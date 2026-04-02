@@ -1,0 +1,20 @@
+FROM python:3.12-slim-bookworm
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl ca-certificates jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python dependencies for sandbox
+RUN pip install --no-cache-dir \
+    claude-agent-sdk>=0.1.48,<0.2 \
+    structlog>=24.0,<26
+
+# Sandbox application code will be added in Plan 2
+# COPY legion/sandbox/ /app/legion/sandbox/
+
+# Non-root user
+RUN useradd --create-home agent
+
+USER agent
+WORKDIR /workspace

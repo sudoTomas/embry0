@@ -1,0 +1,45 @@
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.venv
+venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Node
+node_modules
+frontend/node_modules
+frontend/dist
+
+# Docker
+.dockerignore
+infra/docker-compose*.yml
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# Docs & tests
+docs
+tests
+*.md
+!requirements*.txt
+
+# Project artifacts
+.claude
+.superpowers

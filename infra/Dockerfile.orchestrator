@@ -1,0 +1,38 @@
+FROM python:3.12-slim-bookworm
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl ca-certificates gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+       https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python dependencies
+COPY pyproject.toml /app/
+WORKDIR /app
+RUN pip install --no-cache-dir .
+
+# Application code
+COPY legion/ /app/legion/
+
+# Non-root user
+RUN useradd --create-home orchestrator \
+    && mkdir -p /data \
+    && chown orchestrator:orchestrator /data
+
+USER orchestrator
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl --fail http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "legion.api.app:create_app", "--factory", \
+     "--host", "0.0.0.0", "--port", "8000", \
+     "--log-level", "info", \
+     "--timeout-graceful-shutdown", "30", \
+     "--timeout-keep-alive", "65"]

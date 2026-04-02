@@ -1,0 +1,129 @@
+name: legion
+
+services:
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: legion-frontend
+    ports:
+      - "${PROD_PORT:-8200}:80"
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.orchestrator
+    container_name: legion-orchestrator
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-legion}:${POSTGRES_PASSWORD:-legion}@postgres:5432/${POSTGRES_DB:-legion}"
+      DOCKER_HOST: tcp://dind:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+      AUDIT_LOG_PATH: /data/audit.jsonl
+      TZ: "${TZ:-America/New_York}"
+    env_file: ../.env
+    expose:
+      - "8000"
+    volumes:
+      - dind-certs-client:/certs/client:ro
+      - orchestrator-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dind:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "${ORCHESTRATOR_CPUS:-4}"
+          memory: "${ORCHESTRATOR_MEMORY:-4G}"
+        reservations:
+          cpus: "1"
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    container_name: legion-postgres
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-legion}"
+      POSTGRES_USER: "${POSTGRES_USER:-legion}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-legion}"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-legion}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    restart: unless-stopped
+
+  dind:
+    image: docker:dind
+    container_name: legion-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+      DOCKER_TLS_SAN: DNS:dind,DNS:localhost,DNS:docker
+    volumes:
+      - dind-certs-ca:/certs/ca
+      - dind-certs-client:/certs/client
+      - dind-storage:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "${DIND_CPUS:-4}"
+          memory: "${DIND_MEMORY:-8G}"
+        reservations:
+          cpus: "1"
+          memory: 2G
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  orchestrator-data:
+  dind-certs-ca:
+  dind-certs-client:
+  dind-storage:
