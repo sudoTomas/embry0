@@ -1,0 +1,1 @@
+"""Storage subsystem — PostgreSQL persistence."""
