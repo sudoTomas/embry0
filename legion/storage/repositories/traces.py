@@ -32,7 +32,10 @@ class TracesRepository:
         trace_id = f"trace-{uuid.uuid4().hex[:12]}"
         await self._db.execute(
             """
-            INSERT INTO traces (trace_id, job_id, agent_type, model, result, cost_usd, duration_ms, tools_called, result_summary)
+            INSERT INTO traces (
+                trace_id, job_id, agent_type, model, result,
+                cost_usd, duration_ms, tools_called, result_summary
+            )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             """,
             trace_id,

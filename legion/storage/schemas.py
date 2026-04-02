@@ -1,7 +1,7 @@
 """Data model schemas for storage layer."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 
 
@@ -88,4 +88,4 @@ class TraceRecord:
 
     @staticmethod
     def now_iso() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
