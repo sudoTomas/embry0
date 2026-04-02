@@ -120,7 +120,8 @@ MIGRATIONS: list[tuple[int, str, str]] = [
 
 async def run_migrations(db: DatabasePool) -> None:
     """Run all pending migrations."""
-    assert db.pool is not None, "Call db.connect() first"
+    if db.pool is None:
+        raise RuntimeError("Call db.connect() first")
 
     async with db.pool.acquire() as conn:
         # Create migrations tracking table
@@ -139,10 +140,11 @@ async def run_migrations(db: DatabasePool) -> None:
             if version <= current:
                 continue
             logger.info("migration_applying", version=version, description=description)
-            await conn.execute(sql)
-            await conn.execute(
-                "INSERT INTO legion_migrations (version, description) VALUES ($1, $2)",
-                version,
-                description,
-            )
+            async with conn.transaction():
+                await conn.execute(sql)
+                await conn.execute(
+                    "INSERT INTO legion_migrations (version, description) VALUES ($1, $2)",
+                    version,
+                    description,
+                )
             logger.info("migration_applied", version=version)

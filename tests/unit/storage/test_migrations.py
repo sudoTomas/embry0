@@ -36,6 +36,7 @@ async def test_run_migrations_creates_tables(pg_pool: asyncpg.Pool):
         assert "context_config" in table_names
         assert "budget_config" in table_names
         assert "audit_log" in table_names
+        assert "job_logs" in table_names
 
         await db.close()
     except (OSError, asyncpg.PostgresError) as exc:

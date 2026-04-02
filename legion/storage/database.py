@@ -42,25 +42,29 @@ class DatabasePool:
 
     async def execute(self, query: str, *args: Any) -> str:
         """Execute a query and return the status string."""
-        assert self.pool is not None, "Call connect() first"
+        if self.pool is None:
+            raise RuntimeError("Call connect() first")
         async with self.pool.acquire() as conn:
             return await conn.execute(query, *args)
 
     async def fetchval(self, query: str, *args: Any) -> Any:
         """Execute a query and return a single value."""
-        assert self.pool is not None, "Call connect() first"
+        if self.pool is None:
+            raise RuntimeError("Call connect() first")
         async with self.pool.acquire() as conn:
             return await conn.fetchval(query, *args)
 
     async def fetchrow(self, query: str, *args: Any) -> asyncpg.Record | None:
         """Execute a query and return a single row."""
-        assert self.pool is not None, "Call connect() first"
+        if self.pool is None:
+            raise RuntimeError("Call connect() first")
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(query, *args)
 
     async def fetch(self, query: str, *args: Any) -> list[asyncpg.Record]:
         """Execute a query and return all rows."""
-        assert self.pool is not None, "Call connect() first"
+        if self.pool is None:
+            raise RuntimeError("Call connect() first")
         async with self.pool.acquire() as conn:
             return await conn.fetch(query, *args)
 

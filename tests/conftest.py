@@ -1,18 +1,9 @@
 """Shared test fixtures."""
 
-import asyncio
 from collections.abc import AsyncIterator
 
 import asyncpg
 import pytest
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Shared event loop for all async tests."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest.fixture
