@@ -1,6 +1,7 @@
+from starlette.testclient import TestClient
+
 from legion.api.app import create_app
 from legion.config import LegionConfig
-from starlette.testclient import TestClient
 
 
 def test_websocket_connect():
@@ -10,6 +11,6 @@ def test_websocket_connect():
     app.state.event_subscribers = {}
 
     client = TestClient(app)
-    with client.websocket_connect("/ws/jobs/job-123/events") as ws:
+    with client.websocket_connect("/ws/jobs/job-123/events"):
         # Connection established - send a close to cleanly disconnect
         pass  # TestClient auto-closes

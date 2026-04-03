@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from httpx import ASGITransport, AsyncClient
+
 from legion.api.app import create_app
 from legion.config import LegionConfig
 
@@ -11,7 +13,9 @@ def app():
     app = create_app(config)
     mock_profiles = MagicMock()
     mock_profiles.upsert = AsyncMock()
-    mock_profiles.get = AsyncMock(return_value={"name": "python-3.12", "base_image": "img", "memory": "8g", "cpus": "4"})
+    mock_profiles.get = AsyncMock(
+        return_value={"name": "python-3.12", "base_image": "img", "memory": "8g", "cpus": "4"}
+    )
     mock_profiles.list = AsyncMock(return_value=[{"name": "python-3.12", "base_image": "img"}])
     mock_profiles.delete = AsyncMock()
     app.state.profiles_repo = mock_profiles
@@ -31,7 +35,11 @@ async def test_list_profiles(app):
 async def test_create_profile(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post("/api/v1/sandbox-profiles", json={"name": "python-3.12", "base_image": "img"}, headers={"X-Requested-With": "XMLHttpRequest"})
+        resp = await client.post(
+            "/api/v1/sandbox-profiles",
+            json={"name": "python-3.12", "base_image": "img"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
     assert resp.status_code == 201
 
 
@@ -48,5 +56,8 @@ async def test_get_profile(app):
 async def test_delete_profile(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.delete("/api/v1/sandbox-profiles/python-3.12", headers={"X-Requested-With": "XMLHttpRequest"})
+        resp = await client.delete(
+            "/api/v1/sandbox-profiles/python-3.12",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
     assert resp.status_code == 200

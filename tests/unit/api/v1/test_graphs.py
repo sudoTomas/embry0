@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 from httpx import ASGITransport, AsyncClient
+
 from legion.api.app import create_app
 from legion.config import LegionConfig
 
@@ -33,5 +35,9 @@ async def test_execute_workflow_not_found(app):
     app.state.workflow_registry.get.return_value = None
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post("/api/v1/graphs/execute", json={"workflow": "nonexistent", "input_state": {}}, headers={"X-Requested-With": "XMLHttpRequest"})
+        resp = await client.post(
+            "/api/v1/graphs/execute",
+            json={"workflow": "nonexistent", "input_state": {}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
     assert resp.status_code == 404

@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from httpx import ASGITransport, AsyncClient
+
 from legion.api.app import create_app
 from legion.config import LegionConfig
 
@@ -10,7 +12,15 @@ def app():
     config = LegionConfig(_env_file=None, dev_mode=True)
     app = create_app(config)
     mock_budget = MagicMock()
-    mock_budget.get = AsyncMock(return_value={"max_budget_per_job_usd": 10.0, "daily_cap_usd": 100.0, "monthly_cap_usd": 500.0, "rate_limit_per_author_per_hour": 5, "overrun_mode": "soft"})
+    mock_budget.get = AsyncMock(
+        return_value={
+            "max_budget_per_job_usd": 10.0,
+            "daily_cap_usd": 100.0,
+            "monthly_cap_usd": 500.0,
+            "rate_limit_per_author_per_hour": 5,
+            "overrun_mode": "soft",
+        }
+    )
     mock_budget.update = AsyncMock()
     app.state.budget_repo = mock_budget
     mock_context = MagicMock()
@@ -35,7 +45,11 @@ async def test_get_budget(app):
 async def test_update_budget(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.put("/api/v1/config/budget", json={"max_budget_per_job_usd": 25.0}, headers={"X-Requested-With": "XMLHttpRequest"})
+        resp = await client.put(
+            "/api/v1/config/budget",
+            json={"max_budget_per_job_usd": 25.0},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
     assert resp.status_code == 200
 
 
@@ -51,5 +65,9 @@ async def test_get_global_context(app):
 async def test_set_global_context(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.put("/api/v1/config/context", json={"system_context": "Use TypeScript."}, headers={"X-Requested-With": "XMLHttpRequest"})
+        resp = await client.put(
+            "/api/v1/config/context",
+            json={"system_context": "Use TypeScript."},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
     assert resp.status_code == 200
