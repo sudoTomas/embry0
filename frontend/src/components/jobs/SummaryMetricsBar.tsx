@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { Clock, DollarSign, Layers, Activity } from "lucide-react";
 import type { NodeStateEvent } from "@/lib/types";
 
@@ -16,6 +17,13 @@ export function SummaryMetricsBar({
   startedAt,
   isRunning,
 }: SummaryMetricsBarProps) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!isRunning) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [isRunning]);
+
   const completedPhases = new Set(
     Object.values(nodeStates)
       .filter((ns) => ns.state === "completed")

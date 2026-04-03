@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { IconBox } from "@/components/ui/IconBox";
 import { getPhaseForAgent } from "@/lib/constants";
-import { Target, Code2, ShieldCheck, ScanEye, Send, type LucideIcon } from "lucide-react";
+import { getAgentIcon } from "@/lib/agentIcons";
 
 export type AgentNodeState = "pending" | "running" | "completed" | "failed";
 
@@ -12,13 +12,9 @@ interface TreeAgentNodeProps {
   onClick?: () => void;
 }
 
-const ICON_MAP: Record<string, LucideIcon> = {
-  triage: Target, developer: Code2, validator: ShieldCheck, reviewer: ScanEye, output: Send,
-};
-
 export function TreeAgentNode({ agentType, state, label, onClick }: TreeAgentNodeProps) {
   const phase = getPhaseForAgent(agentType);
-  const Icon = ICON_MAP[agentType] ?? Send;
+  const Icon = getAgentIcon(agentType);
 
   return (
     <button

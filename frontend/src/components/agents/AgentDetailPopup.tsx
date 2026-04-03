@@ -1,11 +1,10 @@
 import { X } from "lucide-react";
+import { useEffect } from "react";
 import { IconBox } from "@/components/ui/IconBox";
 import { getPhaseForAgent } from "@/lib/constants";
 import type { AgentTypeInfo } from "@/lib/types";
 import type { NodeStateEvent } from "@/lib/types";
-import {
-  Target, Code2, ShieldCheck, ScanEye, Send, type LucideIcon,
-} from "lucide-react";
+import { getAgentIcon } from "@/lib/agentIcons";
 
 interface AgentDetailPopupProps {
   agentType: string;
@@ -14,14 +13,6 @@ interface AgentDetailPopupProps {
   onClose: () => void;
 }
 
-const ICON_MAP: Record<string, LucideIcon> = {
-  triage: Target,
-  developer: Code2,
-  validator: ShieldCheck,
-  reviewer: ScanEye,
-  output: Send,
-};
-
 export function AgentDetailPopup({
   agentType,
   agentInfo,
@@ -29,7 +20,15 @@ export function AgentDetailPopup({
   onClose,
 }: AgentDetailPopupProps) {
   const phase = getPhaseForAgent(agentType);
-  const Icon = ICON_MAP[agentType] ?? Send;
+  const Icon = getAgentIcon(agentType);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -38,6 +37,8 @@ export function AgentDetailPopup({
 
       {/* Modal */}
       <div
+        role="dialog"
+        aria-modal="true"
         className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto mx-4 rounded-2xl p-6"
         style={{
           background: "linear-gradient(135deg, rgba(15,20,25,0.98), rgba(9,9,11,0.99))",
@@ -58,7 +59,7 @@ export function AgentDetailPopup({
               <p className="text-xs text-white/40">{phase.label} Phase</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-white/40 hover:text-white/80 transition-colors">
+          <button onClick={onClose} aria-label="Close" className="text-white/40 hover:text-white/80 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>

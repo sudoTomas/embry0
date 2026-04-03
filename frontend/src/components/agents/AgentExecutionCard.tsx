@@ -1,7 +1,8 @@
 import { cn } from "@/lib/utils";
 import { IconBox } from "@/components/ui/IconBox";
 import { getPhaseForAgent } from "@/lib/constants";
-import { CheckCircle2, Target, Code2, ShieldCheck, ScanEye, Send, type LucideIcon } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
+import { getAgentIcon } from "@/lib/agentIcons";
 import type { NodeStateEvent } from "@/lib/types";
 
 interface AgentExecutionCardProps {
@@ -11,17 +12,9 @@ interface AgentExecutionCardProps {
   onClick?: () => void;
 }
 
-const ICON_MAP: Record<string, LucideIcon> = {
-  triage: Target,
-  developer: Code2,
-  validator: ShieldCheck,
-  reviewer: ScanEye,
-  output: Send,
-};
-
 export function AgentExecutionCard({ agentType, nodeState, liveOutput, onClick }: AgentExecutionCardProps) {
   const phase = getPhaseForAgent(agentType);
-  const Icon = ICON_MAP[agentType] ?? Send;
+  const Icon = getAgentIcon(agentType);
   const state = nodeState?.state ?? "pending";
   const isPending = state === "pending" || state === "ready";
   const isRunning = state === "running";
