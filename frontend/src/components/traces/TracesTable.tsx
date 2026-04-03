@@ -62,7 +62,7 @@ export function TracesTable({
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-muted-foreground">
+              <tr className="border-b border-border text-white/40">
                 <th scope="col" className="w-8 px-2 py-3" />
                 <th scope="col" className="text-left px-4 py-3">Issue #</th>
                 <th scope="col" className="text-left px-4 py-3">Repo</th>
@@ -120,10 +120,10 @@ function TraceRow({
   return (
     <>
       <tr
-        className={`border-b border-border/50 cursor-pointer transition-colors ${
+        className={`border-b border-white/[0.04] cursor-pointer transition-colors ${
           isSelected
             ? "bg-primary/5 border-l-2 border-l-primary"
-            : "hover:bg-muted/30"
+            : "hover:bg-cyan-500/[0.02]"
         }`}
         onClick={onClick}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}

@@ -66,7 +66,7 @@ export function JobsTable({
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-muted-foreground">
+              <tr className="border-b border-border text-white/40">
                 <th scope="col" className="text-left px-4 py-3">Job ID</th>
                 <th scope="col" className="text-left px-4 py-3">Repo</th>
                 <th scope="col" className="text-left px-4 py-3">Task</th>
@@ -81,7 +81,7 @@ export function JobsTable({
               {jobs.map((job) => (
                 <tr
                   key={job.job_id}
-                  className="border-b border-border/50 hover:bg-white/[0.02] transition-colors cursor-pointer"
+                  className="border-b border-white/[0.04] hover:bg-cyan-500/[0.02] transition-colors cursor-pointer"
                   onClick={() => navigate(`/jobs/${job.job_id}`)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(`/jobs/${job.job_id}`); } }}
                   tabIndex={0}
@@ -146,7 +146,7 @@ export function JobsTable({
                   <td colSpan={8} className="px-4 py-2">
                     <div className="flex flex-col items-center justify-center py-16 text-center">
                       <div className="relative">
-                        <div className="absolute inset-0 bg-blue-500/5 blur-2xl rounded-full scale-150" />
+                        <div className="absolute inset-0 bg-cyan-500/5 blur-2xl rounded-full scale-150" />
                         <Briefcase size={40} className="text-white/10 relative" />
                       </div>
                       <p className="text-white/25 text-sm mt-4 font-medium">No jobs found</p>

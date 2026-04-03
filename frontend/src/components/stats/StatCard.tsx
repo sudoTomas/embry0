@@ -10,7 +10,7 @@ interface StatCardProps {
 export function StatCard({ title, value, subtitle, color = "#3b82f6", delay = 0 }: StatCardProps) {
   return (
     <div
-      className="relative overflow-hidden rounded-xl border border-white/[0.06] bg-[#111318] p-5 animate-fade-up"
+      className="relative overflow-hidden rounded-xl border border-white/[0.06] bg-[#0f1419] shadow-[0_0_15px_rgba(6,182,212,0.03)] p-5 animate-fade-up"
       style={{ animationDelay: `${delay}ms` }}
     >
       <div
