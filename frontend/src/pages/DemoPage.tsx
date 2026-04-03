@@ -132,7 +132,7 @@ export function DemoPage() {
       />
 
       {/* Two-panel layout */}
-      <div className="grid grid-cols-[420px_1fr] gap-5">
+      <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-5">
         {/* Left panel: Agent execution cards */}
         <div className="space-y-2.5">
           {DEFAULT_ISSUE_TO_PR_PHASES.map((phase) =>
@@ -149,17 +149,19 @@ export function DemoPage() {
         </div>
 
         {/* Right panel: State flow + pipeline tree */}
-        <StateFlowPanel
-          nodeStates={MOCK_NODE_STATES}
-          phases={DEFAULT_ISSUE_TO_PR_PHASES}
-          jobData={{
-            repo: MOCK_JOB.repo,
-            task: MOCK_JOB.task,
-            totalCost: MOCK_JOB.total_cost_usd,
-            prUrl: MOCK_JOB.pr_url,
-          }}
-          onAgentClick={handleAgentClick}
-        />
+        <div className="overflow-y-auto max-h-[calc(100vh-300px)]">
+          <StateFlowPanel
+            nodeStates={MOCK_NODE_STATES}
+            phases={DEFAULT_ISSUE_TO_PR_PHASES}
+            jobData={{
+              repo: MOCK_JOB.repo,
+              task: MOCK_JOB.task,
+              totalCost: MOCK_JOB.total_cost_usd,
+              prUrl: MOCK_JOB.pr_url,
+            }}
+            onAgentClick={handleAgentClick}
+          />
+        </div>
       </div>
 
       {/* Agent detail popup */}
