@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -8,36 +10,35 @@ from legion.config import LegionConfig
 @pytest.fixture
 def app():
     config = LegionConfig(_env_file=None, dev_mode=True)
-    return create_app(config)
+    app = create_app(config)
+    mock_repo = MagicMock()
+    mock_repo.list_all = AsyncMock(
+        return_value=[
+            {
+                "type": "developer",
+                "description": "Writes and edits code",
+                "model": "claude-opus-4-5",
+                "tools": ["bash", "editor"],
+                "skills": [],
+                "system_prompt": "",
+                "is_builtin": True,
+            }
+        ]
+    )
+    app.state.agent_defs_repo = mock_repo
+    return app
 
 
 @pytest.mark.asyncio
-async def test_list_agent_types(app):
+async def test_list_agents(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/v1/agents/types")
+        resp = await client.get("/api/v1/agents")
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, list)
-    assert len(data) >= 4  # triage, developer, validator, reviewer, output
-
-    # Check structure
+    assert len(data) >= 1
     dev = next((a for a in data if a["type"] == "developer"), None)
     assert dev is not None
     assert "description" in dev
-    assert "default_model" in dev
-    assert "default_tools" in dev
-    assert "inputs" in dev
-    assert "outputs" in dev
-    assert "responsibilities" in dev
-    assert "phase" in dev
-
-
-@pytest.mark.asyncio
-async def test_agent_types_include_skills(app):
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/v1/agents/types")
-    data = resp.json()
-    dev = next((a for a in data if a["type"] == "developer"), None)
-    assert "default_skills" in dev
+    assert "model" in dev
