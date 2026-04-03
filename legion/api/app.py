@@ -14,9 +14,13 @@ from legion.branding import API_TITLE
 from legion.config import LegionConfig
 from legion.storage.database import DatabasePool
 from legion.storage.migrations.runner import run_migrations
+from legion.storage.repositories.agent_definitions import AgentDefinitionsRepository
 from legion.storage.repositories.budget_config import BudgetConfigRepository
 from legion.storage.repositories.context_config import ContextConfigRepository
+from legion.storage.repositories.integration_config import IntegrationConfigRepository
 from legion.storage.repositories.jobs import JobsRepository
+from legion.storage.repositories.pipeline_templates import PipelineTemplatesRepository
+from legion.storage.repositories.provider_config import ProviderConfigRepository
 from legion.storage.repositories.sandbox_profiles import SandboxProfilesRepository
 from legion.storage.repositories.traces import TracesRepository
 from legion.workflows.issue_to_pr.graph import IssueToprWorkflow
@@ -40,6 +44,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.profiles_repo = SandboxProfilesRepository(db)
     app.state.context_repo = ContextConfigRepository(db)
     app.state.budget_repo = BudgetConfigRepository(db)
+    app.state.agent_defs_repo = AgentDefinitionsRepository(db)
+    app.state.templates_repo = PipelineTemplatesRepository(db)
+    app.state.integration_repo = IntegrationConfigRepository(db)
+    app.state.provider_repo = ProviderConfigRepository(db)
 
     registry = WorkflowRegistry()
     registry.register(IssueToprWorkflow())
