@@ -1,7 +1,5 @@
 export * from "./jobs";
 export * from "./pipelines";
-export * from "./environment";
-export * from "./images";
 export * from "./events";
 export * from "./github";
 export * from "./config";

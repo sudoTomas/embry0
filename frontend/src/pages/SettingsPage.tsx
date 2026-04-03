@@ -6,8 +6,6 @@ import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { PageError } from "@/components/PageError";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
-import { TriageForm } from "@/components/triage/TriageForm";
 import { toast } from "sonner";
 import type { ConfigResponse } from "@/lib/types";
 
@@ -92,133 +90,6 @@ export function SettingsPage() {
     if (config) setForm({ ...config });
   };
 
-  const configurationContent = (
-    <div className="space-y-6 mt-4">
-      {hasChanges && (
-        <div className="text-sm text-warning">You have unsaved changes.</div>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Budget & Limits</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <Label htmlFor="max_budget_usd">Max Budget per Job (USD)</Label>
-              <Input id="max_budget_usd" type="number" step="0.01" min="0.01" max="1000"
-                value={form.max_budget_usd}
-                onChange={(e) => handleNumberChange("max_budget_usd", e.target.value, 0.01, 1000)} />
-            </div>
-            <div>
-              <Label htmlFor="daily_budget_cap_usd">Daily Budget Cap (USD)</Label>
-              <Input id="daily_budget_cap_usd" type="number" step="1" min="0" max="10000"
-                value={form.daily_budget_cap_usd}
-                onChange={(e) => handleNumberChange("daily_budget_cap_usd", e.target.value, 0, 10000)} />
-            </div>
-            <div>
-              <Label htmlFor="monthly_budget_cap_usd">Monthly Budget Cap (USD)</Label>
-              <Input id="monthly_budget_cap_usd" type="number" step="1" min="0" max="100000"
-                value={form.monthly_budget_cap_usd}
-                onChange={(e) => handleNumberChange("monthly_budget_cap_usd", e.target.value, 0, 100000)} />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Agent Configuration</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="provider_mode">Provider Mode</Label>
-              <Select id="provider_mode" value={form.provider_mode}
-                onChange={(e) => handleChange("provider_mode", e.target.value)}>
-                <option value="anthropic_api">Anthropic API</option>
-                <option value="claude_max">Claude Max</option>
-                <option value="ollama">Ollama</option>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="default_model">Default Model</Label>
-              <Input id="default_model" value={form.default_model}
-                onChange={(e) => handleChange("default_model", e.target.value)} />
-            </div>
-            <div>
-              <Label htmlFor="sandbox_memory">Sandbox Memory</Label>
-              <Input id="sandbox_memory" value={form.sandbox_memory}
-                onChange={(e) => handleChange("sandbox_memory", e.target.value)}
-                placeholder="e.g. 8g" />
-            </div>
-            <div>
-              <Label htmlFor="sandbox_cpus">Sandbox CPUs</Label>
-              <Input id="sandbox_cpus" value={form.sandbox_cpus}
-                onChange={(e) => handleChange("sandbox_cpus", e.target.value)}
-                placeholder="e.g. 4" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Pipeline Behavior</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="trigger_labels">Trigger Labels (comma-separated)</Label>
-              <Input id="trigger_labels" value={form.trigger_labels}
-                onChange={(e) => handleChange("trigger_labels", e.target.value)}
-                placeholder="Legion" />
-            </div>
-            <div>
-              <Label htmlFor="rate_limit">Rate Limit (per author/hour)</Label>
-              <Input id="rate_limit" type="number" min="1" max="100"
-                value={form.rate_limit_per_author_per_hour}
-                onChange={(e) => handleNumberChange("rate_limit_per_author_per_hour", e.target.value, 1, 100)} />
-            </div>
-<div className="flex items-center gap-3 pt-6">
-              <input type="checkbox" id="clone_repos"
-                checked={form.clone_repos_per_issue}
-                onChange={(e) => handleChange("clone_repos_per_issue", e.target.checked)}
-                className="h-4 w-4 rounded border-input" />
-              <Label htmlFor="clone_repos">Clone repo per issue (isolation)</Label>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Notifications</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <Label htmlFor="slack_url">Slack Webhook URL</Label>
-              <Input id="slack_url" type="password" value={form.slack_webhook_url}
-                onChange={(e) => handleChange("slack_webhook_url", e.target.value)}
-                placeholder="https://hooks.slack.com/services/..." />
-            </div>
-            <div>
-              <Label htmlFor="telegram_token">Telegram Bot Token</Label>
-              <Input id="telegram_token" type="password" value={form.telegram_bot_token}
-                onChange={(e) => handleChange("telegram_bot_token", e.target.value)} />
-            </div>
-            <div>
-              <Label htmlFor="telegram_chat">Telegram Chat ID</Label>
-              <Input id="telegram_chat" value={form.telegram_chat_id}
-                onChange={(e) => handleChange("telegram_chat_id", e.target.value)} />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -233,21 +104,61 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="configuration">
-        <TabsList>
-          <TabsTrigger value="configuration">Configuration</TabsTrigger>
-          <TabsTrigger value="triage">Triage</TabsTrigger>
-        </TabsList>
-        <TabsContent value="configuration">
-          {configurationContent}
-        </TabsContent>
-        <TabsContent value="triage">
-          <div className="space-y-6 mt-4">
-            <p className="text-muted-foreground">Test the complexity triage engine with a sample issue.</p>
-            <TriageForm />
+      {hasChanges && (
+        <div className="text-sm text-warning">You have unsaved changes.</div>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Budget & Limits</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <Label htmlFor="max_budget_per_job_usd">Max Budget per Job (USD)</Label>
+              <Input id="max_budget_per_job_usd" type="number" step="0.01" min="0.01" max="1000"
+                value={form.max_budget_per_job_usd as number}
+                onChange={(e) => handleNumberChange("max_budget_per_job_usd", e.target.value, 0.01, 1000)} />
+            </div>
+            <div>
+              <Label htmlFor="daily_cap_usd">Daily Budget Cap (USD)</Label>
+              <Input id="daily_cap_usd" type="number" step="1" min="0" max="10000"
+                value={form.daily_cap_usd as number}
+                onChange={(e) => handleNumberChange("daily_cap_usd", e.target.value, 0, 10000)} />
+            </div>
+            <div>
+              <Label htmlFor="monthly_cap_usd">Monthly Budget Cap (USD)</Label>
+              <Input id="monthly_cap_usd" type="number" step="1" min="0" max="100000"
+                value={form.monthly_cap_usd as number}
+                onChange={(e) => handleNumberChange("monthly_cap_usd", e.target.value, 0, 100000)} />
+            </div>
           </div>
-        </TabsContent>
-      </Tabs>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Rate Limiting</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="rate_limit_per_author_per_hour">Rate Limit (per author/hour)</Label>
+              <Input id="rate_limit_per_author_per_hour" type="number" min="1" max="100"
+                value={form.rate_limit_per_author_per_hour as number}
+                onChange={(e) => handleNumberChange("rate_limit_per_author_per_hour", e.target.value, 1, 100)} />
+            </div>
+            <div>
+              <Label htmlFor="overrun_mode">Overrun Mode</Label>
+              <Select id="overrun_mode" value={form.overrun_mode as string}
+                onChange={(e) => handleChange("overrun_mode", e.target.value)}>
+                <option value="soft">Soft (warn, continue)</option>
+                <option value="hard">Hard (stop at cap)</option>
+              </Select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

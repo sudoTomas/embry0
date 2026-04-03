@@ -1,6 +1,5 @@
 import { useState, useCallback } from "react";
 import { useJobs, useRunJob, useCancelJob } from "@/hooks/useJobs";
-import { useRepos } from "@/hooks/useGitHub";
 import { JobsTable } from "@/components/jobs/JobsTable";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
 import { PageError } from "@/components/PageError";
@@ -22,7 +21,6 @@ export function JobsPage() {
     status: statusFilter,
     repo: repoFilter,
   });
-  const { data: reposData } = useRepos();
   const runJob = useRunJob();
   const cancelJob = useCancelJob();
 
@@ -51,7 +49,7 @@ export function JobsPage() {
   }, []);
 
   const statusOptions: JobStatus[] = ["pending", "running", "completed", "failed", "cancelled"];
-  const repoOptions = reposData?.repos.map((r) => r.full_name) ?? [];
+  const repoOptions: string[] = [];
 
   return (
     <div className="space-y-6">

@@ -1,5 +1,5 @@
 import { NavLink } from "react-router";
-import { Activity, LayoutDashboard, Play, CircleDot, Workflow, KeyRound, Settings } from "lucide-react";
+import { Activity, LayoutDashboard, Play, Workflow, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -8,9 +8,7 @@ import { APP_NAME } from "@/lib/branding";
 const NAV_ITEMS = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/jobs", label: "Jobs", icon: Play },
-  { path: "/issues", label: "Issues", icon: CircleDot },
   { path: "/pipelines", label: "Pipelines", icon: Workflow },
-  { path: "/environments", label: "Environments", icon: KeyRound },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 
