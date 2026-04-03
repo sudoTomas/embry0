@@ -74,6 +74,12 @@ export function JobLogsPage() {
           <h1 className="text-2xl font-bold">Agent Logs</h1>
           <p className="text-sm text-muted-foreground font-mono">{jobId}</p>
         </div>
+        <Link to={`/jobs/${jobId}`}>
+          <Button variant="outline" size="sm" className="gap-1.5">
+            <ArrowLeft className="w-3 h-3" />
+            Dashboard
+          </Button>
+        </Link>
       </div>
 
       {/* Pipeline Visualization */}
