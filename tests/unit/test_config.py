@@ -60,3 +60,29 @@ def test_config_trigger_labels_parsing():
     with patch.dict(os.environ, env, clear=True):
         config = LegionConfig(_env_file=None)  # type: ignore[call-arg]
     assert config.trigger_labels_list == ["Legion", "auto-fix", "bot"]
+
+
+def test_config_claude_max_provider():
+    """Claude Max provider mode reads OAuth token."""
+    env = {
+        "PROVIDER_MODE": "claude_max",
+        "CLAUDE_MAX_OAUTH_TOKEN": "sk-ant-oat01-test",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        config = LegionConfig(_env_file=None)  # type: ignore[call-arg]
+    assert config.provider_mode == "claude_max"
+    assert config.claude_max_oauth_token == "sk-ant-oat01-test"
+
+
+def test_config_ollama_provider():
+    """Ollama provider mode reads base URL and model."""
+    env = {
+        "PROVIDER_MODE": "ollama",
+        "OLLAMA_BASE_URL": "http://gpu:11434",
+        "OLLAMA_MODEL": "codellama",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        config = LegionConfig(_env_file=None)  # type: ignore[call-arg]
+    assert config.provider_mode == "ollama"
+    assert config.ollama_base_url == "http://gpu:11434"
+    assert config.ollama_model == "codellama"

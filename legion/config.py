@@ -32,9 +32,12 @@ class LegionConfig(BaseSettings):
     rate_limit_per_author_per_hour: int = 5
     api_rate_limit_per_minute: int = 60
 
-    # Agent provider
+    # Agent provider (anthropic_api | claude_max | ollama)
     provider_mode: str = "anthropic_api"
     anthropic_api_key: str = ""
+    claude_max_oauth_token: str = ""
+    ollama_base_url: str = ""
+    ollama_model: str = ""
     default_model: str = ""
     model_heavy: str = "claude-opus-4-6"
     model_medium: str = "claude-sonnet-4-6"

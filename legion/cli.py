@@ -26,6 +26,7 @@ _SECRET_FIELDS = frozenset({
     "github_webhook_secret",
     "api_key",
     "anthropic_api_key",
+    "claude_max_oauth_token",
     "telegram_bot_token",
     "slack_webhook_url",
 })
@@ -207,6 +208,12 @@ def cmd_config(args: argparse.Namespace) -> None:
         issues.append(
             "ANTHROPIC_API_KEY is not set (required for provider_mode=anthropic_api)"
         )
+    if config.provider_mode == "claude_max" and not config.claude_max_oauth_token:
+        issues.append(
+            "CLAUDE_MAX_OAUTH_TOKEN is not set (required for provider_mode=claude_max)"
+        )
+    if config.provider_mode == "ollama" and not config.ollama_model:
+        issues.append("OLLAMA_MODEL is not set (required for provider_mode=ollama)")
 
     if issues:
         print(f"\n{len(issues)} issue(s) found:")
