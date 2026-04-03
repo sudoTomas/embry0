@@ -54,6 +54,17 @@ class ContextConfigRepository:
         row = await self._db.fetchrow("SELECT * FROM context_config WHERE id = $1", f"repo:{repo}")
         return dict(row) if row else None
 
+    async def list_repos(self) -> list[dict[str, Any]]:
+        """List all repos that have context configured."""
+        rows = await self._db.fetch(
+            "SELECT repo, system_context, assistant_context FROM context_config WHERE scope = 'repo' ORDER BY repo",
+        )
+        return [dict(r) for r in rows]
+
+    async def delete_repo(self, repo: str) -> None:
+        """Delete per-repo context configuration."""
+        await self._db.execute("DELETE FROM context_config WHERE id = $1", f"repo:{repo}")
+
     async def get_merged(self, repo: str) -> dict[str, str]:
         """Get merged context: global defaults, repo overrides."""
         global_ctx = await self.get_global()

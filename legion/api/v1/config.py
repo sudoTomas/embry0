@@ -106,15 +106,12 @@ async def test_provider_connection(
 async def list_repo_contexts(
     context: ContextConfigRepository = Depends(get_context_repo),
 ) -> list[dict]:
-    rows = await context._db.fetch(
-        "SELECT repo, system_context, assistant_context FROM context_config WHERE scope = 'repo' ORDER BY repo",
-    )
-    return [dict(r) for r in rows]
+    return await context.list_repos()
 
 
 @router.delete("/config/context/repos/{repo:path}")
 async def delete_repo_context(
     repo: str, context: ContextConfigRepository = Depends(get_context_repo),
 ) -> dict:
-    await context._db.execute("DELETE FROM context_config WHERE id = $1", f"repo:{repo}")
+    await context.delete_repo(repo)
     return {"repo": repo, "status": "deleted"}

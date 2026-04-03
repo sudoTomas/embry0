@@ -24,6 +24,9 @@ _UPDATABLE_FIELDS = frozenset(
 )
 
 
+_SECRET_FIELDS = {"webhook_secret", "slack_webhook_url", "telegram_bot_token"}
+
+
 def _mask(value: str, visible: int = 4) -> str:
     """Mask a secret string, showing only the last `visible` characters."""
     if not value:
@@ -77,6 +80,8 @@ class IntegrationConfigRepository:
         args: list[Any] = []
         idx = 1
         for key, value in valid.items():
+            if key in _SECRET_FIELDS and value == "":
+                continue
             if key == "trigger_labels":
                 value = json.dumps(value)
             sets.append(f"{key} = ${idx}")

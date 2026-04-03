@@ -130,13 +130,13 @@ class AgentDefinitionsRepository:
 
     async def delete(self, agent_type: str) -> None:
         """Delete a custom agent definition. Raises ValueError for built-in agents."""
-        row = await self.get(agent_type)
-        if row is not None and row.get("is_builtin"):
+        agent = await self.get(agent_type)
+        if agent is None:
+            raise ValueError(f"Agent '{agent_type}' not found")
+        if agent.get("is_builtin"):
             raise ValueError(f"Cannot delete built-in agent '{agent_type}'")
-        await self._db.execute(
-            "DELETE FROM agent_definitions WHERE type = $1", agent_type
-        )
-        logger.info("agent_definition_deleted", agent_type=agent_type)
+        await self._db.execute("DELETE FROM agent_definitions WHERE type = $1", agent_type)
+        logger.info("agent_definition_deleted", type=agent_type)
 
     async def reset(self, agent_type: str) -> dict[str, Any]:
         """Reset a built-in agent to its seed values. Raises ValueError for custom agents."""

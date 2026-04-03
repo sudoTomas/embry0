@@ -57,6 +57,8 @@ async def delete_agent(
     try:
         await repo.delete(agent_type)
     except ValueError as exc:
+        if "not found" in str(exc):
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     return {"type": agent_type, "status": "deleted"}
 
