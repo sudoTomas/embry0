@@ -19,6 +19,8 @@ class PipelineConfig(TypedDict, total=False):
     reviewer_enabled: bool
     validator_modes: list[str]
     agent_models: dict[str, str]
+    agent_tools: dict[str, list[str]]
+    agent_skills: dict[str, list[str]]
     budget_usd: float
 
 
