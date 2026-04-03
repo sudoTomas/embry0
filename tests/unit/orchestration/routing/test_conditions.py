@@ -1,8 +1,8 @@
 from legion.orchestration.routing.conditions import (
+    check_budget,
+    check_review_result,
     check_triage_action,
     check_validation_result,
-    check_review_result,
-    check_budget,
 )
 
 

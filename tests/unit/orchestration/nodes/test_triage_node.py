@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from legion.orchestration.nodes.triage import run_triage_node, parse_triage_response
+from legion.orchestration.nodes.triage import parse_triage_response, run_triage_node
 
 
 def test_parse_triage_response_proceed():

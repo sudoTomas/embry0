@@ -22,7 +22,8 @@ Respond with a JSON object containing:
 - action: "proceed" | "needs_info" | "split"
 - confidence: 0.0-1.0 (how confident you are in the implementation approach)
 - pipeline_template: "routine" | "standard" (when action=proceed)
-- pipeline_config: object with sandbox_profile, agent_models, max_feedback_loops, reviewer_enabled, validator_modes, budget_usd
+- pipeline_config: object with sandbox_profile, agent_models, max_feedback_loops,
+  reviewer_enabled, validator_modes, budget_usd
 - questions: list of strings (when action=needs_info)
 - sub_tasks: list of {task, description} objects (when action=split)
 - reasoning: explanation of your decision
