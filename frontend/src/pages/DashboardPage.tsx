@@ -29,7 +29,7 @@ export function DashboardPage() {
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Issues" value={String(stats.total_issues)} color="#3b82f6" delay={0} />
+        <StatCard title="Total Issues" value={String(stats.total_issues)} color="#06b6d4" delay={0} />
         <StatCard title="Success Rate" value={formatPercent(stats.success_rate)} color="#22c55e" delay={60} />
         <StatCard
           title="Total Cost"
@@ -77,7 +77,7 @@ export function DashboardPage() {
         <CardContent>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-muted-foreground">
+              <tr className="border-b border-border text-white/40">
                 <th scope="col" className="text-left py-2">#</th>
                 <th scope="col" className="text-left py-2">Repo</th>
                 <th scope="col" className="text-left py-2">Tier</th>
@@ -87,7 +87,7 @@ export function DashboardPage() {
             </thead>
             <tbody>
               {stats.recent_issues.map((issue) => (
-                <tr key={issue.trace_id} className="border-b border-border/50 hover:bg-white/[0.02] transition-colors">
+                <tr key={issue.trace_id} className="border-b border-white/[0.04] hover:bg-cyan-500/[0.02] transition-colors">
                   <td className="py-2">{issue.issue_number}</td>
                   <td className="py-2 font-mono text-xs">{issue.repo}</td>
                   <td className={`py-2 capitalize ${TIER_COLORS[issue.tier]}`}>{issue.tier}</td>
