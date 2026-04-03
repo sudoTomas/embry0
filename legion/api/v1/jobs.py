@@ -1,6 +1,7 @@
 """Jobs API — create, list, get, cancel jobs."""
 from fastapi import APIRouter, Depends, HTTPException, Request
-from legion.api.deps import get_config, get_jobs_repo
+
+from legion.api.deps import get_jobs_repo
 from legion.api.schemas import JobCreateRequest, JobListResponse, JobResponse
 from legion.audit.logger import emit_audit_event
 from legion.storage.repositories.jobs import JobsRepository

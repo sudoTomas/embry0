@@ -1,6 +1,7 @@
 """Per-IP API rate limiting middleware."""
 import time
 from collections import defaultdict
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -25,6 +26,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         now = time.time()
         self._requests[ip] = [t for t in self._requests[ip] if t > now - self._window]
         if len(self._requests[ip]) >= self._max_rpm:
-            return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"}, headers={"Retry-After": "60"})
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded"},
+                headers={"Retry-After": "60"},
+            )
         self._requests[ip].append(now)
         return await call_next(request)

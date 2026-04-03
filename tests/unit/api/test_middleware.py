@@ -1,6 +1,6 @@
 import pytest
-from httpx import ASGITransport, AsyncClient
 from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 from legion.api.middleware.csrf import CSRFMiddleware
 

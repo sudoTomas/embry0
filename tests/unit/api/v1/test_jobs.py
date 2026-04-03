@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from httpx import ASGITransport, AsyncClient
+
 from legion.api.app import create_app
 from legion.config import LegionConfig
 
@@ -28,7 +30,11 @@ def app():
 async def test_create_job(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post("/api/v1/jobs", json={"repo": "owner/repo", "task": "Fix the bug"}, headers={"X-Requested-With": "XMLHttpRequest"})
+        resp = await client.post(
+            "/api/v1/jobs",
+            json={"repo": "owner/repo", "task": "Fix the bug"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
     assert resp.status_code == 201
     assert resp.json()["job_id"] == "job-test123"
 
@@ -72,5 +78,9 @@ async def test_cancel_job(app):
 async def test_create_job_invalid_repo(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post("/api/v1/jobs", json={"repo": "invalid", "task": "Fix"}, headers={"X-Requested-With": "XMLHttpRequest"})
+        resp = await client.post(
+            "/api/v1/jobs",
+            json={"repo": "invalid", "task": "Fix"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
     assert resp.status_code == 422

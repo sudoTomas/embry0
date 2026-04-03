@@ -1,5 +1,6 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
+
 from legion.api.app import create_app
 from legion.config import LegionConfig
 
