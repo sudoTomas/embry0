@@ -26,7 +26,12 @@ async def test_get_stats(app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/v1/stats")
     assert resp.status_code == 200
-    assert "total_jobs" in resp.json()
+    data = resp.json()
+    assert "total_jobs" in data
+    assert "total_issues" in data
+    assert "success_rate" in data
+    assert "daily_cost_usd" in data
+    assert "recent_issues" in data
 
 
 @pytest.mark.asyncio
