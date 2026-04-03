@@ -1,7 +1,10 @@
 """GitHub webhook handler."""
+
 import json as json_module
+
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request
+
 from legion.api.auth import verify_webhook_signature
 
 logger = structlog.get_logger(__name__)
@@ -9,7 +12,11 @@ router = APIRouter()
 
 
 @router.post("/webhook")
-async def github_webhook(request: Request, x_github_event: str = Header(default=""), x_hub_signature_256: str = Header(default="")) -> dict:
+async def github_webhook(
+    request: Request,
+    x_github_event: str = Header(default=""),
+    x_hub_signature_256: str = Header(default=""),
+) -> dict:
     config = request.app.state.config
     body = await request.body()
 
@@ -27,7 +34,7 @@ async def github_webhook(request: Request, x_github_event: str = Header(default=
 
     if event_type == "issues" and action == "labeled":
         issue = payload.get("issue", {})
-        labels = [l.get("name", "") for l in issue.get("labels", [])]
+        labels = [lbl.get("name", "") for lbl in issue.get("labels", [])]
         trigger_labels = set(config.trigger_labels_list)
         if trigger_labels.intersection(labels):
             logger.info("webhook_trigger_matched", issue_number=issue.get("number"), labels=labels)
