@@ -3,10 +3,11 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { FilterSelect } from "@/components/ui/FilterSelect";
 import { Pagination } from "@/components/ui/Pagination";
 import { JobStatusBadge } from "./JobStatusBadge";
+import { EmptyJobsState } from "./EmptyJobsState";
 import { formatCost, formatDate } from "@/lib/utils";
 import { TIER_COLORS } from "@/lib/constants";
 import { Link, useNavigate } from "react-router";
-import { Play, X, Eye, GitPullRequest, Briefcase } from "lucide-react";
+import { Play, X, Eye, GitPullRequest } from "lucide-react";
 import type { JobResponse } from "@/lib/types";
 
 interface JobsTableProps {
@@ -143,15 +144,8 @@ export function JobsTable({
               ))}
               {jobs.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-2">
-                    <div className="flex flex-col items-center justify-center py-16 text-center">
-                      <div className="relative">
-                        <div className="absolute inset-0 bg-cyan-500/5 blur-2xl rounded-full scale-150" />
-                        <Briefcase size={40} className="text-white/10 relative" />
-                      </div>
-                      <p className="text-white/25 text-sm mt-4 font-medium">No jobs found</p>
-                      <p className="text-white/[0.12] text-xs mt-1">Create a new job or adjust your filters</p>
-                    </div>
+                  <td colSpan={8}>
+                    <EmptyJobsState />
                   </td>
                 </tr>
               )}
