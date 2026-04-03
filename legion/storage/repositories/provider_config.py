@@ -79,24 +79,35 @@ class ProviderConfigRepository:
     async def test_connection(self) -> dict[str, str]:
         """Test connectivity for the configured provider.
 
+        For anthropic_api/claude_max: verifies credentials are set.
+        For ollama: makes an HTTP request to verify server is reachable.
         Returns {"status": "ok"|"error", "message": str}.
         """
         config = await self.get()
         mode = config.get("provider_mode", "")
 
         if mode == "anthropic_api":
-            if config.get("api_key_set"):
-                return {"status": "ok", "message": "Anthropic API key is set."}
-            return {"status": "error", "message": "ANTHROPIC_API_KEY environment variable is not set."}
+            if not config.get("api_key_set"):
+                return {"status": "error", "message": "ANTHROPIC_API_KEY environment variable is not set."}
+            return {"status": "ok", "message": "Anthropic API key is configured."}
 
         if mode == "claude_max":
-            if config.get("oauth_token_set"):
-                return {"status": "ok", "message": "Claude Max OAuth token is set."}
-            return {"status": "error", "message": "CLAUDE_MAX_OAUTH_TOKEN environment variable is not set."}
+            if not config.get("oauth_token_set"):
+                return {"status": "error", "message": "CLAUDE_MAX_OAUTH_TOKEN environment variable is not set."}
+            return {"status": "ok", "message": "Claude Max OAuth token is configured."}
 
         if mode == "ollama":
-            if config.get("ollama_base_url"):
-                return {"status": "ok", "message": f"Ollama base URL is configured: {config['ollama_base_url']}"}
-            return {"status": "error", "message": "ollama_base_url is not configured."}
+            base_url = config.get("ollama_base_url", "")
+            if not base_url:
+                return {"status": "error", "message": "ollama_base_url is not configured."}
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+                    async with session.get(f"{base_url.rstrip('/')}/api/tags") as resp:
+                        if resp.status == 200:
+                            return {"status": "ok", "message": f"Ollama server reachable at {base_url}"}
+                        return {"status": "error", "message": f"Ollama returned HTTP {resp.status}"}
+            except Exception as exc:
+                return {"status": "error", "message": f"Cannot reach Ollama at {base_url}: {exc}"}
 
         return {"status": "error", "message": f"Unknown provider mode: {mode!r}"}

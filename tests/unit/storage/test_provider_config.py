@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import asyncpg
 import pytest
 
@@ -125,9 +127,27 @@ async def test_test_connection_claude_max_error(provider_repo: ProviderConfigRep
 @pytest.mark.asyncio
 async def test_test_connection_ollama_ok(provider_repo: ProviderConfigRepository):
     await provider_repo.update(provider_mode="ollama", ollama_base_url="http://localhost:11434")
-    result = await provider_repo.test_connection()
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    mock_aiohttp = MagicMock()
+    mock_aiohttp.ClientSession = MagicMock(return_value=mock_session)
+    mock_aiohttp.ClientTimeout = MagicMock(return_value=MagicMock())
+
+    with patch.dict("sys.modules", {"aiohttp": mock_aiohttp}):
+        result = await provider_repo.test_connection()
+
     assert result["status"] == "ok"
     assert "http://localhost:11434" in result["message"]
+    mock_session.get.assert_called_once_with("http://localhost:11434/api/tags")
 
 
 @pytest.mark.asyncio
@@ -136,3 +156,49 @@ async def test_test_connection_ollama_error(provider_repo: ProviderConfigReposit
     result = await provider_repo.test_connection()
     assert result["status"] == "error"
     assert "ollama_base_url" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_test_connection_ollama_non_200(provider_repo: ProviderConfigRepository):
+    await provider_repo.update(provider_mode="ollama", ollama_base_url="http://localhost:11434")
+
+    mock_resp = MagicMock()
+    mock_resp.status = 503
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    mock_aiohttp = MagicMock()
+    mock_aiohttp.ClientSession = MagicMock(return_value=mock_session)
+    mock_aiohttp.ClientTimeout = MagicMock(return_value=MagicMock())
+
+    with patch.dict("sys.modules", {"aiohttp": mock_aiohttp}):
+        result = await provider_repo.test_connection()
+
+    assert result["status"] == "error"
+    assert "503" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_test_connection_ollama_unreachable(provider_repo: ProviderConfigRepository):
+    await provider_repo.update(provider_mode="ollama", ollama_base_url="http://localhost:11434")
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(side_effect=OSError("Connection refused"))
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    mock_aiohttp = MagicMock()
+    mock_aiohttp.ClientSession = MagicMock(return_value=mock_session)
+    mock_aiohttp.ClientTimeout = MagicMock(return_value=MagicMock())
+
+    with patch.dict("sys.modules", {"aiohttp": mock_aiohttp}):
+        result = await provider_repo.test_connection()
+
+    assert result["status"] == "error"
+    assert "Cannot reach Ollama" in result["message"]
+    assert "http://localhost:11434" in result["message"]
