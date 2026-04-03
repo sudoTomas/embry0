@@ -1,11 +1,25 @@
 """FastAPI dependency functions."""
 
-from fastapi import Depends, Request
+from fastapi import Depends, Header, Request
 
 from legion.api.auth import verify_api_key
 
+
+def _auth_dependency(
+    request: Request,
+    authorization: str = Header(default=""),
+) -> None:
+    """FastAPI dependency that extracts auth parameters and delegates to verify_api_key."""
+    config = request.app.state.config
+    verify_api_key(
+        api_key=config.api_key or "",
+        authorization=authorization,
+        dev_mode=config.dev_mode,
+    )
+
+
 # Reusable dependency: requires a valid API key.
-require_auth = Depends(verify_api_key)
+require_auth = Depends(_auth_dependency)
 
 
 def get_config(request: Request):

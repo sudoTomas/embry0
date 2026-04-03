@@ -1,21 +1,22 @@
 """Stats API."""
 from fastapi import APIRouter, Depends
 
-from legion.api.deps import get_jobs_repo
-from legion.storage.repositories.jobs import JobsRepository
+from legion.api.deps import get_db
+from legion.storage.database import DatabasePool
 
 router = APIRouter()
 
 
 @router.get("/stats")
-async def get_stats(jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
-    _, total_jobs = await jobs.list(limit=0, offset=0)
-    completed_rows, completed = await jobs.list(status="completed", limit=0, offset=0)
-    failed_rows, failed = await jobs.list(status="failed", limit=0, offset=0)
+async def get_stats(db: DatabasePool = Depends(get_db)) -> dict:
+    total_jobs = await db.fetchval("SELECT COUNT(*) FROM jobs") or 0
+    completed = await db.fetchval("SELECT COUNT(*) FROM jobs WHERE status = 'completed'") or 0
+    failed = await db.fetchval("SELECT COUNT(*) FROM jobs WHERE status = 'failed'") or 0
+    total_cost = await db.fetchval("SELECT COALESCE(SUM(total_cost_usd), 0) FROM jobs") or 0.0
     return {
         "total_jobs": total_jobs,
         "completed": completed,
         "failed": failed,
         "success_rate": completed / total_jobs if total_jobs > 0 else 0.0,
-        "total_cost_usd": 0.0,
+        "total_cost_usd": float(total_cost),
     }

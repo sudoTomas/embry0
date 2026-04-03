@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from httpx import ASGITransport, AsyncClient
+
 from legion.api.app import create_app
 from legion.config import LegionConfig
 
@@ -9,9 +11,9 @@ from legion.config import LegionConfig
 def app():
     config = LegionConfig(_env_file=None, dev_mode=True)
     app = create_app(config)
-    mock_jobs = MagicMock()
-    mock_jobs.list = AsyncMock(return_value=([], 0))
-    app.state.jobs_repo = mock_jobs
+    mock_db = MagicMock()
+    mock_db.fetchval = AsyncMock(return_value=0)
+    app.state.db = mock_db
     mock_traces = MagicMock()
     mock_traces.list = AsyncMock(return_value=([], 0))
     app.state.traces_repo = mock_traces

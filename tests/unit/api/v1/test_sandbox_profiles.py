@@ -53,6 +53,19 @@ async def test_get_profile(app):
 
 
 @pytest.mark.asyncio
+async def test_update_profile(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/sandbox-profiles/python-3.12",
+            json={"name": "python-3.12", "base_image": "img"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "updated"
+
+
+@pytest.mark.asyncio
 async def test_delete_profile(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

@@ -8,6 +8,8 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from legion.api.middleware.csrf import CSRFMiddleware
+from legion.api.middleware.rate_limit import RateLimitMiddleware
 from legion.branding import API_TITLE
 from legion.config import LegionConfig
 from legion.storage.database import DatabasePool
@@ -73,6 +75,8 @@ def create_app(config: LegionConfig | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(RateLimitMiddleware, requests_per_minute=config.api_rate_limit_per_minute)
+    app.add_middleware(CSRFMiddleware)
 
     @app.get("/health")
     async def health() -> dict:

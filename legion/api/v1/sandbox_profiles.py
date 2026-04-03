@@ -38,7 +38,12 @@ async def get_profile(name: str, profiles: SandboxProfilesRepository = Depends(g
 async def update_profile(
     name: str, req: SandboxProfileRequest, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)
 ) -> dict:
-    await profiles.upsert(name=name, base_image=req.base_image, memory=req.memory, cpus=req.cpus)
+    await profiles.upsert(
+        name=name, base_image=req.base_image, additional_packages=req.additional_packages,
+        setup_commands=req.setup_commands, memory=req.memory, cpus=req.cpus, pids_limit=req.pids_limit,
+        cap_drop=req.cap_drop, cap_add=req.cap_add, security_opt=req.security_opt,
+        agent_timeout_seconds=req.agent_timeout_seconds, container_timeout_seconds=req.container_timeout_seconds,
+    )
     return {"name": name, "status": "updated"}
 
 

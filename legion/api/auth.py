@@ -3,7 +3,22 @@
 import hashlib
 import hmac
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException
+
+
+def verify_api_key(api_key: str, authorization: str, dev_mode: bool) -> None:
+    """Verify the API key from explicit parameters.
+
+    Raises HTTPException 401 if the key is missing or invalid.
+    Skips verification when dev_mode is True or no key is configured.
+    """
+    if dev_mode or not api_key:
+        return
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = authorization[7:]
+    if not hmac.compare_digest(token, api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 def verify_webhook_signature(body: bytes, signature: str, secret: str) -> None:
@@ -11,27 +26,8 @@ def verify_webhook_signature(body: bytes, signature: str, secret: str) -> None:
 
     Raises HTTPException 401 if the signature is missing or invalid.
     """
+    if not signature:
+        raise HTTPException(status_code=401, detail="Missing webhook signature")
     expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, signature):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook signature")
-
-
-async def verify_api_key(request: Request) -> str:
-    """Verify the API key from the request headers.
-
-    Returns the API key if valid. Raises HTTPException if invalid.
-    """
-    config = request.app.state.config
-
-    # In dev mode, skip authentication.
-    if config.dev_mode:
-        return "dev"
-
-    api_key = request.headers.get("X-API-Key") or request.headers.get("Authorization", "").removeprefix("Bearer ")
-    if not api_key:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing API key")
-
-    if api_key != config.api_key:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key")
-
-    return api_key
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
