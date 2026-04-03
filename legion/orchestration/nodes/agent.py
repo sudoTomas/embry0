@@ -4,6 +4,7 @@ from typing import Any
 
 import structlog
 
+from legion.agents.resolver import resolve_agent_config
 from legion.execution.agent_runner import AgentOutput, AgentRunner
 from legion.orchestration.state import AgentOutputEntry
 
@@ -21,7 +22,21 @@ async def run_agent_node(
     timeout_seconds: int = 300,
     network: str | None = None,
     on_event: Any | None = None,
+    agent_definition: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    # If an agent definition is provided, resolve config through the override chain
+    if agent_definition is not None:
+        pipeline_config = state.get("pipeline_config", {})
+        template_config = pipeline_config.get("pipeline_config") if isinstance(pipeline_config, dict) else None
+        resolved = resolve_agent_config(
+            agent_type=agent_type,
+            agent_definition=agent_definition,
+            template_config=template_config,
+            pipeline_config=template_config,
+        )
+        model = resolved.model or model
+        tools = resolved.tools if resolved.tools else tools
+
     container = state.get("sandbox_container_id", "")
     config = {
         "agent_type": agent_type,

@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from legion.execution.agent_runner import AgentOutput
+from legion.execution.agent_runner import AgentOutput, AgentRunner
 from legion.orchestration.nodes.agent import run_agent_node
 
 
@@ -67,3 +67,33 @@ async def test_run_agent_node_with_network():
     )
     call_kwargs = mock_runner.run.call_args.kwargs
     assert call_kwargs["network"] == "sandbox-internet"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_node_with_resolver():
+    """When agent_definition is provided, resolver overrides model and tools."""
+    mock_runner = AsyncMock(spec=AgentRunner)
+    mock_runner.run = AsyncMock(return_value=AgentOutput(
+        agent_type="developer", output="done", cost_usd=0.5,
+    ))
+
+    agent_def = {
+        "model": "claude-opus-4-6",
+        "tools": ["Read", "Write", "Edit"],
+        "skills": [],
+        "system_prompt": "",
+    }
+
+    result = await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0},
+        agent_runner=mock_runner,
+        agent_type="developer",
+        prompt="implement feature",
+        model="claude-sonnet-4-6",  # default, should be overridden
+        agent_definition=agent_def,
+    )
+
+    # Verify the runner was called with the resolved model
+    call_config = mock_runner.run.call_args.kwargs["config"]
+    assert call_config["model"] == "claude-opus-4-6"  # from agent_definition
+    assert call_config["tools"] == ["Read", "Write", "Edit"]  # from agent_definition
