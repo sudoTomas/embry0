@@ -11,12 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
-# Python dependencies
+# Python dependencies (copy minimal package for metadata, then install deps)
 COPY pyproject.toml /app/
+COPY legion/__init__.py /app/legion/__init__.py
 WORKDIR /app
 RUN pip install --no-cache-dir .
 
-# Application code
+# Application code (overwrite with full source)
 COPY legion/ /app/legion/
 
 # Non-root user
