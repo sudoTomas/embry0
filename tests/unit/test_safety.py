@@ -67,4 +67,5 @@ class TestIsDangerousCommand:
         assert is_dangerous_command("perl -e 'system(\"rm -rf /\")'") is not None
 
     def test_python_subprocess(self):
-        assert is_dangerous_command("python3 -c 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"/\"])'") is not None
+        cmd = "python3 -c 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"/\"])'"
+        assert is_dangerous_command(cmd) is not None

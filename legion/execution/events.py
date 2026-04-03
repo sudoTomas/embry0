@@ -80,9 +80,13 @@ class ErrorEvent:
     timestamp: str = ""
 
 
-def serialize_event(
-    event: AgentStartedEvent | AgentCompletedEvent | ProgressEvent | ToolCallEvent | GitOperationEvent | GithubApiEvent | ErrorEvent,
-) -> str:
+_EventT = (
+    AgentStartedEvent | AgentCompletedEvent | ProgressEvent
+    | ToolCallEvent | GitOperationEvent | GithubApiEvent | ErrorEvent
+)
+
+
+def serialize_event(event: _EventT) -> str:
     """Serialize an event dataclass to a JSON line."""
     data = asdict(event)
     if not data.get("timestamp"):

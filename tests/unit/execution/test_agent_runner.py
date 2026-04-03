@@ -1,8 +1,6 @@
 import json
 from unittest.mock import MagicMock
 
-import pytest
-
 from legion.execution.agent_runner import AgentOutput, AgentRunner
 
 
@@ -57,7 +55,8 @@ def test_parse_handles_invalid_json():
     lines = [
         "not json\n",
         '{"type": "progress", "message": "ok"}\n',
-        '{"type": "final_result", "agent_type": "dev", "is_error": false, "output": "", "cost_usd": 0, "duration_ms": 0, "tools_called": {}}\n',
+        json.dumps({"type": "final_result", "agent_type": "dev", "is_error": False,
+                    "output": "", "cost_usd": 0, "duration_ms": 0, "tools_called": {}}) + "\n",
     ]
 
     result = runner._parse_stdout_events(lines, on_event=lambda _: None)
