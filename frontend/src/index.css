@@ -156,3 +156,51 @@ h1, h2, h3, h4, h5, h6 {
 .animate-scale-in {
   animation: scale-in 0.3s ease-out both;
 }
+
+/* ===== Legion Execution Dashboard Theme ===== */
+:root {
+  --legion-bg-primary: #09090b;
+  --legion-bg-card: #0f1419;
+  --legion-accent-primary: #f97316;
+  --legion-glow-border: rgba(6, 182, 212, 0.15);
+  --legion-glow-shadow: rgba(6, 182, 212, 0.05);
+  --legion-gradient-card: linear-gradient(135deg, rgba(15, 20, 25, 0.95), rgba(9, 9, 11, 0.98));
+
+  --legion-phase-triage: #10b981;
+  --legion-phase-developer: #f59e0b;
+  --legion-phase-validator: #22c55e;
+  --legion-phase-reviewer: #ec4899;
+  --legion-phase-output: #f43f5e;
+}
+
+.legion-card {
+  background: var(--legion-gradient-card);
+  border: 1px solid var(--legion-glow-border);
+  border-radius: 16px;
+  box-shadow: 0 0 20px var(--legion-glow-shadow);
+}
+
+@keyframes legion-flow-down {
+  0% { top: 0; opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+@keyframes legion-pulse-border {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes legion-spin {
+  to { transform: rotate(360deg); }
+}
+
+.legion-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.08);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: legion-spin 0.8s linear infinite;
+}

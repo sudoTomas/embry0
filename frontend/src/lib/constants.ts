@@ -65,3 +65,32 @@ export const ROLE_LABELS: Record<string, string> = {
   triage: "Triage",
 };
 
+// ===== Pipeline Phase Metadata =====
+
+export interface PhaseConfig {
+  name: string;
+  label: string;
+  description: string;
+  color: string;
+  icon: string;
+}
+
+export const PIPELINE_PHASES: Record<string, PhaseConfig> = {
+  triage: { name: "triage", label: "TRIAGE", description: "Analyze issue and configure pipeline", color: "#10b981", icon: "target" },
+  developer: { name: "developer", label: "DEVELOP", description: "Implement code changes, commit, push, create PR", color: "#f59e0b", icon: "code-2" },
+  validator: { name: "validator", label: "VALIDATE", description: "Run tests, lint, type checks", color: "#22c55e", icon: "shield-check" },
+  reviewer: { name: "reviewer", label: "REVIEW", description: "Code review and approval", color: "#ec4899", icon: "scan-eye" },
+  output: { name: "output", label: "OUTPUT", description: "Final results", color: "#f43f5e", icon: "send" },
+};
+
+export const AGENT_STATUS_COLORS: Record<string, string> = {
+  pending: "rgba(255,255,255,0.15)",
+  running: "#f59e0b",
+  completed: "#10b981",
+  failed: "#ef4444",
+};
+
+export function getPhaseForAgent(agentType: string): PhaseConfig {
+  return PIPELINE_PHASES[agentType] ?? PIPELINE_PHASES.output;
+}
+
