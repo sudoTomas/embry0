@@ -7,6 +7,7 @@ import { FailureCategories } from "@/components/stats/FailureCategories";
 import { SuccessSparkline } from "@/components/stats/SuccessSparkline";
 import { PageError } from "@/components/PageError";
 import { DashboardSkeleton } from "@/components/ui/PageSkeleton";
+import { GettingStartedCard } from "@/components/dashboard/GettingStartedCard";
 import { TIER_COLORS } from "@/lib/constants";
 import { formatCost, formatPercent, formatDate } from "@/lib/utils";
 
@@ -40,73 +41,79 @@ export function DashboardPage() {
         <StatCard title="Queue Depth" value={String(queue?.depth ?? stats.queue_depth)} color="#a855f7" delay={180} />
       </div>
 
-      {/* Success sparkline */}
-      <div className="legion-card p-4 animate-fade-up flex items-center gap-4" style={{ animationDelay: '240ms' }}>
-        <span className="text-sm font-medium text-white/40 whitespace-nowrap">
-          Recent Success Rate
-        </span>
-        <SuccessSparkline recentIssues={stats.recent_issues} />
-      </div>
+      {stats.total_issues === 0 ? (
+        <GettingStartedCard />
+      ) : (
+        <>
+          {/* Success sparkline */}
+          <div className="legion-card p-4 animate-fade-up flex items-center gap-4" style={{ animationDelay: '240ms' }}>
+            <span className="text-sm font-medium text-white/40 whitespace-nowrap">
+              Recent Success Rate
+            </span>
+            <SuccessSparkline recentIssues={stats.recent_issues} />
+          </div>
 
-      {/* Cost breakdown + Failure categories side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-fade-up" style={{ animationDelay: '300ms' }}>
-        <CostBreakdown
-          costByTier={stats.cost_by_tier}
-          dailyCost={stats.daily_cost_usd}
-          monthlyCost={stats.monthly_cost_usd}
-        />
-        <FailureCategories categories={stats.failure_categories} />
-      </div>
+          {/* Cost breakdown + Failure categories side by side */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-fade-up" style={{ animationDelay: '300ms' }}>
+            <CostBreakdown
+              costByTier={stats.cost_by_tier}
+              dailyCost={stats.daily_cost_usd}
+              monthlyCost={stats.monthly_cost_usd}
+            />
+            <FailureCategories categories={stats.failure_categories} />
+          </div>
 
-      {/* Tier breakdown */}
-      <TierBreakdown
-        costByTier={stats.cost_by_tier}
-        successRateByTier={stats.success_rate_by_tier}
-        avgAttemptsByTier={stats.avg_attempts_by_tier}
-        avgCostPerTier={stats.avg_cost_per_tier}
-      />
+          {/* Tier breakdown */}
+          <TierBreakdown
+            costByTier={stats.cost_by_tier}
+            successRateByTier={stats.success_rate_by_tier}
+            avgAttemptsByTier={stats.avg_attempts_by_tier}
+            avgCostPerTier={stats.avg_cost_per_tier}
+          />
 
-      {/* Recent issues */}
-      <div
-        className="legion-card animate-fade-up"
-        style={{
-          animationDelay: '360ms',
-          borderColor: 'rgba(6,182,212,0.18)',
-          boxShadow: '0 0 24px rgba(6,182,212,0.08)',
-        }}
-      >
-        <div className="px-6 pt-5 pb-2">
-          <h2 className="text-lg font-semibold text-white">Recent Issues</h2>
-        </div>
-        <div className="px-6 pb-5">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-white/[0.06] text-white/40">
-                <th scope="col" className="text-left py-2 font-medium">#</th>
-                <th scope="col" className="text-left py-2 font-medium">Repo</th>
-                <th scope="col" className="text-left py-2 font-medium">Tier</th>
-                <th scope="col" className="text-left py-2 font-medium">Status</th>
-                <th scope="col" className="text-right py-2 font-medium">Timestamp</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.recent_issues.map((issue) => (
-                <tr key={issue.trace_id} className="border-b border-white/[0.04] hover:bg-cyan-500/[0.02] transition-colors">
-                  <td className="py-2">{issue.issue_number}</td>
-                  <td className="py-2 font-mono text-xs">{issue.repo}</td>
-                  <td className={`py-2 capitalize ${TIER_COLORS[issue.tier]}`}>{issue.tier}</td>
-                  <td className="py-2">
-                    <span className={issue.passed ? "text-success" : "text-destructive"}>
-                      {issue.passed ? "Passed" : "Failed"}
-                    </span>
-                  </td>
-                  <td className="text-right py-2 text-muted-foreground">{formatDate(issue.timestamp)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+          {/* Recent issues */}
+          <div
+            className="legion-card animate-fade-up"
+            style={{
+              animationDelay: '360ms',
+              borderColor: 'rgba(6,182,212,0.18)',
+              boxShadow: '0 0 24px rgba(6,182,212,0.08)',
+            }}
+          >
+            <div className="px-6 pt-5 pb-2">
+              <h2 className="text-lg font-semibold text-white">Recent Issues</h2>
+            </div>
+            <div className="px-6 pb-5">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/[0.06] text-white/40">
+                    <th scope="col" className="text-left py-2 font-medium">#</th>
+                    <th scope="col" className="text-left py-2 font-medium">Repo</th>
+                    <th scope="col" className="text-left py-2 font-medium">Tier</th>
+                    <th scope="col" className="text-left py-2 font-medium">Status</th>
+                    <th scope="col" className="text-right py-2 font-medium">Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.recent_issues.map((issue) => (
+                    <tr key={issue.trace_id} className="border-b border-white/[0.04] hover:bg-cyan-500/[0.02] transition-colors">
+                      <td className="py-2">{issue.issue_number}</td>
+                      <td className="py-2 font-mono text-xs">{issue.repo}</td>
+                      <td className={`py-2 capitalize ${TIER_COLORS[issue.tier]}`}>{issue.tier}</td>
+                      <td className="py-2">
+                        <span className={issue.passed ? "text-success" : "text-destructive"}>
+                          {issue.passed ? "Passed" : "Failed"}
+                        </span>
+                      </td>
+                      <td className="text-right py-2 text-muted-foreground">{formatDate(issue.timestamp)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
