@@ -97,3 +97,79 @@ class BudgetConfigResponse(BaseModel):
     monthly_cap_usd: float
     rate_limit_per_author_per_hour: int
     overrun_mode: str
+
+
+# --- Agent Definitions ---
+
+_AGENT_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+
+class AgentCreateRequest(BaseModel):
+    type: str = Field(..., min_length=1, max_length=50)
+    description: str
+    model: str
+    tools: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
+    system_prompt: str = ""
+
+    @field_validator("type")
+    @classmethod
+    def validate_agent_type(cls, v: str) -> str:
+        if not _AGENT_TYPE_PATTERN.match(v):
+            msg = "type must be lowercase alphanumeric with hyphens/underscores"
+            raise ValueError(msg)
+        return v
+
+
+class AgentUpdateRequest(BaseModel):
+    description: str | None = None
+    model: str | None = None
+    tools: list[str] | None = None
+    skills: list[str] | None = None
+    system_prompt: str | None = None
+
+
+# --- Pipeline Templates ---
+
+
+class TemplateCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str = ""
+    graph_definition: dict[str, Any]
+    agent_models: dict[str, str] = Field(default_factory=dict)
+    sandbox_profile: str | None = None
+
+
+class TemplateUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    graph_definition: dict[str, Any] | None = None
+    agent_models: dict[str, str] | None = None
+    sandbox_profile: str | None = None
+
+
+class TemplateDuplicateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+# --- Integration Config ---
+
+
+class IntegrationConfigUpdate(BaseModel):
+    trigger_labels: list[str] | None = None
+    webhook_secret: str | None = None
+    slack_webhook_url: str | None = None
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+
+
+# --- Provider Config ---
+
+
+class ProviderConfigUpdate(BaseModel):
+    provider_mode: str | None = Field(None, pattern="^(anthropic_api|claude_max|ollama)$")
+    model_heavy: str | None = None
+    model_medium: str | None = None
+    model_light: str | None = None
+    default_model: str | None = None
+    ollama_base_url: str | None = None
