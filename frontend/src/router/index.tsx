@@ -11,6 +11,7 @@ const JobLogsPage = lazy(() => import("../pages/JobLogsPage").then(m => ({ defau
 const PipelinesPage = lazy(() => import("../pages/PipelinesPage").then(m => ({ default: m.PipelinesPage })));
 const SettingsPage = lazy(() => import("../pages/SettingsPage").then(m => ({ default: m.SettingsPage })));
 const NotFoundPage = lazy(() => import("../pages/NotFoundPage").then(m => ({ default: m.NotFoundPage })));
+const DemoPage = lazy(() => import("../pages/DemoPage").then(m => ({ default: m.DemoPage })));
 
 const fallback = <div className="p-6 text-muted-foreground">Loading...</div>;
 
@@ -28,6 +29,7 @@ export const router = createBrowserRouter([
       { path: "triage", element: <Navigate to="/settings" replace /> },
       { path: "issues", element: <Navigate to="/jobs" replace /> },
       { path: "environments", element: <Navigate to="/settings" replace /> },
+      { path: "demo", element: <ErrorBoundary><Suspense fallback={fallback}><DemoPage /></Suspense></ErrorBoundary> },
       { path: "settings", element: <ErrorBoundary><Suspense fallback={fallback}><SettingsPage /></Suspense></ErrorBoundary> },
       { path: "*", element: <ErrorBoundary><Suspense fallback={fallback}><NotFoundPage /></Suspense></ErrorBoundary> },
     ],
