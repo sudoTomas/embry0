@@ -13,10 +13,13 @@ interface NavItem {
   accentColor?: string;
 }
 
-const NAV_ITEMS: NavItem[] = [
+const MONITORING_ITEMS: NavItem[] = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/jobs", label: "Jobs", icon: Play },
   { path: "/demo", label: "Demo", icon: FlaskConical, accentColor: "#f97316" },
+];
+
+const CONFIGURATION_ITEMS: NavItem[] = [
   { path: "/pipelines", label: "Pipelines", icon: Workflow },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
@@ -92,7 +95,22 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 p-2">
-        {NAV_ITEMS.map((item) => (
+        {sidebarOpen && (
+          <div className="px-3 pt-4 pb-1">
+            <span className="text-[10px] font-semibold tracking-wider text-white/20 uppercase">Monitoring</span>
+          </div>
+        )}
+        {MONITORING_ITEMS.map((item) => (
+          <NavItemLink key={item.path} item={item} sidebarOpen={sidebarOpen} />
+        ))}
+
+        <div className="mx-3 my-2 border-t border-white/[0.06]" />
+        {sidebarOpen && (
+          <div className="px-3 pt-2 pb-1">
+            <span className="text-[10px] font-semibold tracking-wider text-white/20 uppercase">Configuration</span>
+          </div>
+        )}
+        {CONFIGURATION_ITEMS.map((item) => (
           <NavItemLink key={item.path} item={item} sidebarOpen={sidebarOpen} />
         ))}
       </nav>
