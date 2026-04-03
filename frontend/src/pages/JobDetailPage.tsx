@@ -1,233 +1,50 @@
 import { useState } from "react";
-import { useParams, Link } from "react-router";
+import { Link, useParams } from "react-router";
+import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
+import { Button } from "@/components/ui/Button";
 import { useJob } from "@/hooks/useJobs";
 import { useJobLogs } from "@/hooks/useJobLogs";
-import { useTraces } from "@/hooks/useTraces";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { useAgentTypes } from "@/hooks/useAgentTypes";
+import { useJobInputs } from "@/hooks/useInputs";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
-import { PageError } from "@/components/PageError";
-import { TableSkeleton } from "@/components/TableSkeleton";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
-import { TracesTable } from "@/components/traces/TracesTable";
-import { formatCost, formatDate } from "@/lib/utils";
-import { TIER_COLORS } from "@/lib/constants";
-import {
-  ArrowLeft,
-  ScrollText,
-  ExternalLink,
-  GitPullRequest,
-  Clock,
-  DollarSign,
-  Cpu,
-  RefreshCw,
-  AlertTriangle,
-  CheckCircle,
-} from "lucide-react";
-
-function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <dt className="text-xs text-muted-foreground uppercase tracking-wide">{label}</dt>
-      <dd className="text-sm">{children}</dd>
-    </div>
-  );
-}
-
-function JobTracesTab({ jobId }: { jobId: string }) {
-  const [filters, setFilters] = useState<{
-    offset: number;
-  }>({ offset: 0 });
-  const limit = 30;
-  const { data, isLoading, isError, refetch } = useTraces({ trace_id: jobId, ...filters, limit });
-
-  if (isError) {
-    return <PageError message="Failed to load traces" onRetry={() => refetch()} />;
-  }
-  if (isLoading) {
-    return <TableSkeleton columns={9} rows={8} />;
-  }
-  if (!data) return null;
-
-  return (
-    <TracesTable
-      traces={data.traces}
-      total={data.total}
-      offset={filters.offset}
-      limit={limit}
-      filters={{}}
-      onFilterChange={() => {}}
-      onPageChange={(offset) => setFilters({ offset })}
-    />
-  );
-}
+import { SummaryMetricsBar } from "@/components/jobs/SummaryMetricsBar";
+import { ResultsSummary } from "@/components/jobs/ResultsSummary";
+import { ErrorSummary } from "@/components/jobs/ErrorSummary";
+import { AwaitingInputCard } from "@/components/jobs/AwaitingInputCard";
+import { AgentExecutionCard } from "@/components/agents/AgentExecutionCard";
+import { AgentDetailPopup } from "@/components/agents/AgentDetailPopup";
+import { StateFlowPanel } from "@/components/state/StateFlowPanel";
+import { LogViewer } from "@/components/logs/LogViewer";
+import { getPipelinePhases } from "@/lib/pipeline-phases";
+import type { AgentTypeInfo, LogEvent, JobInput } from "@/lib/types";
 
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
-  const { data: job, isLoading, isError, refetch } = useJob(jobId);
+  const { data: job, isLoading, isError } = useJob(jobId);
+  const { data: agentTypes } = useAgentTypes();
 
   const isRunning = job?.status === "running";
-  const logs = useJobLogs(isRunning && jobId ? jobId : "");
-  const liveCost = isRunning ? logs.latestCost : (job?.total_cost_usd ?? 0);
+  const isAwaitingInput = job?.status === "awaiting_input";
+  const shouldStream = (isRunning || isAwaitingInput) && !!jobId;
 
-  if (isError) {
-    return <PageError message="Failed to load job details" onRetry={() => refetch()} />;
-  }
+  const logs = useJobLogs(shouldStream ? jobId! : "");
+  const { data: jobInputs } = useJobInputs(jobId ?? "");
 
-  if (isLoading || !job) {
-    return <div className="text-muted-foreground">Loading...</div>;
-  }
+  const [selectedAgent, setSelectedAgent] = useState<{ agentType: string; nodeId: string } | null>(null);
+  const [logsExpanded, setLogsExpanded] = useState(false);
 
-  const detailsContent = (
-    <div className="space-y-6">
-      {/* Task */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Task</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm whitespace-pre-wrap">{job.task}</p>
-        </CardContent>
-      </Card>
+  if (isError) return <div className="p-8 text-center text-red-400">Failed to load job</div>;
+  if (isLoading || !job) return <div className="p-8 text-center text-white/40">Loading...</div>;
 
-      {/* Overview Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Job Info */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Cpu className="h-4 w-4" />
-              Job Info
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <dl className="grid grid-cols-2 gap-4">
-              <DetailRow label="Repository">
-                <span className="font-mono text-xs">{job.repo}</span>
-              </DetailRow>
-              <DetailRow label="Issue">
-                {job.issue_number != null ? (
-                  <span className="font-mono">#{job.issue_number}</span>
-                ) : (
-                  <span className="text-muted-foreground">--</span>
-                )}
-              </DetailRow>
-              <DetailRow label="Tier">
-                <span className={`capitalize ${job.tier ? TIER_COLORS[job.tier] : "text-muted-foreground"}`}>
-                  {job.tier ?? "--"}
-                </span>
-              </DetailRow>
-              <DetailRow label="Provider Mode">
-                <span className="font-mono text-xs">{job.provider_mode ?? "--"}</span>
-              </DetailRow>
-              <DetailRow label="Model">
-                <span className="font-mono text-xs">{job.model ?? "--"}</span>
-              </DetailRow>
-              <DetailRow label="Attempts">
-                <span className="flex items-center gap-1">
-                  <RefreshCw className="h-3 w-3" />
-                  {job.attempts}
-                </span>
-              </DetailRow>
-            </dl>
-          </CardContent>
-        </Card>
+  const phases = getPipelinePhases(job.pipeline_graph);
 
-        {/* Timing & Cost */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              Timing & Cost
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <dl className="grid grid-cols-2 gap-4">
-              <DetailRow label="Created">
-                {formatDate(job.created_at)}
-              </DetailRow>
-              <DetailRow label="Started">
-                {job.started_at ? formatDate(job.started_at) : <span className="text-muted-foreground">--</span>}
-              </DetailRow>
-              <DetailRow label="Finished">
-                {job.finished_at ? formatDate(job.finished_at) : <span className="text-muted-foreground">--</span>}
-              </DetailRow>
-              <DetailRow label="Total Cost">
-                <span className="flex items-center gap-1">
-                  <DollarSign className="h-3 w-3" />
-                  {formatCost(liveCost)}
-                  {isRunning && logs.isConnected && (
-                    <span className="ml-1 text-xs text-green-400 animate-pulse">Live</span>
-                  )}
-                </span>
-              </DetailRow>
-            </dl>
-          </CardContent>
-        </Card>
-      </div>
+  const agentInfo = selectedAgent
+    ? agentTypes?.find((a: AgentTypeInfo) => a.type === selectedAgent.agentType)
+    : undefined;
 
-      {/* Pull Request */}
-      {job.pr_url && (
-        <Card className="border-green-500/30 bg-green-500/5">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2 text-green-600 dark:text-green-400">
-              <GitPullRequest className="h-4 w-4" />
-              Pull Request
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <a
-              href={job.pr_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:underline font-mono break-all"
-            >
-              {job.pr_url}
-            </a>
-            <a href={job.pr_url} target="_blank" rel="noopener noreferrer">
-              <Button className="bg-green-600 text-white hover:bg-green-700">
-                <GitPullRequest className="h-4 w-4 mr-2" />
-                View Pull Request
-                <ExternalLink className="h-3.5 w-3.5 ml-1" />
-              </Button>
-            </a>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Validation Summary */}
-      {job.validation_summary && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <CheckCircle className="h-4 w-4" />
-              Validation Summary
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm whitespace-pre-wrap">{job.validation_summary}</p>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Error Message */}
-      {job.error_message && (
-        <Card className="border-destructive/50">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2 text-destructive">
-              <AlertTriangle className="h-4 w-4" />
-              Error
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <pre className="text-sm text-destructive whitespace-pre-wrap font-mono bg-destructive/10 rounded-md p-3">
-              {job.error_message}
-            </pre>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
+  const handleAgentClick = (agentType: string, nodeId: string) => {
+    setSelectedAgent({ agentType, nodeId });
+  };
 
   return (
     <div className="space-y-6">
@@ -240,31 +57,280 @@ export function JobDetailPage() {
         </Link>
         <div className="flex-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">Job Detail</h1>
+            <h1 className="text-2xl font-bold">{job.repo}</h1>
             <JobStatusBadge status={job.status} />
           </div>
           <p className="text-sm text-muted-foreground font-mono">{job.job_id}</p>
         </div>
         <Link to={`/jobs/${job.job_id}/logs`}>
-          <Button variant="outline" size="sm">
-            <ScrollText className="h-4 w-4 mr-2" />
-            View Logs
+          <Button variant="outline" size="sm" className="gap-1.5">
+            View Full Logs <ExternalLink className="w-3 h-3" />
           </Button>
         </Link>
       </div>
 
-      <Tabs defaultValue="details">
-        <TabsList>
-          <TabsTrigger value="details">Details</TabsTrigger>
-          <TabsTrigger value="traces">Traces</TabsTrigger>
-        </TabsList>
-        <TabsContent value="details">
-          {detailsContent}
-        </TabsContent>
-        <TabsContent value="traces">
-          <JobTracesTab jobId={job.job_id} />
-        </TabsContent>
-      </Tabs>
+      {/* Task description */}
+      <div className="px-4 py-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-sm text-white/70">
+        {job.task}
+      </div>
+
+      {/* Status-dependent content */}
+      {job.status === "running" && (
+        <RunningLayout
+          job={job}
+          logs={logs}
+          phases={phases}
+          onAgentClick={handleAgentClick}
+        />
+      )}
+
+      {job.status === "completed" && (
+        <CompletedLayout
+          job={job}
+          logs={logs}
+          phases={phases}
+          onAgentClick={handleAgentClick}
+        />
+      )}
+
+      {job.status === "failed" && (
+        <FailedLayout
+          job={job}
+          logs={logs}
+          phases={phases}
+          onAgentClick={handleAgentClick}
+        />
+      )}
+
+      {job.status === "awaiting_input" && (
+        <AwaitingLayout
+          job={job}
+          logs={logs}
+          phases={phases}
+          jobInputs={jobInputs ?? []}
+          onAgentClick={handleAgentClick}
+        />
+      )}
+
+      {job.status === "pending" && (
+        <PendingLayout job={job} phases={phases} />
+      )}
+
+      {/* Collapsible log panel (for running/completed/failed) */}
+      {["running", "completed", "failed"].includes(job.status) && logs.events.length > 0 && (
+        <div>
+          <button
+            onClick={() => setLogsExpanded(!logsExpanded)}
+            className="flex items-center gap-2 text-sm text-white/40 hover:text-white/60 transition-colors mb-2"
+          >
+            {logsExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            {logsExpanded ? "Hide Logs" : "Show Logs"} ({logs.events.length} events)
+          </button>
+          {logsExpanded && (
+            <LogViewer
+              events={logs.events}
+              isConnected={logs.isConnected}
+              isComplete={logs.isComplete}
+              costUsd={logs.latestCost}
+              tokensIn={logs.latestTokensIn}
+              tokensOut={logs.latestTokensOut}
+              turns={logs.latestTurns}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Agent detail popup */}
+      {selectedAgent && (
+        <AgentDetailPopup
+          agentType={selectedAgent.agentType}
+          agentInfo={agentInfo}
+          nodeState={logs.nodeStates[selectedAgent.nodeId]}
+          onClose={() => setSelectedAgent(null)}
+        />
+      )}
     </div>
   );
+}
+
+// ===== Status-specific layouts =====
+
+function RunningLayout({
+  job,
+  logs,
+  phases,
+  onAgentClick,
+}: {
+  job: { started_at: string | null; total_cost_usd: number; repo: string; task: string; pr_url: string | null };
+  logs: ReturnType<typeof useJobLogs>;
+  phases: { agentType: string; agents: string[] }[];
+  onAgentClick: (agentType: string, nodeId: string) => void;
+}) {
+  return (
+    <>
+      <SummaryMetricsBar
+        nodeStates={logs.nodeStates}
+        totalPhases={phases.length}
+        totalCost={logs.latestCost || job.total_cost_usd}
+        startedAt={job.started_at}
+        isRunning={true}
+      />
+
+      <div className="grid grid-cols-[420px_1fr] gap-5">
+        {/* Left panel: Agent execution cards */}
+        <div className="space-y-2.5">
+          {phases.map((phase) =>
+            phase.agents.map((nodeId) => (
+              <AgentExecutionCard
+                key={nodeId}
+                agentType={phase.agentType}
+                nodeState={logs.nodeStates[nodeId]}
+                liveOutput={getLatestOutput(logs.events, nodeId)}
+                onClick={() => onAgentClick(phase.agentType, nodeId)}
+              />
+            )),
+          )}
+        </div>
+
+        {/* Right panel: State flow */}
+        <StateFlowPanel
+          nodeStates={logs.nodeStates}
+          phases={phases}
+          jobData={{
+            repo: job.repo,
+            task: job.task,
+            totalCost: logs.latestCost || job.total_cost_usd,
+            prUrl: job.pr_url,
+          }}
+          onAgentClick={onAgentClick}
+        />
+      </div>
+    </>
+  );
+}
+
+function CompletedLayout({
+  job,
+  logs,
+  phases,
+  onAgentClick,
+}: {
+  job: { pr_url: string | null; total_cost_usd: number; started_at: string | null; finished_at: string | null };
+  logs: ReturnType<typeof useJobLogs>;
+  phases: { agentType: string; agents: string[] }[];
+  onAgentClick: (agentType: string, nodeId: string) => void;
+}) {
+  const completedAgents = Object.values(logs.nodeStates).filter((ns) => ns.state === "completed").length;
+
+  return (
+    <>
+      <ResultsSummary
+        prUrl={job.pr_url}
+        totalCost={job.total_cost_usd}
+        startedAt={job.started_at}
+        finishedAt={job.finished_at}
+        agentsRun={completedAgents}
+      />
+
+      <StateFlowPanel
+        nodeStates={logs.nodeStates}
+        phases={phases}
+        jobData={{ totalCost: job.total_cost_usd, prUrl: job.pr_url }}
+        onAgentClick={onAgentClick}
+      />
+    </>
+  );
+}
+
+function FailedLayout({
+  job,
+  logs,
+  phases,
+  onAgentClick,
+}: {
+  job: { error_message: string | null; total_cost_usd: number; started_at: string | null; finished_at: string | null };
+  logs: ReturnType<typeof useJobLogs>;
+  phases: { agentType: string; agents: string[] }[];
+  onAgentClick: (agentType: string, nodeId: string) => void;
+}) {
+  return (
+    <>
+      <ErrorSummary
+        errorMessage={job.error_message}
+        totalCost={job.total_cost_usd}
+        startedAt={job.started_at}
+        finishedAt={job.finished_at}
+        nodeStates={logs.nodeStates}
+      />
+
+      <StateFlowPanel
+        nodeStates={logs.nodeStates}
+        phases={phases}
+        jobData={{ totalCost: job.total_cost_usd }}
+        onAgentClick={onAgentClick}
+      />
+    </>
+  );
+}
+
+function AwaitingLayout({
+  job,
+  logs,
+  phases,
+  jobInputs,
+  onAgentClick,
+}: {
+  job: { job_id: string };
+  logs: ReturnType<typeof useJobLogs>;
+  phases: { agentType: string; agents: string[] }[];
+  jobInputs: JobInput[];
+  onAgentClick: (agentType: string, nodeId: string) => void;
+}) {
+  return (
+    <>
+      <AwaitingInputCard
+        pendingInputs={logs.pendingInputs}
+        jobInputs={jobInputs}
+        jobId={job.job_id}
+      />
+
+      <StateFlowPanel
+        nodeStates={logs.nodeStates}
+        phases={phases}
+        onAgentClick={onAgentClick}
+      />
+    </>
+  );
+}
+
+function PendingLayout({
+  job,
+  phases,
+}: {
+  job: { repo: string; task: string; pipeline_graph?: Record<string, unknown> | null };
+  phases: { agentType: string; agents: string[] }[];
+}) {
+  return (
+    <StateFlowPanel
+      nodeStates={{}}
+      phases={phases}
+      jobData={{ repo: job.repo, task: job.task }}
+    />
+  );
+}
+
+// ===== Helpers =====
+
+function getLatestOutput(events: LogEvent[], nodeId: string): string | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const evt = events[i];
+    if (evt.node_id === nodeId) {
+      if (evt.type === "text" && typeof evt.content === "string" && evt.content) {
+        return evt.content;
+      }
+      if (evt.type === "progress" && evt.message) return evt.message;
+      if (evt.type === "tool_end" && evt.tool) return `Tool: ${evt.tool}`;
+    }
+  }
+  return undefined;
 }
