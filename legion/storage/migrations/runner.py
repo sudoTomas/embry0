@@ -182,6 +182,13 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         INSERT INTO provider_config (id) VALUES ('default') ON CONFLICT (id) DO NOTHING;
         """,
     ),
+    (
+        3,
+        "add description column to pipeline_templates",
+        """
+        ALTER TABLE pipeline_templates ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
+        """,
+    ),
 ]
 
 

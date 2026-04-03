@@ -10,7 +10,7 @@ from legion.storage.database import DatabasePool
 
 logger = structlog.get_logger(__name__)
 
-_UPDATABLE_FIELDS = frozenset({"name", "graph_definition", "agent_models", "sandbox_profile"})
+_UPDATABLE_FIELDS = frozenset({"name", "description", "graph_definition", "agent_models", "sandbox_profile"})
 
 
 class PipelineTemplatesRepository:
@@ -22,7 +22,7 @@ class PipelineTemplatesRepository:
     async def list_all(self) -> list[dict[str, Any]]:
         """List all pipeline templates (summary only, no graph_definition)."""
         rows = await self._db.fetch(
-            "SELECT id, name, sandbox_profile, created_at, updated_at FROM pipeline_templates ORDER BY name"
+            "SELECT id, name, description, sandbox_profile, created_at, updated_at FROM pipeline_templates ORDER BY name"
         )
         return [dict(r) for r in rows]
 
@@ -45,11 +45,12 @@ class PipelineTemplatesRepository:
         template_id = str(uuid.uuid4())
         await self._db.execute(
             """
-            INSERT INTO pipeline_templates (id, name, graph_definition, agent_models, sandbox_profile)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO pipeline_templates (id, name, description, graph_definition, agent_models, sandbox_profile)
+            VALUES ($1, $2, $3, $4, $5, $6)
             """,
             template_id,
             name,
+            description,
             json.dumps(graph_definition),
             json.dumps(agent_models or {}),
             sandbox_profile,

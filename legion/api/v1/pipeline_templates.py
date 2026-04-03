@@ -30,7 +30,7 @@ async def create_template(
     req: TemplateCreateRequest, repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict:
     return await repo.create(
-        name=req.name, graph_definition=req.graph_definition,
+        name=req.name, description=req.description, graph_definition=req.graph_definition,
         agent_models=req.agent_models, sandbox_profile=req.sandbox_profile,
     )
 
