@@ -1,0 +1,158 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-background: #09090b;
+  --color-foreground: #fafafa;
+  --color-card: #18181b;
+  --color-card-foreground: #fafafa;
+  --color-popover: #18181b;
+  --color-popover-foreground: #fafafa;
+  --color-primary: #3b82f6;
+  --color-primary-foreground: #fafafa;
+  --color-secondary: #27272a;
+  --color-secondary-foreground: #fafafa;
+  --color-muted: #27272a;
+  --color-muted-foreground: #a1a1aa;
+  --color-accent: #27272a;
+  --color-accent-foreground: #fafafa;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #fafafa;
+  --color-border: #27272a;
+  --color-input: #27272a;
+  --color-ring: #3b82f6;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+
+  /* Agent role colors */
+  --color-role-explorer: #06b6d4;
+  --color-role-developer: #f59e0b;
+  --color-role-validator: #22c55e;
+  --color-role-triage: #a855f7;
+
+  /* Pipeline stage colors (cool → warm gradient) */
+  --color-stage-triage: #a855f7;
+  --color-stage-explore: #06b6d4;
+  --color-stage-develop: #f59e0b;
+  --color-stage-validate: #22c55e;
+  --color-stage-publish: #3b82f6;
+
+  --radius: 0.5rem;
+
+  --font-sans: 'Outfit', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-display: 'Outfit', system-ui, sans-serif;
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-muted);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted-foreground);
+}
+
+/* Density mode custom properties */
+:root {
+  --density-padding: 1rem;
+  --density-gap: 1rem;
+  --density-font-size: 0.875rem;
+}
+
+[data-density="comfortable"] {
+  --density-padding: 1.25rem;
+  --density-gap: 1.25rem;
+  --density-font-size: 0.9375rem;
+}
+
+[data-density="compact"] {
+  --density-padding: 0.5rem;
+  --density-gap: 0.5rem;
+  --density-font-size: 0.8125rem;
+}
+
+/* Glow / pulse effects for active agents */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.glow-cyan { box-shadow: 0 0 12px rgba(6, 182, 212, 0.4); }
+.glow-amber { box-shadow: 0 0 12px rgba(245, 158, 11, 0.4); }
+.glow-green { box-shadow: 0 0 12px rgba(34, 197, 94, 0.4); }
+.glow-purple { box-shadow: 0 0 12px rgba(168, 85, 247, 0.4); }
+.glow-blue { box-shadow: 0 0 12px rgba(59, 130, 246, 0.4); }
+
+/* React Flow dark theme overrides */
+.react-flow__minimap {
+  background-color: #111318 !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-radius: 8px !important;
+}
+
+.react-flow__controls {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.react-flow__controls-button {
+  background-color: #111318 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  fill: rgba(255, 255, 255, 0.5) !important;
+  border-radius: 6px !important;
+}
+
+.react-flow__controls-button:hover {
+  background-color: #1a1d2e !important;
+  fill: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* Entrance animations */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: fade-up 0.4s ease-out both;
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+.animate-scale-in {
+  animation: scale-in 0.3s ease-out both;
+}
