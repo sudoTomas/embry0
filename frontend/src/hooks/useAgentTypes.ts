@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchAgentTypes } from "@/api/agents";
+import type { AgentTypeInfo } from "@/lib/types";
 
 export function useAgentTypes() {
-  return useQuery({
+  return useQuery<AgentTypeInfo[]>({
     queryKey: ["agent-types"],
     queryFn: fetchAgentTypes,
-    staleTime: 5 * 60 * 1000, // agent types rarely change
+    staleTime: 10 * 60 * 1000,
   });
 }

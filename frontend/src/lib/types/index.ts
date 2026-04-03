@@ -8,3 +8,4 @@ export * from "./triage";
 export * from "./stats";
 export * from "./queue";
 export * from "./inputs";
+export type { AgentTypeInfo, AgentFieldInfo } from "./agents";

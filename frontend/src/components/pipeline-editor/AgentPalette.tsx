@@ -9,13 +9,13 @@ export function AgentPalette() {
 
   const filtered = (agents ?? []).filter(
     (a) =>
-      a.agent_type.toLowerCase().includes(search.toLowerCase()) ||
+      a.type.toLowerCase().includes(search.toLowerCase()) ||
       a.description.toLowerCase().includes(search.toLowerCase()),
   );
 
   const grouped = filtered.reduce<Record<string, AgentTypeInfo[]>>(
     (acc, agent) => {
-      const cat = getAgentCategory(agent.agent_type);
+      const cat = getAgentCategory(agent.type);
       if (!acc[cat]) acc[cat] = [];
       acc[cat]!.push(agent);
       return acc;
@@ -47,17 +47,17 @@ export function AgentPalette() {
           </div>
           {items.map((agent) => (
             <div
-              key={agent.agent_type}
+              key={agent.type}
               draggable
-              onDragStart={(e) => onDragStart(e, agent.agent_type)}
+              onDragStart={(e) => onDragStart(e, agent.type)}
               className="bg-[#1e2030] border rounded-md px-2.5 py-2 mb-1.5 cursor-grab text-xs hover:bg-[#252840] transition-colors"
               style={{
-                borderColor: `${getAgentColor(agent.agent_type)}50`,
+                borderColor: `${getAgentColor(agent.type)}50`,
               }}
             >
               <div className="flex items-center gap-1.5">
-                <span style={{ color: getAgentColor(agent.agent_type) }}>●</span>
-                <span className="font-medium text-white/80">{agent.agent_type}</span>
+                <span style={{ color: getAgentColor(agent.type) }}>●</span>
+                <span className="font-medium text-white/80">{agent.type}</span>
               </div>
               <p className="text-[10px] text-white/25 mt-0.5 line-clamp-2 pl-4 leading-relaxed">
                 {agent.description}
