@@ -1,5 +1,3 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-
 interface FailureCategoriesProps {
   categories: Record<string, number>;
 }
@@ -10,31 +8,31 @@ export function FailureCategories({ categories }: FailureCategoriesProps) {
 
   if (entries.length === 0) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Failure Categories</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">No failures recorded.</p>
-        </CardContent>
-      </Card>
+      <div className="legion-card">
+        <div className="px-6 pt-5 pb-2">
+          <h2 className="text-lg font-semibold text-white">Failure Categories</h2>
+        </div>
+        <div className="px-6 pb-5">
+          <p className="text-sm text-white/40">No failures recorded.</p>
+        </div>
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Failure Categories</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <div className="legion-card">
+      <div className="px-6 pt-5 pb-2">
+        <h2 className="text-lg font-semibold text-white">Failure Categories</h2>
+      </div>
+      <div className="px-6 pb-5">
         <div className="space-y-3">
           {entries.map(([category, count]) => {
             const pct = maxCount > 0 ? (count / maxCount) * 100 : 0;
             return (
               <div key={category}>
                 <div className="flex items-center justify-between text-sm mb-1">
-                  <span className="text-foreground">{category}</span>
-                  <span className="font-mono text-muted-foreground">{count}</span>
+                  <span className="text-white/70">{category}</span>
+                  <span className="font-mono text-white/40">{count}</span>
                 </div>
                 <div className="h-2.5 w-full rounded-full bg-muted overflow-hidden">
                   <div
@@ -46,7 +44,7 @@ export function FailureCategories({ categories }: FailureCategoriesProps) {
             );
           })}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

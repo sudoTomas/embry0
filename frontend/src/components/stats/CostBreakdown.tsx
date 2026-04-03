@@ -1,4 +1,3 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { formatCost } from "@/lib/utils";
 
 /** Background colors matching tier semantics (green/amber/red). */
@@ -25,11 +24,11 @@ export function CostBreakdown({ costByTier, dailyCost, monthlyCost }: CostBreakd
   const maxCost = Math.max(...tiers.map((t) => costByTier[t] ?? 0), 0.01);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Cost Breakdown</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <div className="legion-card">
+      <div className="px-6 pt-5 pb-2">
+        <h2 className="text-lg font-semibold text-white">Cost Breakdown</h2>
+      </div>
+      <div className="px-6 pb-5">
         {/* Horizontal bar chart */}
         <div className="space-y-3">
           {tiers.map((tier) => {
@@ -55,17 +54,17 @@ export function CostBreakdown({ costByTier, dailyCost, monthlyCost }: CostBreakd
         </div>
 
         {/* Daily / Monthly summary */}
-        <div className="mt-4 pt-4 border-t border-border grid grid-cols-2 gap-4 text-sm">
+        <div className="mt-4 pt-4 border-t border-white/[0.06] grid grid-cols-2 gap-4 text-sm">
           <div>
-            <p className="text-muted-foreground">Daily</p>
-            <p className="text-xl font-bold">{formatCost(dailyCost)}</p>
+            <p className="text-white/40">Daily</p>
+            <p className="text-xl font-bold text-white">{formatCost(dailyCost)}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">Monthly</p>
-            <p className="text-xl font-bold">{formatCost(monthlyCost)}</p>
+            <p className="text-white/40">Monthly</p>
+            <p className="text-xl font-bold text-white">{formatCost(monthlyCost)}</p>
           </div>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

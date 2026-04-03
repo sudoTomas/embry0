@@ -5,7 +5,6 @@ import { TierBreakdown } from "@/components/stats/TierBreakdown";
 import { CostBreakdown } from "@/components/stats/CostBreakdown";
 import { FailureCategories } from "@/components/stats/FailureCategories";
 import { SuccessSparkline } from "@/components/stats/SuccessSparkline";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { PageError } from "@/components/PageError";
 import { DashboardSkeleton } from "@/components/ui/PageSkeleton";
 import { TIER_COLORS } from "@/lib/constants";
@@ -42,14 +41,12 @@ export function DashboardPage() {
       </div>
 
       {/* Success sparkline */}
-      <Card className="animate-fade-up" style={{ animationDelay: '240ms' }}>
-        <CardContent className="p-4 flex items-center gap-4">
-          <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">
-            Recent Success Rate
-          </span>
-          <SuccessSparkline recentIssues={stats.recent_issues} />
-        </CardContent>
-      </Card>
+      <div className="legion-card p-4 animate-fade-up flex items-center gap-4" style={{ animationDelay: '240ms' }}>
+        <span className="text-sm font-medium text-white/40 whitespace-nowrap">
+          Recent Success Rate
+        </span>
+        <SuccessSparkline recentIssues={stats.recent_issues} />
+      </div>
 
       {/* Cost breakdown + Failure categories side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-fade-up" style={{ animationDelay: '300ms' }}>
@@ -70,19 +67,26 @@ export function DashboardPage() {
       />
 
       {/* Recent issues */}
-      <Card className="animate-fade-up" style={{ animationDelay: '360ms' }}>
-        <CardHeader>
-          <CardTitle className="text-lg">Recent Issues</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div
+        className="legion-card animate-fade-up"
+        style={{
+          animationDelay: '360ms',
+          borderColor: 'rgba(6,182,212,0.18)',
+          boxShadow: '0 0 24px rgba(6,182,212,0.08)',
+        }}
+      >
+        <div className="px-6 pt-5 pb-2">
+          <h2 className="text-lg font-semibold text-white">Recent Issues</h2>
+        </div>
+        <div className="px-6 pb-5">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-white/40">
-                <th scope="col" className="text-left py-2">#</th>
-                <th scope="col" className="text-left py-2">Repo</th>
-                <th scope="col" className="text-left py-2">Tier</th>
-                <th scope="col" className="text-left py-2">Status</th>
-                <th scope="col" className="text-right py-2">Timestamp</th>
+              <tr className="border-b border-white/[0.06] text-white/40">
+                <th scope="col" className="text-left py-2 font-medium">#</th>
+                <th scope="col" className="text-left py-2 font-medium">Repo</th>
+                <th scope="col" className="text-left py-2 font-medium">Tier</th>
+                <th scope="col" className="text-left py-2 font-medium">Status</th>
+                <th scope="col" className="text-right py-2 font-medium">Timestamp</th>
               </tr>
             </thead>
             <tbody>
@@ -101,8 +105,8 @@ export function DashboardPage() {
               ))}
             </tbody>
           </table>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
