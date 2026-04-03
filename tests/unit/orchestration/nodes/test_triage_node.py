@@ -54,7 +54,7 @@ def test_parse_triage_response_split():
 def test_parse_triage_response_invalid_json():
     decision = parse_triage_response("not json at all")
     assert decision["action"] == "proceed"
-    assert decision["confidence"] == 0.5
+    assert decision["confidence"] == 0.0
 
 
 @pytest.mark.asyncio
@@ -88,3 +88,42 @@ async def test_run_triage_node_success():
 
     assert result["pipeline_config"]["action"] == "proceed"
     assert result["current_stage"] == "triage_complete"
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_triggers_needs_info():
+    """Verify that a 'proceed' decision below confidence_threshold is escalated to needs_info."""
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=json.dumps({
+        "action": "proceed",
+        "confidence": 0.3,
+        "pipeline_template": "standard",
+        "pipeline_config": {
+            "sandbox_profile": "python-3.12",
+            "agent_models": {"developer": "claude-sonnet-4-6"},
+            "budget_usd": 10.0,
+        },
+        "reasoning": "Vague requirements, low confidence.",
+    }))]
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    state = {
+        "repo": "owner/repo",
+        "task": "Do something with the thing",
+        "issue_number": 99,
+    }
+
+    with patch("legion.orchestration.nodes.triage._create_anthropic_client", return_value=mock_client):
+        result = await run_triage_node(state=state, api_key="sk-test", confidence_threshold=0.5)
+
+    assert result["current_stage"] == "triage_complete"
+    pipeline_config = result["pipeline_config"]
+    assert pipeline_config["action"] == "needs_info"
+    assert pipeline_config["confidence"] == 0.3
+    assert len(pipeline_config["questions"]) == 1
+    assert "0.3" in pipeline_config["reasoning"]
+    assert "0.5" in pipeline_config["reasoning"]

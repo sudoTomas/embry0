@@ -56,7 +56,7 @@ def parse_triage_response(raw: str) -> TriageDecision:
         logger.warning("triage_parse_failed", raw=raw[:200])
         return TriageDecision(
             action="proceed",
-            confidence=0.5,
+            confidence=0.0,
             pipeline_template="standard",
             pipeline_config=PipelineConfig(
                 sandbox_profile="default",
@@ -108,6 +108,22 @@ async def run_triage_node(
 
         raw_text = response.content[0].text
         decision = parse_triage_response(raw_text)
+
+        if decision.get("confidence", 0.0) < confidence_threshold and decision.get("action") == "proceed":
+            orig_confidence = decision.get("confidence", 0.0)
+            orig_reasoning = decision.get("reasoning", "")
+            decision = TriageDecision(
+                action="needs_info",
+                confidence=orig_confidence,
+                questions=[
+                    "Low confidence in implementation approach. "
+                    "Please provide more details about the expected behavior."
+                ],
+                reasoning=(
+                    f"Confidence {orig_confidence} below threshold {confidence_threshold}. "
+                    f"Original reasoning: {orig_reasoning}"
+                ),
+            )
 
     except Exception as exc:
         logger.error("triage_llm_failed", error=str(exc))
