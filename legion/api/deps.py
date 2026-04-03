@@ -60,3 +60,23 @@ def get_context_repo(request: Request):
 def get_workflow_registry(request: Request):
     """Return the WorkflowRegistry from request state."""
     return request.app.state.workflow_registry
+
+
+def get_agent_defs_repo(request: Request):
+    """Return the AgentDefinitionsRepository from request state."""
+    return request.app.state.agent_defs_repo
+
+
+def get_templates_repo(request: Request):
+    """Return the PipelineTemplatesRepository from request state."""
+    return request.app.state.templates_repo
+
+
+def get_integration_repo(request: Request):
+    """Return the IntegrationConfigRepository from request state."""
+    return request.app.state.integration_repo
+
+
+def get_provider_repo(request: Request):
+    """Return the ProviderConfigRepository from request state."""
+    return request.app.state.provider_repo
