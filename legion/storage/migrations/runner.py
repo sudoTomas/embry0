@@ -115,6 +115,73 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs (job_id);
         """,
     ),
+    (
+        2,
+        "agent definitions, integration config, provider config",
+        """
+        CREATE TABLE IF NOT EXISTS agent_definitions (
+            type            TEXT PRIMARY KEY,
+            description     TEXT NOT NULL,
+            model           TEXT NOT NULL,
+            tools           JSONB DEFAULT '[]',
+            skills          JSONB DEFAULT '[]',
+            system_prompt   TEXT DEFAULT '',
+            is_builtin      BOOLEAN DEFAULT false,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS integration_config (
+            id                  TEXT PRIMARY KEY,
+            trigger_labels      JSONB DEFAULT '["Legion"]',
+            webhook_secret      TEXT DEFAULT '',
+            slack_webhook_url   TEXT DEFAULT '',
+            telegram_bot_token  TEXT DEFAULT '',
+            telegram_chat_id    TEXT DEFAULT '',
+            updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS provider_config (
+            id              TEXT PRIMARY KEY,
+            provider_mode   TEXT DEFAULT 'anthropic_api',
+            model_heavy     TEXT DEFAULT 'claude-opus-4-6',
+            model_medium    TEXT DEFAULT 'claude-sonnet-4-6',
+            model_light     TEXT DEFAULT 'claude-haiku-4-5',
+            default_model   TEXT DEFAULT '',
+            api_key_set     BOOLEAN DEFAULT false,
+            oauth_token_set BOOLEAN DEFAULT false,
+            ollama_base_url TEXT DEFAULT '',
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        -- Seed built-in agents
+        INSERT INTO agent_definitions (type, description, model, tools, skills, system_prompt, is_builtin)
+        VALUES
+            ('triage',
+             'Analyzes the issue and configures the optimal pipeline. Assesses complexity, determines confidence, and can request more information or split oversized tasks.',
+             'claude-haiku-4-5', '[]', '[]', '', true),
+            ('developer',
+             'Implements code changes, manages git operations, and creates pull requests. Uses Claude Code skills for advanced workflows including sub-agent dispatch and worktree management.',
+             'claude-opus-4-6', '["Read", "Write", "Edit", "Bash", "Glob", "Grep"]',
+             '["superpowers:subagent-driven-development", "superpowers:verification-before-completion"]', '', true),
+            ('validator',
+             'Validates code changes by running tests, linting, and type checking. Reports pass/fail with detailed findings.',
+             'claude-sonnet-4-6', '["Read", "Bash", "Glob", "Grep"]', '[]', '', true),
+            ('reviewer',
+             'Reviews code changes for correctness, quality, security, and scope. Approves or rejects with feedback.',
+             'claude-sonnet-4-6', '["Read", "Glob", "Grep"]', '[]', '', true),
+            ('output',
+             'Assembles the final job result from all agent outputs. Reports success/failure status, cost, and PR URL.',
+             '', '[]', '[]', '', true)
+        ON CONFLICT (type) DO NOTHING;
+
+        -- Seed default integration config
+        INSERT INTO integration_config (id) VALUES ('default') ON CONFLICT (id) DO NOTHING;
+
+        -- Seed default provider config
+        INSERT INTO provider_config (id) VALUES ('default') ON CONFLICT (id) DO NOTHING;
+        """,
+    ),
 ]
 
 
