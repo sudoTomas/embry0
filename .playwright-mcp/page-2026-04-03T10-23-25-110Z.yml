@@ -1,0 +1,84 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - complementary [ref=e42]:
+        - generic [ref=e43]:
+          - generic [ref=e44]:
+            - paragraph [ref=e45]: Module
+            - combobox [ref=e46] [cursor=pointer]:
+              - generic [ref=e47]:
+                - generic [ref=e48]:
+                  - img
+                - generic [ref=e49]: Introduction
+              - img
+          - generic [ref=e50]:
+            - paragraph [ref=e51]: Learning Path
+            - combobox [ref=e52] [cursor=pointer]:
+              - generic [ref=e53]:
+                - generic [ref=e54]:
+                  - img
+                - generic [ref=e55]: Follow Along
+              - img
+        - generic [ref=e57]:
+          - generic [ref=e58]: Progress
+          - generic [ref=e59]: 2 of 5
+        - navigation [ref=e61]:
+          - list [ref=e62]:
+            - listitem [ref=e63]:
+              - button "Welcome" [ref=e64] [cursor=pointer]:
+                - img [ref=e67]
+                - generic [ref=e71]: Welcome
+                - img [ref=e234]
+            - listitem [ref=e75]:
+              - button "Startup Due Diligence" [ref=e76] [cursor=pointer]:
+                - img [ref=e78]
+                - generic [ref=e81]: Startup Due Diligence
+                - img [ref=e662]
+            - listitem [ref=e87]:
+              - button "What You Just Saw" [ref=e88] [cursor=pointer]:
+                - img [ref=e90]
+                - generic [ref=e94]: What You Just Saw
+            - listitem [ref=e100]:
+              - button "LangGraph Tree" [disabled] [ref=e101]:
+                - img [ref=e103]
+                - generic [ref=e106]: LangGraph Tree
+                - img [ref=e109]
+            - listitem [ref=e112]:
+              - button "Choose Your Path" [disabled] [ref=e113]:
+                - img [ref=e115]
+                - generic [ref=e120]: Choose Your Path
+                - img [ref=e123]
+        - generic [ref=e126]:
+          - generic [ref=e128]:
+            - generic [ref=e129]: Workshop Progress
+            - generic [ref=e130]: 0 of 12 modules
+          - generic [ref=e132]:
+            - generic [ref=e133]:
+              - img [ref=e134]
+              - generic [ref=e137]: 2 min
+            - generic [ref=e140]: 2 sections done
+      - generic [ref=e141]:
+        - generic [ref=e143]:
+          - generic [ref=e144]:
+            - link "Overview" [ref=e145] [cursor=pointer]:
+              - /url: /workshops/due-diligence
+              - img [ref=e146]
+              - text: Overview
+            - generic [ref=e148]: "|"
+            - generic [ref=e149]: Introduction
+          - generic [ref=e150]: Section 3 of 5
+        - main [ref=e151]:
+          - generic [ref=e667]:
+            - heading "What You Just Saw" [level=2] [ref=e669]
+            - generic [ref=e672]:
+              - img "Khaled" [ref=e675]
+              - generic [ref=e677]:
+                - generic [ref=e678]:
+                  - generic [ref=e679]: Khaled
+                  - generic [ref=e680]: typing...
+                - generic [ref=e683]:
+                  - paragraph [ref=e684]:
+                    - text: Pretty cool, right?
+                    - img [ref=e686]
+                  - paragraph [ref=e689]: That was a real analysis of Stripe
+  - alert [ref=e157]

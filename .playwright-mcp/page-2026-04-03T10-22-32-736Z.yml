@@ -1,0 +1,122 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - complementary [ref=e42]:
+        - generic [ref=e43]:
+          - generic [ref=e44]:
+            - paragraph [ref=e45]: Module
+            - combobox [ref=e46] [cursor=pointer]:
+              - generic [ref=e47]:
+                - generic [ref=e48]:
+                  - img
+                - generic [ref=e49]: Introduction
+              - img
+          - generic [ref=e50]:
+            - paragraph [ref=e51]: Learning Path
+            - combobox [ref=e52] [cursor=pointer]:
+              - generic [ref=e53]:
+                - generic [ref=e54]:
+                  - img
+                - generic [ref=e55]: Follow Along
+              - img
+        - generic [ref=e57]:
+          - generic [ref=e58]: Progress
+          - generic [ref=e59]: 1 of 5
+        - navigation [ref=e61]:
+          - list [ref=e62]:
+            - listitem [ref=e63]:
+              - button "Welcome" [ref=e64] [cursor=pointer]:
+                - img [ref=e67]
+                - generic [ref=e71]: Welcome
+                - img [ref=e234]
+            - listitem [ref=e75]:
+              - button "Startup Due Diligence" [ref=e76] [cursor=pointer]:
+                - img [ref=e78]
+                - generic [ref=e81]: Startup Due Diligence
+            - listitem [ref=e87]:
+              - button "What You Just Saw" [disabled] [ref=e88]:
+                - img [ref=e90]
+                - generic [ref=e94]: What You Just Saw
+                - img [ref=e97]
+            - listitem [ref=e100]:
+              - button "LangGraph Tree" [disabled] [ref=e101]:
+                - img [ref=e103]
+                - generic [ref=e106]: LangGraph Tree
+                - img [ref=e109]
+            - listitem [ref=e112]:
+              - button "Choose Your Path" [disabled] [ref=e113]:
+                - img [ref=e115]
+                - generic [ref=e120]: Choose Your Path
+                - img [ref=e123]
+        - generic [ref=e126]:
+          - generic [ref=e128]:
+            - generic [ref=e129]: Workshop Progress
+            - generic [ref=e130]: 0 of 12 modules
+          - generic [ref=e132]:
+            - generic [ref=e133]:
+              - img [ref=e134]
+              - generic [ref=e137]: 2 min
+            - generic [ref=e140]: 1 sections done
+      - generic [ref=e141]:
+        - generic [ref=e143]:
+          - generic [ref=e144]:
+            - link "Overview" [ref=e145] [cursor=pointer]:
+              - /url: /workshops/due-diligence
+              - img [ref=e146]
+              - text: Overview
+            - generic [ref=e148]: "|"
+            - generic [ref=e149]: Introduction
+          - generic [ref=e150]: Section 2 of 5
+        - main [ref=e151]:
+          - generic [ref=e239]:
+            - heading "Startup Due Diligence" [level=2] [ref=e241]
+            - generic [ref=e244]:
+              - img "Khaled" [ref=e247]
+              - generic [ref=e249]:
+                - generic [ref=e250]:
+                  - generic [ref=e251]: Khaled
+                  - generic [ref=e252]: 40s ago
+                - generic [ref=e255]:
+                  - paragraph [ref=e256]: But first, let me show you what we're building.
+                  - paragraph [ref=e257]:
+                    - img [ref=e259]
+                    - text: Watch this demo.
+            - generic [ref=e282]:
+              - generic [ref=e284]:
+                - generic [ref=e285]: Input
+                - generic [ref=e286]:
+                  - button "Skip" [ref=e287] [cursor=pointer]:
+                    - img [ref=e288]
+                    - text: Skip
+                  - generic [ref=e290]: 1/6
+              - generic [ref=e293]:
+                - generic [ref=e294]:
+                  - img [ref=e296]
+                  - generic [ref=e300]:
+                    - heading "Analysis Target" [level=4] [ref=e301]
+                    - paragraph [ref=e302]: Inputting company details...
+                - generic [ref=e303]:
+                  - generic [ref=e304]:
+                    - img [ref=e306]
+                    - generic [ref=e310]:
+                      - text: Company Name
+                      - generic [ref=e312]: Stripe
+                    - img [ref=e313]
+                  - generic [ref=e316]:
+                    - img [ref=e318]
+                    - generic [ref=e321]:
+                      - text: Description
+                      - generic [ref=e323]: Payment proce
+                  - generic [ref=e325]:
+                    - img [ref=e327]
+                    - generic [ref=e329]:
+                      - text: Funding Stage
+                      - generic [ref=e331]: —
+                - generic [ref=e333]:
+                  - button "Run Due Diligence" [disabled] [ref=e334]:
+                    - generic [ref=e335]:
+                      - img [ref=e336]
+                      - generic [ref=e338]: Run Due Diligence
+                      - img [ref=e339]
+                  - generic [ref=e341]: Complete the form to start analysis
+  - alert [ref=e157]

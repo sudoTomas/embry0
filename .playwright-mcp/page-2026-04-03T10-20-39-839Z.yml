@@ -1,0 +1,231 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e527]:
+    - generic [ref=e528]:
+      - link "Khaled Elfakharany" [ref=e529] [cursor=pointer]:
+        - /url: /
+        - img "Khaled Elfakharany" [ref=e530]
+      - navigation [ref=e531]:
+        - link "Home" [ref=e532] [cursor=pointer]:
+          - /url: /
+        - link "Projects" [ref=e533] [cursor=pointer]:
+          - /url: /projects
+        - link "Work" [ref=e534] [cursor=pointer]:
+          - /url: /work
+        - link "Workshops New" [ref=e535] [cursor=pointer]:
+          - /url: /workshops
+          - generic [ref=e537]:
+            - img [ref=e538]
+            - generic [ref=e541]: Workshops
+            - generic [ref=e542]: New
+        - link "Articles" [ref=e543] [cursor=pointer]:
+          - /url: /articles
+        - link "Skills" [ref=e544] [cursor=pointer]:
+          - /url: /skills
+        - link "About" [ref=e545] [cursor=pointer]:
+          - /url: /about
+        - link "Contact" [ref=e546] [cursor=pointer]:
+          - /url: /contact
+      - button "Toggle theme" [ref=e548]:
+        - img
+        - generic [ref=e549]: Toggle theme
+  - main [ref=e25]:
+    - generic [ref=e550]:
+      - generic [ref=e552]:
+        - link "Back to Workshops" [ref=e553] [cursor=pointer]:
+          - /url: /workshops
+          - img [ref=e554]
+          - text: Back to Workshops
+        - generic [ref=e556]:
+          - generic [ref=e557]:
+            - generic [ref=e558]: Intermediate
+            - generic [ref=e559]:
+              - img
+              - text: 2-3 hours
+            - generic [ref=e560]:
+              - img
+              - text: 12 Modules
+          - heading "Build Multi-Agent AI Systems" [level=1] [ref=e561]
+          - paragraph [ref=e562]: LangGraph + Claude Agent SDK
+          - paragraph [ref=e563]: Learn to build production-grade multi-agent AI systems using LangGraph for workflow orchestration and Claude Agent SDK for AI execution. Create a complete startup due diligence platform with 11 specialized agents.
+          - generic [ref=e565]:
+            - generic [ref=e568]:
+              - img [ref=e569]
+              - generic [ref=e572]: Free for limited time
+            - button "Start Workshop" [ref=e573] [cursor=pointer]:
+              - generic [ref=e575]:
+                - img [ref=e576]
+                - text: Start Workshop
+                - img [ref=e578]
+          - generic [ref=e580]:
+            - img "Khaled Elfakharany" [ref=e583]
+            - generic [ref=e584]:
+              - generic [ref=e585]: Khaled Elfakharany
+              - generic [ref=e586]: CTO & Senior Software Engineer
+      - generic [ref=e588]:
+        - heading "Course Modules(12)" [level=2] [ref=e590]:
+          - text: Course Modules
+          - generic [ref=e591]: (12)
+        - generic [ref=e592]:
+          - link "0 Current Introduction See what you'll build and choose your learning path" [ref=e593] [cursor=pointer]:
+            - /url: /workshops/due-diligence/module-0
+            - generic [ref=e594]:
+              - generic [ref=e595]:
+                - generic [ref=e596]: "0"
+                - generic [ref=e597]: Current
+              - heading "Introduction" [level=3] [ref=e598]
+              - paragraph [ref=e599]: See what you'll build and choose your learning path
+              - img [ref=e601]
+          - generic [ref=e604]:
+            - generic [ref=e605]:
+              - generic [ref=e606]: "1"
+              - img [ref=e608]
+            - heading "Orientation" [level=3] [ref=e611]
+            - paragraph [ref=e612]: Set expectations and understand what we're building
+            - paragraph [ref=e613]:
+              - img [ref=e614]
+              - text: Complete Module 0 to unlock
+          - generic [ref=e618]:
+            - generic [ref=e619]:
+              - generic [ref=e620]: "2"
+              - img [ref=e622]
+            - heading "Project Setup" [level=3] [ref=e625]
+            - paragraph [ref=e626]: Create project structure, install dependencies, verify setup
+            - paragraph [ref=e627]:
+              - img [ref=e628]
+              - text: Complete Module 1 to unlock
+          - generic [ref=e632]:
+            - generic [ref=e633]:
+              - generic [ref=e634]: "3"
+              - img [ref=e636]
+            - heading "Foundation - State" [level=3] [ref=e639]
+            - paragraph [ref=e640]: Define state schema, understand TypedDict + reducers
+            - paragraph [ref=e641]:
+              - img [ref=e642]
+              - text: Complete Module 2 to unlock
+          - generic [ref=e646]:
+            - generic [ref=e647]:
+              - generic [ref=e648]: "4"
+              - img [ref=e650]
+            - heading "Skeleton - Graph Definition" [level=3] [ref=e653]
+            - paragraph [ref=e654]: Build the workflow graph structure with nodes and edges
+            - paragraph [ref=e655]:
+              - img [ref=e656]
+              - text: Complete Module 3 to unlock
+          - generic [ref=e660]:
+            - generic [ref=e661]:
+              - generic [ref=e662]: "5"
+              - img [ref=e664]
+            - heading "Brains - Claude Agent SDK" [level=3] [ref=e667]
+            - paragraph [ref=e668]: Connect Claude SDK and create your first working agent
+            - paragraph [ref=e669]:
+              - img [ref=e670]
+              - text: Complete Module 4 to unlock
+          - generic [ref=e674]:
+            - generic [ref=e675]:
+              - generic [ref=e676]: "6"
+              - img [ref=e678]
+            - heading "Agent Configuration" [level=3] [ref=e681]
+            - paragraph [ref=e682]: Centralize agent configs and add remaining research agents
+            - paragraph [ref=e683]:
+              - img [ref=e684]
+              - text: Complete Module 5 to unlock
+          - generic [ref=e688]:
+            - generic [ref=e689]:
+              - generic [ref=e690]: "7"
+              - img [ref=e692]
+            - heading "Parallel Execution" [level=3] [ref=e695]
+            - paragraph [ref=e696]: Wire research agents to graph and run them in parallel
+            - paragraph [ref=e697]:
+              - img [ref=e698]
+              - text: Complete Module 6 to unlock
+          - generic [ref=e702]:
+            - generic [ref=e703]:
+              - generic [ref=e704]: "8"
+              - img [ref=e706]
+            - heading "Analysis Layer" [level=3] [ref=e709]
+            - paragraph [ref=e710]: Add analysis agents that consume and interpret research data
+            - paragraph [ref=e711]:
+              - img [ref=e712]
+              - text: Complete Module 7 to unlock
+          - generic [ref=e716]:
+            - generic [ref=e717]:
+              - generic [ref=e718]: "9"
+              - img [ref=e720]
+            - heading "Synthesis & Output" [level=3] [ref=e723]
+            - paragraph [ref=e724]: Generate final report and investment decision
+            - paragraph [ref=e725]:
+              - img [ref=e726]
+              - text: Complete Module 8 to unlock
+          - generic [ref=e730]:
+            - generic [ref=e731]:
+              - generic [ref=e732]: "10"
+              - img [ref=e734]
+            - heading "See It Run" [level=3] [ref=e737]
+            - paragraph [ref=e738]: Run complete workflow, celebrate, and learn debugging tips
+            - paragraph [ref=e739]:
+              - img [ref=e740]
+              - text: Complete Module 9 to unlock
+          - generic [ref=e744]:
+            - generic [ref=e745]:
+              - generic [ref=e746]: "11"
+              - img [ref=e748]
+            - heading "Level Up - Progressive Challenges" [level=3] [ref=e751]
+            - paragraph [ref=e752]: Optional challenges to extend your LangGraph skills
+            - paragraph [ref=e753]:
+              - img [ref=e754]
+              - text: Complete Module 10 to unlock
+      - generic [ref=e758]:
+        - generic [ref=e759]:
+          - generic [ref=e760]: Flexible Learning
+          - heading "Choose Your Path" [level=2] [ref=e761]
+          - paragraph [ref=e762]: Learn at your own pace with three different approaches tailored to your experience level
+        - generic [ref=e763]:
+          - generic [ref=e765]:
+            - img [ref=e767]
+            - heading "Hands-On" [level=3] [ref=e770]
+            - paragraph [ref=e771]: Build everything yourself with requirements and hints. Best for deep learning and retention.
+            - generic [ref=e772]:
+              - img [ref=e773]
+              - text: ~3 hours
+          - generic [ref=e776]:
+            - generic [ref=e777]: Recommended
+            - generic [ref=e778]:
+              - img [ref=e780]
+              - heading "Follow Along" [level=3] [ref=e785]
+              - paragraph [ref=e786]: Copy-paste code with detailed explanations. Great for understanding the full picture quickly.
+              - generic [ref=e787]:
+                - img [ref=e788]
+                - text: ~2 hours
+          - generic [ref=e792]:
+            - img [ref=e794]
+            - heading "AI-Assisted" [level=3] [ref=e797]
+            - paragraph [ref=e798]: Use Claude Code with provided prompts. Experience AI-powered development firsthand.
+            - generic [ref=e799]:
+              - img [ref=e800]
+              - text: ~1.5 hours
+  - alert [ref=e298]: Build Multi-Agent AI Systems | Workshops
+  - contentinfo [ref=e803]:
+    - generic [ref=e804]:
+      - generic [ref=e805]:
+        - generic [ref=e806]:
+          - img "Khaled Elfakharany" [ref=e807]
+          - generic [ref=e808]: CTO & Senior Software Engineer
+        - generic [ref=e809]:
+          - link "GitHub" [ref=e810] [cursor=pointer]:
+            - /url: https://github.com/KFakharany
+            - img
+            - generic [ref=e811]: GitHub
+          - link "LinkedIn" [ref=e812] [cursor=pointer]:
+            - /url: https://linkedin.com/in/khaledelfakharany
+            - img
+            - generic [ref=e813]: LinkedIn
+          - link "Email" [ref=e814] [cursor=pointer]:
+            - /url: mailto:contact@khaledelfakharany.com
+            - img
+            - generic [ref=e815]: Email
+      - generic [ref=e816]:
+        - generic [ref=e817]:
+          - paragraph [ref=e818]: © 2026 Khaled Elfakharany. All rights reserved.
+          - paragraph [ref=e819]: Powered by Ceera.ai
+        - link "Resume" [ref=e821] [cursor=pointer]:
+          - /url: /resume

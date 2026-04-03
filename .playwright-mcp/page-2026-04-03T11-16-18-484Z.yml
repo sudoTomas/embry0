@@ -1,0 +1,223 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - complementary [ref=e493]:
+        - generic [ref=e494]:
+          - generic [ref=e495]:
+            - paragraph [ref=e496]: Module
+            - combobox [ref=e497] [cursor=pointer]:
+              - generic [ref=e498]:
+                - generic [ref=e499]:
+                  - img
+                - generic [ref=e500]: Introduction
+              - img
+          - generic [ref=e501]:
+            - paragraph [ref=e502]: Learning Path
+            - combobox [ref=e503] [cursor=pointer]:
+              - generic [ref=e504]:
+                - generic [ref=e505]:
+                  - img
+                - generic [ref=e506]: Follow Along
+              - img
+        - generic [ref=e508]:
+          - generic [ref=e509]: Progress
+          - generic [ref=e510]: 3 of 5
+        - navigation [ref=e513]:
+          - list [ref=e514]:
+            - listitem [ref=e515]:
+              - button "Welcome" [ref=e516] [cursor=pointer]:
+                - img [ref=e518]
+                - generic [ref=e522]: Welcome
+                - img [ref=e525]
+            - listitem [ref=e527]:
+              - button "Startup Due Diligence" [ref=e528] [cursor=pointer]:
+                - img [ref=e530]
+                - generic [ref=e533]: Startup Due Diligence
+                - img [ref=e536]
+            - listitem [ref=e538]:
+              - button "What You Just Saw" [ref=e539] [cursor=pointer]:
+                - img [ref=e541]
+                - generic [ref=e545]: What You Just Saw
+                - img [ref=e548]
+            - listitem [ref=e550]:
+              - button "LangGraph Tree" [ref=e551] [cursor=pointer]:
+                - img [ref=e554]
+                - generic [ref=e557]: LangGraph Tree
+            - listitem [ref=e561]:
+              - button "Choose Your Path" [disabled] [ref=e562]:
+                - img [ref=e564]
+                - generic [ref=e569]: Choose Your Path
+                - img [ref=e572]
+        - generic [ref=e575]:
+          - generic [ref=e577]:
+            - generic [ref=e578]: Workshop Progress
+            - generic [ref=e579]: 0 of 12 modules
+          - generic [ref=e581]:
+            - generic [ref=e582]:
+              - img [ref=e583]
+              - generic [ref=e586]: 2 min
+            - generic [ref=e589]: 3 sections done
+      - generic [ref=e101]:
+        - generic [ref=e591]:
+          - generic [ref=e592]:
+            - link "Overview" [ref=e593] [cursor=pointer]:
+              - /url: /workshops/due-diligence
+              - img [ref=e594]
+              - text: Overview
+            - generic [ref=e596]: "|"
+            - generic [ref=e597]: Introduction
+          - generic [ref=e598]: Section 4 of 5
+        - main [ref=e599]:
+          - generic [ref=e601]:
+            - heading "LangGraph Tree" [level=2] [ref=e603]
+            - generic [ref=e606]:
+              - img "Khaled" [ref=e609]
+              - generic [ref=e611]:
+                - generic [ref=e612]:
+                  - generic [ref=e613]: Khaled
+                  - generic [ref=e614]: 1 min ago
+                - generic [ref=e617]:
+                  - paragraph [ref=e618]:
+                    - text: Here's the architecture at a glance.
+                    - img [ref=e620]
+                  - paragraph [ref=e624]: This is what powers it all.
+            - generic [ref=e626]:
+              - generic [ref=e627]:
+                - generic [ref=e628]:
+                  - img [ref=e630]
+                  - generic [ref=e634]:
+                    - heading "Multi-Agent Architecture" [level=3] [ref=e635]
+                    - paragraph [ref=e636]: LangGraph Orchestrated Pipeline
+                - generic [ref=e637]:
+                  - generic [ref=e638]:
+                    - generic [ref=e639]: "14"
+                    - generic [ref=e640]: nodes
+                  - generic [ref=e641]:
+                    - generic [ref=e642]: "7"
+                    - generic [ref=e643]: phases
+              - generic [ref=e644]:
+                - generic [ref=e645]:
+                  - generic [ref=e646]:
+                    - generic [ref=e647]:
+                      - generic [ref=e649]: Input
+                      - generic [ref=e650]: 1 node
+                    - generic [ref=e652] [cursor=pointer]:
+                      - img [ref=e654]
+                      - generic [ref=e656]: Init
+                  - img [ref=e678]
+                - generic [ref=e680]:
+                  - generic [ref=e681]:
+                    - generic [ref=e682]:
+                      - generic [ref=e683]:
+                        - generic [ref=e684]: Research (Parallel)
+                        - generic [ref=e685]:
+                          - img [ref=e686]
+                          - text: Parallel
+                      - generic [ref=e688]: 5 nodes
+                    - generic [ref=e689]:
+                      - generic [ref=e690] [cursor=pointer]:
+                        - img [ref=e692]
+                        - generic [ref=e696]: Company Profiler
+                      - generic [ref=e697] [cursor=pointer]:
+                        - img [ref=e699]
+                        - generic [ref=e702]: Market Researcher
+                      - generic [ref=e703] [cursor=pointer]:
+                        - img [ref=e705]
+                        - generic [ref=e708]: Competitor Scout
+                        - generic [ref=e982]:
+                          - generic [ref=e983]:
+                            - img [ref=e984]
+                            - heading "Competitor Scout" [level=4] [ref=e987]
+                          - paragraph [ref=e988]: Identifies key competitors, analyzes market share, and evaluates competitive advantages.
+                          - paragraph [ref=e989]: Click for more details
+                      - generic [ref=e709] [cursor=pointer]:
+                        - img [ref=e711]
+                        - generic [ref=e716]: Team Investigator
+                      - generic [ref=e717] [cursor=pointer]:
+                        - img [ref=e719]
+                        - generic [ref=e722]: News Monitor
+                  - img [ref=e726]
+                - generic [ref=e728]:
+                  - generic [ref=e729]:
+                    - generic [ref=e730]:
+                      - generic [ref=e732]: Validation
+                      - generic [ref=e733]: 1 node
+                    - generic [ref=e735] [cursor=pointer]:
+                      - img [ref=e737]
+                      - generic [ref=e741]: Validate
+                  - img [ref=e745]
+                - generic [ref=e747]:
+                  - generic [ref=e748]:
+                    - generic [ref=e749]:
+                      - generic [ref=e750]:
+                        - generic [ref=e751]: Analysis (Parallel)
+                        - generic [ref=e752]:
+                          - img [ref=e753]
+                          - text: Parallel
+                      - generic [ref=e755]: 4 nodes
+                    - generic [ref=e756]:
+                      - generic [ref=e757] [cursor=pointer]:
+                        - img [ref=e759]
+                        - generic [ref=e761]: Financial Analyst
+                      - generic [ref=e762] [cursor=pointer]:
+                        - img [ref=e764]
+                        - generic [ref=e766]: Risk Assessor
+                      - generic [ref=e767] [cursor=pointer]:
+                        - img [ref=e769]
+                        - generic [ref=e772]: Tech Evaluator
+                      - generic [ref=e773] [cursor=pointer]:
+                        - img [ref=e775]
+                        - generic [ref=e779]: Legal Reviewer
+                  - img [ref=e783]
+                - generic [ref=e785]:
+                  - generic [ref=e786]:
+                    - generic [ref=e787]:
+                      - generic [ref=e789]: Report
+                      - generic [ref=e790]: 1 node
+                    - generic [ref=e792] [cursor=pointer]:
+                      - img [ref=e794]
+                      - generic [ref=e797]: Report Generator
+                  - img [ref=e801]
+                - generic [ref=e803]:
+                  - generic [ref=e804]:
+                    - generic [ref=e805]:
+                      - generic [ref=e807]: Decision
+                      - generic [ref=e808]: 1 node
+                    - generic [ref=e810] [cursor=pointer]:
+                      - img [ref=e812]
+                      - generic [ref=e824]: Decision Agent
+                  - img [ref=e828]
+                - generic [ref=e831]:
+                  - generic [ref=e832]:
+                    - generic [ref=e834]: Output
+                    - generic [ref=e835]: 1 node
+                  - generic [ref=e837] [cursor=pointer]:
+                    - img [ref=e839]
+                    - generic [ref=e841]: Output
+              - generic [ref=e842]:
+                - generic [ref=e845]: Research Agents
+                - generic [ref=e848]: Analysis Agents
+                - generic [ref=e851]: Synthesis
+            - generic [ref=e854]:
+              - img "Khaled" [ref=e857]
+              - generic [ref=e859]:
+                - generic [ref=e860]:
+                  - generic [ref=e861]: Khaled
+                  - generic [ref=e862]: 1 min ago
+                - generic [ref=e865]:
+                  - paragraph [ref=e866]:
+                    - img [ref=e868]
+                    - text: LangGraph orchestrates all of this.
+                  - paragraph [ref=e872]:
+                    - img [ref=e874]
+                    - text: State flows through the graph
+                  - paragraph [ref=e876]:
+                    - img [ref=e878]
+                    - text: Agents read, process, and write back
+                  - paragraph [ref=e881]:
+                    - img [ref=e883]
+                    - text: Results emerge at the end
+            - button "Continue" [ref=e887] [cursor=pointer]:
+              - text: Continue
+              - img
+  - alert [ref=e117]

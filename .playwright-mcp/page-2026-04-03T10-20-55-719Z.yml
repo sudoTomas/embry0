@@ -1,0 +1,98 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e5]:
+        - button [ref=e6]:
+          - img [ref=e7]
+        - generic [ref=e15]:
+          - generic [ref=e16]:
+            - img [ref=e18]
+            - generic [ref=e24]:
+              - img [ref=e25]
+              - generic [ref=e28]: Free for limited time
+            - heading "Start Your Journey" [level=3] [ref=e29]
+            - paragraph [ref=e30]: Enter your details to begin the workshop and track your progress
+          - generic [ref=e31]:
+            - generic [ref=e32]:
+              - generic [ref=e33]: First Name
+              - textbox "First Name" [ref=e34]:
+                - /placeholder: Enter your first name
+            - generic [ref=e35]:
+              - generic [ref=e36]: Email Address
+              - textbox "Email Address" [ref=e37]:
+                - /placeholder: you@example.com
+            - button "Start Workshop" [ref=e38]:
+              - text: Start Workshop
+              - img [ref=e39]
+            - paragraph [ref=e41]:
+              - text: Your information helps us improve the workshop experience.
+              - text: We respect your privacy and won't spam you.
+      - complementary [ref=e42]:
+        - generic [ref=e43]:
+          - generic [ref=e44]:
+            - paragraph [ref=e45]: Module
+            - combobox [ref=e46] [cursor=pointer]:
+              - generic [ref=e47]:
+                - generic [ref=e48]:
+                  - img
+                - generic [ref=e49]: Introduction
+              - img
+          - generic [ref=e50]:
+            - paragraph [ref=e51]: Learning Path
+            - combobox [ref=e52] [cursor=pointer]:
+              - generic [ref=e53]:
+                - generic [ref=e54]:
+                  - img
+                - generic [ref=e55]: Follow Along
+              - img
+        - generic [ref=e57]:
+          - generic [ref=e58]: Progress
+          - generic [ref=e59]: 0 of 5
+        - navigation [ref=e61]:
+          - list [ref=e62]:
+            - listitem [ref=e63]:
+              - button "Welcome" [ref=e64] [cursor=pointer]:
+                - img [ref=e67]
+                - generic [ref=e71]: Welcome
+            - listitem [ref=e75]:
+              - button "Startup Due Diligence" [disabled] [ref=e76]:
+                - img [ref=e78]
+                - generic [ref=e81]: Startup Due Diligence
+                - img [ref=e84]
+            - listitem [ref=e87]:
+              - button "What You Just Saw" [disabled] [ref=e88]:
+                - img [ref=e90]
+                - generic [ref=e94]: What You Just Saw
+                - img [ref=e97]
+            - listitem [ref=e100]:
+              - button "LangGraph Tree" [disabled] [ref=e101]:
+                - img [ref=e103]
+                - generic [ref=e106]: LangGraph Tree
+                - img [ref=e109]
+            - listitem [ref=e112]:
+              - button "Choose Your Path" [disabled] [ref=e113]:
+                - img [ref=e115]
+                - generic [ref=e120]: Choose Your Path
+                - img [ref=e123]
+        - generic [ref=e126]:
+          - generic [ref=e128]:
+            - generic [ref=e129]: Workshop Progress
+            - generic [ref=e130]: 0 of 12 modules
+          - generic [ref=e132]:
+            - generic [ref=e133]:
+              - img [ref=e134]
+              - generic [ref=e137]: 2 min
+            - generic [ref=e140]: 0 sections done
+      - generic [ref=e141]:
+        - generic [ref=e143]:
+          - generic [ref=e144]:
+            - link "Overview" [ref=e145] [cursor=pointer]:
+              - /url: /workshops/due-diligence
+              - img [ref=e146]
+              - text: Overview
+            - generic [ref=e148]: "|"
+            - generic [ref=e149]: Introduction
+          - generic [ref=e150]: Section 1 of 5
+        - main [ref=e151]:
+          - heading "Welcome" [level=2] [ref=e155]
+  - alert [ref=e157]

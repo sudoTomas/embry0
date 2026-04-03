@@ -4,7 +4,10 @@ AGENT_TYPES = [
     {
         "type": "triage",
         "phase": "triage",
-        "description": "Analyzes the issue and configures the optimal pipeline. Assesses complexity, determines confidence, and can request more information or split oversized tasks.",
+        "description": (
+            "Analyzes the issue and configures the optimal pipeline. Assesses complexity,"
+            " determines confidence, and can request more information or split oversized tasks."
+        ),
         "default_model": "claude-haiku-4-5",
         "default_tools": [],
         "default_skills": [],
@@ -28,7 +31,11 @@ AGENT_TYPES = [
     {
         "type": "developer",
         "phase": "developer",
-        "description": "Implements code changes, manages git operations, and creates pull requests. Uses Claude Code skills for advanced workflows including sub-agent dispatch and worktree management.",
+        "description": (
+            "Implements code changes, manages git operations, and creates pull requests."
+            " Uses Claude Code skills for advanced workflows including sub-agent dispatch"
+            " and worktree management."
+        ),
         "default_model": "claude-sonnet-4-6",
         "default_tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         "default_skills": ["superpowers:subagent-driven-development", "superpowers:verification-before-completion"],
@@ -53,7 +60,10 @@ AGENT_TYPES = [
     {
         "type": "validator",
         "phase": "validator",
-        "description": "Validates code changes by running tests, linting, and type checking. Reports pass/fail with detailed findings.",
+        "description": (
+            "Validates code changes by running tests, linting, and type checking."
+            " Reports pass/fail with detailed findings."
+        ),
         "default_model": "claude-sonnet-4-6",
         "default_tools": ["Read", "Bash", "Glob", "Grep"],
         "default_skills": [],
@@ -76,7 +86,10 @@ AGENT_TYPES = [
     {
         "type": "reviewer",
         "phase": "reviewer",
-        "description": "Reviews code changes for correctness, quality, security, and scope. Approves or rejects with feedback.",
+        "description": (
+            "Reviews code changes for correctness, quality, security, and scope."
+            " Approves or rejects with feedback."
+        ),
         "default_model": "claude-sonnet-4-6",
         "default_tools": ["Read", "Glob", "Grep"],
         "default_skills": [],
@@ -98,7 +111,10 @@ AGENT_TYPES = [
     {
         "type": "output",
         "phase": "output",
-        "description": "Assembles the final job result from all agent outputs. Reports success/failure status, cost, and PR URL.",
+        "description": (
+            "Assembles the final job result from all agent outputs."
+            " Reports success/failure status, cost, and PR URL."
+        ),
         "default_model": "",
         "default_tools": [],
         "default_skills": [],
