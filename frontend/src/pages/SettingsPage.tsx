@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
 import { PageError } from "@/components/PageError";
 import { toast } from "sonner";
 import type { ConfigResponse } from "@/lib/types";
@@ -159,6 +160,52 @@ export function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Provider Configuration */}
+      <div className="legion-card p-6">
+        <h2 className="text-lg font-bold mb-4">Provider</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <Label>Mode</Label>
+            <div className="text-sm text-white/60 mt-1 font-mono">
+              {(config as Record<string, unknown>)?.provider_mode as string ?? "anthropic_api"}
+            </div>
+          </div>
+          <div>
+            <Label>Default Model</Label>
+            <div className="text-sm text-white/60 mt-1 font-mono">
+              {(config as Record<string, unknown>)?.default_model as string ?? "claude-sonnet-4-6"}
+            </div>
+          </div>
+        </div>
+        <p className="text-xs text-white/30 mt-3">
+          Provider settings are configured via environment variables. Restart the stack to apply changes.
+        </p>
+      </div>
+
+      {/* Context Injection */}
+      <div className="legion-card p-6">
+        <h2 className="text-lg font-bold mb-4">Context Injection</h2>
+        <div className="space-y-4">
+          <div>
+            <Label>Global System Context</Label>
+            <Textarea
+              placeholder="Coding standards, architectural guidelines, team conventions..."
+              className="mt-1 min-h-[80px] bg-[#0c1015] border-white/[0.08]"
+            />
+          </div>
+          <div>
+            <Label>Global Assistant Context</Label>
+            <Textarea
+              placeholder="Issue-specific instructions, prior context..."
+              className="mt-1 min-h-[80px] bg-[#0c1015] border-white/[0.08]"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-white/30 mt-3">
+          Context is prepended to agent prompts. Per-repo context can be configured via the API.
+        </p>
+      </div>
     </div>
   );
 }
