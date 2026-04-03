@@ -1,5 +1,6 @@
 """Sandbox profiles API."""
 from fastapi import APIRouter, Depends, HTTPException
+
 from legion.api.deps import get_profiles_repo
 from legion.api.schemas import SandboxProfileRequest
 from legion.storage.repositories.sandbox_profiles import SandboxProfilesRepository
@@ -13,7 +14,9 @@ async def list_profiles(profiles: SandboxProfilesRepository = Depends(get_profil
 
 
 @router.post("/sandbox-profiles", status_code=201)
-async def create_profile(req: SandboxProfileRequest, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)) -> dict:
+async def create_profile(
+    req: SandboxProfileRequest, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)
+) -> dict:
     await profiles.upsert(
         name=req.name, base_image=req.base_image, additional_packages=req.additional_packages,
         setup_commands=req.setup_commands, memory=req.memory, cpus=req.cpus, pids_limit=req.pids_limit,
@@ -32,7 +35,9 @@ async def get_profile(name: str, profiles: SandboxProfilesRepository = Depends(g
 
 
 @router.put("/sandbox-profiles/{name}")
-async def update_profile(name: str, req: SandboxProfileRequest, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)) -> dict:
+async def update_profile(
+    name: str, req: SandboxProfileRequest, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)
+) -> dict:
     await profiles.upsert(name=name, base_image=req.base_image, memory=req.memory, cpus=req.cpus)
     return {"name": name, "status": "updated"}
 

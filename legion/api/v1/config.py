@@ -1,5 +1,6 @@
 """Configuration API — budget controls and context injection settings."""
 from fastapi import APIRouter, Depends
+
 from legion.api.deps import get_budget_repo, get_context_repo
 from legion.api.schemas import BudgetConfigRequest, BudgetConfigResponse, ContextConfigRequest
 from legion.storage.repositories.budget_config import BudgetConfigRepository
@@ -29,7 +30,9 @@ async def get_global_context(context: ContextConfigRepository = Depends(get_cont
 
 
 @router.put("/config/context")
-async def set_global_context(req: ContextConfigRequest, context: ContextConfigRepository = Depends(get_context_repo)) -> dict:
+async def set_global_context(
+    req: ContextConfigRequest, context: ContextConfigRepository = Depends(get_context_repo)
+) -> dict:
     await context.set_global(system_context=req.system_context, assistant_context=req.assistant_context)
     return {"status": "updated"}
 
@@ -41,6 +44,8 @@ async def get_repo_context(repo: str, context: ContextConfigRepository = Depends
 
 
 @router.put("/config/context/repos/{repo:path}")
-async def set_repo_context(repo: str, req: ContextConfigRequest, context: ContextConfigRepository = Depends(get_context_repo)) -> dict:
+async def set_repo_context(
+    repo: str, req: ContextConfigRequest, context: ContextConfigRepository = Depends(get_context_repo)
+) -> dict:
     await context.set_repo(repo=repo, system_context=req.system_context, assistant_context=req.assistant_context)
     return {"status": "updated"}
