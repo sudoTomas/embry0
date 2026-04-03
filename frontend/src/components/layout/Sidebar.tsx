@@ -18,7 +18,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "flex flex-col border-r bg-card transition-all duration-200",
+        "flex flex-col border-r border-white/[0.06] bg-[#0c1015] transition-all duration-200",
         sidebarOpen ? "w-56" : "w-14"
       )}
     >
@@ -39,8 +39,8 @@ export function Sidebar() {
               className={({ isActive }) =>
                 cn(
                   "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
-                  "text-white/50 hover:text-white/80 hover:bg-white/[0.04] hover:translate-x-0.5",
-                  isActive && "!text-primary bg-primary/[0.08] border-l-2 border-primary translate-x-0"
+                  "text-white/50 hover:text-white/80 hover:bg-cyan-500/[0.03] hover:translate-x-0.5",
+                  isActive && "!text-orange-500 bg-orange-500/[0.08] border-l-2 border-orange-500 translate-x-0"
                 )
               }
             >

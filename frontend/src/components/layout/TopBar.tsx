@@ -9,8 +9,8 @@ export function TopBar() {
 
   return (
     <header
-      className="flex h-14 items-center gap-4 border-b border-border px-4"
-      style={{ background: 'linear-gradient(180deg, rgba(15,17,23,0.9) 0%, rgba(9,9,11,0.9) 100%)' }}
+      className="flex h-14 items-center gap-4 border-b border-white/[0.06] px-4"
+      style={{ background: 'linear-gradient(180deg, rgba(12,16,21,0.95) 0%, rgba(9,9,11,0.95) 100%)' }}
     >
       <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}>
         {sidebarOpen ? (
