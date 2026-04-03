@@ -25,10 +25,15 @@ async def get_agent(agent_type: str, repo: AgentDefinitionsRepository = Depends(
 async def create_agent(
     req: AgentCreateRequest, repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
 ) -> dict:
-    return await repo.create(
-        agent_type=req.type, description=req.description, model=req.model,
-        tools=req.tools, skills=req.skills, system_prompt=req.system_prompt,
-    )
+    try:
+        return await repo.create(
+            agent_type=req.type, description=req.description, model=req.model,
+            tools=req.tools, skills=req.skills, system_prompt=req.system_prompt,
+        )
+    except Exception as exc:
+        if "duplicate" in str(exc).lower() or "unique" in str(exc).lower():
+            raise HTTPException(status_code=409, detail=f"Agent type '{req.type}' already exists") from exc
+        raise
 
 
 @router.put("/agents/{agent_type}")
@@ -64,3 +69,11 @@ async def reset_agent(
         return await repo.reset(agent_type)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/agents/types")
+async def list_agent_types_deprecated(
+    repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
+) -> list[dict]:
+    """Deprecated: use GET /agents instead."""
+    return await repo.list_all()
