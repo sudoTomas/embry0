@@ -88,7 +88,7 @@ def create_app(config: LegionConfig | None = None) -> FastAPI:
 
 def _register_routers(app: FastAPI) -> None:
     from legion.api.deps import require_auth
-    from legion.api.v1 import agents, config, graphs, health, jobs, queue, sandbox_profiles, stats, traces, webhooks
+    from legion.api.v1 import agents, config, graphs, health, jobs, pipeline_templates, queue, sandbox_profiles, stats, traces, webhooks
     from legion.api.ws import streaming
 
     auth_deps = [require_auth]
@@ -101,5 +101,6 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(stats.router, prefix="/api/v1", tags=["stats"], dependencies=auth_deps)
     app.include_router(traces.router, prefix="/api/v1", tags=["traces"], dependencies=auth_deps)
     app.include_router(queue.router, prefix="/api/v1", tags=["queue"], dependencies=auth_deps)
+    app.include_router(pipeline_templates.router, prefix="/api/v1", tags=["pipeline-templates"], dependencies=auth_deps)
     app.include_router(webhooks.router, tags=["webhooks"])
     app.include_router(streaming.router)
