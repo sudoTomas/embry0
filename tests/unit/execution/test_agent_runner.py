@@ -1,5 +1,8 @@
+import asyncio
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from legion.execution.agent_runner import AgentOutput, AgentRunner
 
@@ -61,3 +64,38 @@ def test_parse_handles_invalid_json():
 
     result = runner._parse_stdout_events(lines, on_event=lambda _: None)
     assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_run_times_out_and_kills_process():
+    """AgentRunner.run() times out and kills the process when it hangs."""
+    sandbox = MagicMock()
+    sandbox.connect_network = AsyncMock()
+    sandbox.disconnect_network = AsyncMock()
+
+    docker = MagicMock()
+
+    # Simulate a proc that never produces output (hangs forever).
+    async def hanging_stdout():
+        await asyncio.sleep(9999)
+        return
+        yield  # Make it an async generator.
+
+    proc = MagicMock()
+    proc.stdout = hanging_stdout()
+    proc.wait = AsyncMock(side_effect=lambda: asyncio.sleep(9999))
+    proc.kill = MagicMock()
+    docker.stream_exec = AsyncMock(return_value=proc)
+
+    runner = AgentRunner(sandbox_manager=sandbox, docker=docker)
+    config = {
+        "agent_type": "developer",
+        "prompt": "do work",
+        "timeout_seconds": 0.05,  # 50ms — fires almost immediately.
+    }
+
+    result = await runner.run(container="test-container", config=config)
+
+    assert result.is_error is True
+    assert "timed out" in result.error_message
+    proc.kill.assert_called_once()

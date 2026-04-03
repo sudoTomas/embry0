@@ -4,6 +4,7 @@ Handles: docker exec into sandbox, stdout stream parsing, event
 forwarding to LangGraph, and AgentOutput construction.
 """
 
+import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -57,13 +58,29 @@ class AgentRunner:
                 workdir="/workspace",
             )
 
-            lines: list[str] = []
-            if proc.stdout is not None:
-                async for raw_line in proc.stdout:
-                    line = raw_line.decode("utf-8", errors="replace")
-                    lines.append(line)
+            timeout_seconds: float = config.get("timeout_seconds", 300)
 
-            await proc.wait()
+            async def _read_and_wait() -> list[str]:
+                collected: list[str] = []
+                if proc.stdout is not None:
+                    async for raw_line in proc.stdout:
+                        line = raw_line.decode("utf-8", errors="replace")
+                        collected.append(line)
+                await proc.wait()
+                return collected
+
+            try:
+                lines = await asyncio.wait_for(_read_and_wait(), timeout=timeout_seconds)
+            except TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return AgentOutput(
+                    agent_type=config.get("agent_type", "unknown"),
+                    is_error=True,
+                    error_message=f"Agent timed out after {timeout_seconds}s",
+                )
 
             result = self._parse_stdout_events(lines, on_event=on_event or (lambda _: None))
 
