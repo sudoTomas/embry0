@@ -3,7 +3,6 @@ import {
   useNodesState,
   useEdgesState,
   addEdge,
-  type Node,
   type Edge,
   type Connection,
 } from "@xyflow/react";
@@ -11,13 +10,14 @@ import {
   detectCycles,
   serializeGraph,
   deserializeGraph,
+  injectStartEndNodes,
 } from "@/lib/graph-utils";
 import type { PipelineGraph, PipelineMetadata } from "@/lib/types";
 
 export function useGraphState(initialGraph?: PipelineGraph) {
   const initial = initialGraph
-    ? deserializeGraph(initialGraph)
-    : { nodes: [] as Node[], edges: [] as Edge[] };
+    ? injectStartEndNodes(deserializeGraph(initialGraph))
+    : injectStartEndNodes({ nodes: [], edges: [] });
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
@@ -81,7 +81,7 @@ export function useGraphState(initialGraph?: PipelineGraph) {
 
   const loadGraph = useCallback(
     (graph: PipelineGraph) => {
-      const { nodes: rfNodes, edges: rfEdges } = deserializeGraph(graph);
+      const { nodes: rfNodes, edges: rfEdges } = injectStartEndNodes(deserializeGraph(graph));
       setNodes(rfNodes);
       setEdges(rfEdges);
     },

@@ -11,6 +11,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { X, Save, FolderOpen } from "lucide-react";
 import { AgentNode } from "./AgentNode";
+import { StartEndNode } from "./StartEndNode";
 import { FeedbackEdge } from "./FeedbackEdge";
 import { AgentBar } from "./AgentBar";
 import { EmptyCanvas } from "./EmptyCanvas";
@@ -22,7 +23,7 @@ import { useGraphState } from "./hooks/useGraphState";
 import { useRenameTemplate, useCreateTemplate } from "@/hooks/usePipelines";
 import type { PipelineGraph } from "@/lib/types";
 
-const nodeTypes = { agentNode: AgentNode };
+const nodeTypes = { agentNode: AgentNode, startEndNode: StartEndNode };
 const edgeTypes = { feedbackEdge: FeedbackEdge };
 
 interface PipelineEditorProps {
@@ -250,6 +251,8 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
           <PipelineCanvas
             graphState={graphState}
             onNodeClick={(nodeId) => {
+              const node = nodes.find((n) => n.id === nodeId);
+              if (node?.data?.nodeRole === "start" || node?.data?.nodeRole === "end") return;
               setSelectedNode(nodeId);
               setSelectedEdge(null);
             }}

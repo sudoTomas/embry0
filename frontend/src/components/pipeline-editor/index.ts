@@ -1,5 +1,6 @@
 export { PipelineEditor } from "./PipelineEditor";
 export { AgentNode } from "./AgentNode";
+export { StartEndNode } from "./StartEndNode";
 export { FeedbackEdge } from "./FeedbackEdge";
 export { AgentBar } from "./AgentBar";
 export { AgentDetailPopup } from "./AgentDetailPopup";

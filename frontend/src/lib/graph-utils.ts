@@ -74,7 +74,17 @@ export function detectCycles(
 }
 
 /**
+ * Helper: check if a React Flow node is a Start/End structural node.
+ */
+function isStartEndNode(n: Node): boolean {
+  const role = (n.data as Record<string, unknown>).nodeRole;
+  return role === "start" || role === "end";
+}
+
+/**
  * Convert React Flow state to PipelineGraph API format.
+ * Start/End nodes are serialized with special agent_type "__start__" / "__end__"
+ * so the backend can reconstruct the flow topology.
  */
 export function serializeGraph(
   rfNodes: Node[],
@@ -83,23 +93,46 @@ export function serializeGraph(
   name: string = "Custom Pipeline",
   graphId?: string,
 ): PipelineGraph {
-  const nodes: AgentNode[] = rfNodes.map((n) => ({
-    node_id: n.id,
-    agent_type: (n.data as Record<string, unknown>).agentType as string,
-    label: ((n.data as Record<string, unknown>).label as string) ?? "",
-    position: { x: n.position.x, y: n.position.y },
-    model: ((n.data as Record<string, unknown>).model as string | undefined) ?? null,
-    max_budget_usd: ((n.data as Record<string, unknown>).maxBudgetUsd as number | undefined) ?? null,
-    max_turns: ((n.data as Record<string, unknown>).maxTurns as number | undefined) ?? null,
-    effort: ((n.data as Record<string, unknown>).effort as string | undefined) ?? null,
-    tools: ((n.data as Record<string, unknown>).tools as string[] | undefined) ?? null,
-    skills: ((n.data as Record<string, unknown>).skills as string[] | undefined) ?? null,
-    prompt_prepend: ((n.data as Record<string, unknown>).promptPrepend as string | undefined) ?? null,
-    prompt_append: ((n.data as Record<string, unknown>).promptAppend as string | undefined) ?? null,
-    custom_prompt: ((n.data as Record<string, unknown>).customPrompt as string | undefined) ?? null,
-    custom_tools: ((n.data as Record<string, unknown>).customTools as string[] | undefined) ?? null,
-    sandbox: ((n.data as Record<string, unknown>).sandbox as AgentNode["sandbox"]) ?? null,
-  }));
+  const nodes: AgentNode[] = rfNodes.map((n) => {
+    const d = n.data as Record<string, unknown>;
+    if (isStartEndNode(n)) {
+      const role = d.nodeRole as "start" | "end";
+      return {
+        node_id: n.id,
+        agent_type: role === "start" ? "__start__" : "__end__",
+        label: role === "start" ? "START" : "END",
+        position: { x: n.position.x, y: n.position.y },
+        model: null,
+        max_budget_usd: null,
+        max_turns: null,
+        effort: null,
+        tools: null,
+        skills: null,
+        prompt_prepend: null,
+        prompt_append: null,
+        custom_prompt: null,
+        custom_tools: null,
+        sandbox: null,
+      };
+    }
+    return {
+      node_id: n.id,
+      agent_type: d.agentType as string,
+      label: (d.label as string) ?? "",
+      position: { x: n.position.x, y: n.position.y },
+      model: (d.model as string | undefined) ?? null,
+      max_budget_usd: (d.maxBudgetUsd as number | undefined) ?? null,
+      max_turns: (d.maxTurns as number | undefined) ?? null,
+      effort: (d.effort as string | undefined) ?? null,
+      tools: (d.tools as string[] | undefined) ?? null,
+      skills: (d.skills as string[] | undefined) ?? null,
+      prompt_prepend: (d.promptPrepend as string | undefined) ?? null,
+      prompt_append: (d.promptAppend as string | undefined) ?? null,
+      custom_prompt: (d.customPrompt as string | undefined) ?? null,
+      custom_tools: (d.customTools as string[] | undefined) ?? null,
+      sandbox: (d.sandbox as AgentNode["sandbox"]) ?? null,
+    };
+  });
 
   const edges: PipelineEdge[] = rfEdges.map((e) => ({
     edge_id: e.id,
@@ -122,26 +155,38 @@ export function serializeGraph(
  * Convert PipelineGraph API format to React Flow state.
  */
 export function deserializeGraph(graph: PipelineGraph): { nodes: Node[]; edges: Edge[] } {
-  const nodes: Node[] = graph.nodes.map((n) => ({
-    id: n.node_id,
-    type: "agentNode",
-    position: { x: n.position.x, y: n.position.y },
-    data: {
-      agentType: n.agent_type,
-      label: n.label || n.agent_type,
-      model: n.model,
-      maxBudgetUsd: n.max_budget_usd,
-      maxTurns: n.max_turns,
-      effort: n.effort,
-      tools: n.tools,
-      skills: n.skills,
-      promptPrepend: n.prompt_prepend,
-      promptAppend: n.prompt_append,
-      customPrompt: n.custom_prompt,
-      customTools: n.custom_tools,
-      sandbox: n.sandbox,
-    },
-  }));
+  const nodes: Node[] = graph.nodes.map((n) => {
+    if (n.agent_type === "__start__" || n.agent_type === "__end__") {
+      const role = n.agent_type === "__start__" ? "start" : "end";
+      return {
+        id: n.node_id,
+        type: "startEndNode",
+        position: { x: n.position.x, y: n.position.y },
+        deletable: false,
+        data: { nodeRole: role },
+      };
+    }
+    return {
+      id: n.node_id,
+      type: "agentNode",
+      position: { x: n.position.x, y: n.position.y },
+      data: {
+        agentType: n.agent_type,
+        label: n.label || n.agent_type,
+        model: n.model,
+        maxBudgetUsd: n.max_budget_usd,
+        maxTurns: n.max_turns,
+        effort: n.effort,
+        tools: n.tools,
+        skills: n.skills,
+        promptPrepend: n.prompt_prepend,
+        promptAppend: n.prompt_append,
+        customPrompt: n.custom_prompt,
+        customTools: n.custom_tools,
+        sandbox: n.sandbox,
+      },
+    };
+  });
 
   const edges: Edge[] = graph.edges.map((e) => ({
     id: e.edge_id,
@@ -157,4 +202,46 @@ export function deserializeGraph(graph: PipelineGraph): { nodes: Node[]; edges: 
   }));
 
   return { nodes, edges };
+}
+
+/**
+ * Ensure Start and End nodes exist in the React Flow graph.
+ * If missing, inject them at sensible positions relative to existing nodes.
+ */
+export function injectStartEndNodes(graph: { nodes: Node[]; edges: Edge[] }): { nodes: Node[]; edges: Edge[] } {
+  const { nodes, edges } = graph;
+  const hasStart = nodes.some((n) => (n.data as Record<string, unknown>).nodeRole === "start");
+  const hasEnd = nodes.some((n) => (n.data as Record<string, unknown>).nodeRole === "end");
+
+  if (hasStart && hasEnd) return graph;
+
+  const agentNodes = nodes.filter(
+    (n) => (n.data as Record<string, unknown>).nodeRole !== "start" && (n.data as Record<string, unknown>).nodeRole !== "end",
+  );
+
+  const injected: Node[] = [...nodes];
+
+  if (!hasStart) {
+    const leftmost = agentNodes.length > 0 ? Math.min(...agentNodes.map((n) => n.position.x)) : 250;
+    injected.push({
+      id: "__start__",
+      type: "startEndNode",
+      position: { x: agentNodes.length > 0 ? leftmost - 200 : 50, y: 250 },
+      deletable: false,
+      data: { nodeRole: "start" },
+    });
+  }
+
+  if (!hasEnd) {
+    const rightmost = agentNodes.length > 0 ? Math.max(...agentNodes.map((n) => n.position.x)) : 50;
+    injected.push({
+      id: "__end__",
+      type: "startEndNode",
+      position: { x: agentNodes.length > 0 ? rightmost + 300 : 800, y: 250 },
+      deletable: false,
+      data: { nodeRole: "end" },
+    });
+  }
+
+  return { nodes: injected, edges };
 }
