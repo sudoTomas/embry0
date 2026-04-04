@@ -13,25 +13,19 @@ export function AgentNode({ data, selected }: NodeProps) {
 
   return (
     <div
-      className="rounded-lg border-2 min-w-[180px] bg-[#12141f] transition-all duration-200"
+      className="rounded-xl min-w-[180px] bg-[#0f1419] transition-all duration-200 hover:-translate-y-0.5"
       style={{
-        borderColor: selected ? color : `${color}50`,
+        border: `1.5px solid ${selected ? `${color}E6` : `${color}50`}`,
         boxShadow: selected
-          ? `0 0 24px ${color}20, 0 4px 16px rgba(0,0,0,0.4)`
-          : "0 2px 8px rgba(0,0,0,0.3)",
+          ? `0 0 24px ${color}26, 0 4px 16px rgba(0,0,0,0.4)`
+          : `0 2px 8px rgba(0,0,0,0.3)`,
       }}
     >
       <Handle
         type="target"
         position={Position.Left}
-        className="!w-3 !h-3 !border-2 !border-[#12141f]"
-        style={{ background: color }}
-      />
-
-      {/* Gradient header strip */}
-      <div
-        className="h-1 rounded-t-[5px]"
-        style={{ background: `linear-gradient(90deg, ${color}, ${color}30)` }}
+        className="!w-2 !h-2 !bg-[#0f1419]"
+        style={{ border: `2px solid ${color}` }}
       />
 
       <div className="px-3 py-2.5">
@@ -49,7 +43,7 @@ export function AgentNode({ data, selected }: NodeProps) {
           )}
         </div>
         <div className="text-[13px] font-bold text-slate-100 mt-1">{label}</div>
-        <div className="flex items-center gap-1.5 mt-1.5 text-[10px] text-white/30">
+        <div className="flex items-center gap-1.5 mt-1.5 text-[10px] text-white/35">
           {shortModel && <span>{shortModel}</span>}
           {budget && <span>· ${budget}</span>}
           {!shortModel && !budget && <span>defaults</span>}
@@ -59,8 +53,8 @@ export function AgentNode({ data, selected }: NodeProps) {
       <Handle
         type="source"
         position={Position.Right}
-        className="!w-3 !h-3 !border-2 !border-[#12141f]"
-        style={{ background: color }}
+        className="!w-2 !h-2 !bg-[#0f1419]"
+        style={{ border: `2px solid ${color}` }}
       />
     </div>
   );

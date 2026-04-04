@@ -16,6 +16,8 @@ const AGENT_COLORS: Record<string, string> = {
   reviewer: "#a855f7", // purple
   "security-reviewer": "#a855f7",
   triage: "#a855f7",
+  validator: "#22c55e", // green
+  output: "#f43f5e", // rose
   custom: "#6b7280", // gray
 };
 
@@ -26,9 +28,10 @@ export function getAgentColor(agentType: string): string {
 export function getAgentCategory(agentType: string): string {
   if (["explorer", "frontend-explorer"].includes(agentType)) return "Exploration";
   if (["developer", "code-gen", "docs-writer"].includes(agentType)) return "Development";
-  if (["test-runner", "lint-checker", "type-checker", "visual-validator"].includes(agentType)) return "Validation";
+  if (["test-runner", "lint-checker", "type-checker", "visual-validator", "validator"].includes(agentType)) return "Validation";
   if (["reviewer", "security-reviewer"].includes(agentType)) return "Review";
   if (agentType === "triage") return "Triage";
+  if (agentType === "output") return "Output";
   return "Custom";
 }
 
