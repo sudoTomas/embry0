@@ -82,7 +82,7 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
         className="bg-[#0c0e12]"
       >
         <Background color="rgba(255,255,255,0.018)" gap={24} />
-        <MiniMap className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06]" nodeColor="#ffffff20" />
+        <MiniMap className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !w-[120px] !h-[75px]" nodeColor="#ffffff20" />
         <Controls className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !shadow-lg" />
       </ReactFlow>
     </div>

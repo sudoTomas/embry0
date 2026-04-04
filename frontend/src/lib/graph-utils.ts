@@ -222,22 +222,22 @@ export function injectStartEndNodes(graph: { nodes: Node[]; edges: Edge[] }): { 
   const injected: Node[] = [...nodes];
 
   if (!hasStart) {
-    const leftmost = agentNodes.length > 0 ? Math.min(...agentNodes.map((n) => n.position.x)) : 250;
+    const leftmost = agentNodes.length > 0 ? Math.min(...agentNodes.map((n) => n.position.x)) : 300;
     injected.push({
       id: "__start__",
       type: "startEndNode",
-      position: { x: agentNodes.length > 0 ? leftmost - 200 : 50, y: 250 },
+      position: { x: agentNodes.length > 0 ? leftmost - 200 : 100, y: 250 },
       deletable: false,
       data: { nodeRole: "start" },
     });
   }
 
   if (!hasEnd) {
-    const rightmost = agentNodes.length > 0 ? Math.max(...agentNodes.map((n) => n.position.x)) : 50;
+    const rightmost = agentNodes.length > 0 ? Math.max(...agentNodes.map((n) => n.position.x)) : 100;
     injected.push({
       id: "__end__",
       type: "startEndNode",
-      position: { x: agentNodes.length > 0 ? rightmost + 300 : 800, y: 250 },
+      position: { x: agentNodes.length > 0 ? rightmost + 300 : 500, y: 250 },
       deletable: false,
       data: { nodeRole: "end" },
     });
