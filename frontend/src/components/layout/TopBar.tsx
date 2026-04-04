@@ -8,6 +8,8 @@ const breadcrumbMap: Record<string, string> = {
   "": "Dashboard",
   jobs: "Jobs",
   demo: "Demo",
+  agents: "Agents",
+  sandboxes: "Sandboxes",
   pipelines: "Pipelines",
   settings: "Settings",
 };
