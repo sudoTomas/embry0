@@ -83,7 +83,7 @@ def parse_triage_response(raw: str) -> TriageDecision:
 async def run_triage_node(
     state: dict[str, Any],
     api_key: str,
-    model: str = "claude-haiku-4-5",
+    model: str = "claude-sonnet-4-6",
     confidence_threshold: float = 0.5,
 ) -> dict[str, Any]:
     """Execute the triage LLM call and return state updates."""

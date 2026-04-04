@@ -11,7 +11,7 @@ logger = structlog.get_logger(__name__)
 BUILTIN_SEED: dict[str, dict[str, Any]] = {
     "triage": {
         "description": "Analyzes the issue and configures the optimal pipeline. Assesses complexity, determines confidence, and can request more information or split oversized tasks.",
-        "model": "claude-haiku-4-5",
+        "model": "claude-sonnet-4-6",
         "tools": [],
         "skills": [],
         "system_prompt": "",

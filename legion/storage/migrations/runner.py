@@ -159,7 +159,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         VALUES
             ('triage',
              'Analyzes the issue and configures the optimal pipeline. Assesses complexity, determines confidence, and can request more information or split oversized tasks.',
-             'claude-haiku-4-5', '[]', '[]', '', true),
+             'claude-sonnet-4-6', '[]', '[]', '', true),
             ('developer',
              'Implements code changes, manages git operations, and creates pull requests. Uses Claude Code skills for advanced workflows including sub-agent dispatch and worktree management.',
              'claude-opus-4-6', '["Read", "Write", "Edit", "Bash", "Glob", "Grep"]',
