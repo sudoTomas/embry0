@@ -34,6 +34,14 @@ export async function createSandboxProfile(
   return data;
 }
 
+export async function updateSandboxProfile(
+  name: string,
+  profile: Omit<SandboxProfile, "created_at" | "updated_at">,
+): Promise<{ name: string; status: string }> {
+  const { data } = await api.put(`/sandbox-profiles/${name}`, profile);
+  return data;
+}
+
 export async function deleteSandboxProfile(name: string): Promise<void> {
   await api.delete(`/sandbox-profiles/${name}`);
 }
