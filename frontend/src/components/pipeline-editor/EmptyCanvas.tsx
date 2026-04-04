@@ -8,7 +8,7 @@ export function EmptyCanvas() {
         <Workflow size={48} className="text-white/15 relative" />
       </div>
       <p className="text-white/25 text-sm mt-4 font-medium">
-        Drag agents from the palette to build your pipeline
+        Drag agents from the bar below to build your pipeline
       </p>
       <p className="text-white/12 text-xs mt-1.5">
         Connect nodes by dragging between handles
