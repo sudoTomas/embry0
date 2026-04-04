@@ -32,8 +32,6 @@ class JobsRepository:
         sandbox_profile: str | None = None,
     ) -> str:
         """Create a new job and return its ID."""
-        import json
-
         job_id = f"job-{uuid.uuid4().hex[:12]}"
         await self._db.execute(
             """
@@ -45,7 +43,7 @@ class JobsRepository:
             task,
             issue_number,
             pipeline_template,
-            json.dumps(pipeline_config) if pipeline_config else None,
+            pipeline_config,
             sandbox_profile,
         )
         logger.info("job_created", job_id=job_id, repo=repo)
@@ -92,8 +90,6 @@ class JobsRepository:
 
     async def update(self, job_id: str, **fields: Any) -> None:
         """Update specific fields on a job."""
-        import json
-
         valid = {k: v for k, v in fields.items() if k in _UPDATABLE_FIELDS}
         if not valid:
             return
@@ -102,8 +98,6 @@ class JobsRepository:
         args: list[Any] = [job_id]
         idx = 2
         for key, value in valid.items():
-            if key == "pipeline_config" and isinstance(value, dict):
-                value = json.dumps(value)
             sets.append(f"{key} = ${idx}")
             args.append(value)
             idx += 1

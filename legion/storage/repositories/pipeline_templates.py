@@ -1,6 +1,5 @@
 """Pipeline templates repository — CRUD + duplicate for graph-based pipeline definitions."""
 
-import json
 import uuid
 from typing import Any
 
@@ -51,8 +50,8 @@ class PipelineTemplatesRepository:
             template_id,
             name,
             description,
-            json.dumps(graph_definition),
-            json.dumps(agent_models or {}),
+            graph_definition,
+            agent_models or {},
             sandbox_profile,
         )
         logger.info("pipeline_template_created", template_id=template_id, name=name)
@@ -67,8 +66,6 @@ class PipelineTemplatesRepository:
             args: list[Any] = [template_id]
             idx = 2
             for key, value in valid.items():
-                if isinstance(value, dict):
-                    value = json.dumps(value)
                 sets.append(f"{key} = ${idx}")
                 args.append(value)
                 idx += 1

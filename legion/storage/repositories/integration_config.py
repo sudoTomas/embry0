@@ -1,6 +1,5 @@
 """Integration config repository — webhook, Slack, and Telegram settings."""
 
-import json
 from typing import Any
 
 import structlog
@@ -49,8 +48,6 @@ class IntegrationConfigRepository:
             return {**_DEFAULTS}
 
         trigger_labels = row["trigger_labels"]
-        if isinstance(trigger_labels, str):
-            trigger_labels = json.loads(trigger_labels)
 
         webhook_secret: str = row["webhook_secret"] or ""
         slack_webhook_url: str = row["slack_webhook_url"] or ""
@@ -82,8 +79,6 @@ class IntegrationConfigRepository:
         for key, value in valid.items():
             if key in _SECRET_FIELDS and value == "":
                 continue
-            if key == "trigger_labels":
-                value = json.dumps(value)
             sets.append(f"{key} = ${idx}")
             args.append(value)
             idx += 1

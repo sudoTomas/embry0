@@ -1,6 +1,5 @@
 """Agent definitions repository — CRUD + reset for agent_definitions table."""
 
-import json
 from typing import Any
 
 import structlog
@@ -90,8 +89,8 @@ class AgentDefinitionsRepository:
             agent_type,
             description,
             model,
-            json.dumps(tools or []),
-            json.dumps(skills or []),
+            tools or [],
+            skills or [],
             system_prompt,
         )
         logger.info("agent_definition_created", agent_type=agent_type)
@@ -112,8 +111,6 @@ class AgentDefinitionsRepository:
         set_clauses = []
         params: list[Any] = []
         for i, (key, value) in enumerate(fields.items(), start=1):
-            if key in ("tools", "skills"):
-                value = json.dumps(value)
             set_clauses.append(f"{key} = ${i}")
             params.append(value)
 
@@ -157,8 +154,8 @@ class AgentDefinitionsRepository:
             """,
             seed["description"],
             seed["model"],
-            json.dumps(seed["tools"]),
-            json.dumps(seed["skills"]),
+            seed["tools"],
+            seed["skills"],
             seed["system_prompt"],
             agent_type,
         )

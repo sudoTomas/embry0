@@ -1,6 +1,5 @@
 """Sandbox profiles repository — CRUD for tooling + security configuration."""
 
-import json
 from typing import Any
 
 import structlog
@@ -55,14 +54,14 @@ class SandboxProfilesRepository:
             """,
             name,
             base_image,
-            json.dumps(additional_packages or []),
-            json.dumps(setup_commands or []),
+            additional_packages or [],
+            setup_commands or [],
             memory,
             cpus,
             pids_limit,
-            json.dumps(cap_drop or ["ALL"]),
-            json.dumps(cap_add or []),
-            json.dumps(security_opt or ["no-new-privileges"]),
+            cap_drop or ["ALL"],
+            cap_add or [],
+            security_opt or ["no-new-privileges"],
             agent_timeout_seconds,
             container_timeout_seconds,
         )

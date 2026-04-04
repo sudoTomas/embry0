@@ -1,11 +1,20 @@
 """PostgreSQL connection pool management via asyncpg."""
 
+import json
 from typing import Any
 
 import asyncpg
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+
+def _jsonb_encoder(value: Any) -> str:
+    return json.dumps(value)
+
+
+def _jsonb_decoder(value: str) -> Any:
+    return json.loads(value)
 
 
 class DatabasePool:
@@ -26,10 +35,19 @@ class DatabasePool:
 
     async def connect(self) -> None:
         """Create the connection pool."""
+
+        async def _init_connection(conn: asyncpg.Connection) -> None:
+            """Set up JSONB codec so asyncpg returns Python objects, not strings."""
+            await conn.set_type_codec(
+                "jsonb", encoder=_jsonb_encoder, decoder=_jsonb_decoder,
+                schema="pg_catalog",
+            )
+
         self.pool = await asyncpg.create_pool(
             self._url,
             min_size=self._min_size,
             max_size=self._max_size,
+            init=_init_connection,
         )
         logger.info("database_connected", url=self._redacted_url)
 

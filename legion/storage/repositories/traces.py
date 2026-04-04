@@ -1,6 +1,5 @@
 """Traces repository — PostgreSQL CRUD for agent execution telemetry."""
 
-import json
 import uuid
 from typing import Any
 
@@ -45,7 +44,7 @@ class TracesRepository:
             result,
             cost_usd,
             duration_ms,
-            json.dumps(tools_called or {}),
+            tools_called or {},
             result_summary,
         )
         logger.info("trace_created", trace_id=trace_id, job_id=job_id, agent_type=agent_type)
