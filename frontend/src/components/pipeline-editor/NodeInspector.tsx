@@ -175,7 +175,7 @@ export function NodeInspector({ node, onUpdate }: NodeInspectorProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const models = useMemo(
-    () => [...new Set(agents?.map((a) => a.default_model) ?? [])],
+    () => [...new Set(agents?.map((a) => a.model) ?? [])],
     [agents],
   );
 

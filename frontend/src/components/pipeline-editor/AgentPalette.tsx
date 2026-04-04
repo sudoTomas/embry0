@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAgentTypes } from "@/hooks/useAgentTypes";
 import { getAgentColor, getAgentCategory } from "@/lib/graph-utils";
-import type { AgentTypeInfo } from "@/lib/types";
+import type { AgentDefinition } from "@/lib/types";
 
 export function AgentPalette() {
   const { data: agents } = useAgentTypes();
@@ -13,7 +13,7 @@ export function AgentPalette() {
       a.description.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const grouped = filtered.reduce<Record<string, AgentTypeInfo[]>>(
+  const grouped = filtered.reduce<Record<string, AgentDefinition[]>>(
     (acc, agent) => {
       const cat = getAgentCategory(agent.type);
       if (!acc[cat]) acc[cat] = [];

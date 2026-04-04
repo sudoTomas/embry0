@@ -9,7 +9,7 @@ import { StateFlowPanel } from "@/components/state/StateFlowPanel";
 import { DEFAULT_ISSUE_TO_PR_PHASES } from "@/lib/pipeline-phases";
 import { useAgentTypes } from "@/hooks/useAgentTypes";
 import type { NodeStateEvent } from "@/lib/types";
-import type { AgentTypeInfo } from "@/lib/types";
+import type { AgentDefinition } from "@/lib/types";
 
 // Mock node states: triage=completed, developer=running, others=pending
 const MOCK_NODE_STATES: Record<string, NodeStateEvent> = {
@@ -82,8 +82,8 @@ export function DemoPage() {
   const { data: agentTypes } = useAgentTypes();
   const [selectedAgent, setSelectedAgent] = useState<{ agentType: string; nodeId: string } | null>(null);
 
-  const agentInfo: AgentTypeInfo | undefined = selectedAgent
-    ? agentTypes?.find((a: AgentTypeInfo) => a.type === selectedAgent.agentType)
+  const agentInfo: AgentDefinition | undefined = selectedAgent
+    ? agentTypes?.find((a: AgentDefinition) => a.type === selectedAgent.agentType)
     : undefined;
 
   const handleAgentClick = (agentType: string, nodeId: string) => {

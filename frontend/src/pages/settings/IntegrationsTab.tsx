@@ -9,7 +9,7 @@ import { MaskedSecretInput } from "@/components/ui/MaskedSecretInput";
 import { PageError } from "@/components/PageError";
 import { toast } from "sonner";
 import { Copy } from "lucide-react";
-import type { IntegrationConfig, IntegrationConfigUpdate } from "@/lib/types/integrations";
+import type { IntegrationConfigUpdate } from "@/lib/types/integrations";
 
 export default function IntegrationsTab() {
   const { data: integrationConfig, isLoading, isError, refetch } = useIntegrationConfig();

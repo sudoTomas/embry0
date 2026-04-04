@@ -16,7 +16,7 @@ import { AgentDetailPopup } from "@/components/agents/AgentDetailPopup";
 import { StateFlowPanel } from "@/components/state/StateFlowPanel";
 import { LogViewer } from "@/components/logs/LogViewer";
 import { getPipelinePhases } from "@/lib/pipeline-phases";
-import type { AgentTypeInfo, LogEvent, JobInput } from "@/lib/types";
+import type { AgentDefinition, LogEvent, JobInput } from "@/lib/types";
 
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -39,7 +39,7 @@ export function JobDetailPage() {
   const phases = getPipelinePhases(job.pipeline_graph);
 
   const agentInfo = selectedAgent
-    ? agentTypes?.find((a: AgentTypeInfo) => a.type === selectedAgent.agentType)
+    ? agentTypes?.find((a: AgentDefinition) => a.type === selectedAgent.agentType)
     : undefined;
 
   const handleAgentClick = (agentType: string, nodeId: string) => {

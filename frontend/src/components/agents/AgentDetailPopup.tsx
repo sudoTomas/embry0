@@ -2,13 +2,13 @@ import { X } from "lucide-react";
 import { useEffect } from "react";
 import { IconBox } from "@/components/ui/IconBox";
 import { getPhaseForAgent } from "@/lib/constants";
-import type { AgentTypeInfo } from "@/lib/types";
+import type { AgentDefinition } from "@/lib/types";
 import type { NodeStateEvent } from "@/lib/types";
 import { getAgentIcon } from "@/lib/agentIcons";
 
 interface AgentDetailPopupProps {
   agentType: string;
-  agentInfo?: AgentTypeInfo;
+  agentInfo?: AgentDefinition;
   nodeState?: NodeStateEvent;
   onClose: () => void;
 }
@@ -71,108 +71,41 @@ export function AgentDetailPopup({
 
         {/* Config badges */}
         <div className="flex flex-wrap gap-2 mb-3">
-          {agentInfo?.default_model && (
+          {agentInfo?.model && (
             <div
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs"
               style={{ backgroundColor: `${phase.color}15`, border: `1px solid ${phase.color}25` }}
             >
               <span className="text-white/50">Model</span>
               <span className="font-semibold" style={{ color: phase.color }}>
-                {agentInfo.default_model}
+                {agentInfo.model}
               </span>
             </div>
           )}
-          {agentInfo?.default_tools && agentInfo.default_tools.length > 0 && (
+          {agentInfo?.tools && agentInfo.tools.length > 0 && (
             <div
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs"
               style={{ backgroundColor: `${phase.color}15`, border: `1px solid ${phase.color}25` }}
             >
               <span className="text-white/50">Tools</span>
               <span className="font-semibold" style={{ color: phase.color }}>
-                {agentInfo.default_tools.join(", ")}
+                {agentInfo.tools.join(", ")}
               </span>
             </div>
           )}
-          {agentInfo?.default_skills && agentInfo.default_skills.length > 0 && (
+          {agentInfo?.skills && agentInfo.skills.length > 0 && (
             <div
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs"
               style={{ backgroundColor: `${phase.color}15`, border: `1px solid ${phase.color}25` }}
             >
               <span className="text-white/50">Skills</span>
               <span className="font-semibold" style={{ color: phase.color }}>
-                {agentInfo.default_skills.join(", ")}
+                {agentInfo.skills.join(", ")}
               </span>
             </div>
           )}
         </div>
 
-        {/* Inputs / Outputs */}
-        {agentInfo && (agentInfo.inputs.length > 0 || agentInfo.outputs.length > 0) && (
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            {/* Inputs */}
-            <div className="rounded-xl p-4" style={{ border: `1px solid ${phase.color}15` }}>
-              <h4 className="text-sm font-bold mb-3" style={{ color: phase.color }}>
-                Inputs
-              </h4>
-              <div className="space-y-2">
-                {agentInfo.inputs.map((field) => (
-                  <div key={field.name} className="flex items-center gap-2 text-xs">
-                    <code
-                      className="px-1.5 py-0.5 rounded text-[11px] font-mono"
-                      style={{ backgroundColor: `${phase.color}20`, color: phase.color }}
-                    >
-                      {field.name}
-                    </code>
-                    <span className="text-white/40">{field.description}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Outputs */}
-            <div
-              className="rounded-xl p-4"
-              style={{ border: `1px solid ${phase.color}20`, backgroundColor: `${phase.color}03` }}
-            >
-              <h4 className="text-sm font-bold mb-3" style={{ color: phase.color }}>
-                Outputs
-              </h4>
-              <div className="space-y-2">
-                {agentInfo.outputs.map((field) => (
-                  <div key={field.name} className="flex items-center gap-2 text-xs">
-                    <code
-                      className="px-1.5 py-0.5 rounded text-[11px] font-mono"
-                      style={{ backgroundColor: `${phase.color}20`, color: phase.color }}
-                    >
-                      {field.name}
-                    </code>
-                    <span className="text-white/40">{field.description}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Responsibilities */}
-        {agentInfo?.responsibilities && agentInfo.responsibilities.length > 0 && (
-          <div
-            className="rounded-xl p-4 mb-4"
-            style={{ backgroundColor: `${phase.color}05`, border: `1px solid ${phase.color}15` }}
-          >
-            <h4 className="text-sm font-bold mb-2" style={{ color: phase.color }}>
-              Key Responsibilities
-            </h4>
-            <ul className="space-y-1">
-              {agentInfo.responsibilities.map((r, i) => (
-                <li key={i} className="text-xs text-white/60 flex items-start gap-2">
-                  <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: phase.color }} />
-                  {r}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
 
         {/* Live metrics (only shown during execution) */}
         {nodeState && nodeState.state !== "pending" && (

@@ -33,13 +33,13 @@ export function useGraphState(initialGraph?: PipelineGraph) {
         // Auto-detect cycles and mark back-edges as feedback
         const backEdgeIds = detectCycles(
           nodes.map((n) => ({ id: n.id })),
-          newEdges.map((e) => ({
+          newEdges.map((e: Edge) => ({
             id: e.id,
             source: e.source,
             target: e.target,
           })),
         );
-        return newEdges.map((e) =>
+        return newEdges.map((e: Edge) =>
           backEdgeIds.has(e.id)
             ? {
                 ...e,
