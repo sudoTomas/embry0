@@ -65,7 +65,7 @@ class GitHubSyncService:
         logger.info("github_issue_updated", issue_id=issue_id, github_number=number)
         return data
 
-    async def handle_webhook_event(self, event_type: str, action: str, payload: dict[str, Any], issues_repo: IssuesRepository, trigger_labels: set[str] | None = None) -> dict[str, str]:
+    async def handle_webhook_event(self, event_type: str, action: str, payload: dict[str, Any], issues_repo: IssuesRepository, trigger_labels: set[str] | None = None, issue_executor: Any | None = None) -> dict[str, str]:
         """Process an inbound GitHub webhook event."""
         if event_type != "issues":
             return {"status": "ignored", "reason": "not an issue event"}
@@ -86,6 +86,12 @@ class GitHubSyncService:
             should_triage = bool(trigger_labels and trigger_labels.intersection(set(labels)))
             if should_triage:
                 await issues_repo.update(issue_id, status="triaging")
+                if issue_executor:
+                    try:
+                        job_id = await issue_executor.execute(issue_id)
+                        logger.info("webhook_auto_triage_started", issue_id=issue_id, job_id=job_id)
+                    except Exception:
+                        logger.warning("webhook_auto_triage_failed", issue_id=issue_id, exc_info=True)
             logger.info("webhook_issue_created", issue_id=issue_id, github_number=gh_number)
             return {"status": "accepted", "action": "issue_created", "issue_id": issue_id}
 

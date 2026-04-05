@@ -39,8 +39,12 @@ async def github_webhook(
         if issues_repo and github_sync:
             trigger_labels = set(config.trigger_labels_list) if hasattr(config, "trigger_labels_list") else set()
             result = await github_sync.handle_webhook_event(
-                event_type=event_type, action=action, payload=payload,
-                issues_repo=issues_repo, trigger_labels=trigger_labels,
+                event_type=event_type,
+                action=action,
+                payload=payload,
+                issues_repo=issues_repo,
+                trigger_labels=trigger_labels,
+                issue_executor=request.app.state.issue_executor,
             )
             return result
 
