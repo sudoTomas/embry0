@@ -72,10 +72,3 @@ async def reset_agent(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-
-@router.get("/agents/types")
-async def list_agent_types_deprecated(
-    repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
-) -> list[dict]:
-    """Deprecated: use GET /agents instead."""
-    return await repo.list_all()

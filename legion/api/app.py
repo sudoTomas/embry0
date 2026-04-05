@@ -117,7 +117,7 @@ def _register_routers(app: FastAPI) -> None:
 
     auth_deps = [require_auth]
     app.include_router(health.router, prefix="/api/v1", tags=["health"])
-    app.include_router(agents.router, prefix="/api/v1", tags=["agents"])
+    app.include_router(agents.router, prefix="/api/v1", tags=["agents"], dependencies=auth_deps)
     app.include_router(issues.router, prefix="/api/v1", tags=["issues"], dependencies=auth_deps)
     app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"], dependencies=auth_deps)
     app.include_router(graphs.router, prefix="/api/v1", tags=["graphs"], dependencies=auth_deps)
