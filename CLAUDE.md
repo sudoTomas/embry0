@@ -17,4 +17,5 @@
   - Frontend changes: `cd infra && docker compose build frontend && docker compose up -d frontend --force-recreate`
   - Both: `cd infra && docker compose build orchestrator frontend && docker compose up -d orchestrator frontend --force-recreate`
 - The frontend is served via nginx on port 8200 and proxies `/api` to the orchestrator container.
-- Always verify health after restart: `curl -s https://legion.alchymielabs.com/health`
+- Always verify health after restart: `curl -s http://localhost:8200/health`
+- The Cloudflare tunnel at `legion.alchymielabs.com` is restricted to webhook paths only (`/api/v1/webhook`, `/api/v1/telegram/callback`). NEVER expose the full app via the tunnel.

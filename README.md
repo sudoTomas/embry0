@@ -75,7 +75,7 @@ Legion runs as a Docker Compose stack with 4 services:
 ```mermaid
 graph LR
     subgraph Stack["Docker Compose Stack"]
-        FE["Frontend<br/>nginx :8201"]
+        FE["Frontend<br/>nginx :8200"]
         ORC["Orchestrator<br/>FastAPI :8000"]
         PG["PostgreSQL :5432"]
         DIND["DinD"]
@@ -136,6 +136,19 @@ The **triage agent** uses an LLM to analyze each issue and configure the pipelin
 
 The **developer agent** owns the full lifecycle: code changes, git operations, and PR creation. It uses Claude Code skills (e.g., superpowers) for structured workflows including sub-agent dispatch and worktree management.
 
+## Issues & Human-in-the-Loop
+
+Legion includes a full-featured **issue tracker** with optional GitHub two-way sync:
+
+- **Create issues** from the dashboard or receive them via GitHub webhook
+- **Triage agent** analyzes issues, asks clarifying questions if needed, or decomposes complex issues into subtasks
+- **Human-in-the-loop** — when the agent needs more info, the pipeline pauses (`awaiting_input`). Questions are dispatched to:
+  - **Dashboard** — questions panel with inline answer inputs
+  - **Telegram** — per-question messages with reply-to-message matching
+  - **GitHub** — issue comment with numbered questions
+- When all blocking questions are answered (from any channel), the pipeline resumes automatically
+- **Board + List views** with drag-and-drop, filters, and animated agent indicators
+
 ## Quick Start
 
 ### Prerequisites
@@ -147,7 +160,7 @@ The **developer agent** owns the full lifecycle: code changes, git operations, a
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/your-org/legion.git
+git clone https://github.com/Alchymie-Labs/legion.git
 cd legion
 cp .env.example .env
 # Edit .env with your credentials:
@@ -175,7 +188,7 @@ This builds all images, starts PostgreSQL + DinD + Orchestrator + Frontend, wait
 ### 4. Open the dashboard
 
 ```
-http://localhost:8201
+http://localhost:8200
 ```
 
 ## CLI Reference
@@ -207,20 +220,42 @@ legion purge --volumes    # Remove only volumes
 
 Two-level API: **low-level graph execution** + **high-level job management**.
 
+### Issues
+
+```bash
+# Create an issue (with optional auto-triage and GitHub sync)
+curl -X POST http://localhost:8200/api/v1/issues \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"title": "Fix the auth bug", "repo": "owner/repo", "auto_triage": true, "github_sync_enabled": true}'
+
+# List issues
+curl http://localhost:8200/api/v1/issues -H "X-Requested-With: XMLHttpRequest"
+
+# Get issue with children and jobs
+curl http://localhost:8200/api/v1/issues/{issue_id} -H "X-Requested-With: XMLHttpRequest"
+
+# Answer a triage question
+curl -X POST http://localhost:8200/api/v1/issues/{issue_id}/inputs/{input_id}/answer \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"answer": "The bug is in the JWT validation logic"}'
+```
+
 ### Jobs (High-Level)
 
 ```bash
 # Create a job
-curl -X POST http://localhost:8201/api/v1/jobs \
+curl -X POST http://localhost:8200/api/v1/jobs \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"repo": "owner/repo", "task": "Fix the auth bug in login.py"}'
 
 # List jobs
-curl http://localhost:8201/api/v1/jobs
+curl http://localhost:8200/api/v1/jobs
 
 # Cancel a job
-curl -X POST http://localhost:8201/api/v1/jobs/{job_id}/cancel \
+curl -X POST http://localhost:8200/api/v1/jobs/{job_id}/cancel \
   -H "X-Requested-With: XMLHttpRequest"
 ```
 
@@ -228,10 +263,10 @@ curl -X POST http://localhost:8201/api/v1/jobs/{job_id}/cancel \
 
 ```bash
 # List available workflows
-curl http://localhost:8201/api/v1/graphs/workflows
+curl http://localhost:8200/api/v1/graphs/workflows
 
 # Execute a workflow
-curl -X POST http://localhost:8201/api/v1/graphs/execute \
+curl -X POST http://localhost:8200/api/v1/graphs/execute \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"workflow": "issue-to-pr", "input_state": {"repo": "owner/repo", "task": "..."}}'
@@ -241,22 +276,22 @@ curl -X POST http://localhost:8201/api/v1/graphs/execute \
 
 ```bash
 # Budget controls
-curl http://localhost:8201/api/v1/config/budget
-curl -X PUT http://localhost:8201/api/v1/config/budget \
+curl http://localhost:8200/api/v1/config/budget
+curl -X PUT http://localhost:8200/api/v1/config/budget \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"max_budget_per_job_usd": 25.0}'
 
 # Context injection
-curl http://localhost:8201/api/v1/config/context
-curl -X PUT http://localhost:8201/api/v1/config/context \
+curl http://localhost:8200/api/v1/config/context
+curl -X PUT http://localhost:8200/api/v1/config/context \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"system_context": "Use TypeScript strict mode."}'
 
 # Sandbox profiles
-curl http://localhost:8201/api/v1/sandbox-profiles
-curl -X POST http://localhost:8201/api/v1/sandbox-profiles \
+curl http://localhost:8200/api/v1/sandbox-profiles
+curl -X POST http://localhost:8200/api/v1/sandbox-profiles \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"name": "java-17", "base_image": "legion-sandbox-java:17", "memory": "12g"}'
@@ -265,7 +300,7 @@ curl -X POST http://localhost:8201/api/v1/sandbox-profiles \
 ### WebSocket Streaming
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8201/ws/jobs/{job_id}/events');
+const ws = new WebSocket('ws://localhost:8200/ws/jobs/{job_id}/events');
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   // { type: "agent_started", agent: "developer", ... }
@@ -285,29 +320,41 @@ legion/
 │   ├── orchestration/          # LangGraph integration
 │   │   ├── state.py            # JobState TypedDict + reducers
 │   │   ├── nodes/              # Agent, triage, validation, output nodes
-│   │   └── routing/            # Conditional edge functions
+│   │   ├── routing/            # Conditional edge functions
+│   │   └── checkpoint.py       # AsyncPostgresSaver integration
 │   ├── workflows/              # Built-in + custom workflows
 │   │   └── issue_to_pr/        # Issue-to-PR pipeline (StateGraph)
 │   ├── execution/              # Sandbox management
 │   │   ├── sandbox_manager.py  # Container lifecycle (DinD)
 │   │   ├── agent_runner.py     # docker exec + stdout parsing
-│   │   └── proxy/              # Auth, Git, GitHub API proxies
+│   │   ├── image_manager.py    # Sandbox image auto-build + reaper
+│   │   └── proxy/              # Auth, Git, GitHub API, Legion proxies
 │   ├── sandbox/                # Code that runs inside containers
 │   │   ├── runner.py           # Agent SDK execution
 │   │   ├── safety.py           # Blocked command enforcement
 │   │   └── github/             # Git ops + GitHub client (via proxies)
+│   ├── services/               # Business logic services
+│   │   ├── issue_executor.py   # Issue→job→workflow orchestration
+│   │   └── github_sync.py      # Two-way GitHub issue sync
+│   ├── notifications/          # Multi-channel notifications
+│   │   ├── telegram.py         # Telegram Bot API integration
+│   │   ├── github.py           # GitHub issue comment notifications
+│   │   └── dispatcher.py       # Routes to configured channels
 │   ├── storage/                # PostgreSQL persistence
-│   ├── agents/                 # Agent registry metadata
+│   ├── agents/                 # Agent definitions + SDK wrapper
+│   │   ├── sdk.py              # Claude Agent SDK wrapper (OAuth)
+│   │   └── resolver.py         # Agent config resolution chain
 │   ├── safety/                 # Shared safety patterns
-│   └── audit/                  # Audit logging (JSONL + structlog)
+│   └── audit/                  # Audit logging (JSONL + DB + structlog)
 ├── frontend/                   # React 19 SPA
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── pipeline-tree/  # Pipeline visualization
-│   │   │   ├── agents/         # Agent popup + execution cards
-│   │   │   ├── state/          # State flow panel
-│   │   │   └── ui/             # Design system (IconBox, Card, ...)
-│   │   ├── pages/              # Dashboard, Jobs, Demo, Pipelines, Settings
+│   │   │   ├── issues/         # Issue tracker (list, board, detail, questions)
+│   │   │   ├── jobs/           # Job table, status badges, event timeline
+│   │   │   ├── pipeline-editor/# Pipeline visualization + editor
+│   │   │   ├── layout/         # Sidebar, TopBar, AppLayout
+│   │   │   └── ui/             # Design system (Card, Button, Input, ...)
+│   │   ├── pages/              # Dashboard, Issues, Jobs, Agents, Pipelines, Settings
 │   │   └── hooks/              # Data fetching (React Query + WebSocket)
 │   ├── Dockerfile              # Multi-stage (Node build + nginx)
 │   └── nginx.conf              # Reverse proxy to orchestrator
@@ -346,7 +393,10 @@ Legion uses environment variables for infrastructure config and API endpoints fo
 | `DAILY_BUDGET_CAP_USD` | `100.0` | Daily spending cap |
 | `MONTHLY_BUDGET_CAP_USD` | `500.0` | Monthly spending cap |
 | `BUDGET_OVERRUN_MODE` | `soft` | `soft` (allow finish) or `hard` (stop immediately) |
-| `PROD_PORT` | `8200` | Frontend port |
+| `PROD_PORT` | `8200` | Frontend port (nginx) |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot token for notifications |
+| `TELEGRAM_CHAT_ID` | — | Telegram chat ID for notifications |
+| `TELEGRAM_WEBHOOK_URL` | — | Public URL for Telegram callback (e.g. Cloudflare tunnel) |
 | `TRIGGER_LABELS` | `Legion` | GitHub labels that trigger jobs |
 
 See `.env.example` for the complete list.
