@@ -20,8 +20,9 @@ async def github_webhook(
     config = request.app.state.config
     body = await request.body()
 
-    if config.github_webhook_secret:
-        verify_webhook_signature(body=body, signature=x_hub_signature_256, secret=config.github_webhook_secret)
+    if not config.github_webhook_secret:
+        raise HTTPException(status_code=503, detail="Webhook secret not configured")
+    verify_webhook_signature(body=body, signature=x_hub_signature_256, secret=config.github_webhook_secret)
 
     try:
         payload = json_module.loads(body)
