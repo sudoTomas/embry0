@@ -3,7 +3,7 @@
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from legion.api.deps import get_github_sync, get_issues_repo, get_jobs_repo
+from legion.api.deps import get_github_sync, get_issue_executor, get_issues_repo, get_jobs_repo
 from legion.api.schemas.issues import (
     CreateIssueRequest,
     IssueDetailResponse,
@@ -12,6 +12,7 @@ from legion.api.schemas.issues import (
     UpdateIssueRequest,
 )
 from legion.audit.logger import emit_audit_event
+from legion.services.issue_executor import IssueExecutor
 from legion.storage.repositories.issues import IssuesRepository
 from legion.storage.repositories.jobs import JobsRepository
 
@@ -33,6 +34,7 @@ async def create_issue(
     request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
     sync=Depends(get_github_sync),
+    executor: IssueExecutor = Depends(get_issue_executor),
 ) -> IssueResponse:
     issue_id = await issues.create(
         title=req.title,
@@ -44,9 +46,6 @@ async def create_issue(
         created_by="user",
     )
 
-    if req.auto_triage:
-        await issues.update(issue_id, status="triaging")
-
     config = request.app.state.config
     emit_audit_event(
         "issue.created",
@@ -55,6 +54,21 @@ async def create_issue(
         audit_log_path=config.audit_log_path,
         issue_id=issue_id,
     )
+
+    if req.auto_triage:
+        await issues.update(issue_id, status="triaging")
+        emit_audit_event(
+            "issue.status_changed",
+            actor="system",
+            details={"old_status": "open", "new_status": "triaging"},
+            audit_log_path=config.audit_log_path,
+            issue_id=issue_id,
+        )
+        try:
+            job_id = await executor.execute(issue_id)
+            logger.info("auto_triage_started", issue_id=issue_id, job_id=job_id)
+        except Exception:
+            logger.warning("auto_triage_failed", issue_id=issue_id, exc_info=True)
 
     if req.github_sync_enabled and req.repo:
         if sync is not None:
@@ -222,6 +236,7 @@ async def triage_issue(
     issue_id: str,
     request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
+    executor: IssueExecutor = Depends(get_issue_executor),
 ) -> IssueResponse:
     existing = await issues.get(issue_id)
     if not existing:
@@ -248,6 +263,12 @@ async def triage_issue(
         audit_log_path=config.audit_log_path,
         issue_id=issue_id,
     )
+
+    try:
+        job_id = await executor.execute(issue_id)
+        logger.info("triage_started", issue_id=issue_id, job_id=job_id)
+    except Exception:
+        logger.warning("triage_execution_failed", issue_id=issue_id, exc_info=True)
 
     updated = await issues.get(issue_id)
     return IssueResponse(**updated)
