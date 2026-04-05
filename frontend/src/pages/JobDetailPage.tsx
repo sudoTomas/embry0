@@ -16,6 +16,8 @@ import { AgentDetailPopup } from "@/components/agents/AgentDetailPopup";
 import { StateFlowPanel } from "@/components/state/StateFlowPanel";
 import { LogViewer } from "@/components/logs/LogViewer";
 import { getPipelinePhases } from "@/lib/pipeline-phases";
+import { useJobEvents } from "@/hooks/useJobEvents";
+import { JobEventTimeline } from "@/components/jobs/JobEventTimeline";
 import type { AgentDefinition, LogEvent, JobInput } from "@/lib/types";
 
 export function JobDetailPage() {
@@ -29,6 +31,9 @@ export function JobDetailPage() {
 
   const logs = useJobLogs(shouldStream ? jobId! : "");
   const { data: jobInputs } = useJobInputs(jobId ?? "");
+
+  const isActive = job?.status === "running" || job?.status === "triaging" || job?.status === "awaiting_input";
+  const { events: pipelineEvents, connected: pipelineConnected } = useJobEvents(jobId, isActive || job?.status === "completed" || job?.status === "failed");
 
   const [selectedAgent, setSelectedAgent] = useState<{ agentType: string; nodeId: string } | null>(null);
   const [logsExpanded, setLogsExpanded] = useState(false);
@@ -73,6 +78,27 @@ export function JobDetailPage() {
       <div className="px-4 py-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-sm text-white/70">
         {job.task}
       </div>
+
+      {/* PR link */}
+      {job.pr_url && (
+        <div className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+          <span className="text-white/40">PR:</span>
+          <a href={job.pr_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+            {job.pr_url}
+          </a>
+        </div>
+      )}
+
+      {/* Pipeline Events Timeline */}
+      {pipelineEvents.length > 0 && (
+        <div className="px-4 py-3 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+          <h3 className="text-sm font-medium text-white/60 mb-2 flex items-center gap-2">
+            Pipeline Events
+            {pipelineConnected && <span className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />}
+          </h3>
+          <JobEventTimeline events={pipelineEvents} connected={pipelineConnected} />
+        </div>
+      )}
 
       {/* Status-dependent content */}
       {job.status === "running" && (
