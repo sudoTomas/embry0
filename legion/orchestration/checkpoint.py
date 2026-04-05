@@ -1,21 +1,20 @@
 """LangGraph checkpoint integration — PostgreSQL-backed state persistence."""
 
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from psycopg_pool import AsyncConnectionPool
 
 
-def create_checkpointer(database_url: str) -> AsyncPostgresSaver:
-    """Create an AsyncPostgresSaver for LangGraph checkpointing.
-
-    Creates a pool-backed saver without opening connections immediately.
-    Call ``await saver.setup()`` before first use to run migrations.
+@asynccontextmanager
+async def checkpointer_context(database_url: str) -> AsyncIterator[AsyncPostgresSaver]:
+    """Create an AsyncPostgresSaver as an async context manager.
 
     Usage:
-        saver = create_checkpointer(config.database_url)
-        async with saver:
-            await saver.setup()
+        async with checkpointer_context(database_url) as saver:
             graph = workflow.compile(checkpointer=saver)
             result = await graph.ainvoke(state, config={"configurable": {"thread_id": job_id}})
     """
-    pool = AsyncConnectionPool(database_url, open=False)
-    return AsyncPostgresSaver(conn=pool)
+    async with AsyncPostgresSaver.from_conn_string(database_url) as saver:
+        await saver.setup()
+        yield saver

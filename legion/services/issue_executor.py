@@ -8,7 +8,7 @@ from typing import Any
 import structlog
 
 from legion.audit.helpers import emit_audit
-from legion.orchestration.checkpoint import create_checkpointer
+from legion.orchestration.checkpoint import checkpointer_context
 from legion.storage.database import DatabasePool
 from legion.storage.repositories.issues import IssuesRepository
 from legion.storage.repositories.jobs import JobsRepository
@@ -103,9 +103,7 @@ class IssueExecutor:
                 "budget_overrun_usd": 0.0,
             }
 
-            saver = create_checkpointer(self._database_url)
-            async with saver:
-                await saver.setup()
+            async with checkpointer_context(self._database_url) as saver:
                 graph = workflow.compile(config={"checkpointer": saver})
                 result = await graph.ainvoke(
                     initial_state,
