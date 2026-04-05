@@ -20,6 +20,19 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
             await websocket.close(code=4001, reason="Unauthorized")
             return
     await websocket.accept()
+
+    # Replay persisted pipeline events
+    try:
+        jobs_repo = websocket.app.state.jobs_repo
+        events = await jobs_repo.get_log_events(job_id)
+        for event in events:
+            payload = event.get("payload", event)
+            if isinstance(payload, dict):
+                await websocket.send_json(payload)
+    except Exception:
+        logger.warning("event_replay_failed", job_id=job_id, exc_info=True)
+
+    # Live streaming
     queue: asyncio.Queue[dict] = asyncio.Queue()
     subscribers = websocket.app.state.event_subscribers
     if job_id not in subscribers:
