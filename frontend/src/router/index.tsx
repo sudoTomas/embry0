@@ -16,6 +16,8 @@ const PipelinesPage = lazy(() => import("../pages/PipelinesPage").then(m => ({ d
 const SettingsPage = lazy(() => import("../pages/SettingsPage").then(m => ({ default: m.SettingsPage })));
 const NotFoundPage = lazy(() => import("../pages/NotFoundPage").then(m => ({ default: m.NotFoundPage })));
 const DemoPage = lazy(() => import("../pages/DemoPage").then(m => ({ default: m.DemoPage })));
+const IssuesPage = lazy(() => import("@/pages/IssuesPage").then((m) => ({ default: m.IssuesPage })));
+const IssueDetailPage = lazy(() => import("@/pages/IssueDetailPage").then((m) => ({ default: m.IssueDetailPage })));
 
 const fallback = <div className="p-6 text-muted-foreground">Loading...</div>;
 
@@ -37,7 +39,8 @@ export const router = createBrowserRouter([
       { path: "pipelines", element: <ErrorBoundary><Suspense fallback={fallback}><PipelinesPage /></Suspense></ErrorBoundary> },
       { path: "traces", element: <Navigate to="/jobs" replace /> },
       { path: "triage", element: <Navigate to="/settings" replace /> },
-      { path: "issues", element: <Navigate to="/jobs" replace /> },
+      { path: "issues", element: <ErrorBoundary><Suspense fallback={fallback}><IssuesPage /></Suspense></ErrorBoundary> },
+      { path: "issues/:id", element: <ErrorBoundary><Suspense fallback={fallback}><IssueDetailPage /></Suspense></ErrorBoundary> },
       { path: "environments", element: <Navigate to="/settings" replace /> },
       { path: "demo", element: <ErrorBoundary><Suspense fallback={fallback}><DemoPage /></Suspense></ErrorBoundary> },
       { path: "settings", element: <ErrorBoundary><Suspense fallback={fallback}><SettingsPage /></Suspense></ErrorBoundary> },
