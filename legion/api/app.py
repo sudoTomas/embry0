@@ -69,6 +69,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from legion.execution.sandbox_manager import SandboxManager
     from legion.services.issue_executor import IssueExecutor
 
+    from legion.execution.image_manager import ContainerReaper, SandboxImageManager
+
     docker = DockerClient(
         docker_host=config.docker_host,
         tls_verify=config.docker_tls_verify,
@@ -82,6 +84,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.sandbox_manager = sandbox_mgr
     app.state.agent_runner = agent_runner
     app.state.proxy_manager = proxy_mgr
+
+    image_mgr = SandboxImageManager(docker)
+    app.state.image_manager = image_mgr
+
+    # Auto-build sandbox image on startup
+    try:
+        built = await image_mgr.ensure_image("legion-sandbox:latest")
+        if built:
+            logger.info("sandbox_image_auto_built")
+        else:
+            logger.info("sandbox_image_already_current")
+    except Exception as exc:
+        logger.warning("sandbox_image_auto_build_failed", error=str(exc))
+
+    # Start container reaper
+    reaper = ContainerReaper(docker, max_age_hours=24)
+    reaper.start()
+    app.state.container_reaper = reaper
 
     # Start proxy services
     await proxy_mgr.start(
@@ -136,6 +156,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+    await reaper.stop()
     await proxy_mgr.stop()
     await db.close()
     logger.info("legion_stopped")
