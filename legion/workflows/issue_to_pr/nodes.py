@@ -252,7 +252,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
         prompt=prompt,
         model=triage_decision.get("pipeline_config", {}).get("agent_models", {}).get("developer", "claude-sonnet-4-6"),
         tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-        timeout_seconds=600,
+        timeout_seconds=1800,
     )
 
     # Try to extract PR URL from agent output
