@@ -15,6 +15,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._max_rpm = requests_per_minute
         self._window = 60.0
         self._requests: dict[str, list[float]] = defaultdict(list)
+        self._request_count = 0
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
@@ -32,4 +33,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 headers={"Retry-After": "60"},
             )
         self._requests[ip].append(now)
+        self._request_count += 1
+        if self._request_count >= 1000:
+            self._request_count = 0
+            stale = [k for k, v in self._requests.items() if not v]
+            for k in stale:
+                del self._requests[k]
         return await call_next(request)
