@@ -20,6 +20,7 @@ def emit_audit_event(
     actor: str = "system",
     details: dict[str, Any] | None = None,
     audit_log_path: Path | None = None,
+    issue_id: str | None = None,
 ) -> None:
     """Emit a structured audit event.
 
@@ -28,12 +29,14 @@ def emit_audit_event(
         actor: Who performed action (IP address, "system", "webhook").
         details: Action-specific key-value pairs.
         audit_log_path: Path to JSONL audit log file. None = skip file write.
+        issue_id: Optional issue ID to associate the event with a specific issue.
     """
     event = {
         "timestamp": _now_iso(),
         "action": action,
         "actor": actor,
         "details": details or {},
+        "issue_id": issue_id,
     }
 
     logger.info("audit_event", **event)
