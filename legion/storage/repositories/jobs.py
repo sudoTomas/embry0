@@ -27,6 +27,7 @@ class JobsRepository:
         repo: str,
         task: str,
         issue_number: int | None = None,
+        issue_id: str | None = None,
         pipeline_template: str | None = None,
         pipeline_config: dict[str, Any] | None = None,
         sandbox_profile: str | None = None,
@@ -35,13 +36,14 @@ class JobsRepository:
         job_id = f"job-{uuid.uuid4().hex[:12]}"
         await self._db.execute(
             """
-            INSERT INTO jobs (job_id, repo, task, issue_number, pipeline_template, pipeline_config, sandbox_profile)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO jobs (job_id, repo, task, issue_number, issue_id, pipeline_template, pipeline_config, sandbox_profile)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             """,
             job_id,
             repo,
             task,
             issue_number,
+            issue_id,
             pipeline_template,
             pipeline_config,
             sandbox_profile,
