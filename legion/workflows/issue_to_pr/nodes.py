@@ -131,12 +131,14 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         writer({"type": "interrupt", "node": "triage", "questions": questions})
         logger.info("triage_needs_info", questions=len(questions))
 
-        answers = interrupt({
-            "questions": questions,
-            "reasoning": reasoning,
-            "asking_node": "triage",
-            "issue_id": state.get("issue_id"),
-        })
+        answers = interrupt(
+            {
+                "questions": questions,
+                "reasoning": reasoning,
+                "asking_node": "triage",
+                "issue_id": state.get("issue_id"),
+            }
+        )
 
         # Resumed — add answers to context and re-run
         additional = state.get("additional_context", "") or ""
@@ -156,8 +158,13 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         if agent_runner and container_id:
             prompt += f"\n\nPrevious Q&A:\n{additional}"
             result = await run_agent_node(
-                state=updated, agent_runner=agent_runner, agent_type="triage",
-                prompt=prompt, model=model, tools=["Read", "Glob", "Grep"], timeout_seconds=180,
+                state=updated,
+                agent_runner=agent_runner,
+                agent_type="triage",
+                prompt=prompt,
+                model=model,
+                tools=["Read", "Glob", "Grep"],
+                timeout_seconds=180,
             )
             if result.get("agent_outputs"):
                 last = result["agent_outputs"][-1]

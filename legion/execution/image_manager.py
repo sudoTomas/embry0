@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -53,7 +52,7 @@ class SandboxImageManager:
         """Get the build hash label from a Docker image."""
         try:
             cmd = self._docker._build_base_cmd()
-            cmd.extend(["inspect", "--format", "{{index .Config.Labels \"legion.build-hash\"}}", image])
+            cmd.extend(["inspect", "--format", '{{index .Config.Labels "legion.build-hash"}}', image])
             result = await self._docker.run_cmd(cmd, timeout=10)
             return result.strip() if result.strip() else None
         except RuntimeError:
@@ -103,13 +102,18 @@ class SandboxImageManager:
             build_context = str(self._app_root)
 
             cmd = self._docker._build_base_cmd()
-            cmd.extend([
-                "build",
-                "-t", image,
-                "--label", f"legion.build-hash={build_hash}",
-                "-f", str(dockerfile_path),
-                build_context,
-            ])
+            cmd.extend(
+                [
+                    "build",
+                    "-t",
+                    image,
+                    "--label",
+                    f"legion.build-hash={build_hash}",
+                    "-f",
+                    str(dockerfile_path),
+                    build_context,
+                ]
+            )
 
             await self._docker.run_cmd(cmd, timeout=300)
             logger.info("sandbox_image_built", image=image, hash=build_hash)
@@ -215,11 +219,16 @@ class ContainerReaper:
         """Find and destroy stale sandbox containers."""
         try:
             cmd = self._docker._build_base_cmd()
-            cmd.extend([
-                "ps", "-a",
-                "--filter", "name=sandbox-",
-                "--format", "{{.ID}} {{.Names}} {{.RunningFor}}",
-            ])
+            cmd.extend(
+                [
+                    "ps",
+                    "-a",
+                    "--filter",
+                    "name=sandbox-",
+                    "--format",
+                    "{{.ID}} {{.Names}} {{.RunningFor}}",
+                ]
+            )
             output = await self._docker.run_cmd(cmd, timeout=15)
 
             for line in output.strip().split("\n"):

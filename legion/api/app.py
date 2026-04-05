@@ -65,11 +65,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     from legion.execution.agent_runner import AgentRunner
     from legion.execution.docker_client import DockerClient
+    from legion.execution.image_manager import ContainerReaper, SandboxImageManager
     from legion.execution.proxy.manager import ProxyManager
     from legion.execution.sandbox_manager import SandboxManager
     from legion.services.issue_executor import IssueExecutor
-
-    from legion.execution.image_manager import ContainerReaper, SandboxImageManager
 
     docker = DockerClient(
         docker_host=config.docker_host,
