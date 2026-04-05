@@ -96,6 +96,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except RuntimeError:
         pass  # Network already exists
 
+    app.state.background_tasks: set[asyncio.Task] = set()
+    app.state.event_subscribers: dict[str, list[asyncio.Queue]] = {}
+
     app.state.issue_executor = IssueExecutor(
         issues_repo=app.state.issues_repo,
         jobs_repo=app.state.jobs_repo,
@@ -109,11 +112,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         sandbox_manager=sandbox_mgr,
         agent_runner=agent_runner,
         proxy_manager=proxy_mgr,
+        event_subscribers=app.state.event_subscribers,
     )
-
-    app.state.background_tasks: set[asyncio.Task] = set()
     app.state.issue_executor._background_tasks = app.state.background_tasks
-    app.state.event_subscribers: dict[str, list[asyncio.Queue]] = {}
 
     if config.telegram_bot_token and getattr(config, "telegram_webhook_url", ""):
         import secrets
