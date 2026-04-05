@@ -75,6 +75,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.issue_executor._background_tasks = app.state.background_tasks
     app.state.event_subscribers: dict[str, list[asyncio.Queue]] = {}
 
+    if config.telegram_bot_token and getattr(config, "telegram_webhook_url", ""):
+        from legion.notifications.telegram import register_webhook
+        webhook_url = f"{config.telegram_webhook_url.rstrip('/')}/api/v1/telegram/callback"
+        await register_webhook(config.telegram_bot_token, webhook_url)
+
     logger.info("legion_started")
     yield
 
@@ -126,6 +131,7 @@ def _register_routers(app: FastAPI) -> None:
         queue,
         sandbox_profiles,
         stats,
+        telegram,
         traces,
         webhooks,
     )
@@ -144,4 +150,5 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(queue.router, prefix="/api/v1", tags=["queue"], dependencies=auth_deps)
     app.include_router(pipeline_templates.router, prefix="/api/v1", tags=["pipeline-templates"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
+    app.include_router(telegram.router, prefix="/api/v1", tags=["telegram"])
     app.include_router(streaming.router)

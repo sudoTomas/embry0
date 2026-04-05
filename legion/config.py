@@ -64,6 +64,7 @@ class LegionConfig(BaseSettings):
     slack_webhook_url: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    telegram_webhook_url: str = ""
 
     # Docker / DinD
     docker_host: str = ""

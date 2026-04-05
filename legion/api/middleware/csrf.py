@@ -4,7 +4,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-_EXEMPT_PREFIXES = ("/webhook", "/health", "/ws/", "/api/v1/webhook")
+_EXEMPT_PREFIXES = ("/webhook", "/health", "/ws/", "/api/v1/webhook", "/api/v1/telegram/callback")
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
