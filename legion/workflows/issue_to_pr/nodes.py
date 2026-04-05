@@ -46,10 +46,11 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
             # Clone repo inside container
             if repo and docker and proxy_mgr and proxy_mgr.git_proxy_url:
                 clone_cmd = [
-                    "bash", "-c",
+                    "bash",
+                    "-c",
                     f'GIT_PROXY_URL="{proxy_mgr.git_proxy_url}" '
-                    f'git clone --depth=1 https://github.com/{repo}.git /workspace 2>&1 || '
-                    f'echo "Clone failed"'
+                    f"git clone --depth=1 https://github.com/{repo}.git /workspace 2>&1 || "
+                    f'echo "Clone failed"',
                 ]
                 await docker.run_cmd(
                     docker.build_exec_cmd(container_id, clone_cmd),
@@ -97,12 +98,14 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         logger.info("triage_needs_info", questions=len(questions))
 
         # Pause graph — interrupt() blocks until Command(resume=answers) is called
-        answers = interrupt({
-            "questions": questions,
-            "reasoning": reasoning,
-            "asking_node": "triage",
-            "issue_id": state.get("issue_id"),
-        })
+        answers = interrupt(
+            {
+                "questions": questions,
+                "reasoning": reasoning,
+                "asking_node": "triage",
+                "issue_id": state.get("issue_id"),
+            }
+        )
 
         # Resumed with answers — add to context and re-run triage
         additional = state.get("additional_context", "") or ""
@@ -170,14 +173,16 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
     slug = task[:30].lower().replace(" ", "-").replace("/", "-")
     branch_name = f"legion/{short_id}-{slug}"
 
-    prompt_parts.append(f"\nInstructions:")
+    prompt_parts.append("\nInstructions:")
     prompt_parts.append(f"1. Create branch: {branch_name}")
-    prompt_parts.append(f"2. Implement the changes")
-    prompt_parts.append(f"3. Write or update tests")
-    prompt_parts.append(f"4. Commit your changes")
-    prompt_parts.append(f"5. Push the branch")
-    prompt_parts.append(f"6. Create a PR with 'Closes #{issue_number}' in the body" if issue_number else "6. Create a PR")
-    prompt_parts.append(f"\nReturn a JSON object at the end with: pr_url, branch, summary, files_changed")
+    prompt_parts.append("2. Implement the changes")
+    prompt_parts.append("3. Write or update tests")
+    prompt_parts.append("4. Commit your changes")
+    prompt_parts.append("5. Push the branch")
+    prompt_parts.append(
+        f"6. Create a PR with 'Closes #{issue_number}' in the body" if issue_number else "6. Create a PR"
+    )
+    prompt_parts.append("\nReturn a JSON object at the end with: pr_url, branch, summary, files_changed")
 
     prompt = "\n".join(prompt_parts)
 
@@ -199,6 +204,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
         if last_output:
             output_text = last_output.get("output", "")
             import json as json_mod
+
             try:
                 for line in output_text.split("\n"):
                     line = line.strip()
@@ -212,6 +218,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
             # Fallback: search for GitHub PR URL pattern
             if not pr_url:
                 import re
+
                 match = re.search(r"https://github\.com/[^/]+/[^/]+/pull/\d+", output_text)
                 if match:
                     pr_url = match.group(0)
@@ -251,7 +258,7 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
 
     prompt = f"""Repository: {repo}
 Branch: {branch}
-PR: {pr_url or 'N/A'}
+PR: {pr_url or "N/A"}
 
 You are reviewing code changes made by the developer agent. Your job:
 
@@ -299,6 +306,7 @@ Return ONLY a JSON object:
         if last_output:
             output_text = last_output.get("output", "")
             import json as json_mod
+
             try:
                 data = json_mod.loads(output_text)
                 writer({"type": "validation_result", **data.get("validation", {})})

@@ -30,6 +30,7 @@ class ProxyManager:
         """Start auth and git proxy services."""
         if anthropic_api_key:
             from legion.execution.proxy.auth_proxy import create_auth_proxy_app
+
             auth_app = create_auth_proxy_app(anthropic_api_key)
             await self._start_app(auth_app, "0.0.0.0", auth_proxy_port)
             self.auth_proxy_url = f"http://host.docker.internal:{auth_proxy_port}"
@@ -37,6 +38,7 @@ class ProxyManager:
 
         if github_token:
             from legion.execution.proxy.git_proxy import create_git_proxy_app
+
             git_app = create_git_proxy_app(github_token)
             await self._start_app(git_app, "0.0.0.0", git_proxy_port)
             self.git_proxy_url = f"http://host.docker.internal:{git_proxy_port}"
@@ -56,9 +58,14 @@ class ProxyManager:
     ) -> str:
         """Start a Legion API proxy scoped to a specific job. Returns the URL."""
         from legion.execution.proxy.legion_proxy import create_legion_proxy_app
+
         app = create_legion_proxy_app(
-            issues_repo=issues_repo, inputs_repo=inputs_repo,
-            issue_id=issue_id, job_id=job_id, repo=repo, db=db,
+            issues_repo=issues_repo,
+            inputs_repo=inputs_repo,
+            issue_id=issue_id,
+            job_id=job_id,
+            repo=repo,
+            db=db,
         )
         await self._start_app(app, "0.0.0.0", port)
         url = f"http://host.docker.internal:{port}"
