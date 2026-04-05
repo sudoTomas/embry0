@@ -38,9 +38,11 @@ Guidelines:
 Respond ONLY with the JSON object, no markdown fences or extra text."""
 
 
-def _create_anthropic_client(api_key: str) -> Any:
-    """Create an Anthropic client. Separated for testing."""
+def _create_anthropic_client(api_key: str = "", auth_token: str = "") -> Any:
+    """Create an Anthropic client. Supports both API key and OAuth token auth."""
     import anthropic
+    if auth_token:
+        return anthropic.AsyncAnthropic(auth_token=auth_token)
     return anthropic.AsyncAnthropic(api_key=api_key)
 
 
@@ -82,11 +84,15 @@ def parse_triage_response(raw: str) -> TriageDecision:
 
 async def run_triage_node(
     state: dict[str, Any],
-    api_key: str,
+    api_key: str = "",
+    auth_token: str = "",
     model: str = "claude-sonnet-4-6",
     confidence_threshold: float = 0.5,
 ) -> dict[str, Any]:
-    """Execute the triage LLM call and return state updates."""
+    """Execute the triage LLM call and return state updates.
+
+    Supports both Anthropic API key and Claude Max OAuth token auth.
+    """
     repo = state.get("repo", "")
     task = state.get("task", "")
     issue_number = state.get("issue_number")
@@ -97,7 +103,7 @@ async def run_triage_node(
     user_prompt += f"\nTask:\n{task}"
 
     try:
-        client = _create_anthropic_client(api_key)
+        client = _create_anthropic_client(api_key=api_key, auth_token=auth_token)
         async with client:
             response = await client.messages.create(
                 model=model,
