@@ -32,6 +32,18 @@ async def github_webhook(
     event_type = x_github_event
     logger.info("webhook_received", event_type=event_type, action=action)
 
+    # Handle issue events via sync service
+    if event_type == "issues" and action in ("opened", "edited", "closed", "reopened", "labeled", "unlabeled"):
+        issues_repo = request.app.state.issues_repo
+        github_sync = request.app.state.github_sync
+        if issues_repo and github_sync:
+            trigger_labels = set(config.trigger_labels_list) if hasattr(config, "trigger_labels_list") else set()
+            result = await github_sync.handle_webhook_event(
+                event_type=event_type, action=action, payload=payload,
+                issues_repo=issues_repo, trigger_labels=trigger_labels,
+            )
+            return result
+
     if event_type == "issues" and action == "labeled":
         issue = payload.get("issue", {})
         labels = [lbl.get("name", "") for lbl in issue.get("labels", [])]
