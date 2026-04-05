@@ -1,11 +1,10 @@
 """Pydantic request/response models for issues."""
 
-import re
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-_REPO_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
+from legion.api.schemas import _REPO_PATTERN
 
 
 class CreateIssueRequest(BaseModel):

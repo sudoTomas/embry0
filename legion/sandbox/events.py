@@ -5,15 +5,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-
-class EventType:
-    AGENT_STARTED = "agent_started"
-    AGENT_COMPLETED = "agent_completed"
-    PROGRESS = "progress"
-    TOOL_CALL = "tool_call"
-    GIT_OPERATION = "git_operation"
-    GITHUB_API = "github_api"
-    ERROR = "error"
+from legion.execution.events import EventType
 
 
 def emit_event(event_type: str, **kwargs: Any) -> None:
