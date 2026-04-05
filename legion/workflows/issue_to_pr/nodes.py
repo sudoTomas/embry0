@@ -71,11 +71,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
 
 
 async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-    """Run triage agent — analyze issue and decide proceed/split/needs_info.
-
-    If needs_info, calls interrupt() to pause for human input.
-    On resume, re-runs triage with the answers as additional context.
-    """
+    """Run triage agent — via AgentRunner in sandbox if available, else direct SDK."""
     import os
 
     from legion.orchestration.nodes.triage import run_triage_node
@@ -84,33 +80,68 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     writer({"type": "node_started", "node": "triage", "agent": "triage"})
 
     model = os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-6")
-    result = await run_triage_node(state, model=model)
+    agent_runner = config["configurable"].get("agent_runner")
+    container_id = state.get("sandbox_container_id")
 
-    # Check if triage wants more info
+    if agent_runner and container_id:
+        # Run triage inside sandbox via AgentRunner
+        from legion.orchestration.nodes.agent import run_agent_node
+        from legion.orchestration.nodes.triage import parse_triage_response
+
+        repo = state.get("repo", "")
+        task = state.get("task", "")
+        issue_number = state.get("issue_number")
+        additional = state.get("additional_context", "")
+
+        prompt = f"Repository: {repo}\n"
+        if issue_number:
+            prompt += f"Issue #{issue_number}\n"
+        prompt += f"\nTask:\n{task}"
+        if additional:
+            prompt += f"\n\nPrevious Q&A:\n{additional}"
+
+        result = await run_agent_node(
+            state=state,
+            agent_runner=agent_runner,
+            agent_type="triage",
+            prompt=prompt,
+            model=model,
+            tools=["Read", "Glob", "Grep"],
+            timeout_seconds=180,
+        )
+
+        # Parse triage decision from agent output
+        if result.get("agent_outputs"):
+            last = result["agent_outputs"][-1]
+            if not last.get("is_error"):
+                decision = parse_triage_response(last.get("output", ""))
+                result["pipeline_config"] = decision
+                result["current_stage"] = "triage_complete"
+    else:
+        # Fallback: run triage directly via Agent SDK (no sandbox)
+        result = await run_triage_node(state, model=model)
+
+    # Check needs_info → interrupt
     pipeline_config = result.get("pipeline_config", {})
     action = pipeline_config.get("action", "proceed")
 
     if action == "needs_info":
         questions = pipeline_config.get("questions", [])
         reasoning = pipeline_config.get("reasoning", "")
-
-        writer({"type": "interrupt", "node": "triage", "questions": questions, "reasoning": reasoning})
+        writer({"type": "interrupt", "node": "triage", "questions": questions})
         logger.info("triage_needs_info", questions=len(questions))
 
-        # Pause graph — interrupt() blocks until Command(resume=answers) is called
-        answers = interrupt(
-            {
-                "questions": questions,
-                "reasoning": reasoning,
-                "asking_node": "triage",
-                "issue_id": state.get("issue_id"),
-            }
-        )
+        answers = interrupt({
+            "questions": questions,
+            "reasoning": reasoning,
+            "asking_node": "triage",
+            "issue_id": state.get("issue_id"),
+        })
 
-        # Resumed with answers — add to context and re-run triage
+        # Resumed — add answers to context and re-run
         additional = state.get("additional_context", "") or ""
         if isinstance(answers, str):
-            additional += f"\n\nUser provided additional context:\n{answers}"
+            additional += f"\n\n{answers}"
         elif isinstance(answers, dict):
             for q, a in answers.items():
                 additional += f"\n\nQ: {q}\nA: {a}"
@@ -118,12 +149,24 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             for item in answers:
                 if isinstance(item, dict):
                     additional += f"\n\nQ: {item.get('question', '')}\nA: {item.get('answer', '')}"
-                else:
-                    additional += f"\n\n{item}"
 
-        updated_state = {**state, "additional_context": additional}
-        writer({"type": "progress", "message": "Re-running triage with user answers"})
-        result = await run_triage_node(updated_state, model=model)
+        updated = {**state, "additional_context": additional}
+        writer({"type": "progress", "message": "Re-running triage with answers"})
+
+        if agent_runner and container_id:
+            prompt += f"\n\nPrevious Q&A:\n{additional}"
+            result = await run_agent_node(
+                state=updated, agent_runner=agent_runner, agent_type="triage",
+                prompt=prompt, model=model, tools=["Read", "Glob", "Grep"], timeout_seconds=180,
+            )
+            if result.get("agent_outputs"):
+                last = result["agent_outputs"][-1]
+                if not last.get("is_error"):
+                    decision = parse_triage_response(last.get("output", ""))
+                    result["pipeline_config"] = decision
+                    result["current_stage"] = "triage_complete"
+        else:
+            result = await run_triage_node(updated, model=model)
 
     writer({"type": "node_completed", "node": "triage", "action": result.get("pipeline_config", {}).get("action")})
     return result
