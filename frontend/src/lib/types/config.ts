@@ -6,7 +6,6 @@ export interface ConfigResponse {
   monthly_cap_usd: number;
   rate_limit_per_author_per_hour: number;
   overrun_mode: OverrunMode;
-  [key: string]: unknown;
 }
 
 export type ConfigUpdateRequest = Partial<ConfigResponse>;
