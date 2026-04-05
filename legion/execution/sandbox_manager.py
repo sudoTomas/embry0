@@ -17,7 +17,7 @@ _DEFAULT_PROFILE: dict[str, Any] = {
     "memory": "8g",
     "cpus": "4",
     "pids_limit": 256,
-    "read_only_root": True,
+    "read_only_root": False,  # Claude CLI needs writable rootfs for Node.js cache
     "cap_drop": ["ALL"],
     "cap_add": [],
     "security_opt": ["no-new-privileges"],
