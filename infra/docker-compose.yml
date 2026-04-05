@@ -36,6 +36,8 @@ services:
     volumes:
       - dind-certs-client:/certs/client:ro
       - orchestrator-data:/data
+      # Claude CLI OAuth credentials (for Agent SDK triage calls)
+      - ${HOME}/.claude:/home/orchestrator/.claude:ro
     depends_on:
       postgres:
         condition: service_healthy

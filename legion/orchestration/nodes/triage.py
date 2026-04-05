@@ -38,14 +38,6 @@ Guidelines:
 Respond ONLY with the JSON object, no markdown fences or extra text."""
 
 
-def _create_anthropic_client(api_key: str = "", auth_token: str = "") -> Any:
-    """Create an Anthropic client. Supports both API key and OAuth token auth."""
-    import anthropic
-    if auth_token:
-        return anthropic.AsyncAnthropic(auth_token=auth_token)
-    return anthropic.AsyncAnthropic(api_key=api_key)
-
-
 def parse_triage_response(raw: str) -> TriageDecision:
     """Parse LLM response into a TriageDecision. Falls back to safe defaults."""
     try:
@@ -84,15 +76,17 @@ def parse_triage_response(raw: str) -> TriageDecision:
 
 async def run_triage_node(
     state: dict[str, Any],
-    api_key: str = "",
-    auth_token: str = "",
     model: str = "claude-sonnet-4-6",
     confidence_threshold: float = 0.5,
+    **_kwargs: Any,
 ) -> dict[str, Any]:
-    """Execute the triage LLM call and return state updates.
+    """Execute the triage via Claude Agent SDK and return state updates.
 
-    Supports both Anthropic API key and Claude Max OAuth token auth.
+    Uses the Claude CLI subprocess with stored OAuth credentials.
+    No API key required.
     """
+    from legion.agents.sdk import run_agent
+
     repo = state.get("repo", "")
     task = state.get("task", "")
     issue_number = state.get("issue_number")
@@ -103,17 +97,22 @@ async def run_triage_node(
     user_prompt += f"\nTask:\n{task}"
 
     try:
-        client = _create_anthropic_client(api_key=api_key, auth_token=auth_token)
-        async with client:
-            response = await client.messages.create(
-                model=model,
-                max_tokens=1024,
-                system=_TRIAGE_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
+        result = await run_agent(
+            prompt=user_prompt,
+            agent_name="triage",
+            model=model,
+            system_prompt=_TRIAGE_SYSTEM_PROMPT,
+            timeout_seconds=120,
+        )
 
-        raw_text = response.content[0].text
-        decision = parse_triage_response(raw_text)
+        if not result.success or not result.raw_output:
+            logger.error("triage_llm_failed", error=result.error)
+            return {
+                "current_stage": "triage_failed",
+                "errors": [f"Triage failed: {result.error}"],
+            }
+
+        decision = parse_triage_response(result.raw_output)
 
         if decision.get("confidence", 0.0) < confidence_threshold and decision.get("action") == "proceed":
             orig_confidence = decision.get("confidence", 0.0)
