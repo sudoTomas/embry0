@@ -32,8 +32,11 @@ export function JobDetailPage() {
   const logs = useJobLogs(shouldStream ? jobId! : "");
   const { data: jobInputs } = useJobInputs(jobId ?? "");
 
-  const isActive = job?.status === "running" || job?.status === "triaging" || job?.status === "awaiting_input";
-  const { events: pipelineEvents, connected: pipelineConnected } = useJobEvents(jobId, isActive || job?.status === "completed" || job?.status === "failed");
+  const isActive = job?.status === "running" || job?.status === "awaiting_input";
+  const { events: pipelineEvents, connected: pipelineConnected } = useJobEvents(
+    jobId,
+    isActive || job?.status === "completed" || job?.status === "failed",
+  );
 
   const [selectedAgent, setSelectedAgent] = useState<{ agentType: string; nodeId: string } | null>(null);
   const [logsExpanded, setLogsExpanded] = useState(false);
