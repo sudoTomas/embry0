@@ -2,7 +2,13 @@
 from fastapi import APIRouter, Depends
 
 from legion.api.deps import get_budget_repo, get_context_repo, get_integration_repo, get_provider_repo
-from legion.api.schemas import BudgetConfigRequest, BudgetConfigResponse, ContextConfigRequest, IntegrationConfigUpdate, ProviderConfigUpdate
+from legion.api.schemas import (
+    BudgetConfigRequest,
+    BudgetConfigResponse,
+    ContextConfigRequest,
+    IntegrationConfigUpdate,
+    ProviderConfigUpdate,
+)
 from legion.storage.repositories.budget_config import BudgetConfigRepository
 from legion.storage.repositories.context_config import ContextConfigRepository
 from legion.storage.repositories.integration_config import IntegrationConfigRepository

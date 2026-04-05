@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import shutil
 import time
-from typing import Any
 
 import structlog
 from pydantic import BaseModel
@@ -128,7 +127,7 @@ async def run_agent(
             usage=usage_data,
         )
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed_ms = int((time.time() - start_time) * 1000)
         return AgentResult(
             success=False,
