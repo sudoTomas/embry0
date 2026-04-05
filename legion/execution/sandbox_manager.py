@@ -64,10 +64,13 @@ class SandboxManager:
         return container_id
 
     async def _copy_credentials(self, container_name: str) -> None:
-        """Copy Claude OAuth credentials into the sandbox container."""
+        """Copy Claude OAuth credentials into the sandbox container via exec.
+
+        Uses `docker exec bash -c 'cat > file'` with stdin piping since
+        docker cp doesn't work with read-only rootfs + tmpfs overlays.
+        """
+        import asyncio
         import os
-        import subprocess
-        import tempfile
 
         src = "/home/orchestrator/.claude"
         if not os.path.isdir(src):
@@ -75,38 +78,30 @@ class SandboxManager:
             return
 
         try:
-            # Create a tar of the credentials and pipe into docker cp
-            # docker cp requires tar format for directories
-            with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
-                tmp_path = tmp.name
+            for filename in [".credentials.json", ".claude.json"]:
+                filepath = os.path.join(src, filename)
+                if not os.path.isfile(filepath):
+                    continue
 
-            # Create tar with just the credentials files we need
-            subprocess.run(
-                ["tar", "cf", tmp_path, "-C", src, ".credentials.json", ".claude.json"],
-                check=True,
-                capture_output=True,
-                timeout=10,
-            )
+                with open(filepath, "rb") as f:
+                    content = f.read()
 
-            # Create the target dir in container via docker exec
-            mkdir_cmd = self._docker.build_exec_cmd(
-                container_name, ["bash", "-c", "mkdir -p /home/agent/.claude"]
-            )
-            await self._docker.run_cmd(mkdir_cmd, timeout=10)
+                # Pipe file content into container via docker exec stdin
+                cmd = self._docker.build_exec_cmd(
+                    container_name,
+                    ["bash", "-c", f"cat > /home/agent/.claude/{filename}"],
+                )
+                # Need raw subprocess for stdin piping
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(proc.communicate(input=content), timeout=10)
+                if proc.returncode != 0:
+                    logger.warning("credential_file_copy_failed", file=filename)
 
-            # Copy tar into container
-            cp_cmd = self._docker._build_base_cmd()
-            cp_cmd.extend(["cp", tmp_path, f"{container_name}:/tmp/claude-creds.tar"])
-            await self._docker.run_cmd(cp_cmd, timeout=10)
-
-            # Extract inside container
-            extract_cmd = self._docker.build_exec_cmd(
-                container_name,
-                ["bash", "-c", "cd /home/agent/.claude && tar xf /tmp/claude-creds.tar && rm /tmp/claude-creds.tar"],
-            )
-            await self._docker.run_cmd(extract_cmd, timeout=10)
-
-            os.unlink(tmp_path)
             logger.info("claude_credentials_copied", container=container_name)
 
         except Exception as exc:
