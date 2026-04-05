@@ -70,6 +70,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     app.state.background_tasks: set[asyncio.Task] = set()
+    app.state.issue_executor._background_tasks = app.state.background_tasks
     app.state.event_subscribers: dict[str, list[asyncio.Queue]] = {}
 
     logger.info("legion_started")

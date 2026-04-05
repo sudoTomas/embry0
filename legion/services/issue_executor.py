@@ -7,8 +7,7 @@ from typing import Any
 
 import structlog
 
-from legion.audit.db_logger import emit_audit_event_db
-from legion.audit.logger import emit_audit_event
+from legion.audit.helpers import emit_audit
 from legion.orchestration.checkpoint import create_checkpointer
 from legion.storage.database import DatabasePool
 from legion.storage.repositories.issues import IssuesRepository
@@ -61,21 +60,14 @@ class IssueExecutor:
             issue_id=issue_id,
         )
 
-        emit_audit_event(
+        await emit_audit(
+            self._db,
             "issue.job_created",
             actor="system",
             details={"job_id": job_id, "issue_id": issue_id},
             audit_log_path=self._audit_log_path,
             issue_id=issue_id,
         )
-        if self._db is not None:
-            await emit_audit_event_db(
-                self._db,
-                "issue.job_created",
-                actor="system",
-                details={"job_id": job_id, "issue_id": issue_id},
-                issue_id=issue_id,
-            )
 
         logger.info("issue_job_created", issue_id=issue_id, job_id=job_id)
 
@@ -131,7 +123,8 @@ class IssueExecutor:
             )
             await self._jobs.update(job_id, status="failed", error_message=str(exc))
             await self._issues.update(issue_id, status="open")
-            emit_audit_event(
+            await emit_audit(
+                self._db,
                 "issue.status_changed",
                 actor="system",
                 details={
@@ -142,18 +135,6 @@ class IssueExecutor:
                 audit_log_path=self._audit_log_path,
                 issue_id=issue_id,
             )
-            if self._db is not None:
-                await emit_audit_event_db(
-                    self._db,
-                    "issue.status_changed",
-                    actor="system",
-                    details={
-                        "old_status": "triaging",
-                        "new_status": "open",
-                        "reason": f"Workflow failed: {exc}",
-                    },
-                    issue_id=issue_id,
-                )
 
     async def _handle_workflow_result(
         self, issue_id: str, job_id: str, result: dict[str, Any]
@@ -191,7 +172,8 @@ class IssueExecutor:
             issue_status = "closed" if final_status == "completed" else "open"
             await self._issues.update(issue_id, status=issue_status)
             await self._issues.update_parent_status(issue_id)
-            emit_audit_event(
+            await emit_audit(
+                self._db,
                 "issue.status_changed",
                 actor="system",
                 details={
@@ -202,18 +184,6 @@ class IssueExecutor:
                 audit_log_path=self._audit_log_path,
                 issue_id=issue_id,
             )
-            if self._db is not None:
-                await emit_audit_event_db(
-                    self._db,
-                    "issue.status_changed",
-                    actor="system",
-                    details={
-                        "old_status": "triaging",
-                        "new_status": issue_status,
-                        "job_status": final_status,
-                    },
-                    issue_id=issue_id,
-                )
 
     async def _handle_split(
         self, issue_id: str, job_id: str, decision: dict[str, Any]
@@ -244,7 +214,8 @@ class IssueExecutor:
         await self._issues.update(issue_id, status="open")
         await self._issues.update_parent_status(issue_id)
 
-        emit_audit_event(
+        await emit_audit(
+            self._db,
             "issue.decomposed",
             actor="triage_agent",
             details={
@@ -255,20 +226,9 @@ class IssueExecutor:
             audit_log_path=self._audit_log_path,
             issue_id=issue_id,
         )
-        if self._db is not None:
-            await emit_audit_event_db(
-                self._db,
-                "issue.decomposed",
-                actor="triage_agent",
-                details={
-                    "child_issue_ids": child_ids,
-                    "count": len(child_ids),
-                    "reasoning": decision.get("reasoning", ""),
-                },
-                issue_id=issue_id,
-            )
 
-        emit_audit_event(
+        await emit_audit(
+            self._db,
             "issue.triaged",
             actor="triage_agent",
             details={
@@ -279,18 +239,6 @@ class IssueExecutor:
             audit_log_path=self._audit_log_path,
             issue_id=issue_id,
         )
-        if self._db is not None:
-            await emit_audit_event_db(
-                self._db,
-                "issue.triaged",
-                actor="triage_agent",
-                details={
-                    "action": "split",
-                    "confidence": decision.get("confidence"),
-                    "reasoning": decision.get("reasoning", ""),
-                },
-                issue_id=issue_id,
-            )
 
         logger.info("issue_decomposed", issue_id=issue_id, children=child_ids)
 
@@ -301,7 +249,8 @@ class IssueExecutor:
         await self._jobs.update(job_id, status="completed")
         await self._issues.update(issue_id, status="open")
 
-        emit_audit_event(
+        await emit_audit(
+            self._db,
             "issue.triaged",
             actor="triage_agent",
             details={
@@ -313,19 +262,6 @@ class IssueExecutor:
             audit_log_path=self._audit_log_path,
             issue_id=issue_id,
         )
-        if self._db is not None:
-            await emit_audit_event_db(
-                self._db,
-                "issue.triaged",
-                actor="triage_agent",
-                details={
-                    "action": "needs_info",
-                    "confidence": decision.get("confidence"),
-                    "questions": decision.get("questions", []),
-                    "reasoning": decision.get("reasoning", ""),
-                },
-                issue_id=issue_id,
-            )
 
         logger.info(
             "issue_needs_info",
