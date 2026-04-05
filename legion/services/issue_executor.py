@@ -309,7 +309,14 @@ class IssueExecutor:
         logger.info("issue_decomposed", issue_id=issue_id, children=child_ids)
 
     async def _broadcast_event(self, job_id: str, event: dict) -> None:
-        """Forward an event to WebSocket subscribers for this job."""
+        """Forward event to WebSocket subscribers and persist to job_logs."""
+        # Persist to database
+        try:
+            await self._jobs.append_log_event(job_id, event)
+        except Exception:
+            logger.warning("event_persist_failed", job_id=job_id, exc_info=True)
+
+        # Forward to WebSocket subscribers
         subscribers = self._event_subscribers.get(job_id, [])
         for queue in subscribers:
             try:
