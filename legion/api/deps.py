@@ -80,3 +80,8 @@ def get_integration_repo(request: Request):
 def get_provider_repo(request: Request):
     """Return the ProviderConfigRepository from request state."""
     return request.app.state.provider_repo
+
+
+def get_issues_repo(request: Request):
+    """Return the IssuesRepository from request state."""
+    return request.app.state.issues_repo
