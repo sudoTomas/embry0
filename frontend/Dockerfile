@@ -2,8 +2,8 @@
 FROM node:20-alpine AS build
 
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY . .
 RUN npm run build
 
@@ -18,6 +18,8 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Copy built SPA from build stage
 COPY --from=build /app/dist /usr/share/nginx/html
+
+USER nginx
 
 EXPOSE 80
 

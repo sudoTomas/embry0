@@ -17,14 +17,14 @@ COPY legion/__init__.py /app/legion/__init__.py
 WORKDIR /app
 RUN pip install --no-cache-dir . psycopg[binary]
 
-# Application code (overwrite with full source)
-COPY legion/ /app/legion/
-
 # Install Node.js (required for Claude CLI / Agent SDK)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @anthropic-ai/claude-code@latest
+
+# Application code (overwrite with full source)
+COPY legion/ /app/legion/
 
 # Non-root user
 RUN useradd --create-home orchestrator \
