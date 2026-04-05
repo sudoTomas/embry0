@@ -70,6 +70,7 @@ class DockerClient:
         if read_only:
             cmd.append("--read-only")
             cmd.extend(["--tmpfs", "/tmp:rw,noexec,nosuid"])
+            cmd.extend(["--tmpfs", "/home/agent/.claude:rw,noexec,nosuid"])
 
         for key, value in (env or {}).items():
             cmd.extend(["-e", f"{key}={value}"])
