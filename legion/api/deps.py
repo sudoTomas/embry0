@@ -90,3 +90,8 @@ def get_issues_repo(request: Request):
 def get_github_sync(request: Request):
     """Return the GitHubSyncService from request state."""
     return request.app.state.github_sync
+
+
+def get_issue_executor(request: Request):
+    """Return the IssueExecutor from request state."""
+    return request.app.state.issue_executor

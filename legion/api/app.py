@@ -58,6 +58,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry.register(IssueToprWorkflow())
     app.state.workflow_registry = registry
 
+    from legion.services.issue_executor import IssueExecutor
+    app.state.issue_executor = IssueExecutor(
+        issues_repo=app.state.issues_repo,
+        jobs_repo=app.state.jobs_repo,
+        traces_repo=app.state.traces_repo,
+        workflow_registry=registry,
+        database_url=config.database_url,
+        audit_log_path=config.audit_log_path,
+    )
+
     app.state.background_tasks: set[asyncio.Task] = set()
     app.state.event_subscribers: dict[str, list[asyncio.Queue]] = {}
 
