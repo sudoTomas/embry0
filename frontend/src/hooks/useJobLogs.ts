@@ -51,7 +51,7 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
     if (!jobId) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/jobs/${jobId}/logs`);
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/jobs/${jobId}/events`);
     wsRef.current = ws;
 
     ws.onopen = () => {
