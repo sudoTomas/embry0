@@ -91,8 +91,22 @@ class IssueExecutor:
         """Execute the issue-to-pr workflow and handle the outcome."""
         from datetime import UTC, datetime
 
+        container_id = None
         try:
             await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
+
+            if self._sandbox:
+                try:
+                    env = {}
+                    if self._proxy:
+                        if self._proxy.auth_proxy_url:
+                            env["ANTHROPIC_BASE_URL"] = self._proxy.auth_proxy_url
+                        if self._proxy.git_proxy_url:
+                            env["GIT_PROXY_URL"] = self._proxy.git_proxy_url
+                    container_id = await self._sandbox.create(job_id, env=env)
+                    logger.info("sandbox_created_for_job", job_id=job_id, container_id=container_id)
+                except Exception as exc:
+                    logger.warning("sandbox_creation_failed", job_id=job_id, error=str(exc))
 
             workflow = self._registry.get("issue-to-pr")
             if not workflow:
@@ -109,6 +123,7 @@ class IssueExecutor:
                 "retry_count": 0,
                 "total_cost_usd": 0.0,
                 "budget_overrun_usd": 0.0,
+                "sandbox_container_id": container_id,
             }
 
             async with checkpointer_context(self._database_url) as saver:
@@ -119,6 +134,14 @@ class IssueExecutor:
                 )
 
             await self._handle_workflow_result(issue_id, job_id, result)
+
+            # Cleanup sandbox (skip if awaiting_input — needed for resume)
+            if container_id and self._sandbox and result.get("current_stage") != "awaiting_input":
+                try:
+                    await self._sandbox.destroy(container_id)
+                    logger.info("sandbox_destroyed", job_id=job_id)
+                except Exception:
+                    logger.warning("sandbox_destroy_failed", job_id=job_id, exc_info=True)
 
         except Exception as exc:
             logger.error(
@@ -141,6 +164,12 @@ class IssueExecutor:
                 audit_log_path=self._audit_log_path,
                 issue_id=issue_id,
             )
+            if container_id and self._sandbox:
+                try:
+                    await self._sandbox.destroy(container_id)
+                    logger.info("sandbox_destroyed", job_id=job_id)
+                except Exception:
+                    logger.warning("sandbox_destroy_failed", job_id=job_id, exc_info=True)
 
     async def _handle_workflow_result(self, issue_id: str, job_id: str, result: dict[str, Any]) -> None:
         """Process the workflow result and update issue/job status."""
@@ -332,3 +361,27 @@ class IssueExecutor:
                 await self._issues.update(issue_id, status="open")
 
         logger.info("needs_info_handled", issue_id=issue_id, blocking=has_blocking)
+
+    async def resume(self, issue_id: str, job_id: str, additional_context: Any) -> None:
+        """Resume a paused pipeline with additional context from answered questions."""
+        try:
+            await self._jobs.update(job_id, status="running")
+            await self._issues.update(issue_id, status="triaging")
+
+            workflow = self._registry.get("issue-to-pr")
+            if not workflow:
+                raise RuntimeError("Workflow 'issue-to-pr' not registered")
+
+            async with checkpointer_context(self._database_url) as saver:
+                graph = workflow.compile(config={"checkpointer": saver})
+                result = await graph.ainvoke(
+                    {"additional_context": additional_context, "pending_inputs": [], "current_stage": ""},
+                    config={"configurable": {"thread_id": job_id}},
+                )
+
+            await self._handle_workflow_result(issue_id, job_id, result)
+
+        except Exception as exc:
+            logger.error("pipeline_resume_failed", issue_id=issue_id, job_id=job_id, error=str(exc))
+            await self._jobs.update(job_id, status="failed", error_message=str(exc))
+            await self._issues.update(issue_id, status="open")
