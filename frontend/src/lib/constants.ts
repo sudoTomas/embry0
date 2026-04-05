@@ -46,6 +46,8 @@ export const JOB_STATUS_COLORS: Record<string, string> = {
   failed: "text-destructive",
   cancelled: "text-muted-foreground",
   awaiting_input: "text-amber-400",
+  pr_merged: "text-purple-400",
+  pr_closed: "text-muted-foreground",
 };
 
 export const JOB_STATUS_BG_COLORS: Record<string, string> = {
@@ -55,6 +57,8 @@ export const JOB_STATUS_BG_COLORS: Record<string, string> = {
   failed: "bg-destructive/10",
   cancelled: "bg-muted/10",
   awaiting_input: "bg-amber-400/10",
+  pr_merged: "bg-purple-400/10",
+  pr_closed: "bg-muted/10",
 };
 
 export const TIER_COLORS: Record<string, string> = {

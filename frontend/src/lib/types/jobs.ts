@@ -1,4 +1,4 @@
-export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_input";
+export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_input" | "pr_merged" | "pr_closed";
 export type Tier = "routine" | "standard" | "complex";
 export type ProviderMode = "anthropic_api" | "claude_max" | "ollama";
 export type TraceResult = "pass" | "fail" | "partial" | "error" | "timeout" | "budget_exceeded";
