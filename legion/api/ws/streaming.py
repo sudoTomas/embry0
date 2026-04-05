@@ -1,6 +1,7 @@
 """WebSocket streaming — live job events to clients."""
 
 import asyncio
+import hmac
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -11,6 +12,13 @@ router = APIRouter()
 
 @router.websocket("/ws/jobs/{job_id}/events")
 async def job_events(websocket: WebSocket, job_id: str) -> None:
+    # Auth check
+    config = websocket.app.state.config
+    if not config.dev_mode and config.api_key:
+        token = websocket.query_params.get("token", "")
+        if not hmac.compare_digest(token, config.api_key):
+            await websocket.close(code=4001, reason="Unauthorized")
+            return
     await websocket.accept()
     queue: asyncio.Queue[dict] = asyncio.Queue()
     subscribers = websocket.app.state.event_subscribers
