@@ -10,38 +10,37 @@ router = APIRouter()
 
 @router.get("/stats")
 async def get_stats(db: DatabasePool = Depends(get_db)) -> dict:
-    """Return dashboard statistics in the format the frontend expects."""
-    total_jobs = await db.fetchval("SELECT COUNT(*) FROM jobs") or 0
-    completed = await db.fetchval("SELECT COUNT(*) FROM jobs WHERE status = 'completed'") or 0
-    failed = await db.fetchval("SELECT COUNT(*) FROM jobs WHERE status = 'failed'") or 0
-    total_cost = float(await db.fetchval("SELECT COALESCE(SUM(total_cost_usd), 0) FROM jobs") or 0.0)
+    row = await db.fetchrow(
+        """
+        SELECT
+            COUNT(*) AS total_jobs,
+            COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+            COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+            COALESCE(SUM(total_cost_usd), 0) AS total_cost
+        FROM jobs
+        """
+    )
+    total_jobs = row["total_jobs"] if row else 0
+    completed = row["completed"] if row else 0
+    failed = row["failed"] if row else 0
+    total_cost = float(row["total_cost"] if row else 0.0)
     success_rate = completed / total_jobs if total_jobs > 0 else 0.0
+    total_issues = await db.fetchval("SELECT COUNT(*) FROM issues") or 0
 
     return {
-        # Core metrics
-        "total_issues": total_jobs,
+        "total_issues": total_issues,
         "total_jobs": total_jobs,
         "completed": completed,
         "failed": failed,
         "success_rate": success_rate,
         "total_cost_usd": total_cost,
-
-        # Cost breakdowns (empty until we have tier tracking)
         "daily_cost_usd": 0.0,
         "monthly_cost_usd": 0.0,
         "cost_by_tier": {},
         "avg_cost_per_tier": {},
-
-        # Tier breakdowns (empty until we have tier tracking)
         "success_rate_by_tier": {},
         "avg_attempts_by_tier": {},
-
-        # Queue
         "queue_depth": 0,
-
-        # Failure categories (empty)
         "failure_categories": {},
-
-        # Recent issues (empty list)
         "recent_issues": [],
     }
