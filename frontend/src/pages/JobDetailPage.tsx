@@ -4,7 +4,7 @@ import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useJob } from "@/hooks/useJobs";
 import { useJobLogs } from "@/hooks/useJobLogs";
-import { useAgentTypes } from "@/hooks/useAgentTypes";
+import { useAgents } from "@/hooks/useAgents";
 import { useJobInputs } from "@/hooks/useInputs";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
 import { SummaryMetricsBar } from "@/components/jobs/SummaryMetricsBar";
@@ -21,7 +21,7 @@ import type { AgentDefinition, LogEvent, JobInput } from "@/lib/types";
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const { data: job, isLoading, isError } = useJob(jobId);
-  const { data: agentTypes } = useAgentTypes();
+  const { data: agentTypes } = useAgents();
 
   const isRunning = job?.status === "running";
   const isAwaitingInput = job?.status === "awaiting_input";

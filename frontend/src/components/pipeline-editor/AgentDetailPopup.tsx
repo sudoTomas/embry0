@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Node } from "@xyflow/react";
 import { X, ChevronDown, ChevronRight } from "lucide-react";
-import { useAgentTypes } from "@/hooks/useAgentTypes";
+import { useAgents } from "@/hooks/useAgents";
 import { getAgentColor, getAgentCategory } from "@/lib/graph-utils";
 import { getAgentIcon } from "@/lib/agentIcons";
 import { cn } from "@/lib/utils";
@@ -222,7 +222,7 @@ export function AgentDetailPopup({
   onClose,
 }: AgentDetailPopupProps) {
   const d = node.data as Record<string, unknown>;
-  const { data: agents } = useAgentTypes();
+  const { data: agents } = useAgents();
   const [editing, setEditing] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 

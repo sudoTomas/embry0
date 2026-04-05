@@ -7,7 +7,7 @@ import { AgentExecutionCard } from "@/components/agents/AgentExecutionCard";
 import { AgentDetailPopup } from "@/components/agents/AgentDetailPopup";
 import { StateFlowPanel } from "@/components/state/StateFlowPanel";
 import { DEFAULT_ISSUE_TO_PR_PHASES } from "@/lib/pipeline-phases";
-import { useAgentTypes } from "@/hooks/useAgentTypes";
+import { useAgents } from "@/hooks/useAgents";
 import type { NodeStateEvent } from "@/lib/types";
 import type { AgentDefinition } from "@/lib/types";
 
@@ -79,7 +79,7 @@ const MOCK_LIVE_OUTPUT: Record<string, string> = {
 };
 
 export function DemoPage() {
-  const { data: agentTypes } = useAgentTypes();
+  const { data: agentTypes } = useAgents();
   const [selectedAgent, setSelectedAgent] = useState<{ agentType: string; nodeId: string } | null>(null);
 
   const agentInfo: AgentDefinition | undefined = selectedAgent

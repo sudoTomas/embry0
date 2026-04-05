@@ -29,8 +29,3 @@ export async function resetAgent(type: string): Promise<AgentDefinition> {
   const { data } = await api.post<AgentDefinition>(`/agents/${type}/reset`);
   return data;
 }
-
-/** @deprecated Use fetchAgents() instead */
-export async function fetchAgentTypes(): Promise<AgentDefinition[]> {
-  return fetchAgents();
-}

@@ -1,5 +1,5 @@
 import type { Node, Edge } from "@xyflow/react";
-import { useAgentTypes } from "@/hooks/useAgentTypes";
+import { useAgents } from "@/hooks/useAgents";
 import { getAgentColor } from "@/lib/graph-utils";
 import { cn } from "@/lib/utils";
 
@@ -41,7 +41,7 @@ interface AgentBarProps {
 }
 
 export function AgentBar({ nodes, edges }: AgentBarProps) {
-  const { data: agents } = useAgentTypes();
+  const { data: agents } = useAgents();
 
   // Filter out triage — it's an orchestrator concern, not a pipeline node
   const available = (agents ?? []).filter((a) => a.type !== "triage");
