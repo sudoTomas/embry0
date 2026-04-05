@@ -77,7 +77,7 @@ class TraceRecord:
 
     trace_id: str
     job_id: str
-    agent_type: str  # "developer" | "validator" | "reviewer"
+    agent_type: str  # "triage" | "developer" | "review"
     model: str
     result: str  # "pass" | "fail" | "partial" | "error" | "timeout" | "budget_exceeded"
     cost_usd: float = 0.0

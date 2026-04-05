@@ -17,30 +17,16 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "system_prompt": "",
     },
     "developer": {
-        "description": "Implements code changes, manages git operations, and creates pull requests. Uses Claude Code skills for advanced workflows including sub-agent dispatch and worktree management.",
+        "description": "Implements code changes, creates branches, commits, pushes, and opens PRs. Runs inside a sandbox container via Claude Code.",
         "model": "claude-opus-4-6",
         "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         "skills": ["superpowers:subagent-driven-development", "superpowers:verification-before-completion"],
         "system_prompt": "",
     },
-    "validator": {
-        "description": "Validates code changes by running tests, linting, and type checking. Reports pass/fail with detailed findings.",
+    "review": {
+        "description": "Reviews code changes by running tests, linting, type checking, and code review. Returns structured JSON with decision, validation results, and documentation review.",
         "model": "claude-sonnet-4-6",
         "tools": ["Read", "Bash", "Glob", "Grep"],
-        "skills": [],
-        "system_prompt": "",
-    },
-    "reviewer": {
-        "description": "Reviews code changes for correctness, quality, security, and scope. Approves or rejects with feedback.",
-        "model": "claude-sonnet-4-6",
-        "tools": ["Read", "Glob", "Grep"],
-        "skills": [],
-        "system_prompt": "",
-    },
-    "output": {
-        "description": "Assembles the final job result from all agent outputs. Reports success/failure status, cost, and PR URL.",
-        "model": "",
-        "tools": [],
         "skills": [],
         "system_prompt": "",
     },

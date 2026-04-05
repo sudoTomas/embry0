@@ -250,6 +250,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             WHERE telegram_message_id IS NOT NULL;
         """,
     ),
+    (
+        6,
+        "remove validator/output agents, rename reviewer to review",
+        """
+        DELETE FROM agent_definitions WHERE type IN ('validator', 'output');
+        UPDATE agent_definitions SET type = 'review',
+            description = 'Reviews code changes by running tests, linting, type checking, and code review. Returns structured JSON with decision, validation results, and documentation review.',
+            tools = '["Read", "Bash", "Glob", "Grep"]'
+        WHERE type = 'reviewer';
+        """,
+    ),
 ]
 
 

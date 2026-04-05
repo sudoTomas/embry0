@@ -348,7 +348,7 @@ Return ONLY a JSON object:
         agent_runner=agent_runner,
         agent_type="review",
         prompt=prompt,
-        model=triage_decision.get("pipeline_config", {}).get("agent_models", {}).get("reviewer", "claude-sonnet-4-6"),
+        model=triage_decision.get("pipeline_config", {}).get("agent_models", {}).get("review", "claude-sonnet-4-6"),
         tools=["Read", "Bash", "Glob", "Grep"],
         timeout_seconds=300,
     )
