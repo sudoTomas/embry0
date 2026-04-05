@@ -25,7 +25,7 @@ class PipelineConfig(TypedDict, total=False):
 
 
 _PIPELINE_DEFAULTS: dict[str, Any] = {
-    "max_feedback_loops": 2,
+    "max_feedback_loops": 3,
     "reviewer_enabled": True,
     "validator_modes": ["test", "lint", "typecheck"],
 }
@@ -61,12 +61,12 @@ class JobState(TypedDict, total=False):
     repo: str
     task: str
     issue_number: int | None
+    issue_id: str | None
     sandbox_container_id: str | None
     pipeline_config: TriageDecision
     global_context: str | None
     repo_context: str | None
     additional_context: str | None
-    pending_inputs: list[dict[str, Any]]
     auth_proxy_url: str | None
     git_proxy_url: str | None
     legion_proxy_url: str | None
