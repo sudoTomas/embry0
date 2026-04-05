@@ -12,7 +12,7 @@ export interface RepoListResponse {
   repos: RepoResponse[];
 }
 
-export interface IssueResponse {
+export interface GithubIssueResponse {
   number: number;
   title: string;
   body: string | null;
@@ -24,16 +24,13 @@ export interface IssueResponse {
   updated_at: string;
 }
 
-export interface IssueListResponse {
-  issues: IssueResponse[];
+export interface GithubIssueListResponse {
+  issues: GithubIssueResponse[];
   total: number;
 }
 
-export interface IssueCreateRequest {
+export interface GithubIssueCreateRequest {
   title: string;
   body?: string;
   labels?: string[];
 }
-
-// Legacy alias kept for backward compatibility
-export type CreateIssueRequest = IssueCreateRequest;
