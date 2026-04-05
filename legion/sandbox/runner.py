@@ -74,6 +74,9 @@ async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
             permission_mode="bypassPermissions",
             max_turns=config.get("max_turns", 40),
             cwd="/workspace",
+            # Strip inherited API key env vars so the CLI uses OAuth credentials
+            # from ~/.claude/.credentials.json instead.
+            env={"ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_API_KEY": ""},
             hooks={
                 "PreToolUse": [{"matcher": None, "hooks": [safety_hook]}],
             },
