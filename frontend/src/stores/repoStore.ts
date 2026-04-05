@@ -20,6 +20,6 @@ export const useRepoStore = create<RepoState>()(
             : state.recentRepos,
         })),
     }),
-    { name: "codinglab-repo" }
+    { name: "legion-repo" }
   )
 );

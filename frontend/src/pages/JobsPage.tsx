@@ -49,7 +49,9 @@ export function JobsPage() {
   }, []);
 
   const statusOptions: JobStatus[] = ["pending", "running", "completed", "failed", "cancelled"];
-  const repoOptions: string[] = [];
+  const repoOptions: string[] = data
+    ? Array.from(new Set(data.jobs.map((j) => j.repo).filter(Boolean)))
+    : [];
 
   return (
     <div className="space-y-6">
