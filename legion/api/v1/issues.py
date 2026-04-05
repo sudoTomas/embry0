@@ -1,7 +1,7 @@
 """Issues API — create, list, get, update, delete, triage, sync, and activity endpoints."""
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from legion.api.deps import get_github_sync, get_issue_executor, get_issues_repo, get_jobs_repo
 from legion.api.schemas.issues import (
@@ -113,8 +113,8 @@ async def list_issues(
     parent_issue_id: str | None = "__top_level__",
     sort: str = "created_at",
     order: str = "desc",
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     issues: IssuesRepository = Depends(get_issues_repo),
 ) -> IssueListResponse:
     top_level_only = parent_issue_id == "__top_level__"
@@ -244,6 +244,7 @@ async def delete_issue(
     issue_id: str,
     request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
+    jobs: JobsRepository = Depends(get_jobs_repo),
 ) -> None:
     existing = await issues.get(issue_id)
     if not existing:
@@ -252,6 +253,13 @@ async def delete_issue(
     children = await issues.get_children(issue_id)
     for child in children:
         await issues.update(child["id"], status="cancelled")
+
+    all_issue_ids = [issue_id] + [c["id"] for c in children]
+    for iid in all_issue_ids:
+        issue_jobs, _ = await jobs.list(issue_id=iid, limit=100, offset=0)
+        for j in issue_jobs:
+            if j["status"] in ("pending", "running", "awaiting_input"):
+                await jobs.update(j["job_id"], status="cancelled")
 
     await issues.update(issue_id, status="cancelled")
 
@@ -374,8 +382,8 @@ async def sync_issue(
 @router.get("/issues/{issue_id}/activity")
 async def get_issue_activity(
     issue_id: str,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     issues: IssuesRepository = Depends(get_issues_repo),
 ) -> list[dict]:
     existing = await issues.get(issue_id)

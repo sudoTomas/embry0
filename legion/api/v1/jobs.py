@@ -1,5 +1,5 @@
 """Jobs API — create, list, get, cancel jobs."""
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from legion.api.deps import get_jobs_repo
 from legion.api.schemas import JobCreateRequest, JobListResponse, JobResponse
@@ -25,7 +25,8 @@ async def create_job(req: JobCreateRequest, request: Request, jobs: JobsReposito
 
 @router.get("/jobs")
 async def list_jobs(status: str | None = None, repo: str | None = None,
-                    limit: int = 50, offset: int = 0,
+                    limit: int = Query(default=50, ge=1, le=200),
+                    offset: int = Query(default=0, ge=0),
                     jobs: JobsRepository = Depends(get_jobs_repo)) -> JobListResponse:
     rows, total = await jobs.list(status=status, repo=repo, limit=limit, offset=offset)
     return JobListResponse(jobs=[JobResponse(**r) for r in rows], total=total, offset=offset, limit=limit)
