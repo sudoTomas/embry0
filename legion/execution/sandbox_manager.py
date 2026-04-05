@@ -42,11 +42,17 @@ class SandboxManager:
         p = {**_DEFAULT_PROFILE, **(profile or {})}
         name = f"sandbox-{job_id}"
 
-        # Inject OAuth token from host credentials into sandbox env
+        # Inject credentials into sandbox env
         env = dict(env) if env else {}
         oauth_token = self._read_oauth_token()
         if oauth_token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+
+        # Pass GitHub token for git push/clone
+        import os
+        github_token = os.environ.get("GITHUB_TOKEN", "")
+        if github_token:
+            env["GITHUB_TOKEN"] = github_token
 
         cmd = self._docker.build_run_cmd(
             image=p.get("base_image", _DEFAULT_PROFILE["base_image"]),

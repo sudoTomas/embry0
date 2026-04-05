@@ -33,22 +33,28 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
     container_id = None
     if sandbox_mgr:
         env = {}
-        if proxy_mgr:
-            if proxy_mgr.auth_proxy_url:
-                env["ANTHROPIC_BASE_URL"] = proxy_mgr.auth_proxy_url
-            if proxy_mgr.git_proxy_url:
-                env["GIT_PROXY_URL"] = proxy_mgr.git_proxy_url
         try:
             container_id = await sandbox_mgr.create(job_id, env=env)
             logger.info("sandbox_created", job_id=job_id, container_id=container_id)
             writer({"type": "progress", "message": "Sandbox container created"})
 
-            # Clone repo inside container
-            if repo and docker and proxy_mgr and proxy_mgr.git_proxy_url:
+            # Clone repo inside container using GITHUB_TOKEN for auth
+            if repo and docker:
+                # Configure git credential helper to use GITHUB_TOKEN env var
+                setup_cmd = [
+                    "bash", "-c",
+                    'git config --global credential.helper '
+                    '"!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" && '
+                    'git config --global user.email "legion@alchymielabs.com" && '
+                    'git config --global user.name "Legion Bot"',
+                ]
+                await docker.run_cmd(
+                    docker.build_exec_cmd(container_id, setup_cmd),
+                    timeout=10,
+                )
+
                 clone_cmd = [
-                    "bash",
-                    "-c",
-                    f'GIT_PROXY_URL="{proxy_mgr.git_proxy_url}" '
+                    "bash", "-c",
                     f"git clone --depth=1 https://github.com/{repo}.git /workspace 2>&1 || "
                     f'echo "Clone failed"',
                 ]
