@@ -1,6 +1,7 @@
 export const ISSUE_STATUS_COLORS: Record<string, string> = {
   open: "text-success",
   triaging: "text-warning",
+  awaiting_input: "text-warning",
   in_progress: "text-blue-400",
   closed: "text-purple-400",
   cancelled: "text-muted-foreground",
@@ -9,6 +10,7 @@ export const ISSUE_STATUS_COLORS: Record<string, string> = {
 export const ISSUE_STATUS_BG_COLORS: Record<string, string> = {
   open: "bg-success/10",
   triaging: "bg-warning/10",
+  awaiting_input: "bg-warning/10",
   in_progress: "bg-blue-400/10",
   closed: "bg-purple-400/10",
   cancelled: "bg-muted-foreground/10",
@@ -17,6 +19,7 @@ export const ISSUE_STATUS_BG_COLORS: Record<string, string> = {
 export const ISSUE_STATUS_ICONS: Record<string, string> = {
   open: "●",
   triaging: "◉",
+  awaiting_input: "❓",
   in_progress: "●",
   closed: "✓",
   cancelled: "✕",
