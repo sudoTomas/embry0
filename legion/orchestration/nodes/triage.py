@@ -24,7 +24,10 @@ Respond with a JSON object containing:
 - pipeline_template: "routine" | "standard" (when action=proceed)
 - pipeline_config: object with sandbox_profile, agent_models, max_feedback_loops,
   reviewer_enabled, validator_modes, budget_usd
-- questions: list of strings (when action=needs_info)
+- questions: list of objects (when action=needs_info). Each object has:
+  - question: the question text
+  - importance: "blocking" (must wait for human answer) or "auto_answerable" (you can suggest an answer)
+  - suggested_answer: your best-guess answer (only when importance=auto_answerable)
 - sub_tasks: list of {task, description} objects (when action=split)
 - reasoning: explanation of your decision
 
