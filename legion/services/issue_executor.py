@@ -32,6 +32,9 @@ class IssueExecutor:
         db: DatabasePool | None = None,
         inputs_repo: Any = None,
         config: Any = None,
+        sandbox_manager: Any = None,
+        agent_runner: Any = None,
+        proxy_manager: Any = None,
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
@@ -42,6 +45,9 @@ class IssueExecutor:
         self._db = db
         self._inputs = inputs_repo
         self._config = config
+        self._sandbox = sandbox_manager
+        self._agent_runner = agent_runner
+        self._proxy = proxy_manager
         self._background_tasks: set[asyncio.Task] = set()
 
     async def execute(self, issue_id: str) -> str:

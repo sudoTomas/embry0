@@ -63,7 +63,38 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry.register(IssueToprWorkflow())
     app.state.workflow_registry = registry
 
+    from legion.execution.docker_client import DockerClient
+    from legion.execution.sandbox_manager import SandboxManager
+    from legion.execution.agent_runner import AgentRunner
+    from legion.execution.proxy.manager import ProxyManager
     from legion.services.issue_executor import IssueExecutor
+
+    docker = DockerClient(
+        docker_host=config.docker_host,
+        tls_verify=config.docker_tls_verify,
+        cert_path=config.docker_cert_path,
+    )
+    sandbox_mgr = SandboxManager(docker)
+    agent_runner = AgentRunner(sandbox_mgr, docker)
+    proxy_mgr = ProxyManager()
+
+    app.state.docker = docker
+    app.state.sandbox_manager = sandbox_mgr
+    app.state.agent_runner = agent_runner
+    app.state.proxy_manager = proxy_mgr
+
+    # Start proxy services
+    await proxy_mgr.start(
+        anthropic_api_key=config.anthropic_api_key,
+        github_token=config.github_token,
+    )
+
+    # Auto-create sandbox network (idempotent)
+    try:
+        base_cmd = docker._build_base_cmd()
+        await docker.run_cmd(base_cmd + ["network", "create", "--driver", "bridge", "sandbox-restricted"])
+    except RuntimeError:
+        pass  # Network already exists
 
     app.state.issue_executor = IssueExecutor(
         issues_repo=app.state.issues_repo,
@@ -75,6 +106,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         db=db,
         inputs_repo=app.state.inputs_repo,
         config=config,
+        sandbox_manager=sandbox_mgr,
+        agent_runner=agent_runner,
+        proxy_manager=proxy_mgr,
     )
 
     app.state.background_tasks: set[asyncio.Task] = set()
@@ -96,6 +130,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+    await proxy_mgr.stop()
     await db.close()
     logger.info("legion_stopped")
 
