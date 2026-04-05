@@ -1,4 +1,5 @@
 """Pipeline templates API — CRUD for pipeline template management."""
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from legion.api.deps import get_templates_repo
@@ -17,7 +18,8 @@ async def list_templates(
 
 @router.get("/pipelines/templates/{template_id}")
 async def get_template(
-    template_id: str, repo: PipelineTemplatesRepository = Depends(get_templates_repo),
+    template_id: str,
+    repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict:
     template = await repo.get(template_id)
     if not template:
@@ -27,17 +29,22 @@ async def get_template(
 
 @router.post("/pipelines/templates", status_code=201)
 async def create_template(
-    req: TemplateCreateRequest, repo: PipelineTemplatesRepository = Depends(get_templates_repo),
+    req: TemplateCreateRequest,
+    repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict:
     return await repo.create(
-        name=req.name, description=req.description, graph_definition=req.graph_definition,
-        agent_models=req.agent_models, sandbox_profile=req.sandbox_profile,
+        name=req.name,
+        description=req.description,
+        graph_definition=req.graph_definition,
+        agent_models=req.agent_models,
+        sandbox_profile=req.sandbox_profile,
     )
 
 
 @router.put("/pipelines/templates/{template_id}")
 async def update_template(
-    template_id: str, req: TemplateUpdateRequest,
+    template_id: str,
+    req: TemplateUpdateRequest,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
@@ -51,7 +58,8 @@ async def update_template(
 
 @router.delete("/pipelines/templates/{template_id}")
 async def delete_template(
-    template_id: str, repo: PipelineTemplatesRepository = Depends(get_templates_repo),
+    template_id: str,
+    repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict:
     await repo.delete(template_id)
     return {"id": template_id, "status": "deleted"}
@@ -59,7 +67,8 @@ async def delete_template(
 
 @router.post("/pipelines/templates/{template_id}/duplicate", status_code=201)
 async def duplicate_template(
-    template_id: str, req: TemplateDuplicateRequest,
+    template_id: str,
+    req: TemplateDuplicateRequest,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict:
     try:

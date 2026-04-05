@@ -10,6 +10,7 @@ import { IssueStatusBadge } from "@/components/issues/IssueStatusBadge";
 import { IssuePriorityBadge } from "@/components/issues/IssuePriorityBadge";
 import { AgentIndicator } from "@/components/issues/AgentIndicator";
 import { IssueActivityFeed } from "@/components/issues/IssueActivityFeed";
+import { IssueQuestionsPanel } from "@/components/issues/IssueQuestionsPanel";
 import { LabelInput } from "@/components/issues/LabelInput";
 import { useIssue, useIssueActivity, useTriageIssue, useSyncIssue, useDeleteIssue, useUpdateIssue } from "@/hooks/useIssues";
 import { formatDate } from "@/lib/utils";
@@ -118,6 +119,11 @@ export function IssueDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Questions panel – shown when pipeline is waiting for user input */}
+      {issue.status === "awaiting_input" && (
+        <IssueQuestionsPanel issueId={issue.id} />
+      )}
 
       {/* Two-column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
@@ -260,6 +266,7 @@ export function IssueDetailPage() {
                 >
                   <option value="open">Open</option>
                   <option value="triaging">Triaging</option>
+                  <option value="awaiting_input">Awaiting Input</option>
                   <option value="in_progress">In Progress</option>
                   <option value="closed">Closed</option>
                   <option value="cancelled">Cancelled</option>

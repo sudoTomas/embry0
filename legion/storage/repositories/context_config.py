@@ -26,7 +26,8 @@ class ContextConfigRepository:
                 assistant_context = EXCLUDED.assistant_context,
                 updated_at = NOW()
             """,
-            system_context, assistant_context,
+            system_context,
+            assistant_context,
         )
 
     async def get_global(self) -> dict[str, Any] | None:
@@ -46,7 +47,10 @@ class ContextConfigRepository:
                 assistant_context = EXCLUDED.assistant_context,
                 updated_at = NOW()
             """,
-            repo_id, repo, system_context, assistant_context,
+            repo_id,
+            repo,
+            system_context,
+            assistant_context,
         )
 
     async def get_repo(self, repo: str) -> dict[str, Any] | None:

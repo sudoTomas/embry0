@@ -47,6 +47,7 @@ async def git_ops_node(state: dict[str, Any]) -> dict[str, Any]:
 
 async def output_node(state: dict[str, Any]) -> dict[str, Any]:
     from legion.orchestration.nodes.output import build_output
+
     return build_output(state)
 
 
@@ -54,3 +55,9 @@ async def retry_developer_node(state: dict[str, Any]) -> dict[str, Any]:
     retry_count = state.get("retry_count", 0)
     logger.info("retry_developer", retry_count=retry_count + 1)
     return {"retry_count": retry_count + 1, "current_stage": "developer_retry"}
+
+
+async def awaiting_input_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Pass-through node that finalizes the awaiting_input pause state."""
+    logger.info("awaiting_input", job_id=state.get("job_id"), pending=len(state.get("pending_inputs", [])))
+    return {"current_stage": "awaiting_input"}

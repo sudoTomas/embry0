@@ -26,10 +26,5 @@ async def _health_handler(request: web.Request) -> web.Response:
 async def _credentials_handler(request: web.Request) -> web.Response:
     """Return git credentials in git-credential-fill format."""
     token = request.app["github_token"]
-    body = (
-        "protocol=https\n"
-        "host=github.com\n"
-        "username=x-access-token\n"
-        f"password={token}\n"
-    )
+    body = f"protocol=https\nhost=github.com\nusername=x-access-token\npassword={token}\n"
     return web.Response(text=body, content_type="text/plain")

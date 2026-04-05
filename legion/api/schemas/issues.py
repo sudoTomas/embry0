@@ -47,7 +47,7 @@ class UpdateIssueRequest(BaseModel):
     @classmethod
     def validate_status(cls, v: str | None) -> str | None:
         if v is not None:
-            allowed = {"open", "triaging", "in_progress", "closed", "cancelled"}
+            allowed = {"open", "triaging", "in_progress", "awaiting_input", "closed", "cancelled"}
             if v not in allowed:
                 msg = f"status must be one of {allowed}"
                 raise ValueError(msg)

@@ -66,6 +66,10 @@ class JobState(TypedDict, total=False):
     global_context: str | None
     repo_context: str | None
     additional_context: str | None
+    pending_inputs: list[dict[str, Any]]
+    auth_proxy_url: str | None
+    git_proxy_url: str | None
+    legion_proxy_url: str | None
     agent_outputs: Annotated[list[AgentOutputEntry], operator.add]
     errors: Annotated[list[str], operator.add]
     current_stage: str

@@ -50,15 +50,52 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.provider_repo = ProviderConfigRepository(db)
 
     from legion.services.github_sync import GitHubSyncService
+    from legion.storage.repositories.issue_inputs import IssueInputsRepository
     from legion.storage.repositories.issues import IssuesRepository
+
     app.state.issues_repo = IssuesRepository(db)
-    app.state.github_sync = GitHubSyncService(github_token=config.github_token if hasattr(config, "github_token") else None)
+    app.state.inputs_repo = IssueInputsRepository(db)
+    app.state.github_sync = GitHubSyncService(
+        github_token=config.github_token if hasattr(config, "github_token") else None
+    )
 
     registry = WorkflowRegistry()
     registry.register(IssueToprWorkflow())
     app.state.workflow_registry = registry
 
+    from legion.execution.agent_runner import AgentRunner
+    from legion.execution.docker_client import DockerClient
+    from legion.execution.proxy.manager import ProxyManager
+    from legion.execution.sandbox_manager import SandboxManager
     from legion.services.issue_executor import IssueExecutor
+
+    docker = DockerClient(
+        docker_host=config.docker_host,
+        tls_verify=config.docker_tls_verify,
+        cert_path=config.docker_cert_path,
+    )
+    sandbox_mgr = SandboxManager(docker)
+    agent_runner = AgentRunner(sandbox_mgr, docker)
+    proxy_mgr = ProxyManager()
+
+    app.state.docker = docker
+    app.state.sandbox_manager = sandbox_mgr
+    app.state.agent_runner = agent_runner
+    app.state.proxy_manager = proxy_mgr
+
+    # Start proxy services
+    await proxy_mgr.start(
+        anthropic_api_key=config.anthropic_api_key,
+        github_token=config.github_token,
+    )
+
+    # Auto-create sandbox network (idempotent)
+    try:
+        base_cmd = docker._build_base_cmd()
+        await docker.run_cmd(base_cmd + ["network", "create", "--driver", "bridge", "sandbox-restricted"])
+    except RuntimeError:
+        pass  # Network already exists
+
     app.state.issue_executor = IssueExecutor(
         issues_repo=app.state.issues_repo,
         jobs_repo=app.state.jobs_repo,
@@ -67,11 +104,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         database_url=config.database_url,
         audit_log_path=config.audit_log_path,
         db=db,
+        inputs_repo=app.state.inputs_repo,
+        config=config,
+        sandbox_manager=sandbox_mgr,
+        agent_runner=agent_runner,
+        proxy_manager=proxy_mgr,
     )
 
     app.state.background_tasks: set[asyncio.Task] = set()
     app.state.issue_executor._background_tasks = app.state.background_tasks
     app.state.event_subscribers: dict[str, list[asyncio.Queue]] = {}
+
+    if config.telegram_bot_token and getattr(config, "telegram_webhook_url", ""):
+        from legion.notifications.telegram import register_webhook
+
+        webhook_url = f"{config.telegram_webhook_url.rstrip('/')}/api/v1/telegram/callback"
+        await register_webhook(config.telegram_bot_token, webhook_url)
 
     logger.info("legion_started")
     yield
@@ -82,6 +130,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+    await proxy_mgr.stop()
     await db.close()
     logger.info("legion_stopped")
 
@@ -124,6 +173,7 @@ def _register_routers(app: FastAPI) -> None:
         queue,
         sandbox_profiles,
         stats,
+        telegram,
         traces,
         webhooks,
     )
@@ -142,4 +192,5 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(queue.router, prefix="/api/v1", tags=["queue"], dependencies=auth_deps)
     app.include_router(pipeline_templates.router, prefix="/api/v1", tags=["pipeline-templates"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
+    app.include_router(telegram.router, prefix="/api/v1", tags=["telegram"])
     app.include_router(streaming.router)

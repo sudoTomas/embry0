@@ -2,10 +2,12 @@
 
 from typing import Any, Literal
 
-from legion.orchestration.routing.conditions import check_triage_action, check_validation_result
+from legion.orchestration.routing.conditions import check_awaiting_input, check_triage_action, check_validation_result
 
 
-def route_after_triage(state: dict[str, Any]) -> Literal["proceed", "needs_info", "split"]:
+def route_after_triage(state: dict[str, Any]) -> Literal["proceed", "needs_info", "split", "awaiting_input"]:
+    if check_awaiting_input(state):
+        return "awaiting_input"
     return check_triage_action(state)
 
 

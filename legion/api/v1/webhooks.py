@@ -49,8 +49,42 @@ async def github_webhook(
             )
             return result
 
+    # NOTE: To receive issue_comment events, add "Issue comments" to the GitHub
+    # webhook event subscription at:
+    # https://github.com/<org>/<repo>/settings/hooks
+    # Handle issue comment events — answers to input questions
     if event_type == "issue_comment" and action == "created":
-        logger.info("webhook_comment", issue=payload.get("issue", {}).get("number"))
+        issues_repo = request.app.state.issues_repo
+        inputs_repo = getattr(request.app.state, "inputs_repo", None)
+        if issues_repo and inputs_repo:
+            comment_body = payload.get("comment", {}).get("body", "")
+            gh_issue = payload.get("issue", {})
+            repo_name = payload.get("repository", {}).get("full_name", "")
+            gh_number = gh_issue.get("number")
+
+            if repo_name and gh_number and comment_body:
+                issue = await issues_repo.get_by_github(repo=repo_name, github_number=gh_number)
+                if issue and issue["status"] == "awaiting_input":
+                    pending_inputs = await inputs_repo.list_by_issue(issue["id"])
+                    answered_any = False
+                    for inp in pending_inputs:
+                        if inp["importance"] == "blocking" and inp["status"] == "pending":
+                            await inputs_repo.answer(inp["id"], comment_body, answered_by="github")
+                            answered_any = True
+                            from legion.notifications.dispatcher import notify_answer_cross_channel
+
+                            await notify_answer_cross_channel(inputs_repo, inp, comment_body, "github", config)
+
+                    if answered_any:
+                        pending = await inputs_repo.count_pending_blocking(issue["id"])
+                        if pending == 0:
+                            executor = request.app.state.issue_executor
+                            from legion.api.v1.issues import _resume_pipeline
+
+                            await _resume_pipeline(issue["id"], issues_repo, inputs_repo, executor)
+
+                    return {"status": "accepted", "action": "comment_processed"}
+
         return {"status": "accepted", "action": "comment_received"}
 
     return {"status": "ignored", "event": event_type, "action": action}

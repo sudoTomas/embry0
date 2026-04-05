@@ -95,3 +95,8 @@ def get_github_sync(request: Request):
 def get_issue_executor(request: Request):
     """Return the IssueExecutor from request state."""
     return request.app.state.issue_executor
+
+
+def get_inputs_repo(request: Request):
+    """Return the IssueInputsRepository from request state."""
+    return request.app.state.inputs_repo

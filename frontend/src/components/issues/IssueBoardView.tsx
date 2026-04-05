@@ -6,6 +6,7 @@ import type { IssueResponse, IssueStatus } from "@/lib/types";
 const BOARD_COLUMNS: { status: IssueStatus; label: string }[] = [
   { status: "open", label: "Open" },
   { status: "triaging", label: "Triaging" },
+  { status: "awaiting_input", label: "Awaiting Input" },
   { status: "in_progress", label: "In Progress" },
   { status: "closed", label: "Closed" },
   { status: "cancelled", label: "Cancelled" },
@@ -53,7 +54,7 @@ export function IssueBoardView({ issues, onStatusChange }: IssueBoardViewProps) 
   };
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
       {BOARD_COLUMNS.map(({ status, label }) => {
         const columnIssues = byStatus[status] ?? [];
         const icon = ISSUE_STATUS_ICONS[status] ?? "●";

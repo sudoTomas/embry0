@@ -81,8 +81,13 @@ class ErrorEvent:
 
 
 _EventT = (
-    AgentStartedEvent | AgentCompletedEvent | ProgressEvent
-    | ToolCallEvent | GitOperationEvent | GithubApiEvent | ErrorEvent
+    AgentStartedEvent
+    | AgentCompletedEvent
+    | ProgressEvent
+    | ToolCallEvent
+    | GitOperationEvent
+    | GithubApiEvent
+    | ErrorEvent
 )
 
 

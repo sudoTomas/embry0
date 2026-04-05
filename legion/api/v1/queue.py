@@ -1,4 +1,5 @@
 """Queue API."""
+
 from fastapi import APIRouter
 
 router = APIRouter()

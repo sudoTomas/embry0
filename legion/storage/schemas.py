@@ -54,8 +54,7 @@ class ValidationResult:
         sections: list[str] = []
         if not self.tests_passed and self.tests_failures:
             failures = "\n".join(
-                f"  - {f.test_name} ({f.file_path}:{f.line_number}): {f.error_message}"
-                for f in self.tests_failures
+                f"  - {f.test_name} ({f.file_path}:{f.line_number}): {f.error_message}" for f in self.tests_failures
             )
             sections.append(f"## Test Failures\n{failures}")
         if not self.types_passed and self.type_errors:

@@ -1,7 +1,7 @@
 """LangGraph checkpoint integration — PostgreSQL-backed state persistence."""
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 

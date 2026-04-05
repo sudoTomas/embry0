@@ -1,4 +1,4 @@
-export type IssueStatus = "open" | "triaging" | "in_progress" | "closed" | "cancelled";
+export type IssueStatus = "open" | "triaging" | "awaiting_input" | "in_progress" | "closed" | "cancelled";
 export type IssuePriority = "critical" | "high" | "medium" | "low";
 
 export interface IssueResponse {

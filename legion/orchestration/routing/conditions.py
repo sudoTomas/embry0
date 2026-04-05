@@ -30,6 +30,11 @@ def check_review_result(state: dict[str, Any]) -> Literal["approved", "rejected"
     return "rejected"
 
 
+def check_awaiting_input(state: dict[str, Any]) -> bool:
+    """Check if the current node has requested human input."""
+    return state.get("current_stage") == "awaiting_input" or bool(state.get("pending_inputs"))
+
+
 def check_budget(state: dict[str, Any]) -> Literal["within_budget", "over_budget"]:
     cost = state.get("total_cost_usd", 0.0)
     config = state.get("pipeline_config", {})

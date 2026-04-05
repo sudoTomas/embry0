@@ -1,4 +1,5 @@
 """Sandbox profiles API."""
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from legion.api.deps import get_profiles_repo
@@ -18,10 +19,18 @@ async def create_profile(
     req: SandboxProfileRequest, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)
 ) -> dict:
     await profiles.upsert(
-        name=req.name, base_image=req.base_image, additional_packages=req.additional_packages,
-        setup_commands=req.setup_commands, memory=req.memory, cpus=req.cpus, pids_limit=req.pids_limit,
-        cap_drop=req.cap_drop, cap_add=req.cap_add, security_opt=req.security_opt,
-        agent_timeout_seconds=req.agent_timeout_seconds, container_timeout_seconds=req.container_timeout_seconds,
+        name=req.name,
+        base_image=req.base_image,
+        additional_packages=req.additional_packages,
+        setup_commands=req.setup_commands,
+        memory=req.memory,
+        cpus=req.cpus,
+        pids_limit=req.pids_limit,
+        cap_drop=req.cap_drop,
+        cap_add=req.cap_add,
+        security_opt=req.security_opt,
+        agent_timeout_seconds=req.agent_timeout_seconds,
+        container_timeout_seconds=req.container_timeout_seconds,
     )
     return {"name": req.name, "status": "created"}
 
@@ -39,10 +48,18 @@ async def update_profile(
     name: str, req: SandboxProfileRequest, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)
 ) -> dict:
     await profiles.upsert(
-        name=name, base_image=req.base_image, additional_packages=req.additional_packages,
-        setup_commands=req.setup_commands, memory=req.memory, cpus=req.cpus, pids_limit=req.pids_limit,
-        cap_drop=req.cap_drop, cap_add=req.cap_add, security_opt=req.security_opt,
-        agent_timeout_seconds=req.agent_timeout_seconds, container_timeout_seconds=req.container_timeout_seconds,
+        name=name,
+        base_image=req.base_image,
+        additional_packages=req.additional_packages,
+        setup_commands=req.setup_commands,
+        memory=req.memory,
+        cpus=req.cpus,
+        pids_limit=req.pids_limit,
+        cap_drop=req.cap_drop,
+        cap_add=req.cap_add,
+        security_opt=req.security_opt,
+        agent_timeout_seconds=req.agent_timeout_seconds,
+        container_timeout_seconds=req.container_timeout_seconds,
     )
     return {"name": name, "status": "updated"}
 

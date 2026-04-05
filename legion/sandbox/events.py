@@ -5,8 +5,6 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from legion.execution.events import EventType
-
 
 def emit_event(event_type: str, **kwargs: Any) -> None:
     """Write a JSON event line to stdout."""
