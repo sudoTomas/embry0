@@ -49,6 +49,7 @@ class DockerClient:
         security_opt: list[str] | None = None,
         read_only: bool = True,
         env: dict[str, str] | None = None,
+        volumes: list[str] | None = None,
     ) -> list[str]:
         """Build `docker run -d` command for sandbox container."""
         cmd = self._build_base_cmd()
@@ -72,6 +73,9 @@ class DockerClient:
 
         for key, value in (env or {}).items():
             cmd.extend(["-e", f"{key}={value}"])
+
+        for vol in volumes or []:
+            cmd.extend(["-v", vol])
 
         cmd.extend([image, "sleep", "infinity"])
         return cmd

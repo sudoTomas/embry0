@@ -54,6 +54,7 @@ class SandboxManager:
             security_opt=p.get("security_opt", _DEFAULT_PROFILE["security_opt"]),
             read_only=p.get("read_only_root", _DEFAULT_PROFILE["read_only_root"]),
             env=env,
+            volumes=["/home/orchestrator/.claude:/home/agent/.claude:ro"],
         )
         container_id = await self._docker.run_cmd(cmd)
         logger.info("sandbox_created", job_id=job_id, container=name, image=p.get("base_image"))

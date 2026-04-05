@@ -55,6 +55,14 @@ async def test_create_uses_sandbox_profile_defaults(manager: SandboxManager):
 
 
 @pytest.mark.asyncio
+async def test_create_mounts_claude_credentials(manager: SandboxManager):
+    """Claude OAuth credentials are always mounted read-only into the sandbox."""
+    await manager.create(job_id="job-creds")
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    assert "/home/orchestrator/.claude:/home/agent/.claude:ro" in kwargs["volumes"]
+
+
+@pytest.mark.asyncio
 async def test_create_with_custom_profile(manager: SandboxManager):
     profile = {
         "base_image": "legion-sandbox-java:17",

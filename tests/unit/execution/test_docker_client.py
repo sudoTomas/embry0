@@ -59,6 +59,30 @@ def test_build_run_cmd(docker: DockerClient):
     assert cmd[-1] == "infinity"  # sleep infinity
 
 
+def test_build_run_cmd_volumes(docker: DockerClient):
+    """Volumes are passed as -v flags, appearing before image."""
+    cmd = docker.build_run_cmd(
+        image="legion-sandbox:latest",
+        name="sandbox-job-123",
+        volumes=["/host/path:/container/path:ro", "/data:/data"],
+    )
+    # Both volumes appear as -v flag pairs
+    assert "-v" in cmd
+    v_pairs = [cmd[i + 1] for i, t in enumerate(cmd) if t == "-v"]
+    assert "/host/path:/container/path:ro" in v_pairs
+    assert "/data:/data" in v_pairs
+    # Image must come after all -v flags
+    image_idx = cmd.index("legion-sandbox:latest")
+    for v in v_pairs:
+        assert cmd.index(v) < image_idx
+
+
+def test_build_run_cmd_no_volumes(docker: DockerClient):
+    """Without volumes parameter, no -v flags appear."""
+    cmd = docker.build_run_cmd(image="legion-sandbox:latest", name="sandbox-job-123")
+    assert "-v" not in cmd
+
+
 def test_build_exec_cmd(docker: DockerClient):
     """Exec command targets container by name."""
     cmd = docker.build_exec_cmd(
