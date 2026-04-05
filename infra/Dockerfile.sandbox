@@ -5,6 +5,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl ca-certificates jq \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js (required for Claude CLI / Agent SDK)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @anthropic-ai/claude-code@latest
+
 # Python dependencies for sandbox
 RUN pip install --no-cache-dir \
     "claude-agent-sdk>=0.1.48,<0.2" \
@@ -24,6 +30,9 @@ ENV PYTHONPATH=/app
 
 # Non-root user
 RUN useradd --create-home agent
+
+# Create writable workspace (tmpfs in docker run, but need the dir)
+RUN mkdir -p /workspace && chown agent:agent /workspace
 
 USER agent
 WORKDIR /workspace
