@@ -120,6 +120,10 @@ async def github_webhook(
                                 for job in jobs_list:
                                     if job["status"] in ("completed", "running"):
                                         await jobs_repo.update(job["job_id"], status="pr_merged")
+                            elif action == "closed" and not merged:
+                                for job in jobs_list:
+                                    if job["status"] in ("completed", "running"):
+                                        await jobs_repo.update(job["job_id"], status="pr_closed")
 
                             return {"status": "accepted", "action": f"pr_{action}"}
 

@@ -143,10 +143,11 @@ class SandboxImageManager:
                     dockerfile_content += f"RUN {cmd_str}\n"
             dockerfile_content += "USER agent\nWORKDIR /workspace\n"
 
-            try:
-                import os
-                import tempfile
+            import os
+            import tempfile
 
+            temp_path = None
+            try:
                 with tempfile.NamedTemporaryFile(mode="w", suffix=".dockerfile", delete=False) as f:
                     f.write(dockerfile_content)
                     temp_path = f.name
@@ -155,14 +156,18 @@ class SandboxImageManager:
                 cmd.extend(["build", "-t", image_tag, "-f", temp_path, "."])
                 await self._docker.run_cmd(cmd, timeout=300)
 
-                os.unlink(temp_path)
-
                 logger.info("sandbox_profile_image_built", image=image_tag, profile=profile_name)
                 return True
 
             except Exception as exc:
                 logger.error("sandbox_profile_image_failed", profile=profile_name, error=str(exc))
                 return False
+            finally:
+                if temp_path:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
 
     async def remove_image(self, image: str) -> None:
         """Remove an image from DinD."""

@@ -86,7 +86,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     if agent_runner and container_id:
         # Run triage inside sandbox via AgentRunner
         from legion.orchestration.nodes.agent import run_agent_node
-        from legion.orchestration.nodes.triage import parse_triage_response
+        from legion.orchestration.nodes.triage import _TRIAGE_SYSTEM_PROMPT, parse_triage_response
 
         repo = state.get("repo", "")
         task = state.get("task", "")
@@ -99,6 +99,9 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         prompt += f"\nTask:\n{task}"
         if additional:
             prompt += f"\n\nPrevious Q&A:\n{additional}"
+
+        # Prepend system prompt since sandbox runner doesn't receive it separately
+        prompt = _TRIAGE_SYSTEM_PROMPT + "\n\n" + prompt
 
         result = await run_agent_node(
             state=state,
