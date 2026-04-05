@@ -1,3 +1,41 @@
+export const ISSUE_STATUS_COLORS: Record<string, string> = {
+  open: "text-success",
+  triaging: "text-warning",
+  in_progress: "text-blue-400",
+  closed: "text-purple-400",
+  cancelled: "text-muted-foreground",
+};
+
+export const ISSUE_STATUS_BG_COLORS: Record<string, string> = {
+  open: "bg-success/10",
+  triaging: "bg-warning/10",
+  in_progress: "bg-blue-400/10",
+  closed: "bg-purple-400/10",
+  cancelled: "bg-muted-foreground/10",
+};
+
+export const ISSUE_STATUS_ICONS: Record<string, string> = {
+  open: "●",
+  triaging: "◉",
+  in_progress: "●",
+  closed: "✓",
+  cancelled: "✕",
+};
+
+export const ISSUE_PRIORITY_COLORS: Record<string, string> = {
+  critical: "text-red-400",
+  high: "text-warning",
+  medium: "text-blue-400",
+  low: "text-muted-foreground",
+};
+
+export const ISSUE_PRIORITY_BG_COLORS: Record<string, string> = {
+  critical: "bg-red-500/20 text-red-300",
+  high: "bg-warning/20 text-amber-300",
+  medium: "bg-blue-500/20 text-blue-300",
+  low: "bg-zinc-500/20 text-zinc-400",
+};
+
 export const JOB_STATUS_COLORS: Record<string, string> = {
   pending: "text-warning",
   running: "text-primary",

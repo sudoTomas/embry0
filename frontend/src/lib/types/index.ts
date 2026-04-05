@@ -1,3 +1,4 @@
+export * from "./issues";
 export * from "./jobs";
 export * from "./pipelines";
 export * from "./events";
