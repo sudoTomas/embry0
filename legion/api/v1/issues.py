@@ -86,6 +86,7 @@ async def create_issue(
             logger.info("auto_triage_started", issue_id=issue_id, job_id=job_id)
         except Exception:
             logger.warning("auto_triage_failed", issue_id=issue_id, exc_info=True)
+            await issues.update(issue_id, status="open")
 
     if req.github_sync_enabled and req.repo:
         if sync is not None:
@@ -206,6 +207,7 @@ async def update_issue(
             },
             issue_id=issue_id,
         )
+        await issues.update_parent_status(issue_id)
 
     emit_audit_event(
         "issue.updated",
@@ -327,6 +329,7 @@ async def triage_issue(
         logger.info("triage_started", issue_id=issue_id, job_id=job_id)
     except Exception:
         logger.warning("triage_execution_failed", issue_id=issue_id, exc_info=True)
+        await issues.update(issue_id, status="open")
 
     updated = await issues.get(issue_id)
     return IssueResponse(**updated)

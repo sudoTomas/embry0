@@ -222,6 +222,37 @@ class IssuesRepository:
             return None
         return dict(row)
 
+    async def update_parent_status(self, issue_id: str) -> None:
+        """Recalculate parent issue status based on children statuses."""
+        issue = await self.get(issue_id)
+        if not issue or not issue.get("parent_issue_id"):
+            return
+
+        parent_id = issue["parent_issue_id"]
+        children = await self.get_children(parent_id)
+        if not children:
+            return
+
+        # Filter out cancelled children
+        active = [c for c in children if c["status"] != "cancelled"]
+        if not active:
+            return
+
+        statuses = {c["status"] for c in active}
+
+        if "triaging" in statuses:
+            new_status = "triaging"
+        elif "in_progress" in statuses:
+            new_status = "in_progress"
+        elif statuses == {"closed"}:
+            new_status = "closed"
+        else:
+            new_status = "open"
+
+        parent = await self.get(parent_id)
+        if parent and parent["status"] != new_status:
+            await self.update(parent_id, status=new_status)
+
     async def get_activity(
         self,
         issue_id: str,

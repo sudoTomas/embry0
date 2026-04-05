@@ -66,4 +66,5 @@ class IssueToprWorkflow:
         builder.add_edge("git_ops", "output")
         builder.add_edge("output", END)
 
-        return builder.compile()
+        checkpointer = config.get("checkpointer") if isinstance(config, dict) else None
+        return builder.compile(checkpointer=checkpointer)

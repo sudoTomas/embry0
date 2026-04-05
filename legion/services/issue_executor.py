@@ -9,6 +9,7 @@ import structlog
 
 from legion.audit.db_logger import emit_audit_event_db
 from legion.audit.logger import emit_audit_event
+from legion.orchestration.checkpoint import create_checkpointer
 from legion.storage.database import DatabasePool
 from legion.storage.repositories.issues import IssuesRepository
 from legion.storage.repositories.jobs import JobsRepository
@@ -110,8 +111,14 @@ class IssueExecutor:
                 "budget_overrun_usd": 0.0,
             }
 
-            graph = workflow.compile()
-            result = await graph.ainvoke(initial_state)
+            saver = create_checkpointer(self._database_url)
+            async with saver:
+                await saver.setup()
+                graph = workflow.compile(config={"checkpointer": saver})
+                result = await graph.ainvoke(
+                    initial_state,
+                    config={"configurable": {"thread_id": job_id}},
+                )
 
             await self._handle_workflow_result(issue_id, job_id, result)
 
@@ -183,6 +190,7 @@ class IssueExecutor:
             )
             issue_status = "closed" if final_status == "completed" else "open"
             await self._issues.update(issue_id, status=issue_status)
+            await self._issues.update_parent_status(issue_id)
             emit_audit_event(
                 "issue.status_changed",
                 actor="system",
@@ -234,6 +242,7 @@ class IssueExecutor:
 
         await self._jobs.update(job_id, status="completed")
         await self._issues.update(issue_id, status="open")
+        await self._issues.update_parent_status(issue_id)
 
         emit_audit_event(
             "issue.decomposed",
