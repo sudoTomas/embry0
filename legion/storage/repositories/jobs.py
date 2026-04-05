@@ -1,5 +1,7 @@
 """Jobs repository — PostgreSQL CRUD for job lifecycle."""
 
+from __future__ import annotations
+
 import uuid
 from typing import Any
 
