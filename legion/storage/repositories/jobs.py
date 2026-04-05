@@ -60,6 +60,7 @@ class JobsRepository:
         self,
         status: str | None = None,
         repo: str | None = None,
+        issue_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -75,6 +76,10 @@ class JobsRepository:
         if repo:
             conditions.append(f"repo = ${idx}")
             args.append(repo)
+            idx += 1
+        if issue_id:
+            conditions.append(f"issue_id = ${idx}")
+            args.append(issue_id)
             idx += 1
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""

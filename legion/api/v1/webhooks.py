@@ -44,14 +44,6 @@ async def github_webhook(
             )
             return result
 
-    if event_type == "issues" and action == "labeled":
-        issue = payload.get("issue", {})
-        labels = [lbl.get("name", "") for lbl in issue.get("labels", [])]
-        trigger_labels = set(config.trigger_labels_list)
-        if trigger_labels.intersection(labels):
-            logger.info("webhook_trigger_matched", issue_number=issue.get("number"), labels=labels)
-            return {"status": "accepted", "action": "job_queued"}
-
     if event_type == "issue_comment" and action == "created":
         logger.info("webhook_comment", issue=payload.get("issue", {}).get("number"))
         return {"status": "accepted", "action": "comment_received"}

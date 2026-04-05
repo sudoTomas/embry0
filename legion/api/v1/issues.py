@@ -1,7 +1,6 @@
 """Issues API — create, list, get, update, delete, triage, sync, and activity endpoints."""
 
-import json
-
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from legion.api.deps import get_issues_repo, get_jobs_repo
@@ -16,6 +15,7 @@ from legion.audit.logger import emit_audit_event
 from legion.storage.repositories.issues import IssuesRepository
 from legion.storage.repositories.jobs import JobsRepository
 
+logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
@@ -40,7 +40,7 @@ async def create_issue(
         labels=req.labels,
         repo=req.repo,
         github_sync_enabled=req.github_sync_enabled,
-        created_by=_actor(request),
+        created_by="user",
     )
 
     if req.auto_triage:
@@ -59,9 +59,9 @@ async def create_issue(
         sync = request.app.state.github_sync
         if sync is not None:
             try:
-                await sync.push_create(issue_id)
+                await sync.push_create(issue_id, issues)
             except Exception:
-                pass
+                logger.warning("github_sync_failed", issue_id=issue_id, exc_info=True)
 
     issue = await issues.get(issue_id)
     return IssueResponse(**issue)
@@ -123,8 +123,7 @@ async def get_issue(
     children_rows = await issues.get_children(issue_id)
     children = [IssueResponse(**c) for c in children_rows]
 
-    jobs_rows, _ = await jobs.list(limit=200, offset=0)
-    issue_jobs = [j for j in jobs_rows if j.get("issue_id") == issue_id]
+    issue_jobs, _ = await jobs.list(issue_id=issue_id, limit=100, offset=0)
 
     return IssueDetailResponse(**issue, children=children, jobs=issue_jobs)
 
@@ -146,8 +145,6 @@ async def update_issue(
 
     updates = req.model_dump(exclude_none=True)
     if updates:
-        if "labels" in updates:
-            updates["labels"] = json.dumps(updates["labels"])
         await issues.update(issue_id, **updates)
 
     config = request.app.state.config
@@ -178,9 +175,9 @@ async def update_issue(
         sync = request.app.state.github_sync
         if sync is not None:
             try:
-                await sync.push_update(issue_id)
+                await sync.push_update(issue_id, issues)
             except Exception:
-                pass
+                logger.warning("github_sync_failed", issue_id=issue_id, exc_info=True)
 
     updated = await issues.get(issue_id)
     return IssueResponse(**updated)
@@ -275,9 +272,9 @@ async def sync_issue(
         raise HTTPException(status_code=400, detail="GitHub sync is not enabled")
 
     if existing.get("github_number"):
-        await sync.push_update(issue_id)
+        await sync.push_update(issue_id, issues)
     else:
-        await sync.push_create(issue_id)
+        await sync.push_create(issue_id, issues)
 
     return {"issue_id": issue_id, "synced": True}
 

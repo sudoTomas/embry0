@@ -3,7 +3,7 @@
 import re
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _REPO_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
 
@@ -74,6 +74,8 @@ class UpdateIssueRequest(BaseModel):
 
 
 class IssueResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     title: str
     body: str

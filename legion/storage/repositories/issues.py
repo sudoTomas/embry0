@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any
 
@@ -54,7 +53,7 @@ class IssuesRepository:
             title,
             body,
             priority,
-            json.dumps(labels),
+            labels,
             repo,
             parent_issue_id,
             github_sync_enabled,
@@ -71,8 +70,10 @@ class IssuesRepository:
                 i.*,
                 (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
                 (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
-                (SELECT j.status FROM jobs j WHERE j.issue_id = i.id AND j.status = 'running'
-                 ORDER BY j.created_at DESC LIMIT 1) AS active_agent
+                (SELECT t.agent_type FROM jobs j
+                 JOIN traces t ON t.job_id = j.job_id
+                 WHERE j.issue_id = i.id AND j.status = 'running'
+                 ORDER BY t.created_at DESC LIMIT 1) AS active_agent
             FROM issues i
             WHERE i.id = $1
             """,
@@ -140,8 +141,10 @@ class IssuesRepository:
                 i.*,
                 (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
                 (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
-                (SELECT j.status FROM jobs j WHERE j.issue_id = i.id AND j.status = 'running'
-                 ORDER BY j.created_at DESC LIMIT 1) AS active_agent
+                (SELECT t.agent_type FROM jobs j
+                 JOIN traces t ON t.job_id = j.job_id
+                 WHERE j.issue_id = i.id AND j.status = 'running'
+                 ORDER BY t.created_at DESC LIMIT 1) AS active_agent
             FROM issues i
             {where}
             ORDER BY i.{sort_col} {sort_dir}
@@ -180,8 +183,10 @@ class IssuesRepository:
                 i.*,
                 (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
                 (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
-                (SELECT j.status FROM jobs j WHERE j.issue_id = i.id AND j.status = 'running'
-                 ORDER BY j.created_at DESC LIMIT 1) AS active_agent
+                (SELECT t.agent_type FROM jobs j
+                 JOIN traces t ON t.job_id = j.job_id
+                 WHERE j.issue_id = i.id AND j.status = 'running'
+                 ORDER BY t.created_at DESC LIMIT 1) AS active_agent
             FROM issues i
             WHERE i.parent_issue_id = $1
             ORDER BY i.created_at ASC
@@ -198,8 +203,10 @@ class IssuesRepository:
                 i.*,
                 (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
                 (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
-                (SELECT j.status FROM jobs j WHERE j.issue_id = i.id AND j.status = 'running'
-                 ORDER BY j.created_at DESC LIMIT 1) AS active_agent
+                (SELECT t.agent_type FROM jobs j
+                 JOIN traces t ON t.job_id = j.job_id
+                 WHERE j.issue_id = i.id AND j.status = 'running'
+                 ORDER BY t.created_at DESC LIMIT 1) AS active_agent
             FROM issues i
             WHERE i.repo = $1 AND i.github_number = $2
             """,
