@@ -35,6 +35,7 @@ class IssueExecutor:
         sandbox_manager: Any = None,
         agent_runner: Any = None,
         proxy_manager: Any = None,
+        event_subscribers: dict | None = None,
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
@@ -48,6 +49,7 @@ class IssueExecutor:
         self._sandbox = sandbox_manager
         self._agent_runner = agent_runner
         self._proxy = proxy_manager
+        self._event_subscribers = event_subscribers or {}
         self._background_tasks: set[asyncio.Task] = set()
 
     async def execute(self, issue_id: str) -> str:
@@ -88,25 +90,11 @@ class IssueExecutor:
         return job_id
 
     async def _run_workflow(self, issue_id: str, job_id: str, issue: dict[str, Any]) -> None:
-        """Execute the issue-to-pr workflow and handle the outcome."""
+        """Execute the issue-to-pr workflow via astream() with interrupt handling."""
         from datetime import UTC, datetime
 
-        container_id = None
         try:
             await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
-
-            if self._sandbox:
-                try:
-                    env = {}
-                    if self._proxy:
-                        if self._proxy.auth_proxy_url:
-                            env["ANTHROPIC_BASE_URL"] = self._proxy.auth_proxy_url
-                        if self._proxy.git_proxy_url:
-                            env["GIT_PROXY_URL"] = self._proxy.git_proxy_url
-                    container_id = await self._sandbox.create(job_id, env=env)
-                    logger.info("sandbox_created_for_job", job_id=job_id, container_id=container_id)
-                except Exception as exc:
-                    logger.warning("sandbox_creation_failed", job_id=job_id, error=str(exc))
 
             workflow = self._registry.get("issue-to-pr")
             if not workflow:
@@ -114,6 +102,7 @@ class IssueExecutor:
 
             initial_state = {
                 "job_id": job_id,
+                "issue_id": issue_id,
                 "repo": issue.get("repo") or "",
                 "task": issue["title"] + ("\n\n" + issue["body"] if issue.get("body") else ""),
                 "issue_number": issue.get("github_number"),
@@ -123,20 +112,67 @@ class IssueExecutor:
                 "retry_count": 0,
                 "total_cost_usd": 0.0,
                 "budget_overrun_usd": 0.0,
-                "sandbox_container_id": container_id,
+            }
+
+            graph_config = {
+                "configurable": {
+                    "thread_id": job_id,
+                    "agent_runner": self._agent_runner,
+                    "sandbox_manager": self._sandbox,
+                    "proxy_manager": self._proxy,
+                    "docker": getattr(self._sandbox, "_docker", None) if self._sandbox else None,
+                    "issues_repo": self._issues,
+                    "inputs_repo": self._inputs,
+                    "db": self._db,
+                }
             }
 
             async with checkpointer_context(self._database_url) as saver:
                 graph = workflow.compile(config={"checkpointer": saver})
-                result = await graph.ainvoke(
+
+                final_state: dict[str, Any] | None = None
+
+                async for event in graph.astream(
                     initial_state,
-                    config={"configurable": {"thread_id": job_id}},
-                )
+                    config=graph_config,
+                    stream_mode=["updates", "custom"],
+                ):
+                    mode = event[0] if isinstance(event, tuple) else "updates"
+                    data = event[1] if isinstance(event, tuple) else event
 
-            await self._handle_workflow_result(issue_id, job_id, result)
+                    if mode == "custom":
+                        await self._broadcast_event(job_id, data)
+                    elif mode == "updates":
+                        if isinstance(data, dict):
+                            for _node_name, node_output in data.items():
+                                if isinstance(node_output, dict):
+                                    final_state = {**(final_state or {}), **node_output}
 
-            # Cleanup sandbox (skip if awaiting_input — needed for resume)
-            if container_id and self._sandbox and result.get("current_stage") != "awaiting_input":
+                # Check if graph was interrupted
+                state_snapshot = await graph.aget_state(graph_config)
+                if state_snapshot and state_snapshot.next:
+                    interrupt_value = None
+                    if hasattr(state_snapshot, "tasks") and state_snapshot.tasks:
+                        for task in state_snapshot.tasks:
+                            if hasattr(task, "interrupts") and task.interrupts:
+                                interrupt_value = task.interrupts[0].value
+                                break
+
+                    if interrupt_value:
+                        await self._handle_needs_info(issue_id, job_id, interrupt_value)
+                    else:
+                        await self._jobs.update(job_id, status="awaiting_input")
+                        await self._issues.update(issue_id, status="awaiting_input")
+                    return
+
+            if final_state:
+                await self._handle_workflow_result(issue_id, job_id, final_state)
+            else:
+                await self._jobs.update(job_id, status="completed")
+
+            # Cleanup sandbox
+            container_id = final_state.get("sandbox_container_id") if final_state else None
+            if container_id and self._sandbox:
                 try:
                     await self._sandbox.destroy(container_id)
                     logger.info("sandbox_destroyed", job_id=job_id)
@@ -164,12 +200,6 @@ class IssueExecutor:
                 audit_log_path=self._audit_log_path,
                 issue_id=issue_id,
             )
-            if container_id and self._sandbox:
-                try:
-                    await self._sandbox.destroy(container_id)
-                    logger.info("sandbox_destroyed", job_id=job_id)
-                except Exception:
-                    logger.warning("sandbox_destroy_failed", job_id=job_id, exc_info=True)
 
     async def _handle_workflow_result(self, issue_id: str, job_id: str, result: dict[str, Any]) -> None:
         """Process the workflow result and update issue/job status."""
@@ -278,12 +308,26 @@ class IssueExecutor:
 
         logger.info("issue_decomposed", issue_id=issue_id, children=child_ids)
 
+    async def _broadcast_event(self, job_id: str, event: dict) -> None:
+        """Forward an event to WebSocket subscribers for this job."""
+        subscribers = self._event_subscribers.get(job_id, [])
+        for queue in subscribers:
+            try:
+                queue.put_nowait(event)
+            except Exception:
+                pass
+
     async def _handle_needs_info(self, issue_id: str, job_id: str, decision: dict[str, Any]) -> None:
         """Create input records, dispatch notifications, and pause for blocking questions."""
         from legion.notifications.dispatcher import dispatch_questions
 
         questions = decision.get("questions", [])
-        asking_node = "triage"
+
+        # Handle interrupt value format (from interrupt())
+        if "asking_node" in decision:
+            asking_node = decision.get("asking_node", "triage")
+        else:
+            asking_node = "triage"
 
         enriched_questions: list[dict[str, Any]] = []
         has_blocking = False
@@ -362,8 +406,10 @@ class IssueExecutor:
 
         logger.info("needs_info_handled", issue_id=issue_id, blocking=has_blocking)
 
-    async def resume(self, issue_id: str, job_id: str, additional_context: Any) -> None:
-        """Resume a paused pipeline with additional context from answered questions."""
+    async def resume(self, issue_id: str, job_id: str, answers: Any) -> None:
+        """Resume a paused pipeline with user answers using Command(resume=)."""
+        from langgraph.types import Command
+
         try:
             await self._jobs.update(job_id, status="running")
             await self._issues.update(issue_id, status="triaging")
@@ -372,14 +418,66 @@ class IssueExecutor:
             if not workflow:
                 raise RuntimeError("Workflow 'issue-to-pr' not registered")
 
+            graph_config = {
+                "configurable": {
+                    "thread_id": job_id,
+                    "agent_runner": self._agent_runner,
+                    "sandbox_manager": self._sandbox,
+                    "proxy_manager": self._proxy,
+                    "docker": getattr(self._sandbox, "_docker", None) if self._sandbox else None,
+                    "issues_repo": self._issues,
+                    "inputs_repo": self._inputs,
+                    "db": self._db,
+                }
+            }
+
             async with checkpointer_context(self._database_url) as saver:
                 graph = workflow.compile(config={"checkpointer": saver})
-                result = await graph.ainvoke(
-                    {"additional_context": additional_context, "pending_inputs": [], "current_stage": ""},
-                    config={"configurable": {"thread_id": job_id}},
-                )
 
-            await self._handle_workflow_result(issue_id, job_id, result)
+                final_state: dict[str, Any] | None = None
+                async for event in graph.astream(
+                    Command(resume=answers),
+                    config=graph_config,
+                    stream_mode=["updates", "custom"],
+                ):
+                    mode = event[0] if isinstance(event, tuple) else "updates"
+                    data = event[1] if isinstance(event, tuple) else event
+
+                    if mode == "custom":
+                        await self._broadcast_event(job_id, data)
+                    elif mode == "updates":
+                        if isinstance(data, dict):
+                            for _node_name, node_output in data.items():
+                                if isinstance(node_output, dict):
+                                    final_state = {**(final_state or {}), **node_output}
+
+                # Check for another interrupt
+                state_snapshot = await graph.aget_state(graph_config)
+                if state_snapshot and state_snapshot.next:
+                    interrupt_value = None
+                    if hasattr(state_snapshot, "tasks") and state_snapshot.tasks:
+                        for task in state_snapshot.tasks:
+                            if hasattr(task, "interrupts") and task.interrupts:
+                                interrupt_value = task.interrupts[0].value
+                                break
+                    if interrupt_value:
+                        await self._handle_needs_info(issue_id, job_id, interrupt_value)
+                    else:
+                        await self._jobs.update(job_id, status="awaiting_input")
+                        await self._issues.update(issue_id, status="awaiting_input")
+                    return
+
+            if final_state:
+                await self._handle_workflow_result(issue_id, job_id, final_state)
+
+            # Cleanup sandbox
+            container_id = final_state.get("sandbox_container_id") if final_state else None
+            if container_id and self._sandbox:
+                try:
+                    await self._sandbox.destroy(container_id)
+                    logger.info("sandbox_destroyed", job_id=job_id)
+                except Exception:
+                    logger.warning("sandbox_destroy_failed", job_id=job_id, exc_info=True)
 
         except Exception as exc:
             logger.error("pipeline_resume_failed", issue_id=issue_id, job_id=job_id, error=str(exc))
