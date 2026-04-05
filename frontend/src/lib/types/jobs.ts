@@ -55,3 +55,23 @@ export interface JobFilters {
   limit?: number;
   offset?: number;
 }
+
+export interface JobEvent {
+  type: string;
+  node?: string;
+  agent?: string;
+  message?: string;
+  tool?: string;
+  file_path?: string;
+  pr_url?: string;
+  branch?: string;
+  cost_usd?: number;
+  duration_ms?: number;
+  questions?: unknown[];
+  decision?: string;
+  summary?: string;
+  validation?: Record<string, unknown>;
+  timestamp?: string;
+  action?: string;
+  model?: string;
+}
