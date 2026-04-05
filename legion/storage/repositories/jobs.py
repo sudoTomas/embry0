@@ -130,3 +130,36 @@ class JobsRepository:
             job_id,
             cost_delta,
         )
+
+    async def append_log_event(self, job_id: str, event: dict[str, Any]) -> None:
+        """Append a pipeline event to the job_logs table."""
+        import json as json_mod
+
+        await self._db.execute(
+            "INSERT INTO job_logs (job_id, stream, text) VALUES ($1, $2, $3)",
+            job_id,
+            "pipeline",
+            json_mod.dumps(event, default=str),
+        )
+
+    async def get_log_events(
+        self, job_id: str, stream: str = "pipeline", limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Get pipeline events for a job, ordered chronologically."""
+        import json as json_mod
+
+        rows = await self._db.fetch(
+            "SELECT * FROM job_logs WHERE job_id = $1 AND stream = $2 ORDER BY created_at ASC LIMIT $3",
+            job_id,
+            stream,
+            limit,
+        )
+        result = []
+        for r in rows:
+            row_dict = dict(r)
+            try:
+                row_dict["payload"] = json_mod.loads(row_dict.get("text", "{}"))
+            except (json_mod.JSONDecodeError, TypeError):
+                row_dict["payload"] = {"type": "raw", "message": row_dict.get("text", "")}
+            result.append(row_dict)
+        return result
