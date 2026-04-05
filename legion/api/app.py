@@ -69,6 +69,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         database_url=config.database_url,
         audit_log_path=config.audit_log_path,
         db=db,
+        inputs_repo=app.state.inputs_repo,
+        config=config,
     )
 
     app.state.background_tasks: set[asyncio.Task] = set()

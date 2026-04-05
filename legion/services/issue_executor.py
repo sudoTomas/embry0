@@ -30,6 +30,8 @@ class IssueExecutor:
         database_url: str,
         audit_log_path: Any = None,
         db: DatabasePool | None = None,
+        inputs_repo: Any = None,
+        config: Any = None,
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
@@ -38,6 +40,8 @@ class IssueExecutor:
         self._database_url = database_url
         self._audit_log_path = audit_log_path
         self._db = db
+        self._inputs = inputs_repo
+        self._config = config
         self._background_tasks: set[asyncio.Task] = set()
 
     async def execute(self, issue_id: str) -> str:
@@ -150,6 +154,11 @@ class IssueExecutor:
             stage=current_stage,
         )
 
+        if current_stage == "awaiting_input":
+            triage_decision = result.get("pipeline_config", {})
+            await self._handle_needs_info(issue_id, job_id, triage_decision)
+            return
+
         if action == "split":
             await self._handle_split(issue_id, job_id, triage_decision)
         elif action == "needs_info":
@@ -243,26 +252,89 @@ class IssueExecutor:
     async def _handle_needs_info(
         self, issue_id: str, job_id: str, decision: dict[str, Any]
     ) -> None:
-        """Handle needs_info — set issue back to open and log the questions."""
-        await self._jobs.update(job_id, status="completed")
-        await self._issues.update(issue_id, status="open")
+        """Create input records, dispatch notifications, and pause for blocking questions."""
+        from legion.notifications.dispatcher import dispatch_questions
 
-        await emit_audit(
-            self._db,
-            "issue.triaged",
-            actor="triage_agent",
-            details={
-                "action": "needs_info",
-                "confidence": decision.get("confidence"),
-                "questions": decision.get("questions", []),
-                "reasoning": decision.get("reasoning", ""),
-            },
-            audit_log_path=self._audit_log_path,
-            issue_id=issue_id,
-        )
+        questions = decision.get("questions", [])
+        asking_node = "triage"
 
-        logger.info(
-            "issue_needs_info",
-            issue_id=issue_id,
-            questions=decision.get("questions", []),
-        )
+        enriched_questions: list[dict[str, Any]] = []
+        has_blocking = False
+
+        for q in questions:
+            if isinstance(q, str):
+                q = {"question": q, "importance": "blocking"}
+
+            importance = q.get("importance", "blocking")
+            auto_answer = q.get("suggested_answer") if importance == "auto_answerable" else None
+
+            input_id = await self._inputs.create(
+                issue_id=issue_id,
+                job_id=job_id,
+                question=q["question"],
+                asking_node=asking_node,
+                importance=importance,
+                auto_answer=auto_answer,
+            )
+            enriched_questions.append({**q, "input_id": input_id})
+            if importance == "blocking":
+                has_blocking = True
+
+            await emit_audit(
+                self._db,
+                "issue.input_created",
+                actor=asking_node,
+                details={
+                    "input_id": input_id,
+                    "question": q["question"],
+                    "importance": importance,
+                },
+                audit_log_path=self._audit_log_path,
+                issue_id=issue_id,
+            )
+
+        if has_blocking:
+            await self._jobs.update(job_id, status="awaiting_input")
+            await self._issues.update(issue_id, status="awaiting_input")
+
+            await emit_audit(
+                self._db,
+                "issue.pipeline_paused",
+                actor="system",
+                details={
+                    "job_id": job_id,
+                    "pending_count": sum(
+                        1 for q in enriched_questions if q.get("importance") == "blocking"
+                    ),
+                },
+                audit_log_path=self._audit_log_path,
+                issue_id=issue_id,
+            )
+
+            issue = await self._issues.get(issue_id)
+            if issue and self._config:
+                blocking_pairs = [
+                    (q["input_id"], q["question"])
+                    for q in enriched_questions
+                    if q.get("importance") == "blocking"
+                ]
+                await dispatch_questions(
+                    inputs_repo=self._inputs,
+                    issue=issue,
+                    job_id=job_id,
+                    questions=blocking_pairs,
+                    asking_node=asking_node,
+                    config=self._config,
+                )
+        else:
+            # All auto-answerable — re-run triage with answers
+            await self._jobs.update(job_id, status="completed")
+            await self._issues.update(issue_id, status="triaging")
+            try:
+                new_job_id = await self.execute(issue_id)
+                logger.info("auto_answer_retriage", issue_id=issue_id, new_job_id=new_job_id)
+            except Exception:
+                logger.warning("auto_answer_retriage_failed", issue_id=issue_id, exc_info=True)
+                await self._issues.update(issue_id, status="open")
+
+        logger.info("needs_info_handled", issue_id=issue_id, blocking=has_blocking)
