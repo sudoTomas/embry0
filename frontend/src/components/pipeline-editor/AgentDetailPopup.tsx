@@ -712,15 +712,7 @@ function EditMode({
 
       <Divider />
 
-      {/* Save / Cancel buttons */}
       <div className="flex items-center justify-end gap-2 mt-1">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="px-4 py-2 rounded-lg text-sm text-white/50 bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08] transition-colors"
-        >
-          Cancel
-        </button>
         <button
           type="button"
           onClick={onCancel}
@@ -731,7 +723,7 @@ function EditMode({
             color,
           }}
         >
-          Save
+          Done
         </button>
       </div>
     </>
