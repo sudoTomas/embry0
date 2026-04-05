@@ -352,10 +352,17 @@ async def sync_issue(
     if sync is None:
         raise HTTPException(status_code=400, detail="GitHub sync is not enabled")
 
-    if existing.get("github_number"):
-        await sync.push_update(issue_id, issues)
-    else:
-        await sync.push_create(issue_id, issues)
+    try:
+        if existing.get("github_number"):
+            await sync.push_update(issue_id, issues)
+        else:
+            await sync.push_create(issue_id, issues)
+    except Exception as exc:
+        logger.warning("github_sync_failed", issue_id=issue_id, exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub sync failed: {exc}",
+        ) from exc
 
     return {"issue_id": issue_id, "synced": True}
 
