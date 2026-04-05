@@ -31,6 +31,14 @@ export function RepoSelector({ value, onChange, repos, placeholder = "Select rep
         value={search}
         onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
+        onBlur={() => {
+          setTimeout(() => {
+            setOpen(false);
+            if (search !== value) {
+              onChange(search);
+            }
+          }, 150);
+        }}
         placeholder={placeholder}
       />
       {open && filtered.length > 0 && (
