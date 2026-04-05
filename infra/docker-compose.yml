@@ -11,6 +11,7 @@ services:
     depends_on:
       orchestrator:
         condition: service_healthy
+    networks: [frontend]
     logging:
       driver: json-file
       options:
@@ -57,6 +58,7 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+    networks: [frontend, backend]
     logging:
       driver: json-file
       options:
@@ -84,6 +86,7 @@ services:
         limits:
           cpus: "2"
           memory: 2G
+    networks: [backend]
     logging:
       driver: json-file
       options:
@@ -116,6 +119,7 @@ services:
         reservations:
           cpus: "1"
           memory: 2G
+    networks: [backend]
     logging:
       driver: json-file
       options:
@@ -129,3 +133,9 @@ volumes:
   dind-certs-ca:
   dind-certs-client:
   dind-storage:
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
