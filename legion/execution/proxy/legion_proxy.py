@@ -1,7 +1,9 @@
 """Legion API proxy — gives sandbox agents controlled access to Legion's API."""
 
 from __future__ import annotations
+
 from typing import Any
+
 import structlog
 from aiohttp import web
 

@@ -59,6 +59,5 @@ async def retry_developer_node(state: dict[str, Any]) -> dict[str, Any]:
 
 async def awaiting_input_node(state: dict[str, Any]) -> dict[str, Any]:
     """Pass-through node that finalizes the awaiting_input pause state."""
-    logger.info("awaiting_input", job_id=state.get("job_id"),
-                pending=len(state.get("pending_inputs", [])))
+    logger.info("awaiting_input", job_id=state.get("job_id"), pending=len(state.get("pending_inputs", [])))
     return {"current_stage": "awaiting_input"}

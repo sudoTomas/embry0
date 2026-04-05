@@ -63,10 +63,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry.register(IssueToprWorkflow())
     app.state.workflow_registry = registry
 
-    from legion.execution.docker_client import DockerClient
-    from legion.execution.sandbox_manager import SandboxManager
     from legion.execution.agent_runner import AgentRunner
+    from legion.execution.docker_client import DockerClient
     from legion.execution.proxy.manager import ProxyManager
+    from legion.execution.sandbox_manager import SandboxManager
     from legion.services.issue_executor import IssueExecutor
 
     docker = DockerClient(
