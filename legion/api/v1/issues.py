@@ -11,6 +11,7 @@ from legion.api.schemas.issues import (
     IssueResponse,
     UpdateIssueRequest,
 )
+from legion.audit.db_logger import emit_audit_event_db
 from legion.audit.logger import emit_audit_event
 from legion.services.issue_executor import IssueExecutor
 from legion.storage.repositories.issues import IssuesRepository
@@ -47,11 +48,20 @@ async def create_issue(
     )
 
     config = request.app.state.config
+    db = request.app.state.db
+    actor = _actor(request)
     emit_audit_event(
         "issue.created",
-        actor=_actor(request),
+        actor=actor,
         details={"issue_id": issue_id, "title": req.title},
         audit_log_path=config.audit_log_path,
+        issue_id=issue_id,
+    )
+    await emit_audit_event_db(
+        db,
+        "issue.created",
+        actor=actor,
+        details={"issue_id": issue_id, "title": req.title},
         issue_id=issue_id,
     )
 
@@ -62,6 +72,13 @@ async def create_issue(
             actor="system",
             details={"old_status": "open", "new_status": "triaging"},
             audit_log_path=config.audit_log_path,
+            issue_id=issue_id,
+        )
+        await emit_audit_event_db(
+            db,
+            "issue.status_changed",
+            actor="system",
+            details={"old_status": "open", "new_status": "triaging"},
             issue_id=issue_id,
         )
         try:
@@ -163,6 +180,7 @@ async def update_issue(
         await issues.update(issue_id, **updates)
 
     config = request.app.state.config
+    db = request.app.state.db
     actor = _actor(request)
 
     if "status" in updates and updates["status"] != existing["status"]:
@@ -177,12 +195,30 @@ async def update_issue(
             audit_log_path=config.audit_log_path,
             issue_id=issue_id,
         )
+        await emit_audit_event_db(
+            db,
+            "issue.status_changed",
+            actor=actor,
+            details={
+                "issue_id": issue_id,
+                "old_status": existing["status"],
+                "new_status": updates["status"],
+            },
+            issue_id=issue_id,
+        )
 
     emit_audit_event(
         "issue.updated",
         actor=actor,
         details={"issue_id": issue_id, "fields": list(updates.keys())},
         audit_log_path=config.audit_log_path,
+        issue_id=issue_id,
+    )
+    await emit_audit_event_db(
+        db,
+        "issue.updated",
+        actor=actor,
+        details={"issue_id": issue_id, "fields": list(updates.keys())},
         issue_id=issue_id,
     )
 
@@ -218,11 +254,20 @@ async def delete_issue(
     await issues.update(issue_id, status="cancelled")
 
     config = request.app.state.config
+    db = request.app.state.db
+    actor = _actor(request)
     emit_audit_event(
         "issue.cancelled",
-        actor=_actor(request),
+        actor=actor,
         details={"issue_id": issue_id},
         audit_log_path=config.audit_log_path,
+        issue_id=issue_id,
+    )
+    await emit_audit_event_db(
+        db,
+        "issue.cancelled",
+        actor=actor,
+        details={"issue_id": issue_id},
         issue_id=issue_id,
     )
 
@@ -252,15 +297,28 @@ async def triage_issue(
     await issues.update(issue_id, status="triaging")
 
     config = request.app.state.config
+    db = request.app.state.db
+    actor = _actor(request)
     emit_audit_event(
         "issue.status_changed",
-        actor=_actor(request),
+        actor=actor,
         details={
             "issue_id": issue_id,
             "old_status": current_status,
             "new_status": "triaging",
         },
         audit_log_path=config.audit_log_path,
+        issue_id=issue_id,
+    )
+    await emit_audit_event_db(
+        db,
+        "issue.status_changed",
+        actor=actor,
+        details={
+            "issue_id": issue_id,
+            "old_status": current_status,
+            "new_status": "triaging",
+        },
         issue_id=issue_id,
     )
 

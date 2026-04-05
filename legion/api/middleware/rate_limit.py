@@ -6,7 +6,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-_EXEMPT_PREFIXES = ("/health", "/webhook", "/ws/")
+_EXEMPT_PREFIXES = ("/health", "/webhook", "/api/v1/webhook", "/ws/")
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

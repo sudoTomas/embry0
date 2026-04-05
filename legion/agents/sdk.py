@@ -34,8 +34,9 @@ def _find_cli() -> str | None:
     if path:
         return path
     # Common locations
+    from pathlib import Path
     for candidate in [
-        "/home/user/.local/bin/claude",
+        str(Path.home() / ".local" / "bin" / "claude"),
         "/usr/local/bin/claude",
     ]:
         import os

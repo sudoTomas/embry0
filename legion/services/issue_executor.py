@@ -7,7 +7,9 @@ from typing import Any
 
 import structlog
 
+from legion.audit.db_logger import emit_audit_event_db
 from legion.audit.logger import emit_audit_event
+from legion.storage.database import DatabasePool
 from legion.storage.repositories.issues import IssuesRepository
 from legion.storage.repositories.jobs import JobsRepository
 from legion.storage.repositories.traces import TracesRepository
@@ -27,6 +29,7 @@ class IssueExecutor:
         workflow_registry: WorkflowRegistry,
         database_url: str,
         audit_log_path: Any = None,
+        db: DatabasePool | None = None,
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
@@ -34,6 +37,7 @@ class IssueExecutor:
         self._registry = workflow_registry
         self._database_url = database_url
         self._audit_log_path = audit_log_path
+        self._db = db
         self._background_tasks: set[asyncio.Task] = set()
 
     async def execute(self, issue_id: str) -> str:
@@ -63,6 +67,14 @@ class IssueExecutor:
             audit_log_path=self._audit_log_path,
             issue_id=issue_id,
         )
+        if self._db is not None:
+            await emit_audit_event_db(
+                self._db,
+                "issue.job_created",
+                actor="system",
+                details={"job_id": job_id, "issue_id": issue_id},
+                issue_id=issue_id,
+            )
 
         logger.info("issue_job_created", issue_id=issue_id, job_id=job_id)
 
@@ -123,6 +135,18 @@ class IssueExecutor:
                 audit_log_path=self._audit_log_path,
                 issue_id=issue_id,
             )
+            if self._db is not None:
+                await emit_audit_event_db(
+                    self._db,
+                    "issue.status_changed",
+                    actor="system",
+                    details={
+                        "old_status": "triaging",
+                        "new_status": "open",
+                        "reason": f"Workflow failed: {exc}",
+                    },
+                    issue_id=issue_id,
+                )
 
     async def _handle_workflow_result(
         self, issue_id: str, job_id: str, result: dict[str, Any]
@@ -170,6 +194,18 @@ class IssueExecutor:
                 audit_log_path=self._audit_log_path,
                 issue_id=issue_id,
             )
+            if self._db is not None:
+                await emit_audit_event_db(
+                    self._db,
+                    "issue.status_changed",
+                    actor="system",
+                    details={
+                        "old_status": "triaging",
+                        "new_status": issue_status,
+                        "job_status": final_status,
+                    },
+                    issue_id=issue_id,
+                )
 
     async def _handle_split(
         self, issue_id: str, job_id: str, decision: dict[str, Any]
@@ -210,6 +246,18 @@ class IssueExecutor:
             audit_log_path=self._audit_log_path,
             issue_id=issue_id,
         )
+        if self._db is not None:
+            await emit_audit_event_db(
+                self._db,
+                "issue.decomposed",
+                actor="triage_agent",
+                details={
+                    "child_issue_ids": child_ids,
+                    "count": len(child_ids),
+                    "reasoning": decision.get("reasoning", ""),
+                },
+                issue_id=issue_id,
+            )
 
         emit_audit_event(
             "issue.triaged",
@@ -222,6 +270,18 @@ class IssueExecutor:
             audit_log_path=self._audit_log_path,
             issue_id=issue_id,
         )
+        if self._db is not None:
+            await emit_audit_event_db(
+                self._db,
+                "issue.triaged",
+                actor="triage_agent",
+                details={
+                    "action": "split",
+                    "confidence": decision.get("confidence"),
+                    "reasoning": decision.get("reasoning", ""),
+                },
+                issue_id=issue_id,
+            )
 
         logger.info("issue_decomposed", issue_id=issue_id, children=child_ids)
 
@@ -244,6 +304,19 @@ class IssueExecutor:
             audit_log_path=self._audit_log_path,
             issue_id=issue_id,
         )
+        if self._db is not None:
+            await emit_audit_event_db(
+                self._db,
+                "issue.triaged",
+                actor="triage_agent",
+                details={
+                    "action": "needs_info",
+                    "confidence": decision.get("confidence"),
+                    "questions": decision.get("questions", []),
+                    "reasoning": decision.get("reasoning", ""),
+                },
+                issue_id=issue_id,
+            )
 
         logger.info(
             "issue_needs_info",

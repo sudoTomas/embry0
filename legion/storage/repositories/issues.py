@@ -14,7 +14,7 @@ logger = structlog.get_logger(__name__)
 _ALLOWED_UPDATE_FIELDS = frozenset({
     "title", "body", "status", "priority", "labels", "repo",
     "parent_issue_id", "github_number", "github_url", "github_sync_enabled",
-    "github_synced_at", "created_by",
+    "github_synced_at",
 })
 
 _ALLOWED_SORT_COLUMNS = frozenset({"created_at", "updated_at", "priority"})
@@ -120,7 +120,8 @@ class IssuesRepository:
             idx += 1
         if search:
             conditions.append(f"(i.title ILIKE ${idx} OR i.body ILIKE ${idx})")
-            args.append(f"%{search}%")
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            args.append(f"%{escaped}%")
             idx += 1
         if top_level_only:
             conditions.append("i.parent_issue_id IS NULL")
