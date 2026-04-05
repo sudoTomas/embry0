@@ -6,15 +6,17 @@ import { TableSkeleton } from "@/components/TableSkeleton";
 import { IssueListView } from "@/components/issues/IssueListView";
 import { IssueBoardView } from "@/components/issues/IssueBoardView";
 import { CreateIssueDialog } from "@/components/issues/CreateIssueDialog";
-import { useIssues } from "@/hooks/useIssues";
+import { useIssues, useUpdateIssue } from "@/hooks/useIssues";
 import { useIssuesStore } from "@/stores/issuesStore";
 import { cn } from "@/lib/utils";
+import type { IssueStatus } from "@/lib/types";
 
 const LIMIT = 20;
 
 export function IssuesPage() {
   const { viewMode, setViewMode } = useIssuesStore();
   const [showCreate, setShowCreate] = useState(false);
+  const updateIssue = useUpdateIssue();
   const [offset, setOffset] = useState(0);
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [priorityFilter, setPriorityFilter] = useState<string | undefined>();
@@ -49,6 +51,10 @@ export function IssuesPage() {
     setSearch(v);
     setOffset(0);
   }, []);
+
+  const handleBoardStatusChange = useCallback((issueId: string, newStatus: string) => {
+    updateIssue.mutate({ id: issueId, status: newStatus as IssueStatus });
+  }, [updateIssue]);
 
   const repoOptions: string[] = data
     ? Array.from(new Set(data.issues.map((i) => i.repo).filter((r): r is string => r !== null)))
@@ -135,7 +141,7 @@ export function IssuesPage() {
             onPageChange={setOffset}
           />
         ) : (
-          <IssueBoardView issues={data.issues} />
+          <IssueBoardView issues={data.issues} onStatusChange={handleBoardStatusChange} />
         )
       ) : null}
     </div>

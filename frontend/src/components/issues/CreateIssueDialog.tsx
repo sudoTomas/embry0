@@ -39,66 +39,76 @@ export function CreateIssueDialog({ onClose, repos = [], labelSuggestions = [] }
   };
 
   return (
-    <Card className="mb-6">
-      <CardHeader><CardTitle>Create Issue</CardTitle></CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <Label htmlFor="issue-title">Title</Label>
-              <Input id="issue-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Issue title" required />
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onClick={onClose}
+      onKeyDown={(e) => e.key === "Escape" && onClose()}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Create issue dialog"
+      tabIndex={-1}
+    >
+      <Card className="w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <CardHeader><CardTitle>Create Issue</CardTitle></CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <Label htmlFor="issue-title">Title</Label>
+                <Input id="issue-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Issue title" required />
+              </div>
+              <div className="md:col-span-2">
+                <Label htmlFor="issue-body">Description</Label>
+                <Textarea id="issue-body" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Describe the issue (Markdown supported)" rows={4} />
+              </div>
+              <div>
+                <Label>Repository</Label>
+                <RepoSelector value={repo} onChange={setRepo} repos={repos} />
+              </div>
+              <div>
+                <Label htmlFor="issue-priority">Priority</Label>
+                <Select id="issue-priority" value={priority} onChange={(e) => setPriority(e.target.value as IssuePriority)}>
+                  <option value="critical">Critical</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </Select>
+              </div>
+              <div className="md:col-span-2">
+                <Label>Labels</Label>
+                <LabelInput value={labels} onChange={setLabels} suggestions={labelSuggestions} />
+              </div>
             </div>
-            <div className="md:col-span-2">
-              <Label htmlFor="issue-body">Description</Label>
-              <Textarea id="issue-body" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Describe the issue (Markdown supported)" rows={4} />
+            <div className="flex items-center gap-6 pt-2 text-sm">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={githubSync}
+                  onChange={(e) => setGithubSync(e.target.checked)}
+                  disabled={!repo}
+                  className="rounded border-border"
+                />
+                <span className={!repo ? "text-muted-foreground" : ""}>Sync to GitHub</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoTriage}
+                  onChange={(e) => setAutoTriage(e.target.checked)}
+                  className="rounded border-border"
+                />
+                Auto-triage
+              </label>
             </div>
-            <div>
-              <Label>Repository</Label>
-              <RepoSelector value={repo} onChange={setRepo} repos={repos} />
+            <div className="flex gap-2 justify-end">
+              <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+              <Button type="submit" disabled={createIssue.isPending}>
+                {createIssue.isPending ? "Creating..." : "Create Issue"}
+              </Button>
             </div>
-            <div>
-              <Label htmlFor="issue-priority">Priority</Label>
-              <Select id="issue-priority" value={priority} onChange={(e) => setPriority(e.target.value as IssuePriority)}>
-                <option value="critical">Critical</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </Select>
-            </div>
-            <div className="md:col-span-2">
-              <Label>Labels</Label>
-              <LabelInput value={labels} onChange={setLabels} suggestions={labelSuggestions} />
-            </div>
-          </div>
-          <div className="flex items-center gap-6 pt-2 text-sm">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={githubSync}
-                onChange={(e) => setGithubSync(e.target.checked)}
-                disabled={!repo}
-                className="rounded border-border"
-              />
-              <span className={!repo ? "text-muted-foreground" : ""}>Sync to GitHub</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoTriage}
-                onChange={(e) => setAutoTriage(e.target.checked)}
-                className="rounded border-border"
-              />
-              Auto-triage
-            </label>
-          </div>
-          <div className="flex gap-2 justify-end">
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={createIssue.isPending}>
-              {createIssue.isPending ? "Creating..." : "Create Issue"}
-            </Button>
-          </div>
-        </form>
-      </CardContent>
-    </Card>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

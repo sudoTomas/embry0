@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { FilterSelect } from "@/components/ui/FilterSelect";
 import { Input } from "@/components/ui/Input";
@@ -42,6 +43,18 @@ export function IssueListView({
   onPageChange,
 }: IssueListViewProps) {
   const navigate = useNavigate();
+  const [localSearch, setLocalSearch] = useState(searchValue);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onSearchChange(localSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [localSearch, onSearchChange]);
+
+  useEffect(() => {
+    setLocalSearch(searchValue);
+  }, [searchValue]);
 
   return (
     <Card>
@@ -69,8 +82,8 @@ export function IssueListView({
           <Input
             className="h-8 w-48 text-xs"
             placeholder="Search issues..."
-            value={searchValue}
-            onChange={(e) => onSearchChange(e.target.value)}
+            value={localSearch}
+            onChange={(e) => setLocalSearch(e.target.value)}
           />
         </div>
 

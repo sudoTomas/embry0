@@ -18,6 +18,7 @@ export interface IssueResponse {
   created_at: string;
   updated_at: string;
   children_count: number;
+  children_closed_count: number;
   jobs_count: number;
   active_agent: string | null;
 }

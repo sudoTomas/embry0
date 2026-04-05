@@ -3,13 +3,15 @@ import { ArrowLeft, Send, RefreshCw, X, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Select } from "@/components/ui/Select";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { PageError } from "@/components/PageError";
 import { IssueStatusBadge } from "@/components/issues/IssueStatusBadge";
 import { IssuePriorityBadge } from "@/components/issues/IssuePriorityBadge";
 import { AgentIndicator } from "@/components/issues/AgentIndicator";
 import { IssueActivityFeed } from "@/components/issues/IssueActivityFeed";
-import { useIssue, useIssueActivity, useTriageIssue, useSyncIssue, useDeleteIssue } from "@/hooks/useIssues";
+import { LabelInput } from "@/components/issues/LabelInput";
+import { useIssue, useIssueActivity, useTriageIssue, useSyncIssue, useDeleteIssue, useUpdateIssue } from "@/hooks/useIssues";
 import { formatDate } from "@/lib/utils";
 import { formatCost } from "@/lib/utils";
 
@@ -22,6 +24,11 @@ export function IssueDetailPage() {
   const triageIssue = useTriageIssue();
   const syncIssue = useSyncIssue();
   const deleteIssue = useDeleteIssue();
+  const updateIssue = useUpdateIssue();
+
+  const handleFieldUpdate = (field: string, value: unknown) => {
+    updateIssue.mutate({ id: issue!.id, [field]: value });
+  };
 
   if (isError) return <PageError message="Failed to load issue" onRetry={() => refetch()} />;
   if (isLoading || !issue) return <TableSkeleton columns={4} rows={8} />;
@@ -123,9 +130,9 @@ export function IssueDetailPage() {
             </CardHeader>
             <CardContent>
               {issue.body ? (
-                <pre className="text-sm text-white/80 whitespace-pre-wrap font-sans leading-relaxed">
+                <div className="text-sm text-foreground/90 whitespace-pre-wrap break-words leading-relaxed">
                   {issue.body}
-                </pre>
+                </div>
               ) : (
                 <p className="text-sm text-muted-foreground">No description provided.</p>
               )}
@@ -246,31 +253,42 @@ export function IssueDetailPage() {
               {/* Status */}
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5">Status</p>
-                <IssueStatusBadge status={issue.status} />
+                <Select
+                  value={issue.status}
+                  onChange={(e) => handleFieldUpdate("status", e.target.value)}
+                  className="h-8 text-xs"
+                >
+                  <option value="open">Open</option>
+                  <option value="triaging">Triaging</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="closed">Closed</option>
+                  <option value="cancelled">Cancelled</option>
+                </Select>
               </div>
 
               {/* Priority */}
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5">Priority</p>
-                <IssuePriorityBadge priority={issue.priority} />
+                <Select
+                  value={issue.priority}
+                  onChange={(e) => handleFieldUpdate("priority", e.target.value)}
+                  className="h-8 text-xs"
+                >
+                  <option value="critical">Critical</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </Select>
               </div>
 
               {/* Labels */}
-              {issue.labels.length > 0 && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1.5">Labels</p>
-                  <div className="flex flex-wrap gap-1">
-                    {issue.labels.map((label) => (
-                      <span
-                        key={label}
-                        className="inline-flex items-center rounded-md bg-zinc-700/50 px-2 py-0.5 text-xs text-zinc-300"
-                      >
-                        {label}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Labels</p>
+                <LabelInput
+                  value={issue.labels}
+                  onChange={(labels) => handleFieldUpdate("labels", labels)}
+                />
+              </div>
 
               {/* Repo */}
               {issue.repo && (
