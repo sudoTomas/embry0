@@ -92,6 +92,7 @@ class IssueResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     children_count: int = 0
+    children_closed_count: int = 0
     jobs_count: int = 0
     active_agent: str | None = None
 

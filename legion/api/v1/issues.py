@@ -3,7 +3,7 @@
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from legion.api.deps import get_issues_repo, get_jobs_repo
+from legion.api.deps import get_github_sync, get_issues_repo, get_jobs_repo
 from legion.api.schemas.issues import (
     CreateIssueRequest,
     IssueDetailResponse,
@@ -32,6 +32,7 @@ async def create_issue(
     req: CreateIssueRequest,
     request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
+    sync=Depends(get_github_sync),
 ) -> IssueResponse:
     issue_id = await issues.create(
         title=req.title,
@@ -56,7 +57,6 @@ async def create_issue(
     )
 
     if req.github_sync_enabled and req.repo:
-        sync = request.app.state.github_sync
         if sync is not None:
             try:
                 await sync.push_create(issue_id, issues)
@@ -138,6 +138,7 @@ async def update_issue(
     req: UpdateIssueRequest,
     request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
+    sync=Depends(get_github_sync),
 ) -> IssueResponse:
     existing = await issues.get(issue_id)
     if not existing:
@@ -172,7 +173,6 @@ async def update_issue(
     )
 
     if updates.get("github_sync_enabled") or existing.get("github_sync_enabled"):
-        sync = request.app.state.github_sync
         if sync is not None:
             try:
                 await sync.push_update(issue_id, issues)
@@ -260,14 +260,13 @@ async def triage_issue(
 @router.post("/issues/{issue_id}/sync")
 async def sync_issue(
     issue_id: str,
-    request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
+    sync=Depends(get_github_sync),
 ) -> dict:
     existing = await issues.get(issue_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Issue not found")
 
-    sync = request.app.state.github_sync
     if sync is None:
         raise HTTPException(status_code=400, detail="GitHub sync is not enabled")
 

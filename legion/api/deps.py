@@ -85,3 +85,8 @@ def get_provider_repo(request: Request):
 def get_issues_repo(request: Request):
     """Return the IssuesRepository from request state."""
     return request.app.state.issues_repo
+
+
+def get_github_sync(request: Request):
+    """Return the GitHubSyncService from request state."""
+    return request.app.state.github_sync

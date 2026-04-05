@@ -69,6 +69,7 @@ class IssuesRepository:
             SELECT
                 i.*,
                 (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
+                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id AND c.status = 'closed') AS children_closed_count,
                 (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
                 (SELECT t.agent_type FROM jobs j
                  JOIN traces t ON t.job_id = j.job_id
@@ -140,6 +141,7 @@ class IssuesRepository:
             SELECT
                 i.*,
                 (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
+                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id AND c.status = 'closed') AS children_closed_count,
                 (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
                 (SELECT t.agent_type FROM jobs j
                  JOIN traces t ON t.job_id = j.job_id
@@ -182,6 +184,7 @@ class IssuesRepository:
             SELECT
                 i.*,
                 (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
+                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id AND c.status = 'closed') AS children_closed_count,
                 (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
                 (SELECT t.agent_type FROM jobs j
                  JOIN traces t ON t.job_id = j.job_id
@@ -202,6 +205,7 @@ class IssuesRepository:
             SELECT
                 i.*,
                 (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id) AS children_count,
+                (SELECT COUNT(*) FROM issues c WHERE c.parent_issue_id = i.id AND c.status = 'closed') AS children_closed_count,
                 (SELECT COUNT(*) FROM jobs j WHERE j.issue_id = i.id) AS jobs_count,
                 (SELECT t.agent_type FROM jobs j
                  JOIN traces t ON t.job_id = j.job_id
