@@ -1,4 +1,5 @@
-export type ProviderMode = "anthropic_api" | "claude_max" | "ollama";
+import type { ProviderMode } from "./jobs";
+export type { ProviderMode };
 
 export interface ProviderConfig {
   provider_mode: ProviderMode;
