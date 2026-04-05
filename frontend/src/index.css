@@ -204,3 +204,12 @@ h1, h2, h3, h4, h5, h6 {
   border-radius: 50%;
   animation: legion-spin 0.8s linear infinite;
 }
+
+@keyframes agent-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+.animate-agent-bounce {
+  animation: agent-bounce 1.5s ease-in-out infinite;
+}
