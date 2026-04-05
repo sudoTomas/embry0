@@ -99,6 +99,10 @@ async def run_triage_node(
         user_prompt += f"Issue #{issue_number}\n"
     user_prompt += f"\nTask:\n{task}"
 
+    additional = state.get("additional_context", "")
+    if additional:
+        user_prompt += f"\n\nPrevious Q&A (answers from the user):\n{additional}"
+
     try:
         result = await run_agent(
             prompt=user_prompt,

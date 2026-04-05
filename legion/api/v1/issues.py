@@ -369,18 +369,40 @@ async def _resume_pipeline(
     inputs: IssueInputsRepository,
     executor: IssueExecutor,
 ) -> None:
+    # Idempotency guard — bail out if already resumed by another answer path
+    issue = await issues.get(issue_id)
+    if not issue or issue["status"] != "awaiting_input":
+        return
+
     all_answers = await inputs.list_all_answered(issue_id)
     context_lines = []
     for a in all_answers:
         answer_text = a.get("answer") or a.get("auto_answer") or ""
         context_lines.append(f"Q: {a['question']}\nA: {answer_text}")
-    await issues.update(issue_id, status="triaging")
-    try:
-        job_id = await executor.execute(issue_id)
+    additional_context = "\n\n".join(context_lines)
+
+    # Find the awaiting_input job and resume from its checkpoint
+    jobs_repo = executor._jobs
+    jobs_list, _ = await jobs_repo.list(issue_id=issue_id, limit=10, offset=0)
+    awaiting_jobs = [j for j in jobs_list if j["status"] == "awaiting_input"]
+
+    if awaiting_jobs:
+        job_id = awaiting_jobs[0]["job_id"]
+        import asyncio
+
+        task = asyncio.create_task(executor.resume(issue_id, job_id, additional_context))
+        executor._background_tasks.add(task)
+        task.add_done_callback(executor._background_tasks.discard)
         logger.info("pipeline_resumed", issue_id=issue_id, job_id=job_id)
-    except Exception:
-        logger.warning("pipeline_resume_failed", issue_id=issue_id, exc_info=True)
-        await issues.update(issue_id, status="open")
+    else:
+        # No awaiting job — start fresh with accumulated context
+        await issues.update(issue_id, status="triaging")
+        try:
+            job_id = await executor.execute(issue_id)
+            logger.info("pipeline_resumed_fresh", issue_id=issue_id, job_id=job_id)
+        except Exception:
+            logger.warning("pipeline_resume_failed", issue_id=issue_id, exc_info=True)
+            await issues.update(issue_id, status="open")
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +434,6 @@ async def answer_issue_input(
     issue_id: str,
     input_id: str,
     req: AnswerInputRequest,
-    request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
     inputs: IssueInputsRepository = Depends(get_inputs_repo),
     executor: IssueExecutor = Depends(get_issue_executor),
@@ -429,8 +450,7 @@ async def answer_issue_input(
     if inp["status"] in ("answered", "auto_answered"):
         raise HTTPException(status_code=409, detail="Input has already been answered")
 
-    actor = _actor(request)
-    await inputs.answer(input_id, answer=req.answer, answered_by=actor)
+    await inputs.answer(input_id, answer=req.answer, answered_by="user")
 
     pending_blocking = await inputs.count_pending_blocking(issue_id)
     if pending_blocking == 0:

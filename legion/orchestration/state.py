@@ -41,7 +41,7 @@ class TriageDecision(TypedDict, total=False):
     confidence: float
     pipeline_template: str
     pipeline_config: PipelineConfig
-    questions: list[str]
+    questions: list[Any]  # list of strings or dicts with question/importance/suggested_answer
     sub_tasks: list[dict[str, Any]]
     reasoning: str
 

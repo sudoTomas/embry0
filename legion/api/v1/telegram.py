@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from legion.api.deps import get_inputs_repo, get_issue_executor, get_issues_repo
 from legion.api.v1.issues import _resume_pipeline
@@ -23,6 +24,12 @@ async def telegram_callback(request: Request) -> dict:
        pipeline when all blocking inputs are answered.
     2. Callback query (inline button click): acknowledges via answerCallbackQuery.
     """
+    expected_secret = getattr(request.app.state, "telegram_webhook_secret", "")
+    if expected_secret:
+        provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if provided != expected_secret:
+            return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+
     try:
         update = await request.json()
     except Exception:
@@ -112,6 +119,8 @@ async def telegram_callback(request: Request) -> dict:
     # Resume pipeline if all blocking inputs are now answered
     pending = await inputs_repo.count_pending_blocking(inp["issue_id"])
     if pending == 0:
-        await _resume_pipeline(inp["issue_id"], issues_repo, inputs_repo, executor)
+        current_issue = await issues_repo.get(inp["issue_id"])
+        if current_issue and current_issue["status"] == "awaiting_input":
+            await _resume_pipeline(inp["issue_id"], issues_repo, inputs_repo, executor)
 
     return {"status": "answered", "input_id": inp["id"]}

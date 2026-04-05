@@ -33,7 +33,7 @@ class IssueInputsRepository:
         otherwise the status is 'pending'.
         """
         input_id = f"inp-{uuid.uuid4().hex[:12]}"
-        status = "auto_answered" if auto_answer is not None else "pending"
+        status = "auto_answered" if auto_answer is not None and importance == "auto_answerable" else "pending"
         await self._db.execute(
             """
             INSERT INTO issue_inputs (

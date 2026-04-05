@@ -116,10 +116,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.event_subscribers: dict[str, list[asyncio.Queue]] = {}
 
     if config.telegram_bot_token and getattr(config, "telegram_webhook_url", ""):
+        import secrets
+
         from legion.notifications.telegram import register_webhook
 
         webhook_url = f"{config.telegram_webhook_url.rstrip('/')}/api/v1/telegram/callback"
-        await register_webhook(config.telegram_bot_token, webhook_url)
+        app.state.telegram_webhook_secret = secrets.token_hex(32)
+        await register_webhook(config.telegram_bot_token, webhook_url, secret_token=app.state.telegram_webhook_secret)
+    else:
+        app.state.telegram_webhook_secret = ""
 
     logger.info("legion_started")
     yield

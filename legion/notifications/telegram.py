@@ -126,9 +126,11 @@ async def edit_message_answered(
         )
 
 
-async def register_webhook(bot_token: str, webhook_url: str) -> bool:
+async def register_webhook(bot_token: str, webhook_url: str, secret_token: str = "") -> bool:
     """Register a webhook URL with the Telegram Bot API. Returns True on success."""
-    payload = {"url": webhook_url}
+    payload: dict[str, str] = {"url": webhook_url}
+    if secret_token:
+        payload["secret_token"] = secret_token
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(
             f"{_TELEGRAM_API}/bot{bot_token}/setWebhook",

@@ -78,10 +78,12 @@ async def github_webhook(
                     if answered_any:
                         pending = await inputs_repo.count_pending_blocking(issue["id"])
                         if pending == 0:
-                            executor = request.app.state.issue_executor
-                            from legion.api.v1.issues import _resume_pipeline
+                            current_issue = await issues_repo.get(issue["id"])
+                            if current_issue and current_issue["status"] == "awaiting_input":
+                                executor = request.app.state.issue_executor
+                                from legion.api.v1.issues import _resume_pipeline
 
-                            await _resume_pipeline(issue["id"], issues_repo, inputs_repo, executor)
+                                await _resume_pipeline(issue["id"], issues_repo, inputs_repo, executor)
 
                     return {"status": "accepted", "action": "comment_processed"}
 
