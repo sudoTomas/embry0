@@ -89,4 +89,40 @@ async def github_webhook(
 
         return {"status": "accepted", "action": "comment_received"}
 
+    # Handle pull request events — PR linking
+    # NOTE: GitHub webhook must also subscribe to "Pull requests" events
+    if event_type == "pull_request" and action in ("opened", "closed"):
+        repo_name = payload.get("repository", {}).get("full_name", "")
+        pr = payload.get("pull_request", {})
+        pr_url = pr.get("html_url", "")
+        branch = pr.get("head", {}).get("ref", "")
+        merged = pr.get("merged", False)
+
+        if repo_name and pr_url:
+            jobs_repo = request.app.state.jobs_repo
+            issues_repo = request.app.state.issues_repo
+
+            # Match PR to job via branch name pattern: legion/{id}-{slug}
+            if branch.startswith("legion/"):
+                parts = branch.split("/", 1)[1].split("-", 1)
+                if len(parts) >= 1:
+                    issue_id_prefix = parts[0]
+                    issues_list, _ = await issues_repo.list(limit=100, offset=0)
+                    for issue in issues_list:
+                        if issue["id"].startswith(f"iss-{issue_id_prefix}"):
+                            jobs_list, _ = await jobs_repo.list(issue_id=issue["id"], limit=10, offset=0)
+                            for job in jobs_list:
+                                if not job.get("pr_url"):
+                                    await jobs_repo.update(job["job_id"], pr_url=pr_url)
+
+                            if action == "closed" and merged:
+                                await issues_repo.update(issue["id"], status="closed")
+                                for job in jobs_list:
+                                    if job["status"] in ("completed", "running"):
+                                        await jobs_repo.update(job["job_id"], status="pr_merged")
+
+                            return {"status": "accepted", "action": f"pr_{action}"}
+
+        return {"status": "ignored", "event": "pull_request", "action": action}
+
     return {"status": "ignored", "event": event_type, "action": action}
