@@ -42,6 +42,12 @@ class SandboxManager:
         p = {**_DEFAULT_PROFILE, **(profile or {})}
         name = f"sandbox-{job_id}"
 
+        # Inject OAuth token from host credentials into sandbox env
+        env = dict(env) if env else {}
+        oauth_token = self._read_oauth_token()
+        if oauth_token:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+
         cmd = self._docker.build_run_cmd(
             image=p.get("base_image", _DEFAULT_PROFILE["base_image"]),
             name=name,
@@ -57,55 +63,28 @@ class SandboxManager:
         )
         container_id = await self._docker.run_cmd(cmd)
         logger.info("sandbox_created", job_id=job_id, container=name, image=p.get("base_image"))
-
-        # Copy Claude credentials into sandbox (volume mounts don't work with DinD)
-        await self._copy_credentials(name)
-
         return container_id
 
-    async def _copy_credentials(self, container_name: str) -> None:
-        """Copy Claude OAuth credentials into the sandbox container via exec.
-
-        Uses `docker exec bash -c 'cat > file'` with stdin piping since
-        docker cp doesn't work with read-only rootfs + tmpfs overlays.
-        """
-        import asyncio
+    @staticmethod
+    def _read_oauth_token() -> str | None:
+        """Read Claude OAuth token from host credentials file."""
+        import json
         import os
 
-        src = "/home/orchestrator/.claude"
-        if not os.path.isdir(src):
-            logger.warning("claude_credentials_not_found", path=src)
-            return
-
+        creds_path = "/home/orchestrator/.claude/.credentials.json"
+        if not os.path.isfile(creds_path):
+            logger.warning("claude_credentials_not_found", path=creds_path)
+            return None
         try:
-            for filename in [".credentials.json", ".claude.json"]:
-                filepath = os.path.join(src, filename)
-                if not os.path.isfile(filepath):
-                    continue
-
-                with open(filepath, "rb") as f:
-                    content = f.read()
-
-                # Pipe file content into container via docker exec stdin
-                cmd = self._docker.build_exec_cmd(
-                    container_name,
-                    ["bash", "-c", f"cat > /home/agent/.claude/{filename}"],
-                )
-                # Need raw subprocess for stdin piping
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await asyncio.wait_for(proc.communicate(input=content), timeout=10)
-                if proc.returncode != 0:
-                    logger.warning("credential_file_copy_failed", file=filename)
-
-            logger.info("claude_credentials_copied", container=container_name)
-
+            with open(creds_path) as f:
+                creds = json.load(f)
+            token = creds.get("claudeAiOauth", {}).get("accessToken")
+            if token:
+                logger.info("claude_oauth_token_loaded")
+            return token
         except Exception as exc:
-            logger.warning("claude_credentials_copy_failed", container=container_name, error=str(exc))
+            logger.warning("claude_credentials_read_failed", error=str(exc))
+            return None
 
     async def destroy(self, container: str, timeout: int = 10) -> None:
         """Stop and remove a sandbox container."""
