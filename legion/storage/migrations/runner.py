@@ -189,6 +189,41 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE pipeline_templates ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
         """,
     ),
+    (
+        4,
+        "Add issues table, issues FK on jobs, issue_id on audit_log",
+        """
+        CREATE TABLE IF NOT EXISTS issues (
+            id              TEXT PRIMARY KEY,
+            title           TEXT NOT NULL,
+            body            TEXT DEFAULT '',
+            status          TEXT NOT NULL DEFAULT 'open',
+            priority        TEXT NOT NULL DEFAULT 'medium',
+            labels          JSONB NOT NULL DEFAULT '[]',
+            repo            TEXT,
+            parent_issue_id TEXT REFERENCES issues(id),
+            github_number   INTEGER,
+            github_url      TEXT,
+            github_sync_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            github_synced_at TIMESTAMPTZ,
+            created_by      TEXT NOT NULL DEFAULT 'user',
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_issues_status ON issues (status);
+        CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues (priority);
+        CREATE INDEX IF NOT EXISTS idx_issues_repo ON issues (repo);
+        CREATE INDEX IF NOT EXISTS idx_issues_parent ON issues (parent_issue_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_issues_github
+            ON issues (repo, github_number) WHERE github_number IS NOT NULL;
+
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS issue_id TEXT REFERENCES issues(id);
+        CREATE INDEX IF NOT EXISTS idx_jobs_issue_id ON jobs (issue_id);
+
+        ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS issue_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_audit_issue_id ON audit_log (issue_id);
+        """,
+    ),
 ]
 
 
