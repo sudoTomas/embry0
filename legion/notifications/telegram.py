@@ -39,22 +39,13 @@ async def send_question(
     # Build deep-link URL to the specific input in the dashboard
     answer_url = f"{dashboard_url.rstrip('/')}/issues/{issue_id}/inputs/{input_id}"
 
-    inline_keyboard = {
-        "inline_keyboard": [
-            [{"text": "Answer in Dashboard", "url": answer_url}]
-        ]
-    }
+    inline_keyboard = {"inline_keyboard": [[{"text": "Answer in Dashboard", "url": answer_url}]]}
 
     # MarkdownV2 attempt
     repo_tag = f"\\[{_escape_mdv2(repo)}\\]" if repo else ""
     node_tag = _escape_mdv2(asking_node)
     q_escaped = _escape_mdv2(question)
-    mdv2_text = (
-        f"*Legion* {repo_tag}\n"
-        f"_{node_tag}_ is asking:\n\n"
-        f"{q_escaped}\n\n"
-        f"`input:{_escape_mdv2(input_id)}`"
-    )
+    mdv2_text = f"*Legion* {repo_tag}\n_{node_tag}_ is asking:\n\n{q_escaped}\n\n`input:{_escape_mdv2(input_id)}`"
 
     payload_mdv2 = {
         "chat_id": chat_id,
@@ -82,12 +73,7 @@ async def send_question(
             input_id=input_id,
         )
         repo_prefix = f"[{repo}] " if repo else ""
-        plain_text = (
-            f"Legion {repo_prefix}\n"
-            f"{asking_node} is asking:\n\n"
-            f"{question}\n\n"
-            f"input:{input_id}"
-        )
+        plain_text = f"Legion {repo_prefix}\n{asking_node} is asking:\n\n{question}\n\ninput:{input_id}"
         payload_plain = {
             "chat_id": chat_id,
             "text": plain_text,

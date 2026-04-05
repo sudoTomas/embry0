@@ -1,4 +1,5 @@
 """Pydantic request/response models for issue inputs."""
+
 from datetime import datetime
 
 from pydantic import BaseModel, Field

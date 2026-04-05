@@ -62,9 +62,7 @@ class AgentDefinitionsRepository:
 
     async def get(self, agent_type: str) -> dict[str, Any] | None:
         """Fetch a single agent definition by type."""
-        row = await self._db.fetchrow(
-            "SELECT * FROM agent_definitions WHERE type = $1", agent_type
-        )
+        row = await self._db.fetchrow("SELECT * FROM agent_definitions WHERE type = $1", agent_type)
         if row is None:
             return None
         return dict(row)

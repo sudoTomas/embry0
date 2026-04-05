@@ -61,5 +61,8 @@ def resolve_agent_config(
             skills = pipeline_config["agent_skills"][agent_type]
 
     return ResolvedAgentConfig(
-        model=model, tools=tools, skills=skills, system_prompt=system_prompt,
+        model=model,
+        tools=tools,
+        skills=skills,
+        system_prompt=system_prompt,
     )

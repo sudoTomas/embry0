@@ -41,6 +41,7 @@ async def telegram_callback(request: Request) -> dict:
         cq_id = cq.get("id")
         if cq_id and config.telegram_bot_token:
             import httpx
+
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.post(
                     f"https://api.telegram.org/bot{config.telegram_bot_token}/answerCallbackQuery",
@@ -96,6 +97,7 @@ async def telegram_callback(request: Request) -> dict:
     # Cross-channel sync (edit Telegram message from other channels is a no-op here
     # since we already edited; dispatcher handles other direction)
     from legion.notifications.dispatcher import notify_answer_cross_channel
+
     try:
         await notify_answer_cross_channel(
             inputs_repo=inputs_repo,

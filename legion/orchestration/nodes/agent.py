@@ -48,7 +48,10 @@ async def run_agent_node(
     }
 
     result: AgentOutput = await agent_runner.run(
-        container=container, config=config, network=network, on_event=on_event,
+        container=container,
+        config=config,
+        network=network,
+        on_event=on_event,
     )
 
     output_entry = AgentOutputEntry(

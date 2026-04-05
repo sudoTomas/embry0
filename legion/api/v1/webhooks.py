@@ -72,6 +72,7 @@ async def github_webhook(
                             await inputs_repo.answer(inp["id"], comment_body, answered_by="github")
                             answered_any = True
                             from legion.notifications.dispatcher import notify_answer_cross_channel
+
                             await notify_answer_cross_channel(inputs_repo, inp, comment_body, "github", config)
 
                     if answered_any:
@@ -79,6 +80,7 @@ async def github_webhook(
                         if pending == 0:
                             executor = request.app.state.issue_executor
                             from legion.api.v1.issues import _resume_pipeline
+
                             await _resume_pipeline(issue["id"], issues_repo, inputs_repo, executor)
 
                     return {"status": "accepted", "action": "comment_processed"}

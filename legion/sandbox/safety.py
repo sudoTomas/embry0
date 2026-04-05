@@ -20,9 +20,7 @@ def check_tool_safety(tool_name: str, tool_input: dict[str, Any]) -> dict[str, s
 
     if tool_name in ("Write", "Edit"):
         file_path = tool_input.get("file_path", "")
-        if file_path and not (
-            file_path.startswith(WORKSPACE_PREFIX + "/") or file_path == WORKSPACE_PREFIX
-        ):
+        if file_path and not (file_path.startswith(WORKSPACE_PREFIX + "/") or file_path == WORKSPACE_PREFIX):
             return {
                 "decision": "deny",
                 "reason": f"Blocked: file operation outside {WORKSPACE_PREFIX}",
@@ -30,9 +28,7 @@ def check_tool_safety(tool_name: str, tool_input: dict[str, Any]) -> dict[str, s
 
     if tool_name == "Read":
         file_path = tool_input.get("file_path", "")
-        if file_path and not (
-            file_path.startswith(WORKSPACE_PREFIX + "/") or file_path == WORKSPACE_PREFIX
-        ):
+        if file_path and not (file_path.startswith(WORKSPACE_PREFIX + "/") or file_path == WORKSPACE_PREFIX):
             return {
                 "decision": "deny",
                 "reason": f"Blocked: read outside {WORKSPACE_PREFIX}",

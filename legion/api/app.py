@@ -52,15 +52,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from legion.services.github_sync import GitHubSyncService
     from legion.storage.repositories.issue_inputs import IssueInputsRepository
     from legion.storage.repositories.issues import IssuesRepository
+
     app.state.issues_repo = IssuesRepository(db)
     app.state.inputs_repo = IssueInputsRepository(db)
-    app.state.github_sync = GitHubSyncService(github_token=config.github_token if hasattr(config, "github_token") else None)
+    app.state.github_sync = GitHubSyncService(
+        github_token=config.github_token if hasattr(config, "github_token") else None
+    )
 
     registry = WorkflowRegistry()
     registry.register(IssueToprWorkflow())
     app.state.workflow_registry = registry
 
     from legion.services.issue_executor import IssueExecutor
+
     app.state.issue_executor = IssueExecutor(
         issues_repo=app.state.issues_repo,
         jobs_repo=app.state.jobs_repo,
@@ -79,6 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     if config.telegram_bot_token and getattr(config, "telegram_webhook_url", ""):
         from legion.notifications.telegram import register_webhook
+
         webhook_url = f"{config.telegram_webhook_url.rstrip('/')}/api/v1/telegram/callback"
         await register_webhook(config.telegram_bot_token, webhook_url)
 

@@ -20,10 +20,17 @@ async def emit_audit(
 ) -> None:
     """Emit an audit event to both file and database."""
     emit_audit_event(
-        action, actor=actor, details=details,
-        audit_log_path=audit_log_path, issue_id=issue_id,
+        action,
+        actor=actor,
+        details=details,
+        audit_log_path=audit_log_path,
+        issue_id=issue_id,
     )
     if db is not None:
         await emit_audit_event_db(
-            db, action, actor=actor, details=details, issue_id=issue_id,
+            db,
+            action,
+            actor=actor,
+            details=details,
+            issue_id=issue_id,
         )

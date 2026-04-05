@@ -102,6 +102,7 @@ class ProviderConfigRepository:
                 return {"status": "error", "message": "ollama_base_url is not configured."}
             try:
                 import aiohttp
+
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
                     async with session.get(f"{base_url.rstrip('/')}/api/tags") as resp:
                         if resp.status == 200:

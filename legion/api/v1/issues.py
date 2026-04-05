@@ -30,6 +30,7 @@ def _actor(request: Request) -> str:
 # POST /issues — create a new issue
 # ---------------------------------------------------------------------------
 
+
 @router.post("/issues", status_code=201)
 async def create_issue(
     req: CreateIssueRequest,
@@ -92,6 +93,7 @@ async def create_issue(
 # GET /issues — list issues with filters
 # ---------------------------------------------------------------------------
 
+
 @router.get("/issues")
 async def list_issues(
     status: str | None = None,
@@ -131,6 +133,7 @@ async def list_issues(
 # GET /issues/{issue_id} — get issue detail with children and jobs
 # ---------------------------------------------------------------------------
 
+
 @router.get("/issues/{issue_id}")
 async def get_issue(
     issue_id: str,
@@ -152,6 +155,7 @@ async def get_issue(
 # ---------------------------------------------------------------------------
 # PUT /issues/{issue_id} — update issue
 # ---------------------------------------------------------------------------
+
 
 @router.put("/issues/{issue_id}")
 async def update_issue(
@@ -212,6 +216,7 @@ async def update_issue(
 # DELETE /issues/{issue_id} — soft delete (cancel issue and all children)
 # ---------------------------------------------------------------------------
 
+
 @router.delete("/issues/{issue_id}", status_code=204)
 async def delete_issue(
     issue_id: str,
@@ -252,6 +257,7 @@ async def delete_issue(
 # ---------------------------------------------------------------------------
 # POST /issues/{issue_id}/triage — set status to triaging
 # ---------------------------------------------------------------------------
+
 
 @router.post("/issues/{issue_id}/triage")
 async def triage_issue(
@@ -304,6 +310,7 @@ async def triage_issue(
 # POST /issues/{issue_id}/sync — force outbound GitHub sync
 # ---------------------------------------------------------------------------
 
+
 @router.post("/issues/{issue_id}/sync")
 async def sync_issue(
     issue_id: str,
@@ -336,6 +343,7 @@ async def sync_issue(
 # GET /issues/{issue_id}/activity — return audit log entries for issue
 # ---------------------------------------------------------------------------
 
+
 @router.get("/issues/{issue_id}/activity")
 async def get_issue_activity(
     issue_id: str,
@@ -353,6 +361,7 @@ async def get_issue_activity(
 # ---------------------------------------------------------------------------
 # Helper: resume pipeline after all blocking inputs are answered
 # ---------------------------------------------------------------------------
+
 
 async def _resume_pipeline(
     issue_id: str,
@@ -378,6 +387,7 @@ async def _resume_pipeline(
 # GET /issues/{issue_id}/inputs — list all inputs for an issue
 # ---------------------------------------------------------------------------
 
+
 @router.get("/issues/{issue_id}/inputs")
 async def list_issue_inputs(
     issue_id: str,
@@ -395,6 +405,7 @@ async def list_issue_inputs(
 # ---------------------------------------------------------------------------
 # POST /issues/{issue_id}/inputs/{input_id}/answer — submit an answer
 # ---------------------------------------------------------------------------
+
 
 @router.post("/issues/{issue_id}/inputs/{input_id}/answer")
 async def answer_issue_input(

@@ -47,6 +47,7 @@ async def git_ops_node(state: dict[str, Any]) -> dict[str, Any]:
 
 async def output_node(state: dict[str, Any]) -> dict[str, Any]:
     from legion.orchestration.nodes.output import build_output
+
     return build_output(state)
 
 

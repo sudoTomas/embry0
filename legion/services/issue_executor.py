@@ -81,9 +81,7 @@ class IssueExecutor:
 
         return job_id
 
-    async def _run_workflow(
-        self, issue_id: str, job_id: str, issue: dict[str, Any]
-    ) -> None:
+    async def _run_workflow(self, issue_id: str, job_id: str, issue: dict[str, Any]) -> None:
         """Execute the issue-to-pr workflow and handle the outcome."""
         from datetime import UTC, datetime
 
@@ -138,9 +136,7 @@ class IssueExecutor:
                 issue_id=issue_id,
             )
 
-    async def _handle_workflow_result(
-        self, issue_id: str, job_id: str, result: dict[str, Any]
-    ) -> None:
+    async def _handle_workflow_result(self, issue_id: str, job_id: str, result: dict[str, Any]) -> None:
         """Process the workflow result and update issue/job status."""
         triage_decision = result.get("pipeline_config", {})
         action = triage_decision.get("action", "proceed")
@@ -192,9 +188,7 @@ class IssueExecutor:
                 issue_id=issue_id,
             )
 
-    async def _handle_split(
-        self, issue_id: str, job_id: str, decision: dict[str, Any]
-    ) -> None:
+    async def _handle_split(self, issue_id: str, job_id: str, decision: dict[str, Any]) -> None:
         """Decompose issue into child issues based on triage split decision."""
         sub_tasks = decision.get("sub_tasks", [])
         if not sub_tasks:
@@ -249,9 +243,7 @@ class IssueExecutor:
 
         logger.info("issue_decomposed", issue_id=issue_id, children=child_ids)
 
-    async def _handle_needs_info(
-        self, issue_id: str, job_id: str, decision: dict[str, Any]
-    ) -> None:
+    async def _handle_needs_info(self, issue_id: str, job_id: str, decision: dict[str, Any]) -> None:
         """Create input records, dispatch notifications, and pause for blocking questions."""
         from legion.notifications.dispatcher import dispatch_questions
 
@@ -303,9 +295,7 @@ class IssueExecutor:
                 actor="system",
                 details={
                     "job_id": job_id,
-                    "pending_count": sum(
-                        1 for q in enriched_questions if q.get("importance") == "blocking"
-                    ),
+                    "pending_count": sum(1 for q in enriched_questions if q.get("importance") == "blocking"),
                 },
                 audit_log_path=self._audit_log_path,
                 issue_id=issue_id,
@@ -314,9 +304,7 @@ class IssueExecutor:
             issue = await self._issues.get(issue_id)
             if issue and self._config:
                 blocking_pairs = [
-                    (q["input_id"], q["question"])
-                    for q in enriched_questions
-                    if q.get("importance") == "blocking"
+                    (q["input_id"], q["question"]) for q in enriched_questions if q.get("importance") == "blocking"
                 ]
                 await dispatch_questions(
                     inputs_repo=self._inputs,

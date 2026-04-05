@@ -39,7 +39,9 @@ class DatabasePool:
         async def _init_connection(conn: asyncpg.Connection) -> None:
             """Set up JSONB codec so asyncpg returns Python objects, not strings."""
             await conn.set_type_codec(
-                "jsonb", encoder=_jsonb_encoder, decoder=_jsonb_decoder,
+                "jsonb",
+                encoder=_jsonb_encoder,
+                decoder=_jsonb_decoder,
                 schema="pg_catalog",
             )
 

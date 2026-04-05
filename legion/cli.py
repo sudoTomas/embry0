@@ -21,15 +21,17 @@ PROJECT_NAME = "legion"
 DIND_CONTAINER = "legion-dind"
 SANDBOX_IMAGE = "legion-sandbox:latest"
 
-_SECRET_FIELDS = frozenset({
-    "github_token",
-    "github_webhook_secret",
-    "api_key",
-    "anthropic_api_key",
-    "claude_max_oauth_token",
-    "telegram_bot_token",
-    "slack_webhook_url",
-})
+_SECRET_FIELDS = frozenset(
+    {
+        "github_token",
+        "github_webhook_secret",
+        "api_key",
+        "anthropic_api_key",
+        "claude_max_oauth_token",
+        "telegram_bot_token",
+        "slack_webhook_url",
+    }
+)
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 
@@ -169,13 +171,20 @@ def _build_sandbox(home: Path) -> None:
     _info("Building sandbox image inside DinD...")
     # Copy the entire project context (for Dockerfile.sandbox)
     _run(["docker", "cp", f"{home}/.", f"{DIND_CONTAINER}:/build-context/"])
-    _run([
-        "docker", "exec", DIND_CONTAINER,
-        "docker", "build",
-        "-t", SANDBOX_IMAGE,
-        "-f", "/build-context/infra/Dockerfile.sandbox",
-        "/build-context/",
-    ])
+    _run(
+        [
+            "docker",
+            "exec",
+            DIND_CONTAINER,
+            "docker",
+            "build",
+            "-t",
+            SANDBOX_IMAGE,
+            "-f",
+            "/build-context/infra/Dockerfile.sandbox",
+            "/build-context/",
+        ]
+    )
     _info("Sandbox image built")
 
 
@@ -205,13 +214,9 @@ def cmd_config(args: argparse.Namespace) -> None:
     if not config.github_token:
         issues.append("GITHUB_TOKEN is not set")
     if config.provider_mode == "anthropic_api" and not config.anthropic_api_key:
-        issues.append(
-            "ANTHROPIC_API_KEY is not set (required for provider_mode=anthropic_api)"
-        )
+        issues.append("ANTHROPIC_API_KEY is not set (required for provider_mode=anthropic_api)")
     if config.provider_mode == "claude_max" and not config.claude_max_oauth_token:
-        issues.append(
-            "CLAUDE_MAX_OAUTH_TOKEN is not set (required for provider_mode=claude_max)"
-        )
+        issues.append("CLAUDE_MAX_OAUTH_TOKEN is not set (required for provider_mode=claude_max)")
     if config.provider_mode == "ollama" and not config.ollama_model:
         issues.append("OLLAMA_MODEL is not set (required for provider_mode=ollama)")
 
@@ -313,10 +318,7 @@ def cmd_build(args: argparse.Namespace) -> None:
     cmd = _compose_cmd(home) + ["build"]
     if not args.cached:
         cmd.append("--no-cache")
-    _header(
-        "Building production images..."
-        + (" (cached)" if args.cached else " (clean)")
-    )
+    _header("Building production images..." + (" (cached)" if args.cached else " (clean)"))
     _run(cmd)
     _info("Build complete")
 
@@ -390,23 +392,15 @@ def main() -> None:
 
     # start
     start_parser = subparsers.add_parser("start", help="Start the production stack")
-    start_parser.add_argument(
-        "--port", type=int, default=None, help="Port (default: PROD_PORT env or 8200)"
-    )
-    start_parser.add_argument(
-        "--host", type=str, default=None, help="Host (default: HOST env or 0.0.0.0)"
-    )
+    start_parser.add_argument("--port", type=int, default=None, help="Port (default: PROD_PORT env or 8200)")
+    start_parser.add_argument("--host", type=str, default=None, help="Host (default: HOST env or 0.0.0.0)")
 
     # stop
     subparsers.add_parser("stop", help="Stop the production stack")
 
     # build
-    build_parser = subparsers.add_parser(
-        "build", help="Build production images (clean, no cache)"
-    )
-    build_parser.add_argument(
-        "--cached", action="store_true", help="Use Docker cache instead of clean build"
-    )
+    build_parser = subparsers.add_parser("build", help="Build production images (clean, no cache)")
+    build_parser.add_argument("--cached", action="store_true", help="Use Docker cache instead of clean build")
 
     # build-sandbox
     subparsers.add_parser("build-sandbox", help="Build sandbox image inside DinD")
@@ -424,21 +418,11 @@ def main() -> None:
     subparsers.add_parser("config", help="Validate and display configuration")
 
     # purge
-    purge_parser = subparsers.add_parser(
-        "purge", help="Remove all Legion Docker artifacts"
-    )
-    purge_parser.add_argument(
-        "--containers", action="store_true", help="Remove only containers"
-    )
-    purge_parser.add_argument(
-        "--images", action="store_true", help="Remove only images"
-    )
-    purge_parser.add_argument(
-        "--volumes", action="store_true", help="Remove only volumes"
-    )
-    purge_parser.add_argument(
-        "--networks", action="store_true", help="Remove only networks"
-    )
+    purge_parser = subparsers.add_parser("purge", help="Remove all Legion Docker artifacts")
+    purge_parser.add_argument("--containers", action="store_true", help="Remove only containers")
+    purge_parser.add_argument("--images", action="store_true", help="Remove only images")
+    purge_parser.add_argument("--volumes", action="store_true", help="Remove only volumes")
+    purge_parser.add_argument("--networks", action="store_true", help="Remove only networks")
 
     args = parser.parse_args()
 

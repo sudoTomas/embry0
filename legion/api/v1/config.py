@@ -1,4 +1,5 @@
 """Configuration API — budget controls and context injection settings."""
+
 from fastapi import APIRouter, Depends
 
 from legion.api.deps import get_budget_repo, get_context_repo, get_integration_repo, get_provider_repo
@@ -61,6 +62,7 @@ async def set_repo_context(
 
 # --- Integration Config ---
 
+
 @router.get("/config/integrations")
 async def get_integrations(
     repo: IntegrationConfigRepository = Depends(get_integration_repo),
@@ -80,6 +82,7 @@ async def update_integrations(
 
 
 # --- Provider Config ---
+
 
 @router.get("/config/provider")
 async def get_provider(
@@ -108,6 +111,7 @@ async def test_provider_connection(
 
 # --- Context: list and delete repos ---
 
+
 @router.get("/config/context/repos")
 async def list_repo_contexts(
     context: ContextConfigRepository = Depends(get_context_repo),
@@ -117,7 +121,8 @@ async def list_repo_contexts(
 
 @router.delete("/config/context/repos/{repo:path}")
 async def delete_repo_context(
-    repo: str, context: ContextConfigRepository = Depends(get_context_repo),
+    repo: str,
+    context: ContextConfigRepository = Depends(get_context_repo),
 ) -> dict:
     await context.delete_repo(repo)
     return {"repo": repo, "status": "deleted"}

@@ -11,11 +11,21 @@ from legion.storage.database import DatabasePool
 
 logger = structlog.get_logger(__name__)
 
-_ALLOWED_UPDATE_FIELDS = frozenset({
-    "title", "body", "status", "priority", "labels", "repo",
-    "parent_issue_id", "github_number", "github_url", "github_sync_enabled",
-    "github_synced_at",
-})
+_ALLOWED_UPDATE_FIELDS = frozenset(
+    {
+        "title",
+        "body",
+        "status",
+        "priority",
+        "labels",
+        "repo",
+        "parent_issue_id",
+        "github_number",
+        "github_url",
+        "github_sync_enabled",
+        "github_synced_at",
+    }
+)
 
 _ALLOWED_SORT_COLUMNS = frozenset({"created_at", "updated_at", "priority"})
 

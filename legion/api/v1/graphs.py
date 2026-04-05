@@ -1,4 +1,5 @@
 """Graph execution API."""
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from legion.api.deps import get_workflow_registry

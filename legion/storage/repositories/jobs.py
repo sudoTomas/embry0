@@ -9,11 +9,20 @@ from legion.storage.database import DatabasePool
 
 logger = structlog.get_logger(__name__)
 
-_UPDATABLE_FIELDS = frozenset({
-    "status", "pipeline_template", "pipeline_config", "sandbox_profile",
-    "total_cost_usd", "budget_overrun_usd", "pr_url", "error_message",
-    "started_at", "finished_at",
-})
+_UPDATABLE_FIELDS = frozenset(
+    {
+        "status",
+        "pipeline_template",
+        "pipeline_config",
+        "sandbox_profile",
+        "total_cost_usd",
+        "budget_overrun_usd",
+        "pr_url",
+        "error_message",
+        "started_at",
+        "finished_at",
+    }
+)
 
 
 class JobsRepository:
