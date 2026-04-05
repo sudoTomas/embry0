@@ -50,8 +50,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.provider_repo = ProviderConfigRepository(db)
 
     from legion.services.github_sync import GitHubSyncService
+    from legion.storage.repositories.issue_inputs import IssueInputsRepository
     from legion.storage.repositories.issues import IssuesRepository
     app.state.issues_repo = IssuesRepository(db)
+    app.state.inputs_repo = IssueInputsRepository(db)
     app.state.github_sync = GitHubSyncService(github_token=config.github_token if hasattr(config, "github_token") else None)
 
     registry = WorkflowRegistry()

@@ -3,7 +3,8 @@
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from legion.api.deps import get_github_sync, get_issue_executor, get_issues_repo, get_jobs_repo
+from legion.api.deps import get_github_sync, get_inputs_repo, get_issue_executor, get_issues_repo, get_jobs_repo
+from legion.api.schemas.inputs import AnswerInputRequest, InputResponse
 from legion.api.schemas.issues import (
     CreateIssueRequest,
     IssueDetailResponse,
@@ -13,6 +14,7 @@ from legion.api.schemas.issues import (
 )
 from legion.audit.helpers import emit_audit
 from legion.services.issue_executor import IssueExecutor
+from legion.storage.repositories.issue_inputs import IssueInputsRepository
 from legion.storage.repositories.issues import IssuesRepository
 from legion.storage.repositories.jobs import JobsRepository
 
@@ -346,3 +348,82 @@ async def get_issue_activity(
         raise HTTPException(status_code=404, detail="Issue not found")
 
     return await issues.get_activity(issue_id, limit=limit, offset=offset)
+
+
+# ---------------------------------------------------------------------------
+# Helper: resume pipeline after all blocking inputs are answered
+# ---------------------------------------------------------------------------
+
+async def _resume_pipeline(
+    issue_id: str,
+    issues: IssuesRepository,
+    inputs: IssueInputsRepository,
+    executor: IssueExecutor,
+) -> None:
+    all_answers = await inputs.list_all_answered(issue_id)
+    context_lines = []
+    for a in all_answers:
+        answer_text = a.get("answer") or a.get("auto_answer") or ""
+        context_lines.append(f"Q: {a['question']}\nA: {answer_text}")
+    await issues.update(issue_id, status="triaging")
+    try:
+        job_id = await executor.execute(issue_id)
+        logger.info("pipeline_resumed", issue_id=issue_id, job_id=job_id)
+    except Exception:
+        logger.warning("pipeline_resume_failed", issue_id=issue_id, exc_info=True)
+        await issues.update(issue_id, status="open")
+
+
+# ---------------------------------------------------------------------------
+# GET /issues/{issue_id}/inputs — list all inputs for an issue
+# ---------------------------------------------------------------------------
+
+@router.get("/issues/{issue_id}/inputs")
+async def list_issue_inputs(
+    issue_id: str,
+    issues: IssuesRepository = Depends(get_issues_repo),
+    inputs: IssueInputsRepository = Depends(get_inputs_repo),
+) -> list[InputResponse]:
+    existing = await issues.get(issue_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    rows = await inputs.list_by_issue(issue_id)
+    return [InputResponse(**r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# POST /issues/{issue_id}/inputs/{input_id}/answer — submit an answer
+# ---------------------------------------------------------------------------
+
+@router.post("/issues/{issue_id}/inputs/{input_id}/answer")
+async def answer_issue_input(
+    issue_id: str,
+    input_id: str,
+    req: AnswerInputRequest,
+    request: Request,
+    issues: IssuesRepository = Depends(get_issues_repo),
+    inputs: IssueInputsRepository = Depends(get_inputs_repo),
+    executor: IssueExecutor = Depends(get_issue_executor),
+) -> InputResponse:
+    existing = await issues.get(issue_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    inp = await inputs.get(input_id)
+    if not inp:
+        raise HTTPException(status_code=404, detail="Input not found")
+    if inp["issue_id"] != issue_id:
+        raise HTTPException(status_code=404, detail="Input not found")
+    if inp["status"] in ("answered", "auto_answered"):
+        raise HTTPException(status_code=409, detail="Input has already been answered")
+
+    actor = _actor(request)
+    await inputs.answer(input_id, answer=req.answer, answered_by=actor)
+
+    pending_blocking = await inputs.count_pending_blocking(issue_id)
+    if pending_blocking == 0:
+        await _resume_pipeline(issue_id, issues, inputs, executor)
+
+    updated = await inputs.get(input_id)
+    return InputResponse(**updated)
