@@ -1,4 +1,9 @@
-"""Issue-to-PR workflow — LangGraph StateGraph definition."""
+"""Issue-to-PR workflow — LangGraph StateGraph definition.
+
+Graph: init → triage → developer → review → END
+                            ↑           |
+                            └── retry ←──┘ (up to 3x, then max_retries interrupt)
+"""
 
 from typing import Any
 
@@ -51,7 +56,13 @@ class IssueToprWorkflow:
         )
 
         builder.add_edge("retry", "developer")
-        builder.add_edge("max_retries", END)
+
+        # max_retries can loop back to developer (if user says continue) or end
+        builder.add_conditional_edges(
+            "max_retries",
+            lambda state: "retry" if state.get("current_stage") == "developer_retry" else END,
+            {"retry": "retry", END: END},
+        )
 
         checkpointer = config.get("checkpointer") if isinstance(config, dict) else None
         return builder.compile(checkpointer=checkpointer)
