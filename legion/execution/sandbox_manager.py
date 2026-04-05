@@ -54,11 +54,63 @@ class SandboxManager:
             security_opt=p.get("security_opt", _DEFAULT_PROFILE["security_opt"]),
             read_only=p.get("read_only_root", _DEFAULT_PROFILE["read_only_root"]),
             env=env,
-            volumes=["/home/orchestrator/.claude:/home/agent/.claude:ro"],
         )
         container_id = await self._docker.run_cmd(cmd)
         logger.info("sandbox_created", job_id=job_id, container=name, image=p.get("base_image"))
+
+        # Copy Claude credentials into sandbox (volume mounts don't work with DinD)
+        await self._copy_credentials(name)
+
         return container_id
+
+    async def _copy_credentials(self, container_name: str) -> None:
+        """Copy Claude OAuth credentials into the sandbox container."""
+        import os
+        import subprocess
+        import tempfile
+
+        src = "/home/orchestrator/.claude"
+        if not os.path.isdir(src):
+            logger.warning("claude_credentials_not_found", path=src)
+            return
+
+        try:
+            # Create a tar of the credentials and pipe into docker cp
+            # docker cp requires tar format for directories
+            with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
+                tmp_path = tmp.name
+
+            # Create tar with just the credentials files we need
+            subprocess.run(
+                ["tar", "cf", tmp_path, "-C", src, ".credentials.json", ".claude.json"],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+
+            # Create the target dir in container via docker exec
+            mkdir_cmd = self._docker.build_exec_cmd(
+                container_name, ["bash", "-c", "mkdir -p /home/agent/.claude"]
+            )
+            await self._docker.run_cmd(mkdir_cmd, timeout=10)
+
+            # Copy tar into container
+            cp_cmd = self._docker._build_base_cmd()
+            cp_cmd.extend(["cp", tmp_path, f"{container_name}:/tmp/claude-creds.tar"])
+            await self._docker.run_cmd(cp_cmd, timeout=10)
+
+            # Extract inside container
+            extract_cmd = self._docker.build_exec_cmd(
+                container_name,
+                ["bash", "-c", "cd /home/agent/.claude && tar xf /tmp/claude-creds.tar && rm /tmp/claude-creds.tar"],
+            )
+            await self._docker.run_cmd(extract_cmd, timeout=10)
+
+            os.unlink(tmp_path)
+            logger.info("claude_credentials_copied", container=container_name)
+
+        except Exception as exc:
+            logger.warning("claude_credentials_copy_failed", container=container_name, error=str(exc))
 
     async def destroy(self, container: str, timeout: int = 10) -> None:
         """Stop and remove a sandbox container."""
