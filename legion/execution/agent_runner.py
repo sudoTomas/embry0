@@ -82,6 +82,11 @@ class AgentRunner:
                     error_message=f"Agent timed out after {timeout_seconds}s",
                 )
 
+            logger.info("agent_stdout_captured", agent_type=config.get("agent_type"), line_count=len(lines), exit_code=proc.returncode)
+            if lines:
+                logger.debug("agent_stdout_first_line", line=lines[0][:200])
+                logger.debug("agent_stdout_last_line", line=lines[-1][:200])
+
             result = self._parse_stdout_events(lines, on_event=on_event or (lambda _: None))
 
             if result:
