@@ -6,6 +6,7 @@ from langgraph.graph import END, START, StateGraph
 
 from legion.orchestration.state import JobState
 from legion.workflows.issue_to_pr.nodes import (
+    awaiting_input_node,
     developer_node,
     git_ops_node,
     init_node,
@@ -31,6 +32,7 @@ class IssueToprWorkflow:
 
         builder.add_node("init", init_node)
         builder.add_node("triage", triage_node)
+        builder.add_node("awaiting_input", awaiting_input_node)
         builder.add_node("developer", developer_node)
         builder.add_node("validator", validator_node)
         builder.add_node("reviewer", reviewer_node)
@@ -44,8 +46,10 @@ class IssueToprWorkflow:
         builder.add_conditional_edges(
             "triage",
             route_after_triage,
-            {"proceed": "developer", "needs_info": "output", "split": "output"},
+            {"proceed": "developer", "needs_info": "output", "split": "output", "awaiting_input": "awaiting_input"},
         )
+
+        builder.add_edge("awaiting_input", END)
 
         builder.add_edge("developer", "validator")
 
