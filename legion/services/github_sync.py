@@ -41,10 +41,14 @@ class GitHubSyncService:
         repo = issue["repo"]
         payload = {"title": issue["title"], "body": issue.get("body", ""), "labels": issue.get("labels", [])}
         async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{_GITHUB_API}/repos/{repo}/issues", json=payload, headers=self._headers(), timeout=15.0)
+            resp = await client.post(
+                f"{_GITHUB_API}/repos/{repo}/issues", json=payload, headers=self._headers(), timeout=15.0
+            )
             resp.raise_for_status()
             data = resp.json()
-        await issues_repo.update(issue_id, github_number=data["number"], github_url=data["html_url"], github_synced_at=datetime.now(UTC))
+        await issues_repo.update(
+            issue_id, github_number=data["number"], github_url=data["html_url"], github_synced_at=datetime.now(UTC)
+        )
         logger.info("github_issue_created", issue_id=issue_id, github_number=data["number"])
         return data
 
@@ -56,16 +60,31 @@ class GitHubSyncService:
         repo = issue["repo"]
         number = issue["github_number"]
         gh_state = _STATUS_TO_GH_STATE.get(issue["status"], "open")
-        payload = {"title": issue["title"], "body": issue.get("body", ""), "labels": issue.get("labels", []), "state": gh_state}
+        payload = {
+            "title": issue["title"],
+            "body": issue.get("body", ""),
+            "labels": issue.get("labels", []),
+            "state": gh_state,
+        }
         async with httpx.AsyncClient() as client:
-            resp = await client.patch(f"{_GITHUB_API}/repos/{repo}/issues/{number}", json=payload, headers=self._headers(), timeout=15.0)
+            resp = await client.patch(
+                f"{_GITHUB_API}/repos/{repo}/issues/{number}", json=payload, headers=self._headers(), timeout=15.0
+            )
             resp.raise_for_status()
             data = resp.json()
         await issues_repo.update(issue_id, github_synced_at=datetime.now(UTC))
         logger.info("github_issue_updated", issue_id=issue_id, github_number=number)
         return data
 
-    async def handle_webhook_event(self, event_type: str, action: str, payload: dict[str, Any], issues_repo: IssuesRepository, trigger_labels: set[str] | None = None, issue_executor: Any | None = None) -> dict[str, str]:
+    async def handle_webhook_event(
+        self,
+        event_type: str,
+        action: str,
+        payload: dict[str, Any],
+        issues_repo: IssuesRepository,
+        trigger_labels: set[str] | None = None,
+        issue_executor: Any | None = None,
+    ) -> dict[str, str]:
         """Process an inbound GitHub webhook event."""
         if event_type != "issues":
             return {"status": "ignored", "reason": "not an issue event"}
@@ -81,7 +100,14 @@ class GitHubSyncService:
             if existing:
                 return {"status": "ignored", "reason": "issue already exists"}
             labels = [lbl.get("name", "") for lbl in gh_issue.get("labels", [])]
-            issue_id = await issues_repo.create(title=gh_issue.get("title", ""), body=gh_issue.get("body", "") or "", labels=labels, repo=repo, github_sync_enabled=True, created_by="webhook")
+            issue_id = await issues_repo.create(
+                title=gh_issue.get("title", ""),
+                body=gh_issue.get("body", "") or "",
+                labels=labels,
+                repo=repo,
+                github_sync_enabled=True,
+                created_by="webhook",
+            )
             await issues_repo.update(issue_id, github_number=gh_number, github_url=gh_issue.get("html_url", ""))
             should_triage = bool(trigger_labels and trigger_labels.intersection(set(labels)))
             if should_triage:
@@ -100,7 +126,11 @@ class GitHubSyncService:
         issue_id = existing["id"]
 
         if action == "edited":
-            await issues_repo.update(issue_id, title=gh_issue.get("title", existing["title"]), body=gh_issue.get("body", "") or existing.get("body", ""))
+            await issues_repo.update(
+                issue_id,
+                title=gh_issue.get("title", existing["title"]),
+                body=gh_issue.get("body", "") or existing.get("body", ""),
+            )
             return {"status": "accepted", "action": "issue_updated"}
         if action == "closed":
             await issues_repo.update(issue_id, status="closed")
