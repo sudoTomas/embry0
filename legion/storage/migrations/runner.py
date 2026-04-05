@@ -224,6 +224,32 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_audit_issue_id ON audit_log (issue_id);
         """,
     ),
+    (
+        5,
+        "Add issue_inputs table for human-in-the-loop questions",
+        """
+        CREATE TABLE IF NOT EXISTS issue_inputs (
+            id              TEXT PRIMARY KEY,
+            issue_id        TEXT NOT NULL REFERENCES issues(id),
+            job_id          TEXT NOT NULL REFERENCES jobs(job_id),
+            asking_node     TEXT NOT NULL DEFAULT 'triage',
+            question        TEXT NOT NULL,
+            importance      TEXT NOT NULL DEFAULT 'blocking',
+            auto_answer     TEXT,
+            answer          TEXT,
+            answered_by     TEXT,
+            telegram_message_id INTEGER,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            answered_at     TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_issue_inputs_issue_id ON issue_inputs (issue_id);
+        CREATE INDEX IF NOT EXISTS idx_issue_inputs_job_id ON issue_inputs (job_id);
+        CREATE INDEX IF NOT EXISTS idx_issue_inputs_status ON issue_inputs (status);
+        CREATE INDEX IF NOT EXISTS idx_issue_inputs_telegram_msg ON issue_inputs (telegram_message_id)
+            WHERE telegram_message_id IS NOT NULL;
+        """,
+    ),
 ]
 
 
