@@ -51,6 +51,36 @@ async def get_job(job_id: str, jobs: JobsRepository = Depends(get_jobs_repo)) ->
     return job
 
 
+@router.get("/jobs/{job_id}/inputs")
+async def get_job_inputs(job_id: str, request: Request) -> list:
+    """Get all inputs (questions) for a job."""
+    inputs_repo = request.app.state.inputs_repo
+    return await inputs_repo.list_by_job(job_id)
+
+
+@router.post("/jobs/{job_id}/inputs/{input_id}/answer")
+async def answer_job_input(job_id: str, input_id: str, request: Request) -> dict:
+    """Answer an input question for a job."""
+    body = await request.json()
+    answer = body.get("answer", "")
+    inputs_repo = request.app.state.inputs_repo
+    await inputs_repo.answer(input_id, answer, answered_by="user")
+    return {"status": "answered", "input_id": input_id}
+
+
+@router.get("/jobs/{job_id}/logs/events")
+async def get_job_log_events(job_id: str, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
+    """Get persisted pipeline events for a job."""
+    events = await jobs.get_log_events(job_id)
+    # Extract the parsed payload from each row
+    result = []
+    for e in events:
+        payload = e.get("payload", {})
+        if isinstance(payload, dict):
+            result.append(payload)
+    return {"events": result}
+
+
 @router.post("/jobs/{job_id}/cancel")
 async def cancel_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
     job = await jobs.get(job_id)
