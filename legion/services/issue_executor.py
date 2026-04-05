@@ -76,8 +76,10 @@ class IssueExecutor:
         self, issue_id: str, job_id: str, issue: dict[str, Any]
     ) -> None:
         """Execute the issue-to-pr workflow and handle the outcome."""
+        from datetime import UTC, datetime
+
         try:
-            await self._jobs.update(job_id, status="running")
+            await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
 
             workflow = self._registry.get("issue-to-pr")
             if not workflow:
@@ -144,6 +146,8 @@ class IssueExecutor:
             await self._handle_needs_info(issue_id, job_id, triage_decision)
         else:
             # action == "proceed" — workflow ran through the full pipeline
+            from datetime import UTC, datetime
+
             final_status = "completed" if current_stage == "completed" else "failed"
             await self._jobs.update(
                 job_id,
@@ -151,6 +155,7 @@ class IssueExecutor:
                 pr_url=result.get("pr_url"),
                 error_message=result.get("result_summary") if final_status == "failed" else None,
                 total_cost_usd=result.get("total_cost_usd", 0.0),
+                finished_at=datetime.now(UTC),
             )
             issue_status = "closed" if final_status == "completed" else "open"
             await self._issues.update(issue_id, status=issue_status)

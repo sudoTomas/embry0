@@ -137,14 +137,23 @@ async def run_triage_node(
             "errors": [f"Triage failed: {exc}"],
         }
 
+    # Estimate cost from usage (Claude Sonnet ~$3/M input, $15/M output)
+    triage_cost = 0.0
+    if result.usage:
+        input_tokens = result.usage.get("input_tokens", 0)
+        output_tokens = result.usage.get("output_tokens", 0)
+        triage_cost = (input_tokens * 3.0 / 1_000_000) + (output_tokens * 15.0 / 1_000_000)
+
     logger.info(
         "triage_complete",
         action=decision.get("action"),
         confidence=decision.get("confidence"),
         pipeline_template=decision.get("pipeline_template"),
+        cost_usd=round(triage_cost, 4),
     )
 
     return {
         "pipeline_config": decision,
         "current_stage": "triage_complete",
+        "total_cost_usd": state.get("total_cost_usd", 0.0) + triage_cost,
     }
