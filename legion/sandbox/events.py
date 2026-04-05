@@ -3,7 +3,16 @@
 import json
 import sys
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
+
+
+class EventType(StrEnum):
+    AGENT_STARTED = "agent_started"
+    AGENT_COMPLETED = "agent_completed"
+    TOOL_CALL = "tool_call"
+    PROGRESS = "progress"
+    ERROR = "error"
 
 
 def emit_event(event_type: str, **kwargs: Any) -> None:
