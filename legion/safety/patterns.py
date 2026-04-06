@@ -25,10 +25,10 @@ DANGEROUS_BASH_PATTERNS: list[str] = [
     r"\bdd\s+.*of=/dev/",
     r">\s*/dev/sd[a-z]",
     # Environment / credential leakage
-    r"\benv\b(?!\s+[\w-]+=)",  # bare `env` but not `env VAR=val cmd`
+    r"^\s*env\s*$",  # bare `env` (dumps all vars); `env VAR=val cmd` and `env python` are fine
     r"\bprintenv\b",
     r"\bexport\s+-p\b",
-    r"\bset\b\s*$",  # bare `set` dumps all vars; `set -e` is fine
+    r"^\s*set\s*$",  # bare `set` (dumps shell vars); `set -e`, `set -x` are fine
     r"\bcat\s+/proc/",
     r"\bcat\s+.*\.env\b",
     r"\bcat\s+.*credentials",

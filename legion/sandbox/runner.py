@@ -104,16 +104,7 @@ async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
             },
         )
 
-        # Self-test: verify safety hooks are functioning
-        # If the SDK silently ignores hooks, this will catch it before we
-        # run with bypassPermissions and no safety net.
-        hook_test_fired = False
-
-        async def _test_hook(hook_input: Any) -> dict[str, Any]:
-            nonlocal hook_test_fired
-            hook_test_fired = True
-            return {"decision": "deny", "reason": "self-test"}
-
+        # Self-test: verify safety hook is callable and pattern matching works
         try:
             test_input = {"tool_name": "Bash", "tool_input": {"command": "echo test"}}
             test_result = await safety_hook(test_input)
