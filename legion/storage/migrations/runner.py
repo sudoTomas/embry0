@@ -261,6 +261,34 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         WHERE type = 'reviewer';
         """,
     ),
+    (
+        7,
+        "add updated_at to jobs table with auto-update trigger",
+        """
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+        -- Backfill existing rows: use created_at as initial updated_at
+        UPDATE jobs SET updated_at = COALESCE(started_at, created_at) WHERE updated_at IS NULL;
+
+        -- Create trigger function for auto-updating updated_at
+        CREATE OR REPLACE FUNCTION update_jobs_updated_at()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            NEW.updated_at = NOW();
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        -- Attach trigger to jobs table
+        DROP TRIGGER IF EXISTS trg_jobs_updated_at ON jobs;
+        CREATE TRIGGER trg_jobs_updated_at
+            BEFORE UPDATE ON jobs
+            FOR EACH ROW
+            EXECUTE FUNCTION update_jobs_updated_at();
+
+        CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs (updated_at);
+        """,
+    ),
 ]
 
 
