@@ -263,7 +263,10 @@ class IssueExecutor:
             # action == "proceed" — workflow ran through the full pipeline
             from datetime import UTC, datetime
 
-            final_status = "completed" if current_stage == "completed" else "failed"
+            # Pipeline ends at review_complete (approved) or abandoned (user gave up)
+            failed_stages = {"abandoned", "triage_failed", "developer_retry"}
+            has_errors = bool(result.get("errors"))
+            final_status = "failed" if current_stage in failed_stages or has_errors else "completed"
             await self._jobs.update(
                 job_id,
                 status=final_status,
