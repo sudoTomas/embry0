@@ -8,8 +8,41 @@ from typing import Any
 import structlog
 
 from legion.storage.database import DatabasePool
+from legion.storage.schemas import JobStatus
 
 logger = structlog.get_logger(__name__)
+
+# Valid status transitions: current_status -> set of allowed next statuses
+VALID_JOB_TRANSITIONS: dict[str, set[str]] = {
+    JobStatus.PENDING: {JobStatus.RUNNING, JobStatus.CANCELLED},
+    JobStatus.RUNNING: {
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+        JobStatus.CANCELLED,
+        JobStatus.AWAITING_INPUT,
+        JobStatus.PAUSED,
+    },
+    JobStatus.AWAITING_INPUT: {
+        JobStatus.RUNNING,
+        JobStatus.CANCELLED,
+        JobStatus.FAILED,
+    },
+    JobStatus.PAUSED: {
+        JobStatus.RUNNING,
+        JobStatus.CANCELLED,
+        JobStatus.FAILED,
+        JobStatus.EXPIRED,
+    },
+    JobStatus.COMPLETED: {
+        JobStatus.PR_MERGED,
+        JobStatus.PR_CLOSED,
+    },
+    JobStatus.FAILED: set(),  # Terminal
+    JobStatus.CANCELLED: set(),  # Terminal
+    JobStatus.EXPIRED: set(),  # Terminal
+    JobStatus.PR_MERGED: set(),  # Terminal
+    JobStatus.PR_CLOSED: set(),  # Terminal
+}
 
 _UPDATABLE_FIELDS = frozenset(
     {
@@ -107,10 +140,36 @@ class JobsRepository:
         return [dict(r) for r in rows], total or 0
 
     async def update(self, job_id: str, **fields: Any) -> None:
-        """Update specific fields on a job."""
+        """Update specific fields on a job. Validates status transitions."""
         valid = {k: v for k, v in fields.items() if k in _UPDATABLE_FIELDS}
         if not valid:
             return
+
+        # Validate status transition if status is being changed
+        new_status = valid.get("status")
+        if new_status is not None:
+            row = await self._db.fetchrow("SELECT status FROM jobs WHERE job_id = $1", job_id)
+            if row is not None:
+                current_status = row["status"]
+                if current_status == new_status:
+                    # No-op: same status, skip the transition check but still update other fields
+                    valid.pop("status")
+                    if not valid:
+                        return
+                else:
+                    allowed = VALID_JOB_TRANSITIONS.get(current_status, set())
+                    if new_status not in allowed:
+                        logger.warning(
+                            "invalid_job_status_transition",
+                            job_id=job_id,
+                            current=current_status,
+                            requested=new_status,
+                            allowed=sorted(allowed),
+                        )
+                        raise ValueError(
+                            f"Invalid job status transition: {current_status} -> {new_status}. "
+                            f"Allowed: {sorted(allowed)}"
+                        )
 
         sets: list[str] = []
         args: list[Any] = [job_id]
@@ -119,6 +178,9 @@ class JobsRepository:
             sets.append(f"{key} = ${idx}")
             args.append(value)
             idx += 1
+
+        if not sets:
+            return
 
         await self._db.execute(
             f"UPDATE jobs SET {', '.join(sets)} WHERE job_id = $1",
