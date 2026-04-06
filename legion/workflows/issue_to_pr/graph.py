@@ -1,8 +1,8 @@
 """Issue-to-PR workflow — LangGraph StateGraph definition.
 
-Graph: init → triage → developer → review → END
-                            ↑           |
-                            └── retry ←──┘ (up to 3x, then max_retries interrupt)
+Graph: init → triage → developer → [budget check] → review → END
+                            ↑                            |
+                            └────────── retry ←──────────┘ (up to 3x, then max_retries interrupt)
 """
 
 from typing import Any
@@ -19,6 +19,7 @@ from legion.workflows.issue_to_pr.nodes import (
     triage_node,
 )
 from legion.workflows.issue_to_pr.routing import (
+    route_after_developer,
     route_after_review,
     route_after_triage,
 )
@@ -47,7 +48,12 @@ class IssueToprWorkflow:
             {"proceed": "developer", "split": END},
         )
 
-        builder.add_edge("developer", "review")
+        # Budget check between developer and review
+        builder.add_conditional_edges(
+            "developer",
+            route_after_developer,
+            {"within_budget": "review", "over_budget": "max_retries"},
+        )
 
         builder.add_conditional_edges(
             "review",
