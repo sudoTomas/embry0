@@ -186,7 +186,7 @@ async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
         "agent_type": agent_type,
         "is_error": is_error,
         "error_message": error_message,
-        "output": output_text[:5000],
+        "output": output_text[-10000:] if len(output_text) > 10000 else output_text,
         "cost_usd": cost_usd,
         "duration_ms": elapsed_ms,
         "tools_called": tools_called,
