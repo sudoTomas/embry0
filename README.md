@@ -35,7 +35,6 @@ graph TB
 
     subgraph Sandbox["Docker Sandbox (per job)"]
         DEV["Developer Agent<br/><small>Code + Git + PR</small>"]
-        VAL["Validator Agent<br/><small>Tests + Lint + Types</small>"]
         REV["Reviewer Agent<br/><small>Code review</small>"]
     end
 
@@ -49,9 +48,7 @@ graph TB
     API -->|job request| TR
     TR --> LG
     LG -->|docker exec| DEV
-    DEV --> VAL
-    VAL -->|fail| DEV
-    VAL -->|pass| REV
+    DEV --> REV
     REV -->|rejected| DEV
     REV -->|approved| PR
     LG --> WS
@@ -105,11 +102,11 @@ graph LR
 
 ### Security Model
 
-- **Sandbox isolation** — Each job runs in a Docker container with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, read-only filesystem
+- **Sandbox isolation** — Each job runs in a Docker container with `--cap-drop=ALL`, `--security-opt=no-new-privileges`
 - **No customer code retention** — Sandbox clones repo internally; code is deleted when container is destroyed
 - **Credential injection via proxies** — API keys and tokens never enter the sandbox; three proxy services inject credentials transparently
 - **Dynamic network switching** — Agents get internet access only when needed (research), otherwise network-restricted
-- **Safety patterns** — 16 blocked command patterns with NFKC unicode normalization prevent dangerous bash operations
+- **Safety patterns** — 34 blocked command patterns with NFKC unicode normalization, Glob restriction, and symlink defense via `os.path.realpath()` prevent dangerous bash operations
 
 ## The Issue-to-PR Pipeline
 
@@ -121,11 +118,9 @@ stateDiagram-v2
     Triage --> AwaitInput: needs_info
     Triage --> Split: too_large
 
-    Developer --> Validator
-    Validator --> Reviewer: pass
-    Validator --> Developer: fail (retry)
+    Developer --> Reviewer
     Reviewer --> Output: approved
-    Reviewer --> Developer: rejected (feedback)
+    Reviewer --> Developer: changes_requested (retry)
     Output --> [*]
 ```
 
@@ -306,6 +301,12 @@ ws.onmessage = (event) => {
   // { type: "agent_started", agent: "developer", ... }
   // { type: "progress", message: "Editing src/auth/login.py", ... }
   // { type: "agent_completed", cost_usd: 0.42, ... }
+  // Rich event types:
+  // { type: "thinking", text: "...", node: "developer" }
+  // { type: "tool_call", tool_name: "Edit", input: "main.py", node: "developer" }
+  // { type: "tool_result", tool_use_id: "...", content: "...", is_error: false }
+  // { type: "text", text: "...", node: "developer" }
+  // { type: "cost_update", cost_usd: 1.23, tokens_in: 5000, tokens_out: 2000 }
 };
 ```
 
@@ -350,7 +351,7 @@ legion/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── issues/         # Issue tracker (list, board, detail, questions)
-│   │   │   ├── jobs/           # Job table, status badges, event timeline
+│   │   │   ├── jobs/           # Agent cards, tool call stream, thinking blocks, paused banner
 │   │   │   ├── pipeline-editor/# Pipeline visualization + editor
 │   │   │   ├── layout/         # Sidebar, TopBar, AppLayout
 │   │   │   └── ui/             # Design system (Card, Button, Input, ...)

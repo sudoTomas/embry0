@@ -19,3 +19,14 @@
 - The frontend is served via nginx on port 8200 and proxies `/api` to the orchestrator container.
 - Always verify health after restart: `curl -s http://localhost:8200/health`
 - The Cloudflare tunnel at `legion.alchymielabs.com` is restricted to webhook paths only (`/api/v1/webhook`, `/api/v1/telegram/callback`). NEVER expose the full app via the tunnel.
+
+## Sandbox
+
+- After code changes to `legion/sandbox/` or `legion/safety/`, rebuild the sandbox image and load into DinD:
+  ```bash
+  docker build -t legion-sandbox:latest -f infra/Dockerfile.sandbox .
+  cd infra && docker save legion-sandbox:latest | docker compose exec -T orchestrator docker --host tcp://dind:2376 --tlsverify --tlscacert=/certs/client/ca.pem --tlscert=/certs/client/cert.pem --tlskey=/certs/client/key.pem load
+  ```
+- The sandbox uses OAuth via `CLAUDE_CODE_OAUTH_TOKEN` env var (read from `~/.claude/.credentials.json` on the orchestrator).
+- The sandbox uses `GITHUB_TOKEN` env var for git push/clone (read from orchestrator environment).
+- Read-only rootfs is disabled (`read_only_root: False`) because Claude CLI needs writable fs.

@@ -243,11 +243,12 @@ stateDiagram-v2
         Git --> PR: Create PR (Closes #issue)
     }
 
-    Developer --> Review
+    Developer --> BudgetCheck: check cost vs. budget
+    BudgetCheck --> Review: within budget
+    BudgetCheck --> AskUser: budget exceeded
 
     state Review {
-        Test: Run tests + lint + typecheck
-        Test --> Assess2: Code review
+        Assess2: Code review
         Assess2 --> Approved: decision = approved
         Assess2 --> ChangesReq: decision = changes_requested
     }
@@ -270,7 +271,7 @@ stateDiagram-v2
 | `init` | No | — | Create sandbox container, clone repo |
 | `triage` | Yes | Read, Glob, Grep | Analyze issue, configure pipeline. Can `interrupt()` for questions. |
 | `developer` | Yes | Read, Write, Edit, Bash, Glob, Grep | Write code, create branch, commit, push, open PR |
-| `review` | Yes | Read, Bash, Glob, Grep | Run tests/lint/typecheck, code review. Structured JSON output. |
+| `review` | Yes | Read, Bash, Glob, Grep | Code review with structured JSON output. Can request changes (triggers retry). |
 | `retry` | No | — | Inject review feedback into state, increment counter |
 | `max_retries` | No | — | `interrupt()` — ask user: continue, merge as-is, or abandon |
 
@@ -350,10 +351,10 @@ graph LR
 | Capability drop | `--cap-drop=ALL` (configurable: `cap_add` escape hatch) |
 | Privilege escalation | `--security-opt=no-new-privileges` |
 | Resource limits | `--memory`, `--cpus`, `--pids-limit` (all configurable) |
-| Filesystem | Read-only root, writable `/tmp` (tmpfs, noexec, nosuid), writable `/workspace` |
+| Filesystem | Writable root (read-only disabled — Claude CLI requires writable fs), writable `/tmp` (tmpfs, noexec, nosuid), writable `/workspace` |
 | Network | `sandbox-restricted` (default) or `sandbox-internet` (research agents) |
 | Credentials | Never in sandbox — four proxies inject API keys and tokens |
-| Command blocking | 16 regex patterns, NFKC unicode normalization |
+| Command blocking | 34 regex patterns, NFKC unicode normalization, Glob path restriction, symlink defense via `os.path.realpath()` |
 | Code retention | None — repo cloned inside container, deleted on teardown |
 | OAuth credentials | Mounted read-only from orchestrator (`~/.claude`) |
 
