@@ -116,6 +116,26 @@ async def cancel_job(job_id: str, request: Request, jobs: JobsRepository = Depen
     if job["status"] not in ("pending", "running", "awaiting_input", "paused"):
         raise HTTPException(status_code=409, detail=f"Cannot cancel job in {job['status']} state")
     await jobs.update(job_id, status="cancelled")
+
+    # Destroy the sandbox container so the background task detects failure and exits
+    sandbox_mgr = getattr(request.app.state, "sandbox_manager", None)
+    if sandbox_mgr:
+        container_name = f"sandbox-{job_id}"
+        try:
+            await sandbox_mgr.destroy(container_name)
+        except Exception:
+            pass  # Container may not exist (pending jobs, already cleaned up)
+
+    # Reset associated issue status back to open
+    issue_id = job.get("issue_id")
+    if issue_id:
+        issues_repo = getattr(request.app.state, "issues_repo", None)
+        if issues_repo:
+            try:
+                await issues_repo.update(issue_id, status="open")
+            except Exception:
+                pass
+
     config = request.app.state.config
     emit_audit_event(
         "job_cancelled",
