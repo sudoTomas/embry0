@@ -69,6 +69,12 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
     except Exception as exc:
         logger.error("sandbox_init_failed", job_id=job_id, error=str(exc))
         writer({"type": "error", "message": f"Sandbox init failed: {exc}"})
+        # Clean up partially-created container to avoid leaks
+        if container_id:
+            try:
+                await sandbox_mgr.destroy(container_id)
+            except Exception:
+                logger.warning("sandbox_cleanup_failed", container_id=container_id)
         raise RuntimeError(f"Sandbox initialization failed: {exc}") from exc
 
     writer({"type": "node_completed", "node": "init"})
