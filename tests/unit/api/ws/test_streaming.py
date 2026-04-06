@@ -1,6 +1,10 @@
+import pytest
 from starlette.testclient import TestClient
 
-from legion.api.app import create_app
+try:
+    from legion.api.app import create_app
+except ImportError:
+    pytest.skip("psycopg not available", allow_module_level=True)
 from legion.config import LegionConfig
 
 

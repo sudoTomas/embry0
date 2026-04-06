@@ -1,7 +1,10 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from legion.api.app import create_app
+try:
+    from legion.api.app import create_app
+except ImportError:
+    pytest.skip("psycopg not available", allow_module_level=True)
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from dataclasses import dataclass
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -63,31 +64,34 @@ def test_parse_triage_response_invalid_json():
     assert decision["confidence"] == 0.0
 
 
+@dataclass
+class MockAgentResult:
+    success: bool = True
+    raw_output: str = ""
+    error: str | None = None
+    usage: dict | None = None
+
+
 @pytest.mark.asyncio
 async def test_run_triage_node_success():
-    mock_response = MagicMock()
-    mock_response.content = [
-        MagicMock(
-            text=json.dumps(
-                {
-                    "action": "proceed",
-                    "confidence": 0.9,
-                    "pipeline_template": "standard",
-                    "pipeline_config": {
-                        "sandbox_profile": "python-3.12",
-                        "agent_models": {"developer": "claude-sonnet-4-6"},
-                        "budget_usd": 10.0,
-                    },
-                    "reasoning": "Clear task.",
-                }
-            )
-        )
-    ]
+    """Verify triage node calls Agent SDK and parses the response."""
+    triage_output = json.dumps(
+        {
+            "action": "proceed",
+            "confidence": 0.9,
+            "pipeline_template": "standard",
+            "pipeline_config": {
+                "sandbox_profile": "python-3.12",
+                "agent_models": {"developer": "claude-sonnet-4-6"},
+                "budget_usd": 10.0,
+            },
+            "reasoning": "Clear task.",
+        }
+    )
 
-    mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(return_value=mock_response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_result = MockAgentResult(
+        success=True, raw_output=triage_output, usage={"input_tokens": 100, "output_tokens": 50}
+    )
 
     state = {
         "repo": "owner/repo",
@@ -95,8 +99,8 @@ async def test_run_triage_node_success():
         "issue_number": 42,
     }
 
-    with patch("legion.orchestration.nodes.triage._create_anthropic_client", return_value=mock_client):
-        result = await run_triage_node(state=state, api_key="sk-test")
+    with patch("legion.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
+        result = await run_triage_node(state=state)
 
     assert result["pipeline_config"]["action"] == "proceed"
     assert result["current_stage"] == "triage_complete"
@@ -105,29 +109,23 @@ async def test_run_triage_node_success():
 @pytest.mark.asyncio
 async def test_low_confidence_triggers_needs_info():
     """Verify that a 'proceed' decision below confidence_threshold is escalated to needs_info."""
-    mock_response = MagicMock()
-    mock_response.content = [
-        MagicMock(
-            text=json.dumps(
-                {
-                    "action": "proceed",
-                    "confidence": 0.3,
-                    "pipeline_template": "standard",
-                    "pipeline_config": {
-                        "sandbox_profile": "python-3.12",
-                        "agent_models": {"developer": "claude-sonnet-4-6"},
-                        "budget_usd": 10.0,
-                    },
-                    "reasoning": "Vague requirements, low confidence.",
-                }
-            )
-        )
-    ]
+    triage_output = json.dumps(
+        {
+            "action": "proceed",
+            "confidence": 0.3,
+            "pipeline_template": "standard",
+            "pipeline_config": {
+                "sandbox_profile": "python-3.12",
+                "agent_models": {"developer": "claude-sonnet-4-6"},
+                "budget_usd": 10.0,
+            },
+            "reasoning": "Vague requirements, low confidence.",
+        }
+    )
 
-    mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(return_value=mock_response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_result = MockAgentResult(
+        success=True, raw_output=triage_output, usage={"input_tokens": 100, "output_tokens": 50}
+    )
 
     state = {
         "repo": "owner/repo",
@@ -135,8 +133,8 @@ async def test_low_confidence_triggers_needs_info():
         "issue_number": 99,
     }
 
-    with patch("legion.orchestration.nodes.triage._create_anthropic_client", return_value=mock_client):
-        result = await run_triage_node(state=state, api_key="sk-test", confidence_threshold=0.5)
+    with patch("legion.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
+        result = await run_triage_node(state=state, confidence_threshold=0.5)
 
     assert result["current_stage"] == "triage_complete"
     pipeline_config = result["pipeline_config"]

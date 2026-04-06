@@ -55,11 +55,18 @@ async def test_create_uses_sandbox_profile_defaults(manager: SandboxManager):
 
 
 @pytest.mark.asyncio
-async def test_create_mounts_claude_credentials(manager: SandboxManager):
-    """Claude OAuth credentials are always mounted read-only into the sandbox."""
-    await manager.create(job_id="job-creds")
-    kwargs = manager._docker.build_run_cmd.call_args.kwargs
-    assert "/home/orchestrator/.claude:/home/agent/.claude:ro" in kwargs["volumes"]
+async def test_create_injects_github_token(manager: SandboxManager):
+    """GitHub token is injected via env var when available."""
+    import os
+
+    os.environ["GITHUB_TOKEN"] = "ghp_test123"
+    try:
+        await manager.create(job_id="job-creds")
+        kwargs = manager._docker.build_run_cmd.call_args.kwargs
+        assert "GITHUB_TOKEN" in (kwargs.get("env") or {})
+        assert kwargs["env"]["GITHUB_TOKEN"] == "ghp_test123"
+    finally:
+        del os.environ["GITHUB_TOKEN"]
 
 
 @pytest.mark.asyncio
