@@ -57,17 +57,17 @@ export function useAgentStates(events: LogEvent[]): {
 
     for (const event of events) {
       // LogEvent uses node_id; map to node for backward compat
-      const node = (event as Record<string, unknown>).node_id as string
-        ?? (event as Record<string, unknown>).node as string
+      const node = (event as unknown as Record<string, unknown>).node_id as string
+        ?? (event as unknown as Record<string, unknown>).node as string
         ?? "";
 
-      if (event.type === "pipeline_stage_completed" && (event as Record<string, unknown>).pr_url) {
-        prUrl = (event as Record<string, unknown>).pr_url as string;
+      if (event.type === "pipeline_stage_completed" && (event as unknown as Record<string, unknown>).pr_url) {
+        prUrl = (event as unknown as Record<string, unknown>).pr_url as string;
       }
 
       // Detect interrupt / awaiting_input as interrupt data
-      if (event.type === "awaiting_input" || (event as Record<string, unknown>).type === "interrupt") {
-        const raw = event as Record<string, unknown>;
+      if (event.type === "awaiting_input" || (event as unknown as Record<string, unknown>).type === "interrupt") {
+        const raw = event as unknown as Record<string, unknown>;
         interruptData = {
           reason: raw.reason as string | undefined,
           retry_count: raw.retry_count as number | undefined,
@@ -87,7 +87,7 @@ export function useAgentStates(events: LogEvent[]): {
         }
         agentMap.set(node, {
           node,
-          agent: (event as Record<string, unknown>).agent as string || node,
+          agent: (event as unknown as Record<string, unknown>).agent as string || node,
           status: "running",
           events: [],
           toolCalls: [],
@@ -104,7 +104,7 @@ export function useAgentStates(events: LogEvent[]): {
       }
 
       // Also handle legacy node_started events
-      if ((event as Record<string, unknown>).type === "node_started" && node) {
+      if ((event as unknown as Record<string, unknown>).type === "node_started" && node) {
         const startCount = (nodeStartCounts.get(node) || 0) + 1;
         nodeStartCounts.set(node, startCount);
 
@@ -113,7 +113,7 @@ export function useAgentStates(events: LogEvent[]): {
         }
         agentMap.set(node, {
           node,
-          agent: (event as Record<string, unknown>).agent as string || node,
+          agent: (event as unknown as Record<string, unknown>).agent as string || node,
           status: "running",
           events: [],
           toolCalls: [],
@@ -133,7 +133,7 @@ export function useAgentStates(events: LogEvent[]): {
       if (!agent) continue;
 
       agent.events.push(event);
-      const raw = event as Record<string, unknown>;
+      const raw = event as unknown as Record<string, unknown>;
 
       switch (event.type) {
         case "pipeline_stage_completed":
