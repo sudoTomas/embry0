@@ -412,39 +412,46 @@ async def retry_node(state: dict[str, Any], config: RunnableConfig) -> dict[str,
 
 
 async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-    """Max retries reached — interrupt to ask user what to do."""
+    """Max retries reached — pause pipeline and ask user what to do."""
     writer = get_stream_writer()
     retry_count = state.get("retry_count", 0)
     pr_url = state.get("pr_url", "")
 
     summary = {
         "message": f"Review failed after {retry_count} attempts",
+        "reason": "max_retries",
         "pr_url": pr_url,
         "retry_count": retry_count,
         "options": ["continue_retrying", "merge_as_is", "abandon"],
     }
 
-    # Get the latest review feedback for context
     outputs = state.get("agent_outputs", [])
     review_outputs = [o for o in outputs if o.get("agent_type") == "review"]
     if review_outputs:
         summary["latest_review"] = review_outputs[-1].get("output", "")[:1000]
 
-    writer({"type": "interrupt", "node": "max_retries", "summary": summary})
+    writer({"type": "interrupt", "node": "max_retries", "reason": "max_retries", "summary": summary})
     logger.info("max_retries_reached", retry_count=retry_count)
 
     user_choice = interrupt(summary)
 
     if isinstance(user_choice, str):
         choice = user_choice
+        guidance = ""
     elif isinstance(user_choice, dict):
         choice = user_choice.get("choice", "abandon")
+        guidance = user_choice.get("guidance", "")
     else:
         choice = "abandon"
+        guidance = ""
 
     if choice == "continue_retrying":
-        return {"retry_count": 0, "current_stage": "developer_retry"}
+        updates: dict[str, Any] = {"retry_count": 0, "current_stage": "developer_retry"}
+        if guidance:
+            existing = state.get("additional_context", "") or ""
+            updates["additional_context"] = existing + f"\n\nUser guidance:\n{guidance}"
+        return updates
     elif choice == "merge_as_is":
         return {"current_stage": "completed"}
-    else:  # abandon
+    else:
         return {"current_stage": "abandoned", "errors": [f"Abandoned after {retry_count} retries"]}
