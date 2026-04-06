@@ -74,6 +74,7 @@ async def github_webhook(
                             from legion.notifications.dispatcher import notify_answer_cross_channel
 
                             await notify_answer_cross_channel(inputs_repo, inp, comment_body, "github", config)
+                            break  # Only answer the first pending blocking input per comment
 
                     if answered_any:
                         pending = await inputs_repo.count_pending_blocking(issue["id"])
