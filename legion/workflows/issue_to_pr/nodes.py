@@ -27,7 +27,6 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
     repo = state.get("repo", "")
 
     sandbox_mgr = config["configurable"].get("sandbox_manager")
-    proxy_mgr = config["configurable"].get("proxy_manager")
     docker = config["configurable"].get("docker")
 
     container_id = None
@@ -42,8 +41,9 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
             if repo and docker:
                 # Configure git credential helper to use GITHUB_TOKEN env var
                 setup_cmd = [
-                    "bash", "-c",
-                    'git config --global credential.helper '
+                    "bash",
+                    "-c",
+                    "git config --global credential.helper "
                     '"!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" && '
                     'git config --global user.email "legion@alchymielabs.com" && '
                     'git config --global user.name "Legion Bot"',
@@ -54,9 +54,9 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                 )
 
                 clone_cmd = [
-                    "bash", "-c",
-                    f"git clone --depth=1 https://github.com/{repo}.git /workspace 2>&1 || "
-                    f'echo "Clone failed"',
+                    "bash",
+                    "-c",
+                    f'git clone --depth=1 https://github.com/{repo}.git /workspace 2>&1 || echo "Clone failed"',
                 ]
                 await docker.run_cmd(
                     docker.build_exec_cmd(container_id, clone_cmd),

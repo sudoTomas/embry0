@@ -50,6 +50,7 @@ class SandboxManager:
 
         # Pass GitHub token for git push/clone
         import os
+
         github_token = os.environ.get("GITHUB_TOKEN", "")
         if github_token:
             env["GITHUB_TOKEN"] = github_token

@@ -144,9 +144,7 @@ class JobsRepository:
             json_mod.dumps(event, default=str),
         )
 
-    async def get_log_events(
-        self, job_id: str, stream: str = "pipeline", limit: int = 500
-    ) -> list[dict[str, Any]]:
+    async def get_log_events(self, job_id: str, stream: str = "pipeline", limit: int = 500) -> list[dict[str, Any]]:
         """Get pipeline events for a job, ordered chronologically."""
         import json as json_mod
 

@@ -288,8 +288,7 @@ class ContainerReaper:
             return
         try:
             rows = await self._db.fetch(
-                "SELECT job_id FROM jobs WHERE status = 'paused' AND "
-                "updated_at < NOW() - INTERVAL '1 hour' * $1",
+                "SELECT job_id FROM jobs WHERE status = 'paused' AND updated_at < NOW() - INTERVAL '1 hour' * $1",
                 self._paused_ttl_hours,
             )
             for row in rows:
@@ -310,9 +309,7 @@ class ContainerReaper:
                     "UPDATE jobs SET status = 'expired' WHERE job_id = $1",
                     job_id,
                 )
-                issue_row = await self._db.fetchrow(
-                    "SELECT issue_id FROM jobs WHERE job_id = $1", job_id
-                )
+                issue_row = await self._db.fetchrow("SELECT issue_id FROM jobs WHERE job_id = $1", job_id)
                 if issue_row and issue_row.get("issue_id"):
                     await self._db.execute(
                         "UPDATE issues SET status = 'open' WHERE id = $1 AND status = 'paused'",

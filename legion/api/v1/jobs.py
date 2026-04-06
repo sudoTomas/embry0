@@ -100,9 +100,8 @@ async def resume_job(job_id: str, request: Request, jobs: JobsRepository = Depen
         raise HTTPException(status_code=400, detail="Job has no associated issue")
 
     import asyncio
-    task = asyncio.create_task(
-        executor.resume(issue_id, job_id, {"choice": choice, "guidance": guidance})
-    )
+
+    task = asyncio.create_task(executor.resume(issue_id, job_id, {"choice": choice, "guidance": guidance}))
     executor._background_tasks.add(task)
     task.add_done_callback(executor._background_tasks.discard)
 
