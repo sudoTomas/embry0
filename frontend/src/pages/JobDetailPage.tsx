@@ -6,10 +6,12 @@ import { useJob } from "@/hooks/useJobs";
 import { useJobInputs } from "@/hooks/useInputs";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
 import { AwaitingInputCard } from "@/components/jobs/AwaitingInputCard";
-import { useJobEvents } from "@/hooks/useJobEvents";
+import { useJobLogs } from "@/hooks/useJobLogs";
 import { useAgentStates } from "@/hooks/useAgentStates";
 import { AgentCard } from "@/components/jobs/AgentCard";
 import { PausedBanner } from "@/components/jobs/PausedBanner";
+import { resumeJob, discardJob } from "@/api/jobs";
+
 function useElapsedTime(startedAt: string | null, finishedAt: string | null) {
   const [elapsed, setElapsed] = useState("");
   useEffect(() => {
@@ -36,15 +38,14 @@ export function JobDetailPage() {
   const { data: job, isLoading, isError, refetch } = useJob(jobId);
   const { data: jobInputs } = useJobInputs(jobId ?? "");
 
-  const shouldConnect = !!job && job.status !== "pending" && job.status !== "expired";
-  const { events, connected } = useJobEvents(jobId, shouldConnect);
+  const { events, isConnected, latestCost } = useJobLogs(jobId);
   const { agents, activeAgents, completedAgents, pendingAgents, prUrl, interruptData } = useAgentStates(events);
 
   const elapsed = useElapsedTime(job?.started_at ?? null, job?.finished_at ?? null);
 
-  // Calculate live cost from agent states
+  // Calculate live cost from agent states, falling back to hook cost or job cost
   const liveCost = agents.reduce((sum, a) => sum + a.costUsd, 0);
-  const displayCost = liveCost > 0 ? liveCost : job?.total_cost_usd ?? 0;
+  const displayCost = liveCost > 0 ? liveCost : latestCost > 0 ? latestCost : job?.total_cost_usd ?? 0;
 
   // Phase counter
   const totalPhases = agents.length + pendingAgents.length;
@@ -58,27 +59,19 @@ export function JobDetailPage() {
 
   const handleResume = async (choice: string, guidance?: string) => {
     try {
-      await fetch(`/api/v1/jobs/${job.job_id}/resume`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
-        body: JSON.stringify({ choice, guidance }),
-      });
+      await resumeJob(job.job_id, choice, guidance);
       refetch();
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to resume job:", err);
     }
   };
 
   const handleDiscard = async () => {
     try {
-      await fetch(`/api/v1/jobs/${job.job_id}/resume`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
-        body: JSON.stringify({ choice: "abandon" }),
-      });
+      await discardJob(job.job_id);
       refetch();
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to discard job:", err);
     }
   };
 
@@ -236,10 +229,10 @@ export function JobDetailPage() {
       </div>
 
       {/* Connection indicator */}
-      {shouldConnect && (
+      {job.status !== "pending" && job.status !== "expired" && (
         <div className="flex items-center gap-2 text-[10px] text-white/30">
-          <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-green-400 animate-pulse" : "bg-white/20"}`} />
-          <span>{connected ? "Live" : "Disconnected"}</span>
+          <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-green-400 animate-pulse" : "bg-white/20"}`} />
+          <span>{isConnected ? "Live" : "Disconnected"}</span>
           <span className="ml-auto">{events.length} events</span>
         </div>
       )}
