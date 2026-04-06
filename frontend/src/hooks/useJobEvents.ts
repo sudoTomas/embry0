@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { JobEvent } from "@/lib/types/jobs";
 
+const MAX_RETRIES = 10;
+
 export function useJobEvents(jobId: string | undefined, enabled: boolean = true) {
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const retryCountRef = useRef(0);
 
   const connect = useCallback(() => {
     if (!jobId || !enabled) return;
@@ -15,7 +18,10 @@ export function useJobEvents(jobId: string | undefined, enabled: boolean = true)
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
-    ws.onopen = () => setConnected(true);
+    ws.onopen = () => {
+      setConnected(true);
+      retryCountRef.current = 0;
+    };
 
     ws.onmessage = (msg) => {
       try {
@@ -29,6 +35,13 @@ export function useJobEvents(jobId: string | undefined, enabled: boolean = true)
     ws.onclose = () => {
       setConnected(false);
       wsRef.current = null;
+      // Reconnect after delay if still enabled and under retry limit
+      if (enabled && jobId && retryCountRef.current < MAX_RETRIES) {
+        retryCountRef.current += 1;
+        setTimeout(() => {
+          connect();
+        }, 3000);
+      }
     };
 
     ws.onerror = () => {
@@ -37,6 +50,7 @@ export function useJobEvents(jobId: string | undefined, enabled: boolean = true)
   }, [jobId, enabled]);
 
   useEffect(() => {
+    retryCountRef.current = 0;
     connect();
     return () => {
       wsRef.current?.close();

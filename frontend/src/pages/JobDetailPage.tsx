@@ -125,7 +125,7 @@ export function JobDetailPage() {
       </div>
 
       {/* Task description */}
-      <div className="px-3 py-2 rounded-md bg-white/[0.02] border border-white/[0.05] text-xs text-white/60 truncate">
+      <div className="px-3 py-2 rounded-md bg-white/[0.02] border border-white/[0.05] text-xs text-white/60 line-clamp-3">
         {job.task}
       </div>
 

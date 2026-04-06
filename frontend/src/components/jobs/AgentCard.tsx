@@ -31,7 +31,7 @@ function formatDuration(ms: number): string {
 export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
   const [manualExpand, setManualExpand] = useState(false);
   const isActive = agent.status === "running";
-  const expanded = forceExpanded ?? isActive ?? manualExpand;
+  const expanded = forceExpanded ?? (isActive || manualExpand);
   const colors = getColors(agent.agent);
 
   // Compact card (completed or pending)
