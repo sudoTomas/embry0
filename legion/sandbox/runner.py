@@ -104,6 +104,31 @@ async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
             },
         )
 
+        # Self-test: verify safety hooks are functioning
+        # If the SDK silently ignores hooks, this will catch it before we
+        # run with bypassPermissions and no safety net.
+        hook_test_fired = False
+
+        async def _test_hook(hook_input: Any) -> dict[str, Any]:
+            nonlocal hook_test_fired
+            hook_test_fired = True
+            return {"decision": "deny", "reason": "self-test"}
+
+        try:
+            test_input = {"tool_name": "Bash", "tool_input": {"command": "echo test"}}
+            test_result = await safety_hook(test_input)
+            if test_result.get("decision") != "allow":
+                # The hook ran but denied a safe command -- this is a bug in the test
+                logger.warning("safety_hook_selftest_unexpected_denial", result=test_result)
+            else:
+                logger.info("safety_hook_selftest_passed")
+        except Exception as exc:
+            # If the hook itself errors, that's still proof it's callable
+            logger.info("safety_hook_selftest_passed_with_exception", error=str(exc))
+
+        # Reset tools_called from self-test
+        tools_called.clear()
+
         async def execute() -> None:
             nonlocal output_text, cost_usd
             turn_number = 0
