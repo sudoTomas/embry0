@@ -119,6 +119,16 @@ class IssueExecutor:
         if not issue:
             raise ValueError(f"Issue {issue_id} not found")
 
+        # Concurrency guard: reject if a job is already active for this issue
+        active_jobs, _ = await self._jobs.list(issue_id=issue_id, limit=10, offset=0)
+        active_statuses = {"pending", "running", "awaiting_input", "paused"}
+        for existing_job in active_jobs:
+            if existing_job["status"] in active_statuses:
+                raise ValueError(
+                    f"Issue {issue_id} already has an active job: "
+                    f"{existing_job['job_id']} (status={existing_job['status']})"
+                )
+
         task_text = issue["title"]
         if issue.get("body"):
             task_text += "\n\n" + issue["body"]
@@ -364,6 +374,15 @@ class IssueExecutor:
             await self._jobs.append_log_event(job_id, event)
         except Exception:
             logger.warning("event_persist_failed", job_id=job_id, exc_info=True)
+
+        # Persist cost incrementally on cost_update events
+        if event.get("type") == "cost_update" and event.get("cost_usd"):
+            try:
+                await self._jobs.update(
+                    job_id, total_cost_usd=event["cost_usd"]
+                )
+            except Exception:
+                logger.warning("cost_update_failed", job_id=job_id, exc_info=True)
 
         # Forward to WebSocket subscribers
         subscribers = self._event_subscribers.get(job_id, [])
