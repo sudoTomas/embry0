@@ -7,6 +7,7 @@ import re
 import unicodedata
 
 DANGEROUS_BASH_PATTERNS: list[str] = [
+    # Destructive commands
     r"rm\s+-[rf]{1,2}\s+/",
     r"curl\s+[^|]*\|\s*(bash|sh|zsh)",
     r"wget\s+[^|]*\|\s*(sh|bash|zsh)",
@@ -23,6 +24,30 @@ DANGEROUS_BASH_PATTERNS: list[str] = [
     r"mkfifo\s+",
     r"\bdd\s+.*of=/dev/",
     r">\s*/dev/sd[a-z]",
+    # Environment / credential leakage
+    r"\benv\b(?!\s+[\w-]+=)",  # bare `env` but not `env VAR=val cmd`
+    r"\bprintenv\b",
+    r"\bexport\s+-p\b",
+    r"\bset\b\s*$",  # bare `set` dumps all vars; `set -e` is fine
+    r"\bcat\s+/proc/",
+    r"\bcat\s+.*\.env\b",
+    r"\bcat\s+.*credentials",
+    r"\bcat\s+.*/\.aws/",
+    r"\bcat\s+.*/\.ssh/",
+    r"\bcat\s+.*/\.gnupg/",
+    # Container/host escape vectors
+    r"\bdocker\b",
+    r"\bpodman\b",
+    r"\bssh\s",
+    r"\bscp\s",
+    r"\brsync\s.*:",
+    # Network exfiltration via Node.js
+    r"\bnode\s+-e\s+.*(?:http|net|fetch|request|axios)",
+    # Git credential theft
+    r"\bgit\s+credential\b",
+    r"\bgit\s+config\s+.*credential",
+    # Symlink escape attempts
+    r"\bln\s+-s\s+/(?!workspace\b)",
 ]
 
 
