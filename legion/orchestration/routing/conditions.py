@@ -20,7 +20,7 @@ def check_review_decision(state: dict[str, Any]) -> Literal["approved", "changes
     outputs = state.get("agent_outputs", [])
     review_outputs = [o for o in outputs if o.get("agent_type") == "review"]
     if not review_outputs:
-        return "approved"
+        return "changes_requested"
 
     latest = review_outputs[-1]
     output_text = latest.get("output", "")

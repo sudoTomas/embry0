@@ -37,12 +37,12 @@ def test_triage_action_empty_state():
 
 def test_review_decision_no_outputs():
     state = {"agent_outputs": []}
-    assert check_review_decision(state) == "approved"
+    assert check_review_decision(state) == "changes_requested"
 
 
 def test_review_decision_no_review_outputs():
     state = {"agent_outputs": [{"agent_type": "developer", "output": "done"}]}
-    assert check_review_decision(state) == "approved"
+    assert check_review_decision(state) == "changes_requested"
 
 
 def test_review_decision_approved_json():
