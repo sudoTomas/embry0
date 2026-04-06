@@ -37,6 +37,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     db = DatabasePool(config.database_url)
     await db.connect()
     await run_migrations(db)
+
+    # Recover orphaned jobs from previous orchestrator lifecycle
+    try:
+        orphaned = await db.fetch(
+            "SELECT job_id FROM jobs WHERE status IN ('running', 'pending')"
+        )
+        if orphaned:
+            orphaned_ids = [r["job_id"] for r in orphaned]
+            logger.warning("recovering_orphaned_jobs", count=len(orphaned_ids), job_ids=orphaned_ids)
+            await db.execute(
+                """
+                UPDATE jobs
+                SET status = 'failed',
+                    error_message = 'Orchestrator restarted — job was orphaned'
+                WHERE status IN ('running', 'pending')
+                """
+            )
+            # Also reset any issues stuck in triaging/awaiting_input for these jobs
+            await db.execute(
+                """
+                UPDATE issues SET status = 'open'
+                WHERE status IN ('triaging', 'awaiting_input')
+                AND id IN (
+                    SELECT issue_id FROM jobs
+                    WHERE job_id = ANY($1::text[]) AND issue_id IS NOT NULL
+                )
+                """,
+                orphaned_ids,
+            )
+            logger.info("orphaned_jobs_recovered", count=len(orphaned_ids))
+    except Exception:
+        logger.exception("orphan_recovery_failed")
+
     app.state.db = db
 
     app.state.jobs_repo = JobsRepository(db)
@@ -119,6 +152,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await docker.run_cmd(base_cmd + ["network", "create", "--driver", "bridge", "sandbox-restricted"])
     except RuntimeError:
         pass  # Network already exists
+
+    # Clean up orphaned sandbox containers from previous lifecycle
+    try:
+        cmd = docker._build_base_cmd()
+        cmd.extend(["ps", "-a", "--filter", "name=sandbox-", "--format", "{{.Names}}"])
+        output = await docker.run_cmd(cmd, timeout=15)
+        if output.strip():
+            for container_name in output.strip().split("\n"):
+                container_name = container_name.strip()
+                if not container_name:
+                    continue
+                logger.info("cleaning_orphaned_container", container=container_name)
+                try:
+                    await sandbox_mgr.destroy(container_name)
+                except Exception:
+                    logger.warning("orphaned_container_cleanup_failed", container=container_name)
+    except Exception:
+        logger.warning("orphaned_container_scan_failed", exc_info=True)
 
     app.state.background_tasks: set[asyncio.Task] = set()
     app.state.event_subscribers: dict[str, list[asyncio.Queue]] = {}
