@@ -8,6 +8,7 @@ from typing import Any
 import structlog
 
 from legion.storage.database import DatabasePool
+from legion.storage.schemas import IssueStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -28,6 +29,50 @@ _ALLOWED_UPDATE_FIELDS = frozenset(
 )
 
 _ALLOWED_SORT_COLUMNS = frozenset({"created_at", "updated_at", "priority"})
+
+# Valid issue status transitions: current_status -> set of allowed next statuses
+VALID_ISSUE_TRANSITIONS: dict[str, set[str]] = {
+    IssueStatus.OPEN: {
+        IssueStatus.TRIAGING,
+        IssueStatus.IN_PROGRESS,
+        IssueStatus.CLOSED,
+        IssueStatus.CANCELLED,
+    },
+    IssueStatus.TRIAGING: {
+        IssueStatus.OPEN,
+        IssueStatus.IN_PROGRESS,
+        IssueStatus.AWAITING_INPUT,
+        IssueStatus.CLOSED,
+        IssueStatus.CANCELLED,
+    },
+    IssueStatus.IN_PROGRESS: {
+        IssueStatus.OPEN,
+        IssueStatus.AWAITING_INPUT,
+        IssueStatus.PAUSED,
+        IssueStatus.CLOSED,
+        IssueStatus.CANCELLED,
+    },
+    IssueStatus.AWAITING_INPUT: {
+        IssueStatus.OPEN,
+        IssueStatus.TRIAGING,
+        IssueStatus.IN_PROGRESS,
+        IssueStatus.CLOSED,
+        IssueStatus.CANCELLED,
+    },
+    IssueStatus.PAUSED: {
+        IssueStatus.OPEN,
+        IssueStatus.TRIAGING,
+        IssueStatus.IN_PROGRESS,
+        IssueStatus.CLOSED,
+        IssueStatus.CANCELLED,
+    },
+    IssueStatus.CLOSED: {
+        IssueStatus.OPEN,  # Reopen
+    },
+    IssueStatus.CANCELLED: {
+        IssueStatus.OPEN,  # Reopen
+    },
+}
 
 
 class IssuesRepository:
@@ -168,10 +213,39 @@ class IssuesRepository:
         return [dict(r) for r in rows], total or 0
 
     async def update(self, issue_id: str, **fields: Any) -> None:
-        """Update specific fields on an issue. updated_at is always refreshed."""
+        """Update specific fields on an issue. updated_at is always refreshed.
+
+        Validates status transitions if status is being changed.
+        """
         valid = {k: v for k, v in fields.items() if k in _ALLOWED_UPDATE_FIELDS}
         if not valid:
             return
+
+        # Validate status transition if status is being changed
+        new_status = valid.get("status")
+        if new_status is not None:
+            row = await self._db.fetchrow("SELECT status FROM issues WHERE id = $1", issue_id)
+            if row is not None:
+                current_status = row["status"]
+                if current_status == new_status:
+                    # No-op: same status, skip transition check but update other fields
+                    valid.pop("status")
+                    if not valid:
+                        return
+                else:
+                    allowed = VALID_ISSUE_TRANSITIONS.get(current_status, set())
+                    if new_status not in allowed:
+                        logger.warning(
+                            "invalid_issue_status_transition",
+                            issue_id=issue_id,
+                            current=current_status,
+                            requested=new_status,
+                            allowed=sorted(allowed),
+                        )
+                        raise ValueError(
+                            f"Invalid issue status transition: {current_status} -> {new_status}. "
+                            f"Allowed: {sorted(allowed)}"
+                        )
 
         sets: list[str] = ["updated_at = NOW()"]
         args: list[Any] = []
