@@ -19,6 +19,19 @@ from legion.sandbox.safety import check_tool_safety
 logger = structlog.get_logger(__name__)
 
 
+def _summarize_tool_input(tool_name: str, tool_input: dict) -> str:
+    """Create a short summary of tool input for display."""
+    if not isinstance(tool_input, dict):
+        return str(tool_input)[:200]
+    if tool_name in ("Read", "Glob", "Grep"):
+        return tool_input.get("file_path", "") or tool_input.get("path", "") or tool_input.get("pattern", "")
+    if tool_name in ("Write", "Edit"):
+        return tool_input.get("file_path", "")
+    if tool_name == "Bash":
+        return tool_input.get("command", "")[:200]
+    return str(tool_input)[:200]
+
+
 async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
     """Execute an agent using the Claude Agent SDK."""
     agent_type = config.get("agent_type", "agent")
@@ -46,6 +59,15 @@ async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
             ToolUseBlock,
             query,
         )
+
+        try:
+            from claude_agent_sdk import ThinkingBlock
+        except ImportError:
+            ThinkingBlock = None
+        try:
+            from claude_agent_sdk import ToolResultBlock
+        except ImportError:
+            ToolResultBlock = None
 
         async def safety_hook(hook_input: Any) -> dict[str, Any]:
             """PreToolUse hook: enforce safety rules and track tool calls (C1, I1)."""
@@ -84,20 +106,67 @@ async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
 
         async def execute() -> None:
             nonlocal output_text, cost_usd
+            turn_number = 0
+
             async for message in query(prompt=prompt, options=options):
                 if isinstance(message, AssistantMessage):
+                    turn_number += 1
+                    emit_event(
+                        EventType.TURN_START,
+                        turn_number=turn_number,
+                        model=getattr(message, "model", ""),
+                        node=agent_type,
+                    )
+
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             output_text += block.text
+                            emit_event(
+                                EventType.TEXT,
+                                text=block.text[:2000],
+                                message_id=getattr(message, "uuid", ""),
+                                node=agent_type,
+                            )
                         elif isinstance(block, ToolUseBlock):
-                            # Fallback tool tracking for SDKs without hook support (I1).
                             tool_name = getattr(block, "name", "") or getattr(block, "tool_name", "")
                             if tool_name:
                                 tools_called[tool_name] = tools_called.get(tool_name, 0) + 1
+                            emit_event(
+                                EventType.TOOL_CALL,
+                                tool_name=tool_name,
+                                tool_id=getattr(block, "id", ""),
+                                input=_summarize_tool_input(tool_name, getattr(block, "input", {})),
+                                node=agent_type,
+                            )
+                        elif ThinkingBlock is not None and isinstance(block, ThinkingBlock):
+                            emit_event(
+                                EventType.THINKING,
+                                text=block.thinking[:3000],
+                                node=agent_type,
+                            )
+                        elif ToolResultBlock is not None and isinstance(block, ToolResultBlock):
+                            emit_event(
+                                EventType.TOOL_RESULT,
+                                tool_use_id=getattr(block, "tool_use_id", ""),
+                                content=str(getattr(block, "content", ""))[:1000],
+                                is_error=getattr(block, "is_error", False),
+                                node=agent_type,
+                            )
+
                 elif isinstance(message, ResultMessage):
                     if message.result and not output_text:
                         output_text = message.result
                     cost_usd = getattr(message, "total_cost_usd", 0.0) or 0.0
+                    usage = getattr(message, "usage", {}) or {}
+                    emit_event(
+                        EventType.COST_UPDATE,
+                        cost_usd=cost_usd,
+                        duration_ms=getattr(message, "duration_ms", 0),
+                        num_turns=getattr(message, "num_turns", 0),
+                        tokens_in=usage.get("input_tokens", 0),
+                        tokens_out=usage.get("output_tokens", 0),
+                        node=agent_type,
+                    )
 
         timeout = config.get("timeout_seconds", 300)
         await asyncio.wait_for(execute(), timeout=timeout)
