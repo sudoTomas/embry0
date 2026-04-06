@@ -11,6 +11,11 @@ class EventType(StrEnum):
     AGENT_STARTED = "agent_started"
     AGENT_COMPLETED = "agent_completed"
     TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    THINKING = "thinking"
+    TEXT = "text"
+    TURN_START = "turn_start"
+    COST_UPDATE = "cost_update"
     PROGRESS = "progress"
     ERROR = "error"
 
