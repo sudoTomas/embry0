@@ -12,6 +12,20 @@ class JobStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     AWAITING_INPUT = "awaiting_input"
+    PAUSED = "paused"
+    EXPIRED = "expired"
+    PR_MERGED = "pr_merged"
+    PR_CLOSED = "pr_closed"
+
+
+class IssueStatus(StrEnum):
+    OPEN = "open"
+    TRIAGING = "triaging"
+    IN_PROGRESS = "in_progress"
+    AWAITING_INPUT = "awaiting_input"
+    PAUSED = "paused"
+    CLOSED = "closed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
