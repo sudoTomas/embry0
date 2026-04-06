@@ -54,6 +54,9 @@ class LegionConfig(BaseSettings):
     sandbox_memory: str = "8g"
     sandbox_cpus: str = "4"
 
+    # Paused job TTL
+    paused_job_ttl_hours: int = 48
+
     # Queue
     max_global_concurrent_jobs: int = 10
 

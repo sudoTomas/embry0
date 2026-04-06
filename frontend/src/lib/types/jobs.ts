@@ -1,4 +1,4 @@
-export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_input" | "pr_merged" | "pr_closed";
+export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_input" | "pr_merged" | "pr_closed" | "paused" | "expired";
 export type Tier = "routine" | "standard" | "complex";
 export type ProviderMode = "anthropic_api" | "claude_max" | "ollama";
 export type TraceResult = "pass" | "fail" | "partial" | "error" | "timeout" | "budget_exceeded";
@@ -62,11 +62,22 @@ export interface JobEvent {
   agent?: string;
   message?: string;
   tool?: string;
+  tool_name?: string;
+  tool_id?: string;
+  input?: string;
+  content?: string;
+  is_error?: boolean;
+  tool_use_id?: string;
+  text?: string;
   file_path?: string;
   pr_url?: string;
   branch?: string;
   cost_usd?: number;
   duration_ms?: number;
+  num_turns?: number;
+  tokens_in?: number;
+  tokens_out?: number;
+  turn_number?: number;
   questions?: unknown[];
   decision?: string;
   summary?: string;
@@ -74,4 +85,11 @@ export interface JobEvent {
   timestamp?: string;
   action?: string;
   model?: string;
+  message_id?: string;
+  retry_count?: number;
+  options?: string[];
+  latest_review?: string;
+  reason?: string;
+  ttl_hours?: number;
+  paused_at?: string;
 }

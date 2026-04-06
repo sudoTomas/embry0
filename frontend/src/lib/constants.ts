@@ -48,6 +48,8 @@ export const JOB_STATUS_COLORS: Record<string, string> = {
   awaiting_input: "text-amber-400",
   pr_merged: "text-purple-400",
   pr_closed: "text-muted-foreground",
+  paused: "text-amber-400",
+  expired: "text-zinc-500",
 };
 
 export const JOB_STATUS_BG_COLORS: Record<string, string> = {
@@ -59,6 +61,8 @@ export const JOB_STATUS_BG_COLORS: Record<string, string> = {
   awaiting_input: "bg-amber-400/10",
   pr_merged: "bg-purple-400/10",
   pr_closed: "bg-muted/10",
+  paused: "bg-amber-400/10",
+  expired: "bg-zinc-500/10",
 };
 
 export const TIER_COLORS: Record<string, string> = {
