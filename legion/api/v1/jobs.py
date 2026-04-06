@@ -81,6 +81,34 @@ async def get_job_log_events(job_id: str, jobs: JobsRepository = Depends(get_job
     return {"events": result}
 
 
+@router.post("/jobs/{job_id}/resume")
+async def resume_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
+    """Resume a paused job with optional guidance."""
+    job = await jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] != "paused":
+        raise HTTPException(status_code=409, detail=f"Job is {job['status']}, not paused")
+
+    body = await request.json()
+    choice = body.get("choice", "continue_retrying")
+    guidance = body.get("guidance", "")
+
+    executor = request.app.state.issue_executor
+    issue_id = job.get("issue_id")
+    if not issue_id:
+        raise HTTPException(status_code=400, detail="Job has no associated issue")
+
+    import asyncio
+    task = asyncio.create_task(
+        executor.resume(issue_id, job_id, {"choice": choice, "guidance": guidance})
+    )
+    executor._background_tasks.add(task)
+    task.add_done_callback(executor._background_tasks.discard)
+
+    return {"job_id": job_id, "status": "resuming", "choice": choice}
+
+
 @router.post("/jobs/{job_id}/cancel")
 async def cancel_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
     job = await jobs.get(job_id)
