@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
-    && npm install -g @anthropic-ai/claude-code@latest
+    && npm install -g @anthropic-ai/claude-code@2.1.92
 
 # Python dependencies for sandbox
 RUN pip install --no-cache-dir \
