@@ -98,7 +98,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("sandbox_image_auto_build_failed", error=str(exc))
 
     # Start container reaper
-    reaper = ContainerReaper(docker, max_age_hours=24)
+    reaper = ContainerReaper(
+        docker,
+        max_age_hours=24,
+        db=db,
+        paused_ttl_hours=config.paused_job_ttl_hours,
+    )
     reaper.start()
     app.state.container_reaper = reaper
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -181,18 +182,22 @@ class SandboxImageManager:
 
 
 class ContainerReaper:
-    """Background task that destroys stale sandbox containers."""
+    """Background task that destroys stale sandbox containers and expires paused jobs."""
 
     def __init__(
         self,
         docker: DockerClient,
         max_age_hours: int = 24,
         check_interval_seconds: int = 3600,
+        db: Any = None,
+        paused_ttl_hours: int = 48,
     ) -> None:
         self._docker = docker
         self._max_age_hours = max_age_hours
         self._interval = check_interval_seconds
         self._task: asyncio.Task | None = None
+        self._db = db
+        self._paused_ttl_hours = paused_ttl_hours
 
     def start(self) -> None:
         """Start the reaper background task."""
@@ -215,6 +220,7 @@ class ContainerReaper:
             try:
                 await asyncio.sleep(self._interval)
                 await self._reap()
+                await self._expire_paused_jobs()
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -275,3 +281,43 @@ class ContainerReaper:
 
         except RuntimeError:
             logger.warning("reaper_list_failed")
+
+    async def _expire_paused_jobs(self) -> None:
+        """Transition paused jobs past their TTL to expired, destroy their sandboxes."""
+        if not self._db:
+            return
+        try:
+            rows = await self._db.fetch(
+                "SELECT job_id FROM jobs WHERE status = 'paused' AND "
+                "updated_at < NOW() - INTERVAL '1 hour' * $1",
+                self._paused_ttl_hours,
+            )
+            for row in rows:
+                job_id = row["job_id"]
+                container_name = f"sandbox-{job_id}"
+                logger.info("expiring_paused_job", job_id=job_id)
+                try:
+                    stop_cmd = self._docker.build_stop_cmd(container_name, timeout=5)
+                    await self._docker.run_cmd(stop_cmd)
+                except RuntimeError:
+                    pass
+                try:
+                    rm_cmd = self._docker.build_rm_cmd(container_name)
+                    await self._docker.run_cmd(rm_cmd)
+                except RuntimeError:
+                    pass
+                await self._db.execute(
+                    "UPDATE jobs SET status = 'expired' WHERE job_id = $1",
+                    job_id,
+                )
+                issue_row = await self._db.fetchrow(
+                    "SELECT issue_id FROM jobs WHERE job_id = $1", job_id
+                )
+                if issue_row and issue_row.get("issue_id"):
+                    await self._db.execute(
+                        "UPDATE issues SET status = 'open' WHERE id = $1 AND status = 'paused'",
+                        issue_row["issue_id"],
+                    )
+                logger.info("paused_job_expired", job_id=job_id)
+        except Exception:
+            logger.exception("expire_paused_jobs_error")
