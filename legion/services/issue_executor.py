@@ -198,7 +198,13 @@ class IssueExecutor:
 
                 if interrupted:
                     if interrupt_value:
-                        await self._handle_needs_info(issue_id, job_id, interrupt_value)
+                        reason = interrupt_value.get("reason", "")
+                        if reason == "max_retries":
+                            await self._jobs.update(job_id, status="paused")
+                            await self._issues.update(issue_id, status="paused")
+                            logger.info("job_paused", job_id=job_id, reason=reason)
+                        else:
+                            await self._handle_needs_info(issue_id, job_id, interrupt_value)
                     else:
                         await self._jobs.update(job_id, status="awaiting_input")
                         await self._issues.update(issue_id, status="awaiting_input")
@@ -209,7 +215,12 @@ class IssueExecutor:
             else:
                 await self._jobs.update(job_id, status="completed")
 
-            await self._cleanup_sandbox(final_state, job_id)
+            # Don't destroy sandbox for paused jobs
+            job_record = await self._jobs.get(job_id)
+            if job_record and job_record.get("status") == "paused":
+                logger.info("sandbox_preserved_for_paused_job", job_id=job_id)
+            else:
+                await self._cleanup_sandbox(final_state, job_id)
 
         except Exception as exc:
             logger.error(
@@ -478,7 +489,13 @@ class IssueExecutor:
 
                 if interrupted:
                     if interrupt_value:
-                        await self._handle_needs_info(issue_id, job_id, interrupt_value)
+                        reason = interrupt_value.get("reason", "")
+                        if reason == "max_retries":
+                            await self._jobs.update(job_id, status="paused")
+                            await self._issues.update(issue_id, status="paused")
+                            logger.info("job_paused", job_id=job_id, reason=reason)
+                        else:
+                            await self._handle_needs_info(issue_id, job_id, interrupt_value)
                     else:
                         await self._jobs.update(job_id, status="awaiting_input")
                         await self._issues.update(issue_id, status="awaiting_input")
@@ -487,8 +504,12 @@ class IssueExecutor:
             if final_state:
                 await self._handle_workflow_result(issue_id, job_id, final_state)
 
-            # Cleanup sandbox
-            await self._cleanup_sandbox(final_state, job_id)
+            # Don't destroy sandbox for paused jobs
+            job_record = await self._jobs.get(job_id)
+            if job_record and job_record.get("status") == "paused":
+                logger.info("sandbox_preserved_for_paused_job", job_id=job_id)
+            else:
+                await self._cleanup_sandbox(final_state, job_id)
 
         except Exception as exc:
             logger.error("pipeline_resume_failed", issue_id=issue_id, job_id=job_id, error=str(exc))
