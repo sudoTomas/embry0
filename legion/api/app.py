@@ -40,9 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Recover orphaned jobs from previous orchestrator lifecycle
     try:
-        orphaned = await db.fetch(
-            "SELECT job_id FROM jobs WHERE status IN ('running', 'pending')"
-        )
+        orphaned = await db.fetch("SELECT job_id FROM jobs WHERE status IN ('running', 'pending')")
         if orphaned:
             orphaned_ids = [r["job_id"] for r in orphaned]
             logger.warning("recovering_orphaned_jobs", count=len(orphaned_ids), job_ids=orphaned_ids)

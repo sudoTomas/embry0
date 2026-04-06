@@ -21,7 +21,7 @@ def test_pipeline_config_defaults():
         budget_usd=10.0,
     )
     assert config["reviewer_enabled"] is True
-    assert config["max_feedback_loops"] == 2
+    assert config["max_feedback_loops"] == 3
     assert config["validator_modes"] == ["test", "lint", "typecheck"]
 
 
@@ -56,11 +56,20 @@ def test_agent_output_entry():
 def test_job_state_has_required_keys():
     annotations = JobState.__annotations__
     required_keys = [
-        "job_id", "repo", "task", "sandbox_container_id",
-        "pipeline_config", "global_context", "repo_context",
-        "agent_outputs", "errors", "current_stage",
-        "total_cost_usd", "budget_overrun_usd",
-        "pr_url", "result_summary",
+        "job_id",
+        "repo",
+        "task",
+        "sandbox_container_id",
+        "pipeline_config",
+        "global_context",
+        "repo_context",
+        "agent_outputs",
+        "errors",
+        "current_stage",
+        "total_cost_usd",
+        "budget_overrun_usd",
+        "pr_url",
+        "result_summary",
     ]
     for key in required_keys:
         assert key in annotations, f"Missing key: {key}"

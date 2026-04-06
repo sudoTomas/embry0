@@ -378,9 +378,7 @@ class IssueExecutor:
         # Persist cost incrementally on cost_update events
         if event.get("type") == "cost_update" and event.get("cost_usd"):
             try:
-                await self._jobs.update(
-                    job_id, total_cost_usd=event["cost_usd"]
-                )
+                await self._jobs.update(job_id, total_cost_usd=event["cost_usd"])
             except Exception:
                 logger.warning("cost_update_failed", job_id=job_id, exc_info=True)
 

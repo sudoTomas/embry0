@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from legion.agents.resolver import ResolvedAgentConfig, resolve_agent_config
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers

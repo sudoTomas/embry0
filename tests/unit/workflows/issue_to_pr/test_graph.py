@@ -21,5 +21,6 @@ def test_workflow_graph_has_expected_nodes():
     assert "init" in node_names
     assert "triage" in node_names
     assert "developer" in node_names
-    assert "validator" in node_names
-    assert "output" in node_names
+    assert "review" in node_names
+    assert "retry" in node_names
+    assert "max_retries" in node_names

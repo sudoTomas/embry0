@@ -33,8 +33,11 @@ def test_job_create_request_budget_limit():
 
 def test_job_response_serialization():
     resp = JobResponse(
-        job_id="job-abc123", status="pending", repo="owner/repo",
-        task="Fix bug", total_cost_usd=0.0,
+        job_id="job-abc123",
+        status="pending",
+        repo="owner/repo",
+        task="Fix bug",
+        total_cost_usd=0.0,
     )
     data = resp.model_dump()
     assert data["job_id"] == "job-abc123"
@@ -43,7 +46,8 @@ def test_job_response_serialization():
 
 def test_graph_execute_request():
     req = GraphExecuteRequest(
-        workflow="issue-to-pr", input_state={"repo": "o/r", "task": "Fix"},
+        workflow="issue-to-pr",
+        input_state={"repo": "o/r", "task": "Fix"},
     )
     assert req.workflow == "issue-to-pr"
 
@@ -55,7 +59,10 @@ def test_sandbox_profile_request():
 
 def test_budget_config_response():
     resp = BudgetConfigResponse(
-        max_budget_per_job_usd=10.0, daily_cap_usd=100.0,
-        monthly_cap_usd=500.0, rate_limit_per_author_per_hour=5, overrun_mode="soft",
+        max_budget_per_job_usd=10.0,
+        daily_cap_usd=100.0,
+        monthly_cap_usd=500.0,
+        rate_limit_per_author_per_hour=5,
+        overrun_mode="soft",
     )
     assert resp.overrun_mode == "soft"

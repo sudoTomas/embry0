@@ -11,6 +11,7 @@ from legion.storage.repositories.provider_config import ProviderConfigRepository
 @pytest.fixture
 async def provider_repo(pg_pool: asyncpg.Pool) -> ProviderConfigRepository:
     import os
+
     url = os.environ.get("TEST_DATABASE_URL", "postgresql://legion:legion@localhost:5432/legion_test")
     db = DatabasePool(url)
     await db.connect()

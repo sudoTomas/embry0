@@ -47,7 +47,10 @@ async def test_run_agent_node_error():
     )
     state = {"sandbox_container_id": "sandbox-job-123", "total_cost_usd": 0.0}
     result = await run_agent_node(
-        state=state, agent_runner=mock_runner, agent_type="developer", prompt="Fix the bug",
+        state=state,
+        agent_runner=mock_runner,
+        agent_type="developer",
+        prompt="Fix the bug",
     )
     assert result["agent_outputs"][0]["is_error"] is True
     assert len(result["errors"]) == 1
@@ -57,13 +60,14 @@ async def test_run_agent_node_error():
 @pytest.mark.asyncio
 async def test_run_agent_node_with_network():
     mock_runner = MagicMock()
-    mock_runner.run = AsyncMock(
-        return_value=AgentOutput(agent_type="researcher", output="Found data")
-    )
+    mock_runner.run = AsyncMock(return_value=AgentOutput(agent_type="researcher", output="Found data"))
     state = {"sandbox_container_id": "sandbox-job-123", "total_cost_usd": 0.0}
     await run_agent_node(
-        state=state, agent_runner=mock_runner, agent_type="researcher",
-        prompt="Research topic", network="sandbox-internet",
+        state=state,
+        agent_runner=mock_runner,
+        agent_type="researcher",
+        prompt="Research topic",
+        network="sandbox-internet",
     )
     call_kwargs = mock_runner.run.call_args.kwargs
     assert call_kwargs["network"] == "sandbox-internet"
@@ -73,9 +77,13 @@ async def test_run_agent_node_with_network():
 async def test_run_agent_node_with_resolver():
     """When agent_definition is provided, resolver overrides model and tools."""
     mock_runner = AsyncMock(spec=AgentRunner)
-    mock_runner.run = AsyncMock(return_value=AgentOutput(
-        agent_type="developer", output="done", cost_usd=0.5,
-    ))
+    mock_runner.run = AsyncMock(
+        return_value=AgentOutput(
+            agent_type="developer",
+            output="done",
+            cost_usd=0.5,
+        )
+    )
 
     agent_def = {
         "model": "claude-opus-4-6",
@@ -84,7 +92,7 @@ async def test_run_agent_node_with_resolver():
         "system_prompt": "",
     }
 
-    result = await run_agent_node(
+    await run_agent_node(
         state={"sandbox_container_id": "c1", "total_cost_usd": 0.0},
         agent_runner=mock_runner,
         agent_type="developer",

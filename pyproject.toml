@@ -43,6 +43,7 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+ignore = ["E501"]  # Line length enforced by formatter, not linter
 
 [tool.mypy]
 python_version = "3.12"

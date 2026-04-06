@@ -13,14 +13,31 @@ def app():
     app = create_app(config)
     mock_jobs = MagicMock()
     mock_jobs.create = AsyncMock(return_value="job-test123")
-    mock_jobs.get = AsyncMock(return_value={
-        "job_id": "job-test123", "status": "pending", "repo": "owner/repo",
-        "task": "Fix bug", "total_cost_usd": 0.0, "budget_overrun_usd": 0.0,
-    })
-    mock_jobs.list = AsyncMock(return_value=([{
-        "job_id": "job-test123", "status": "pending", "repo": "owner/repo",
-        "task": "Fix bug", "total_cost_usd": 0.0, "budget_overrun_usd": 0.0,
-    }], 1))
+    mock_jobs.get = AsyncMock(
+        return_value={
+            "job_id": "job-test123",
+            "status": "pending",
+            "repo": "owner/repo",
+            "task": "Fix bug",
+            "total_cost_usd": 0.0,
+            "budget_overrun_usd": 0.0,
+        }
+    )
+    mock_jobs.list = AsyncMock(
+        return_value=(
+            [
+                {
+                    "job_id": "job-test123",
+                    "status": "pending",
+                    "repo": "owner/repo",
+                    "task": "Fix bug",
+                    "total_cost_usd": 0.0,
+                    "budget_overrun_usd": 0.0,
+                }
+            ],
+            1,
+        )
+    )
     mock_jobs.update = AsyncMock()
     app.state.jobs_repo = mock_jobs
     return app

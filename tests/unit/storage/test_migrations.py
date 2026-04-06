@@ -24,9 +24,7 @@ async def test_run_migrations_creates_tables(pg_pool: asyncpg.Pool):
         await run_migrations(db)
 
         # Verify core tables exist
-        tables = await db.fetch(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
-        )
+        tables = await db.fetch("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
         table_names = {row["tablename"] for row in tables}
         assert "legion_migrations" in table_names
         assert "jobs" in table_names

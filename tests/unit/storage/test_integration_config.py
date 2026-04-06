@@ -20,6 +20,7 @@ async def integration_repo(pg_pool: asyncpg.Pool) -> IntegrationConfigRepository
 
 # --- _mask unit tests (pure, no DB needed) ---
 
+
 def test_mask_empty_string():
     assert _mask("") == ""
 
@@ -39,6 +40,7 @@ def test_mask_exactly_visible_plus_one():
 
 
 # --- Repository integration tests ---
+
 
 @pytest.mark.asyncio
 async def test_get_returns_defaults(integration_repo: IntegrationConfigRepository):
