@@ -25,3 +25,13 @@ export async function cancelJob(jobId: string): Promise<JobResponse> {
   const { data } = await api.post(`/jobs/${jobId}/cancel`);
   return data;
 }
+
+export async function resumeJob(jobId: string, choice: string, guidance?: string): Promise<{ job_id: string; status: string; choice: string }> {
+  const { data } = await api.post(`/jobs/${jobId}/resume`, { choice, guidance });
+  return data;
+}
+
+export async function discardJob(jobId: string): Promise<{ job_id: string; status: string; choice: string }> {
+  const { data } = await api.post(`/jobs/${jobId}/resume`, { choice: "abandon" });
+  return data;
+}
