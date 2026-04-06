@@ -29,44 +29,47 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
     sandbox_mgr = config["configurable"].get("sandbox_manager")
     docker = config["configurable"].get("docker")
 
+    if not sandbox_mgr:
+        raise RuntimeError("No sandbox manager available — cannot create sandbox")
+
     container_id = None
-    if sandbox_mgr:
+    try:
         env = {}
-        try:
-            container_id = await sandbox_mgr.create(job_id, env=env)
-            logger.info("sandbox_created", job_id=job_id, container_id=container_id)
-            writer({"type": "progress", "message": "Sandbox container created"})
+        container_id = await sandbox_mgr.create(job_id, env=env)
+        logger.info("sandbox_created", job_id=job_id, container_id=container_id)
+        writer({"type": "progress", "message": "Sandbox container created"})
 
-            # Clone repo inside container using GITHUB_TOKEN for auth
-            if repo and docker:
-                # Configure git credential helper to use GITHUB_TOKEN env var
-                setup_cmd = [
-                    "bash",
-                    "-c",
-                    "git config --global credential.helper "
-                    '"!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" && '
-                    'git config --global user.email "legion@alchymielabs.com" && '
-                    'git config --global user.name "Legion Bot"',
-                ]
-                await docker.run_cmd(
-                    docker.build_exec_cmd(container_id, setup_cmd),
-                    timeout=10,
-                )
+        # Clone repo inside container using GITHUB_TOKEN for auth
+        if repo and docker:
+            # Configure git credential helper to use GITHUB_TOKEN env var
+            setup_cmd = [
+                "bash",
+                "-c",
+                "git config --global credential.helper "
+                '"!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" && '
+                'git config --global user.email "legion@alchymielabs.com" && '
+                'git config --global user.name "Legion Bot"',
+            ]
+            await docker.run_cmd(
+                docker.build_exec_cmd(container_id, setup_cmd),
+                timeout=10,
+            )
 
-                clone_cmd = [
-                    "bash",
-                    "-c",
-                    f'git clone --depth=1 https://github.com/{repo}.git /workspace 2>&1 || echo "Clone failed"',
-                ]
-                await docker.run_cmd(
-                    docker.build_exec_cmd(container_id, clone_cmd),
-                    timeout=120,
-                )
-                writer({"type": "progress", "message": f"Repository {repo} cloned"})
-                logger.info("repo_cloned", job_id=job_id, repo=repo)
-        except Exception as exc:
-            logger.warning("sandbox_init_failed", job_id=job_id, error=str(exc))
-            writer({"type": "error", "message": f"Sandbox init failed: {exc}"})
+            clone_cmd = [
+                "bash",
+                "-c",
+                f'git clone --depth=1 https://github.com/{repo}.git /workspace 2>&1 || echo "Clone failed"',
+            ]
+            await docker.run_cmd(
+                docker.build_exec_cmd(container_id, clone_cmd),
+                timeout=120,
+            )
+            writer({"type": "progress", "message": f"Repository {repo} cloned"})
+            logger.info("repo_cloned", job_id=job_id, repo=repo)
+    except Exception as exc:
+        logger.error("sandbox_init_failed", job_id=job_id, error=str(exc))
+        writer({"type": "error", "message": f"Sandbox init failed: {exc}"})
+        raise RuntimeError(f"Sandbox initialization failed: {exc}") from exc
 
     writer({"type": "node_completed", "node": "init"})
     return {
