@@ -109,6 +109,9 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         # Prepend system prompt since sandbox runner doesn't receive it separately
         prompt = _TRIAGE_SYSTEM_PROMPT + "\n\n" + prompt
 
+        def _forward_event(event: dict) -> None:
+            writer(event)
+
         result = await run_agent_node(
             state=state,
             agent_runner=agent_runner,
@@ -117,6 +120,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             model=model,
             tools=["Read", "Glob", "Grep"],
             timeout_seconds=180,
+            on_event=_forward_event,
         )
 
         # Parse triage decision from agent output
@@ -174,6 +178,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 model=model,
                 tools=["Read", "Glob", "Grep"],
                 timeout_seconds=180,
+                on_event=_forward_event,
             )
             if result.get("agent_outputs"):
                 last = result["agent_outputs"][-1]
@@ -245,6 +250,9 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
 
     prompt = "\n".join(prompt_parts)
 
+    def _forward_event(event: dict) -> None:
+        writer(event)
+
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
@@ -253,6 +261,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
         model=triage_decision.get("pipeline_config", {}).get("agent_models", {}).get("developer", "claude-sonnet-4-6"),
         tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         timeout_seconds=1800,
+        on_event=_forward_event,
     )
 
     # Try to extract PR URL from agent output
@@ -349,6 +358,9 @@ Return ONLY a JSON object:
     "summary": "Overall assessment"
 }}"""
 
+    def _forward_event(event: dict) -> None:
+        writer(event)
+
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
@@ -357,6 +369,7 @@ Return ONLY a JSON object:
         model=triage_decision.get("pipeline_config", {}).get("agent_models", {}).get("review", "claude-sonnet-4-6"),
         tools=["Read", "Bash", "Glob", "Grep"],
         timeout_seconds=300,
+        on_event=_forward_event,
     )
 
     # Extract validation and decision from output for streaming
