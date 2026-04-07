@@ -39,7 +39,10 @@ export function JobDetailPage() {
   const { data: jobInputs } = useJobInputs(jobId ?? "");
 
   const { events, isConnected, latestCost } = useJobLogs(jobId);
-  const { agents, activeAgents, completedAgents, pendingAgents, prUrl, interruptData } = useAgentStates(events);
+  const { agents, activeAgents, completedAgents, pendingAgents, prUrl, interruptData } = useAgentStates(
+    events,
+    job?.status,
+  );
 
   const elapsed = useElapsedTime(job?.started_at ?? null, job?.finished_at ?? null);
 

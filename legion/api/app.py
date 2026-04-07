@@ -52,6 +52,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 WHERE status IN ('running', 'pending')
                 """
             )
+            # Append synthetic node_failed events to job_logs so the frontend
+            # event timeline reflects the orphaned state
+            from datetime import UTC, datetime
+            import json as _json
+
+            now_iso = datetime.now(UTC).isoformat()
+            for jid in orphaned_ids:
+                synthetic = {
+                    "type": "node_completed",
+                    "node": "developer",
+                    "action": "orphaned",
+                    "error": "Orchestrator restarted — job was orphaned",
+                    "timestamp": now_iso,
+                }
+                try:
+                    await db.execute(
+                        "INSERT INTO job_logs (job_id, stream, text) VALUES ($1, $2, $3)",
+                        jid,
+                        "pipeline",
+                        _json.dumps(synthetic, default=str),
+                    )
+                except Exception:
+                    pass
+
             # Also reset any issues stuck in triaging/awaiting_input for these jobs
             await db.execute(
                 """

@@ -39,7 +39,10 @@ export interface AgentState {
   model?: string;
 }
 
-export function useAgentStates(events: LogEvent[]): {
+export function useAgentStates(
+  events: LogEvent[],
+  jobStatus?: string,
+): {
   agents: AgentState[];
   activeAgents: AgentState[];
   completedAgents: AgentState[];
@@ -234,6 +237,20 @@ export function useAgentStates(events: LogEvent[]): {
       .map((n) => agentMap.get(n)!)
       .filter(Boolean);
 
+    // If the job is in a terminal state, mark any "running" agents as failed
+    // (they were orphaned by an orchestrator restart or crash and never completed).
+    const terminalStatuses = new Set(["failed", "cancelled", "expired", "completed", "pr_merged", "pr_closed"]);
+    if (jobStatus && terminalStatuses.has(jobStatus)) {
+      for (const agent of agents) {
+        if (agent.status === "running") {
+          agent.status = jobStatus === "completed" || jobStatus === "pr_merged" ? "completed" : "failed";
+          if (!agent.summary) {
+            agent.summary = jobStatus === "completed" ? "" : "Agent did not complete (orphaned)";
+          }
+        }
+      }
+    }
+
     const activeAgents = agents.filter((a) => a.status === "running");
     const completedAgents = agents.filter((a) => a.status === "completed" || a.status === "failed");
     const pendingAgents: AgentState[] = [];
@@ -261,5 +278,5 @@ export function useAgentStates(events: LogEvent[]): {
     }
 
     return { agents, activeAgents, completedAgents, pendingAgents, prUrl, interruptData };
-  }, [events]);
+  }, [events, jobStatus]);
 }
