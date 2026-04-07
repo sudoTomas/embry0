@@ -207,8 +207,9 @@ export function useAgentStates(
         case "cost_update":
           if (raw.cost_usd != null) agent.costUsd = raw.cost_usd as number;
           else if (event.cost_usd != null) agent.costUsd = event.cost_usd;
-          if (raw.duration_ms != null) agent.durationMs = raw.duration_ms as number;
-          else if (event.duration_ms != null) agent.durationMs = event.duration_ms;
+          // NOTE: Do NOT set durationMs from cost_update — it contains API
+          // duration (time spent in Claude API calls), not wall-clock time.
+          // Wall-clock duration is computed from node_started → node_completed.
           if (raw.num_turns != null) agent.turnCount = raw.num_turns as number;
           else if (event.turns != null) agent.turnCount = event.turns;
           break;
