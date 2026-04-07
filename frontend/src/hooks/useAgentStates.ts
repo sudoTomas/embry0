@@ -31,6 +31,7 @@ export interface AgentState {
   textBlocks: string[];
   costUsd: number;
   durationMs: number;
+  startedAt?: string;
   turnCount: number;
   toolCallCount: number;
   summary: string;
@@ -95,6 +96,7 @@ export function useAgentStates(events: LogEvent[]): {
           textBlocks: [],
           costUsd: 0,
           durationMs: 0,
+          startedAt: event.timestamp,
           turnCount: 0,
           toolCallCount: 0,
           summary: "",
@@ -121,6 +123,7 @@ export function useAgentStates(events: LogEvent[]): {
           textBlocks: [],
           costUsd: 0,
           durationMs: 0,
+          startedAt: event.timestamp,
           turnCount: 0,
           toolCallCount: 0,
           summary: "",
@@ -139,6 +142,10 @@ export function useAgentStates(events: LogEvent[]): {
         case "pipeline_stage_completed":
           agent.status = "completed";
           if (raw.action) agent.summary = raw.action as string;
+          // Compute duration if not set by cost_update
+          if (agent.durationMs === 0 && agent.startedAt && event.timestamp) {
+            agent.durationMs = new Date(event.timestamp).getTime() - new Date(agent.startedAt).getTime();
+          }
           break;
         case "tool_call":
           agent.toolCalls.push({
@@ -215,6 +222,10 @@ export function useAgentStates(events: LogEvent[]): {
       if (raw.type === "node_completed") {
         agent.status = "completed";
         if (raw.action) agent.summary = raw.action as string;
+        // Compute duration if not set by cost_update
+        if (agent.durationMs === 0 && agent.startedAt && event.timestamp) {
+          agent.durationMs = new Date(event.timestamp).getTime() - new Date(agent.startedAt).getTime();
+        }
       }
     }
 

@@ -43,34 +43,94 @@ export function ConversationView({ events }: ConversationViewProps) {
     return started?.prompt as string | undefined;
   }, [events]);
 
-  // Group conversation_message events into turns
+  // Group events into turns. Supports both legacy `conversation_message` events
+  // and new sandbox event types (turn_start, thinking, text, tool_call, tool_result).
   const turns = useMemo(() => {
-    const turnMap = new Map<number, ConversationTurn>();
+    const turnMap = new Map<string, ConversationTurn>();
+    let currentTurnKey: string | null = null;
+    let currentTurnNum = 0;
 
     for (const event of events) {
-      if (event.type !== "conversation_message") continue;
-      const turnNum = event.turn_number ?? 0;
-      const role = event.role;
-      const content = event.content;
-      if (!Array.isArray(content)) continue;
+      const raw = event as unknown as Record<string, unknown>;
 
-      let turn = turnMap.get(turnNum);
-      if (!turn) {
-        turn = {
-          turnNumber: turnNum,
+      // Legacy path: conversation_message events
+      if (event.type === "conversation_message") {
+        const turnNum = event.turn_number ?? 0;
+        const key = `legacy-${turnNum}`;
+        const role = event.role;
+        const content = event.content;
+        if (!Array.isArray(content)) continue;
+        let turn = turnMap.get(key);
+        if (!turn) {
+          turn = {
+            turnNumber: turnNum,
+            assistantBlocks: [],
+            userBlocks: [],
+            timestamp: event.timestamp,
+            model: event.model,
+          };
+          turnMap.set(key, turn);
+        }
+        if (role === "assistant") {
+          turn.assistantBlocks.push(...(content as ConversationContentBlock[]));
+          if (event.model) turn.model = event.model;
+        } else if (role === "user") {
+          turn.userBlocks.push(...(content as ConversationContentBlock[]));
+        }
+        continue;
+      }
+
+      // New path: turn_start opens a new turn, subsequent events go into it
+      if (event.type === "turn_start") {
+        currentTurnNum++;
+        currentTurnKey = `new-${currentTurnNum}-${event.timestamp}`;
+        turnMap.set(currentTurnKey, {
+          turnNumber: currentTurnNum,
           assistantBlocks: [],
           userBlocks: [],
           timestamp: event.timestamp,
-          model: event.model,
-        };
-        turnMap.set(turnNum, turn);
+          model: (raw.model as string) || event.model,
+        });
+        continue;
       }
 
-      if (role === "assistant") {
-        turn.assistantBlocks.push(...(content as ConversationContentBlock[]));
-        if (event.model) turn.model = event.model;
-      } else if (role === "user") {
-        turn.userBlocks.push(...(content as ConversationContentBlock[]));
+      if (!currentTurnKey) continue;
+      const turn = turnMap.get(currentTurnKey);
+      if (!turn) continue;
+
+      switch (event.type) {
+        case "thinking": {
+          const text = (raw.text as string) || "";
+          if (text) {
+            turn.assistantBlocks.push({ type: "thinking", thinking: text });
+          }
+          break;
+        }
+        case "text": {
+          const text = (raw.text as string) || "";
+          if (text) {
+            turn.assistantBlocks.push({ type: "text", text });
+          }
+          break;
+        }
+        case "tool_call": {
+          turn.assistantBlocks.push({
+            type: "tool_use",
+            id: (raw.tool_id as string) || "",
+            name: (raw.tool_name as string) || "",
+            input: (raw.input as Record<string, unknown>) || { value: raw.input },
+          } as ConversationContentBlock);
+          break;
+        }
+        case "tool_result": {
+          turn.userBlocks.push({
+            type: "tool_result",
+            tool_use_id: (raw.tool_use_id as string) || "",
+            content: (raw.content as string) || "",
+            is_error: (raw.is_error as boolean) || null,
+          } as ConversationContentBlock);
+          break;
+        }
       }
     }
 

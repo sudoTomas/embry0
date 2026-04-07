@@ -1,0 +1,188 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - complementary [ref=e4]:
+      - generic [ref=e5]:
+        - img [ref=e6]
+        - generic [ref=e8]: Legion
+      - navigation [ref=e9]:
+        - generic [ref=e10]: Monitoring
+        - link "Dashboard" [ref=e11] [cursor=pointer]:
+          - /url: /
+          - img [ref=e12]
+          - generic [ref=e17]: Dashboard
+        - link "Issues" [ref=e18] [cursor=pointer]:
+          - /url: /issues
+          - img [ref=e19]
+          - generic [ref=e22]: Issues
+        - link "Jobs" [ref=e23] [cursor=pointer]:
+          - /url: /jobs
+          - img [ref=e24]
+          - generic [ref=e26]: Jobs
+        - link "Demo" [ref=e27] [cursor=pointer]:
+          - /url: /demo
+          - img [ref=e28]
+          - generic [ref=e30]: Demo
+        - generic [ref=e32]: Configuration
+        - link "Agents" [ref=e33] [cursor=pointer]:
+          - /url: /agents
+          - img [ref=e34]
+          - generic [ref=e37]: Agents
+        - link "Sandboxes" [ref=e38] [cursor=pointer]:
+          - /url: /sandboxes
+          - img [ref=e39]
+          - generic [ref=e42]: Sandboxes
+        - link "Pipelines" [ref=e43] [cursor=pointer]:
+          - /url: /pipelines
+          - img [ref=e44]
+          - generic [ref=e48]: Pipelines
+        - link "Settings" [ref=e49] [cursor=pointer]:
+          - /url: /settings
+          - img [ref=e50]
+          - generic [ref=e53]: Settings
+    - generic [ref=e54]:
+      - banner [ref=e55]:
+        - button "Close sidebar" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+        - navigation "Breadcrumb" [ref=e60]:
+          - generic [ref=e61]: Legion
+          - generic [ref=e62]: /
+          - generic [ref=e63]: Jobs
+          - generic [ref=e64]: /
+          - generic [ref=e65]: job-7ac70736e707
+      - main [ref=e66]:
+        - generic [ref=e68]:
+          - generic [ref=e69]:
+            - link [ref=e70] [cursor=pointer]:
+              - /url: /jobs
+              - button [ref=e71]:
+                - img [ref=e72]
+            - generic [ref=e74]:
+              - generic [ref=e75]:
+                - generic [ref=e76]: sudoTomas/coding-lab-e2e-test
+                - generic [ref=e77]: running
+              - generic [ref=e78]: job-7ac70736e707
+            - generic [ref=e79]:
+              - generic [ref=e80]:
+                - img [ref=e81]
+                - text: 2m 20s
+              - generic [ref=e84]:
+                - img [ref=e85]
+                - text: $0.02
+              - generic [ref=e87]:
+                - img [ref=e88]
+                - text: 1/3
+            - 'link "Issue #20" [ref=e92] [cursor=pointer]':
+              - /url: https://github.com/sudoTomas/coding-lab-e2e-test/issues/20
+              - 'button "Issue #20" [ref=e93]':
+                - text: "Issue #20"
+                - img [ref=e94]
+          - generic [ref=e98]: "Add expression-based input mode with parser and parentheses support Add a true expression input mode where users can type complex expressions like `(2 + 3) * sin(45) - sqrt(16)` and get a result. ## Requirements ### Backend (`main.py`) - Implement a safe expression evaluator that supports: - All existing scientific functions (sin, cos, tan, log, ln, sqrt, factorial, power, etc.) - Standard arithmetic: `+`, `-`, `*`, `/`, `^` - Parentheses for grouping - Constants: `pi`, `e` - Operator precedence (PEMDAS) - Unary minus - Function name: `evaluate_expression(expr: str) -> float` - Should raise `ValueError` for invalid expressions or domain errors (e.g. sqrt of negative) - Use a proper parser (Pratt or recursive descent) — DO NOT use `eval()` or `exec()` for security reasons ### Frontend (`index.html`) - Add an \"Expression Mode\" toggle button next to the existing calculator - When in expression mode: - Display becomes a text input where users can type expressions directly - Add `(` and `)` buttons to the calculator - Add `=` button submits and shows result - Result is added to the history panel like other calculations - When in standard mode, the existing immediate-execution UI is used - Mode should persist across page reloads via localStorage ### Tests - Add unit tests in `test_main.py` for `evaluate_expression`: - Simple arithmetic: `2 + 3`, `10 / 2` - Operator precedence: `2 + 3 * 4` = 14 - Parentheses: `(2 + 3) * 4` = 20 - Nested parentheses: `((2 + 3) * (4 - 1))` = 15 - Functions: `sin(0)` = 0, `sqrt(16)` = 4 - Constants: `pi`, `e` - Mixed: `sqrt(16) + sin(0) * 5` - Errors: invalid syntax, division by zero, sqrt of negative - Add Playwright tests in `tests/ui.spec.js` for the new expression mode UI ## Acceptance criteria - All existing tests still pass - New unit tests cover happy path + error cases - Mode toggle works and persists - No use of `eval` or `exec` in the parser - The expression `(2 + 3) * sin(45) - sqrt(16)` should evaluate correctly (≈ -0.464)"
+          - generic [ref=e101]:
+            - generic [ref=e103] [cursor=pointer]:
+              - generic [ref=e105]: ✓
+              - generic [ref=e106]:
+                - generic [ref=e107]:
+                  - generic [ref=e108]: triage
+                  - generic [ref=e109]: Done
+                - generic [ref=e110]:
+                  - text: 10s
+                  - generic [ref=e111]: · $0.02
+                  - generic [ref=e112]: · proceed
+              - img [ref=e113]
+            - generic [ref=e116]:
+              - generic [ref=e117]:
+                - generic [ref=e119]: ✎
+                - generic [ref=e120]:
+                  - generic [ref=e121]:
+                    - generic [ref=e122]: developer
+                    - generic [ref=e123]: Running
+                  - generic [ref=e125]:
+                    - text: 0ms
+                    - generic [ref=e126]: · 22 tool calls
+                    - generic [ref=e127]: · claude-opus-4-6
+              - button "Thinking" [ref=e129]:
+                - img [ref=e130]
+                - generic [ref=e138]: Thinking
+                - img [ref=e144]
+              - generic [ref=e146]:
+                - paragraph [ref=e147]: "Now let me read the UI test file too:"
+                - paragraph [ref=e148]: Good, I have the full picture. Now let me create the branch and implement everything.
+                - paragraph [ref=e149]: "Now let me implement the expression evaluator in `main.py`:"
+                - paragraph [ref=e150]: "Now let me add the unit tests for `evaluate_expression`:"
+                - paragraph [ref=e151]: "Now add the expression evaluator tests at the end of the test file:"
+              - generic [ref=e152]:
+                - generic [ref=e153]:
+                  - generic [ref=e154]: Agent
+                  - generic [ref=e155]: "{'subagent_type': 'Explore', 'description': 'Explore current codebase', 'prompt': 'Read the full contents of these files and report them back to me verbatim:\\n1. /workspace/main.py\\n2. /workspace/test"
+                - generic [ref=e156]:
+                  - generic [ref=e157]: Read
+                  - generic [ref=e158]: /workspace/main.py
+                - generic [ref=e159]:
+                  - generic [ref=e160]: Read
+                  - generic [ref=e161]: /workspace/test_main.py
+                - generic [ref=e162]:
+                  - generic [ref=e163]: Read
+                  - generic [ref=e164]: /workspace/index.html
+                - generic [ref=e165]:
+                  - generic [ref=e166]: Read
+                  - generic [ref=e167]: /workspace/tests/ui.spec.js
+                - generic [ref=e168]:
+                  - generic [ref=e169]: Read
+                  - generic [ref=e170]: /workspace/serve.py
+                - generic [ref=e171]:
+                  - generic [ref=e172]: Read
+                  - generic [ref=e173]: /workspace/playwright.config.js
+                - generic [ref=e174]:
+                  - generic [ref=e175]: Read
+                  - generic [ref=e176]: /workspace/tests/ui.spec.js
+                - generic [ref=e177]:
+                  - generic [ref=e178]: Read
+                  - generic [ref=e179]: /workspace/tests/ui.spec.js
+                - generic [ref=e180]:
+                  - generic [ref=e181]: Bash
+                  - generic [ref=e182]: wc -l /workspace/tests/ui.spec.js
+                - generic [ref=e183]:
+                  - generic [ref=e184]: Read
+                  - generic [ref=e185]: /workspace/tests/ui.spec.js
+                - generic [ref=e186]:
+                  - generic [ref=e187]: Read
+                  - generic [ref=e188]: /workspace/tests/ui.spec.js
+                - generic [ref=e189]:
+                  - generic [ref=e190]: Read
+                  - generic [ref=e191]: /workspace/index.html
+                - generic [ref=e192]:
+                  - generic [ref=e193]: Read
+                  - generic [ref=e194]: /workspace/tests/ui.spec.js
+                - generic [ref=e195]:
+                  - generic [ref=e196]: Read
+                  - generic [ref=e197]: /workspace/tests/ui.spec.js
+                - generic [ref=e198]:
+                  - generic [ref=e199]: Bash
+                  - generic [ref=e200]: git checkout -b legion/iss-4dd3e1e0-add-expression-based-input-mod
+                - generic [ref=e201]:
+                  - generic [ref=e202]: Edit
+                  - generic [ref=e203]: /workspace/main.py
+                - generic [ref=e204]:
+                  - generic [ref=e205]: Read
+                  - generic [ref=e206]: /workspace/main.py
+                - generic [ref=e207]:
+                  - generic [ref=e208]: Edit
+                  - generic [ref=e209]: /workspace/main.py
+                - generic [ref=e210]:
+                  - generic [ref=e211]: Read
+                  - generic [ref=e212]: /workspace/test_main.py
+                - generic [ref=e213]:
+                  - generic [ref=e214]: Edit
+                  - generic [ref=e215]: /workspace/test_main.py
+                - generic [ref=e216]:
+                  - generic [ref=e217]: Read
+                  - generic [ref=e218]: /workspace/test_main.py
+            - generic [ref=e221] [cursor=pointer]:
+              - generic [ref=e223]: ☑
+              - generic [ref=e225]:
+                - generic [ref=e226]: review
+                - generic [ref=e227]: Waiting
+          - generic [ref=e228]:
+            - generic [ref=e230]: Live
+            - generic [ref=e231]: 71 events
+  - region "Notifications alt+T"

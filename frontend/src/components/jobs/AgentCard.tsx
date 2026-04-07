@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { AgentState } from "@/hooks/useAgentStates";
 import { ToolCallStream } from "./ToolCallStream";
@@ -28,11 +28,24 @@ function formatDuration(ms: number): string {
   return `${m}m ${rs}s`;
 }
 
+function useLiveDuration(startedAt: string | undefined, isActive: boolean, frozenMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isActive) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [isActive]);
+  if (!isActive) return frozenMs;
+  if (!startedAt) return frozenMs;
+  return now - new Date(startedAt).getTime();
+}
+
 export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
   const [manualExpand, setManualExpand] = useState(false);
   const isActive = agent.status === "running";
   const expanded = forceExpanded ?? (isActive || manualExpand);
   const colors = getColors(agent.agent);
+  const liveDurationMs = useLiveDuration(agent.startedAt, isActive, agent.durationMs);
 
   // Compact card (completed or pending)
   if (!expanded) {
@@ -58,7 +71,7 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
           </div>
           {agent.status !== "pending" && (
             <div className="text-[10px] text-white/40 mt-0.5">
-              {formatDuration(agent.durationMs)}
+              {formatDuration(liveDurationMs)}
               {agent.costUsd > 0 && <span> &middot; ${agent.costUsd.toFixed(2)}</span>}
               {agent.summary && <span> &middot; {agent.summary}</span>}
             </div>
@@ -95,7 +108,7 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
             {!isActive && agent.status === "completed" && <span className="text-[10px] text-green-400">\u2713 Completed</span>}
           </div>
           <div className="text-[10px] text-white/40 mt-0.5">
-            {formatDuration(agent.durationMs)}
+            {formatDuration(liveDurationMs)}
             {agent.costUsd > 0 && <span> &middot; ${agent.costUsd.toFixed(2)}</span>}
             {agent.toolCallCount > 0 && <span> &middot; {agent.toolCallCount} tool calls</span>}
             {agent.model && <span> &middot; {agent.model}</span>}
