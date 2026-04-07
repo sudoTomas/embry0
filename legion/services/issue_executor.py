@@ -369,6 +369,12 @@ class IssueExecutor:
 
     async def _broadcast_event(self, job_id: str, event: dict) -> None:
         """Forward event to WebSocket subscribers and persist to job_logs."""
+        # Add timestamp if missing (events from StreamWriter don't include one)
+        if "timestamp" not in event:
+            from datetime import UTC, datetime
+
+            event = {**event, "timestamp": datetime.now(UTC).isoformat()}
+
         # Persist to database
         try:
             await self._jobs.append_log_event(job_id, event)
