@@ -54,8 +54,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             # Append synthetic node_failed events to job_logs so the frontend
             # event timeline reflects the orphaned state
-            from datetime import UTC, datetime
             import json as _json
+            from datetime import UTC, datetime
 
             now_iso = datetime.now(UTC).isoformat()
             for jid in orphaned_ids:
