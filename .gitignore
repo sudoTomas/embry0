@@ -36,3 +36,5 @@ node_modules/
 Thumbs.db
 .playwright-mcp/
 *.png
+snapshot.md
+snap*.md
