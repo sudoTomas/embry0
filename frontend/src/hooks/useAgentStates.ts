@@ -140,6 +140,15 @@ export function useAgentStates(events: LogEvent[]): {
           agent.status = "completed";
           if (raw.action) agent.summary = raw.action as string;
           break;
+        case "tool_call":
+          agent.toolCalls.push({
+            tool_name: (raw.tool_name as string) || event.tool || "",
+            tool_id: (raw.tool_id as string) || event.tool_use_id || "",
+            input: typeof raw.input === "string" ? (raw.input as string) : JSON.stringify(raw.input ?? ""),
+            timestamp: event.timestamp,
+          });
+          agent.toolCallCount++;
+          break;
         case "tool_start":
           agent.toolCalls.push({
             tool_name: event.tool || "",
@@ -149,26 +158,49 @@ export function useAgentStates(events: LogEvent[]): {
           });
           agent.toolCallCount++;
           break;
-        case "tool_end":
-          if (event.tool_use_id) {
-            const tc = agent.toolCalls.find((t) => t.tool_id === event.tool_use_id);
+        case "tool_result":
+        case "tool_end": {
+          const toolUseId = (raw.tool_use_id as string) || event.tool_use_id || "";
+          if (toolUseId) {
+            const tc = agent.toolCalls.find((t) => t.tool_id === toolUseId);
             if (tc) {
-              tc.result = event.output ?? event.content as string;
-              tc.is_error = event.is_error;
+              tc.result =
+                (raw.content as string) ??
+                event.output ??
+                (event.content as string);
+              tc.is_error = (raw.is_error as boolean) ?? event.is_error;
             }
           }
           break;
+        }
+        case "thinking":
+          if (raw.text && typeof raw.text === "string") {
+            agent.thinkingBlocks.push(raw.text as string);
+          }
+          break;
         case "text":
-          if (event.content && typeof event.content === "string") agent.textBlocks.push(event.content);
+          if (raw.text && typeof raw.text === "string") {
+            agent.textBlocks.push(raw.text as string);
+          } else if (event.content && typeof event.content === "string") {
+            agent.textBlocks.push(event.content);
+          }
           break;
         case "turn_start":
           agent.turnCount++;
-          if (event.model) agent.model = event.model;
+          // Only set model from FIRST turn — Claude Code spawns subagents
+          // (often Haiku) for tool calls. We want to show the parent model.
+          if (!agent.model) {
+            if (raw.model) agent.model = raw.model as string;
+            else if (event.model) agent.model = event.model;
+          }
           break;
         case "cost_update":
-          if (event.cost_usd != null) agent.costUsd = event.cost_usd;
-          if (event.duration_ms != null) agent.durationMs = event.duration_ms;
-          if (event.turns != null) agent.turnCount = event.turns;
+          if (raw.cost_usd != null) agent.costUsd = raw.cost_usd as number;
+          else if (event.cost_usd != null) agent.costUsd = event.cost_usd;
+          if (raw.duration_ms != null) agent.durationMs = raw.duration_ms as number;
+          else if (event.duration_ms != null) agent.durationMs = event.duration_ms;
+          if (raw.num_turns != null) agent.turnCount = raw.num_turns as number;
+          else if (event.turns != null) agent.turnCount = event.turns;
           break;
         case "progress":
           if (event.message) agent.summary = event.message;

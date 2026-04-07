@@ -4,6 +4,9 @@ export type LogEventType =
   | "text"
   | "tool_start"
   | "tool_end"
+  | "tool_call"
+  | "tool_result"
+  | "thinking"
   | "cost_update"
   | "turn_start"
   | "subagent_start"
@@ -15,6 +18,8 @@ export type LogEventType =
   | "stream_end"
   | "pipeline_graph"
   | "node_state"
+  | "node_started"
+  | "node_completed"
   | "feedback_triggered"
   | "feedback_resolved"
   | "awaiting_input"
@@ -25,6 +30,8 @@ export type LogEventType =
   | "agent_completed"
   | "pipeline_stage_started"
   | "pipeline_stage_completed"
+  | "pr_created"
+  | "interrupt"
   | "finding_published";
 
 export interface LogEvent {
