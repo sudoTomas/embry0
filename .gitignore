@@ -30,6 +30,7 @@ node_modules/
 
 # Docker
 .superpowers/
+.worktrees/
 
 # OS
 .DS_Store
