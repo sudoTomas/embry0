@@ -381,20 +381,30 @@ class IssueExecutor:
         except Exception:
             logger.warning("event_persist_failed", job_id=job_id, exc_info=True)
 
-        # Persist cost incrementally on cost_update events
+        # Persist cost incrementally on cost_update events.
+        # Use atomic increment — each cost_update event carries the DELTA for the
+        # most recent turn, not the cumulative total. Using update() here would
+        # overwrite prior turns' cost.
         if event.get("type") == "cost_update" and event.get("cost_usd"):
             try:
-                await self._jobs.update(job_id, total_cost_usd=event["cost_usd"])
+                await self._jobs.increment_cost(job_id, event["cost_usd"])
             except Exception:
                 logger.warning("cost_update_failed", job_id=job_id, exc_info=True)
 
-        # Forward to WebSocket subscribers
+        # Forward to WebSocket subscribers. One failing subscriber must not block
+        # delivery to others, but silent failures cause hard-to-debug client
+        # desyncs — log with enough context to diagnose.
         subscribers = self._event_subscribers.get(job_id, [])
         for queue in subscribers:
             try:
                 queue.put_nowait(event)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "subscriber_put_failed",
+                    job_id=job_id,
+                    event_type=event.get("type", "unknown"),
+                    error=str(exc),
+                )
 
     async def _handle_needs_info(self, issue_id: str, job_id: str, decision: dict[str, Any]) -> None:
         """Create input records, dispatch notifications, and pause for blocking questions."""

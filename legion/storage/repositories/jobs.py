@@ -155,6 +155,11 @@ class JobsRepository:
                     # No-op: same status, skip the transition check but still update other fields
                     valid.pop("status")
                     if not valid:
+                        logger.debug(
+                            "job_status_update_noop",
+                            job_id=job_id,
+                            status=new_status,
+                        )
                         return
                 else:
                     allowed = VALID_JOB_TRANSITIONS.get(current_status, set())

@@ -69,3 +69,25 @@ async def test_increment_cost(jobs_repo: JobsRepository):
 async def test_get_nonexistent_job(jobs_repo: JobsRepository):
     job = await jobs_repo.get("job-doesnotexist")
     assert job is None
+
+
+@pytest.mark.asyncio
+async def test_update_same_status_logs_debug_no_op(jobs_repo: JobsRepository, capsys):
+    """update() with same status logs a debug-level 'no-op' marker for observability.
+
+    Uses capsys (not caplog) because this project's structlog writes to stdout
+    via PrintLoggerFactory. See Plan A Task 2 for the same pattern.
+    """
+    job_id = await jobs_repo.create(repo="o/r", task="t")
+    await jobs_repo.update(job_id, status=JobStatus.RUNNING)
+
+    # Drain any output from the first update
+    capsys.readouterr()
+
+    # Same status — should be a no-op and emit the debug marker
+    await jobs_repo.update(job_id, status=JobStatus.RUNNING)
+
+    captured = capsys.readouterr()
+    assert "job_status_update_noop" in captured.out, (
+        f"Expected 'job_status_update_noop' log on stdout. Got: {captured.out!r}"
+    )

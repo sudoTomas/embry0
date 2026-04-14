@@ -179,3 +179,40 @@ async def test_webhook_non_envelope_payload_field_preserved(app):
     assert kwargs["action"] == "labeled"
     assert kwargs["payload"]["issue"]["number"] == 99
     assert kwargs["payload"]["payload"] == "not-json-at-all"  # original field survived
+
+
+@pytest.mark.asyncio
+async def test_webhook_does_not_recursively_unwrap_nested_envelopes(app):
+    """Handler unwraps smee envelope exactly once.
+
+    If a payload contains a literal nested envelope (rare; not produced by smee),
+    the inner envelope must be passed through to downstream handlers rather than
+    silently recursively unwrapped — preventing unexpected attack surface if a
+    crafted payload is ever delivered via an unsigned route.
+    """
+    app.state.config = LegionConfig(_env_file=None, dev_mode=True, github_webhook_secret="")
+
+    inner_payload = {"action": "opened", "issue": {"number": 1}, "repository": {"full_name": "o/r"}}
+    # A single envelope whose inner "payload" string is itself a valid envelope
+    nested_inner = {"payload": json.dumps(inner_payload)}
+    outer_envelope = {"payload": json.dumps(nested_inner)}
+    body = json.dumps(outer_envelope).encode()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/webhook",
+            content=body,
+            headers={
+                "X-GitHub-Event": "issues",
+                "Content-Type": "application/json",
+            },
+        )
+    # The handler unwrapped ONCE — downstream sees the intermediate envelope,
+    # which has no "action" key, so the handler returns "ignored" (not 200 success
+    # via the real payload).
+    assert resp.status_code == 200
+    body_json = resp.json()
+    assert body_json.get("status") == "ignored", (
+        f"Double-unwrap would have delivered the real payload. Got: {body_json}"
+    )
