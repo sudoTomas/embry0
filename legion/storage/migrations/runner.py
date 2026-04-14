@@ -297,6 +297,16 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_jobs_error_code ON jobs (error_code) WHERE error_code IS NOT NULL;
         """,
     ),
+    (
+        9,
+        "add trace_id to jobs and audit_log for cross-span correlation",
+        """
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS trace_id TEXT;
+        ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS trace_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_jobs_trace_id ON jobs (trace_id) WHERE trace_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_audit_trace_id ON audit_log (trace_id) WHERE trace_id IS NOT NULL;
+        """,
+    ),
 ]
 
 

@@ -422,3 +422,57 @@ async def test_cancel_job_is_idempotent_when_no_task(monkeypatch):
 
     await executor.cancel_job("job-nonexistent")
     # Should not raise
+
+
+@pytest.mark.asyncio
+async def test_execute_generates_trace_id_and_passes_to_jobs_create(monkeypatch):
+    """IssueExecutor.execute() generates a trc-* id and passes it via jobs.create."""
+    from legion.services.issue_executor import IssueExecutor
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._background_tasks = set()
+    executor._tasks_by_job = {}
+    executor._event_bus = None
+    executor._audit_log_path = None
+    executor._db = MagicMock()
+
+    issues = MagicMock()
+    issues.get = AsyncMock(
+        return_value={
+            "id": "iss-1",
+            "repo": "o/r",
+            "title": "t",
+            "body": None,
+            "github_number": None,
+            "status": "triaging",
+        }
+    )
+    executor._issues = issues
+
+    jobs = MagicMock()
+    jobs.list = AsyncMock(return_value=([], 0))
+    jobs.create = AsyncMock(return_value="job-abc")
+    executor._jobs = jobs
+
+    # Stub emit_audit
+    import legion.services.issue_executor as exec_mod
+
+    async def _fake_audit(*a, **k):
+        pass
+
+    monkeypatch.setattr(exec_mod, "emit_audit", _fake_audit)
+
+    # Stub _track_task so we don't actually run the workflow
+    def _fake_track(coro, *, kind, job_id, issue_id=None):
+        coro.close()  # prevent RuntimeWarning about unawaited coroutine
+        return None
+
+    executor._track_task = _fake_track  # type: ignore[method-assign]
+
+    await executor.execute("iss-1")
+
+    jobs.create.assert_awaited_once()
+    call_kwargs = jobs.create.await_args.kwargs
+    assert "trace_id" in call_kwargs
+    assert call_kwargs["trace_id"].startswith("trc-")
+    assert len(call_kwargs["trace_id"]) == 16  # "trc-" + 12 hex chars
