@@ -353,10 +353,12 @@ graph LR
 | Resource limits | `--memory`, `--cpus`, `--pids-limit` (all configurable) |
 | Filesystem | Writable root (read-only disabled — Claude CLI requires writable fs), writable `/tmp` (tmpfs, noexec, nosuid), writable `/workspace` |
 | Network | `sandbox-restricted` (default) or `sandbox-internet` (research agents) |
-| Credentials | Never in sandbox — four proxies inject API keys and tokens |
+| Credentials | Injected via proxies (see Proxy Services) — `GITHUB_TOKEN` and `ANTHROPIC_API_KEY` never enter the sandbox env. **Known exception:** `CLAUDE_CODE_OAUTH_TOKEN` (Claude Max mode only). |
 | Command blocking | 34 regex patterns, NFKC unicode normalization, Glob path restriction, symlink defense via `os.path.realpath()` |
 | Code retention | None — repo cloned inside container, deleted on teardown |
 | OAuth credentials | Mounted read-only from orchestrator (`~/.claude`) |
+
+**Sandbox env surface (as of this change):** The container env contains only non-sensitive config: `LEGION_GIT_PROXY_URL` (just the proxy URL; not a secret), plus `CLAUDE_CODE_OAUTH_TOKEN` when Claude Max mode is active (see Known Exceptions). No `GITHUB_TOKEN`. No `ANTHROPIC_API_KEY`.
 
 ### Sandbox Image Management
 
@@ -370,7 +372,9 @@ The `SandboxImageManager` handles image lifecycle inside DinD:
 
 ## Proxy Services
 
-Four proxy services run on the `sandbox-restricted` network. They inject credentials transparently — sandbox agents never see API keys, tokens, or secrets.
+Four proxy services run on the `sandbox-restricted` network.
+
+**Credential injection via proxies** — GitHub auth flows exclusively through the git credential proxy (port 9101): the sandbox's git credential helper curls the proxy, which injects the orchestrator's `GITHUB_TOKEN` in the response. `GITHUB_TOKEN` is never present in the sandbox env. The auth proxy (port 9100) for Anthropic API keys is started but not currently wired into the sandbox runner — see Known Exceptions below. **Known exception:** `CLAUDE_CODE_OAUTH_TOKEN` is passed into the sandbox env when Claude Max OAuth mode is active, because the Claude CLI reads it directly from env. Closing this gap (routing the Claude CLI through the auth proxy in Claude Max mode too) is tracked for a future plan.
 
 | Proxy | Port | Purpose | Credential Injected |
 |-------|------|---------|-------------------|
