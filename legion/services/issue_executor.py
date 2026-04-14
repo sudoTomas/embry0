@@ -239,14 +239,24 @@ class IssueExecutor:
         """
         from legion.orchestration.checkpoint import purge_thread
 
-        # 1. Cancel the live task (best effort — may already be done)
+        # 1. Cancel the live task (best effort — may already be done).
+        # shield: if the HTTP request handler is cancelled while we wait,
+        # don't double-cancel the already-cancelling background task.
         task = self._tasks_by_job.get(job_id)
+        task_still_alive_after_timeout = False
         if task is not None and not task.done():
             task.cancel()
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=5)
-            except (TimeoutError, asyncio.CancelledError, Exception):
-                # Cancellation propagated; done-callback handles logging.
+            except TimeoutError:
+                task_still_alive_after_timeout = True
+                logger.warning(
+                    "cancel_timeout_task_still_alive",
+                    job_id=job_id,
+                    msg="Background task did not honour cancel within 5s; proceeding with status update anyway.",
+                )
+            except asyncio.CancelledError:
+                # Task finished cancelling — expected path.
                 pass
 
         # 2. Destroy sandbox (idempotent)
@@ -257,7 +267,22 @@ class IssueExecutor:
             except Exception:
                 logger.warning("sandbox_destroy_on_cancel_failed", job_id=job_id, exc_info=True)
 
-        # 3. Update DB: job → cancelled, issue → open
+        # 3. Update DB: job → cancelled, issue → open.
+        # Re-check status if the task didn't cancel in time — avoid clobbering
+        # a 'completed'/'failed' status the task just wrote.
+        if task_still_alive_after_timeout:
+            try:
+                current = await self._jobs.get(job_id)
+                if current and current.get("status") in ("completed", "failed"):
+                    logger.info(
+                        "cancel_superseded_by_terminal_status",
+                        job_id=job_id,
+                        actual_status=current.get("status"),
+                    )
+                    return
+            except Exception:
+                logger.warning("cancel_status_recheck_failed", job_id=job_id, exc_info=True)
+
         try:
             await self._jobs.update(job_id, status="cancelled")
         except Exception:
@@ -266,7 +291,7 @@ class IssueExecutor:
         try:
             job = await self._jobs.get(job_id)
         except Exception:
-            pass
+            logger.warning("job_fetch_during_cancel_failed", job_id=job_id, exc_info=True)
         if job and job.get("issue_id"):
             try:
                 await self._issues.update(job["issue_id"], status="open")
@@ -290,7 +315,7 @@ class IssueExecutor:
                 issue_id=job.get("issue_id") if job else None,
             )
         except Exception:
-            pass
+            logger.warning("cancel_audit_emit_failed", job_id=job_id, exc_info=True)
 
         logger.info("job_cancelled", job_id=job_id, actor=actor)
 
