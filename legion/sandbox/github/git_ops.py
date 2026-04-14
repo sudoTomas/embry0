@@ -49,13 +49,8 @@ def build_sandbox_credential_config_cmd(git_proxy_url: str) -> str:
         ValueError: if ``git_proxy_url`` does not match ``http://host:port``.
     """
     if not _GIT_PROXY_URL_RE.fullmatch(git_proxy_url):
-        raise ValueError(
-            f"git_proxy_url must match http://host:port (got: {git_proxy_url!r})"
-        )
-    return (
-        f'git config --global credential.helper '
-        f'"!f() {{ curl -sf {git_proxy_url}/git-credentials; }}; f"'
-    )
+        raise ValueError(f"git_proxy_url must match http://host:port (got: {git_proxy_url!r})")
+    return f'git config --global credential.helper "!f() {{ curl -sf {git_proxy_url}/git-credentials; }}; f"'
 
 
 def configure_git_credentials(git_proxy_url: str) -> str:
