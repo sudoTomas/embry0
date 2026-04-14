@@ -214,9 +214,7 @@ async def test_repo_preferences_without_sandbox_profile_keeps_llm_choice():
             "reasoning": "ok",
         }
     )
-    mock_result = MockAgentResult(
-        success=True, raw_output=triage_output, usage={"input_tokens": 5, "output_tokens": 5}
-    )
+    mock_result = MockAgentResult(success=True, raw_output=triage_output, usage={"input_tokens": 5, "output_tokens": 5})
 
     prefs_repo = AsyncMock()
     prefs_repo.get = AsyncMock(

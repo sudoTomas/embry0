@@ -358,9 +358,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(queue.router, prefix="/api/v1", tags=["queue"], dependencies=auth_deps)
     app.include_router(pipeline_templates.router, prefix="/api/v1", tags=["pipeline-templates"], dependencies=auth_deps)
     app.include_router(environment.router, prefix="/api/v1", tags=["environment"], dependencies=auth_deps)
-    app.include_router(
-        repo_preferences.router, prefix="/api/v1", tags=["repo-preferences"], dependencies=auth_deps
-    )
+    app.include_router(repo_preferences.router, prefix="/api/v1", tags=["repo-preferences"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
     app.include_router(telegram.router, prefix="/api/v1", tags=["telegram"])
     app.include_router(streaming.router)

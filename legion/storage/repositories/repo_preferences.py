@@ -23,8 +23,7 @@ class RepoPreferencesRepository:
 
     async def get(self, repo: str) -> dict[str, Any] | None:
         row = await self._db.fetchrow(
-            "SELECT repo, sandbox_profile, language_hint, notes, updated_at "
-            "FROM repo_preferences WHERE repo = $1",
+            "SELECT repo, sandbox_profile, language_hint, notes, updated_at FROM repo_preferences WHERE repo = $1",
             repo,
         )
         return dict(row) if row else None
@@ -60,7 +59,6 @@ class RepoPreferencesRepository:
 
     async def list_all(self) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
-            "SELECT repo, sandbox_profile, language_hint, notes, updated_at "
-            "FROM repo_preferences ORDER BY repo"
+            "SELECT repo, sandbox_profile, language_hint, notes, updated_at FROM repo_preferences ORDER BY repo"
         )
         return [dict(r) for r in rows]
