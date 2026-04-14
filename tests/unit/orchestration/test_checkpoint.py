@@ -98,23 +98,15 @@ async def test_purge_thread_deletes_only_target_thread_rows(pg_pool):
             except asyncpg.PostgresError as exc:
                 pytest.skip(f"Checkpoint schema doesn't match test fixture: {exc}")
 
-            before_target = await conn.fetchval(
-                "SELECT COUNT(*) FROM checkpoints WHERE thread_id = $1", target
-            )
-            before_other = await conn.fetchval(
-                "SELECT COUNT(*) FROM checkpoints WHERE thread_id = $1", other
-            )
+            before_target = await conn.fetchval("SELECT COUNT(*) FROM checkpoints WHERE thread_id = $1", target)
+            before_other = await conn.fetchval("SELECT COUNT(*) FROM checkpoints WHERE thread_id = $1", other)
             assert before_target >= 1
             assert before_other >= 1
 
             await purge_thread(url, target)
 
-            after_target = await conn.fetchval(
-                "SELECT COUNT(*) FROM checkpoints WHERE thread_id = $1", target
-            )
-            after_other = await conn.fetchval(
-                "SELECT COUNT(*) FROM checkpoints WHERE thread_id = $1", other
-            )
+            after_target = await conn.fetchval("SELECT COUNT(*) FROM checkpoints WHERE thread_id = $1", target)
+            after_other = await conn.fetchval("SELECT COUNT(*) FROM checkpoints WHERE thread_id = $1", other)
             assert after_target == 0, "target thread rows should be deleted"
             assert after_other == before_other, "other thread rows must be preserved"
 
