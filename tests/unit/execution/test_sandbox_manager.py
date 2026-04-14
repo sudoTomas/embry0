@@ -55,18 +55,34 @@ async def test_create_uses_sandbox_profile_defaults(manager: SandboxManager):
 
 
 @pytest.mark.asyncio
-async def test_create_injects_github_token(manager: SandboxManager):
-    """GitHub token is injected via env var when available."""
-    import os
+async def test_sandbox_manager_does_not_inject_github_token(manager: SandboxManager, monkeypatch):
+    """SandboxManager must NOT read GITHUB_TOKEN from the orchestrator's env
+    or inject it into the sandbox container. Git auth flows through the
+    credential proxy instead (see Plan C Task 2)."""
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_would_leak_if_injected")
 
-    os.environ["GITHUB_TOKEN"] = "ghp_test123"
-    try:
-        await manager.create(job_id="job-creds")
-        kwargs = manager._docker.build_run_cmd.call_args.kwargs
-        assert "GITHUB_TOKEN" in (kwargs.get("env") or {})
-        assert kwargs["env"]["GITHUB_TOKEN"] == "ghp_test123"
-    finally:
-        del os.environ["GITHUB_TOKEN"]
+    await manager.create(job_id="job-xyz")
+
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    env_passed = kwargs.get("env", {}) or {}
+
+    assert "GITHUB_TOKEN" not in env_passed, (
+        f"GITHUB_TOKEN must not be injected into the sandbox env. Found keys: {sorted(env_passed)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sandbox_manager_passes_through_caller_env(manager: SandboxManager):
+    """Caller-provided env (like LEGION_GIT_PROXY_URL) must reach the container."""
+    await manager.create(
+        job_id="job-xyz",
+        env={"LEGION_GIT_PROXY_URL": "http://host.docker.internal:9101"},
+    )
+
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    env_passed = kwargs.get("env", {}) or {}
+
+    assert env_passed.get("LEGION_GIT_PROXY_URL") == "http://host.docker.internal:9101"
 
 
 @pytest.mark.asyncio

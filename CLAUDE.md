@@ -29,5 +29,5 @@
   cd infra && docker save legion-sandbox:latest | docker compose exec -T orchestrator docker --host tcp://dind:2376 --tlsverify --tlscacert=/certs/client/ca.pem --tlscert=/certs/client/cert.pem --tlskey=/certs/client/key.pem load
   ```
 - The sandbox uses OAuth via `CLAUDE_CODE_OAUTH_TOKEN` env var (read from `~/.claude/.credentials.json` on the orchestrator).
-- The sandbox uses `GITHUB_TOKEN` env var for git push/clone (read from orchestrator environment).
+- Git auth flows via the credential proxy (port 9101 on the orchestrator): the sandbox's git credential helper curls `$LEGION_GIT_PROXY_URL/git-credentials`. `GITHUB_TOKEN` never enters the sandbox env. The proxy is managed by `ProxyManager` in `legion/execution/proxy/manager.py`.
 - Read-only rootfs is disabled (`read_only_root: False`) because Claude CLI needs writable fs.
