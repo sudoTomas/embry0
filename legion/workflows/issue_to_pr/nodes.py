@@ -40,7 +40,24 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
 
     container_id = None
     try:
+        # Merge user env FIRST, then infrastructure vars last so they win.
+        # Defense-in-depth vs the API-layer RESERVED_ENV_KEYS check: a stored
+        # row with a reserved key (from pre-fix data) must not escape to the
+        # sandbox. Drop any user keys that collide.
+        from legion.api.schemas.environment import RESERVED_ENV_KEYS
+
         env: dict[str, str] = {}
+        user_env = state.get("user_env_vars") or {}
+        for k, v in user_env.items():
+            if k in RESERVED_ENV_KEYS:
+                logger.warning(
+                    "user_env_var_reserved_key_dropped",
+                    key=k,
+                    job_id=job_id,
+                    msg="Reserved key in user env var rejected at sandbox injection. Remove it via the environment API.",
+                )
+                continue
+            env[k] = v
         if git_proxy_url:
             env["LEGION_GIT_PROXY_URL"] = git_proxy_url
         container_id = await sandbox_mgr.create(job_id, env=env)

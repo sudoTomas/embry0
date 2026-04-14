@@ -17,6 +17,7 @@ from legion.storage.migrations.runner import run_migrations
 from legion.storage.repositories.agent_definitions import AgentDefinitionsRepository
 from legion.storage.repositories.budget_config import BudgetConfigRepository
 from legion.storage.repositories.context_config import ContextConfigRepository
+from legion.storage.repositories.environment import EnvironmentRepository
 from legion.storage.repositories.integration_config import IntegrationConfigRepository
 from legion.storage.repositories.jobs import JobsRepository
 from legion.storage.repositories.pipeline_templates import PipelineTemplatesRepository
@@ -128,6 +129,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.templates_repo = PipelineTemplatesRepository(db)
     app.state.integration_repo = IntegrationConfigRepository(db)
     app.state.provider_repo = ProviderConfigRepository(db)
+    app.state.env_repo = EnvironmentRepository(db)
 
     from legion.services.github_sync import GitHubSyncService
     from legion.storage.repositories.issue_inputs import IssueInputsRepository
@@ -250,6 +252,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         agent_runner=agent_runner,
         proxy_manager=proxy_mgr,
         event_bus=app.state.event_bus,
+        env_repo=app.state.env_repo,
     )
     app.state.issue_executor._background_tasks = app.state.background_tasks
 
@@ -321,6 +324,7 @@ def _register_routers(app: FastAPI) -> None:
     from legion.api.v1 import (
         agents,
         config,
+        environment,
         graphs,
         health,
         issues,
@@ -349,6 +353,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(traces.router, prefix="/api/v1", tags=["traces"], dependencies=auth_deps)
     app.include_router(queue.router, prefix="/api/v1", tags=["queue"], dependencies=auth_deps)
     app.include_router(pipeline_templates.router, prefix="/api/v1", tags=["pipeline-templates"], dependencies=auth_deps)
+    app.include_router(environment.router, prefix="/api/v1", tags=["environment"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
     app.include_router(telegram.router, prefix="/api/v1", tags=["telegram"])
     app.include_router(streaming.router)

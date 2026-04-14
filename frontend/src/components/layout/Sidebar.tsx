@@ -1,5 +1,5 @@
 import { NavLink } from "react-router";
-import { Activity, LayoutDashboard, Play, Workflow, Settings, FlaskConical, Bot, Box, CircleDot } from "lucide-react";
+import { Activity, LayoutDashboard, Play, Workflow, Settings, FlaskConical, Bot, Box, CircleDot, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -24,6 +24,7 @@ const CONFIGURATION_ITEMS: NavItem[] = [
   { path: "/agents", label: "Agents", icon: Bot },
   { path: "/sandboxes", label: "Sandboxes", icon: Box },
   { path: "/pipelines", label: "Pipelines", icon: Workflow },
+  { path: "/environments", label: "Environments", icon: KeyRound },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 

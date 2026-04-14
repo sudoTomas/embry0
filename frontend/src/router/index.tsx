@@ -18,6 +18,7 @@ const NotFoundPage = lazy(() => import("../pages/NotFoundPage").then(m => ({ def
 const DemoPage = lazy(() => import("../pages/DemoPage").then(m => ({ default: m.DemoPage })));
 const IssuesPage = lazy(() => import("@/pages/IssuesPage").then((m) => ({ default: m.IssuesPage })));
 const IssueDetailPage = lazy(() => import("@/pages/IssueDetailPage").then((m) => ({ default: m.IssueDetailPage })));
+const EnvironmentsPage = lazy(() => import("@/pages/EnvironmentsPage").then((m) => ({ default: m.EnvironmentsPage })));
 
 const fallback = <div className="p-6 text-muted-foreground">Loading...</div>;
 
@@ -41,7 +42,7 @@ export const router = createBrowserRouter([
       { path: "triage", element: <Navigate to="/settings" replace /> },
       { path: "issues", element: <ErrorBoundary><Suspense fallback={fallback}><IssuesPage /></Suspense></ErrorBoundary> },
       { path: "issues/:id", element: <ErrorBoundary><Suspense fallback={fallback}><IssueDetailPage /></Suspense></ErrorBoundary> },
-      { path: "environments", element: <Navigate to="/settings" replace /> },
+      { path: "environments", element: <ErrorBoundary><Suspense fallback={fallback}><EnvironmentsPage /></Suspense></ErrorBoundary> },
       { path: "demo", element: <ErrorBoundary><Suspense fallback={fallback}><DemoPage /></Suspense></ErrorBoundary> },
       { path: "settings", element: <ErrorBoundary><Suspense fallback={fallback}><SettingsPage /></Suspense></ErrorBoundary> },
       { path: "*", element: <ErrorBoundary><Suspense fallback={fallback}><NotFoundPage /></Suspense></ErrorBoundary> },

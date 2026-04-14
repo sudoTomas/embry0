@@ -70,6 +70,9 @@ class LegionConfig(BaseSettings):
     telegram_webhook_url: str = ""
     telegram_webhook_secret: str = ""
 
+    # Environment variable encryption
+    environment_secret_key: str = ""
+
     # Docker / DinD
     docker_host: str = ""
     docker_tls_verify: bool = False
