@@ -48,7 +48,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 """
                 UPDATE jobs
                 SET status = 'failed',
-                    error_message = 'Orchestrator restarted — job was orphaned'
+                    error_message = 'Orchestrator restarted — job was orphaned',
+                    error_code = 'ERR_ORPHANED'
                 WHERE status IN ('running', 'pending')
                 """
             )

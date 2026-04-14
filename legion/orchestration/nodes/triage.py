@@ -11,7 +11,7 @@ from typing import Any
 
 import structlog
 
-from legion.orchestration.state import PipelineConfig, TriageDecision
+from legion.orchestration.state import TriageDecision
 
 logger = structlog.get_logger(__name__)
 
@@ -52,39 +52,32 @@ Respond ONLY with the JSON object, no markdown fences or extra text."""
 
 
 def parse_triage_response(raw: str) -> TriageDecision:
-    """Parse LLM response into a TriageDecision. Falls back to safe defaults."""
+    """Parse LLM response into a TriageDecision.
+
+    Strict: raises TriageParseError on invalid JSON or schema mismatch.
+    Callers must handle it (typically by failing the job with
+    ErrorCode.TRIAGE_MALFORMED and logging the raw output).
+    """
+    from legion.orchestration.state import TriageDecisionModel, TriageParseError
+
     try:
         text = raw.strip()
         if text.startswith("```"):
             lines = text.split("\n")
             text = "\n".join(lines[1:-1])
         data = json.loads(text)
-    except (json.JSONDecodeError, IndexError):
-        logger.warning("triage_parse_failed", raw=raw[:200])
-        return TriageDecision(
-            action="proceed",
-            confidence=0.0,
-            pipeline_template="standard",
-            pipeline_config=PipelineConfig(
-                sandbox_profile="default",
-                agent_models={"developer": "claude-sonnet-4-6"},
-                budget_usd=10.0,
-                max_feedback_loops=2,
-                reviewer_enabled=True,
-                validator_modes=["test", "lint", "typecheck"],
-            ),
-            reasoning="Fallback: could not parse triage response.",
-        )
+    except (json.JSONDecodeError, IndexError) as exc:
+        logger.warning("triage_parse_failed_json", raw=raw[:500])
+        raise TriageParseError(f"Invalid JSON: {exc}") from exc
 
-    return TriageDecision(
-        action=data.get("action", "proceed"),
-        confidence=data.get("confidence", 0.5),
-        pipeline_template=data.get("pipeline_template", "standard"),
-        pipeline_config=data.get("pipeline_config", {}),
-        questions=data.get("questions", []),
-        sub_tasks=data.get("sub_tasks", []),
-        reasoning=data.get("reasoning", ""),
-    )
+    try:
+        model = TriageDecisionModel.model_validate(data)
+    except Exception as exc:  # pydantic ValidationError subclass
+        logger.warning("triage_parse_failed_schema", raw=raw[:500], error=str(exc))
+        raise TriageParseError(f"Schema validation failed: {exc}") from exc
+
+    # Return as TypedDict-shaped dict for downstream dict-based code.
+    return TriageDecision(**model.model_dump())
 
 
 async def run_triage_node(

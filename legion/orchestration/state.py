@@ -6,6 +6,8 @@ import operator
 from enum import StrEnum
 from typing import Annotated, Any, TypedDict
 
+from pydantic import BaseModel, ConfigDict, Field
+
 
 class TriageAction(StrEnum):
     PROCEED = "proceed"
@@ -54,6 +56,47 @@ class AgentOutputEntry(TypedDict, total=False):
     cost_usd: float
     duration_ms: int
     tools_called: dict[str, int]
+
+
+class PipelineConfigModel(BaseModel):
+    """Strict Pydantic equivalent of the PipelineConfig TypedDict.
+
+    Used only at the triage-parse boundary; downstream code continues to
+    interact with the dict form stored in JobState (LangGraph requires dict).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sandbox_profile: str = "default"
+    max_feedback_loops: int = Field(default=2, ge=0, le=20)
+    reviewer_enabled: bool = True
+    validator_modes: list[str] = Field(default_factory=list)
+    agent_models: dict[str, str] = Field(default_factory=dict)
+    agent_tools: dict[str, list[str]] = Field(default_factory=dict)
+    agent_skills: dict[str, list[str]] = Field(default_factory=dict)
+    budget_usd: float = Field(default=10.0, ge=0.0)
+
+
+class TriageDecisionModel(BaseModel):
+    """Strict Pydantic equivalent of the TriageDecision TypedDict."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: str = Field(pattern="^(proceed|needs_info|split)$")
+    confidence: float = Field(ge=0.0, le=1.0)
+    pipeline_template: str = "standard"
+    pipeline_config: PipelineConfigModel = Field(default_factory=PipelineConfigModel)
+    questions: list[dict] = Field(default_factory=list)
+    sub_tasks: list[dict] = Field(default_factory=list)
+    reasoning: str = ""
+
+
+class TriageParseError(ValueError):
+    """Raised when LLM output can't be parsed into a TriageDecisionModel.
+
+    Callers should mark the job failed with ErrorCode.TRIAGE_MALFORMED and
+    log the raw LLM output for debugging.
+    """
 
 
 class JobState(TypedDict, total=False):
