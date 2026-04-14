@@ -21,6 +21,23 @@ _STATUS_TO_GH_STATE = {
 }
 
 
+def _extract_label_names(raw_labels: object) -> list[str]:
+    """Extract label name strings from a GitHub issue's ``labels`` field.
+
+    Defensive: silently skips entries that aren't dicts with a non-empty string
+    ``name`` key. Handles the case where ``raw_labels`` itself is missing/None.
+    """
+    if not isinstance(raw_labels, list):
+        return []
+    names: list[str] = []
+    for lbl in raw_labels:
+        if isinstance(lbl, dict):
+            name = lbl.get("name")
+            if isinstance(name, str) and name:
+                names.append(name)
+    return names
+
+
 class GitHubSyncService:
     """Handles two-way sync between Legion issues and GitHub issues."""
 
@@ -99,7 +116,7 @@ class GitHubSyncService:
         if action == "opened":
             if existing:
                 return {"status": "ignored", "reason": "issue already exists"}
-            labels = [lbl.get("name", "") for lbl in gh_issue.get("labels", [])]
+            labels = _extract_label_names(gh_issue.get("labels"))
             issue_id = await issues_repo.create(
                 title=gh_issue.get("title", ""),
                 body=gh_issue.get("body", "") or "",
@@ -139,7 +156,7 @@ class GitHubSyncService:
             await issues_repo.update(issue_id, status="open")
             return {"status": "accepted", "action": "issue_reopened"}
         if action in ("labeled", "unlabeled"):
-            labels = [lbl.get("name", "") for lbl in gh_issue.get("labels", [])]
+            labels = _extract_label_names(gh_issue.get("labels"))
             await issues_repo.update(issue_id, labels=labels)
             return {"status": "accepted", "action": f"issue_{action}"}
         return {"status": "ignored", "reason": f"unhandled action: {action}"}
