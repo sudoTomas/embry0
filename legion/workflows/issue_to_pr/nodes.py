@@ -283,21 +283,43 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     return result
 
 
+def _format_question_text(question: str, category: str | None, options: list[str] | None) -> str:
+    """Inline category + options into the question string so they survive the
+    trip through _handle_needs_info → issue_inputs (which only persists the
+    `question` TEXT column). Prevents the dashboard from showing a bare prompt
+    when the agent offered a category/options context.
+    """
+    parts: list[str] = []
+    if category and category != "general":
+        parts.append(f"[{category}]")
+    parts.append(question)
+    if options:
+        parts.append("\nOptions: " + " | ".join(str(o) for o in options))
+    return " ".join(parts[:-1]) + (
+        parts[-1] if parts[-1].startswith("\n") else (" " + parts[-1] if parts[:-1] else parts[-1])
+    )
+
+
 def _extract_ask_user_events(agent_output: dict[str, Any]) -> list[dict[str, Any]]:
     """Pull any agent_ask_user events out of the agent's streamed events.
 
     Returns a list of normalized question dicts: {question, category, options,
-    asking_node, importance}.
+    asking_node, importance}. The ``question`` string is formatted with inline
+    category/options markers so those context hints survive persistence
+    through issue_inputs (which only has a plain ``question`` TEXT column).
     """
     events = agent_output.get("events", []) if isinstance(agent_output, dict) else []
     pending: list[dict[str, Any]] = []
     for e in events:
         if isinstance(e, dict) and e.get("type") == "agent_ask_user":
+            raw_q = e.get("question", "")
+            category = e.get("category", "general")
+            options = e.get("options", []) or []
             pending.append(
                 {
-                    "question": e.get("question", ""),
-                    "category": e.get("category", "general"),
-                    "options": e.get("options", []),
+                    "question": _format_question_text(raw_q, category, options),
+                    "category": category,
+                    "options": options,
                     "asking_node": "developer",
                     "importance": "blocking",
                 }
@@ -460,13 +482,30 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
     }
 
     if pending_questions:
-        updates["pending_agent_questions"] = pending_questions
-        updates["current_stage"] = "developer_asked_user"
-        logger.info(
-            "developer_asked_user",
-            question_count=len(pending_questions),
-            job_id=state.get("job_id"),
-        )
+        # Cycle guard: cap agent-question rounds at 5 so a pathological agent
+        # can't loop forever on human-in-the-loop. After the cap, treat it as
+        # a workflow failure with a clear error.
+        current_rounds = int(state.get("agent_question_rounds", 0) or 0)
+        max_rounds = 5
+        if current_rounds >= max_rounds:
+            logger.warning(
+                "agent_question_rounds_exceeded",
+                rounds=current_rounds,
+                max_rounds=max_rounds,
+                job_id=state.get("job_id"),
+            )
+            updates["current_stage"] = "failed"
+            updates["errors"] = [f"Agent exceeded {max_rounds} rounds of asking the user — giving up."]
+        else:
+            updates["pending_agent_questions"] = pending_questions
+            updates["current_stage"] = "developer_asked_user"
+            updates["agent_question_rounds"] = current_rounds + 1
+            logger.info(
+                "developer_asked_user",
+                question_count=len(pending_questions),
+                rounds=current_rounds + 1,
+                job_id=state.get("job_id"),
+            )
 
     # Clear consumed user answers so they don't bleed into future runs.
     if user_answers:

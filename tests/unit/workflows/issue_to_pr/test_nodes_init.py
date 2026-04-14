@@ -28,11 +28,17 @@ def test_extract_ask_user_events_normalizes_fields():
     pending = _extract_ask_user_events(agent_output)
 
     assert len(pending) == 2
-    assert pending[0]["question"] == "q1"
+    # question is inlined with category prefix + options suffix so the
+    # dashboard sees the context even though issue_inputs only persists
+    # the question TEXT column.
+    assert "q1" in pending[0]["question"]
+    assert "[design]" in pending[0]["question"]
+    assert "Options: a | b" in pending[0]["question"]
     assert pending[0]["category"] == "design"
     assert pending[0]["options"] == ["a", "b"]
     assert pending[0]["asking_node"] == "developer"
     assert pending[0]["importance"] == "blocking"
+    # Second question has no options and 'general' category — no prefix/suffix added.
     assert pending[1]["question"] == "q2"
     assert pending[1]["category"] == "general"
     assert pending[1]["options"] == []
