@@ -128,6 +128,117 @@ async def test_run_triage_node_success():
 
 
 @pytest.mark.asyncio
+async def test_repo_preferences_override_sandbox_profile():
+    """A repo_preferences row with sandbox_profile must override the LLM-chosen
+    value in ``pipeline_config.sandbox_profile``, regardless of what triage
+    decided."""
+    triage_output = json.dumps(
+        {
+            "action": "proceed",
+            "confidence": 0.9,
+            "pipeline_template": "standard",
+            "pipeline_config": {
+                "sandbox_profile": "python-3.12",
+                "agent_models": {"developer": "claude-sonnet-4-6"},
+                "budget_usd": 10.0,
+            },
+            "reasoning": "Clear task.",
+        }
+    )
+
+    mock_result = MockAgentResult(
+        success=True, raw_output=triage_output, usage={"input_tokens": 100, "output_tokens": 50}
+    )
+
+    prefs_repo = AsyncMock()
+    prefs_repo.get = AsyncMock(
+        return_value={
+            "repo": "acme/widgets",
+            "sandbox_profile": "java-17",
+            "language_hint": "java",
+            "notes": "",
+            "updated_at": None,
+        }
+    )
+
+    state = {"repo": "acme/widgets", "task": "Do the thing", "issue_number": 7}
+    graph_config = {"configurable": {"repo_preferences_repo": prefs_repo}}
+
+    with patch("legion.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
+        result = await run_triage_node(state=state, config=graph_config)
+
+    prefs_repo.get.assert_awaited_once_with("acme/widgets")
+    assert result["pipeline_config"]["pipeline_config"]["sandbox_profile"] == "java-17"
+
+
+@pytest.mark.asyncio
+async def test_no_repo_preferences_leaves_llm_choice_intact():
+    """Without a preferences row, the LLM-picked sandbox_profile is preserved."""
+    triage_output = json.dumps(
+        {
+            "action": "proceed",
+            "confidence": 0.9,
+            "pipeline_template": "standard",
+            "pipeline_config": {
+                "sandbox_profile": "python-3.12",
+                "agent_models": {"developer": "claude-sonnet-4-6"},
+            },
+            "reasoning": "ok",
+        }
+    )
+    mock_result = MockAgentResult(
+        success=True, raw_output=triage_output, usage={"input_tokens": 10, "output_tokens": 5}
+    )
+
+    prefs_repo = AsyncMock()
+    prefs_repo.get = AsyncMock(return_value=None)
+
+    state = {"repo": "acme/widgets", "task": "noop", "issue_number": 1}
+    graph_config = {"configurable": {"repo_preferences_repo": prefs_repo}}
+
+    with patch("legion.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
+        result = await run_triage_node(state=state, config=graph_config)
+
+    assert result["pipeline_config"]["pipeline_config"]["sandbox_profile"] == "python-3.12"
+
+
+@pytest.mark.asyncio
+async def test_repo_preferences_without_sandbox_profile_keeps_llm_choice():
+    """A preferences row with sandbox_profile=None must not overwrite the LLM's pick."""
+    triage_output = json.dumps(
+        {
+            "action": "proceed",
+            "confidence": 0.9,
+            "pipeline_template": "standard",
+            "pipeline_config": {"sandbox_profile": "python-3.12"},
+            "reasoning": "ok",
+        }
+    )
+    mock_result = MockAgentResult(
+        success=True, raw_output=triage_output, usage={"input_tokens": 5, "output_tokens": 5}
+    )
+
+    prefs_repo = AsyncMock()
+    prefs_repo.get = AsyncMock(
+        return_value={
+            "repo": "acme/widgets",
+            "sandbox_profile": None,
+            "language_hint": "python",
+            "notes": "",
+            "updated_at": None,
+        }
+    )
+
+    state = {"repo": "acme/widgets", "task": "noop"}
+    graph_config = {"configurable": {"repo_preferences_repo": prefs_repo}}
+
+    with patch("legion.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
+        result = await run_triage_node(state=state, config=graph_config)
+
+    assert result["pipeline_config"]["pipeline_config"]["sandbox_profile"] == "python-3.12"
+
+
+@pytest.mark.asyncio
 async def test_low_confidence_triggers_needs_info():
     """Verify that a 'proceed' decision below confidence_threshold is escalated to needs_info."""
     triage_output = json.dumps(

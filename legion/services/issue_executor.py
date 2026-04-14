@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
     from legion.api.events.bus import EventBus
     from legion.storage.repositories.environment import EnvironmentRepository
+    from legion.storage.repositories.repo_preferences import RepoPreferencesRepository
 
 from legion.audit.helpers import emit_audit
 from legion.orchestration.checkpoint import checkpointer_context
@@ -43,6 +44,7 @@ class IssueExecutor:
         proxy_manager: Any = None,
         event_bus: EventBus | None = None,
         env_repo: EnvironmentRepository | None = None,
+        repo_preferences_repo: RepoPreferencesRepository | None = None,
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
@@ -58,6 +60,7 @@ class IssueExecutor:
         self._proxy = proxy_manager
         self._event_bus = event_bus
         self._env_repo = env_repo
+        self._repo_prefs = repo_preferences_repo
         self._background_tasks: set[asyncio.Task] = set()
         self._tasks_by_job: dict[str, asyncio.Task] = {}
 
@@ -73,6 +76,7 @@ class IssueExecutor:
                 "issues_repo": self._issues,
                 "inputs_repo": self._inputs,
                 "db": self._db,
+                "repo_preferences_repo": self._repo_prefs,
             }
         }
 

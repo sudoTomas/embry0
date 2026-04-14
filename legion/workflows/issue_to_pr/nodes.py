@@ -181,11 +181,17 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         if result.get("agent_outputs"):
             last = result["agent_outputs"][-1]
             if not last.get("is_error"):
+                from legion.orchestration.nodes.triage import apply_repo_preferences_override
                 from legion.orchestration.state import TriageParseError
                 from legion.safety.error_codes import ErrorCode
 
                 try:
                     decision = parse_triage_response(last.get("output", ""))
+                    decision = await apply_repo_preferences_override(
+                        decision,
+                        state.get("repo", ""),
+                        config["configurable"].get("repo_preferences_repo"),
+                    )
                     result["pipeline_config"] = decision
                     result["current_stage"] = "triage_complete"
                 except TriageParseError as exc:
@@ -198,7 +204,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                     }
     else:
         # Fallback: run triage directly via Agent SDK (no sandbox)
-        result = await run_triage_node(state, model=model)
+        result = await run_triage_node(state, config=config, model=model)
 
     # Check needs_info → interrupt
     pipeline_config = result.get("pipeline_config", {})
@@ -249,11 +255,17 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             if result.get("agent_outputs"):
                 last = result["agent_outputs"][-1]
                 if not last.get("is_error"):
+                    from legion.orchestration.nodes.triage import apply_repo_preferences_override
                     from legion.orchestration.state import TriageParseError
                     from legion.safety.error_codes import ErrorCode
 
                     try:
                         decision = parse_triage_response(last.get("output", ""))
+                        decision = await apply_repo_preferences_override(
+                            decision,
+                            updated.get("repo", ""),
+                            config["configurable"].get("repo_preferences_repo"),
+                        )
                         result["pipeline_config"] = decision
                         result["current_stage"] = "triage_complete"
                     except TriageParseError as exc:
@@ -265,7 +277,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                             "error_code": ErrorCode.TRIAGE_MALFORMED.value,
                         }
         else:
-            result = await run_triage_node(updated, model=model)
+            result = await run_triage_node(updated, config=config, model=model)
 
     writer({"type": "node_completed", "node": "triage", "action": result.get("pipeline_config", {}).get("action")})
     return result
