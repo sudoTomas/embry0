@@ -17,7 +17,9 @@ async def test_broadcast_event_accumulates_cost_across_events():
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._jobs = jobs
-    executor._event_subscribers = {}
+    from legion.api.events.bus import EventBus
+
+    executor._event_bus = EventBus()
 
     await executor._broadcast_event("job-1", {"type": "cost_update", "cost_usd": 0.10})
     await executor._broadcast_event("job-1", {"type": "cost_update", "cost_usd": 0.05})
@@ -42,7 +44,9 @@ async def test_broadcast_event_ignores_cost_update_without_amount():
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._jobs = jobs
-    executor._event_subscribers = {}
+    from legion.api.events.bus import EventBus
+
+    executor._event_bus = EventBus()
 
     await executor._broadcast_event("job-1", {"type": "cost_update"})
     await executor._broadcast_event("job-1", {"type": "cost_update", "cost_usd": 0})
@@ -52,42 +56,50 @@ async def test_broadcast_event_ignores_cost_update_without_amount():
 
 
 @pytest.mark.asyncio
-async def test_broadcast_event_logs_subscriber_exception(capsys):
-    """Failing subscribers must be logged, not silently swallowed.
-
-    Uses capsys because structlog is not configured to wrap stdlib logging in
-    this project — its default PrintLogger writes directly to stdout, so the
-    stdlib-based caplog fixture would not see the record.
-    """
-    import asyncio
-
+async def test_broadcast_event_stamps_event_seq_from_persist():
+    """The seq returned by append_log_event must be stamped onto the event
+    before it reaches subscribers, so WS clients can use it as a cursor."""
+    from legion.api.events.bus import EventBus
     from legion.services.issue_executor import IssueExecutor
 
     jobs = MagicMock()
-    jobs.append_log_event = AsyncMock()
+    jobs.append_log_event = AsyncMock(return_value=12345)
     jobs.increment_cost = AsyncMock()
 
-    # Subscriber whose put_nowait always raises
-    bad_queue = MagicMock()
-    bad_queue.put_nowait = MagicMock(side_effect=asyncio.QueueFull())
-
-    good_queue = MagicMock()
-    good_queue.put_nowait = MagicMock()
+    bus = EventBus()
+    queue = await bus.subscribe("job-1")
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._jobs = jobs
-    executor._event_subscribers = {"job-1": [bad_queue, good_queue]}
+    executor._event_bus = bus
 
     await executor._broadcast_event("job-1", {"type": "progress", "message": "hi"})
 
-    # Good subscriber still received the event (one bad subscriber doesn't block others)
-    assert good_queue.put_nowait.call_count == 1
+    delivered = queue.get_nowait()
+    assert delivered["event_seq"] == 12345
+    assert delivered["type"] == "progress"
 
-    # Bad subscriber failure was logged to stdout (structlog default PrintLogger)
-    captured = capsys.readouterr()
-    assert "subscriber_put_failed" in captured.out, (
-        f"Expected a 'subscriber_put_failed' log line. Got stdout: {captured.out!r}"
-    )
-    # And the log carries diagnostic context
-    assert "job-1" in captured.out
-    assert "progress" in captured.out
+
+@pytest.mark.asyncio
+async def test_broadcast_event_no_event_seq_when_persist_fails():
+    """If append_log_event raises, the event still reaches subscribers but
+    carries no event_seq stamp (nothing to stamp since nothing was persisted)."""
+    from legion.api.events.bus import EventBus
+    from legion.services.issue_executor import IssueExecutor
+
+    jobs = MagicMock()
+    jobs.append_log_event = AsyncMock(side_effect=RuntimeError("db down"))
+    jobs.increment_cost = AsyncMock()
+
+    bus = EventBus()
+    queue = await bus.subscribe("job-1")
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._jobs = jobs
+    executor._event_bus = bus
+
+    await executor._broadcast_event("job-1", {"type": "progress", "message": "hi"})
+
+    delivered = queue.get_nowait()
+    assert "event_seq" not in delivered
+    assert delivered["type"] == "progress"

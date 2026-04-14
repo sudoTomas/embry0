@@ -207,7 +207,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("orphaned_container_scan_failed", exc_info=True)
 
     app.state.background_tasks: set[asyncio.Task] = set()
-    app.state.event_subscribers: dict[str, list[asyncio.Queue]] = {}
+    from legion.api.events.bus import EventBus
+
+    app.state.event_bus = EventBus()
 
     app.state.issue_executor = IssueExecutor(
         issues_repo=app.state.issues_repo,
@@ -222,7 +224,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         sandbox_manager=sandbox_mgr,
         agent_runner=agent_runner,
         proxy_manager=proxy_mgr,
-        event_subscribers=app.state.event_subscribers,
+        event_bus=app.state.event_bus,
     )
     app.state.issue_executor._background_tasks = app.state.background_tasks
 
