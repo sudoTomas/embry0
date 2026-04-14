@@ -18,6 +18,14 @@ class JobCreateRequest(BaseModel):
     sandbox_profile: str | None = None
     max_budget_usd: float | None = Field(None, gt=0, le=1000)
     additional_context: str | None = None
+    agent_models: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Per-agent model override. Keys are agent type strings (e.g. 'developer', "
+            "'review'); values are model ids. When present, overrides whatever triage "
+            "decides."
+        ),
+    )
 
     @field_validator("repo")
     @classmethod

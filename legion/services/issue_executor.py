@@ -344,6 +344,7 @@ class IssueExecutor:
         # during this workflow is tagged. Lookup on the job row — the trace_id
         # was assigned in execute() at job creation time.
         trace_id_bound = False
+        job_row: dict[str, Any] | None = None
         try:
             job_row = await self._jobs.get(job_id)
             trace_id = (job_row or {}).get("trace_id")
@@ -374,6 +375,16 @@ class IssueExecutor:
                 "total_cost_usd": 0.0,
                 "budget_overrun_usd": 0.0,
             }
+
+            # Pass through any per-agent model override supplied at job creation
+            # time (JobCreateRequest.agent_models). Stored on the job row under
+            # pipeline_config.agent_models_override; read here and surfaced on
+            # state so agent nodes can prefer it over the triage decision.
+            overrides = (job_row or {}).get("pipeline_config") or {}
+            if isinstance(overrides, dict):
+                agent_models_override = overrides.get("agent_models_override")
+                if agent_models_override:
+                    initial_state["agent_models_override"] = agent_models_override
 
             graph_config = self._build_graph_config(job_id)
 
