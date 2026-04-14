@@ -471,72 +471,119 @@ class IssueExecutor:
             await self._event_bus.publish(job_id, event)
 
     async def _handle_needs_info(self, issue_id: str, job_id: str, decision: dict[str, Any]) -> None:
-        """Create input records, dispatch notifications, and pause for blocking questions."""
+        """Create input records, dispatch notifications, and pause for blocking questions.
+
+        Atomicity: the INSERTs for all input rows and the status UPDATEs for the
+        job + issue are wrapped in a single DB transaction. Either all persist
+        or none do — no orphan input rows if the orchestrator crashes mid-flow.
+
+        Audit events and notification dispatch happen AFTER the commit, because:
+        - Audit is additive (can emit a few extra records; no correctness impact).
+        - Notifications are best-effort (a missed Telegram ping is not a data issue).
+        """
+        import uuid
+
         from legion.notifications.dispatcher import dispatch_questions
 
         questions = decision.get("questions", [])
+        asking_node = decision.get("asking_node", "triage") if "asking_node" in decision else "triage"
 
-        # Handle interrupt value format (from interrupt())
-        if "asking_node" in decision:
-            asking_node = decision.get("asking_node", "triage")
-        else:
-            asking_node = "triage"
-
-        enriched_questions: list[dict[str, Any]] = []
-        has_blocking = False
-
+        # Normalize questions to dicts and compute rollout details.
+        normalized: list[dict[str, Any]] = []
         for q in questions:
             if isinstance(q, str):
                 q = {"question": q, "importance": "blocking"}
-
             importance = q.get("importance", "blocking")
             auto_answer = q.get("suggested_answer") if importance == "auto_answerable" else None
-
-            input_id = await self._inputs.create(
-                issue_id=issue_id,
-                job_id=job_id,
-                question=q["question"],
-                asking_node=asking_node,
-                importance=importance,
-                auto_answer=auto_answer,
+            normalized.append(
+                {
+                    "question": q["question"],
+                    "importance": importance,
+                    "auto_answer": auto_answer,
+                }
             )
-            enriched_questions.append({**q, "input_id": input_id})
-            if importance == "blocking":
-                has_blocking = True
 
+        has_blocking = any(n["importance"] == "blocking" for n in normalized)
+
+        # Transactional writes: inputs + status updates as one unit.
+        enriched_questions: list[dict[str, Any]] = []
+        async with self._db.transaction() as conn:
+            for n in normalized:
+                input_id = f"inp-{uuid.uuid4().hex[:12]}"
+                status = (
+                    "auto_answered"
+                    if n["auto_answer"] is not None and n["importance"] == "auto_answerable"
+                    else "pending"
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO issue_inputs (
+                        id, issue_id, job_id, asking_node, question,
+                        importance, auto_answer, status
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    """,
+                    input_id,
+                    issue_id,
+                    job_id,
+                    asking_node,
+                    n["question"],
+                    n["importance"],
+                    n["auto_answer"],
+                    status,
+                )
+                enriched_questions.append(
+                    {
+                        "question": n["question"],
+                        "importance": n["importance"],
+                        "auto_answer": n["auto_answer"],
+                        "input_id": input_id,
+                    }
+                )
+
+            if has_blocking:
+                await conn.execute(
+                    "UPDATE jobs SET status = 'awaiting_input' WHERE job_id = $1",
+                    job_id,
+                )
+                await conn.execute(
+                    "UPDATE issues SET status = 'awaiting_input' WHERE id = $1",
+                    issue_id,
+                )
+
+        # Audit (post-commit, additive)
+        for eq in enriched_questions:
             await emit_audit(
                 self._db,
                 "issue.input_created",
                 actor=asking_node,
                 details={
-                    "input_id": input_id,
-                    "question": q["question"],
-                    "importance": importance,
+                    "input_id": eq["input_id"],
+                    "question": eq["question"],
+                    "importance": eq["importance"],
                 },
                 audit_log_path=self._audit_log_path,
                 issue_id=issue_id,
             )
 
         if has_blocking:
-            await self._jobs.update(job_id, status="awaiting_input")
-            await self._issues.update(issue_id, status="awaiting_input")
-
             await emit_audit(
                 self._db,
                 "issue.pipeline_paused",
                 actor="system",
                 details={
                     "job_id": job_id,
-                    "pending_count": sum(1 for q in enriched_questions if q.get("importance") == "blocking"),
+                    "pending_count": sum(1 for eq in enriched_questions if eq["importance"] == "blocking"),
                 },
                 audit_log_path=self._audit_log_path,
                 issue_id=issue_id,
             )
 
+            # Best-effort notification dispatch
             issue = await self._issues.get(issue_id)
             if issue and self._config:
                 blocking_pairs = [
-                    (q["input_id"], q["question"]) for q in enriched_questions if q.get("importance") == "blocking"
+                    (eq["input_id"], eq["question"]) for eq in enriched_questions if eq["importance"] == "blocking"
                 ]
                 await dispatch_questions(
                     inputs_repo=self._inputs,
@@ -547,7 +594,7 @@ class IssueExecutor:
                     config=self._config,
                 )
         else:
-            # All auto-answerable — re-run triage with answers
+            # All auto-answerable — re-run triage with answers.
             await self._jobs.update(job_id, status="completed")
             await self._issues.update(issue_id, status="triaging")
             try:
