@@ -64,16 +64,28 @@ async def test_sum_by_agent_for_job_aggregates_costs(repos: tuple[JobsRepository
     job_id = await jobs_repo.create(repo="o/r", task="t")
 
     await traces_repo.create(
-        job_id=job_id, agent_type="developer", model="claude-sonnet-4-6",
-        result="success", cost_usd=0.10, duration_ms=1000,
+        job_id=job_id,
+        agent_type="developer",
+        model="claude-sonnet-4-6",
+        result="success",
+        cost_usd=0.10,
+        duration_ms=1000,
     )
     await traces_repo.create(
-        job_id=job_id, agent_type="developer", model="claude-sonnet-4-6",
-        result="success", cost_usd=0.20, duration_ms=2000,
+        job_id=job_id,
+        agent_type="developer",
+        model="claude-sonnet-4-6",
+        result="success",
+        cost_usd=0.20,
+        duration_ms=2000,
     )
     await traces_repo.create(
-        job_id=job_id, agent_type="review", model="claude-opus-4-6",
-        result="success", cost_usd=0.50, duration_ms=500,
+        job_id=job_id,
+        agent_type="review",
+        model="claude-opus-4-6",
+        result="success",
+        cost_usd=0.50,
+        duration_ms=500,
     )
 
     breakdown = await traces_repo.sum_by_agent_for_job(job_id)
