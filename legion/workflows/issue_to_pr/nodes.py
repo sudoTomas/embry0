@@ -28,32 +28,49 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
 
     sandbox_mgr = config["configurable"].get("sandbox_manager")
     docker = config["configurable"].get("docker")
+    proxy_mgr = config["configurable"].get("proxy_manager")
 
     if not sandbox_mgr:
         raise RuntimeError("No sandbox manager available — cannot create sandbox")
 
+    # Git proxy URL (may be empty if orchestrator has no GITHUB_TOKEN configured).
+    # The sandbox uses this URL as a credential helper; the proxy injects the
+    # orchestrator's GitHub token on each request. No token ever enters the sandbox env.
+    git_proxy_url = getattr(proxy_mgr, "git_proxy_url", "") if proxy_mgr else ""
+
     container_id = None
     try:
-        env = {}
+        env: dict[str, str] = {}
+        if git_proxy_url:
+            env["LEGION_GIT_PROXY_URL"] = git_proxy_url
         container_id = await sandbox_mgr.create(job_id, env=env)
         logger.info("sandbox_created", job_id=job_id, container_id=container_id)
         writer({"type": "progress", "message": "Sandbox container created"})
 
-        # Clone repo inside container using GITHUB_TOKEN for auth
+        # Clone repo inside container. Git auth flows via credential proxy — the
+        # helper curls $LEGION_GIT_PROXY_URL/git-credentials which returns the
+        # orchestrator's token without the token ever being visible to agent code.
         if repo and docker:
-            # Configure git credential helper to use GITHUB_TOKEN env var
-            setup_cmd = [
-                "bash",
-                "-c",
-                "git config --global credential.helper "
-                '"!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" && '
-                'git config --global user.email "legion@alchymielabs.com" && '
-                'git config --global user.name "Legion Bot"',
-            ]
-            await docker.run_cmd(
-                docker.build_exec_cmd(container_id, setup_cmd),
-                timeout=10,
-            )
+            if git_proxy_url:
+                setup_cmd = [
+                    "bash",
+                    "-c",
+                    "git config --global credential.helper "
+                    f'"!f() {{ curl -sf {git_proxy_url}/git-credentials; }}; f" && '
+                    'git config --global user.email "legion@alchymielabs.com" && '
+                    'git config --global user.name "Legion Bot"',
+                ]
+                await docker.run_cmd(
+                    docker.build_exec_cmd(container_id, setup_cmd),
+                    timeout=10,
+                )
+            else:
+                logger.warning(
+                    "git_proxy_unavailable",
+                    job_id=job_id,
+                    msg="No git proxy URL — skipping credential helper setup; "
+                    "clone and push to private repos will fail.",
+                )
 
             clone_cmd = [
                 "bash",
