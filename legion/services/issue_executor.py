@@ -334,6 +334,55 @@ class IssueExecutor:
             except Exception:
                 logger.warning("sandbox_destroy_failed", job_id=job_id, exc_info=True)
 
+    async def _execute_workflow_stream(
+        self,
+        input_value: Any,
+        issue_id: str,
+        job_id: str,
+    ) -> tuple[dict[str, Any] | None, bool, dict[str, Any] | None]:
+        """Run the issue-to-pr workflow against ``input_value``.
+
+        Shared body of ``_run_workflow`` (fresh initial state) and ``resume``
+        (Command(resume=...)). Returns the tuple from ``_process_stream``.
+
+        Raises RuntimeError if the workflow isn't registered.
+        """
+        workflow = self._registry.get("issue-to-pr")
+        if not workflow:
+            raise RuntimeError("Workflow 'issue-to-pr' not registered")
+
+        graph_config = self._build_graph_config(job_id)
+
+        async with checkpointer_context(self._database_url) as saver:
+            graph = workflow.compile(config={"checkpointer": saver})
+            return await self._process_stream(
+                graph,
+                input_value,
+                graph_config,
+                issue_id,
+                job_id,
+            )
+
+    async def _handle_interrupt(
+        self,
+        issue_id: str,
+        job_id: str,
+        interrupt_value: dict[str, Any] | None,
+    ) -> None:
+        """Transition job/issue state based on the interrupt value from
+        ``_process_stream``."""
+        if interrupt_value:
+            reason = interrupt_value.get("reason", "")
+            if reason == "max_retries":
+                await self._jobs.update(job_id, status="paused")
+                await self._issues.update(issue_id, status="paused")
+                logger.info("job_paused", job_id=job_id, reason=reason)
+                return
+            await self._handle_needs_info(issue_id, job_id, interrupt_value)
+            return
+        await self._jobs.update(job_id, status="awaiting_input")
+        await self._issues.update(issue_id, status="awaiting_input")
+
     async def _run_workflow(self, issue_id: str, job_id: str, issue: dict[str, Any]) -> None:
         """Execute the issue-to-pr workflow via astream() with interrupt handling."""
         from datetime import UTC, datetime
@@ -357,10 +406,6 @@ class IssueExecutor:
         final_state: dict[str, Any] | None = None
         try:
             await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
-
-            workflow = self._registry.get("issue-to-pr")
-            if not workflow:
-                raise RuntimeError("Workflow 'issue-to-pr' not registered")
 
             initial_state = {
                 "job_id": job_id,
@@ -386,32 +431,15 @@ class IssueExecutor:
                 if agent_models_override:
                     initial_state["agent_models_override"] = agent_models_override
 
-            graph_config = self._build_graph_config(job_id)
+            final_state, interrupted, interrupt_value = await self._execute_workflow_stream(
+                initial_state,
+                issue_id,
+                job_id,
+            )
 
-            async with checkpointer_context(self._database_url) as saver:
-                graph = workflow.compile(config={"checkpointer": saver})
-
-                final_state, interrupted, interrupt_value = await self._process_stream(
-                    graph,
-                    initial_state,
-                    graph_config,
-                    issue_id,
-                    job_id,
-                )
-
-                if interrupted:
-                    if interrupt_value:
-                        reason = interrupt_value.get("reason", "")
-                        if reason == "max_retries":
-                            await self._jobs.update(job_id, status="paused")
-                            await self._issues.update(issue_id, status="paused")
-                            logger.info("job_paused", job_id=job_id, reason=reason)
-                        else:
-                            await self._handle_needs_info(issue_id, job_id, interrupt_value)
-                    else:
-                        await self._jobs.update(job_id, status="awaiting_input")
-                        await self._issues.update(issue_id, status="awaiting_input")
-                    return
+            if interrupted:
+                await self._handle_interrupt(issue_id, job_id, interrupt_value)
+                return
 
             if final_state:
                 await self._handle_workflow_result(issue_id, job_id, final_state)
@@ -763,40 +791,20 @@ class IssueExecutor:
         """Resume a paused pipeline with user answers using Command(resume=)."""
         from langgraph.types import Command
 
+        final_state: dict[str, Any] | None = None
         try:
             await self._jobs.update(job_id, status="running")
             await self._issues.update(issue_id, status="triaging")
 
-            workflow = self._registry.get("issue-to-pr")
-            if not workflow:
-                raise RuntimeError("Workflow 'issue-to-pr' not registered")
+            final_state, interrupted, interrupt_value = await self._execute_workflow_stream(
+                Command(resume=answers),
+                issue_id,
+                job_id,
+            )
 
-            graph_config = self._build_graph_config(job_id)
-
-            async with checkpointer_context(self._database_url) as saver:
-                graph = workflow.compile(config={"checkpointer": saver})
-
-                final_state, interrupted, interrupt_value = await self._process_stream(
-                    graph,
-                    Command(resume=answers),
-                    graph_config,
-                    issue_id,
-                    job_id,
-                )
-
-                if interrupted:
-                    if interrupt_value:
-                        reason = interrupt_value.get("reason", "")
-                        if reason == "max_retries":
-                            await self._jobs.update(job_id, status="paused")
-                            await self._issues.update(issue_id, status="paused")
-                            logger.info("job_paused", job_id=job_id, reason=reason)
-                        else:
-                            await self._handle_needs_info(issue_id, job_id, interrupt_value)
-                    else:
-                        await self._jobs.update(job_id, status="awaiting_input")
-                        await self._issues.update(issue_id, status="awaiting_input")
-                    return
+            if interrupted:
+                await self._handle_interrupt(issue_id, job_id, interrupt_value)
+                return
 
             if final_state:
                 await self._handle_workflow_result(issue_id, job_id, final_state)

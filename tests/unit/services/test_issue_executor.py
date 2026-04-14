@@ -476,3 +476,35 @@ async def test_execute_generates_trace_id_and_passes_to_jobs_create(monkeypatch)
     assert "trace_id" in call_kwargs
     assert call_kwargs["trace_id"].startswith("trc-")
     assert len(call_kwargs["trace_id"]) == 16  # "trc-" + 12 hex chars
+
+
+@pytest.mark.asyncio
+async def test_handle_interrupt_max_retries_pauses():
+    """_handle_interrupt with reason=max_retries must pause both job and issue."""
+    from legion.services.issue_executor import IssueExecutor
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._jobs = MagicMock()
+    executor._jobs.update = AsyncMock()
+    executor._issues = MagicMock()
+    executor._issues.update = AsyncMock()
+
+    await executor._handle_interrupt("iss-1", "job-1", {"reason": "max_retries"})
+    executor._jobs.update.assert_any_await("job-1", status="paused")
+    executor._issues.update.assert_any_await("iss-1", status="paused")
+
+
+@pytest.mark.asyncio
+async def test_handle_interrupt_no_value_sets_awaiting_input():
+    """_handle_interrupt with no interrupt_value must set both to awaiting_input."""
+    from legion.services.issue_executor import IssueExecutor
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._jobs = MagicMock()
+    executor._jobs.update = AsyncMock()
+    executor._issues = MagicMock()
+    executor._issues.update = AsyncMock()
+
+    await executor._handle_interrupt("iss-1", "job-1", None)
+    executor._jobs.update.assert_any_await("job-1", status="awaiting_input")
+    executor._issues.update.assert_any_await("iss-1", status="awaiting_input")
