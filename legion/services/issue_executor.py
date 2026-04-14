@@ -204,9 +204,11 @@ class IssueExecutor:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            # Best-effort WS notification. If no bus, skip.
+            # Best-effort WS notification. Track the publish task on
+            # _background_tasks so a clean shutdown awaits it (otherwise it
+            # could be orphaned if the loop is tearing down).
             if self._event_bus is not None:
-                asyncio.create_task(
+                pub_task = asyncio.create_task(
                     self._event_bus.publish(
                         job_id,
                         {
@@ -217,6 +219,8 @@ class IssueExecutor:
                         },
                     )
                 )
+                self._background_tasks.add(pub_task)
+                pub_task.add_done_callback(self._background_tasks.discard)
 
         task.add_done_callback(_on_done)
         return task
