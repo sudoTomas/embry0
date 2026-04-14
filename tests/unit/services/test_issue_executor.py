@@ -27,13 +27,8 @@ async def test_broadcast_event_accumulates_cost_across_events():
     calls = [call.args for call in jobs.increment_cost.await_args_list]
     assert calls == [("job-1", 0.10), ("job-1", 0.05), ("job-1", 0.20)]
 
-    update_calls_for_cost = [
-        c for c in jobs.update.await_args_list
-        if "total_cost_usd" in c.kwargs
-    ]
-    assert update_calls_for_cost == [], (
-        f"update() must not be used for cost accumulation: {update_calls_for_cost}"
-    )
+    update_calls_for_cost = [c for c in jobs.update.await_args_list if "total_cost_usd" in c.kwargs]
+    assert update_calls_for_cost == [], f"update() must not be used for cost accumulation: {update_calls_for_cost}"
 
 
 @pytest.mark.asyncio
