@@ -67,8 +67,7 @@ async def test_sandbox_manager_does_not_inject_github_token(manager: SandboxMana
     env_passed = kwargs.get("env", {}) or {}
 
     assert "GITHUB_TOKEN" not in env_passed, (
-        f"GITHUB_TOKEN must not be injected into the sandbox env. "
-        f"Found keys: {sorted(env_passed)}"
+        f"GITHUB_TOKEN must not be injected into the sandbox env. Found keys: {sorted(env_passed)}"
     )
 
 

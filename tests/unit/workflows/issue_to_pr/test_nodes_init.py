@@ -50,9 +50,7 @@ async def test_init_node_passes_git_proxy_url_to_sandbox():
     assert env.get("LEGION_GIT_PROXY_URL") == "http://host.docker.internal:9101", (
         f"LEGION_GIT_PROXY_URL must be in sandbox env. Got: {sorted(env)}"
     )
-    assert "GITHUB_TOKEN" not in env, (
-        f"GITHUB_TOKEN must NOT be in sandbox env. Got: {sorted(env)}"
-    )
+    assert "GITHUB_TOKEN" not in env, f"GITHUB_TOKEN must NOT be in sandbox env. Got: {sorted(env)}"
 
 
 @pytest.mark.asyncio
@@ -101,16 +99,10 @@ async def test_init_node_git_credential_helper_curls_proxy():
         if "credential.helper" in cmd_str:
             credential_setup_found = True
             assert "curl" in cmd_str, f"Helper must curl proxy, got: {cmd_str}"
-            assert "host.docker.internal:9101" in cmd_str, (
-                f"Helper must reference proxy URL, got: {cmd_str}"
-            )
-            assert "$GITHUB_TOKEN" not in cmd_str, (
-                f"Helper must NOT reference $GITHUB_TOKEN, got: {cmd_str}"
-            )
+            assert "host.docker.internal:9101" in cmd_str, f"Helper must reference proxy URL, got: {cmd_str}"
+            assert "$GITHUB_TOKEN" not in cmd_str, f"Helper must NOT reference $GITHUB_TOKEN, got: {cmd_str}"
             break
-    assert credential_setup_found, (
-        f"No credential.helper setup exec call found. All calls: {all_run_cmd_calls}"
-    )
+    assert credential_setup_found, f"No credential.helper setup exec call found. All calls: {all_run_cmd_calls}"
 
 
 @pytest.mark.asyncio
