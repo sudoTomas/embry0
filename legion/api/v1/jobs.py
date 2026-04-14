@@ -44,10 +44,17 @@ async def list_jobs(
 
 
 @router.get("/jobs/{job_id}")
-async def get_job(job_id: str, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
+async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
     job = await jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    # Per-agent cost breakdown (E7 lean variant — aggregates existing traces rows).
+    traces_repo = getattr(request.app.state, "traces_repo", None)
+    if traces_repo is not None:
+        try:
+            job["cost_breakdown"] = await traces_repo.sum_by_agent_for_job(job_id)
+        except Exception:
+            job["cost_breakdown"] = []
     return job
 
 

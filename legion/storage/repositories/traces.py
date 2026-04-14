@@ -1,5 +1,7 @@
 """Traces repository — PostgreSQL CRUD for agent execution telemetry."""
 
+from __future__ import annotations
+
 import uuid
 from typing import Any
 
@@ -93,3 +95,25 @@ class TracesRepository:
             *args,
         )
         return [dict(r) for r in rows], total or 0
+
+    async def sum_by_agent_for_job(self, job_id: str) -> list[dict[str, Any]]:
+        """Aggregate traces by (agent_type, model) with cost + duration totals.
+
+        Used to surface per-agent cost breakdown on GET /api/v1/jobs/{id}.
+        Returns rows ordered by cost_usd DESC so the most expensive agents
+        show first.
+        """
+        rows = await self._db.fetch(
+            """
+            SELECT agent_type, model,
+                   COUNT(*) as runs,
+                   COALESCE(SUM(cost_usd), 0.0) as cost_usd,
+                   COALESCE(SUM(duration_ms), 0) as duration_ms
+            FROM traces
+            WHERE job_id = $1
+            GROUP BY agent_type, model
+            ORDER BY cost_usd DESC
+            """,
+            job_id,
+        )
+        return [dict(r) for r in rows]
