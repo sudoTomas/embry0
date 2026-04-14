@@ -54,6 +54,7 @@ _UPDATABLE_FIELDS = frozenset(
         "budget_overrun_usd",
         "pr_url",
         "error_message",
+        "error_code",
         "started_at",
         "finished_at",
     }
