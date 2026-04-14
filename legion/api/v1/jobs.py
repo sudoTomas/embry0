@@ -12,12 +12,18 @@ router = APIRouter()
 
 @router.post("/jobs", status_code=201)
 async def create_job(req: JobCreateRequest, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
+    # Merge any per-agent model override into pipeline_config so triage/dispatch
+    # can honour it downstream (see IssueExecutor._run_workflow + agent node).
+    effective_config = dict(req.pipeline_config) if req.pipeline_config else None
+    if req.agent_models:
+        effective_config = {**(effective_config or {}), "agent_models_override": req.agent_models}
+
     job_id = await jobs.create(
         repo=req.repo,
         task=req.task,
         issue_number=req.issue_number,
         pipeline_template=req.pipeline_template,
-        pipeline_config=req.pipeline_config,
+        pipeline_config=effective_config,
         sandbox_profile=req.sandbox_profile,
     )
     config = request.app.state.config

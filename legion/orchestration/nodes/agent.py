@@ -37,6 +37,12 @@ async def run_agent_node(
         model = resolved.model or model
         tools = resolved.tools if resolved.tools else tools
 
+    # Per-job model override (JobCreateRequest.agent_models) wins over triage /
+    # template / agent-definition. Surfaced on state by IssueExecutor.
+    override_models = state.get("agent_models_override") or {}
+    if isinstance(override_models, dict) and agent_type in override_models:
+        model = override_models[agent_type]
+
     container = state.get("sandbox_container_id", "")
     config = {
         "agent_type": agent_type,

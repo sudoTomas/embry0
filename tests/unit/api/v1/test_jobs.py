@@ -97,6 +97,30 @@ async def test_cancel_job(app):
 
 
 @pytest.mark.asyncio
+async def test_create_job_accepts_agent_models_override(app):
+    """JobCreateRequest.agent_models flows into pipeline_config.agent_models_override."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/jobs",
+            json={
+                "repo": "owner/repo",
+                "task": "Fix the bug",
+                "agent_models": {"developer": "claude-haiku-4-5", "review": "claude-sonnet-4-6"},
+            },
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 201
+    # The repo.create should have been called with pipeline_config containing
+    # the override under the agreed key.
+    app.state.jobs_repo.create.assert_called_once()
+    kwargs = app.state.jobs_repo.create.call_args.kwargs
+    assert kwargs["pipeline_config"] == {
+        "agent_models_override": {"developer": "claude-haiku-4-5", "review": "claude-sonnet-4-6"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_create_job_invalid_repo(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

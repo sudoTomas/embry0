@@ -20,3 +20,30 @@ def test_websocket_connect():
     with client.websocket_connect("/ws/jobs/job-123/events"):
         # Connection established - send a close to cleanly disconnect
         pass  # TestClient auto-closes
+
+
+def test_passes_filter_no_filter_accepts_everything():
+    """Empty wanted set means "no filter" — every event passes."""
+    from legion.api.ws.streaming import _passes_filter
+
+    assert _passes_filter({"type": "progress"}, set()) is True
+    assert _passes_filter({"type": "cost_update"}, set()) is True
+    assert _passes_filter({}, set()) is True  # missing type still passes
+
+
+def test_passes_filter_allows_wanted_types():
+    from legion.api.ws.streaming import _passes_filter
+
+    wanted = {"progress", "cost_update"}
+    assert _passes_filter({"type": "progress"}, wanted) is True
+    assert _passes_filter({"type": "cost_update"}, wanted) is True
+
+
+def test_passes_filter_rejects_unwanted_types():
+    from legion.api.ws.streaming import _passes_filter
+
+    wanted = {"progress"}
+    assert _passes_filter({"type": "thinking"}, wanted) is False
+    # Missing type is dropped when a filter is active.
+    assert _passes_filter({}, wanted) is False
+    assert _passes_filter({"type": None}, wanted) is False
