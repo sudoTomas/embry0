@@ -626,17 +626,33 @@ async def retry_node(state: dict[str, Any], config: RunnableConfig) -> dict[str,
 
 
 async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-    """Max retries reached — pause pipeline and ask user what to do."""
+    """Max retries reached — pause pipeline and ask user what to do.
+
+    Special case: if the job arrives here because the agent_question_rounds
+    cap was exhausted (ERR_MAX_AGENT_QUESTIONS), do NOT offer 'continue_retrying'
+    — the cap is already tripped, so continuing would loop. Offer only
+    'merge_as_is' (if a PR was produced) or 'abandon'.
+    """
     writer = get_stream_writer()
     retry_count = state.get("retry_count", 0)
     pr_url = state.get("pr_url", "")
+    exhausted = bool(state.get("agent_questions_exhausted"))
+
+    if exhausted:
+        message = "Agent exceeded the ask_user round cap — cannot continue."
+        reason = "agent_questions_exhausted"
+        options = ["merge_as_is", "abandon"] if pr_url else ["abandon"]
+    else:
+        message = f"Review failed after {retry_count} attempts"
+        reason = "max_retries"
+        options = ["continue_retrying", "merge_as_is", "abandon"]
 
     summary = {
-        "message": f"Review failed after {retry_count} attempts",
-        "reason": "max_retries",
+        "message": message,
+        "reason": reason,
         "pr_url": pr_url,
         "retry_count": retry_count,
-        "options": ["continue_retrying", "merge_as_is", "abandon"],
+        "options": options,
     }
 
     outputs = state.get("agent_outputs", [])
@@ -658,6 +674,15 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
     else:
         choice = "abandon"
         guidance = ""
+
+    # Refuse continue_retrying when agent_questions were exhausted — the cap
+    # is still tripped and continuing would immediately fail again.
+    if exhausted and choice == "continue_retrying":
+        logger.warning(
+            "continue_retrying_rejected_agent_questions_exhausted",
+            job_id=state.get("job_id"),
+        )
+        choice = "abandon"
 
     if choice == "continue_retrying":
         updates: dict[str, Any] = {"retry_count": 0, "current_stage": "developer_retry"}
