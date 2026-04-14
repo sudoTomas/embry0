@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from functools import lru_cache
 from typing import Any
@@ -112,6 +111,18 @@ async def reveal_global_secret(key: str, request: Request) -> RevealResponse:
             var["value"] = await provider.decrypt(var["value"])
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to decrypt") from None
+
+    # Audit trail: who unmasked what secret.
+    from legion.audit.helpers import emit_audit
+
+    actor = request.client.host if request.client else "unknown"
+    await emit_audit(
+        request.app.state.db,
+        "environment.secret_revealed",
+        actor=actor,
+        details={"scope": "global", "key": key},
+        audit_log_path=request.app.state.config.audit_log_path,
+    )
     return RevealResponse(key=var["key"], value=var["value"])
 
 
@@ -162,6 +173,17 @@ async def reveal_repo_secret(owner: str, repo: str, key: str, request: Request) 
             var["value"] = await provider.decrypt(var["value"])
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to decrypt") from None
+
+    from legion.audit.helpers import emit_audit
+
+    actor = request.client.host if request.client else "unknown"
+    await emit_audit(
+        request.app.state.db,
+        "environment.secret_revealed",
+        actor=actor,
+        details={"scope": "repo", "repo": f"{owner}/{repo}", "key": key},
+        audit_log_path=request.app.state.config.audit_log_path,
+    )
     return RevealResponse(key=var["key"], value=var["value"])
 
 
@@ -222,7 +244,9 @@ def _parse_env_file(content: str) -> list[dict[str, Any]]:
 @router.get("/repos/{owner}/{repo}/environment/detect", response_model=DetectResponse)
 async def detect_repo_environment(owner: str, repo: str, request: Request) -> DetectResponse:
     full_repo = f"{owner}/{repo}"
-    github_token = os.environ.get("GITHUB_TOKEN", "")
+    # Source the token from config (single source of truth); env-var read was a
+    # divergence that would silently break if config ever moved off env.
+    github_token = getattr(request.app.state.config, "github_token", "") or ""
 
     headers: dict[str, str] = {"Accept": "application/vnd.github.raw+json"}
     if github_token:
@@ -231,10 +255,15 @@ async def detect_repo_environment(owner: str, repo: str, request: Request) -> De
     content: str | None = None
     source_file = ""
 
-    async with httpx.AsyncClient() as client:
+    # Bounded timeout — a stuck GitHub response must not hold a request worker.
+    async with httpx.AsyncClient(timeout=10.0) as client:
         for filename in _ENV_TEMPLATE_FILES:
             url = f"https://api.github.com/repos/{full_repo}/contents/{filename}"
-            resp = await client.get(url, headers=headers)
+            try:
+                resp = await client.get(url, headers=headers)
+            except httpx.HTTPError as exc:
+                logger.warning("env_detect_http_error", repo=full_repo, file=filename, error=str(exc))
+                continue
             if resp.status_code == 200:
                 content = resp.text
                 source_file = filename

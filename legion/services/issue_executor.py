@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine
 
     from legion.api.events.bus import EventBus
+    from legion.storage.repositories.environment import EnvironmentRepository
 
 from legion.audit.helpers import emit_audit
 from legion.orchestration.checkpoint import checkpointer_context
@@ -41,7 +42,7 @@ class IssueExecutor:
         agent_runner: Any = None,
         proxy_manager: Any = None,
         event_bus: EventBus | None = None,
-        env_repo: Any = None,
+        env_repo: EnvironmentRepository | None = None,
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
@@ -449,6 +450,18 @@ class IssueExecutor:
                     for row in repo_rows:
                         merged[row["key"]] = row
                     decrypted = await _decrypt_vars(list(merged.values()), provider)
+                    # Drop rows that failed to decrypt and log them individually so
+                    # ops can diagnose which key is stuck (e.g. encrypted with an
+                    # older ENVIRONMENT_SECRET_KEY that's since been rotated).
+                    failed_keys = [v["key"] for v in decrypted if v["value"] == "[DECRYPTION_FAILED]"]
+                    if failed_keys:
+                        logger.warning(
+                            "env_vars_decrypt_failed_skipped",
+                            repo=repo_name,
+                            job_id=job_id,
+                            keys=failed_keys,
+                            msg="Encrypted values couldn't be decrypted with the current secret key. Those vars will NOT be injected into the sandbox.",
+                        )
                     env_vars = {v["key"]: v["value"] for v in decrypted if v["value"] != "[DECRYPTION_FAILED]"}
                     if env_vars:
                         initial_state["user_env_vars"] = env_vars

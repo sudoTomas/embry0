@@ -2,7 +2,22 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# Reserved keys that Legion itself injects into the sandbox. Allowing user env
+# vars to use these names would let a malicious config hijack infrastructure
+# (e.g. repointing LEGION_GIT_PROXY_URL to an attacker endpoint, which would
+# exfiltrate the GitHub token since the sandbox's git credential helper curls
+# that URL — see CLAUDE.md "Sandbox" section).
+RESERVED_ENV_KEYS: frozenset[str] = frozenset(
+    {
+        "LEGION_GIT_PROXY_URL",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "GITHUB_TOKEN",
+    }
+)
 
 
 class EnvVarInput(BaseModel):
@@ -15,6 +30,17 @@ class EnvVarInput(BaseModel):
     var_type: str = Field(default="config", pattern=r"^(config|secret)$")
     description: str = ""
     required: bool = False
+
+    @field_validator("key")
+    @classmethod
+    def _key_not_reserved(cls, v: str) -> str:
+        # Reserved keys would let a user hijack orchestrator-injected infrastructure
+        # variables. Reject at the API boundary.
+        if v in RESERVED_ENV_KEYS:
+            raise ValueError(
+                f"Key {v!r} is reserved for Legion infrastructure. Reserved keys: {sorted(RESERVED_ENV_KEYS)}"
+            )
+        return v
 
 
 class EnvironmentSetRequest(BaseModel):
