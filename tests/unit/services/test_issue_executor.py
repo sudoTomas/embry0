@@ -103,5 +103,3 @@ async def test_broadcast_event_no_event_seq_when_persist_fails():
     delivered = queue.get_nowait()
     assert "event_seq" not in delivered
     assert delivered["type"] == "progress"
-
-

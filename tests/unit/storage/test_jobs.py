@@ -122,10 +122,11 @@ async def test_get_log_events_filters_by_since_seq(jobs_repo):
     all_events = await jobs_repo.get_log_events(job_id)
     assert len(all_events) == 3
 
-    # since_seq=seq1 — return only events after the first
+    # since_seq=seq1 — return only events after the first (seq2 and seq3)
     after_first = await jobs_repo.get_log_events(job_id, since_seq=seq1)
     assert len(after_first) == 2
-    assert all(e["id"] > seq1 for e in after_first)
+    returned_ids = {e["id"] for e in after_first}
+    assert returned_ids == {seq2, seq3}
 
     # since_seq=seq3 — return nothing (nothing newer)
     after_last = await jobs_repo.get_log_events(job_id, since_seq=seq3)

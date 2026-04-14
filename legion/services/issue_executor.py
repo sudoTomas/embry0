@@ -38,7 +38,7 @@ class IssueExecutor:
         sandbox_manager: Any = None,
         agent_runner: Any = None,
         proxy_manager: Any = None,
-        event_bus: "EventBus | None" = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
