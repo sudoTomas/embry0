@@ -488,6 +488,8 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
         current_rounds = int(state.get("agent_question_rounds", 0) or 0)
         max_rounds = 5
         if current_rounds >= max_rounds:
+            from legion.safety.error_codes import ErrorCode
+
             logger.warning(
                 "agent_question_rounds_exceeded",
                 rounds=current_rounds,
@@ -495,6 +497,8 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
                 job_id=state.get("job_id"),
             )
             updates["current_stage"] = "failed"
+            updates["agent_questions_exhausted"] = True
+            updates["error_code"] = ErrorCode.MAX_AGENT_QUESTIONS.value
             updates["errors"] = [f"Agent exceeded {max_rounds} rounds of asking the user — giving up."]
         else:
             updates["pending_agent_questions"] = pending_questions

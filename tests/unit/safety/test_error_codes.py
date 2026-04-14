@@ -30,6 +30,7 @@ def test_error_code_catalogue_minimum():
         "WORKFLOW_UNKNOWN",
         "SANDBOX_INIT",
         "DOCKER_TIMEOUT",
+        "MAX_AGENT_QUESTIONS",
         "UNKNOWN",
     }
     present = {c.name for c in ErrorCode}
