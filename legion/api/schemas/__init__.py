@@ -44,6 +44,9 @@ class JobResponse(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     pipeline_config: dict[str, Any] | None = None
+    trace_id: str | None = None
+    error_code: str | None = None
+    cost_breakdown: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class JobListResponse(BaseModel):

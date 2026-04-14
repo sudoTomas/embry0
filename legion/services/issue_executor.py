@@ -121,6 +121,8 @@ class IssueExecutor:
 
         Returns the job_id. The workflow runs asynchronously.
         """
+        import uuid
+
         issue = await self._issues.get(issue_id)
         if not issue:
             raise ValueError(f"Issue {issue_id} not found")
@@ -139,11 +141,14 @@ class IssueExecutor:
         if issue.get("body"):
             task_text += "\n\n" + issue["body"]
 
+        trace_id = f"trc-{uuid.uuid4().hex[:12]}"
+
         job_id = await self._jobs.create(
             repo=issue.get("repo") or "unknown/unknown",
             task=task_text,
             issue_number=issue.get("github_number"),
             issue_id=issue_id,
+            trace_id=trace_id,
         )
 
         await emit_audit(
@@ -333,6 +338,21 @@ class IssueExecutor:
         """Execute the issue-to-pr workflow via astream() with interrupt handling."""
         from datetime import UTC, datetime
 
+        import structlog.contextvars as cv
+
+        # Bind trace_id to structlog contextvars so every log + audit emitted
+        # during this workflow is tagged. Lookup on the job row — the trace_id
+        # was assigned in execute() at job creation time.
+        trace_id_bound = False
+        try:
+            job_row = await self._jobs.get(job_id)
+            trace_id = (job_row or {}).get("trace_id")
+            if trace_id:
+                cv.bind_contextvars(trace_id=trace_id)
+                trace_id_bound = True
+        except Exception:
+            logger.warning("trace_id_bind_failed", job_id=job_id, exc_info=True)
+
         final_state: dict[str, Any] | None = None
         try:
             await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
@@ -432,6 +452,12 @@ class IssueExecutor:
 
             # Cleanup sandbox on error
             await self._cleanup_sandbox(final_state, job_id)
+        finally:
+            if trace_id_bound:
+                try:
+                    cv.unbind_contextvars("trace_id")
+                except Exception:
+                    logger.warning("trace_id_unbind_failed", job_id=job_id, exc_info=True)
 
     async def _handle_workflow_result(self, issue_id: str, job_id: str, result: dict[str, Any]) -> None:
         """Process the workflow result and update issue/job status."""

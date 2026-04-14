@@ -57,6 +57,7 @@ _UPDATABLE_FIELDS = frozenset(
         "error_code",
         "started_at",
         "finished_at",
+        "trace_id",
     }
 )
 
@@ -76,13 +77,17 @@ class JobsRepository:
         pipeline_template: str | None = None,
         pipeline_config: dict[str, Any] | None = None,
         sandbox_profile: str | None = None,
+        trace_id: str | None = None,
     ) -> str:
         """Create a new job and return its ID."""
         job_id = f"job-{uuid.uuid4().hex[:12]}"
         await self._db.execute(
             """
-            INSERT INTO jobs (job_id, repo, task, issue_number, issue_id, pipeline_template, pipeline_config, sandbox_profile)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO jobs (
+                job_id, repo, task, issue_number, issue_id,
+                pipeline_template, pipeline_config, sandbox_profile, trace_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             """,
             job_id,
             repo,
@@ -92,8 +97,9 @@ class JobsRepository:
             pipeline_template,
             pipeline_config,
             sandbox_profile,
+            trace_id,
         )
-        logger.info("job_created", job_id=job_id, repo=repo)
+        logger.info("job_created", job_id=job_id, repo=repo, trace_id=trace_id)
         return job_id
 
     async def get(self, job_id: str) -> dict[str, Any] | None:

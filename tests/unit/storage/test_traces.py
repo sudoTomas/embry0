@@ -54,3 +54,47 @@ async def test_list_traces_by_job(repos: tuple[JobsRepository, TracesRepository]
     rows, total = await traces_repo.list(job_id=job_id)
     assert total == 2
     assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_sum_by_agent_for_job_aggregates_costs(repos: tuple[JobsRepository, TracesRepository]):
+    """sum_by_agent_for_job groups by (agent_type, model) with cost/duration sums,
+    ordered by cost DESC."""
+    jobs_repo, traces_repo = repos
+    job_id = await jobs_repo.create(repo="o/r", task="t")
+
+    await traces_repo.create(
+        job_id=job_id,
+        agent_type="developer",
+        model="claude-sonnet-4-6",
+        result="success",
+        cost_usd=0.10,
+        duration_ms=1000,
+    )
+    await traces_repo.create(
+        job_id=job_id,
+        agent_type="developer",
+        model="claude-sonnet-4-6",
+        result="success",
+        cost_usd=0.20,
+        duration_ms=2000,
+    )
+    await traces_repo.create(
+        job_id=job_id,
+        agent_type="review",
+        model="claude-opus-4-6",
+        result="success",
+        cost_usd=0.50,
+        duration_ms=500,
+    )
+
+    breakdown = await traces_repo.sum_by_agent_for_job(job_id)
+    assert len(breakdown) == 2
+    # Ordered by cost_usd DESC: review (0.50) first, then developer (0.30)
+    assert breakdown[0]["agent_type"] == "review"
+    assert float(breakdown[0]["cost_usd"]) == pytest.approx(0.50)
+    assert breakdown[0]["runs"] == 1
+    assert breakdown[1]["agent_type"] == "developer"
+    assert breakdown[1]["runs"] == 2
+    assert float(breakdown[1]["cost_usd"]) == pytest.approx(0.30)
+    assert breakdown[1]["duration_ms"] == 3000
