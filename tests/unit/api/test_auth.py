@@ -67,5 +67,7 @@ def test_verify_webhook_signature_no_secret_prod_mode_raises_503():
 def test_verify_webhook_signature_secret_set_dev_mode_still_verifies():
     """If a secret IS configured, dev_mode does NOT bypass — HMAC still enforced."""
     with pytest.raises(HTTPException) as exc:
-        verify_webhook_signature(body=b'{"action": "opened"}', signature="sha256=bogus", secret="real-secret", dev_mode=True)
+        verify_webhook_signature(
+            body=b'{"action": "opened"}', signature="sha256=bogus", secret="real-secret", dev_mode=True
+        )
     assert exc.value.status_code == 401
