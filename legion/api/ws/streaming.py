@@ -9,6 +9,19 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
+def _passes_filter(event: dict, wanted: set[str]) -> bool:
+    """Return True if the event should be forwarded given the wanted type set.
+
+    Empty ``wanted`` means "no filter" (everything passes). An event whose
+    ``type`` is missing or unknown is dropped when a filter is active — the
+    only way to receive untyped events is to omit the filter entirely.
+    """
+    if not wanted:
+        return True
+    event_type = event.get("type") if isinstance(event, dict) else None
+    return event_type in wanted
+
+
 @router.websocket("/ws/jobs/{job_id}/events")
 async def job_events(websocket: WebSocket, job_id: str) -> None:
     # Auth check
@@ -26,6 +39,11 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
         since_seq = int(websocket.query_params.get("since_seq", "0"))
     except ValueError:
         since_seq = 0
+
+    # Optional server-side filter: ``?event_types=progress,cost_update`` sends
+    # only events whose ``type`` is in the CSV set. Empty / missing = no filter.
+    raw_types = websocket.query_params.get("event_types", "")
+    wanted_types = {t.strip() for t in raw_types.split(",") if t.strip()}
 
     event_bus = websocket.app.state.event_bus
 
@@ -50,6 +68,8 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
                     payload = {**payload, "event_seq": row_id}
                     if row_id > watermark:
                         watermark = row_id
+                if not _passes_filter(payload, wanted_types):
+                    continue
                 await websocket.send_json(payload)
     except Exception:
         logger.warning("event_replay_failed", job_id=job_id, exc_info=True)
@@ -61,6 +81,8 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
             event_seq = event.get("event_seq")
             if isinstance(event_seq, int) and event_seq <= watermark:
                 continue  # already delivered via replay
+            if not _passes_filter(event, wanted_types):
+                continue
             await websocket.send_json(event)
     except WebSocketDisconnect:
         logger.info("ws_disconnected", job_id=job_id)
