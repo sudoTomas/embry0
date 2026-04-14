@@ -712,7 +712,7 @@ graph TB
 
 ## External Integrations
 
-### Cloudflare Tunnel
+### Cloudflare Tunnel (production webhook ingress)
 
 The public endpoint at `legion.alchymielabs.com` is restricted to webhook paths only:
 
@@ -721,6 +721,19 @@ The public endpoint at `legion.alchymielabs.com` is restricted to webhook paths 
 | `/api/v1/webhook` | GitHub webhook | Issue events, PR events, comments |
 | `/api/v1/telegram/callback` | Telegram Bot API | Reply-to-message answers |
 | Everything else | **403 Forbidden** | Dashboard only accessible on LAN |
+
+Signature verification is always on in production: `GITHUB_WEBHOOK_SECRET` is set and the handler enforces HMAC-SHA256 (`verify_webhook_signature` in `legion/api/auth.py`).
+
+### smee.io Relay (local development webhook ingress)
+
+For developer laptops without a public URL, Legion supports the [smee.io](https://smee.io) relay pattern. The GitHub webhook is pointed at a smee channel URL, and `smee-client` forwards received events to `http://localhost:8200/api/v1/webhook`. Because smee re-serializes the JSON payload before forwarding, GitHub's HMAC signature is invalidated — so this flow requires `DEV_MODE=true` and an empty `GITHUB_WEBHOOK_SECRET`.
+
+The handler in `legion/api/v1/webhooks.py` supports this flow in two ways:
+
+1. `verify_webhook_signature(..., dev_mode=True)` skips HMAC verification when no secret is configured.
+2. After JSON parsing, the handler detects and unwraps smee's `{"payload": "<json-string>"}` envelope so downstream code sees the real GitHub payload unchanged.
+
+See README "Webhook Setup → Option B — smee.io relay" for the end-to-end setup. **Never enable this configuration in production** — any unsigned `POST` to `/api/v1/webhook` will be accepted and could trigger jobs.
 
 ### Telegram Bot
 

@@ -21,11 +21,17 @@ def verify_api_key(api_key: str, authorization: str, dev_mode: bool) -> None:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
-def verify_webhook_signature(body: bytes, signature: str, secret: str) -> None:
+def verify_webhook_signature(body: bytes, signature: str, secret: str, dev_mode: bool = False) -> None:
     """Verify a GitHub webhook HMAC-SHA256 signature.
 
-    Raises HTTPException 401 if the signature is missing or invalid.
+    - If ``secret`` is set: always require and verify a valid signature (401 on mismatch).
+    - If ``secret`` is empty and ``dev_mode`` is True: skip verification (smee.io local relay flow).
+    - If ``secret`` is empty and ``dev_mode`` is False: raise 503 (not configured for production).
     """
+    if not secret:
+        if dev_mode:
+            return
+        raise HTTPException(status_code=503, detail="Webhook secret not configured")
     if not signature:
         raise HTTPException(status_code=401, detail="Missing webhook signature")
     expected = "sha256=" + hmac.HMAC(secret.encode(), body, hashlib.sha256).hexdigest()

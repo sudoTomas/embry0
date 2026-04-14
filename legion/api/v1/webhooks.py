@@ -20,14 +20,26 @@ async def github_webhook(
     config = request.app.state.config
     body = await request.body()
 
-    if not config.github_webhook_secret:
-        raise HTTPException(status_code=503, detail="Webhook secret not configured")
-    verify_webhook_signature(body=body, signature=x_hub_signature_256, secret=config.github_webhook_secret)
+    verify_webhook_signature(
+        body=body,
+        signature=x_hub_signature_256,
+        secret=config.github_webhook_secret,
+        dev_mode=config.dev_mode,
+    )
 
     try:
         payload = json_module.loads(body)
     except (json_module.JSONDecodeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    # Unwrap smee.io relay envelope — smee wraps the real payload inside a
+    # "payload" key as a JSON string. When receiving webhooks directly from
+    # GitHub this branch is a no-op.
+    if "payload" in payload and isinstance(payload["payload"], str):
+        try:
+            payload = json_module.loads(payload["payload"])
+        except (json_module.JSONDecodeError, ValueError):
+            pass  # Not a smee envelope — use the payload as-is
 
     action = payload.get("action", "")
     event_type = x_github_event

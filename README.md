@@ -310,6 +310,144 @@ ws.onmessage = (event) => {
 };
 ```
 
+## Webhook Setup
+
+Legion reacts to GitHub events (issues opened/labeled/edited/closed, issue comments, pull requests) via a single webhook endpoint at `POST /api/v1/webhook`. Because Legion usually runs on a private network, you need a way to get GitHub's webhook POSTs into your instance. Two supported approaches:
+
+| Approach | Use when | Signature verification |
+|----------|----------|------------------------|
+| **Cloudflare Tunnel** | Production / always-on demo / shared team instance | **Required** — real HMAC secret |
+| **smee.io relay** | Local dev on a laptop / ephemeral testing | **Skipped** — DEV_MODE=true, no secret |
+
+### Option A — Cloudflare Tunnel (production)
+
+Exposes your Legion instance on a public hostname via a zero-trust tunnel. The tunnel should be **restricted to webhook paths only** — never expose the full app.
+
+**1. Install cloudflared:**
+
+```bash
+# macOS
+brew install cloudflared
+# Linux (Debian/Ubuntu)
+curl -L https://pkg.cloudflare.com/install.sh | sudo bash
+sudo apt-get install -y cloudflared
+```
+
+**2. Authenticate and create a tunnel:**
+
+```bash
+cloudflared tunnel login                       # opens browser, picks your CF zone
+cloudflared tunnel create legion-webhooks       # prints a tunnel UUID
+```
+
+**3. Route a DNS name at the tunnel:**
+
+```bash
+cloudflared tunnel route dns legion-webhooks legion.your-domain.com
+```
+
+**4. Write the tunnel config** at `~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: <UUID from step 2>
+credentials-file: /home/you/.cloudflared/<UUID>.json
+
+ingress:
+  # Allow only the GitHub webhook path
+  - hostname: legion.your-domain.com
+    path: ^/api/v1/webhook$
+    service: http://localhost:8200
+  # Allow the Telegram callback path (optional)
+  - hostname: legion.your-domain.com
+    path: ^/api/v1/telegram/callback$
+    service: http://localhost:8200
+  # Reject everything else
+  - service: http_status:404
+```
+
+> **Security:** the `path:` whitelist is critical. Without it the tunnel would expose your entire Legion UI and API to the internet.
+
+**5. Run the tunnel** (as a service or in a tmux pane):
+
+```bash
+cloudflared tunnel run legion-webhooks
+# Or install as a system service:
+sudo cloudflared service install
+```
+
+**6. Generate a webhook secret and set it in `.env`:**
+
+```bash
+openssl rand -hex 20
+```
+
+```
+GITHUB_WEBHOOK_SECRET=<generated-value>
+DEV_MODE=false
+```
+
+Rebuild the orchestrator so the new secret is picked up:
+
+```bash
+cd infra && docker compose build orchestrator && docker compose up -d orchestrator --force-recreate
+```
+
+**7. Configure the GitHub webhook** — repo → Settings → Webhooks → Add webhook:
+
+- **Payload URL:** `https://legion.your-domain.com/api/v1/webhook`
+- **Content type:** `application/json`
+- **Secret:** the value from step 6
+- **SSL verification:** enabled
+- **Events:** select "Let me select individual events", check **Issues**, **Issue comments**, **Pull requests**
+
+**8. Verify:** trigger an event (e.g. label an issue with `Legion`) and tail the orchestrator logs:
+
+```bash
+docker logs -f infra-orchestrator-1 | grep webhook_received
+```
+
+### Option B — smee.io relay (local development)
+
+For testing real GitHub events against a local Legion instance on your laptop, with no public hostname needed. smee.io re-serializes the webhook body before forwarding, which invalidates GitHub's HMAC — so this flow uses `DEV_MODE=true` and no secret.
+
+**1. Get a smee channel:** visit [https://smee.io](https://smee.io), click **Start a new channel**, and copy the channel URL (e.g. `https://smee.io/aBcDeF1234`).
+
+**2. Start the relay** (Node 20+ required):
+
+```bash
+npx smee-client --url https://smee.io/aBcDeF1234 --target http://localhost:8200/api/v1/webhook
+```
+
+Leave this running in a terminal pane — it prints every forwarded event.
+
+**3. Enable DEV_MODE** in `.env` and clear the webhook secret:
+
+```
+DEV_MODE=true
+GITHUB_WEBHOOK_SECRET=
+```
+
+Rebuild the orchestrator so the new config is picked up:
+
+```bash
+cd infra && docker compose build orchestrator && docker compose up -d orchestrator --force-recreate
+```
+
+**4. Configure the GitHub webhook** — repo → Settings → Webhooks → Add webhook:
+
+- **Payload URL:** your smee channel URL (e.g. `https://smee.io/aBcDeF1234`)
+- **Content type:** `application/json`
+- **Secret:** *(leave blank)*
+- **Events:** Issues, Issue comments, Pull requests
+
+**5. Verify:** trigger an event in the repo. You should see the event appear in the smee-client terminal AND in `docker logs -f infra-orchestrator-1 | grep webhook_received`.
+
+> **Note:** smee caches recent events and replays them on reconnect, which can cause duplicate job triggers after restarting the relay. For demos or production, always use Cloudflare Tunnel with HMAC verification.
+
+### Without webhooks
+
+You can trigger jobs manually via the dashboard — open the Issues page, find your issue, and click **Send to Agent**. No webhook setup required.
+
 ## Project Structure
 
 ```
