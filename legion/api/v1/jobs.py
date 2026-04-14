@@ -99,11 +99,12 @@ async def resume_job(job_id: str, request: Request, jobs: JobsRepository = Depen
     if not issue_id:
         raise HTTPException(status_code=400, detail="Job has no associated issue")
 
-    import asyncio
-
-    task = asyncio.create_task(executor.resume(issue_id, job_id, {"choice": choice, "guidance": guidance}))
-    executor._background_tasks.add(task)
-    task.add_done_callback(executor._background_tasks.discard)
+    executor._track_task(
+        executor.resume(issue_id, job_id, {"choice": choice, "guidance": guidance}),
+        kind="resume_via_api",
+        job_id=job_id,
+        issue_id=issue_id,
+    )
 
     return {"job_id": job_id, "status": "resuming", "choice": choice}
 

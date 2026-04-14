@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
     from legion.api.events.bus import EventBus
 
 from legion.audit.helpers import emit_audit
@@ -154,11 +156,70 @@ class IssueExecutor:
 
         logger.info("issue_job_created", issue_id=issue_id, job_id=job_id)
 
-        task = asyncio.create_task(self._run_workflow(issue_id, job_id, issue))
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        self._track_task(
+            self._run_workflow(issue_id, job_id, issue),
+            kind="workflow_execute",
+            job_id=job_id,
+            issue_id=issue_id,
+        )
 
         return job_id
+
+    def _track_task(
+        self,
+        coro: "Coroutine[Any, Any, Any]",
+        *,
+        kind: str,
+        job_id: str,
+        issue_id: str | None = None,
+    ) -> asyncio.Task:
+        """Create an asyncio.Task from ``coro``, register it, and attach a
+        done-callback that logs failures and publishes a ``job_failed`` event.
+
+        Centralizes the former 3x duplication of create_task + set.add +
+        add_done_callback(set.discard). The callback:
+
+        - Removes the task from ``_background_tasks`` (idempotent).
+        - On CancelledError: silent (normal shutdown path).
+        - On any other exception: logs ``background_task_failed`` with the
+          kind/job_id/issue_id context, and publishes a ``job_failed`` event
+          via the event bus so WS clients see the failure even if the coro
+          died outside its own try/except.
+        """
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+
+        def _on_done(t: asyncio.Task) -> None:
+            self._background_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is None:
+                return
+            logger.error(
+                "background_task_failed",
+                kind=kind,
+                job_id=job_id,
+                issue_id=issue_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            # Best-effort WS notification. If no bus, skip.
+            if self._event_bus is not None:
+                asyncio.create_task(
+                    self._event_bus.publish(
+                        job_id,
+                        {
+                            "type": "job_failed",
+                            "job_id": job_id,
+                            "kind": kind,
+                            "error": str(exc),
+                        },
+                    )
+                )
+
+        task.add_done_callback(_on_done)
+        return task
 
     async def _cleanup_sandbox(self, final_state: dict[str, Any] | None, job_id: str) -> None:
         """Destroy the sandbox container if present."""
