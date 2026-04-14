@@ -245,7 +245,7 @@ class IssueExecutor:
             task.cancel()
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=5)
-            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+            except (TimeoutError, asyncio.CancelledError, Exception):
                 # Cancellation propagated; done-callback handles logging.
                 pass
 

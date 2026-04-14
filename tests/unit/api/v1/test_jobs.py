@@ -40,6 +40,11 @@ def app():
     )
     mock_jobs.update = AsyncMock()
     app.state.jobs_repo = mock_jobs
+
+    # Mock issue_executor for cancel_job endpoint
+    mock_executor = MagicMock()
+    mock_executor.cancel_job = AsyncMock()
+    app.state.issue_executor = mock_executor
     return app
 
 
