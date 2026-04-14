@@ -388,11 +388,12 @@ async def _resume_pipeline(
 
     if awaiting_jobs:
         job_id = awaiting_jobs[0]["job_id"]
-        import asyncio
-
-        task = asyncio.create_task(executor.resume(issue_id, job_id, additional_context))
-        executor._background_tasks.add(task)
-        task.add_done_callback(executor._background_tasks.discard)
+        executor._track_task(
+            executor.resume(issue_id, job_id, additional_context),
+            kind="resume_via_answer",
+            job_id=job_id,
+            issue_id=issue_id,
+        )
         logger.info("pipeline_resumed", issue_id=issue_id, job_id=job_id)
     else:
         # No awaiting job — start fresh with accumulated context

@@ -1,5 +1,6 @@
 """Unit tests for IssueExecutor event broadcasting and cost accumulation."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -103,3 +104,115 @@ async def test_broadcast_event_no_event_seq_when_persist_fails():
     delivered = queue.get_nowait()
     assert "event_seq" not in delivered
     assert delivered["type"] == "progress"
+
+
+@pytest.mark.asyncio
+async def test_track_task_registers_and_removes_on_completion():
+    """_track_task adds to the set; callback removes on normal completion."""
+    from legion.api.events.bus import EventBus
+    from legion.services.issue_executor import IssueExecutor
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._background_tasks = set()
+    executor._event_bus = EventBus()
+
+    completed = asyncio.Event()
+
+    async def _work() -> None:
+        completed.set()
+
+    task = executor._track_task(_work(), kind="test", job_id="job-1")
+    assert task in executor._background_tasks
+    await completed.wait()
+    await asyncio.sleep(0)  # let done-callback fire
+    assert task not in executor._background_tasks
+
+
+@pytest.mark.asyncio
+async def test_track_task_logs_and_publishes_on_failure(capsys):
+    """If the coroutine raises an unexpected exception, _track_task logs it
+    AND publishes a job_failed event via the bus (so WS clients see it)."""
+    from legion.api.events.bus import EventBus
+    from legion.services.issue_executor import IssueExecutor
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._background_tasks = set()
+    executor._event_bus = EventBus()
+
+    queue = await executor._event_bus.subscribe("job-1")
+
+    async def _boom() -> None:
+        raise RuntimeError("kaboom")
+
+    task = executor._track_task(_boom(), kind="workflow", job_id="job-1")
+    # Awaiting the failed task always re-raises the exception for the caller.
+    # What _track_task guarantees is that the done-callback ALSO sees the
+    # exception (via .exception()) and logs/publishes it — even if no one awaits.
+    try:
+        await task
+    except RuntimeError:
+        pass
+    await asyncio.sleep(0)
+
+    # Failure was logged
+    captured = capsys.readouterr()
+    assert "background_task_failed" in captured.out
+    assert "kaboom" in captured.out
+
+    # job_failed event was published
+    assert queue.qsize() == 1
+    evt = queue.get_nowait()
+    assert evt["type"] == "job_failed"
+    assert evt["job_id"] == "job-1"
+    assert "kaboom" in evt.get("error", "")
+
+
+@pytest.mark.asyncio
+async def test_track_task_ignores_cancelled_error(capsys):
+    """Task cancellation during shutdown is normal; must NOT log as an error
+    or emit a job_failed event."""
+    from legion.api.events.bus import EventBus
+    from legion.services.issue_executor import IssueExecutor
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._background_tasks = set()
+    executor._event_bus = EventBus()
+
+    queue = await executor._event_bus.subscribe("job-1")
+
+    async def _slow() -> None:
+        await asyncio.sleep(10)
+
+    task = executor._track_task(_slow(), kind="workflow", job_id="job-1")
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    await asyncio.sleep(0)
+
+    captured = capsys.readouterr()
+    assert "background_task_failed" not in captured.out
+    assert queue.qsize() == 0  # no job_failed event on cancellation
+
+
+@pytest.mark.asyncio
+async def test_track_task_removes_from_set_on_exception():
+    """Even when the coro raises, the task must be removed from the tracking set."""
+    from legion.api.events.bus import EventBus
+    from legion.services.issue_executor import IssueExecutor
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._background_tasks = set()
+    executor._event_bus = EventBus()
+
+    async def _boom() -> None:
+        raise RuntimeError("x")
+
+    task = executor._track_task(_boom(), kind="workflow", job_id="job-1")
+    try:
+        await task
+    except RuntimeError:
+        pass
+    await asyncio.sleep(0)
+    assert task not in executor._background_tasks
