@@ -18,6 +18,7 @@ class EventType(StrEnum):
     COST_UPDATE = "cost_update"
     PROGRESS = "progress"
     ERROR = "error"
+    AGENT_ASK_USER = "agent_ask_user"
 
 
 def emit_event(event_type: str, **kwargs: Any) -> None:
