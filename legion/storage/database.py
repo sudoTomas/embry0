@@ -1,6 +1,8 @@
 """PostgreSQL connection pool management via asyncpg."""
 
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
@@ -59,6 +61,22 @@ class DatabasePool:
             await self.pool.close()
             self.pool = None
             logger.info("database_disconnected")
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[asyncpg.Connection]:
+        """Yield a connection with BEGIN/COMMIT wrapped around the block.
+
+        Usage:
+            async with db.transaction() as conn:
+                await conn.execute("INSERT ...")
+                await conn.execute("UPDATE ...")
+            # Commit on normal exit; rollback on any exception.
+        """
+        if self.pool is None:
+            raise RuntimeError("Call connect() first")
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                yield conn
 
     async def execute(self, query: str, *args: Any) -> str:
         """Execute a query and return the status string."""
