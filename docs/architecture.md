@@ -127,12 +127,18 @@ stateDiagram-v2
     triaging --> awaiting_input: needs_info (blocking questions)
     triaging --> in_progress: proceed (jobs running)
     triaging --> open: split (child issues created)
+    triaging --> paused: paused explicitly
     awaiting_input --> triaging: all questions answered
+    awaiting_input --> paused: TTL exceeded
+    paused --> running: resumed
+    paused --> open: cancelled
     in_progress --> closed: all jobs completed
     open --> cancelled: user cancels
     closed --> [*]
     cancelled --> [*]
 ```
+
+When a blocking question sits unanswered past the configured `paused_job_ttl_hours`, the `ContainerReaper` transitions the issue to `paused` and destroys its sandbox. Resumption rebuilds the sandbox.
 
 ### Multi-Channel Notifications
 
@@ -232,10 +238,10 @@ stateDiagram-v2
         Assess --> NeedsInfo: confidence < threshold
         Assess --> Split: issue too large
         NeedsInfo --> Await: interrupt() — ask for info
-        Split --> CreateChildren: create child issues (via Legion proxy)
     }
 
     Triage --> Developer: action = proceed
+    Triage --> [*]: action = split
 
     state Developer {
         Code: Write code + tests
@@ -264,6 +270,8 @@ stateDiagram-v2
     End2 --> [*]
 ```
 
+> **Note on `split`:** The `split` action creates child issues as a side effect inside `run_triage_node` (calling the Legion API proxy) and then terminates the current workflow; there is no dedicated child-creation node in the graph.
+
 ### Graph Nodes
 
 | Node | Agent? | Tools | Purpose |
@@ -286,6 +294,8 @@ The LLM triage node outputs a pipeline configuration.
 | `pipeline_template` | `str` | Template name or "custom" |
 | `pipeline_config.sandbox_profile` | `str` | Sandbox profile name |
 | `pipeline_config.agent_models` | `dict[str, str]` | Model per agent |
+| `pipeline_config.agent_tools` | `dict[str, list[str]]` | Per-agent tool allowlist overrides |
+| `pipeline_config.agent_skills` | `dict[str, list[str]]` | Per-agent Claude Code skills to load |
 | `pipeline_config.max_feedback_loops` | `int` | Review → retry cycles (default: 3) |
 | `pipeline_config.reviewer_enabled` | `bool` | Whether review is included (default: true) |
 | `pipeline_config.validator_modes` | `list[str]` | Which validators to run (test, lint, typecheck) |
@@ -425,6 +435,7 @@ graph TB
         IL["GET /api/v1/issues"]
         ID["GET /api/v1/issues/{id}"]
         IU["PUT /api/v1/issues/{id}"]
+        IX["DELETE /api/v1/issues/{id}"]
         IT["POST /api/v1/issues/{id}/triage"]
         IS["POST /api/v1/issues/{id}/sync"]
         IA["GET /api/v1/issues/{id}/activity"]
@@ -478,7 +489,7 @@ erDiagram
         string id PK
         string title
         string body
-        string status "open|triaging|in_progress|awaiting_input|closed|cancelled"
+        string status "open|triaging|in_progress|awaiting_input|paused|closed|cancelled"
         string priority "critical|high|medium|low"
         json labels
         string repo "owner/name"
@@ -509,7 +520,8 @@ erDiagram
 
     jobs {
         string job_id PK
-        string status "pending|running|completed|failed|cancelled|awaiting_input|pr_merged|pr_closed"
+        string status "pending|running|completed|failed|cancelled|awaiting_input|paused|expired|pr_merged|pr_closed"
+        string error_code "ERR_AGENT_TIMEOUT|ERR_NO_RESULT|ERR_BUDGET_OVERRUN|ERR_MAX_RETRIES|ERR_TRIAGE_MALFORMED|ERR_ORPHANED|ERR_WORKFLOW_UNKNOWN|ERR_SANDBOX_INIT|ERR_DOCKER_TIMEOUT|ERR_UNKNOWN"
         string repo
         string task
         int issue_number
@@ -609,6 +621,41 @@ erDiagram
 ```
 
 LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are managed by `langgraph-checkpoint-postgres` and provide pause/resume, time-travel debugging, and state inspection.
+
+---
+
+## Job Lifecycle & Executor
+
+The `IssueExecutor` (`legion/services/issue_executor.py`) owns the lifecycle of every background coroutine spawned to run a workflow.
+
+**Task lifecycle.** `IssueExecutor._track_task(coro, *, kind, job_id, issue_id)` is the single entry point for creating background coroutines. It registers the task in both `_background_tasks` (set) and `_tasks_by_job` (dict) and attaches a done-callback that logs non-`CancelledError` failures and publishes a `job_failed` WS event. `IssueExecutor.cancel_job(job_id)` is the centralised cancellation flow: cancel the live task (with a 5s grace), destroy the sandbox, update job+issue status, purge LangGraph checkpoints for the thread, and emit a `job.cancelled` audit event.
+
+### Failure Classification
+
+Failures populate the `jobs.error_code` column (migration 8) with one of the canonical values in `legion.safety.error_codes.ErrorCode`:
+
+| Code | Meaning |
+|------|---------|
+| `ERR_AGENT_TIMEOUT` | Agent SDK call exceeded its configured timeout. |
+| `ERR_NO_RESULT` | Sandbox produced no final `ResultMessage`. |
+| `ERR_BUDGET_OVERRUN` | Hard budget cap hit. |
+| `ERR_MAX_RETRIES` | Reviewer rejected past `max_feedback_loops`. |
+| `ERR_TRIAGE_MALFORMED` | Triage LLM output failed schema validation. |
+| `ERR_ORPHANED` | Orchestrator restarted with the job in-flight. |
+| `ERR_WORKFLOW_UNKNOWN` | Referenced workflow is not registered. |
+| `ERR_SANDBOX_INIT` | Sandbox container creation failed. |
+| `ERR_DOCKER_TIMEOUT` | An underlying Docker command timed out. |
+| `ERR_UNKNOWN` | Uncategorised — dashboards should alert on growth. |
+
+---
+
+## WebSocket Streaming
+
+Live event fan-out to the dashboard is served by `WS /ws/jobs/{id}/events`. The handler lives in `legion/api/ws/streaming.py`.
+
+WebSocket fan-out is managed by `legion.api.events.EventBus` — a concurrency-safe class that holds per-`job_id` `asyncio.Queue` subscribers under an `asyncio.Lock` and exposes `subscribe`, `unsubscribe`, and `publish`. Event producers (graph nodes, the executor, the sandbox manager) call `EventBus.publish(job_id, event)` and every currently-subscribed queue for that job receives a copy.
+
+**Replay cursor (`since_seq`).** Every broadcast event carries an `event_seq` field — the monotonic `BIGSERIAL` `id` from the `job_logs` table stamped at persist time. When a WS client reconnects after a dropped connection, it passes `?since_seq=<last_seen>`; the handler replays only rows with `id > since_seq`, tracks the highest id as a watermark, and then drops live events with `event_seq <= watermark` to prevent duplicates during the subscribe→replay race.
 
 ---
 
