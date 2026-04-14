@@ -307,6 +307,28 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_audit_trace_id ON audit_log (trace_id) WHERE trace_id IS NOT NULL;
         """,
     ),
+    (
+        10,
+        "environment tables — global + per-repo env vars with secret masking",
+        """
+        CREATE TABLE IF NOT EXISTS global_environment (
+            key         TEXT PRIMARY KEY,
+            value       TEXT NOT NULL,
+            var_type    TEXT NOT NULL DEFAULT 'config' CHECK (var_type IN ('config', 'secret')),
+            description TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS repo_environment (
+            repo        TEXT NOT NULL,
+            key         TEXT NOT NULL,
+            value       TEXT NOT NULL,
+            var_type    TEXT NOT NULL DEFAULT 'config' CHECK (var_type IN ('config', 'secret')),
+            description TEXT DEFAULT '',
+            required    BOOLEAN NOT NULL DEFAULT FALSE,
+            PRIMARY KEY (repo, key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_environment_repo ON repo_environment (repo);
+        """,
+    ),
 ]
 
 
