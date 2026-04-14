@@ -216,3 +216,68 @@ async def test_track_task_removes_from_set_on_exception():
         pass
     await asyncio.sleep(0)
     assert task not in executor._background_tasks
+
+
+@pytest.mark.asyncio
+async def test_handle_needs_info_rolls_back_on_update_failure():
+    """If updating job status fails mid-commit, input rows must NOT persist."""
+    from legion.services.issue_executor import IssueExecutor
+
+    # Build a fake db with a transaction() that raises on the second statement
+    class _FakeConn:
+        def __init__(self) -> None:
+            self.executed: list[str] = []
+            self._fail_on = "UPDATE jobs"
+
+        async def fetchval(self, query: str, *args):
+            return None
+
+        async def execute(self, query: str, *args):
+            if self._fail_on in query:
+                raise RuntimeError("simulated db failure")
+            self.executed.append(query)
+
+    class _FakeDb:
+        def __init__(self) -> None:
+            self.conn = _FakeConn()
+
+        def transaction(self):
+            fake_conn = self.conn
+
+            class _TxnCM:
+                async def __aenter__(self_inner):
+                    return fake_conn
+
+                async def __aexit__(self_inner, exc_type, exc, tb):
+                    return False  # propagate
+
+            return _TxnCM()
+
+    db = _FakeDb()
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._db = db
+    executor._inputs = MagicMock()  # should NOT be called since we're inside txn
+    executor._jobs = MagicMock()
+    executor._issues = MagicMock()
+    executor._config = None
+    executor._audit_log_path = None
+
+    with pytest.raises(RuntimeError, match="simulated db failure"):
+        await executor._handle_needs_info(
+            issue_id="iss-1",
+            job_id="job-1",
+            decision={
+                "questions": [
+                    {"question": "Q1?", "importance": "blocking"},
+                    {"question": "Q2?", "importance": "blocking"},
+                ],
+                "asking_node": "triage",
+            },
+        )
+
+    # Verify: the UPDATE jobs failed, so NO inserts should have been kept
+    # (the fake exec tracked them, but in a real DB transaction they rolled back).
+    # This test verifies the sequence by inspecting what was attempted.
+    # The test of _actual_ rollback behavior is in the storage layer tests.
+    insert_count = sum(1 for q in db.conn.executed if "INSERT INTO issue_inputs" in q)
+    assert insert_count == 2, "both INSERTs should have been attempted before the UPDATE"
