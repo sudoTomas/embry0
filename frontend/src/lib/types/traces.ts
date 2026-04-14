@@ -1,35 +1,23 @@
-import type { Tier, ProviderMode, TraceResult } from "./jobs";
+import type { TraceResult } from "./jobs";
 
-export interface TraceValidation {
-  passed: boolean;
-  category: "full_pass" | "partial_pass" | "full_fail";
-  summary: string;
-}
-
+/**
+ * Trace record as returned by GET /api/v1/traces.
+ *
+ * Mirrors the columns of the `traces` table (see legion/storage/migrations/runner.py).
+ * The legion schema is intentionally narrower than coding-lab's — fields like
+ * issue_number, repo, tier, role, tokens, validation, etc. are not persisted here.
+ */
 export interface TraceResponse {
   trace_id: string;
-  issue_number: number;
-  repo: string;
-  timestamp: string;
-  attempt: number;
-  tier: Tier;
-  provider_mode: ProviderMode;
+  job_id: string;
+  agent_type: string;
   model: string;
-  role: "developer" | "validator" | "explorer";
   result: TraceResult;
-  session_id: string | null;
-  turns_used: number | null;
-  tokens_input: number | null;
-  tokens_output: number | null;
+  cost_usd: number;
+  duration_ms: number;
   tools_called: Record<string, number>;
-  tool_errors: Record<string, number>;
-  duration_seconds: number | null;
-  cost_usd: number | null;
-  error_message: string | null;
-  stop_reason: string | null;
-  escalated_from: ProviderMode | null;
-  escalation_reason: string | null;
-  validation: TraceValidation | null;
+  result_summary: string;
+  created_at: string;
 }
 
 export interface TraceListResponse {
@@ -40,11 +28,9 @@ export interface TraceListResponse {
 }
 
 export interface TraceFilters {
-  trace_id?: string;
-  repo?: string;
-  role?: string;
+  job_id?: string;
+  agent_type?: string;
   result?: string;
-  tier?: string;
   limit?: number;
   offset?: number;
 }

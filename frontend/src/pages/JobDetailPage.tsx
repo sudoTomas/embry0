@@ -2,14 +2,17 @@ import { useState, useEffect } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, ExternalLink, Clock, DollarSign, Layers } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { useJob } from "@/hooks/useJobs";
 import { useJobInputs } from "@/hooks/useInputs";
+import { useTraces } from "@/hooks/useTraces";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
 import { AwaitingInputCard } from "@/components/jobs/AwaitingInputCard";
 import { useJobLogs } from "@/hooks/useJobLogs";
 import { useAgentStates } from "@/hooks/useAgentStates";
 import { AgentCard } from "@/components/jobs/AgentCard";
 import { PausedBanner } from "@/components/jobs/PausedBanner";
+import { TracesTable } from "@/components/traces/TracesTable";
 import { resumeJob, discardJob } from "@/api/jobs";
 
 function useElapsedTime(startedAt: string | null, finishedAt: string | null) {
@@ -33,6 +36,8 @@ function useElapsedTime(startedAt: string | null, finishedAt: string | null) {
   return elapsed;
 }
 
+const TRACES_PAGE_SIZE = 25;
+
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const { data: job, isLoading, isError, refetch } = useJob(jobId);
@@ -42,6 +47,15 @@ export function JobDetailPage() {
   const { agents, activeAgents, completedAgents, pendingAgents, prUrl, interruptData } = useAgentStates(
     events,
     job?.status,
+  );
+
+  // Traces tab state
+  const [traceFilters, setTraceFilters] = useState<{ agent_type?: string; result?: string }>({});
+  const [traceOffset, setTraceOffset] = useState(0);
+  const { data: tracesData } = useTraces(
+    jobId
+      ? { job_id: jobId, ...traceFilters, limit: TRACES_PAGE_SIZE, offset: traceOffset }
+      : {},
   );
 
   const elapsed = useElapsedTime(job?.started_at ?? null, job?.finished_at ?? null);
@@ -201,35 +215,62 @@ export function JobDetailPage() {
         />
       )}
 
-      {/* Agent Cards Grid */}
-      <div className="space-y-2">
-        {/* Completed agents in grid */}
-        {completedAgents.length > 0 && (
-          <div className={`grid gap-2 ${completedAgents.length >= 3 ? "grid-cols-3" : completedAgents.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
-            {completedAgents.map((agent) => (
-              <AgentCard key={`${agent.node}-${agent.retryLabel || ""}`} agent={agent} />
-            ))}
-          </div>
-        )}
+      {/* Pipeline / Traces Tabs */}
+      <Tabs defaultValue="pipeline" className="space-y-3">
+        <TabsList>
+          <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
+          <TabsTrigger value="traces">
+            Traces{tracesData ? ` (${tracesData.total})` : ""}
+          </TabsTrigger>
+        </TabsList>
 
-        {/* Active agents — full width or side by side */}
-        {activeAgents.length > 0 && (
-          <div className={`grid gap-2 ${activeAgents.length >= 2 ? "grid-cols-2" : "grid-cols-1"}`}>
-            {activeAgents.map((agent) => (
-              <AgentCard key={`${agent.node}-active`} agent={agent} expanded />
-            ))}
-          </div>
-        )}
+        <TabsContent value="pipeline">
+          {/* Agent Cards Grid */}
+          <div className="space-y-2">
+            {/* Completed agents in grid */}
+            {completedAgents.length > 0 && (
+              <div className={`grid gap-2 ${completedAgents.length >= 3 ? "grid-cols-3" : completedAgents.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
+                {completedAgents.map((agent) => (
+                  <AgentCard key={`${agent.node}-${agent.retryLabel || ""}`} agent={agent} />
+                ))}
+              </div>
+            )}
 
-        {/* Pending agents in grid */}
-        {pendingAgents.length > 0 && (
-          <div className={`grid gap-2 ${pendingAgents.length >= 3 ? "grid-cols-3" : pendingAgents.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
-            {pendingAgents.map((agent) => (
-              <AgentCard key={`${agent.node}-pending`} agent={agent} />
-            ))}
+            {/* Active agents — full width or side by side */}
+            {activeAgents.length > 0 && (
+              <div className={`grid gap-2 ${activeAgents.length >= 2 ? "grid-cols-2" : "grid-cols-1"}`}>
+                {activeAgents.map((agent) => (
+                  <AgentCard key={`${agent.node}-active`} agent={agent} expanded />
+                ))}
+              </div>
+            )}
+
+            {/* Pending agents in grid */}
+            {pendingAgents.length > 0 && (
+              <div className={`grid gap-2 ${pendingAgents.length >= 3 ? "grid-cols-3" : pendingAgents.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
+                {pendingAgents.map((agent) => (
+                  <AgentCard key={`${agent.node}-pending`} agent={agent} />
+                ))}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </TabsContent>
+
+        <TabsContent value="traces">
+          <TracesTable
+            traces={tracesData?.traces ?? []}
+            total={tracesData?.total ?? 0}
+            offset={traceOffset}
+            limit={TRACES_PAGE_SIZE}
+            filters={traceFilters}
+            onFilterChange={(f) => {
+              setTraceFilters(f);
+              setTraceOffset(0);
+            }}
+            onPageChange={setTraceOffset}
+          />
+        </TabsContent>
+      </Tabs>
 
       {/* Connection indicator */}
       {job.status !== "pending" && job.status !== "expired" && (
