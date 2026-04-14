@@ -80,8 +80,41 @@ def parse_triage_response(raw: str) -> TriageDecision:
     return TriageDecision(**model.model_dump())
 
 
+async def apply_repo_preferences_override(
+    decision: dict[str, Any],
+    repo: str,
+    prefs_repo: Any,
+) -> dict[str, Any]:
+    """If ``prefs_repo`` has a non-null ``sandbox_profile`` for ``repo``, override
+    ``decision['pipeline_config']['sandbox_profile']`` in place.
+
+    Safe against exceptions: on fetch failure, logs a warning and leaves the
+    decision untouched.
+    """
+    if prefs_repo is None or not repo:
+        return decision
+    try:
+        pref = await prefs_repo.get(repo)
+    except Exception:
+        logger.warning("repo_prefs_fetch_failed", repo=repo, exc_info=True)
+        return decision
+    if pref and pref.get("sandbox_profile"):
+        pipeline_cfg = decision.get("pipeline_config") or {}
+        if not isinstance(pipeline_cfg, dict):
+            pipeline_cfg = {}
+        pipeline_cfg["sandbox_profile"] = pref["sandbox_profile"]
+        decision["pipeline_config"] = pipeline_cfg
+        logger.info(
+            "triage_sandbox_profile_overridden_by_prefs",
+            repo=repo,
+            profile=pref["sandbox_profile"],
+        )
+    return decision
+
+
 async def run_triage_node(
     state: dict[str, Any],
+    config: dict[str, Any] | None = None,
     model: str = "claude-sonnet-4-6",
     confidence_threshold: float = 0.5,
     **_kwargs: Any,
@@ -90,6 +123,11 @@ async def run_triage_node(
 
     Uses the Claude CLI subprocess with stored OAuth credentials.
     No API key required.
+
+    If the repo has a stored ``sandbox_profile`` preference
+    (``repo_preferences`` table, injected via
+    ``configurable.repo_preferences_repo``), that value overrides whatever the
+    LLM picked for ``pipeline_config.sandbox_profile``.
     """
     from legion.agents.sdk import run_agent
 
@@ -146,6 +184,13 @@ async def run_triage_node(
             "current_stage": "triage_failed",
             "errors": [f"Triage failed: {exc}"],
         }
+
+    # Honour per-repo sandbox_profile preference if configured.
+    # The repo_preferences_repo is plumbed through IssueExecutor._build_graph_config.
+    prefs_repo = None
+    if config and isinstance(config.get("configurable"), dict):
+        prefs_repo = config["configurable"].get("repo_preferences_repo")
+    decision = await apply_repo_preferences_override(decision, repo, prefs_repo)
 
     # Estimate cost from usage (Claude Sonnet ~$3/M input, $15/M output)
     triage_cost = 0.0
