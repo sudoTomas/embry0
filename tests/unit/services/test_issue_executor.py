@@ -55,3 +55,53 @@ async def test_broadcast_event_ignores_cost_update_without_amount():
     assert jobs.increment_cost.await_count == 0
 
 
+@pytest.mark.asyncio
+async def test_broadcast_event_stamps_event_seq_from_persist():
+    """The seq returned by append_log_event must be stamped onto the event
+    before it reaches subscribers, so WS clients can use it as a cursor."""
+    from legion.api.events.bus import EventBus
+    from legion.services.issue_executor import IssueExecutor
+
+    jobs = MagicMock()
+    jobs.append_log_event = AsyncMock(return_value=12345)
+    jobs.increment_cost = AsyncMock()
+
+    bus = EventBus()
+    queue = await bus.subscribe("job-1")
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._jobs = jobs
+    executor._event_bus = bus
+
+    await executor._broadcast_event("job-1", {"type": "progress", "message": "hi"})
+
+    delivered = queue.get_nowait()
+    assert delivered["event_seq"] == 12345
+    assert delivered["type"] == "progress"
+
+
+@pytest.mark.asyncio
+async def test_broadcast_event_no_event_seq_when_persist_fails():
+    """If append_log_event raises, the event still reaches subscribers but
+    carries no event_seq stamp (nothing to stamp since nothing was persisted)."""
+    from legion.api.events.bus import EventBus
+    from legion.services.issue_executor import IssueExecutor
+
+    jobs = MagicMock()
+    jobs.append_log_event = AsyncMock(side_effect=RuntimeError("db down"))
+    jobs.increment_cost = AsyncMock()
+
+    bus = EventBus()
+    queue = await bus.subscribe("job-1")
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._jobs = jobs
+    executor._event_bus = bus
+
+    await executor._broadcast_event("job-1", {"type": "progress", "message": "hi"})
+
+    delivered = queue.get_nowait()
+    assert "event_seq" not in delivered
+    assert delivered["type"] == "progress"
+
+

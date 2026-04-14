@@ -91,3 +91,18 @@ async def test_update_same_status_logs_debug_no_op(jobs_repo: JobsRepository, ca
     assert "job_status_update_noop" in captured.out, (
         f"Expected 'job_status_update_noop' log on stdout. Got: {captured.out!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_append_log_event_returns_monotonic_seq(jobs_repo):
+    """append_log_event returns the inserted row's id. Successive inserts are
+    monotonically increasing — the id is the event_seq the WS client will use
+    as a cursor."""
+    job_id = await jobs_repo.create(repo="o/r", task="t")
+    seq1 = await jobs_repo.append_log_event(job_id, {"type": "progress", "n": 1})
+    seq2 = await jobs_repo.append_log_event(job_id, {"type": "progress", "n": 2})
+    seq3 = await jobs_repo.append_log_event(job_id, {"type": "progress", "n": 3})
+
+    assert isinstance(seq1, int) and seq1 > 0
+    assert seq2 > seq1
+    assert seq3 > seq2

@@ -200,16 +200,21 @@ class JobsRepository:
             cost_delta,
         )
 
-    async def append_log_event(self, job_id: str, event: dict[str, Any]) -> None:
-        """Append a pipeline event to the job_logs table."""
+    async def append_log_event(self, job_id: str, event: dict[str, Any]) -> int:
+        """Append a pipeline event to the job_logs table.
+
+        Returns the inserted row's ``id`` — a monotonic BIGSERIAL used as the
+        event sequence number for WS replay cursoring (see Plan B1).
+        """
         import json as json_mod
 
-        await self._db.execute(
-            "INSERT INTO job_logs (job_id, stream, text) VALUES ($1, $2, $3)",
+        row = await self._db.fetchrow(
+            "INSERT INTO job_logs (job_id, stream, text) VALUES ($1, $2, $3) RETURNING id",
             job_id,
             "pipeline",
             json_mod.dumps(event, default=str),
         )
+        return int(row["id"])
 
     async def get_log_events(self, job_id: str, stream: str = "pipeline", limit: int = 500) -> list[dict[str, Any]]:
         """Get pipeline events for a job, ordered chronologically."""

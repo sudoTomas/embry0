@@ -378,11 +378,16 @@ class IssueExecutor:
 
             event = {**event, "timestamp": datetime.now(UTC).isoformat()}
 
-        # Persist to database
+        # Persist to database and capture the assigned sequence id.
+        # Stamp it onto the event dict so WS subscribers can use it as a replay
+        # cursor (see legion/api/ws/streaming.py).
+        seq: int | None = None
         try:
-            await self._jobs.append_log_event(job_id, event)
+            seq = await self._jobs.append_log_event(job_id, event)
         except Exception:
             logger.warning("event_persist_failed", job_id=job_id, exc_info=True)
+        if seq is not None:
+            event = {**event, "event_seq": seq}
 
         # Persist cost incrementally on cost_update events.
         # Use atomic increment — each cost_update event carries the DELTA for the
