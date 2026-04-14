@@ -289,6 +289,14 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs (updated_at);
         """,
     ),
+    (
+        8,
+        "add error_code column to jobs",
+        """
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS error_code TEXT;
+        CREATE INDEX IF NOT EXISTS idx_jobs_error_code ON jobs (error_code) WHERE error_code IS NOT NULL;
+        """,
+    ),
 ]
 
 

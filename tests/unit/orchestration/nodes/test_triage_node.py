@@ -32,7 +32,10 @@ def test_parse_triage_response_needs_info():
         {
             "action": "needs_info",
             "confidence": 0.3,
-            "questions": ["What file contains the auth logic?", "Which version of the API?"],
+            "questions": [
+                {"question": "What file contains the auth logic?", "importance": "blocking"},
+                {"question": "Which version of the API?", "importance": "blocking"},
+            ],
             "reasoning": "Insufficient context.",
         }
     )
@@ -59,9 +62,27 @@ def test_parse_triage_response_split():
 
 
 def test_parse_triage_response_invalid_json():
-    decision = parse_triage_response("not json at all")
-    assert decision["action"] == "proceed"
-    assert decision["confidence"] == 0.0
+    """Strict parser now raises TriageParseError on invalid JSON."""
+    from legion.orchestration.state import TriageParseError
+
+    with pytest.raises(TriageParseError):
+        parse_triage_response("not json at all")
+
+
+def test_parse_triage_response_raises_on_invalid_schema():
+    """Schema violation (bad action value) raises TriageParseError."""
+    from legion.orchestration.state import TriageParseError
+
+    with pytest.raises(TriageParseError):
+        parse_triage_response('{"action": "chaos", "confidence": 0.5}')
+
+
+def test_parse_triage_response_accepts_valid_minimal():
+    """Minimal valid payload (action + confidence) parses OK with defaults."""
+    result = parse_triage_response('{"action": "proceed", "confidence": 0.9}')
+    assert result["action"] == "proceed"
+    assert result["confidence"] == 0.9
+    assert result["pipeline_template"] == "standard"
 
 
 @dataclass

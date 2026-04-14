@@ -118,14 +118,30 @@ class DockerClient:
         return cmd
 
     async def run_cmd(self, cmd: list[str], timeout: int = 60) -> str:
-        """Execute a Docker command and return stdout. Raises on failure."""
+        """Execute a Docker command and return stdout.
+
+        Raises RuntimeError on non-zero exit. Raises TimeoutError on timeout
+        (and kills the subprocess to prevent zombie Docker commands that would
+        otherwise block the Docker daemon).
+        """
         logger.debug("docker_cmd", cmd=cmd)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            # The subprocess would otherwise keep running and hold a Docker slot.
+            # Kill → wait briefly for exit → re-raise so callers can fail cleanly.
+            logger.warning("docker_cmd_timeout", cmd=cmd, timeout=timeout)
+            proc.kill()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except TimeoutError:
+                logger.error("docker_cmd_kill_stuck", cmd=cmd, pid=proc.pid)
+            raise
 
         if proc.returncode != 0:
             err = stderr.decode().strip()

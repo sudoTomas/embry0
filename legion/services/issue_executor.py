@@ -401,7 +401,21 @@ class IssueExecutor:
                 job_id=job_id,
                 error=str(exc),
             )
-            await self._jobs.update(job_id, status="failed", error_message=str(exc))
+            from legion.orchestration.state import TriageParseError
+            from legion.safety.error_codes import ErrorCode
+
+            if isinstance(exc, TriageParseError):
+                code = ErrorCode.TRIAGE_MALFORMED
+            elif isinstance(exc, RuntimeError) and "not registered" in str(exc):
+                code = ErrorCode.WORKFLOW_UNKNOWN
+            else:
+                code = ErrorCode.UNKNOWN
+            await self._jobs.update(
+                job_id,
+                status="failed",
+                error_message=str(exc),
+                error_code=code.value,
+            )
             await self._issues.update(issue_id, status="open")
             await emit_audit(
                 self._db,
@@ -450,11 +464,19 @@ class IssueExecutor:
             failed_stages = {"abandoned", "triage_failed", "developer_retry"}
             has_errors = bool(result.get("errors"))
             final_status = "failed" if current_stage in failed_stages or has_errors else "completed"
+            # Classify the failure: graph nodes may have set a specific error_code
+            # in state (e.g. ERR_TRIAGE_MALFORMED); otherwise bucket as UNKNOWN.
+            error_code: str | None = None
+            if final_status == "failed":
+                from legion.safety.error_codes import ErrorCode
+
+                error_code = result.get("error_code") or ErrorCode.UNKNOWN.value
             await self._jobs.update(
                 job_id,
                 status=final_status,
                 pr_url=result.get("pr_url"),
                 error_message=result.get("result_summary") if final_status == "failed" else None,
+                error_code=error_code,
                 total_cost_usd=result.get("total_cost_usd", 0.0),
                 finished_at=datetime.now(UTC),
             )
@@ -751,5 +773,19 @@ class IssueExecutor:
 
         except Exception as exc:
             logger.error("pipeline_resume_failed", issue_id=issue_id, job_id=job_id, error=str(exc))
-            await self._jobs.update(job_id, status="failed", error_message=str(exc))
+            from legion.orchestration.state import TriageParseError
+            from legion.safety.error_codes import ErrorCode
+
+            if isinstance(exc, TriageParseError):
+                code = ErrorCode.TRIAGE_MALFORMED
+            elif isinstance(exc, RuntimeError) and "not registered" in str(exc):
+                code = ErrorCode.WORKFLOW_UNKNOWN
+            else:
+                code = ErrorCode.UNKNOWN
+            await self._jobs.update(
+                job_id,
+                status="failed",
+                error_message=str(exc),
+                error_code=code.value,
+            )
             await self._issues.update(issue_id, status="open")
