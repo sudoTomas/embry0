@@ -41,6 +41,7 @@ class IssueExecutor:
         agent_runner: Any = None,
         proxy_manager: Any = None,
         event_bus: EventBus | None = None,
+        env_repo: Any = None,
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
@@ -55,6 +56,7 @@ class IssueExecutor:
         self._agent_runner = agent_runner
         self._proxy = proxy_manager
         self._event_bus = event_bus
+        self._env_repo = env_repo
         self._background_tasks: set[asyncio.Task] = set()
         self._tasks_by_job: dict[str, asyncio.Task] = {}
 
@@ -430,6 +432,34 @@ class IssueExecutor:
                 agent_models_override = overrides.get("agent_models_override")
                 if agent_models_override:
                     initial_state["agent_models_override"] = agent_models_override
+
+            # Fetch merged env (global + repo) decrypted — to be injected into
+            # the sandbox. Repo vars override globals of the same key.
+            repo_name = issue.get("repo") or ""
+            if repo_name and self._env_repo is not None:
+                try:
+                    from legion.api.v1.environment import _decrypt_vars, _get_secrets_provider
+
+                    provider = _get_secrets_provider(
+                        self._config.environment_secret_key if self._config else ""
+                    )
+                    global_rows = await self._env_repo.get_global()
+                    repo_rows = await self._env_repo.get_repo(repo_name)
+                    merged: dict[str, dict[str, Any]] = {}
+                    for row in global_rows:
+                        merged[row["key"]] = row
+                    for row in repo_rows:
+                        merged[row["key"]] = row
+                    decrypted = await _decrypt_vars(list(merged.values()), provider)
+                    env_vars = {
+                        v["key"]: v["value"]
+                        for v in decrypted
+                        if v["value"] != "[DECRYPTION_FAILED]"
+                    }
+                    if env_vars:
+                        initial_state["user_env_vars"] = env_vars
+                except Exception:
+                    logger.warning("env_merge_failed", repo=repo_name, exc_info=True)
 
             final_state, interrupted, interrupt_value = await self._execute_workflow_stream(
                 initial_state,

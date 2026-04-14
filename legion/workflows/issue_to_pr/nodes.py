@@ -43,6 +43,9 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
         env: dict[str, str] = {}
         if git_proxy_url:
             env["LEGION_GIT_PROXY_URL"] = git_proxy_url
+        user_env = state.get("user_env_vars") or {}
+        if user_env:
+            env.update(user_env)
         container_id = await sandbox_mgr.create(job_id, env=env)
         logger.info("sandbox_created", job_id=job_id, container_id=container_id)
         writer({"type": "progress", "message": "Sandbox container created"})

@@ -252,6 +252,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         agent_runner=agent_runner,
         proxy_manager=proxy_mgr,
         event_bus=app.state.event_bus,
+        env_repo=app.state.env_repo,
     )
     app.state.issue_executor._background_tasks = app.state.background_tasks
 
