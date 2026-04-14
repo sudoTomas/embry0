@@ -167,7 +167,7 @@ class IssueExecutor:
 
     def _track_task(
         self,
-        coro: "Coroutine[Any, Any, Any]",
+        coro: Coroutine[Any, Any, Any],
         *,
         kind: str,
         job_id: str,

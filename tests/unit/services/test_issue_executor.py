@@ -145,11 +145,13 @@ async def test_track_task_logs_and_publishes_on_failure(capsys):
         raise RuntimeError("kaboom")
 
     task = executor._track_task(_boom(), kind="workflow", job_id="job-1")
-    # Wait for the task to finish
+    # Awaiting the failed task always re-raises the exception for the caller.
+    # What _track_task guarantees is that the done-callback ALSO sees the
+    # exception (via .exception()) and logs/publishes it — even if no one awaits.
     try:
         await task
     except RuntimeError:
-        pass  # _track_task doesn't re-raise — it swallows via done-callback
+        pass
     await asyncio.sleep(0)
 
     # Failure was logged
