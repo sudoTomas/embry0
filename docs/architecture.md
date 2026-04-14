@@ -304,6 +304,8 @@ The LLM triage node outputs a pipeline configuration.
 | `sub_tasks` | `list[dict]` | When `split`: `{task, description}` objects |
 | `reasoning` | `str` | Why this configuration was chosen |
 
+**Per-repo preference override (Plan K).** If a row exists in `repo_preferences` for the current `owner/repo`, its `sandbox_profile` value **overrides** whatever the triage LLM chose in `pipeline_config.sandbox_profile`. The override is applied after triage parsing and before graph execution; the LLM is still free to reason about profiles, but the repo preference wins at execution time. See the ER diagram for the `repo_preferences` table.
+
 ### LangGraph Native Patterns
 
 | Pattern | Usage |
@@ -444,9 +446,9 @@ graph TB
     end
 
     subgraph "Jobs (Execution)"
-        JC["POST /api/v1/jobs"]
+        JC["POST /api/v1/jobs<br/>(supports agent_models override)"]
         JL["GET /api/v1/jobs"]
-        JD["GET /api/v1/jobs/{id}"]
+        JD["GET /api/v1/jobs/{id}<br/>(includes cost_breakdown)"]
         JX["POST /api/v1/jobs/{id}/cancel"]
     end
 
@@ -454,6 +456,10 @@ graph TB
         EX["POST /api/v1/graphs/execute"]
         GS["GET /api/v1/graphs/{id}/state"]
         RS["POST /api/v1/graphs/{id}/resume"]
+    end
+
+    subgraph "Ops & Debug"
+        SBL["GET /api/v1/sandboxes"]
     end
 
     subgraph "Configuration"
@@ -465,6 +471,8 @@ graph TB
         SP["CRUD /api/v1/sandbox-profiles"]
         PT["CRUD /api/v1/pipeline-templates"]
         AG["CRUD /api/v1/agents"]
+        RP["GET/PUT/DELETE /api/v1/repos/{owner}/{repo}/preferences"]
+        ENV["CRUD /api/v1/environments (global + per-repo env vars)"]
     end
 
     subgraph "Webhooks & Callbacks"
@@ -473,9 +481,18 @@ graph TB
     end
 
     subgraph "Streaming"
-        WSK["WS /ws/jobs/{id}/events"]
+        WSK["WS /ws/jobs/{id}/events<br/>(optional ?event_types=a,b server-side filter)"]
     end
 ```
+
+**Plan G/H endpoints & fields:**
+
+- `GET /api/v1/sandboxes` — lists live sandbox containers (ops visibility).
+- `POST /api/v1/jobs` — accepts an `agent_models` field for per-agent model override at job creation.
+- `GET /api/v1/jobs/{id}` — response includes a `cost_breakdown` field (per-agent aggregated cost/duration/tools).
+- `GET /ws/jobs/{id}/events?event_types=a,b` — optional server-side event filter; only the named event types are streamed.
+- `GET/PUT/DELETE /api/v1/repos/{owner}/{repo}/preferences` (Plan K) — per-repo preferences override triage (see Triage Decision note below).
+- `CRUD /api/v1/environments` (Plan J) — global + per-repo environment variables with Fernet-encrypted secrets (see Environment Variable Storage below).
 
 ---
 
@@ -521,7 +538,8 @@ erDiagram
     jobs {
         string job_id PK
         string status "pending|running|completed|failed|cancelled|awaiting_input|paused|expired|pr_merged|pr_closed"
-        string error_code "ERR_AGENT_TIMEOUT|ERR_NO_RESULT|ERR_BUDGET_OVERRUN|ERR_MAX_RETRIES|ERR_TRIAGE_MALFORMED|ERR_ORPHANED|ERR_WORKFLOW_UNKNOWN|ERR_SANDBOX_INIT|ERR_DOCKER_TIMEOUT|ERR_UNKNOWN"
+        string error_code "ERR_AGENT_TIMEOUT|ERR_NO_RESULT|ERR_BUDGET_OVERRUN|ERR_MAX_RETRIES|ERR_TRIAGE_MALFORMED|ERR_ORPHANED|ERR_WORKFLOW_UNKNOWN|ERR_SANDBOX_INIT|ERR_DOCKER_TIMEOUT|ERR_MAX_AGENT_QUESTIONS|ERR_UNKNOWN"
+        string trace_id "trc-<12hex> — grep key for the full job timeline"
         string repo
         string task
         int issue_number
@@ -535,6 +553,7 @@ erDiagram
         timestamp created_at
         timestamp started_at
         timestamp finished_at
+        timestamp updated_at
     }
 
     traces {
@@ -609,7 +628,30 @@ erDiagram
         string actor
         json details
         string issue_id "nullable"
+        string trace_id "nullable — same trace_id stamped on jobs row"
         timestamp created_at
+    }
+
+    repo_preferences {
+        string repo PK "owner/name"
+        string sandbox_profile "override of triage decision"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    global_environment {
+        string key PK
+        string value "plaintext OR Fernet-encrypted (see type)"
+        string type "plain|secret"
+        timestamp updated_at
+    }
+
+    repo_environment {
+        string repo PK "owner/name — composite with key"
+        string key PK
+        string value "plaintext OR Fernet-encrypted (see type)"
+        string type "plain|secret"
+        timestamp updated_at
     }
 
     issues ||--o{ jobs : "spawns"
@@ -618,9 +660,34 @@ erDiagram
     jobs ||--o{ traces : "has"
     jobs ||--o{ issue_inputs : "produced by"
     sandbox_profiles ||--o{ pipeline_templates : "referenced by"
+    repo_preferences ||--o{ jobs : "may override triage for"
 ```
 
 LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are managed by `langgraph-checkpoint-postgres` and provide pause/resume, time-travel debugging, and state inspection.
+
+### Environment Variable Storage (Plan J)
+
+Per-repo and global environment variables are stored in `global_environment` / `repo_environment`. Variables of type `secret` are Fernet-encrypted at rest using a key derived from `ENVIRONMENT_SECRET_KEY` via PBKDF2-HMAC-SHA256. Responses mask secret values (`****`); a separate `/reveal` endpoint returns plaintext and emits an `environment.secret_revealed` audit event.
+
+Reserved keys (`LEGION_GIT_PROXY_URL`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`) are blocked at the API layer and again at sandbox injection time to prevent users from hijacking orchestrator-injected infrastructure variables. If `ENVIRONMENT_SECRET_KEY` is unset the backend falls back to an insecure default and logs a startup warning; rotating the key makes prior secrets undecryptable and surfaces as `secret_decryption_failed` log events on the next job that needs them.
+
+### Migrations Reference
+
+The migration runner (`legion/storage/migrations/runner.py`) applies these idempotently, in order, on orchestrator startup:
+
+| # | Description | Tables/Columns |
+|---|---|---|
+| 1 | Initial schema | `jobs`, `traces`, `audit_log`, `job_logs` |
+| 2 | Agent definitions, integration config, provider config | `agent_definitions`, `integration_config`, `provider_config` |
+| 3 | Pipeline templates description column | `pipeline_templates.description` |
+| 4 | Issues table + issue_id FK on jobs | `issues`, `audit_log.issue_id` |
+| 5 | Human-in-the-loop questions | `issue_inputs` |
+| 6 | Remove validator/output agents, rename reviewer → review | `agent_definitions` seed |
+| 7 | Add updated_at to jobs | `jobs.updated_at` + trigger |
+| 8 | Add error_code to jobs | `jobs.error_code` |
+| 9 | Add trace_id threading | `jobs.trace_id`, `audit_log.trace_id` |
+| 10 | Environment variables with encryption | `global_environment`, `repo_environment` |
+| 11 | Per-repo preferences | `repo_preferences` |
 
 ---
 
@@ -629,6 +696,10 @@ LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writ
 The `IssueExecutor` (`legion/services/issue_executor.py`) owns the lifecycle of every background coroutine spawned to run a workflow.
 
 **Task lifecycle.** `IssueExecutor._track_task(coro, *, kind, job_id, issue_id)` is the single entry point for creating background coroutines. It registers the task in both `_background_tasks` (set) and `_tasks_by_job` (dict) and attaches a done-callback that logs non-`CancelledError` failures and publishes a `job_failed` WS event. `IssueExecutor.cancel_job(job_id)` is the centralised cancellation flow: cancel the live task (with a 5s grace), destroy the sandbox, update job+issue status, purge LangGraph checkpoints for the thread, and emit a `job.cancelled` audit event.
+
+**Trace ID threading (Plan H).** Every job is assigned a `trace_id` (format `trc-<12hex>`) at creation; the id is bound to structlog contextvars for the duration of `_run_workflow` and persisted onto every `audit_log` row written in that span. Use it as a grep key to reconstruct an issue's full timeline across logs and audit events.
+
+**Agent-initiated questions (Plan L — `ask_user`).** Agents can pause the pipeline mid-execution by calling `legion.sandbox.ask_user(question, category, options)`. The sandbox runner emits `agent_ask_user` events; `developer_node` picks them up and the graph routes to `ask_user_interrupt`, which raises `interrupt(...)` with the pending questions. `_handle_needs_info` persists questions to `issue_inputs` and transitions status to `awaiting_input` (reusing the triage-question infrastructure). On resume via `Command(resume=answers)`, the developer re-runs with a Q&A block prepended to its prompt. Capped at 5 rounds per job; past that the job fails with `ERR_MAX_AGENT_QUESTIONS`.
 
 ### Failure Classification
 
@@ -645,6 +716,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_WORKFLOW_UNKNOWN` | Referenced workflow is not registered. |
 | `ERR_SANDBOX_INIT` | Sandbox container creation failed. |
 | `ERR_DOCKER_TIMEOUT` | An underlying Docker command timed out. |
+| `ERR_MAX_AGENT_QUESTIONS` | Agent exceeded the 5-round `ask_user` cap (see Plan L). |
 | `ERR_UNKNOWN` | Uncategorised — dashboards should alert on growth. |
 
 ---

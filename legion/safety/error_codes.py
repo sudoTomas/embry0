@@ -26,4 +26,5 @@ class ErrorCode(StrEnum):
     WORKFLOW_UNKNOWN = "ERR_WORKFLOW_UNKNOWN"  # Referenced workflow not in registry
     SANDBOX_INIT = "ERR_SANDBOX_INIT"  # Sandbox container setup failed
     DOCKER_TIMEOUT = "ERR_DOCKER_TIMEOUT"  # Underlying docker command timed out
+    MAX_AGENT_QUESTIONS = "ERR_MAX_AGENT_QUESTIONS"  # Agent exceeded the ask_user round cap
     UNKNOWN = "ERR_UNKNOWN"  # Uncategorised — should diminish over time

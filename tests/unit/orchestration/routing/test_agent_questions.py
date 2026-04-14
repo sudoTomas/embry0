@@ -32,3 +32,22 @@ def test_route_after_developer_cycle_guard_fails_after_5_rounds():
     from legion.orchestration.routing.agent_questions import route_after_developer
 
     assert route_after_developer(state_ok) == "ask_user"
+
+
+def test_graph_router_routes_exhausted_to_over_budget():
+    """When agent_questions_exhausted=True, the graph's combined router must
+    bypass review (which would silently overwrite current_stage=failed) and
+    return "over_budget" so the graph transitions to max_retries."""
+    from legion.workflows.issue_to_pr.graph import _route_after_developer
+
+    # Even if pending questions or within-budget, exhausted flag wins.
+    state = {
+        "agent_questions_exhausted": True,
+        "pending_agent_questions": [{"question": "q"}],
+        "current_stage": "failed",
+    }
+    assert _route_after_developer(state) == "over_budget"
+
+    # Without the flag, normal routing applies (pending questions → ask_user).
+    state_normal = {"pending_agent_questions": [{"question": "q"}]}
+    assert _route_after_developer(state_normal) == "ask_user"

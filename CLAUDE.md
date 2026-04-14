@@ -9,6 +9,9 @@
 ## Environment
 
 - The user works from a laptop SSH-ed into a home server where Claude Code runs. When starting local servers (dev servers, visual companions, etc.), bind to `0.0.0.0` so they are accessible over the local network. Use `--host 0.0.0.0 --url-host 0.0.0.0` for the brainstorming visual companion.
+- `ENVIRONMENT_SECRET_KEY` drives Fernet encryption for per-repo env var secrets. If unset, Legion falls back to an insecure default and logs a warning. Rotating the key makes prior secrets undecryptable.
+- Agents can pause the pipeline to ask the user questions (`legion.sandbox.ask_user`). Capped at 5 rounds per job to prevent runaway loops; after the cap the job fails with `ERR_MAX_AGENT_QUESTIONS`.
+- Reserved env var keys (`LEGION_GIT_PROXY_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `GITHUB_TOKEN`) are blocked as user-settable env vars both at the API and at sandbox injection — don't attempt to override infrastructure variables via the environment UI.
 
 ## Deployment
 

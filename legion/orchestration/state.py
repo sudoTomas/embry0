@@ -127,3 +127,4 @@ class JobState(TypedDict, total=False):
     pending_agent_questions: list[dict[str, Any]]
     user_answers: Any
     agent_question_rounds: int  # cycle guard — capped at 5 rounds to prevent unbounded human-in-the-loop
+    agent_questions_exhausted: bool  # set True when agent_question_rounds cap hit; routes to terminal failure

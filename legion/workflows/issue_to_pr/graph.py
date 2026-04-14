@@ -37,9 +37,14 @@ def _route_after_developer(state: dict[str, Any]) -> Literal["ask_user", "within
     """Combined router after the developer node.
 
     Priority:
-    1. If the agent asked the user questions, divert to ask_user_interrupt.
-    2. Otherwise, apply the budget check (within_budget → review, over_budget → max_retries).
+    1. If the agent-question cycle cap has been hit, go straight to max_retries
+       (via "over_budget") so the terminal failure state is preserved — otherwise
+       review_node would overwrite current_stage and silently swallow the failure.
+    2. If the agent asked the user questions, divert to ask_user_interrupt.
+    3. Otherwise, apply the budget check (within_budget → review, over_budget → max_retries).
     """
+    if state.get("agent_questions_exhausted"):
+        return "over_budget"
     if route_for_agent_questions(state) == "ask_user":
         return "ask_user"
     return route_after_developer_budget(state)
