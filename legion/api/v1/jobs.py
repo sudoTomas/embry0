@@ -56,9 +56,7 @@ async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(
         except Exception:
             import structlog
 
-            structlog.get_logger(__name__).warning(
-                "cost_breakdown_query_failed", job_id=job_id, exc_info=True
-            )
+            structlog.get_logger(__name__).warning("cost_breakdown_query_failed", job_id=job_id, exc_info=True)
             job["cost_breakdown"] = []
     return job
 
