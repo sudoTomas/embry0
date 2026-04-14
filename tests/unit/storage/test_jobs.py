@@ -106,3 +106,27 @@ async def test_append_log_event_returns_monotonic_seq(jobs_repo):
     assert isinstance(seq1, int) and seq1 > 0
     assert seq2 > seq1
     assert seq3 > seq2
+
+
+@pytest.mark.asyncio
+async def test_get_log_events_filters_by_since_seq(jobs_repo):
+    """get_log_events(..., since_seq=N) returns only rows with id > N.
+
+    Enables the WS replay cursor — client reconnects with its last-seen seq
+    and only gets newer events."""
+    job_id = await jobs_repo.create(repo="o/r", task="t")
+    seq1 = await jobs_repo.append_log_event(job_id, {"type": "progress", "n": 1})
+    seq2 = await jobs_repo.append_log_event(job_id, {"type": "progress", "n": 2})
+    seq3 = await jobs_repo.append_log_event(job_id, {"type": "progress", "n": 3})
+
+    all_events = await jobs_repo.get_log_events(job_id)
+    assert len(all_events) == 3
+
+    # since_seq=seq1 — return only events after the first
+    after_first = await jobs_repo.get_log_events(job_id, since_seq=seq1)
+    assert len(after_first) == 2
+    assert all(e["id"] > seq1 for e in after_first)
+
+    # since_seq=seq3 — return nothing (nothing newer)
+    after_last = await jobs_repo.get_log_events(job_id, since_seq=seq3)
+    assert after_last == []
