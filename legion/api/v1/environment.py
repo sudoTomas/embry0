@@ -54,9 +54,7 @@ def _mask_var(var: dict[str, Any]) -> EnvVarResponse:
     )
 
 
-async def _encrypt_vars(
-    variables: list[dict[str, Any]], provider: FernetSecretsProvider
-) -> list[dict[str, Any]]:
+async def _encrypt_vars(variables: list[dict[str, Any]], provider: FernetSecretsProvider) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for v in variables:
         d = dict(v)
@@ -66,9 +64,7 @@ async def _encrypt_vars(
     return out
 
 
-async def _decrypt_vars(
-    variables: list[dict[str, Any]], provider: FernetSecretsProvider
-) -> list[dict[str, Any]]:
+async def _decrypt_vars(variables: list[dict[str, Any]], provider: FernetSecretsProvider) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for v in variables:
         d = dict(v)
@@ -93,9 +89,7 @@ async def get_global_environment(request: Request) -> EnvironmentResponse:
 
 
 @router.put("/environment/global", response_model=EnvironmentResponse)
-async def set_global_environment(
-    req: EnvironmentSetRequest, request: Request
-) -> EnvironmentResponse:
+async def set_global_environment(req: EnvironmentSetRequest, request: Request) -> EnvironmentResponse:
     provider = _get_secrets_provider(request.app.state.config.environment_secret_key)
     env_repo = request.app.state.env_repo
     raw = [v.model_dump() for v in req.variables]
@@ -132,9 +126,7 @@ async def get_repo_environment(owner: str, repo: str, request: Request) -> Envir
 
 
 @router.get("/repos/{owner}/{repo}/environment/resolve", response_model=EnvironmentResponse)
-async def resolve_repo_environment(
-    owner: str, repo: str, request: Request
-) -> EnvironmentResponse:
+async def resolve_repo_environment(owner: str, repo: str, request: Request) -> EnvironmentResponse:
     env_repo = request.app.state.env_repo
     merged: dict[str, dict] = {}
     for v in await env_repo.get_global():
@@ -157,12 +149,8 @@ async def set_repo_environment(
     return EnvironmentResponse(variables=[_mask_var(r) for r in rows])
 
 
-@router.get(
-    "/repos/{owner}/{repo}/environment/{key}/reveal", response_model=RevealResponse
-)
-async def reveal_repo_secret(
-    owner: str, repo: str, key: str, request: Request
-) -> RevealResponse:
+@router.get("/repos/{owner}/{repo}/environment/{key}/reveal", response_model=RevealResponse)
+async def reveal_repo_secret(owner: str, repo: str, key: str, request: Request) -> RevealResponse:
     env_repo = request.app.state.env_repo
     rows = await env_repo.get_repo(f"{owner}/{repo}")
     var = next((r for r in rows if r["key"] == key), None)
@@ -178,9 +166,7 @@ async def reveal_repo_secret(
 
 
 @router.delete("/repos/{owner}/{repo}/environment/{key}", status_code=204, response_model=None)
-async def delete_repo_env_var(
-    owner: str, repo: str, key: str, request: Request
-) -> None:
+async def delete_repo_env_var(owner: str, repo: str, key: str, request: Request) -> None:
     env_repo = request.app.state.env_repo
     await env_repo.delete_repo_var(f"{owner}/{repo}", key)
 
@@ -234,9 +220,7 @@ def _parse_env_file(content: str) -> list[dict[str, Any]]:
 
 
 @router.get("/repos/{owner}/{repo}/environment/detect", response_model=DetectResponse)
-async def detect_repo_environment(
-    owner: str, repo: str, request: Request
-) -> DetectResponse:
+async def detect_repo_environment(owner: str, repo: str, request: Request) -> DetectResponse:
     full_repo = f"{owner}/{repo}"
     github_token = os.environ.get("GITHUB_TOKEN", "")
 

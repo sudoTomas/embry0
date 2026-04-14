@@ -34,13 +34,11 @@ def test_parse_env_file_classifies_secrets():
 def test_parse_env_file_ignores_blank_separated_comments():
     content = "# orphan comment\n\nMODE=value\n"
     parsed = _parse_env_file(content)
-    assert parsed == [
-        {"key": "MODE", "default_value": "value", "description": "", "suggested_type": "config"}
-    ]
+    assert parsed == [{"key": "MODE", "default_value": "value", "description": "", "suggested_type": "config"}]
 
 
 def test_parse_env_file_strips_quotes():
-    parsed = _parse_env_file('NAME="hello world"\nOTHER=\'quoted\'\n')
+    parsed = _parse_env_file("NAME=\"hello world\"\nOTHER='quoted'\n")
     values = {v["key"]: v["default_value"] for v in parsed}
     assert values == {"NAME": "hello world", "OTHER": "quoted"}
 

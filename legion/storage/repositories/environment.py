@@ -22,9 +22,7 @@ class EnvironmentRepository:
         self._db = db
 
     async def get_global(self) -> list[dict[str, Any]]:
-        rows = await self._db.fetch(
-            "SELECT key, value, var_type, description FROM global_environment ORDER BY key"
-        )
+        rows = await self._db.fetch("SELECT key, value, var_type, description FROM global_environment ORDER BY key")
         return [dict(r) for r in rows]
 
     async def set_global(self, variables: list[dict[str, Any]]) -> None:
@@ -70,6 +68,4 @@ class EnvironmentRepository:
                 )
 
     async def delete_repo_var(self, repo: str, key: str) -> None:
-        await self._db.execute(
-            "DELETE FROM repo_environment WHERE repo = $1 AND key = $2", repo, key
-        )
+        await self._db.execute("DELETE FROM repo_environment WHERE repo = $1 AND key = $2", repo, key)
