@@ -92,6 +92,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.exception("orphan_recovery_failed")
 
+    # Orphan inputs: purge issue_inputs whose parent job is no longer in
+    # awaiting_input or paused. Closes the window where a crash between
+    # creating inputs and transitioning job status would leave stale rows.
+    try:
+        purged = await db.execute(
+            """
+            DELETE FROM issue_inputs
+            WHERE job_id IN (
+                SELECT job_id FROM jobs
+                WHERE status NOT IN ('awaiting_input', 'paused')
+            )
+            """
+        )
+        # execute returns a status string like "DELETE 5"; log it for observability
+        logger.info("orphan_inputs_purged", status=purged)
+    except Exception:
+        logger.exception("orphan_inputs_purge_failed")
+
     app.state.db = db
 
     app.state.jobs_repo = JobsRepository(db)
