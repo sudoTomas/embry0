@@ -243,11 +243,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     logger.info("legion_stopping")
-    tasks = app.state.background_tasks
+    # Snapshot the task set BEFORE cancelling so the done-callback that
+    # removes tasks from the set can't mutate what we're iterating.
+    tasks = list(app.state.background_tasks)
     if tasks:
         for task in tasks:
             task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # Bounded wait — don't hang shutdown forever if a task refuses to cancel.
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=30,
+            )
+        except TimeoutError:
+            logger.warning(
+                "background_tasks_shutdown_timeout",
+                remaining=len([t for t in tasks if not t.done()]),
+            )
     await reaper.stop()
     await proxy_mgr.stop()
     await db.close()
