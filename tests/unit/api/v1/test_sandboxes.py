@@ -35,10 +35,7 @@ async def test_list_sandboxes_parses_ps_output(app):
     mock_docker = MagicMock()
     mock_docker._build_base_cmd = MagicMock(return_value=["docker"])
     mock_docker.run_cmd = AsyncMock(
-        return_value=(
-            "sandbox-abc|Up 2 hours|2 hours ago\n"
-            "sandbox-def|Exited (0) 5 minutes ago|5 minutes ago\n"
-        )
+        return_value=("sandbox-abc|Up 2 hours|2 hours ago\nsandbox-def|Exited (0) 5 minutes ago|5 minutes ago\n")
     )
     app.state.docker = mock_docker
 
