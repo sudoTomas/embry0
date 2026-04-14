@@ -40,6 +40,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Recover orphaned jobs from previous orchestrator lifecycle
     try:
+        from legion.safety.error_codes import ErrorCode
+
         orphaned = await db.fetch("SELECT job_id FROM jobs WHERE status IN ('running', 'pending')")
         if orphaned:
             orphaned_ids = [r["job_id"] for r in orphaned]
@@ -49,9 +51,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 UPDATE jobs
                 SET status = 'failed',
                     error_message = 'Orchestrator restarted — job was orphaned',
-                    error_code = 'ERR_ORPHANED'
+                    error_code = $1
                 WHERE status IN ('running', 'pending')
-                """
+                """,
+                ErrorCode.ORPHANED.value,
             )
             # Append synthetic node_failed events to job_logs so the frontend
             # event timeline reflects the orphaned state

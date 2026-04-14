@@ -464,11 +464,19 @@ class IssueExecutor:
             failed_stages = {"abandoned", "triage_failed", "developer_retry"}
             has_errors = bool(result.get("errors"))
             final_status = "failed" if current_stage in failed_stages or has_errors else "completed"
+            # Classify the failure: graph nodes may have set a specific error_code
+            # in state (e.g. ERR_TRIAGE_MALFORMED); otherwise bucket as UNKNOWN.
+            error_code: str | None = None
+            if final_status == "failed":
+                from legion.safety.error_codes import ErrorCode
+
+                error_code = result.get("error_code") or ErrorCode.UNKNOWN.value
             await self._jobs.update(
                 job_id,
                 status=final_status,
                 pr_url=result.get("pr_url"),
                 error_message=result.get("result_summary") if final_status == "failed" else None,
+                error_code=error_code,
                 total_cost_usd=result.get("total_cost_usd", 0.0),
                 finished_at=datetime.now(UTC),
             )
