@@ -22,6 +22,7 @@ from legion.storage.repositories.integration_config import IntegrationConfigRepo
 from legion.storage.repositories.jobs import JobsRepository
 from legion.storage.repositories.pipeline_templates import PipelineTemplatesRepository
 from legion.storage.repositories.provider_config import ProviderConfigRepository
+from legion.storage.repositories.repo_preferences import RepoPreferencesRepository
 from legion.storage.repositories.sandbox_profiles import SandboxProfilesRepository
 from legion.storage.repositories.traces import TracesRepository
 from legion.workflows.issue_to_pr.graph import IssueToprWorkflow
@@ -130,6 +131,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.integration_repo = IntegrationConfigRepository(db)
     app.state.provider_repo = ProviderConfigRepository(db)
     app.state.env_repo = EnvironmentRepository(db)
+    app.state.repo_preferences_repo = RepoPreferencesRepository(db)
 
     from legion.services.github_sync import GitHubSyncService
     from legion.storage.repositories.issue_inputs import IssueInputsRepository
@@ -331,6 +333,7 @@ def _register_routers(app: FastAPI) -> None:
         jobs,
         pipeline_templates,
         queue,
+        repo_preferences,
         sandbox_profiles,
         sandboxes,
         stats,
@@ -354,6 +357,9 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(queue.router, prefix="/api/v1", tags=["queue"], dependencies=auth_deps)
     app.include_router(pipeline_templates.router, prefix="/api/v1", tags=["pipeline-templates"], dependencies=auth_deps)
     app.include_router(environment.router, prefix="/api/v1", tags=["environment"], dependencies=auth_deps)
+    app.include_router(
+        repo_preferences.router, prefix="/api/v1", tags=["repo-preferences"], dependencies=auth_deps
+    )
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
     app.include_router(telegram.router, prefix="/api/v1", tags=["telegram"])
     app.include_router(streaming.router)

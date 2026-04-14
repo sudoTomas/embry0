@@ -329,6 +329,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_repo_environment_repo ON repo_environment (repo);
         """,
     ),
+    (
+        11,
+        "repo_preferences — per-repo sandbox profile + language hints",
+        """
+        CREATE TABLE IF NOT EXISTS repo_preferences (
+            repo             TEXT PRIMARY KEY,
+            sandbox_profile  TEXT,
+            language_hint    TEXT,
+            notes            TEXT DEFAULT '',
+            updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """,
+    ),
 ]
 
 
