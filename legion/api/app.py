@@ -95,6 +95,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Orphan inputs: purge issue_inputs whose parent job is no longer in
     # awaiting_input or paused. Closes the window where a crash between
     # creating inputs and transitioning job status would leave stale rows.
+    # Safe to run unguarded: no executor is live yet (app.state.issue_executor
+    # is built below); no concurrent _handle_needs_info can race this DELETE.
+    # If future refactors move executor construction earlier, revisit this.
     try:
         purged = await db.execute(
             """

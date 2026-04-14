@@ -219,8 +219,17 @@ async def test_track_task_removes_from_set_on_exception():
 
 
 @pytest.mark.asyncio
-async def test_handle_needs_info_rolls_back_on_update_failure():
-    """If updating job status fails mid-commit, input rows must NOT persist."""
+async def test_handle_needs_info_sequences_inserts_before_updates():
+    """Sequencing guard: _handle_needs_info must issue ALL INSERTs via the
+    transaction conn BEFORE any UPDATE, and the UPDATE must propagate failure
+    up to the caller.
+
+    This test verifies the SEQUENCE of SQL dispatch (so a future refactor
+    can't silently move an INSERT onto a pool-level connection outside the
+    transaction). It does NOT verify transactional rollback semantics — the
+    real-DB end-to-end rollback behaviour is covered by
+    test_handle_needs_info_real_transaction_rolls_back_inserts below.
+    """
     from legion.services.issue_executor import IssueExecutor
 
     # Build a fake db with a transaction() that raises on the second statement
