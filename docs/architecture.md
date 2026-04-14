@@ -130,8 +130,8 @@ stateDiagram-v2
     triaging --> paused: paused explicitly
     awaiting_input --> triaging: all questions answered
     awaiting_input --> paused: TTL exceeded
-    paused --> running: resumed
-    paused --> open: cancelled
+    paused --> in_progress: resumed
+    paused --> open: reaper expired
     in_progress --> closed: all jobs completed
     open --> cancelled: user cancels
     closed --> [*]
