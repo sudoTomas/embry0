@@ -124,3 +124,5 @@ class JobState(TypedDict, total=False):
     branch_name: str | None
     pr_url: str | None
     result_summary: str | None
+    pending_agent_questions: list[dict[str, Any]]
+    user_answers: Any

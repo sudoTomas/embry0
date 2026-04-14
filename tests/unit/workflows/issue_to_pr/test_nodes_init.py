@@ -5,6 +5,39 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
+def test_extract_ask_user_events_normalizes_fields():
+    """_extract_ask_user_events pulls agent_ask_user events out of the event
+    stream and normalizes each to {question, category, options, asking_node,
+    importance}. Non-matching events are ignored."""
+    from legion.workflows.issue_to_pr.nodes import _extract_ask_user_events
+
+    agent_output = {
+        "events": [
+            {"type": "text", "text": "hello"},
+            {
+                "type": "agent_ask_user",
+                "question": "q1",
+                "category": "design",
+                "options": ["a", "b"],
+            },
+            {"type": "agent_ask_user", "question": "q2", "category": "general"},
+            {"type": "tool_call", "name": "Read"},
+        ]
+    }
+
+    pending = _extract_ask_user_events(agent_output)
+
+    assert len(pending) == 2
+    assert pending[0]["question"] == "q1"
+    assert pending[0]["category"] == "design"
+    assert pending[0]["options"] == ["a", "b"]
+    assert pending[0]["asking_node"] == "developer"
+    assert pending[0]["importance"] == "blocking"
+    assert pending[1]["question"] == "q2"
+    assert pending[1]["category"] == "general"
+    assert pending[1]["options"] == []
+
+
 @pytest.mark.asyncio
 async def test_init_node_passes_git_proxy_url_to_sandbox():
     """Init node must pass LEGION_GIT_PROXY_URL into the sandbox env based on
