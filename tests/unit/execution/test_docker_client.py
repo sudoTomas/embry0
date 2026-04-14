@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -135,3 +136,37 @@ async def test_run_cmd_failure():
 
         with pytest.raises(RuntimeError, match="something failed"):
             await client.run_cmd(["docker", "ps"])
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_kills_subprocess_on_timeout(monkeypatch):
+    """When wait_for times out, the subprocess must be killed (not left
+    running as a zombie that holds Docker daemon slots)."""
+    killed = False
+
+    class _FakeProc:
+        def __init__(self) -> None:
+            self.pid = 123456
+            self.returncode = -9
+
+        async def communicate(self):
+            await asyncio.sleep(30)  # longer than timeout — wait_for will fire
+
+        def kill(self) -> None:
+            nonlocal killed
+            killed = True
+
+        async def wait(self) -> int:
+            return -9
+
+    async def _fake_create(*args, **kwargs):
+        return _FakeProc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+
+    client = DockerClient(docker_host="tcp://fake", tls_verify=False, cert_path="")
+
+    with pytest.raises(TimeoutError):
+        await client.run_cmd(["docker", "ps"], timeout=1)
+
+    assert killed, "subprocess was not killed on timeout"
