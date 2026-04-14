@@ -54,6 +54,11 @@ async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(
         try:
             job["cost_breakdown"] = await traces_repo.sum_by_agent_for_job(job_id)
         except Exception:
+            import structlog
+
+            structlog.get_logger(__name__).warning(
+                "cost_breakdown_query_failed", job_id=job_id, exc_info=True
+            )
             job["cost_breakdown"] = []
     return job
 

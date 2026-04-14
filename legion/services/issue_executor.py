@@ -351,7 +351,7 @@ class IssueExecutor:
                 cv.bind_contextvars(trace_id=trace_id)
                 trace_id_bound = True
         except Exception:
-            pass
+            logger.warning("trace_id_bind_failed", job_id=job_id, exc_info=True)
 
         final_state: dict[str, Any] | None = None
         try:
@@ -457,7 +457,7 @@ class IssueExecutor:
                 try:
                     cv.unbind_contextvars("trace_id")
                 except Exception:
-                    pass
+                    logger.warning("trace_id_unbind_failed", job_id=job_id, exc_info=True)
 
     async def _handle_workflow_result(self, issue_id: str, job_id: str, result: dict[str, Any]) -> None:
         """Process the workflow result and update issue/job status."""
