@@ -19,6 +19,7 @@
 - The frontend is served via nginx on port 8200 and proxies `/api` to the orchestrator container.
 - Always verify health after restart: `curl -s http://localhost:8200/health`
 - The Cloudflare tunnel at `legion.alchymielabs.com` is restricted to webhook paths only (`/api/v1/webhook`, `/api/v1/telegram/callback`). NEVER expose the full app via the tunnel.
+- For local development without a public URL, use the smee.io relay: set `DEV_MODE=true` and leave `GITHUB_WEBHOOK_SECRET` empty, then run `npx smee-client --url https://smee.io/<channel> --target http://localhost:8200/api/v1/webhook`. `DEV_MODE=true` is required because smee re-serializes the payload, invalidating GitHub's HMAC signature. See README "Webhook Setup" for full steps. Never use this configuration in production.
 
 ## Sandbox
 
