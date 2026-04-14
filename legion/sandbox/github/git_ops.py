@@ -5,6 +5,7 @@ appear in sandbox process memory or CLI arguments.
 """
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -27,6 +28,34 @@ def build_clone_url(repo: str) -> str:
 def build_credential_helper_script(git_proxy_url: str) -> str:
     """Build a git credential helper script that queries the git proxy."""
     return f'#!/bin/sh\ncurl -sf "{git_proxy_url}/git-credentials"\n'
+
+
+# Strict format for git proxy URLs: http://host:port (no path, no query).
+# ProxyManager produces URLs like http://host.docker.internal:9101. We validate
+# defensively so that a future change to the source of the URL can't introduce
+# shell injection via the `git config` command we build from it.
+_GIT_PROXY_URL_RE = re.compile(r"^http://[a-zA-Z0-9.\-]+:\d+$")
+
+
+def build_sandbox_credential_config_cmd(git_proxy_url: str) -> str:
+    """Build the bash snippet that configures git inside a sandbox container
+    to use the credential proxy.
+
+    Used by the orchestrator-side init node to set up git via ``docker exec``.
+    The returned string is a single ``git config --global credential.helper ...``
+    command (no trailing semicolon) suitable for chaining with ``&&``.
+
+    Raises:
+        ValueError: if ``git_proxy_url`` does not match ``http://host:port``.
+    """
+    if not _GIT_PROXY_URL_RE.fullmatch(git_proxy_url):
+        raise ValueError(
+            f"git_proxy_url must match http://host:port (got: {git_proxy_url!r})"
+        )
+    return (
+        f'git config --global credential.helper '
+        f'"!f() {{ curl -sf {git_proxy_url}/git-credentials; }}; f"'
+    )
 
 
 def configure_git_credentials(git_proxy_url: str) -> str:

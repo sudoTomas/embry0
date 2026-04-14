@@ -52,11 +52,13 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
         # orchestrator's token without the token ever being visible to agent code.
         if repo and docker:
             if git_proxy_url:
+                from legion.sandbox.github.git_ops import build_sandbox_credential_config_cmd
+
+                cred_cmd = build_sandbox_credential_config_cmd(git_proxy_url)
                 setup_cmd = [
                     "bash",
                     "-c",
-                    "git config --global credential.helper "
-                    f'"!f() {{ curl -sf {git_proxy_url}/git-credentials; }}; f" && '
+                    f"{cred_cmd} && "
                     'git config --global user.email "legion@alchymielabs.com" && '
                     'git config --global user.name "Legion Bot"',
                 ]
@@ -72,15 +74,24 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                     "clone and push to private repos will fail.",
                 )
 
+            # Fail loudly on clone error — if /workspace isn't a git repo, every
+            # downstream agent call silently misbehaves. `set -e` surfaces a
+            # non-zero exit from `git clone` which DockerClient.run_cmd then
+            # raises as RuntimeError.
             clone_cmd = [
                 "bash",
                 "-c",
-                f'git clone --depth=1 https://github.com/{repo}.git /workspace 2>&1 || echo "Clone failed"',
+                f"set -e && git clone --depth=1 https://github.com/{repo}.git /workspace",
             ]
-            await docker.run_cmd(
-                docker.build_exec_cmd(container_id, clone_cmd),
-                timeout=120,
-            )
+            try:
+                await docker.run_cmd(
+                    docker.build_exec_cmd(container_id, clone_cmd),
+                    timeout=120,
+                )
+            except RuntimeError as exc:
+                logger.error("repo_clone_failed", job_id=job_id, repo=repo, error=str(exc))
+                writer({"type": "error", "message": f"Repository clone failed for {repo}: {exc}"})
+                raise RuntimeError(f"Repository clone failed for {repo}: {exc}") from exc
             writer({"type": "progress", "message": f"Repository {repo} cloned"})
             logger.info("repo_cloned", job_id=job_id, repo=repo)
     except Exception as exc:
