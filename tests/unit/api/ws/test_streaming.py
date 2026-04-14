@@ -12,7 +12,9 @@ def test_websocket_connect():
     """WebSocket connects successfully."""
     config = LegionConfig(_env_file=None, dev_mode=True)
     app = create_app(config)
-    app.state.event_subscribers = {}
+    from legion.api.events.bus import EventBus
+
+    app.state.event_bus = EventBus()
 
     client = TestClient(app)
     with client.websocket_connect("/ws/jobs/job-123/events"):

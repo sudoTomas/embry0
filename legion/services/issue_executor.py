@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from legion.api.events.bus import EventBus
 
 from legion.audit.helpers import emit_audit
 from legion.orchestration.checkpoint import checkpointer_context
@@ -35,7 +38,7 @@ class IssueExecutor:
         sandbox_manager: Any = None,
         agent_runner: Any = None,
         proxy_manager: Any = None,
-        event_subscribers: dict | None = None,
+        event_bus: "EventBus | None" = None,
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
@@ -49,7 +52,7 @@ class IssueExecutor:
         self._sandbox = sandbox_manager
         self._agent_runner = agent_runner
         self._proxy = proxy_manager
-        self._event_subscribers = event_subscribers or {}
+        self._event_bus = event_bus
         self._background_tasks: set[asyncio.Task] = set()
 
     def _build_graph_config(self, job_id: str) -> dict[str, Any]:
@@ -391,20 +394,11 @@ class IssueExecutor:
             except Exception:
                 logger.warning("cost_update_failed", job_id=job_id, exc_info=True)
 
-        # Forward to WebSocket subscribers. One failing subscriber must not block
-        # delivery to others, but silent failures cause hard-to-debug client
-        # desyncs — log with enough context to diagnose.
-        subscribers = self._event_subscribers.get(job_id, [])
-        for queue in subscribers:
-            try:
-                queue.put_nowait(event)
-            except Exception as exc:
-                logger.warning(
-                    "subscriber_put_failed",
-                    job_id=job_id,
-                    event_type=event.get("type", "unknown"),
-                    error=str(exc),
-                )
+        # Forward to WebSocket subscribers via the concurrency-safe event bus.
+        # The bus logs individual subscriber failures; we skip if no bus was
+        # injected (test shim).
+        if self._event_bus is not None:
+            await self._event_bus.publish(job_id, event)
 
     async def _handle_needs_info(self, issue_id: str, job_id: str, decision: dict[str, Any]) -> None:
         """Create input records, dispatch notifications, and pause for blocking questions."""
