@@ -114,6 +114,7 @@ async def test_track_task_registers_and_removes_on_completion():
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
+    executor._tasks_by_job = {}
     executor._event_bus = EventBus()
 
     completed = asyncio.Event()
@@ -137,6 +138,7 @@ async def test_track_task_logs_and_publishes_on_failure(capsys):
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
+    executor._tasks_by_job = {}
     executor._event_bus = EventBus()
 
     queue = await executor._event_bus.subscribe("job-1")
@@ -176,6 +178,7 @@ async def test_track_task_ignores_cancelled_error(capsys):
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
+    executor._tasks_by_job = {}
     executor._event_bus = EventBus()
 
     queue = await executor._event_bus.subscribe("job-1")
@@ -204,6 +207,7 @@ async def test_track_task_removes_from_set_on_exception():
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
+    executor._tasks_by_job = {}
     executor._event_bus = EventBus()
 
     async def _boom() -> None:
@@ -290,3 +294,131 @@ async def test_handle_needs_info_sequences_inserts_before_updates():
     # The test of _actual_ rollback behavior is in the storage layer tests.
     insert_count = sum(1 for q in db.conn.executed if "INSERT INTO issue_inputs" in q)
     assert insert_count == 2, "both INSERTs should have been attempted before the UPDATE"
+
+
+@pytest.mark.asyncio
+async def test_track_task_registers_in_tasks_by_job():
+    """_track_task must populate _tasks_by_job with the new task."""
+    from legion.api.events.bus import EventBus
+    from legion.services.issue_executor import IssueExecutor
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._background_tasks = set()
+    executor._tasks_by_job = {}
+    executor._event_bus = EventBus()
+
+    async def _work() -> None:
+        await asyncio.sleep(0.1)
+
+    task = executor._track_task(_work(), kind="workflow", job_id="job-1")
+    assert executor._tasks_by_job.get("job-1") is task
+
+    await task
+    await asyncio.sleep(0)
+    assert "job-1" not in executor._tasks_by_job
+
+
+@pytest.mark.asyncio
+async def test_cancel_job_cancels_running_task(monkeypatch):
+    """cancel_job cancels the active task, purges sandbox/checkpoints/status."""
+    from legion.api.events.bus import EventBus
+    from legion.services.issue_executor import IssueExecutor
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._background_tasks = set()
+    executor._tasks_by_job = {}
+    executor._event_bus = EventBus()
+    executor._database_url = "postgres://stub"
+    executor._audit_log_path = None
+    executor._db = MagicMock()
+
+    jobs = MagicMock()
+    jobs.update = AsyncMock()
+    jobs.get = AsyncMock(return_value={"job_id": "job-1", "issue_id": "iss-1"})
+    executor._jobs = jobs
+
+    issues = MagicMock()
+    issues.update = AsyncMock()
+    executor._issues = issues
+
+    sandbox = MagicMock()
+    sandbox.destroy = AsyncMock()
+    executor._sandbox = sandbox
+
+    # Stub purge_thread to avoid real DB
+    import legion.orchestration.checkpoint as ckpt_mod
+
+    purge_calls: list[tuple[str, str]] = []
+
+    async def _fake_purge(url: str, thread_id: str) -> None:
+        purge_calls.append((url, thread_id))
+
+    monkeypatch.setattr(ckpt_mod, "purge_thread", _fake_purge)
+
+    # Stub emit_audit (imported into issue_executor)
+    import legion.services.issue_executor as exec_mod
+
+    audit_calls: list[dict] = []
+
+    async def _fake_audit(*args, **kwargs):
+        audit_calls.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setattr(exec_mod, "emit_audit", _fake_audit)
+
+    # Start a slow task that we'll cancel
+    started = asyncio.Event()
+
+    async def _slow() -> None:
+        started.set()
+        await asyncio.sleep(10)
+
+    task = executor._track_task(_slow(), kind="workflow", job_id="job-1")
+    await started.wait()
+
+    await executor.cancel_job("job-1", actor="tester")
+
+    assert task.cancelled()
+    sandbox.destroy.assert_awaited_once_with("sandbox-job-1")
+    jobs.update.assert_any_await("job-1", status="cancelled")
+    issues.update.assert_any_await("iss-1", status="open")
+    assert purge_calls == [("postgres://stub", "job-1")]
+    assert any("job.cancelled" in str(a) for a in audit_calls)
+
+
+@pytest.mark.asyncio
+async def test_cancel_job_is_idempotent_when_no_task(monkeypatch):
+    """cancel_job called for a job with no live task completes cleanly."""
+    from legion.services.issue_executor import IssueExecutor
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._background_tasks = set()
+    executor._tasks_by_job = {}
+    executor._event_bus = None
+    executor._database_url = "postgres://stub"
+    executor._audit_log_path = None
+    executor._db = MagicMock()
+
+    jobs = MagicMock()
+    jobs.update = AsyncMock()
+    jobs.get = AsyncMock(return_value=None)
+    executor._jobs = jobs
+
+    issues = MagicMock()
+    issues.update = AsyncMock()
+    executor._issues = issues
+    executor._sandbox = None  # no sandbox to destroy
+
+    async def _fake_purge(url, tid):
+        pass
+
+    async def _fake_audit(*a, **k):
+        pass
+
+    import legion.orchestration.checkpoint as ckpt_mod
+    import legion.services.issue_executor as exec_mod
+
+    monkeypatch.setattr(ckpt_mod, "purge_thread", _fake_purge)
+    monkeypatch.setattr(exec_mod, "emit_audit", _fake_audit)
+
+    await executor.cancel_job("job-nonexistent")
+    # Should not raise
