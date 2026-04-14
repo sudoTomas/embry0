@@ -56,6 +56,7 @@ class IssueExecutor:
         self._proxy = proxy_manager
         self._event_bus = event_bus
         self._background_tasks: set[asyncio.Task] = set()
+        self._tasks_by_job: dict[str, asyncio.Task] = {}
 
     def _build_graph_config(self, job_id: str) -> dict[str, Any]:
         """Build the graph config dict for LangGraph execution."""
@@ -188,9 +189,15 @@ class IssueExecutor:
         """
         task = asyncio.create_task(coro)
         self._background_tasks.add(task)
+        self._tasks_by_job[job_id] = task
 
         def _on_done(t: asyncio.Task) -> None:
             self._background_tasks.discard(t)
+            # Only remove from _tasks_by_job if this task is still the one
+            # registered for that job_id (it may have been overwritten by a
+            # later task tracked under the same job_id).
+            if self._tasks_by_job.get(job_id) is t:
+                self._tasks_by_job.pop(job_id, None)
             if t.cancelled():
                 return
             exc = t.exception()
@@ -224,6 +231,68 @@ class IssueExecutor:
 
         task.add_done_callback(_on_done)
         return task
+
+    async def cancel_job(self, job_id: str, *, actor: str = "system") -> None:
+        """Centralised cancellation: cancels the active task, purges the
+        sandbox, purges the LangGraph checkpoint, transitions DB status,
+        resets the associated issue. Idempotent.
+        """
+        from legion.orchestration.checkpoint import purge_thread
+
+        # 1. Cancel the live task (best effort — may already be done)
+        task = self._tasks_by_job.get(job_id)
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                # Cancellation propagated; done-callback handles logging.
+                pass
+
+        # 2. Destroy sandbox (idempotent)
+        container_name = f"sandbox-{job_id}"
+        if self._sandbox is not None:
+            try:
+                await self._sandbox.destroy(container_name)
+            except Exception:
+                logger.warning("sandbox_destroy_on_cancel_failed", job_id=job_id, exc_info=True)
+
+        # 3. Update DB: job → cancelled, issue → open
+        try:
+            await self._jobs.update(job_id, status="cancelled")
+        except Exception:
+            logger.warning("job_status_cancel_update_failed", job_id=job_id, exc_info=True)
+        job = None
+        try:
+            job = await self._jobs.get(job_id)
+        except Exception:
+            pass
+        if job and job.get("issue_id"):
+            try:
+                await self._issues.update(job["issue_id"], status="open")
+            except Exception:
+                logger.warning("issue_reset_on_cancel_failed", issue_id=job["issue_id"], exc_info=True)
+
+        # 4. Purge LangGraph checkpoints for this thread
+        try:
+            await purge_thread(self._database_url, job_id)
+        except Exception:
+            logger.warning("checkpoint_purge_failed", job_id=job_id, exc_info=True)
+
+        # 5. Emit audit event (best effort)
+        try:
+            await emit_audit(
+                self._db,
+                "job.cancelled",
+                actor=actor,
+                details={"job_id": job_id},
+                audit_log_path=self._audit_log_path,
+                issue_id=job.get("issue_id") if job else None,
+            )
+        except Exception:
+            pass
+
+        logger.info("job_cancelled", job_id=job_id, actor=actor)
 
     async def _cleanup_sandbox(self, final_state: dict[str, Any] | None, job_id: str) -> None:
         """Destroy the sandbox container if present."""
