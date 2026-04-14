@@ -180,16 +180,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cmd = docker._build_base_cmd()
         cmd.extend(["ps", "-a", "--filter", "name=sandbox-", "--format", "{{.Names}}"])
         output = await docker.run_cmd(cmd, timeout=15)
+        total = 0
+        failed = 0
         if output.strip():
             for container_name in output.strip().split("\n"):
                 container_name = container_name.strip()
                 if not container_name:
                     continue
+                total += 1
                 logger.info("cleaning_orphaned_container", container=container_name)
                 try:
                     await sandbox_mgr.destroy(container_name)
                 except Exception:
+                    failed += 1
                     logger.warning("orphaned_container_cleanup_failed", container=container_name)
+        if total:
+            logger.info("orphaned_container_cleanup_summary", total=total, failed=failed)
+        if failed:
+            logger.warning(
+                "orphaned_container_cleanup_partial",
+                total=total,
+                failed=failed,
+                msg="Some orphaned containers could not be cleaned up; manual docker rm may be needed.",
+            )
     except Exception:
         logger.warning("orphaned_container_scan_failed", exc_info=True)
 
