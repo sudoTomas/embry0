@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/Card";
 import { EnvVarTable } from "@/components/environments/EnvVarTable";
 import { EnvVarModal } from "@/components/environments/EnvVarModal";
 import { DetectBanner } from "@/components/environments/DetectBanner";
+import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
 import { TableSkeleton } from "@/components/ui/PageSkeleton";
 import { FolderOpen, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -282,6 +283,8 @@ export function EnvironmentsPage() {
             </form>
 
             {validRepo && <DetectBanner owner={owner} repo={repoName} onImport={handleImport} />}
+
+            {validRepo && <RepoPreferencesSection owner={owner} repo={repoName} />}
 
             {validRepo ? (
               <Card className="p-0">
