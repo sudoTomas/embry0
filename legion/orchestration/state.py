@@ -124,3 +124,6 @@ class JobState(TypedDict, total=False):
     branch_name: str | None
     pr_url: str | None
     result_summary: str | None
+    pending_agent_questions: list[dict[str, Any]]
+    user_answers: Any
+    agent_question_rounds: int  # cycle guard — capped at 5 rounds to prevent unbounded human-in-the-loop

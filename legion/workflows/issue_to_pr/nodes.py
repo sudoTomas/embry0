@@ -283,6 +283,77 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     return result
 
 
+def _format_question_text(question: str, category: str | None, options: list[str] | None) -> str:
+    """Inline category + options into the question string so they survive the
+    trip through _handle_needs_info → issue_inputs (which only persists the
+    `question` TEXT column). Prevents the dashboard from showing a bare prompt
+    when the agent offered a category/options context.
+    """
+    parts: list[str] = []
+    if category and category != "general":
+        parts.append(f"[{category}]")
+    parts.append(question)
+    if options:
+        parts.append("\nOptions: " + " | ".join(str(o) for o in options))
+    return " ".join(parts[:-1]) + (
+        parts[-1] if parts[-1].startswith("\n") else (" " + parts[-1] if parts[:-1] else parts[-1])
+    )
+
+
+def _extract_ask_user_events(agent_output: dict[str, Any]) -> list[dict[str, Any]]:
+    """Pull any agent_ask_user events out of the agent's streamed events.
+
+    Returns a list of normalized question dicts: {question, category, options,
+    asking_node, importance}. The ``question`` string is formatted with inline
+    category/options markers so those context hints survive persistence
+    through issue_inputs (which only has a plain ``question`` TEXT column).
+    """
+    events = agent_output.get("events", []) if isinstance(agent_output, dict) else []
+    pending: list[dict[str, Any]] = []
+    for e in events:
+        if isinstance(e, dict) and e.get("type") == "agent_ask_user":
+            raw_q = e.get("question", "")
+            category = e.get("category", "general")
+            options = e.get("options", []) or []
+            pending.append(
+                {
+                    "question": _format_question_text(raw_q, category, options),
+                    "category": category,
+                    "options": options,
+                    "asking_node": "developer",
+                    "importance": "blocking",
+                }
+            )
+    return pending
+
+
+def _format_user_answers_block(user_answers: Any) -> str:
+    """Format resumed user answers as a prompt-ready Q&A block.
+
+    Handles string (pre-formatted), list[dict(question, answer)], and dict[q -> a] shapes.
+    Returns empty string if no answers.
+    """
+    if not user_answers:
+        return ""
+    lines: list[str] = []
+    if isinstance(user_answers, str):
+        lines.append(user_answers)
+    elif isinstance(user_answers, dict):
+        for q, a in user_answers.items():
+            lines.append(f"Q: {q}\nA: {a}")
+    elif isinstance(user_answers, list):
+        for item in user_answers:
+            if isinstance(item, dict):
+                q = item.get("question", "")
+                a = item.get("answer", "")
+                lines.append(f"Q: {q}\nA: {a}")
+            else:
+                lines.append(str(item))
+    if not lines:
+        return ""
+    return "The user has answered your prior questions as follows:\n" + "\n\n".join(lines)
+
+
 async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Run developer agent — write code, create branch, commit, push, open PR.
 
@@ -306,11 +377,18 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
     triage_decision = state.get("pipeline_config", {})
     additional_context = state.get("additional_context", "")
     feedback_context = state.get("feedback_context", "")
+    user_answers = state.get("user_answers")
 
     prompt_parts = [f"Repository: {repo}"]
     if issue_number:
         prompt_parts.append(f"GitHub Issue: #{issue_number}")
     prompt_parts.append(f"\nTask:\n{task}")
+
+    # If the user just answered prior agent questions, prepend the Q&A block so
+    # the agent sees the answers in its freshly-built context.
+    answers_block = _format_user_answers_block(user_answers)
+    if answers_block:
+        prompt_parts.append(f"\n{answers_block}")
 
     if additional_context:
         prompt_parts.append(f"\nAdditional Context:\n{additional_context}")
@@ -340,7 +418,13 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
 
     prompt = "\n".join(prompt_parts)
 
+    # Collect agent events locally so we can scan for agent_ask_user events
+    # after the agent finishes. We still forward every event to the graph
+    # stream writer for live streaming.
+    collected_events: list[dict[str, Any]] = []
+
     def _forward_event(event: dict) -> None:
+        collected_events.append(event)
         writer(event)
 
     result = await run_agent_node(
@@ -353,6 +437,10 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
         timeout_seconds=1800,
         on_event=_forward_event,
     )
+
+    # Scan the agent's event stream for `agent_ask_user` events. If present,
+    # surface them to the graph so the router can divert to ask_user_interrupt.
+    pending_questions = _extract_ask_user_events({"events": collected_events})
 
     # Try to extract PR URL from agent output
     pr_url = None
@@ -386,12 +474,44 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
 
     writer({"type": "node_completed", "node": "developer"})
 
-    return {
+    updates: dict[str, Any] = {
         **result,
         "pr_url": pr_url,
         "branch_name": branch,
         "current_stage": "developer_complete",
     }
+
+    if pending_questions:
+        # Cycle guard: cap agent-question rounds at 5 so a pathological agent
+        # can't loop forever on human-in-the-loop. After the cap, treat it as
+        # a workflow failure with a clear error.
+        current_rounds = int(state.get("agent_question_rounds", 0) or 0)
+        max_rounds = 5
+        if current_rounds >= max_rounds:
+            logger.warning(
+                "agent_question_rounds_exceeded",
+                rounds=current_rounds,
+                max_rounds=max_rounds,
+                job_id=state.get("job_id"),
+            )
+            updates["current_stage"] = "failed"
+            updates["errors"] = [f"Agent exceeded {max_rounds} rounds of asking the user — giving up."]
+        else:
+            updates["pending_agent_questions"] = pending_questions
+            updates["current_stage"] = "developer_asked_user"
+            updates["agent_question_rounds"] = current_rounds + 1
+            logger.info(
+                "developer_asked_user",
+                question_count=len(pending_questions),
+                rounds=current_rounds + 1,
+                job_id=state.get("job_id"),
+            )
+
+    # Clear consumed user answers so they don't bleed into future runs.
+    if user_answers:
+        updates["user_answers"] = None
+
+    return updates
 
 
 async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
@@ -545,3 +665,33 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         return {"current_stage": "completed"}
     else:
         return {"current_stage": "abandoned", "errors": [f"Abandoned after {retry_count} retries"]}
+
+
+async def ask_user_interrupt(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
+    """Pause the pipeline — raise an interrupt with the pending questions.
+
+    When resumed via Command(resume=answers), the pending questions are cleared
+    and the user's answers are stored on state so the developer node's next
+    invocation can include them in its prompt.
+    """
+    writer = get_stream_writer()
+
+    questions = state.get("pending_agent_questions", []) or []
+    asking_node = questions[0].get("asking_node", "developer") if questions else "developer"
+
+    writer({"type": "agent_paused_for_input", "node": asking_node, "count": len(questions)})
+    logger.info("agent_ask_user_interrupt", node=asking_node, count=len(questions))
+
+    # interrupt() raises; the graph halts here until Command(resume=...) arrives.
+    answers = interrupt(
+        {
+            "asking_node": asking_node,
+            "questions": questions,
+            "reason": "agent_needs_info",
+        }
+    )
+
+    return {
+        "pending_agent_questions": [],
+        "user_answers": answers,
+    }
