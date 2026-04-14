@@ -172,7 +172,25 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-### 3. Start the stack
+### 3. Environment Secrets
+
+Legion encrypts per-repo secret environment variables at rest using Fernet. Set an encryption key before starting the stack:
+
+```bash
+# Generate a strong key (or use your favorite secret manager)
+openssl rand -hex 32
+```
+
+Add to `.env`:
+```
+ENVIRONMENT_SECRET_KEY=<generated-value>
+```
+
+If unset, Legion logs a warning and uses an insecure default — DO NOT use that in production. Rotating the key will make previously-encrypted secrets undecryptable; the orchestrator will log `secret_decryption_failed` for each affected key on the next job that needs them.
+
+Per-repo and global env vars are managed through the `/environments` page in the dashboard.
+
+### 4. Start the stack
 
 ```bash
 legion start
@@ -180,7 +198,7 @@ legion start
 
 This builds all images, starts PostgreSQL + DinD + Orchestrator + Frontend, waits for health checks, and builds the sandbox image inside DinD.
 
-### 4. Open the dashboard
+### 5. Open the dashboard
 
 ```
 http://localhost:8200
