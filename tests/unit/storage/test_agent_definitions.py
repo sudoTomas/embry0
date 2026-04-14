@@ -122,23 +122,23 @@ async def test_delete_builtin_raises_value_error(agent_repo: AgentDefinitionsRep
 async def test_reset_builtin_restores_seed_values(agent_repo: AgentDefinitionsRepository):
     # First modify the built-in agent
     await agent_repo.update(
-        "validator",
+        "review",
         description="Modified description",
         model="claude-haiku-4-5",
         system_prompt="Overridden prompt",
     )
-    modified = await agent_repo.get("validator")
+    modified = await agent_repo.get("review")
     assert modified is not None
     assert modified["description"] == "Modified description"
 
     # Reset it
-    restored = await agent_repo.reset("validator")
-    seed = BUILTIN_SEED["validator"]
+    restored = await agent_repo.reset("review")
+    seed = BUILTIN_SEED["review"]
     assert restored["description"] == seed["description"]
     assert restored["model"] == seed["model"]
     assert restored["system_prompt"] == seed["system_prompt"]
 
-    fetched = await agent_repo.get("validator")
+    fetched = await agent_repo.get("review")
     assert fetched is not None
     assert fetched["description"] == seed["description"]
 
