@@ -144,3 +144,38 @@ async def test_webhook_prod_mode_no_secret_rejects_with_503(app):
             },
         )
     assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_webhook_non_envelope_payload_field_preserved(app):
+    """A real GitHub payload whose top-level 'payload' is not JSON must pass through unchanged.
+
+    Regression guard: the smee envelope unwrap silently swallows JSONDecodeError, which is
+    the intended fallback behavior. Without this test a refactor that changes the fallback to
+    raise 400 would go unnoticed.
+    """
+    app.state.config = LegionConfig(_env_file=None, dev_mode=True, github_webhook_secret="")
+    real = {
+        "action": "labeled",
+        "payload": "not-json-at-all",  # looks like a smee envelope field but isn't
+        "issue": {"number": 99},
+        "repository": {"full_name": "o/r"},
+    }
+    body = json.dumps(real).encode()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/webhook",
+            content=body,
+            headers={
+                "X-GitHub-Event": "issues",
+                "Content-Type": "application/json",
+            },
+        )
+    assert resp.status_code == 200
+    # Handler received the ORIGINAL payload (not an exception, not a rewrite)
+    app.state.github_sync.handle_webhook_event.assert_awaited_once()
+    kwargs = app.state.github_sync.handle_webhook_event.await_args.kwargs
+    assert kwargs["action"] == "labeled"
+    assert kwargs["payload"]["issue"]["number"] == 99
+    assert kwargs["payload"]["payload"] == "not-json-at-all"  # original field survived
