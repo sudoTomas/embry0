@@ -119,6 +119,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.exception("orphan_inputs_purge_failed")
 
+    # Stale awaiting_input check — surface jobs waiting for user input longer
+    # than 24h so ops can nudge the user or clean up dead sessions.
+    try:
+        stale = await db.fetch(
+            """
+            SELECT job_id, updated_at
+            FROM jobs
+            WHERE status = 'awaiting_input'
+              AND updated_at < NOW() - INTERVAL '24 hours'
+            ORDER BY updated_at ASC
+            LIMIT 50
+            """
+        )
+        if stale:
+            logger.warning(
+                "stale_awaiting_input_jobs",
+                count=len(stale),
+                oldest_job_id=stale[0]["job_id"] if stale else None,
+                msg="Jobs have been awaiting user input for >24h. Consider cancelling or following up.",
+            )
+    except Exception:
+        logger.warning("stale_awaiting_input_check_failed", exc_info=True)
+
     app.state.db = db
 
     app.state.jobs_repo = JobsRepository(db)
