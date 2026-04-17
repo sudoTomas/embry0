@@ -128,3 +128,4 @@ class JobState(TypedDict, total=False):
     user_answers: Any
     agent_question_rounds: int  # cycle guard — capped at 5 rounds to prevent unbounded human-in-the-loop
     agent_questions_exhausted: bool  # set True when agent_question_rounds cap hit; routes to terminal failure
+    user_retry_rounds: int  # cycle guard — capped at 3 continue_retrying clicks in max_retries_node
