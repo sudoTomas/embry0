@@ -310,6 +310,54 @@ curl -X POST http://localhost:8200/api/v1/sandbox-profiles \
   -d '{"name": "java-17", "base_image": "legion-sandbox-java:17", "memory": "12g"}'
 ```
 
+### Environment Variables
+
+```bash
+# List global environment variables (secrets masked)
+curl http://localhost:8200/api/v1/environment/global \
+  -H "X-Requested-With: XMLHttpRequest"
+
+# Set global environment variables
+curl -X PUT http://localhost:8200/api/v1/environment/global \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"variables": [{"key": "DATABASE_URL", "value": "postgres://...", "var_type": "secret"}]}'
+
+# Reveal a masked secret (audit-logged)
+curl http://localhost:8200/api/v1/environment/global/DATABASE_URL/reveal \
+  -H "X-Requested-With: XMLHttpRequest"
+
+# Per-repo environment (same pattern, scoped)
+curl http://localhost:8200/api/v1/repos/owner/repo/environment \
+  -H "X-Requested-With: XMLHttpRequest"
+
+# Auto-detect env vars from repo's .env.example
+curl http://localhost:8200/api/v1/repos/owner/repo/environment/detect \
+  -H "X-Requested-With: XMLHttpRequest"
+```
+
+### Repository Preferences
+
+```bash
+# Get per-repo sandbox profile override
+curl http://localhost:8200/api/v1/repos/owner/repo/preferences \
+  -H "X-Requested-With: XMLHttpRequest"
+
+# Set sandbox profile + language hint for a repo
+curl -X PUT http://localhost:8200/api/v1/repos/owner/repo/preferences \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"sandbox_profile": "java-17", "language_hint": "Java", "notes": "Uses Maven"}'
+```
+
+### Sandbox Visibility
+
+```bash
+# List running sandbox containers (ops)
+curl http://localhost:8200/api/v1/sandboxes \
+  -H "X-Requested-With: XMLHttpRequest"
+```
+
 ### WebSocket Streaming
 
 ```javascript
@@ -555,6 +603,8 @@ Legion uses environment variables for infrastructure config and API endpoints fo
 | `TELEGRAM_CHAT_ID` | — | Telegram chat ID for notifications |
 | `TELEGRAM_WEBHOOK_URL` | — | Public URL for Telegram callback (e.g. Cloudflare tunnel) |
 | `TRIGGER_LABELS` | `Legion` | GitHub labels that trigger jobs |
+| `ENVIRONMENT_SECRET_KEY` | — | Fernet key for encrypting env var secrets at rest |
+| `PAUSED_JOB_TTL_HOURS` | `48` | Hours before a paused job's sandbox is expired |
 
 See `.env.example` for the complete list.
 
