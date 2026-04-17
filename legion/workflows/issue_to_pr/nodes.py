@@ -685,7 +685,19 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         choice = "abandon"
 
     if choice == "continue_retrying":
-        updates: dict[str, Any] = {"retry_count": 0, "current_stage": "developer_retry"}
+        user_rounds = int(state.get("user_retry_rounds", 0) or 0)
+        max_user_retries = 3
+        if user_rounds >= max_user_retries:
+            logger.warning("user_retry_rounds_exceeded", job_id=state.get("job_id"))
+            return {
+                "current_stage": "abandoned",
+                "errors": [f"Exceeded {max_user_retries} user-initiated retries"],
+            }
+        updates: dict[str, Any] = {
+            "retry_count": 0,
+            "current_stage": "developer_retry",
+            "user_retry_rounds": user_rounds + 1,
+        }
         if guidance:
             existing = state.get("additional_context", "") or ""
             updates["additional_context"] = existing + f"\n\nUser guidance:\n{guidance}"

@@ -508,6 +508,8 @@ class IssueExecutor:
                 code = ErrorCode.TRIAGE_MALFORMED
             elif isinstance(exc, RuntimeError) and "not registered" in str(exc):
                 code = ErrorCode.WORKFLOW_UNKNOWN
+            elif isinstance(exc, RuntimeError) and "Sandbox initialization failed" in str(exc):
+                code = ErrorCode.SANDBOX_INIT
             else:
                 code = ErrorCode.UNKNOWN
             await self._jobs.update(
@@ -567,7 +569,7 @@ class IssueExecutor:
             from datetime import UTC, datetime
 
             # Pipeline ends at review_complete (approved) or abandoned (user gave up)
-            failed_stages = {"abandoned", "triage_failed", "developer_retry"}
+            failed_stages = {"abandoned", "failed", "triage_failed", "developer_retry"}
             has_errors = bool(result.get("errors"))
             final_status = "failed" if current_stage in failed_stages or has_errors else "completed"
             # Classify the failure: graph nodes may have set a specific error_code
@@ -866,6 +868,8 @@ class IssueExecutor:
                 code = ErrorCode.TRIAGE_MALFORMED
             elif isinstance(exc, RuntimeError) and "not registered" in str(exc):
                 code = ErrorCode.WORKFLOW_UNKNOWN
+            elif isinstance(exc, RuntimeError) and "Sandbox initialization failed" in str(exc):
+                code = ErrorCode.SANDBOX_INIT
             else:
                 code = ErrorCode.UNKNOWN
             await self._jobs.update(

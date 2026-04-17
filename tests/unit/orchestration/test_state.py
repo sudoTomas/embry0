@@ -70,6 +70,15 @@ def test_job_state_has_required_keys():
         "budget_overrun_usd",
         "pr_url",
         "result_summary",
+        "user_retry_rounds",
     ]
     for key in required_keys:
         assert key in annotations, f"Missing key: {key}"
+
+
+def test_job_state_has_cycle_guard_fields():
+    """Both cycle-guard fields exist for agent questions and user retries."""
+    annotations = JobState.__annotations__
+    assert "agent_question_rounds" in annotations
+    assert "agent_questions_exhausted" in annotations
+    assert "user_retry_rounds" in annotations

@@ -98,3 +98,12 @@ async def test_sum_by_agent_for_job_aggregates_costs(repos: tuple[JobsRepository
     assert breakdown[1]["runs"] == 2
     assert float(breakdown[1]["cost_usd"]) == pytest.approx(0.30)
     assert breakdown[1]["duration_ms"] == 3000
+
+
+@pytest.mark.asyncio
+async def test_sum_by_agent_for_job_empty_returns_empty(repos: tuple[JobsRepository, TracesRepository]):
+    """No traces for a job returns an empty breakdown list."""
+    jobs_repo, traces_repo = repos
+    job_id = await jobs_repo.create(repo="o/r", task="t")
+    breakdown = await traces_repo.sum_by_agent_for_job(job_id)
+    assert breakdown == []
