@@ -18,7 +18,7 @@ class ErrorCode(StrEnum):
     """
 
     AGENT_TIMEOUT = "ERR_AGENT_TIMEOUT"  # Agent SDK call exceeded budget_seconds
-    NO_RESULT = "ERR_NO_RESULT"  # Sandbox returned no ResultMessage
+    NO_RESULT = "ERR_NO_RESULT"  # Sandbox infrastructure returned no ResultMessage (pre-executor-refactor path). On the new AgentExecutor path, use AGENT_NO_RESULT instead.
     BUDGET_OVERRUN = "ERR_BUDGET_OVERRUN"  # Hard budget cap hit
     MAX_RETRIES = "ERR_MAX_RETRIES"  # Reviewer rejected past max_feedback_loops
     TRIAGE_MALFORMED = "ERR_TRIAGE_MALFORMED"  # Triage LLM output failed schema validation
@@ -36,6 +36,6 @@ class ErrorCode(StrEnum):
     INVALID_CONFIG = "ERR_INVALID_CONFIG"  # Unknown execution_mode/auth_mode or cli requested before Phase 2
     AUTH_REJECTED = "ERR_AUTH_REJECTED"  # OAuth token / API key refused by upstream
     AGENT_KILLED = "ERR_AGENT_KILLED"  # Subprocess killed externally
-    AGENT_NO_RESULT = "ERR_AGENT_NO_RESULT"  # Agent exited with no ResultMessage
+    AGENT_NO_RESULT = "ERR_AGENT_NO_RESULT"  # Agent exited with no ResultMessage (new AgentExecutor path; supersedes NO_RESULT for executor-managed failures)
     SAFETY_HOOK_FAILED = "ERR_SAFETY_HOOK_FAILED"  # Hook raised or malformed — fails closed
     TOOL_DENIED = "ERR_TOOL_DENIED"  # Safety policy denied a tool call
