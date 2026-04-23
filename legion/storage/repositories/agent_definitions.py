@@ -15,6 +15,8 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "tools": [],
         "skills": [],
         "system_prompt": "",
+        "execution_mode": None,
+        "auth_mode": None,
     },
     "developer": {
         "description": "Implements code changes, creates branches, commits, pushes, and opens PRs. Runs inside a sandbox container via Claude Code.",
@@ -22,6 +24,8 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         "skills": ["superpowers:subagent-driven-development", "superpowers:verification-before-completion"],
         "system_prompt": "",
+        "execution_mode": None,
+        "auth_mode": None,
     },
     "review": {
         "description": "Reviews code changes by running tests, linting, type checking, and code review. Returns structured JSON with decision, validation results, and documentation review.",
@@ -29,10 +33,12 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "tools": ["Read", "Bash", "Glob", "Grep"],
         "skills": [],
         "system_prompt": "",
+        "execution_mode": None,
+        "auth_mode": None,
     },
 }
 
-_ALLOWED_UPDATE_FIELDS = {"description", "model", "tools", "skills", "system_prompt"}
+_ALLOWED_UPDATE_FIELDS = {"description", "model", "tools", "skills", "system_prompt", "execution_mode", "auth_mode"}
 
 
 class AgentDefinitionsRepository:
@@ -61,13 +67,15 @@ class AgentDefinitionsRepository:
         tools: list[str] | None = None,
         skills: list[str] | None = None,
         system_prompt: str = "",
+        execution_mode: str | None = None,
+        auth_mode: str | None = None,
     ) -> dict[str, Any]:
         """Insert a new custom agent definition."""
         row = await self._db.fetchrow(
             """
             INSERT INTO agent_definitions
-                (type, description, model, tools, skills, system_prompt, is_builtin)
-            VALUES ($1, $2, $3, $4, $5, $6, false)
+                (type, description, model, tools, skills, system_prompt, is_builtin, execution_mode, auth_mode)
+            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8)
             RETURNING *
             """,
             agent_type,
@@ -76,6 +84,8 @@ class AgentDefinitionsRepository:
             tools or [],
             skills or [],
             system_prompt,
+            execution_mode,
+            auth_mode,
         )
         logger.info("agent_definition_created", agent_type=agent_type)
         return dict(row)
@@ -132,8 +142,10 @@ class AgentDefinitionsRepository:
                 tools = $3,
                 skills = $4,
                 system_prompt = $5,
+                execution_mode = $6,
+                auth_mode = $7,
                 updated_at = NOW()
-            WHERE type = $6
+            WHERE type = $8
             RETURNING *
             """,
             seed["description"],
@@ -141,6 +153,8 @@ class AgentDefinitionsRepository:
             seed["tools"],
             seed["skills"],
             seed["system_prompt"],
+            seed["execution_mode"],
+            seed["auth_mode"],
             agent_type,
         )
         if row is None:
