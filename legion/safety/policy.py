@@ -16,7 +16,10 @@ security bug.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -65,3 +68,45 @@ class SafetyPolicy:
     deny_rules: list[str] = field(default_factory=list)
     content_checks: list[ContentRule] = field(default_factory=list)
     network_egress_allowlist: list[str] = field(default_factory=list)
+
+
+def _normalize(text: str) -> str:
+    """NFKC-normalize and collapse whitespace to defeat obfuscation."""
+    text = unicodedata.normalize("NFKC", text)
+    text = re.sub(r"/(?:usr/)?(?:local/)?(?:s?bin)/", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _stringify_input(tool_input: dict[str, Any]) -> str:
+    """Flatten all input values into one scanable string."""
+    parts: list[str] = []
+    for value in tool_input.values():
+        try:
+            parts.append(str(value))
+        except Exception:
+            continue
+    return " ".join(parts)
+
+
+def evaluate_policy(
+    policy: SafetyPolicy,
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> Verdict:
+    """Evaluate a single tool call against Ring-3 content checks.
+
+    Returns Verdict.allow() if no rule fires. Returns Verdict.deny(reason)
+    if any matching rule hits. On any internal exception, returns
+    Verdict.deny("safety hook failed: ...") — fail-closed.
+    """
+    try:
+        haystack = _normalize(_stringify_input(tool_input))
+        for rule in policy.content_checks:
+            if rule.tools and tool_name not in rule.tools:
+                continue
+            if re.search(rule.pattern, haystack, re.IGNORECASE):
+                return Verdict.deny(f"Blocked by safety policy: {rule.reason}")
+        return Verdict.allow()
+    except Exception as exc:
+        return Verdict.deny(f"safety hook failed: {exc!r}")
