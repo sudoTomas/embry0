@@ -41,6 +41,8 @@ async def put_repo_preferences(owner: str, repo: str, req: RepoPreferencesUpdate
         sandbox_profile=req.sandbox_profile,
         language_hint=req.language_hint,
         notes=req.notes,
+        execution_mode=req.execution_mode,
+        auth_mode=req.auth_mode,
     )
     return RepoPreferencesResponse(**saved)
 

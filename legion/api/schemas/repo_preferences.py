@@ -12,6 +12,8 @@ class RepoPreferencesResponse(BaseModel):
     sandbox_profile: str | None
     language_hint: str | None
     notes: str
+    execution_mode: str | None
+    auth_mode: str | None
     updated_at: datetime
 
 
@@ -21,3 +23,5 @@ class RepoPreferencesUpdateRequest(BaseModel):
     sandbox_profile: str | None = None
     language_hint: str | None = None
     notes: str = ""
+    execution_mode: str | None = None
+    auth_mode: str | None = None
