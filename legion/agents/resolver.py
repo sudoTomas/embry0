@@ -163,17 +163,16 @@ def resolve_agent_invocation(
     resolved = resolve_agent_config(
         agent_type=agent_type,
         agent_definition=agent_definition,
-        template_config=pipeline_config,
+        template_config=None,
         pipeline_config=pipeline_config,
     )
 
     # -- system_prompt, skills, mcp_servers: thread through (plumbing gap closure)
     system_prompt = agent_definition.get("system_prompt", "") or ""
-    # template/pipeline can override via pipeline_config.system_prompts[agent_type]
-    for cfg in (pipeline_config,):
-        override = cfg.get("system_prompts", {}).get(agent_type)
-        if override:
-            system_prompt = override
+    # pipeline (triage output) can override via pipeline_config.system_prompts[agent_type]
+    pipeline_system_prompt = pipeline_config.get("system_prompts", {}).get(agent_type)
+    if pipeline_system_prompt:
+        system_prompt = pipeline_system_prompt
     skills = resolved.skills or []
     mcp_servers = agent_definition.get("mcp_servers", {}) or {}
     # pipeline override for mcp_servers too

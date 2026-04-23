@@ -182,3 +182,22 @@ def test_system_prompt_resolved_from_agent_definition() -> None:
         )
     )
     assert inv.system_prompt == "You are a reviewer"
+
+
+def test_pipeline_system_prompt_beats_agent_definition() -> None:
+    """pipeline_config.system_prompts[agent_type] overrides agent_definition.system_prompt."""
+    inv = resolve_agent_invocation(
+        **_base_args(
+            agent_definition={
+                "model": "claude-sonnet-4-6",
+                "tools": ["Read"],
+                "skills": [],
+                "system_prompt": "from agent definition",
+                "mcp_servers": {},
+                "execution_mode": None,
+                "auth_mode": None,
+            },
+            pipeline_config={"system_prompts": {"developer": "from pipeline"}},
+        )
+    )
+    assert inv.system_prompt == "from pipeline"
