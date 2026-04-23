@@ -50,4 +50,4 @@ def test_reserved_env_keys_export_expected_set() -> None:
         "ANTHROPIC_AUTH_TOKEN",
         "GITHUB_TOKEN",
     }
-    assert expected <= RESERVED_ENV_KEYS
+    assert RESERVED_ENV_KEYS == expected
