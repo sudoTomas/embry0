@@ -2,7 +2,14 @@
 
 import pytest
 
-from legion.safety.policy import ContentRule, SafetyPolicy, Verdict, evaluate_policy
+from legion.safety.policy import (
+    ContentRule,
+    SafetyPolicy,
+    Verdict,
+    default_policy_for_agent,
+    evaluate_policy,
+    render_settings_json,
+)
 
 
 def test_safety_policy_is_frozen() -> None:
@@ -104,3 +111,52 @@ def test_evaluate_policy_handles_non_string_tool_input() -> None:
     v = evaluate_policy(policy, "Bash", {"command": 12345})
     # Integer coerced to string "12345" — pattern "x" doesn't match — allow.
     assert v.allowed is True
+
+
+def test_default_policy_includes_workspace_deny_rules() -> None:
+    policy = default_policy_for_agent("developer")
+    assert any("/etc/" in r for r in policy.deny_rules)
+    assert any(".credentials" in r or ".claude" in r for r in policy.deny_rules)
+
+
+def test_default_policy_includes_workspace_allow_rules() -> None:
+    policy = default_policy_for_agent("developer")
+    assert any("/workspace" in r for r in policy.allow_rules)
+
+
+def test_default_policy_includes_dangerous_bash_content_checks() -> None:
+    policy = default_policy_for_agent("developer")
+    patterns_in_policy = {r.pattern for r in policy.content_checks}
+    from legion.safety.patterns import DANGEROUS_BASH_PATTERNS
+
+    for p in DANGEROUS_BASH_PATTERNS:
+        assert p in patterns_in_policy, f"missing pattern from default policy: {p}"
+
+
+def test_default_policy_readonly_agent_omits_write_tools() -> None:
+    policy = default_policy_for_agent("triage")
+    assert "Write" not in policy.allowed_tools
+    assert "Edit" not in policy.allowed_tools
+    # Triage only needs Read/Glob/Grep
+    assert "Read" in policy.allowed_tools
+
+
+def test_render_settings_json_shape() -> None:
+    policy = SafetyPolicy(
+        allowed_tools=["Read", "Bash"],
+        allow_rules=["Read(/workspace/**)", "Bash(git:*)"],
+        deny_rules=["Read(/etc/**)"],
+        content_checks=[],
+        network_egress_allowlist=[],
+    )
+    rendered = render_settings_json(policy)
+    assert rendered["permissions"]["allow"] == ["Read(/workspace/**)", "Bash(git:*)"]
+    assert rendered["permissions"]["deny"] == ["Read(/etc/**)"]
+    assert rendered["permissions"]["defaultMode"] == "default"
+
+
+def test_render_settings_json_omits_empty_sections() -> None:
+    policy = SafetyPolicy()
+    rendered = render_settings_json(policy)
+    assert rendered["permissions"]["allow"] == []
+    assert rendered["permissions"]["deny"] == []

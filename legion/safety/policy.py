@@ -110,3 +110,84 @@ def evaluate_policy(
         return Verdict.allow()
     except Exception as exc:
         return Verdict.deny(f"safety hook failed: {exc!r}")
+
+
+# ---- Default policies and rendering ----
+
+# Ring-2 baseline: deny host-sensitive reads/writes globally.
+_BASELINE_DENY_RULES: list[str] = [
+    "Read(/etc/**)",
+    "Read(/root/**)",
+    "Read(~/.claude/**)",
+    "Read(~/.ssh/**)",
+    "Read(~/.aws/**)",
+    "Read(~/.gnupg/**)",
+    "Read(/proc/**)",
+    "Write(/etc/**)",
+    "Write(/root/**)",
+    "Write(/usr/**)",
+    "Write(/bin/**)",
+    "Write(/sbin/**)",
+    "Edit(/etc/**)",
+    "Edit(/root/**)",
+    "Edit(/usr/**)",
+]
+
+# Ring-2 baseline: allow workspace ops and common developer commands.
+_BASELINE_ALLOW_RULES: list[str] = [
+    "Read(/workspace/**)",
+    "Write(/workspace/**)",
+    "Edit(/workspace/**)",
+    "Glob(/workspace/**)",
+]
+
+# Agent-type → tools mapping (matches current developer/triage/review semantics).
+_AGENT_TOOLS: dict[str, list[str]] = {
+    "triage": ["Read", "Glob", "Grep"],
+    "developer": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+    "review": ["Read", "Glob", "Grep", "Bash"],
+}
+
+
+def default_policy_for_agent(agent_type: str) -> SafetyPolicy:
+    """Baseline safety policy for a given agent type.
+
+    Encodes today's production behavior:
+    - Ring 2 deny: host-sensitive paths (credentials, /etc, /root, etc.).
+    - Ring 2 allow: /workspace/** for file operations.
+    - Ring 3 content checks: every pattern in DANGEROUS_BASH_PATTERNS.
+
+    Callers may layer additional rules on top (e.g., per-repo or per-pipeline
+    overrides); this factory is the irreducible baseline.
+    """
+    from legion.safety.patterns import DANGEROUS_BASH_PATTERNS
+
+    content_checks = [
+        ContentRule(pattern=p, tools=["Bash"], reason=f"dangerous bash pattern: {p}")
+        for p in DANGEROUS_BASH_PATTERNS
+    ]
+    tools = _AGENT_TOOLS.get(agent_type, _AGENT_TOOLS["developer"])
+    return SafetyPolicy(
+        allowed_tools=tools,
+        allow_rules=list(_BASELINE_ALLOW_RULES),
+        deny_rules=list(_BASELINE_DENY_RULES),
+        content_checks=content_checks,
+        network_egress_allowlist=[],
+    )
+
+
+def render_settings_json(policy: SafetyPolicy) -> dict[str, Any]:
+    """Serialize a SafetyPolicy into a Claude Code settings.json dict.
+
+    Ring-2 enforcement: the rendered file is written into /workspace/.claude/settings.json
+    by the executor before invoking Claude. Claude Code reads permissions.allow/deny
+    first and enforces them before tool dispatch.
+    """
+    return {
+        "$schema": "https://json.schemastore.org/claude-code-settings.json",
+        "permissions": {
+            "defaultMode": "default",
+            "allow": list(policy.allow_rules),
+            "deny": list(policy.deny_rules),
+        },
+    }
