@@ -54,3 +54,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "sandbox_smoke: real-sandbox end-to-end tests. Run with `pytest -m sandbox_smoke`.",
+]
