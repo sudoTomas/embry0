@@ -132,3 +132,41 @@ async def test_sdk_executor_timeout_path(tmp_path, monkeypatch) -> None:
 
     assert out.is_error is True
     assert "timed out" in out.error_message.lower()
+
+
+class _FakeToolUseBlock:
+    def __init__(self, name: str, tool_id: str = "t1") -> None:
+        self.name = name
+        self.id = tool_id
+        self.input = {"command": "echo hi"}
+
+
+class _FakeAssistantMessageWithTool:
+    def __init__(self, tool_name: str) -> None:
+        self.content = [_FakeToolUseBlock(tool_name)]
+        self.model = "claude-sonnet-4-6"
+        self.uuid = "u-t"
+
+
+@pytest.mark.asyncio
+async def test_sdk_executor_tools_called_counts_once_per_invocation(
+    tmp_path, monkeypatch
+) -> None:
+    """Regression: tools_called must not be double-counted (hook + block)."""
+    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+
+    messages = [
+        _FakeAssistantMessageWithTool("Bash"),
+        _FakeAssistantMessageWithTool("Bash"),
+        _FakeResultMessage("done", 0.001),
+    ]
+
+    with patch("claude_agent_sdk.query", return_value=_scripted_query(messages)):
+        executor = SdkAgentExecutor()
+        out = await executor.run(
+            _inv(),
+            config={"configurable": {}, "_test_writer": lambda e: None},
+        )
+
+    # Two Bash tool calls → count of 2 (not 4 from the old double-count bug).
+    assert out.tools_called.get("Bash") == 2

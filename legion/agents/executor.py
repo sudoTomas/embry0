@@ -125,6 +125,17 @@ class SdkAgentExecutor:
                 blk, "input"
             )
 
+        def _is_tool_use_block(blk: Any) -> bool:
+            if isinstance(blk, ToolUseBlock):
+                return True
+            # Duck-type: has name, id, and input — but not the text attr of a TextBlock.
+            return (
+                hasattr(blk, "name")
+                and hasattr(blk, "id")
+                and hasattr(blk, "input")
+                and not hasattr(blk, "text")
+            )
+
         writer = _resolve_writer(config)  # type: ignore[arg-type]
         now = time.time()
         tools_called: dict[str, int] = {}
@@ -154,7 +165,9 @@ class SdkAgentExecutor:
                 tool_input = hook_input.get("tool_input", {})
             if not isinstance(tool_input, dict):
                 tool_input = {}
-            tools_called[tool_name] = tools_called.get(tool_name, 0) + 1
+            # NOTE: tools_called is incremented on ToolUseBlock emission (after
+            # hook allows) — not here — so denied tools don't inflate the counter.
+            # Denial telemetry lives in the "error" event emitted below.
             verdict = evaluate_policy(invocation.safety_policy, tool_name, tool_input)
             if not verdict.allowed:
                 writer({"type": "error", "error": verdict.reason, "tool_name": tool_name})
@@ -199,7 +212,7 @@ class SdkAgentExecutor:
                                     "node": invocation.agent_type,
                                 }
                             )
-                        elif isinstance(block, ToolUseBlock):
+                        elif _is_tool_use_block(block):
                             tn = getattr(block, "name", "") or getattr(block, "tool_name", "")
                             if tn:
                                 tools_called[tn] = tools_called.get(tn, 0) + 1
