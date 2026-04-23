@@ -552,9 +552,15 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command:
     agent_runner = configurable.get("agent_runner")
     if not agent_runner:
         logger.error("review_node_no_runner")
+        from legion.safety.error_codes import ErrorCode
+
         return Command(
             goto="max_retries",
-            update={"current_stage": "review_complete", "errors": ["No agent runner available"]},
+            update={
+                "current_stage": "review_complete",
+                "errors": ["No agent runner available"],
+                "error_code": ErrorCode.UNKNOWN.value,
+            },
         )
 
     repo = state.get("repo", "")
