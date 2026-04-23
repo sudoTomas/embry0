@@ -212,6 +212,61 @@ async def test_run_agent_node_select_executor_error_returns_error_updates(
 
 
 @pytest.mark.asyncio
+async def test_run_agent_node_delegates_to_agent_runner_with_full_invocation(
+    monkeypatch, tmp_path
+) -> None:
+    """When agent_runner is provided, run_agent_node serializes the full AgentInvocation."""
+    captured_config: dict[str, Any] = {}
+    captured_kwargs: dict[str, Any] = {}
+
+    async def fake_run(**kwargs):
+        captured_kwargs.update(kwargs)
+        captured_config.update(kwargs["config"])
+        return AgentOutput(
+            agent_type="developer",
+            is_error=False,
+            output="ok",
+            cost_usd=0.01,
+            duration_ms=50,
+            tools_called={},
+        )
+
+    class _Runner:
+        run = staticmethod(fake_run)
+
+    updates = await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
+        agent_runner=_Runner(),
+        agent_type="developer",
+        prompt="do it",
+        model="claude-sonnet-4-6",
+        tools=["Read"],
+        agent_definition={
+            "model": "claude-sonnet-4-6",
+            "tools": ["Read"],
+            "skills": ["code-review"],
+            "system_prompt": "You are a reviewer.",
+            "mcp_servers": {"mcp1": {"command": "npx"}},
+            "execution_mode": None,
+            "auth_mode": "api_key",
+        },
+        credentials={"api_key": "sk-abc", "oauth_token": ""},
+        global_defaults={"execution_mode": "sdk", "auth_mode": "oauth"},
+    )
+
+    # Confirm the full invocation made it into the serialized config.
+    assert captured_config["skills"] == ["code-review"]
+    assert captured_config["mcp_servers"] == {"mcp1": {"command": "npx"}}
+    assert captured_config["system_prompt"] == "You are a reviewer."
+    assert captured_config["execution_mode"] == "sdk"
+    assert captured_config["auth_mode"] == "api_key"
+    # And runner receives the container id from state.
+    assert captured_kwargs["container"] == "c1"
+    assert updates["total_cost_usd"] == pytest.approx(0.01)
+    assert updates["current_stage"] == "developer_complete"
+
+
+@pytest.mark.asyncio
 async def test_run_agent_node_per_job_model_override_wins() -> None:
     """agent_models_override on state overrides the agent_definition model."""
     captured: dict[str, Any] = {}

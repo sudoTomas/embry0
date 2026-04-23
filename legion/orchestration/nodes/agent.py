@@ -48,7 +48,7 @@ def _auth_error_updates(
 
 async def run_agent_node(
     state: dict[str, Any],
-    agent_runner: Any,  # kept for backward compat; no longer used
+    agent_runner: Any,
     agent_type: str,
     prompt: str,
     model: str = "claude-sonnet-4-6",
@@ -56,16 +56,19 @@ async def run_agent_node(
     max_turns: int = 40,
     timeout_seconds: int = 300,
     network: str | None = None,
-    # network: retained for backward compat with legacy callers; not yet threaded
-    # into AgentInvocation. Network wiring will be revisited if/when AgentInvocation
-    # gains a network field (currently the sandbox container handles this upstream).
-    on_event: Any | None = None,  # deprecated; writer comes from RunnableConfig
+    on_event: Any | None = None,
     agent_definition: dict[str, Any] | None = None,
     credentials: dict[str, str] | None = None,
     global_defaults: dict[str, Any] | None = None,
     config: Any | None = None,
 ) -> dict[str, Any]:
     """Resolve an AgentInvocation and run it via the chosen executor.
+
+    When ``agent_runner`` is provided (production), the fully-resolved
+    invocation is serialized and shipped to the sandbox container via
+    ``AgentRunner.run``; the in-container ``SdkAgentExecutor`` performs the
+    actual Claude call. When ``agent_runner`` is ``None`` (legacy/non-sandboxed
+    fallback), the executor runs in-process.
 
     Returns a LangGraph state update dict. Does NOT return a Command here;
     Command returns live in the workflow nodes (see Task 16).
@@ -119,14 +122,44 @@ async def run_agent_node(
             timeout_seconds=timeout_seconds,
             credentials=credentials,
         )
-        executor = select_executor(invocation)
     except AuthConfigError as exc:
         return _auth_error_updates(agent_type, exc, state)
 
-    # executor.run has its own internal exception handling; keep it outside the
-    # AuthConfigError try block so runtime executor failures are not silently
-    # swallowed as config-error shapes.
-    result: AgentOutput = await executor.run(invocation, config)
+    # Build the serialized invocation dict the sandbox runner receives.
+    serialized = {
+        "agent_type": invocation.agent_type,
+        "prompt": invocation.prompt,
+        "system_prompt": invocation.system_prompt,
+        "system_context": invocation.system_context,
+        "model": invocation.model,
+        "tools": list(invocation.tools),
+        "skills": list(invocation.skills),
+        "mcp_servers": dict(invocation.mcp_servers),
+        "max_turns": invocation.max_turns,
+        "timeout_seconds": invocation.timeout_seconds,
+        "execution_mode": invocation.execution_mode,
+        "auth_mode": invocation.auth_mode,
+    }
+
+    container = state.get("sandbox_container_id", "")
+
+    try:
+        if agent_runner is None:
+            # No sandbox available (legacy non-sandboxed fallback) — run in-process.
+            executor = select_executor(invocation)
+            result: AgentOutput = await executor.run(invocation, config)
+        else:
+            # Production path: docker-exec the sandbox runner with the
+            # serialized invocation; the in-container SdkAgentExecutor
+            # handles the actual Claude call.
+            result = await agent_runner.run(
+                container=container,
+                config=serialized,
+                network=network,
+                on_event=on_event,
+            )
+    except AuthConfigError as exc:
+        return _auth_error_updates(agent_type, exc, state)
 
     output_entry = AgentOutputEntry(
         agent_type=result.agent_type,
