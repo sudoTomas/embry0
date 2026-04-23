@@ -28,3 +28,14 @@ class ErrorCode(StrEnum):
     DOCKER_TIMEOUT = "ERR_DOCKER_TIMEOUT"  # Underlying docker command timed out
     MAX_AGENT_QUESTIONS = "ERR_MAX_AGENT_QUESTIONS"  # Agent exceeded the ask_user round cap
     UNKNOWN = "ERR_UNKNOWN"  # Uncategorised — should diminish over time
+
+    # Phase 1 — pluggable agent execution modes
+    INCOHERENT_CONFIG = "ERR_INCOHERENT_CONFIG"  # Config combination rejected at resolve time
+    MISSING_OAUTH_TOKEN = "ERR_MISSING_OAUTH_TOKEN"  # auth_mode=oauth but no token available
+    MISSING_API_KEY = "ERR_MISSING_API_KEY"  # auth_mode=api_key but ANTHROPIC_API_KEY empty
+    INVALID_CONFIG = "ERR_INVALID_CONFIG"  # Unknown execution_mode/auth_mode or cli requested before Phase 2
+    AUTH_REJECTED = "ERR_AUTH_REJECTED"  # OAuth token / API key refused by upstream
+    AGENT_KILLED = "ERR_AGENT_KILLED"  # Subprocess killed externally
+    AGENT_NO_RESULT = "ERR_AGENT_NO_RESULT"  # Agent exited with no ResultMessage
+    SAFETY_HOOK_FAILED = "ERR_SAFETY_HOOK_FAILED"  # Hook raised or malformed — fails closed
+    TOOL_DENIED = "ERR_TOOL_DENIED"  # Safety policy denied a tool call
