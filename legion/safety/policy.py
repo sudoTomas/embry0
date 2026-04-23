@@ -131,6 +131,8 @@ _BASELINE_DENY_RULES: list[str] = [
     "Edit(/etc/**)",
     "Edit(/root/**)",
     "Edit(/usr/**)",
+    "Edit(/bin/**)",
+    "Edit(/sbin/**)",
 ]
 
 # Ring-2 baseline: allow workspace ops and common developer commands.

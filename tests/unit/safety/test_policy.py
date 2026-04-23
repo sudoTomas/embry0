@@ -116,7 +116,8 @@ def test_evaluate_policy_handles_non_string_tool_input() -> None:
 def test_default_policy_includes_workspace_deny_rules() -> None:
     policy = default_policy_for_agent("developer")
     assert any("/etc/" in r for r in policy.deny_rules)
-    assert any(".credentials" in r or ".claude" in r for r in policy.deny_rules)
+    # ~/.claude/** covers the host's OAuth credentials file.
+    assert any("~/.claude" in r for r in policy.deny_rules)
 
 
 def test_default_policy_includes_workspace_allow_rules() -> None:
@@ -153,6 +154,8 @@ def test_render_settings_json_shape() -> None:
     assert rendered["permissions"]["allow"] == ["Read(/workspace/**)", "Bash(git:*)"]
     assert rendered["permissions"]["deny"] == ["Read(/etc/**)"]
     assert rendered["permissions"]["defaultMode"] == "default"
+    assert "$schema" in rendered
+    assert "claude-code-settings" in rendered["$schema"]
 
 
 def test_render_settings_json_omits_empty_sections() -> None:
@@ -160,3 +163,10 @@ def test_render_settings_json_omits_empty_sections() -> None:
     rendered = render_settings_json(policy)
     assert rendered["permissions"]["allow"] == []
     assert rendered["permissions"]["deny"] == []
+
+
+def test_default_policy_unknown_agent_falls_back_to_developer_tools() -> None:
+    """Unknown agent types get the developer tool set (broad but scoped)."""
+    unknown = default_policy_for_agent("nonexistent_agent_type")
+    developer = default_policy_for_agent("developer")
+    assert unknown.allowed_tools == developer.allowed_tools
