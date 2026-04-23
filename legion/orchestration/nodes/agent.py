@@ -15,6 +15,37 @@ from legion.orchestration.state import AgentOutputEntry
 logger = structlog.get_logger(__name__)
 
 
+def _auth_error_updates(
+    agent_type: str,
+    exc: AuthConfigError,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the failure-state dict for an AuthConfigError from any call site."""
+    logger.error(
+        "agent_config_error",
+        agent_type=agent_type,
+        error_code=exc.error_code.value,
+        error=str(exc),
+    )
+    return {
+        "agent_outputs": [
+            AgentOutputEntry(
+                agent_type=agent_type,
+                is_error=True,
+                error_message=str(exc),
+                output="",
+                cost_usd=0.0,
+                duration_ms=0,
+                tools_called={},
+            )
+        ],
+        "errors": [f"{agent_type}: {exc}"],
+        "current_stage": f"{agent_type}_failed",
+        "total_cost_usd": state.get("total_cost_usd", 0.0),
+        "error_code": exc.error_code.value,
+    }
+
+
 async def run_agent_node(
     state: dict[str, Any],
     agent_runner: Any,  # kept for backward compat; no longer used
@@ -25,6 +56,9 @@ async def run_agent_node(
     max_turns: int = 40,
     timeout_seconds: int = 300,
     network: str | None = None,
+    # network: retained for backward compat with legacy callers; not yet threaded
+    # into AgentInvocation. Network wiring will be revisited if/when AgentInvocation
+    # gains a network field (currently the sandbox container handles this upstream).
     on_event: Any | None = None,  # deprecated; writer comes from RunnableConfig
     agent_definition: dict[str, Any] | None = None,
     credentials: dict[str, str] | None = None,
@@ -85,33 +119,13 @@ async def run_agent_node(
             timeout_seconds=timeout_seconds,
             credentials=credentials,
         )
+        executor = select_executor(invocation)
     except AuthConfigError as exc:
-        logger.error(
-            "agent_config_error",
-            error_code=exc.error_code.value,
-            error=str(exc),
-            execution_mode=global_defaults.get("execution_mode"),
-            auth_mode=global_defaults.get("auth_mode"),
-        )
-        return {
-            "agent_outputs": [
-                AgentOutputEntry(
-                    agent_type=agent_type,
-                    is_error=True,
-                    error_message=str(exc),
-                    output="",
-                    cost_usd=0.0,
-                    duration_ms=0,
-                    tools_called={},
-                )
-            ],
-            "errors": [f"{agent_type}: {exc}"],
-            "current_stage": f"{agent_type}_failed",
-            "total_cost_usd": state.get("total_cost_usd", 0.0),
-            "error_code": exc.error_code.value,
-        }
+        return _auth_error_updates(agent_type, exc, state)
 
-    executor = select_executor(invocation)
+    # executor.run has its own internal exception handling; keep it outside the
+    # AuthConfigError try block so runtime executor failures are not silently
+    # swallowed as config-error shapes.
     result: AgentOutput = await executor.run(invocation, config)
 
     output_entry = AgentOutputEntry(

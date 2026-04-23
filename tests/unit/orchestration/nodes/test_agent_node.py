@@ -179,8 +179,36 @@ async def test_run_agent_node_config_error_sets_error_code() -> None:
     )
     assert result["current_stage"] == "developer_failed"
     assert result["agent_outputs"][0]["is_error"] is True
-    assert "error_code" in result
+    assert result["error_code"] == "ERR_MISSING_API_KEY"
     assert result["errors"][0].startswith("developer:")
+
+
+@pytest.mark.asyncio
+async def test_run_agent_node_select_executor_error_returns_error_updates(
+    monkeypatch, tmp_path
+) -> None:
+    """If select_executor raises AuthConfigError, return error state (Phase 2 guard)."""
+    from legion.execution.auth_provider import AuthConfigError
+    from legion.safety.error_codes import ErrorCode
+
+    with patch(
+        "legion.orchestration.nodes.agent.select_executor",
+        side_effect=AuthConfigError(ErrorCode.INVALID_CONFIG, "forced"),
+    ):
+        updates = await run_agent_node(
+            state={"total_cost_usd": 0.0, "pipeline_config": {}},
+            agent_runner=None,
+            agent_type="developer",
+            prompt="x",
+            model="claude-sonnet-4-6",
+            tools=["Read"],
+            credentials={"api_key": "sk-abc", "oauth_token": ""},
+            global_defaults={"execution_mode": "sdk", "auth_mode": "api_key"},
+        )
+
+    assert updates["agent_outputs"][0]["is_error"] is True
+    assert updates["error_code"] == "ERR_INVALID_CONFIG"
+    assert updates["current_stage"] == "developer_failed"
 
 
 @pytest.mark.asyncio
