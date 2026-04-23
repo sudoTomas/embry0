@@ -1,69 +1,36 @@
-"""Safety enforcement inside the sandbox container."""
+"""In-sandbox safety adapter — thin wrapper around evaluate_policy.
 
-import os
+Workspace-boundary rules have moved to Ring 2 (declarative settings.json).
+This module now only adapts the Ring-3 content-checks path for call sites
+that need a boolean/reason result shaped like the legacy hook contract.
+
+Call sites should prefer evaluate_policy(policy, ...) directly when they
+already have a SafetyPolicy in hand. This wrapper exists for backward
+compatibility with the in-sandbox PreToolUse hook integration.
+"""
+
+from __future__ import annotations
+
 from typing import Any
 
-from legion.safety.patterns import is_dangerous_command
-
-WORKSPACE_PREFIX = "/workspace"
+from legion.safety.policy import SafetyPolicy, default_policy_for_agent, evaluate_policy
 
 
-def _is_within_workspace(file_path: str) -> bool:
-    """Check if a file path resolves to within /workspace, following symlinks."""
-    if not file_path:
-        return False
-    # Resolve symlinks to prevent symlink-based path escapes
-    try:
-        resolved = os.path.realpath(file_path)
-    except (OSError, ValueError):
-        return False
-    return resolved.startswith(WORKSPACE_PREFIX + "/") or resolved == WORKSPACE_PREFIX
+def check_tool_safety(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    policy: SafetyPolicy | None = None,
+    agent_type: str = "developer",
+) -> dict[str, str] | None:
+    """Evaluate a tool call. Returns a denial dict if unsafe, None if safe.
 
-
-def check_tool_safety(tool_name: str, tool_input: dict[str, Any]) -> dict[str, str] | None:
-    """Check if a tool call is safe. Returns denial dict if unsafe, None if safe."""
-    if tool_name == "Bash":
-        cmd = tool_input.get("command", "")
-        pattern = is_dangerous_command(cmd)
-        if pattern:
-            return {
-                "decision": "deny",
-                "reason": f"Blocked: dangerous bash pattern ({pattern})",
-            }
-
-    if tool_name in ("Write", "Edit"):
-        file_path = tool_input.get("file_path", "")
-        if file_path and not _is_within_workspace(file_path):
-            return {
-                "decision": "deny",
-                "reason": f"Blocked: file operation outside {WORKSPACE_PREFIX}",
-            }
-
-    if tool_name == "Read":
-        file_path = tool_input.get("file_path", "")
-        if file_path and not _is_within_workspace(file_path):
-            return {
-                "decision": "deny",
-                "reason": f"Blocked: read outside {WORKSPACE_PREFIX}",
-            }
-
-    if tool_name == "Glob":
-        # Glob uses 'path' for the directory and 'pattern' for the glob expression.
-        # If path is provided, it must be within /workspace.
-        # If only pattern is provided and it's an absolute path, check it.
-        path = tool_input.get("path", "")
-        pattern = tool_input.get("pattern", "")
-
-        if path:
-            if not _is_within_workspace(path):
-                return {
-                    "decision": "deny",
-                    "reason": f"Blocked: glob outside {WORKSPACE_PREFIX}",
-                }
-        elif pattern.startswith("/") and not pattern.startswith(WORKSPACE_PREFIX):
-            return {
-                "decision": "deny",
-                "reason": f"Blocked: glob pattern targets outside {WORKSPACE_PREFIX}",
-            }
-
-    return None
+    Compatibility shape: returns None on allow; returns
+    {"decision": "deny", "reason": ...} on deny, matching the legacy hook
+    response shape. Callers emitting events should translate this into a
+    TOOL_DENIED event separately.
+    """
+    effective_policy = policy if policy is not None else default_policy_for_agent(agent_type)
+    verdict = evaluate_policy(effective_policy, tool_name, tool_input)
+    if verdict.allowed:
+        return None
+    return {"decision": "deny", "reason": verdict.reason}
