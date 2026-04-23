@@ -15,7 +15,7 @@ import structlog
 from legion.agents.config_builder import build_sdk_options
 from legion.agents.invocation import AgentInvocation
 from legion.execution.agent_runner import AgentOutput
-from legion.safety.policy import evaluate_policy, render_settings_json
+from legion.safety.policy import SafetyPolicy, evaluate_policy, render_settings_json
 
 if TYPE_CHECKING:
     from langchain_core.runnables.config import RunnableConfig
@@ -65,6 +65,28 @@ def _summarize_tool_input(tool_name: str, tool_input: dict) -> str:
     if tool_name == "Bash":
         return str(tool_input.get("command", ""))[:200]
     return str(tool_input)[:200]
+
+
+async def _evaluate_hook(
+    policy: SafetyPolicy,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    tools_called: dict[str, int],  # noqa: ARG001 — reserved for future per-tool counters
+    writer: Callable[[dict[str, Any]], None],
+) -> dict[str, Any]:
+    """Ring-3 PreToolUse hook — delegates to evaluate_policy, fail-closed.
+
+    Exposed at module level so unit tests can exercise the deny path directly
+    (a fake query() mock doesn't invoke SDK hooks, so the only way to test this
+    path is to call this function directly).
+    """
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    verdict = evaluate_policy(policy, tool_name, tool_input)
+    if not verdict.allowed:
+        writer({"type": "error", "error": verdict.reason, "tool_name": tool_name})
+        return {"decision": "deny", "reason": verdict.reason}
+    return {"decision": "allow"}
 
 
 class SdkAgentExecutor:
@@ -163,16 +185,12 @@ class SdkAgentExecutor:
             tool_input = getattr(hook_input, "tool_input", None)
             if tool_input is None and isinstance(hook_input, dict):
                 tool_input = hook_input.get("tool_input", {})
-            if not isinstance(tool_input, dict):
-                tool_input = {}
             # NOTE: tools_called is incremented on ToolUseBlock emission (after
             # hook allows) — not here — so denied tools don't inflate the counter.
             # Denial telemetry lives in the "error" event emitted below.
-            verdict = evaluate_policy(invocation.safety_policy, tool_name, tool_input)
-            if not verdict.allowed:
-                writer({"type": "error", "error": verdict.reason, "tool_name": tool_name})
-                return {"decision": "deny", "reason": verdict.reason}
-            return {"decision": "allow"}
+            return await _evaluate_hook(
+                invocation.safety_policy, tool_name, tool_input, tools_called, writer
+            )
 
         # Attach hook to options. Newer SDK versions expose a hooks kwarg;
         # if unavailable, proceed without (legacy installs — noop).
