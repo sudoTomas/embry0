@@ -194,7 +194,6 @@ def test_workspace_root_default(monkeypatch) -> None:
 def test_resolve_writer_returns_test_writer() -> None:
     from legion.agents.executor import _resolve_writer
 
-    sentinel = object()
     calls = []
 
     def w(e):  # noqa: ANN001
