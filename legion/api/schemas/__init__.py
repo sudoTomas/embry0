@@ -26,6 +26,8 @@ class JobCreateRequest(BaseModel):
             "decides."
         ),
     )
+    execution_mode_override: str | None = None
+    auth_mode_override: str | None = None
 
     @field_validator("repo")
     @classmethod

@@ -24,6 +24,11 @@ class PipelineConfig(TypedDict, total=False):
     agent_tools: dict[str, list[str]]
     agent_skills: dict[str, list[str]]
     budget_usd: float
+    # Phase 1 additions — per-agent-type overrides produced by triage.
+    execution_modes: dict[str, str]
+    auth_modes: dict[str, str]
+    system_prompts: dict[str, str]
+    mcp_servers: dict[str, dict[str, Any]]
 
 
 _PIPELINE_DEFAULTS: dict[str, Any] = {
@@ -75,6 +80,10 @@ class PipelineConfigModel(BaseModel):
     agent_tools: dict[str, list[str]] = Field(default_factory=dict)
     agent_skills: dict[str, list[str]] = Field(default_factory=dict)
     budget_usd: float = Field(default=10.0, ge=0.0)
+    execution_modes: dict[str, str] = Field(default_factory=dict)
+    auth_modes: dict[str, str] = Field(default_factory=dict)
+    system_prompts: dict[str, str] = Field(default_factory=dict)
+    mcp_servers: dict[str, Any] = Field(default_factory=dict)
 
 
 class TriageDecisionModel(BaseModel):

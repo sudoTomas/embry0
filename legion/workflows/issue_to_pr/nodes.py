@@ -13,7 +13,10 @@ from typing import Any
 import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
-from langgraph.types import interrupt
+from langgraph.graph import END
+from langgraph.types import Command, interrupt
+
+from legion.orchestration.nodes.agent import run_agent_node
 
 logger = structlog.get_logger(__name__)
 
@@ -145,7 +148,6 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
 
     if agent_runner and container_id:
         # Run triage inside sandbox via AgentRunner
-        from legion.orchestration.nodes.agent import run_agent_node
         from legion.orchestration.nodes.triage import _TRIAGE_SYSTEM_PROMPT, parse_triage_response
 
         repo = state.get("repo", "")
@@ -354,20 +356,18 @@ def _format_user_answers_block(user_answers: Any) -> str:
     return "The user has answered your prior questions as follows:\n" + "\n\n".join(lines)
 
 
-async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
+async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Command:
     """Run developer agent — write code, create branch, commit, push, open PR.
 
     Uses AgentRunner.run() to execute a full Claude Code session in the sandbox.
+    Returns a Command that self-routes to review / ask_user_interrupt / max_retries
+    based on the executor output, pending agent questions, and budget state.
     """
-    from legion.orchestration.nodes.agent import run_agent_node
-
     writer = get_stream_writer()
     writer({"type": "node_started", "node": "developer", "agent": "developer"})
 
-    agent_runner = config["configurable"].get("agent_runner")
-    if not agent_runner:
-        logger.error("developer_node_no_runner")
-        return {"current_stage": "developer_complete", "errors": ["No agent runner available"]}
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    agent_runner = configurable.get("agent_runner")
 
     # Build the developer prompt
     repo = state.get("repo", "")
@@ -515,23 +515,53 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> dict[
     if user_answers:
         updates["user_answers"] = None
 
-    return updates
+    # Self-routing: decide the next node based on the updates we just produced
+    # and the state we were handed. Priority:
+    #   1. agent_questions_exhausted wins — terminal failure (max_retries).
+    #   2. Pending agent questions divert to ask_user_interrupt.
+    #   3. Budget overrun also diverts to max_retries.
+    #   4. Otherwise proceed to review.
+    pipeline = state.get("pipeline_config", {}) or {}
+    if isinstance(pipeline, dict) and "pipeline_config" in pipeline:
+        pipeline = pipeline.get("pipeline_config") or {}
+    budget = pipeline.get("budget_usd", 10.0) if isinstance(pipeline, dict) else 10.0
+
+    if updates.get("agent_questions_exhausted") or state.get("agent_questions_exhausted"):
+        goto = "max_retries"
+    elif updates.get("pending_agent_questions") or state.get("pending_agent_questions"):
+        goto = "ask_user_interrupt"
+    elif updates.get("total_cost_usd", state.get("total_cost_usd", 0.0)) > budget:
+        goto = "max_retries"
+    else:
+        goto = "review"
+
+    return Command(goto=goto, update=updates)
 
 
-async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
+async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command:
     """Run review agent — tests, lint, typecheck, code review.
 
-    Returns structured JSON with decision, validation results, and comments.
+    Returns structured JSON with decision, validation results, and comments,
+    and self-routes via Command to approved (END), changes_requested (retry),
+    or max_retries based on the review decision.
     """
-    from legion.orchestration.nodes.agent import run_agent_node
-
     writer = get_stream_writer()
     writer({"type": "node_started", "node": "review", "agent": "review"})
 
-    agent_runner = config["configurable"].get("agent_runner")
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    agent_runner = configurable.get("agent_runner")
     if not agent_runner:
         logger.error("review_node_no_runner")
-        return {"current_stage": "review_complete", "errors": ["No agent runner available"]}
+        from legion.safety.error_codes import ErrorCode
+
+        return Command(
+            goto="max_retries",
+            update={
+                "current_stage": "review_complete",
+                "errors": ["No agent runner available"],
+                "error_code": ErrorCode.UNKNOWN.value,
+            },
+        )
 
     repo = state.get("repo", "")
     pr_url = state.get("pr_url", "")
@@ -601,7 +631,26 @@ Return ONLY a JSON object:
                 pass
 
     writer({"type": "node_completed", "node": "review"})
-    return {**result, "current_stage": "review_complete"}
+
+    updates: dict[str, Any] = {**result, "current_stage": "review_complete"}
+
+    # Self-routing: inline check_review_decision against the merged agent_outputs
+    # (existing state plus whatever this review run appended). Approved → END,
+    # changes_requested → retry (or max_retries if retry cap hit).
+    from legion.orchestration.routing.conditions import check_review_decision
+
+    merged_outputs = list(state.get("agent_outputs", []) or []) + list(result.get("agent_outputs", []) or [])
+    merged_state = {**state, "agent_outputs": merged_outputs}
+    decision = check_review_decision(merged_state)
+
+    if decision == "approved":
+        goto: Any = END
+    elif decision == "max_retries":
+        goto = "max_retries"
+    else:
+        goto = "retry"
+
+    return Command(goto=goto, update=updates)
 
 
 async def retry_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:

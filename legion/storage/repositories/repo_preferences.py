@@ -23,7 +23,7 @@ class RepoPreferencesRepository:
 
     async def get(self, repo: str) -> dict[str, Any] | None:
         row = await self._db.fetchrow(
-            "SELECT repo, sandbox_profile, language_hint, notes, updated_at FROM repo_preferences WHERE repo = $1",
+            "SELECT repo, sandbox_profile, language_hint, notes, execution_mode, auth_mode, updated_at FROM repo_preferences WHERE repo = $1",
             repo,
         )
         return dict(row) if row else None
@@ -34,21 +34,27 @@ class RepoPreferencesRepository:
         sandbox_profile: str | None = None,
         language_hint: str | None = None,
         notes: str = "",
+        execution_mode: str | None = None,
+        auth_mode: str | None = None,
     ) -> dict[str, Any]:
         await self._db.execute(
             """
-            INSERT INTO repo_preferences (repo, sandbox_profile, language_hint, notes)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO repo_preferences (repo, sandbox_profile, language_hint, notes, execution_mode, auth_mode)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (repo) DO UPDATE SET
                 sandbox_profile = EXCLUDED.sandbox_profile,
                 language_hint = EXCLUDED.language_hint,
                 notes = EXCLUDED.notes,
+                execution_mode = EXCLUDED.execution_mode,
+                auth_mode = EXCLUDED.auth_mode,
                 updated_at = NOW()
             """,
             repo,
             sandbox_profile,
             language_hint,
             notes,
+            execution_mode,
+            auth_mode,
         )
         out = await self.get(repo)
         assert out is not None
@@ -59,6 +65,6 @@ class RepoPreferencesRepository:
 
     async def list_all(self) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
-            "SELECT repo, sandbox_profile, language_hint, notes, updated_at FROM repo_preferences ORDER BY repo"
+            "SELECT repo, sandbox_profile, language_hint, notes, execution_mode, auth_mode, updated_at FROM repo_preferences ORDER BY repo"
         )
         return [dict(r) for r in rows]

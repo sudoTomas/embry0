@@ -5,15 +5,16 @@ Graph: init → triage → developer → [ask_user? | budget check] → review �
                             │             └── ask_user_interrupt ──┤
                             └────────── retry ←────────────────────┘
                                          (up to 3x, then max_retries interrupt)
+
+`developer_node` and `review_node` self-route via `Command(goto=..., update=...)`,
+so no conditional edges are wired for them here. See
+`legion/workflows/issue_to_pr/nodes.py` for the routing logic.
 """
 
-from typing import Any, Literal
+from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from legion.orchestration.routing.agent_questions import (
-    route_after_developer as route_for_agent_questions,
-)
 from legion.orchestration.state import JobState
 from legion.workflows.issue_to_pr.nodes import (
     ask_user_interrupt,
@@ -24,30 +25,7 @@ from legion.workflows.issue_to_pr.nodes import (
     review_node,
     triage_node,
 )
-from legion.workflows.issue_to_pr.routing import (
-    route_after_developer as route_after_developer_budget,
-)
-from legion.workflows.issue_to_pr.routing import (
-    route_after_review,
-    route_after_triage,
-)
-
-
-def _route_after_developer(state: dict[str, Any]) -> Literal["ask_user", "within_budget", "over_budget"]:
-    """Combined router after the developer node.
-
-    Priority:
-    1. If the agent-question cycle cap has been hit, go straight to max_retries
-       (via "over_budget") so the terminal failure state is preserved — otherwise
-       review_node would overwrite current_stage and silently swallow the failure.
-    2. If the agent asked the user questions, divert to ask_user_interrupt.
-    3. Otherwise, apply the budget check (within_budget → review, over_budget → max_retries).
-    """
-    if state.get("agent_questions_exhausted"):
-        return "over_budget"
-    if route_for_agent_questions(state) == "ask_user":
-        return "ask_user"
-    return route_after_developer_budget(state)
+from legion.workflows.issue_to_pr.routing import route_after_triage
 
 
 class IssueToprWorkflow:
@@ -74,28 +52,12 @@ class IssueToprWorkflow:
             {"proceed": "developer", "split": END},
         )
 
-        # After the developer node: either the agent paused to ask the user
-        # (ask_user_interrupt), or we apply the existing budget check and
-        # continue to review / max_retries.
-        builder.add_conditional_edges(
-            "developer",
-            _route_after_developer,
-            {
-                "ask_user": "ask_user_interrupt",
-                "within_budget": "review",
-                "over_budget": "max_retries",
-            },
-        )
+        # `developer` and `review` self-route via Command(goto=..., update=...)
+        # returned from the node bodies. No conditional edges needed here.
 
         # After the user answers, re-run the developer so the agent sees the
         # Q&A in its rebuilt context.
         builder.add_edge("ask_user_interrupt", "developer")
-
-        builder.add_conditional_edges(
-            "review",
-            route_after_review,
-            {"approved": END, "changes_requested": "retry", "max_retries": "max_retries"},
-        )
 
         builder.add_edge("retry", "developer")
 

@@ -616,6 +616,42 @@ Budget controls, context injection, and sandbox profiles are configurable via th
 - **Context** — `GET/PUT /api/v1/config/context` (global), `/config/context/repos/{repo}` (per-repo)
 - **Sandbox Profiles** — `CRUD /api/v1/sandbox-profiles`
 
+## Agent Execution & Auth Modes
+
+Legion invokes Claude through a pluggable executor layer with two orthogonal config dimensions:
+
+| Dimension | Values | Meaning |
+|---|---|---|
+| `execution_mode` | `sdk` (default), `cli` (Phase 2) | Agent SDK Python wrapper vs direct `claude -p` CLI subprocess |
+| `auth_mode` | `oauth` (default), `api_key` | Claude Max OAuth token vs Anthropic API key |
+
+All 4 combinations are valid in Phase 2+. **Phase 1 supports `sdk` only**; requesting `cli` at any level raises `ERR_INVALID_CONFIG` at resolve time.
+
+### Five-level precedence
+
+Later levels win:
+
+1. **Global** — `LegionConfig.default_execution_mode`, `.default_auth_mode` (env vars `DEFAULT_EXECUTION_MODE`, `DEFAULT_AUTH_MODE`).
+2. **Per-repo** — `repo_preferences.execution_mode`, `.auth_mode` columns.
+3. **Per-job** — `JobCreateRequest.execution_mode_override`, `.auth_mode_override`.
+4. **Per-agent-type** — `agent_definitions.execution_mode`, `.auth_mode` columns.
+5. **Pipeline config (triage output)** — `pipeline_config.execution_modes[agent_type]`, `.auth_modes[agent_type]`.
+
+NULL at any level falls through to the previous level.
+
+### Credentials
+
+- `auth_mode=oauth` requires `CLAUDE_CODE_OAUTH_TOKEN` (loaded from the host's `~/.claude/.credentials.json` by the sandbox manager). Missing token → `ERR_MISSING_OAUTH_TOKEN`.
+- `auth_mode=api_key` requires `ANTHROPIC_API_KEY` in `LegionConfig`. Missing key → `ERR_MISSING_API_KEY`.
+
+### Safety Policy (three rings)
+
+1. **Container isolation** — ephemeral Docker sandbox, non-root, tmpfs workspace.
+2. **Declarative permissions** — rendered into `/workspace/.claude/settings.json` per run (`permissions.allow` / `permissions.deny`). Enforced by Claude Code before tool dispatch.
+3. **Programmable hook** — `evaluate_policy()` runs dangerous-Bash-pattern checks as a `PreToolUse` callable. Fail-closed.
+
+Both execution modes consume the same `SafetyPolicy` data structure via different delivery mechanisms.
+
 ## Development
 
 ```bash

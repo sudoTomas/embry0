@@ -19,12 +19,14 @@ def app():
     mock_prefs = MagicMock()
     mock_prefs.get = AsyncMock(return_value=None)
 
-    async def _upsert(repo, sandbox_profile=None, language_hint=None, notes=""):
+    async def _upsert(repo, sandbox_profile=None, language_hint=None, notes="", execution_mode=None, auth_mode=None):
         return {
             "repo": repo,
             "sandbox_profile": sandbox_profile,
             "language_hint": language_hint,
             "notes": notes,
+            "execution_mode": execution_mode,
+            "auth_mode": auth_mode,
             "updated_at": datetime.now(UTC),
         }
 
@@ -114,3 +116,21 @@ async def test_delete_preferences_returns_204(app):
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
     assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_upsert_passes_execution_and_auth_modes(app) -> None:
+    """execution_mode and auth_mode round-trip through the API."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widget/preferences",
+            json={"execution_mode": "sdk", "auth_mode": "api_key"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200
+    mock_prefs = app.state.repo_preferences_repo
+    mock_prefs.upsert.assert_called_once()
+    kwargs = mock_prefs.upsert.call_args.kwargs
+    assert kwargs["execution_mode"] == "sdk"
+    assert kwargs["auth_mode"] == "api_key"

@@ -236,7 +236,7 @@ def cmd_health(args: argparse.Namespace) -> None:
 
     port = os.environ.get("PROD_PORT", "8200")
     url = args.url or os.environ.get("LEGION_URL", f"http://localhost:{port}")
-    endpoint = f"{url.rstrip('/')}/health/ready"
+    endpoint = f"{url.rstrip('/')}/api/v1/health/ready"
 
     try:
         resp = httpx.get(endpoint, timeout=5.0)

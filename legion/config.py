@@ -78,6 +78,12 @@ class LegionConfig(BaseSettings):
     docker_tls_verify: bool = False
     docker_cert_path: str = ""
 
+    # Pluggable agent execution modes (Phase 1).
+    # Both dimensions are orthogonal. Defaults preserve today's runtime
+    # behavior (SDK path + OAuth from ~/.claude/.credentials.json).
+    default_execution_mode: str = "sdk"
+    default_auth_mode: str = "oauth"
+
     @field_validator("audit_log_path", mode="before")
     @classmethod
     def _empty_str_to_none(cls, v: object) -> object:

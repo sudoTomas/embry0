@@ -342,6 +342,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         """,
     ),
+    (
+        12,
+        "pluggable agent execution modes — execution_mode + auth_mode columns",
+        """
+        ALTER TABLE repo_preferences
+            ADD COLUMN IF NOT EXISTS execution_mode TEXT,
+            ADD COLUMN IF NOT EXISTS auth_mode TEXT;
+
+        ALTER TABLE agent_definitions
+            ADD COLUMN IF NOT EXISTS execution_mode TEXT,
+            ADD COLUMN IF NOT EXISTS auth_mode TEXT;
+        """,
+    ),
 ]
 
 
