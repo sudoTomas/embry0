@@ -10,7 +10,7 @@ def test_config_defaults():
         config = AthanorConfig(
             _env_file=None,  # type: ignore[call-arg]
         )
-    assert config.database_url == "postgresql://legion:legion@localhost:5432/legion"
+    assert config.database_url == "postgresql://athanor:athanor@localhost:5432/athanor"
     assert config.max_budget_usd == 10.0
     assert config.daily_budget_cap_usd == 100.0
     assert config.monthly_budget_cap_usd == 500.0

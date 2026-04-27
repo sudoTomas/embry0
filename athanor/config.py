@@ -16,7 +16,7 @@ class AthanorConfig(BaseSettings):
     )
 
     # Database (PostgreSQL)
-    database_url: str = "postgresql://legion:legion@localhost:5432/legion"
+    database_url: str = "postgresql://athanor:athanor@localhost:5432/athanor"
 
     # GitHub integration
     github_token: str = ""
@@ -50,7 +50,7 @@ class AthanorConfig(BaseSettings):
     budget_overrun_mode: str = "soft"  # "soft" | "hard"
 
     # Sandbox defaults
-    sandbox_image: str = "legion-sandbox:latest"
+    sandbox_image: str = "athanor-sandbox:latest"
     sandbox_memory: str = "8g"
     sandbox_cpus: str = "4"
 

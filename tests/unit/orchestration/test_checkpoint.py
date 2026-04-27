@@ -24,7 +24,7 @@ async def test_checkpointer_context_creates_saver():
     # This will fail to connect without a real DB, but we can verify the function exists
     # and returns the right type structure. For a real integration test, use testcontainers.
     try:
-        async with checkpointer_context("postgresql://legion:legion@localhost:5432/legion") as saver:
+        async with checkpointer_context("postgresql://athanor:athanor@localhost:5432/athanor") as saver:
             assert isinstance(saver, AsyncPostgresSaver)
     except (psycopg.OperationalError, OSError, ConnectionRefusedError):
         pytest.skip("PostgreSQL not available — skipping integration test")
@@ -38,7 +38,7 @@ async def test_purge_thread_is_idempotent_for_nonexistent_thread(pg_pool):
 
     from athanor.orchestration.checkpoint import checkpointer_context, purge_thread
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://legion:legion@localhost:5432/legion_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
 
     try:
         async with checkpointer_context(url) as _saver:
@@ -57,7 +57,7 @@ async def test_purge_thread_deletes_only_target_thread_rows(pg_pool):
 
     from athanor.orchestration.checkpoint import checkpointer_context, purge_thread
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://legion:legion@localhost:5432/legion_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
 
     try:
         async with checkpointer_context(url) as _saver:

@@ -593,7 +593,7 @@ Legion uses environment variables for infrastructure config and API endpoints fo
 | `CLAUDE_MAX_OAUTH_TOKEN` | — | OAuth token (for `claude_max` mode) |
 | `GITHUB_TOKEN` | — | GitHub personal access token |
 | `GITHUB_WEBHOOK_SECRET` | — | HMAC secret for webhook verification |
-| `DATABASE_URL` | `postgresql://legion:legion@postgres:5432/legion` | PostgreSQL connection |
+| `DATABASE_URL` | `postgresql://athanor:athanor@postgres:5432/athanor` | PostgreSQL connection |
 | `MAX_BUDGET_USD` | `10.0` | Default per-job budget |
 | `DAILY_BUDGET_CAP_USD` | `100.0` | Daily spending cap |
 | `MONTHLY_BUDGET_CAP_USD` | `500.0` | Monthly spending cap |
@@ -675,7 +675,7 @@ cd frontend && npm install && npm run dev
 pytest tests/unit/ -v
 
 # Integration tests (requires PostgreSQL)
-TEST_DATABASE_URL=postgresql://legion:legion@localhost:5432/legion_test \
+TEST_DATABASE_URL=postgresql://athanor:athanor@localhost:5432/athanor_test \
   pytest tests/integration/ -v
 
 # Full suite

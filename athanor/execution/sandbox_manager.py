@@ -13,7 +13,7 @@ from athanor.execution.docker_client import DockerClient
 logger = structlog.get_logger(__name__)
 
 _DEFAULT_PROFILE: dict[str, Any] = {
-    "base_image": "legion-sandbox:latest",
+    "base_image": "athanor-sandbox:latest",
     "memory": "8g",
     "cpus": "4",
     "pids_limit": 256,

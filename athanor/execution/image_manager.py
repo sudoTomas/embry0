@@ -69,7 +69,7 @@ class SandboxImageManager:
         except RuntimeError:
             return False
 
-    async def ensure_image(self, image: str = "legion-sandbox:latest", force: bool = False) -> bool:
+    async def ensure_image(self, image: str = "athanor-sandbox:latest", force: bool = False) -> bool:
         """Ensure the sandbox image is built and up-to-date. Returns True if build occurred."""
         async with self._build_lock:
             current_hash = self._compute_build_hash()
@@ -127,7 +127,7 @@ class SandboxImageManager:
     async def build_profile_image(
         self,
         profile_name: str,
-        base_image: str = "legion-sandbox:latest",
+        base_image: str = "athanor-sandbox:latest",
         additional_packages: list[str] | None = None,
         setup_commands: list[str] | None = None,
     ) -> bool:

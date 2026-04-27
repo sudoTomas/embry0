@@ -18,7 +18,7 @@ class SandboxProfilesRepository:
     async def upsert(
         self,
         name: str,
-        base_image: str = "legion-sandbox:latest",
+        base_image: str = "athanor-sandbox:latest",
         additional_packages: list[str] | None = None,
         setup_commands: list[str] | None = None,
         memory: str = "8g",

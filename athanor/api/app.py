@@ -196,7 +196,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Auto-build sandbox image on startup
     try:
-        built = await image_mgr.ensure_image("legion-sandbox:latest")
+        built = await image_mgr.ensure_image("athanor-sandbox:latest")
         if built:
             logger.info("sandbox_image_auto_built")
         else:
@@ -320,11 +320,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("legion_stopped")
 
 
-def create_app(config: AthanorConfig | None = None) -> FastAPI:
+def create_app(config: AthanorConfig | None = None, lifespan_override=None) -> FastAPI:
     if config is None:
         config = AthanorConfig()
 
-    app = FastAPI(title=API_TITLE, version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title=API_TITLE, version="0.1.0", lifespan=lifespan_override or lifespan)
     app.state.config = config
 
     app.add_middleware(

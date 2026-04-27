@@ -35,7 +35,7 @@ def test_build_base_cmd_no_tls():
 def test_build_run_cmd(docker: DockerClient):
     """Run command includes security and resource flags."""
     cmd = docker.build_run_cmd(
-        image="legion-sandbox:latest",
+        image="athanor-sandbox:latest",
         name="sandbox-job-123",
         network="sandbox-restricted",
         memory="8g",
@@ -56,14 +56,14 @@ def test_build_run_cmd(docker: DockerClient):
     assert "--pids-limit=256" in cmd
     assert "--read-only" in cmd
     assert "--network=sandbox-restricted" in cmd
-    assert "legion-sandbox:latest" in cmd
+    assert "athanor-sandbox:latest" in cmd
     assert cmd[-1] == "infinity"  # sleep infinity
 
 
 def test_build_run_cmd_volumes(docker: DockerClient):
     """Volumes are passed as -v flags, appearing before image."""
     cmd = docker.build_run_cmd(
-        image="legion-sandbox:latest",
+        image="athanor-sandbox:latest",
         name="sandbox-job-123",
         volumes=["/host/path:/container/path:ro", "/data:/data"],
     )
@@ -73,14 +73,14 @@ def test_build_run_cmd_volumes(docker: DockerClient):
     assert "/host/path:/container/path:ro" in v_pairs
     assert "/data:/data" in v_pairs
     # Image must come after all -v flags
-    image_idx = cmd.index("legion-sandbox:latest")
+    image_idx = cmd.index("athanor-sandbox:latest")
     for v in v_pairs:
         assert cmd.index(v) < image_idx
 
 
 def test_build_run_cmd_no_volumes(docker: DockerClient):
     """Without volumes parameter, no -v flags appear."""
-    cmd = docker.build_run_cmd(image="legion-sandbox:latest", name="sandbox-job-123")
+    cmd = docker.build_run_cmd(image="athanor-sandbox:latest", name="sandbox-job-123")
     assert "-v" not in cmd
 
 

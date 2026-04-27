@@ -60,7 +60,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
 
         CREATE TABLE IF NOT EXISTS sandbox_profiles (
             name            TEXT PRIMARY KEY,
-            base_image      TEXT NOT NULL DEFAULT 'legion-sandbox:latest',
+            base_image      TEXT NOT NULL DEFAULT 'athanor-sandbox:latest',
             additional_packages JSONB DEFAULT '[]',
             setup_commands  JSONB DEFAULT '[]',
             memory          TEXT NOT NULL DEFAULT '8g',
@@ -133,7 +133,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
 
         CREATE TABLE IF NOT EXISTS integration_config (
             id                  TEXT PRIMARY KEY,
-            trigger_labels      JSONB DEFAULT '["Legion"]',
+            trigger_labels      JSONB DEFAULT '["Athanor"]',
             webhook_secret      TEXT DEFAULT '',
             slack_webhook_url   TEXT DEFAULT '',
             telegram_bot_token  TEXT DEFAULT '',
@@ -366,7 +366,7 @@ async def run_migrations(db: DatabasePool) -> None:
     async with db.pool.acquire() as conn:
         # Create migrations tracking table
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS legion_migrations (
+            CREATE TABLE IF NOT EXISTS athanor_migrations (
                 version INTEGER PRIMARY KEY,
                 description TEXT NOT NULL,
                 applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -374,7 +374,7 @@ async def run_migrations(db: DatabasePool) -> None:
         """)
 
         # Get current version
-        current = await conn.fetchval("SELECT COALESCE(MAX(version), 0) FROM legion_migrations")
+        current = await conn.fetchval("SELECT COALESCE(MAX(version), 0) FROM athanor_migrations")
 
         for version, description, sql in MIGRATIONS:
             if version <= current:
@@ -383,7 +383,7 @@ async def run_migrations(db: DatabasePool) -> None:
             async with conn.transaction():
                 await conn.execute(sql)
                 await conn.execute(
-                    "INSERT INTO legion_migrations (version, description) VALUES ($1, $2)",
+                    "INSERT INTO athanor_migrations (version, description) VALUES ($1, $2)",
                     version,
                     description,
                 )

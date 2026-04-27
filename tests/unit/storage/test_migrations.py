@@ -17,7 +17,7 @@ async def test_run_migrations_creates_tables(pg_pool: asyncpg.Pool):
     """Running migrations creates all expected tables."""
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://legion:legion@localhost:5432/legion_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
     try:
         db = DatabasePool(url)
         await db.connect()
@@ -26,7 +26,7 @@ async def test_run_migrations_creates_tables(pg_pool: asyncpg.Pool):
         # Verify core tables exist
         tables = await db.fetch("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
         table_names = {row["tablename"] for row in tables}
-        assert "legion_migrations" in table_names
+        assert "athanor_migrations" in table_names
         assert "jobs" in table_names
         assert "traces" in table_names
         assert "pipeline_templates" in table_names
@@ -46,14 +46,14 @@ async def test_run_migrations_is_idempotent(pg_pool: asyncpg.Pool):
     """Running migrations twice does not error."""
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://legion:legion@localhost:5432/legion_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
     try:
         db = DatabasePool(url)
         await db.connect()
         await run_migrations(db)
         await run_migrations(db)  # Second run should be no-op
 
-        version = await db.fetchval("SELECT MAX(version) FROM legion_migrations")
+        version = await db.fetchval("SELECT MAX(version) FROM athanor_migrations")
         assert version == len(MIGRATIONS)
 
         await db.close()

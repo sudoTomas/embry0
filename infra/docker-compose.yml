@@ -25,7 +25,7 @@ services:
       dockerfile: infra/Dockerfile.orchestrator
     container_name: legion-orchestrator
     environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-legion}:${POSTGRES_PASSWORD:-legion}@postgres:5432/${POSTGRES_DB:-legion}"
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-athanor}:${POSTGRES_PASSWORD:-athanor}@postgres:5432/${POSTGRES_DB:-athanor}"
       DOCKER_HOST: tcp://dind:2376
       DOCKER_TLS_VERIFY: "1"
       DOCKER_CERT_PATH: /certs/client
@@ -70,13 +70,13 @@ services:
     image: postgres:16
     container_name: legion-postgres
     environment:
-      POSTGRES_DB: "${POSTGRES_DB:-legion}"
-      POSTGRES_USER: "${POSTGRES_USER:-legion}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-legion}"
+      POSTGRES_DB: "${POSTGRES_DB:-athanor}"
+      POSTGRES_USER: "${POSTGRES_USER:-athanor}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-athanor}"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-legion}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-athanor}"]
       interval: 10s
       timeout: 5s
       start_period: 10s

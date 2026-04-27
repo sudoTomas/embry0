@@ -16,7 +16,7 @@ import { toast } from "sonner";
 
 const DEFAULT_PROFILE: Omit<SandboxProfile, "created_at" | "updated_at"> = {
   name: "",
-  base_image: "legion-sandbox:latest",
+  base_image: "athanor-sandbox:latest",
   additional_packages: [],
   setup_commands: [],
   memory: "8g",
@@ -141,7 +141,7 @@ export function SandboxFormPage() {
                 id="base_image"
                 value={form.base_image}
                 onChange={(e) => setField("base_image", e.target.value)}
-                placeholder="legion-sandbox:latest"
+                placeholder="athanor-sandbox:latest"
                 className="mt-1"
               />
             </div>

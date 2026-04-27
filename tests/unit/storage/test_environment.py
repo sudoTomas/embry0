@@ -14,7 +14,7 @@ from athanor.storage.repositories.environment import EnvironmentRepository
 async def env_repo(pg_pool: asyncpg.Pool) -> AsyncIterator[EnvironmentRepository]:
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://legion:legion@localhost:5432/legion_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
     db = DatabasePool(url)
     await db.connect()
     await run_migrations(db)

@@ -12,7 +12,7 @@ from athanor.storage.repositories.provider_config import ProviderConfigRepositor
 async def provider_repo(pg_pool: asyncpg.Pool) -> ProviderConfigRepository:
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://legion:legion@localhost:5432/legion_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
     db = DatabasePool(url)
     await db.connect()
     await run_migrations(db)

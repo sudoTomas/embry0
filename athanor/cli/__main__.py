@@ -17,9 +17,9 @@ logger = structlog.get_logger()
 
 COMPOSE_FILE = "infra/docker-compose.yml"
 ENV_FILE = ".env"
-PROJECT_NAME = "legion"
-DIND_CONTAINER = "legion-dind"
-SANDBOX_IMAGE = "legion-sandbox:latest"
+PROJECT_NAME = "athanor"
+DIND_CONTAINER = "athanor-dind"
+SANDBOX_IMAGE = "athanor-sandbox:latest"
 
 _SECRET_FIELDS = frozenset(
     {

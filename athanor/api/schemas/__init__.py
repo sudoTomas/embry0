@@ -78,7 +78,7 @@ class GraphResumeRequest(BaseModel):
 
 class SandboxProfileRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-    base_image: str = "legion-sandbox:latest"
+    base_image: str = "athanor-sandbox:latest"
     additional_packages: list[str] = Field(default_factory=list)
     setup_commands: list[str] = Field(default_factory=list)
     memory: str = "8g"

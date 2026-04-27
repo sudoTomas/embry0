@@ -12,7 +12,7 @@ from athanor.storage.repositories.issues import IssuesRepository
 
 @pytest.fixture
 async def issues_repo(pg_pool: asyncpg.Pool) -> IssuesRepository:
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://legion:legion@localhost:5432/legion_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
     db = DatabasePool(url)
     await db.connect()
     await run_migrations(db)
