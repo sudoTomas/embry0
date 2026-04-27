@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { Workflow, FlaskConical } from "lucide-react";
+import { Workflow, CircleDot } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { IconBox } from "@/components/ui/IconBox";
 
@@ -11,13 +11,13 @@ export function EmptyJobsState() {
       </div>
       <h3 className="text-lg font-semibold text-white/70 mb-2">No jobs yet</h3>
       <p className="text-sm text-white/30 text-center max-w-sm mb-6">
-        Jobs are created when GitHub issues are labeled or via the API. Try the demo to see the execution dashboard in action.
+        Jobs are created when GitHub issues are labeled or via the API. Create an issue to get started.
       </p>
       <div className="flex gap-3">
-        <Link to="/demo">
+        <Link to="/issues">
           <Button variant="outline" size="sm" className="gap-1.5">
-            <FlaskConical className="w-3.5 h-3.5" />
-            View Demo
+            <CircleDot className="w-3.5 h-3.5" />
+            Create your first issue
           </Button>
         </Link>
       </div>

@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { FlaskConical, Plus, Settings } from "lucide-react";
+import { CircleDot, Plus, Settings } from "lucide-react";
 import { IconBox } from "@/components/ui/IconBox";
 
 export function GettingStartedCard() {
@@ -13,19 +13,19 @@ export function GettingStartedCard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Link to="/demo" className="group">
+        <Link to="/issues" className="group">
           <div className="rounded-xl p-5 border border-orange-500/15 bg-orange-500/[0.03] hover:bg-orange-500/[0.06] transition-all">
-            <IconBox icon={FlaskConical} color="#f97316" size="lg" className="mb-3" />
-            <h3 className="font-semibold text-orange-400 mb-1">Explore the Demo</h3>
-            <p className="text-xs text-white/40">See the execution dashboard with simulated agent data</p>
+            <IconBox icon={CircleDot} color="#f97316" size="lg" className="mb-3" />
+            <h3 className="font-semibold text-orange-400 mb-1">Create an Issue</h3>
+            <p className="text-xs text-white/40">Submit your first issue to the agent pipeline for autonomous resolution</p>
           </div>
         </Link>
 
         <Link to="/jobs" className="group">
           <div className="rounded-xl p-5 border border-cyan-500/15 bg-cyan-500/[0.03] hover:bg-cyan-500/[0.06] transition-all">
             <IconBox icon={Plus} color="#06b6d4" size="lg" className="mb-3" />
-            <h3 className="font-semibold text-cyan-400 mb-1">Create a Job</h3>
-            <p className="text-xs text-white/40">Submit an issue to the agent pipeline for autonomous resolution</p>
+            <h3 className="font-semibold text-cyan-400 mb-1">View Jobs</h3>
+            <p className="text-xs text-white/40">Monitor the agent pipeline as it processes your issues</p>
           </div>
         </Link>
 
