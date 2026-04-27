@@ -31,11 +31,11 @@ class SandboxImageManager:
             hasher.update(dockerfile.read_bytes())
 
         source_dirs = [
-            self._app_root / "legion" / "sandbox",
-            self._app_root / "legion" / "safety",
+            self._app_root / "athanor" / "sandbox",
+            self._app_root / "athanor" / "safety",
         ]
         source_files = [
-            self._app_root / "legion" / "execution" / "events.py",
+            self._app_root / "athanor" / "execution" / "events.py",
         ]
 
         for src_dir in source_dirs:
@@ -133,7 +133,7 @@ class SandboxImageManager:
     ) -> bool:
         """Build a profile-specific sandbox image."""
         async with self._build_lock:
-            image_tag = f"legion-sandbox:{profile_name}"
+            image_tag = f"athanor-sandbox:{profile_name}"
 
             dockerfile_content = f"FROM {base_image}\nUSER root\n"
             if additional_packages:

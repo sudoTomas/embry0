@@ -339,7 +339,7 @@ def create_app(config: AthanorConfig | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict:
-        return {"status": "ok", "service": "legion"}
+        return {"status": "ok", "service": "athanor"}
 
     _register_routers(app)
     return app

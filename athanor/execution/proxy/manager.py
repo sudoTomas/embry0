@@ -18,7 +18,7 @@ class ProxyManager:
         self._sites: list[web.TCPSite] = []
         self.auth_proxy_url: str = ""
         self.git_proxy_url: str = ""
-        self.legion_proxy_url: str = ""
+        self.athanor_proxy_url: str = ""
 
     async def start(
         self,
@@ -46,7 +46,7 @@ class ProxyManager:
 
         logger.info("proxy_manager_started")
 
-    async def start_legion_proxy_for_job(
+    async def start_athanor_proxy_for_job(
         self,
         issues_repo: Any,
         inputs_repo: Any,
@@ -56,7 +56,7 @@ class ProxyManager:
         db: Any = None,
         port: int = 9102,
     ) -> str:
-        """Start a Legion API proxy scoped to a specific job. Returns the URL."""
+        """Start an Athanor API proxy scoped to a specific job. Returns the URL."""
         from athanor.execution.proxy.legion_proxy import create_legion_proxy_app
 
         app = create_legion_proxy_app(
@@ -69,7 +69,7 @@ class ProxyManager:
         )
         await self._start_app(app, "0.0.0.0", port)
         url = f"http://host.docker.internal:{port}"
-        logger.info("legion_proxy_started_for_job", job_id=job_id, port=port)
+        logger.info("athanor_proxy_started_for_job", job_id=job_id, port=port)
         return url
 
     async def _start_app(self, app: web.Application, host: str, port: int) -> None:

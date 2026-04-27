@@ -121,7 +121,7 @@ class JobState(TypedDict, total=False):
     additional_context: str | None
     auth_proxy_url: str | None
     git_proxy_url: str | None
-    legion_proxy_url: str | None
+    athanor_proxy_url: str | None
     agent_outputs: Annotated[list[AgentOutputEntry], operator.add]
     errors: Annotated[list[str], operator.add]
     current_stage: str

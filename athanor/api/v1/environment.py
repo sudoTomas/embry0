@@ -25,7 +25,7 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 _SECRET_MASK = "****"
-_DEFAULT_SECRET_KEY = "legion-dev-secret-key"
+_DEFAULT_SECRET_KEY = "athanor-dev-secret-key"
 
 
 @lru_cache(maxsize=1)

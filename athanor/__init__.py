@@ -1,1 +1,1 @@
-"""Legion — General-purpose agent orchestration engine."""
+"""Athanor — General-purpose agent orchestration engine."""
