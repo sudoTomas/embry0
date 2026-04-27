@@ -183,6 +183,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             timeout_seconds=180,
             on_event=_forward_event,
             credentials=credentials,
+            config=config,
         )
 
         # Parse triage decision from agent output
@@ -260,6 +261,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 timeout_seconds=180,
                 on_event=_forward_event,
                 credentials=credentials,
+                config=config,
             )
             if result.get("agent_outputs"):
                 last = result["agent_outputs"][-1]
@@ -445,6 +447,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         timeout_seconds=1800,
         on_event=_forward_event,
         credentials=credentials,
+        config=config,
     )
 
     # Scan the agent's event stream for `agent_ask_user` events. If present,
@@ -625,6 +628,7 @@ Return ONLY a JSON object:
         timeout_seconds=300,
         on_event=_forward_event,
         credentials=credentials,
+        config=config,
     )
 
     # Extract validation and decision from output for streaming
