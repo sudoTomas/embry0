@@ -62,13 +62,13 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                 continue
             env[k] = v
         if git_proxy_url:
-            env["LEGION_GIT_PROXY_URL"] = git_proxy_url
+            env["ATHANOR_GIT_PROXY_URL"] = git_proxy_url
         container_id = await sandbox_mgr.create(job_id, env=env)
         logger.info("sandbox_created", job_id=job_id, container_id=container_id)
         writer({"type": "progress", "message": "Sandbox container created"})
 
         # Clone repo inside container. Git auth flows via credential proxy — the
-        # helper curls $LEGION_GIT_PROXY_URL/git-credentials which returns the
+        # helper curls $ATHANOR_GIT_PROXY_URL/git-credentials which returns the
         # orchestrator's token without the token ever being visible to agent code.
         if repo and docker:
             if git_proxy_url:

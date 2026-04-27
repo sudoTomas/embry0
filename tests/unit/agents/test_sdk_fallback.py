@@ -18,7 +18,7 @@ class _FakeResult:
 
 @pytest.mark.asyncio
 async def test_run_agent_returns_agent_result(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
 
     async def _gen(msgs):
         for m in msgs:

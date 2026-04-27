@@ -13,7 +13,7 @@ from athanor.orchestration.nodes.agent import run_agent_node
 
 @pytest.mark.asyncio
 async def test_run_agent_node_builds_invocation_and_delegates(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
 
     fake_out = AgentOutput(
         agent_type="developer",

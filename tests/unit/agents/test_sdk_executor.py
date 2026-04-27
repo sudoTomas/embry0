@@ -64,7 +64,7 @@ async def _scripted_query(messages: list[Any]):
 async def test_sdk_executor_returns_output(tmp_path, monkeypatch) -> None:
     # Point the executor at a tmp /workspace so settings.json writes don't
     # pollute the real FS.
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
 
     messages = [
         _FakeAssistantMessage("hello"),
@@ -94,7 +94,7 @@ async def test_sdk_executor_returns_output(tmp_path, monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_sdk_executor_writes_settings_json(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
 
     with patch(
         "claude_agent_sdk.query",
@@ -115,7 +115,7 @@ async def test_sdk_executor_writes_settings_json(tmp_path, monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_sdk_executor_timeout_path(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
 
     async def never_yields():
         import asyncio as _a
@@ -151,7 +151,7 @@ class _FakeAssistantMessageWithTool:
 @pytest.mark.asyncio
 async def test_sdk_executor_tools_called_counts_once_per_invocation(tmp_path, monkeypatch) -> None:
     """Regression: tools_called must not be double-counted (hook + block)."""
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
 
     messages = [
         _FakeAssistantMessageWithTool("Bash"),
@@ -178,14 +178,14 @@ async def test_sdk_executor_tools_called_counts_once_per_invocation(tmp_path, mo
 def test_workspace_root_respects_env_var(monkeypatch, tmp_path) -> None:
     from athanor.agents.executor import _workspace_root
 
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
     assert _workspace_root() == tmp_path
 
 
 def test_workspace_root_default(monkeypatch) -> None:
     from athanor.agents.executor import _workspace_root
 
-    monkeypatch.delenv("LEGION_WORKSPACE_ROOT", raising=False)
+    monkeypatch.delenv("ATHANOR_WORKSPACE_ROOT", raising=False)
     assert str(_workspace_root()) == "/workspace"
 
 
@@ -317,7 +317,7 @@ async def test_evaluate_hook_non_dict_input_coerced() -> None:
 
 @pytest.mark.asyncio
 async def test_sdk_executor_exception_sets_error(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
 
     async def raises():
         raise RuntimeError("boom")
@@ -348,7 +348,7 @@ async def test_sdk_executor_with_real_sdk_instances(tmp_path, monkeypatch) -> No
         TextBlock,
     )
 
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
 
     text_block = TextBlock(text="hello from sdk")
@@ -386,7 +386,7 @@ async def test_sdk_executor_with_real_tool_use_block(tmp_path, monkeypatch) -> N
     """Use real ToolUseBlock to hit the isinstance() fast-path."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock
 
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
 
     tool_block = ToolUseBlock(id="t1", name="Bash", input={"command": "echo hi"})
@@ -423,7 +423,7 @@ async def test_sdk_executor_with_thinking_block(tmp_path, monkeypatch) -> None:
     """Use real ThinkingBlock to hit the isinstance() branch."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, ThinkingBlock
 
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
 
     thinking_block = ThinkingBlock(thinking="I should check the file", signature="sig1")
@@ -461,7 +461,7 @@ async def test_sdk_executor_with_tool_result_block(tmp_path, monkeypatch) -> Non
     """Use real ToolResultBlock to hit the isinstance() branch."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, ToolResultBlock
 
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
 
     tool_result = ToolResultBlock(tool_use_id="t1", content="file content here", is_error=False)
@@ -505,7 +505,7 @@ async def test_sdk_executor_hooks_unavailable_logs_warning(tmp_path, monkeypatch
     """If options.hooks assignment raises, executor logs warning and continues."""
     from unittest.mock import MagicMock
 
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
 
     mock_options = MagicMock()
     # Make setting .hooks raise to simulate legacy SDK
@@ -539,7 +539,7 @@ async def test_sdk_executor_hooks_unavailable_logs_warning(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_sdk_executor_result_message_uses_fallback_result(tmp_path, monkeypatch) -> None:
     """When output_text is empty and result message has .result, use it."""
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
 
     # No AssistantMessage → output_text stays empty → result comes from ResultMessage.result
@@ -561,7 +561,7 @@ async def test_sdk_executor_result_message_uses_fallback_result(tmp_path, monkey
 @pytest.mark.asyncio
 async def test_sdk_executor_system_context_prepended(tmp_path, monkeypatch) -> None:
     """system_context is prepended to the prompt when non-empty."""
-    monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
     captured_prompts: list[str] = []
 
     async def capturing_query(prompt, options):  # noqa: ARG001

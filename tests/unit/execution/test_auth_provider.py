@@ -44,7 +44,7 @@ def test_unknown_mode_rejected() -> None:
 def test_reserved_env_keys_export_expected_set() -> None:
     # These must NEVER be user-settable via the environment UI.
     expected = {
-        "LEGION_GIT_PROXY_URL",
+        "ATHANOR_GIT_PROXY_URL",
         "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",

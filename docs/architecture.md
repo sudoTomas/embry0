@@ -370,7 +370,7 @@ graph LR
 | Code retention | None — repo cloned inside container, deleted on teardown |
 | OAuth credentials | Mounted read-only from orchestrator (`~/.claude`) |
 
-**Sandbox env surface:** The container env contains only non-sensitive config: `LEGION_GIT_PROXY_URL` (just the proxy URL; not a secret), plus `CLAUDE_CODE_OAUTH_TOKEN` when Claude Max OAuth mode is active (see the Credentials row above). No `GITHUB_TOKEN`. No `ANTHROPIC_API_KEY`.
+**Sandbox env surface:** The container env contains only non-sensitive config: `ATHANOR_GIT_PROXY_URL` (just the proxy URL; not a secret), plus `CLAUDE_CODE_OAUTH_TOKEN` when Claude Max OAuth mode is active (see the Credentials row above). No `GITHUB_TOKEN`. No `ANTHROPIC_API_KEY`.
 
 ### Sandbox Image Management
 
@@ -669,7 +669,7 @@ LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writ
 
 Per-repo and global environment variables are stored in `global_environment` / `repo_environment`. Variables of type `secret` are Fernet-encrypted at rest using a key derived from `ENVIRONMENT_SECRET_KEY` via PBKDF2-HMAC-SHA256. Responses mask secret values (`****`); a separate `/reveal` endpoint returns plaintext and emits an `environment.secret_revealed` audit event.
 
-Reserved keys (`LEGION_GIT_PROXY_URL`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`) are blocked at the API layer and again at sandbox injection time to prevent users from hijacking orchestrator-injected infrastructure variables. If `ENVIRONMENT_SECRET_KEY` is unset the backend falls back to an insecure default and logs a startup warning; rotating the key makes prior secrets undecryptable and surfaces as `secret_decryption_failed` log events on the next job that needs them.
+Reserved keys (`ATHANOR_GIT_PROXY_URL`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`) are blocked at the API layer and again at sandbox injection time to prevent users from hijacking orchestrator-injected infrastructure variables. If `ENVIRONMENT_SECRET_KEY` is unset the backend falls back to an insecure default and logs a startup warning; rotating the key makes prior secrets undecryptable and surfaces as `secret_decryption_failed` log events on the next job that needs them.
 
 ### Migrations Reference
 

@@ -18,7 +18,7 @@ from athanor.safety.error_codes import ErrorCode
 # by user repo-environment settings. See CLAUDE.md for rationale.
 RESERVED_ENV_KEYS: Final[frozenset[str]] = frozenset(
     {
-        "LEGION_GIT_PROXY_URL",
+        "ATHANOR_GIT_PROXY_URL",
         "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",

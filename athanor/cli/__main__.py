@@ -74,12 +74,12 @@ def _mask_secret(value: str) -> str:
 
 
 def _resolve_home() -> Path:
-    """Resolve the project root from LEGION_HOME or cwd."""
-    home = Path(os.environ.get("LEGION_HOME", ".")).resolve()
+    """Resolve the project root from ATHANOR_HOME or cwd."""
+    home = Path(os.environ.get("ATHANOR_HOME", ".")).resolve()
     if not (home / COMPOSE_FILE).exists():
         _err(f"{COMPOSE_FILE} not found in {home}")
-        _err("Set LEGION_HOME to the project root, e.g.:")
-        _err("  export LEGION_HOME=/opt/legion")
+        _err("Set ATHANOR_HOME to the project root, e.g.:")
+        _err("  export ATHANOR_HOME=/opt/legion")
         sys.exit(1)
     return home
 
@@ -235,7 +235,7 @@ def cmd_health(args: argparse.Namespace) -> None:
     import httpx
 
     port = os.environ.get("PROD_PORT", "8200")
-    url = args.url or os.environ.get("LEGION_URL", f"http://localhost:{port}")
+    url = args.url or os.environ.get("ATHANOR_URL", f"http://localhost:{port}")
     endpoint = f"{url.rstrip('/')}/api/v1/health/ready"
 
     try:
@@ -411,7 +411,7 @@ def main() -> None:
         "--url",
         type=str,
         default=None,
-        help="Base URL (default: LEGION_URL env or http://localhost:$PROD_PORT)",
+        help="Base URL (default: ATHANOR_URL env or http://localhost:$PROD_PORT)",
     )
 
     # config

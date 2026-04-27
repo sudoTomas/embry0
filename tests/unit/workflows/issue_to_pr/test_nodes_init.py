@@ -46,7 +46,7 @@ def test_extract_ask_user_events_normalizes_fields():
 
 @pytest.mark.asyncio
 async def test_init_node_passes_git_proxy_url_to_sandbox():
-    """Init node must pass LEGION_GIT_PROXY_URL into the sandbox env based on
+    """Init node must pass ATHANOR_GIT_PROXY_URL into the sandbox env based on
     proxy_manager.git_proxy_url. Without this, git ops inside the sandbox
     can't authenticate."""
     from athanor.workflows.issue_to_pr.nodes import init_node
@@ -86,8 +86,8 @@ async def test_init_node_passes_git_proxy_url_to_sandbox():
 
     _, create_kwargs = sandbox_mgr.create.call_args
     env = create_kwargs.get("env", {}) or {}
-    assert env.get("LEGION_GIT_PROXY_URL") == "http://host.docker.internal:9101", (
-        f"LEGION_GIT_PROXY_URL must be in sandbox env. Got: {sorted(env)}"
+    assert env.get("ATHANOR_GIT_PROXY_URL") == "http://host.docker.internal:9101", (
+        f"ATHANOR_GIT_PROXY_URL must be in sandbox env. Got: {sorted(env)}"
     )
     assert "GITHUB_TOKEN" not in env, f"GITHUB_TOKEN must NOT be in sandbox env. Got: {sorted(env)}"
 

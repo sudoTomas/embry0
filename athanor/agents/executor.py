@@ -32,8 +32,8 @@ class AgentExecutor(Protocol):
 
 
 def _workspace_root() -> Path:
-    """Return the workspace root. Respects LEGION_WORKSPACE_ROOT for tests."""
-    return Path(os.environ.get("LEGION_WORKSPACE_ROOT", "/workspace"))
+    """Return the workspace root. Respects ATHANOR_WORKSPACE_ROOT for tests."""
+    return Path(os.environ.get("ATHANOR_WORKSPACE_ROOT", "/workspace"))
 
 
 def _resolve_writer(config: dict[str, Any] | None) -> Callable[[dict[str, Any]], None]:

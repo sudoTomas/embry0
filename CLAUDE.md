@@ -11,7 +11,7 @@
 - The user works from a laptop SSH-ed into a home server where Claude Code runs. When starting local servers (dev servers, visual companions, etc.), bind to `0.0.0.0` so they are accessible over the local network. Use `--host 0.0.0.0 --url-host 0.0.0.0` for the brainstorming visual companion.
 - `ENVIRONMENT_SECRET_KEY` drives Fernet encryption for per-repo env var secrets. If unset, Legion falls back to an insecure default and logs a warning. Rotating the key makes prior secrets undecryptable.
 - Agents can pause the pipeline to ask the user questions (`legion.sandbox.ask_user`). Capped at 5 rounds per job to prevent runaway loops; after the cap the job fails with `ERR_MAX_AGENT_QUESTIONS`.
-- Reserved env var keys (`LEGION_GIT_PROXY_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `GITHUB_TOKEN`) are blocked as user-settable env vars both at the API and at sandbox injection — don't attempt to override infrastructure variables via the environment UI.
+- Reserved env var keys (`ATHANOR_GIT_PROXY_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `GITHUB_TOKEN`) are blocked as user-settable env vars both at the API and at sandbox injection — don't attempt to override infrastructure variables via the environment UI.
 
 ## Deployment
 
@@ -32,5 +32,5 @@
   cd infra && docker save legion-sandbox:latest | docker compose exec -T orchestrator docker --host tcp://dind:2376 --tlsverify --tlscacert=/certs/client/ca.pem --tlscert=/certs/client/cert.pem --tlskey=/certs/client/key.pem load
   ```
 - The sandbox uses OAuth via `CLAUDE_CODE_OAUTH_TOKEN` env var (read from `~/.claude/.credentials.json` on the orchestrator).
-- Git auth flows via the credential proxy (port 9101 on the orchestrator): the sandbox's git credential helper curls `$LEGION_GIT_PROXY_URL/git-credentials`. `GITHUB_TOKEN` never enters the sandbox env. The proxy is managed by `ProxyManager` in `legion/execution/proxy/manager.py`.
+- Git auth flows via the credential proxy (port 9101 on the orchestrator): the sandbox's git credential helper curls `$ATHANOR_GIT_PROXY_URL/git-credentials`. `GITHUB_TOKEN` never enters the sandbox env. The proxy is managed by `ProxyManager` in `legion/execution/proxy/manager.py`.
 - Read-only rootfs is disabled (`read_only_root: False`) because Claude CLI needs writable fs.

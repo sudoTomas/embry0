@@ -73,16 +73,16 @@ async def test_sandbox_manager_does_not_inject_github_token(manager: SandboxMana
 
 @pytest.mark.asyncio
 async def test_sandbox_manager_passes_through_caller_env(manager: SandboxManager):
-    """Caller-provided env (like LEGION_GIT_PROXY_URL) must reach the container."""
+    """Caller-provided env (like ATHANOR_GIT_PROXY_URL) must reach the container."""
     await manager.create(
         job_id="job-xyz",
-        env={"LEGION_GIT_PROXY_URL": "http://host.docker.internal:9101"},
+        env={"ATHANOR_GIT_PROXY_URL": "http://host.docker.internal:9101"},
     )
 
     kwargs = manager._docker.build_run_cmd.call_args.kwargs
     env_passed = kwargs.get("env", {}) or {}
 
-    assert env_passed.get("LEGION_GIT_PROXY_URL") == "http://host.docker.internal:9101"
+    assert env_passed.get("ATHANOR_GIT_PROXY_URL") == "http://host.docker.internal:9101"
 
 
 @pytest.mark.asyncio
