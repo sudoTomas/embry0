@@ -1,6 +1,6 @@
 <div align="center">
 
-# Legion
+# Athanor
 
 **Autonomous Agent Orchestration Engine**
 
@@ -15,7 +15,7 @@
 
 ---
 
-Legion is a production-grade agent orchestration engine that autonomously resolves GitHub issues by dispatching AI agents through a configurable pipeline. It uses **LangGraph** for workflow orchestration and **Claude Agent SDK** for agent execution inside isolated Docker sandboxes.
+Athanor is a production-grade agent orchestration engine that autonomously resolves GitHub issues by dispatching AI agents through a configurable pipeline. It uses **LangGraph** for workflow orchestration and **Claude Agent SDK** for agent execution inside isolated Docker sandboxes.
 
 **Core principle: no customer code retention.** All code lives exclusively inside sandbox containers. When a container is destroyed, customer code is gone.
 
@@ -28,7 +28,7 @@ graph TB
         API["REST API"]
     end
 
-    subgraph Legion["Legion Orchestrator"]
+    subgraph Athanor["Athanor Orchestrator"]
         TR["Triage Agent<br/><small>LLM-based pipeline config</small>"]
         LG["LangGraph Engine<br/><small>StateGraph + Checkpointing</small>"]
     end
@@ -54,13 +54,13 @@ graph TB
     LG --> WS
     LG --> DB
 
-    style Legion fill:#0f1419,stroke:#06b6d4,color:#e4e4e7
+    style Athanor fill:#0f1419,stroke:#06b6d4,color:#e4e4e7
     style Sandbox fill:#1a1a2e,stroke:#f59e0b,color:#e4e4e7
 ```
 
 ## Architecture
 
-Legion runs as a Docker Compose stack with 4 services:
+Athanor runs as a Docker Compose stack with 4 services:
 
 | Service | Purpose |
 |---------|---------|
@@ -133,7 +133,7 @@ The **developer agent** owns the full lifecycle: code changes, git operations, a
 
 ## Issues & Human-in-the-Loop
 
-Legion includes a full-featured **issue tracker** with optional GitHub two-way sync:
+Athanor includes a full-featured **issue tracker** with optional GitHub two-way sync:
 
 - **Create issues** from the dashboard or receive them via GitHub webhook
 - **Triage agent** analyzes issues, asks clarifying questions if needed, or decomposes complex issues into subtasks
@@ -155,8 +155,8 @@ Legion includes a full-featured **issue tracker** with optional GitHub two-way s
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/Alchymie-Labs/legion.git
-cd legion
+git clone https://github.com/sudoTomas/athanor.git
+cd athanor
 cp .env.example .env
 # Edit .env with your credentials:
 #   PROVIDER_MODE=anthropic_api (or claude_max)
@@ -174,7 +174,7 @@ pip install -e ".[dev]"
 
 ### 3. Environment Secrets
 
-Legion encrypts per-repo secret environment variables at rest using Fernet. Set an encryption key before starting the stack:
+Athanor encrypts per-repo secret environment variables at rest using Fernet. Set an encryption key before starting the stack:
 
 ```bash
 # Generate a strong key (or use your favorite secret manager)
@@ -186,14 +186,14 @@ Add to `.env`:
 ENVIRONMENT_SECRET_KEY=<generated-value>
 ```
 
-If unset, Legion logs a warning and uses an insecure default — DO NOT use that in production. Rotating the key will make previously-encrypted secrets undecryptable; the orchestrator will log `secret_decryption_failed` for each affected key on the next job that needs them.
+If unset, Athanor logs a warning and uses an insecure default — DO NOT use that in production. Rotating the key will make previously-encrypted secrets undecryptable; the orchestrator will log `secret_decryption_failed` for each affected key on the next job that needs them.
 
 Per-repo and global env vars are managed through the `/environments` page in the dashboard.
 
 ### 4. Start the stack
 
 ```bash
-legion start
+athanor start
 ```
 
 This builds all images, starts PostgreSQL + DinD + Orchestrator + Frontend, waits for health checks, and builds the sandbox image inside DinD.
@@ -206,19 +206,19 @@ http://localhost:8200
 
 ## CLI Reference
 
-### Production Stack (`legion`)
+### Production Stack (`athanor`)
 
 ```bash
-legion start              # Start the full stack
-legion start --port 8201  # Start on a custom port
-legion stop               # Stop the stack
-legion build              # Build images (clean, no cache)
-legion build --cached     # Build with Docker cache
-legion build-sandbox      # Rebuild sandbox image inside DinD
-legion health             # Check stack health
-legion config             # Validate and display config (secrets masked)
-legion purge              # Remove all Docker artifacts
-legion purge --volumes    # Remove only volumes
+athanor start              # Start the full stack
+athanor start --port 8201  # Start on a custom port
+athanor stop               # Stop the stack
+athanor build              # Build images (clean, no cache)
+athanor build --cached     # Build with Docker cache
+athanor build-sandbox      # Rebuild sandbox image inside DinD
+athanor health             # Check stack health
+athanor config             # Validate and display config (secrets masked)
+athanor purge              # Remove all Docker artifacts
+athanor purge --volumes    # Remove only volumes
 ```
 
 ### Development (`./lab`)
@@ -378,7 +378,7 @@ ws.onmessage = (event) => {
 
 ## Webhook Setup
 
-Legion reacts to GitHub events (issues opened/labeled/edited/closed, issue comments, pull requests) via a single webhook endpoint at `POST /api/v1/webhook`. Because Legion usually runs on a private network, you need a way to get GitHub's webhook POSTs into your instance. Two supported approaches:
+Athanor reacts to GitHub events (issues opened/labeled/edited/closed, issue comments, pull requests) via a single webhook endpoint at `POST /api/v1/webhook`. Because Athanor usually runs on a private network, you need a way to get GitHub's webhook POSTs into your instance. Two supported approaches:
 
 | Approach | Use when | Signature verification |
 |----------|----------|------------------------|
@@ -387,7 +387,7 @@ Legion reacts to GitHub events (issues opened/labeled/edited/closed, issue comme
 
 ### Option A — Cloudflare Tunnel (production)
 
-Exposes your Legion instance on a public hostname via a zero-trust tunnel. The tunnel should be **restricted to webhook paths only** — never expose the full app.
+Exposes your Athanor instance on a public hostname via a zero-trust tunnel. The tunnel should be **restricted to webhook paths only** — never expose the full app.
 
 **1. Install cloudflared:**
 
@@ -403,13 +403,13 @@ sudo apt-get install -y cloudflared
 
 ```bash
 cloudflared tunnel login                       # opens browser, picks your CF zone
-cloudflared tunnel create legion-webhooks       # prints a tunnel UUID
+cloudflared tunnel create athanor-webhooks       # prints a tunnel UUID
 ```
 
 **3. Route a DNS name at the tunnel:**
 
 ```bash
-cloudflared tunnel route dns legion-webhooks legion.your-domain.com
+cloudflared tunnel route dns athanor-webhooks athanor.your-domain.com
 ```
 
 **4. Write the tunnel config** at `~/.cloudflared/config.yml`:
@@ -420,23 +420,23 @@ credentials-file: /home/you/.cloudflared/<UUID>.json
 
 ingress:
   # Allow only the GitHub webhook path
-  - hostname: legion.your-domain.com
+  - hostname: athanor.your-domain.com
     path: ^/api/v1/webhook$
     service: http://localhost:8200
   # Allow the Telegram callback path (optional)
-  - hostname: legion.your-domain.com
+  - hostname: athanor.your-domain.com
     path: ^/api/v1/telegram/callback$
     service: http://localhost:8200
   # Reject everything else
   - service: http_status:404
 ```
 
-> **Security:** the `path:` whitelist is critical. Without it the tunnel would expose your entire Legion UI and API to the internet.
+> **Security:** the `path:` whitelist is critical. Without it the tunnel would expose your entire Athanor UI and API to the internet.
 
 **5. Run the tunnel** (as a service or in a tmux pane):
 
 ```bash
-cloudflared tunnel run legion-webhooks
+cloudflared tunnel run athanor-webhooks
 # Or install as a system service:
 sudo cloudflared service install
 ```
@@ -460,13 +460,13 @@ cd infra && docker compose build orchestrator && docker compose up -d orchestrat
 
 **7. Configure the GitHub webhook** — repo → Settings → Webhooks → Add webhook:
 
-- **Payload URL:** `https://legion.your-domain.com/api/v1/webhook`
+- **Payload URL:** `https://athanor.your-domain.com/api/v1/webhook`
 - **Content type:** `application/json`
 - **Secret:** the value from step 6
 - **SSL verification:** enabled
 - **Events:** select "Let me select individual events", check **Issues**, **Issue comments**, **Pull requests**
 
-**8. Verify:** trigger an event (e.g. label an issue with `Legion`) and tail the orchestrator logs:
+**8. Verify:** trigger an event (e.g. label an issue with `Athanor`) and tail the orchestrator logs:
 
 ```bash
 docker logs -f infra-orchestrator-1 | grep webhook_received
@@ -474,7 +474,7 @@ docker logs -f infra-orchestrator-1 | grep webhook_received
 
 ### Option B — smee.io relay (local development)
 
-For testing real GitHub events against a local Legion instance on your laptop, with no public hostname needed. smee.io re-serializes the webhook body before forwarding, which invalidates GitHub's HMAC — so this flow uses `DEV_MODE=true` and no secret.
+For testing real GitHub events against a local Athanor instance on your laptop, with no public hostname needed. smee.io re-serializes the webhook body before forwarding, which invalidates GitHub's HMAC — so this flow uses `DEV_MODE=true` and no secret.
 
 **1. Get a smee channel:** visit [https://smee.io](https://smee.io), click **Start a new channel**, and copy the channel URL (e.g. `https://smee.io/aBcDeF1234`).
 
@@ -517,8 +517,8 @@ You can trigger jobs manually via the dashboard — open the Issues page, find y
 ## Project Structure
 
 ```
-legion/
-├── legion/                     # Python backend
+athanor/
+├── athanor/                     # Python backend
 │   ├── api/                    # FastAPI endpoints + WebSocket
 │   │   ├── v1/                 # REST routes (jobs, graphs, config, ...)
 │   │   └── ws/                 # WebSocket streaming
@@ -533,7 +533,7 @@ legion/
 │   │   ├── sandbox_manager.py  # Container lifecycle (DinD)
 │   │   ├── agent_runner.py     # docker exec + stdout parsing
 │   │   ├── image_manager.py    # Sandbox image auto-build + reaper
-│   │   └── proxy/              # Auth, Git, GitHub API, Legion proxies
+│   │   └── proxy/              # Auth, Git, GitHub API, Athanor proxies
 │   ├── sandbox/                # Code that runs inside containers
 │   │   ├── runner.py           # Agent SDK execution
 │   │   ├── safety.py           # Blocked command enforcement
@@ -582,7 +582,7 @@ legion/
 
 ## Configuration
 
-Legion uses environment variables for infrastructure config and API endpoints for runtime config.
+Athanor uses environment variables for infrastructure config and API endpoints for runtime config.
 
 ### Environment Variables (`.env`)
 
@@ -602,7 +602,7 @@ Legion uses environment variables for infrastructure config and API endpoints fo
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot token for notifications |
 | `TELEGRAM_CHAT_ID` | — | Telegram chat ID for notifications |
 | `TELEGRAM_WEBHOOK_URL` | — | Public URL for Telegram callback (e.g. Cloudflare tunnel) |
-| `TRIGGER_LABELS` | `Legion` | GitHub labels that trigger jobs |
+| `TRIGGER_LABELS` | `Athanor` | GitHub labels that trigger jobs |
 | `ENVIRONMENT_SECRET_KEY` | — | Fernet key for encrypting env var secrets at rest |
 | `PAUSED_JOB_TTL_HOURS` | `48` | Hours before a paused job's sandbox is expired |
 
@@ -618,7 +618,7 @@ Budget controls, context injection, and sandbox profiles are configurable via th
 
 ## Agent Execution & Auth Modes
 
-Legion invokes Claude through a pluggable executor layer with two orthogonal config dimensions:
+Athanor invokes Claude through a pluggable executor layer with two orthogonal config dimensions:
 
 | Dimension | Values | Meaning |
 |---|---|---|
@@ -631,7 +631,7 @@ All 4 combinations are valid in Phase 2+. **Phase 1 supports `sdk` only**; reque
 
 Later levels win:
 
-1. **Global** — `LegionConfig.default_execution_mode`, `.default_auth_mode` (env vars `DEFAULT_EXECUTION_MODE`, `DEFAULT_AUTH_MODE`).
+1. **Global** — `AthanorConfig.default_execution_mode`, `.default_auth_mode` (env vars `DEFAULT_EXECUTION_MODE`, `DEFAULT_AUTH_MODE`).
 2. **Per-repo** — `repo_preferences.execution_mode`, `.auth_mode` columns.
 3. **Per-job** — `JobCreateRequest.execution_mode_override`, `.auth_mode_override`.
 4. **Per-agent-type** — `agent_definitions.execution_mode`, `.auth_mode` columns.
@@ -642,7 +642,7 @@ NULL at any level falls through to the previous level.
 ### Credentials
 
 - `auth_mode=oauth` requires `CLAUDE_CODE_OAUTH_TOKEN` (loaded from the host's `~/.claude/.credentials.json` by the sandbox manager). Missing token → `ERR_MISSING_OAUTH_TOKEN`.
-- `auth_mode=api_key` requires `ANTHROPIC_API_KEY` in `LegionConfig`. Missing key → `ERR_MISSING_API_KEY`.
+- `auth_mode=api_key` requires `ANTHROPIC_API_KEY` in `AthanorConfig`. Missing key → `ERR_MISSING_API_KEY`.
 
 ### Safety Policy (three rings)
 
@@ -662,7 +662,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 
 # Run linting
-ruff check legion/ tests/
+ruff check athanor/ tests/
 
 # Frontend dev server
 cd frontend && npm install && npm run dev
@@ -684,7 +684,7 @@ pytest tests/ -v
 
 ## Future Roadmap
 
-- **Spring Boot SaaS Layer** — Multi-tenant fleet management (one Legion instance per tenant)
+- **Spring Boot SaaS Layer** — Multi-tenant fleet management (one Athanor instance per tenant)
 - **Kubernetes Deployment** — Helm chart, DinD replaced by K8s pod launching
 - **Custom Workflows** — User-defined LangGraph graphs via API
 - **Pipeline Template Marketplace** — Pre-built workflows for common tasks

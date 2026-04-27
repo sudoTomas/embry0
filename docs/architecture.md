@@ -1,12 +1,12 @@
-# Legion Architecture
+# Athanor Architecture
 
-Detailed technical documentation of the Legion agent orchestration engine.
+Detailed technical documentation of the Athanor agent orchestration engine.
 
 ---
 
 ## System Overview
 
-Legion is a general-purpose agent orchestration engine built on LangGraph and Claude Agent SDK. GitHub issues or API requests create issues which are triaged by an LLM agent, questions are dispatched to the user via multiple channels (Dashboard, Telegram, GitHub), agents execute inside Docker sandboxes, and on success a PR is opened automatically. Customer code never persists on the host — it lives only inside ephemeral sandbox containers.
+Athanor is a general-purpose agent orchestration engine built on LangGraph and Claude Agent SDK. GitHub issues or API requests create issues which are triaged by an LLM agent, questions are dispatched to the user via multiple channels (Dashboard, Telegram, GitHub), agents execute inside Docker sandboxes, and on success a PR is opened automatically. Customer code never persists on the host — it lives only inside ephemeral sandbox containers.
 
 ```mermaid
 graph TB
@@ -21,7 +21,7 @@ graph TB
     SB -.->|"Claude API"| AP["Auth Proxy"]
     SB -.->|"git clone/push"| GP["Git Remote Proxy"]
     SB -.->|"GitHub REST API"| GHP["GitHub API Proxy"]
-    SB -.->|"create issues, request input"| LP["Legion API Proxy"]
+    SB -.->|"create issues, request input"| LP["Athanor API Proxy"]
 
     SB -->|"create PR, post comments<br/>(via proxy)"| GH
 
@@ -55,7 +55,7 @@ graph TB
             AP["Auth Proxy<br/>(Claude API)"]
             GP["Git Remote Proxy<br/>(git clone/push)"]
             GHP["GitHub API Proxy<br/>(PRs, comments)"]
-            LP["Legion API Proxy<br/>(create issues, request input)"]
+            LP["Athanor API Proxy<br/>(create issues, request input)"]
         end
 
         PG["PostgreSQL 16<br/>Jobs + Issues + Checkpoints"]
@@ -105,8 +105,8 @@ graph TB
 
 | Service | Image | Purpose | Resources |
 |---------|-------|---------|-----------|
-| Frontend | `legion-frontend` | nginx serving React SPA, reverse proxy | — |
-| Orchestrator | `legion-orchestrator` | FastAPI + LangGraph, job management, proxy services. Never touches customer code. | configurable via `.env` |
+| Frontend | `athanor-frontend` | nginx serving React SPA, reverse proxy | — |
+| Orchestrator | `athanor-orchestrator` | FastAPI + LangGraph, job management, proxy services. Never touches customer code. | configurable via `.env` |
 | PostgreSQL | `postgres:16` | Application data + LangGraph checkpoints | configurable via `.env` |
 | DinD | `docker:dind` | Runs sandbox containers (privileged) | configurable via `.env` |
 
@@ -116,7 +116,7 @@ No shared workspace volumes. All resource limits, ports, image tags, and credent
 
 ## Issues & Human-in-the-Loop
 
-Issues are first-class entities in Legion — independent of jobs. An issue is the **what** (the problem/request), a job is the **how** (the execution). Issues support optional two-way GitHub sync and can be decomposed into child issues by the triage agent.
+Issues are first-class entities in Athanor — independent of jobs. An issue is the **what** (the problem/request), a job is the **how** (the execution). Issues support optional two-way GitHub sync and can be decomposed into child issues by the triage agent.
 
 ### Issue Lifecycle
 
@@ -154,8 +154,8 @@ Answers from any channel trigger cross-channel sync (e.g., answer via Telegram �
 
 ### GitHub Two-Way Sync
 
-- **Outbound (Legion → GitHub):** Issue create/update pushes to GitHub API
-- **Inbound (GitHub → Legion):** Webhook handles `issues.opened`, `issues.edited`, `issues.closed`, `issues.reopened`, `issues.labeled`, `issues.unlabeled`, `issue_comment.created`
+- **Outbound (Athanor → GitHub):** Issue create/update pushes to GitHub API
+- **Inbound (GitHub → Athanor):** Webhook handles `issues.opened`, `issues.edited`, `issues.closed`, `issues.reopened`, `issues.labeled`, `issues.unlabeled`, `issue_comment.created`
 - **Conflict handling:** Last-write-wins with timestamps
 
 ---
@@ -270,7 +270,7 @@ stateDiagram-v2
     End2 --> [*]
 ```
 
-> **Note on `split`:** The `split` action creates child issues as a side effect inside `run_triage_node` (calling the Legion API proxy) and then terminates the current workflow; there is no dedicated child-creation node in the graph.
+> **Note on `split`:** The `split` action creates child issues as a side effect inside `run_triage_node` (calling the Athanor API proxy) and then terminates the current workflow; there is no dedicated child-creation node in the graph.
 
 ### Graph Nodes
 
@@ -334,10 +334,10 @@ graph LR
         AP["Auth Proxy"]
         GP["Git Remote Proxy"]
         GHP["GitHub API Proxy"]
-        LP["Legion API Proxy<br/>(CreateIssue, RequestInput)"]
+        LP["Athanor API Proxy<br/>(CreateIssue, RequestInput)"]
     end
 
-    subgraph Sandbox["Sandbox Container (legion-sandbox)"]
+    subgraph Sandbox["Sandbox Container (athanor-sandbox)"]
         RN["runner.py"]
         SDK["Agent SDK<br/>query()"]
         SF["safety.py"]
@@ -376,8 +376,8 @@ graph LR
 
 The `SandboxImageManager` handles image lifecycle inside DinD:
 
-- **Auto-build on startup** — computes SHA256 hash of `Dockerfile.sandbox` + sandbox source files, compares with image label `legion.build-hash`, rebuilds if stale
-- **Profile-specific images** — `legion-sandbox:{profile_name}` extends the base image with additional packages/commands
+- **Auto-build on startup** — computes SHA256 hash of `Dockerfile.sandbox` + sandbox source files, compares with image label `athanor.build-hash`, rebuilds if stale
+- **Profile-specific images** — `athanor-sandbox:{profile_name}` extends the base image with additional packages/commands
 - **Container reaper** — background task destroys containers older than 24 hours
 
 ---
@@ -393,11 +393,11 @@ Four proxy services run on the `sandbox-restricted` network.
 | Auth Proxy | 9100 | Claude API requests | `x-api-key` header |
 | Git Remote Proxy | 9101 | `git clone/push` | Git credential helper response |
 | GitHub API Proxy | — | GitHub REST API (PRs, comments) | `Authorization: Bearer` header |
-| Legion API Proxy | 9102 | Legion internal API (per-job) | Scoped to current issue/job |
+| Athanor API Proxy | 9102 | Athanor internal API (per-job) | Scoped to current issue/job |
 
-### Legion API Proxy
+### Athanor API Proxy
 
-Gives sandbox agents controlled access to Legion's own API, scoped to the current job's issue:
+Gives sandbox agents controlled access to Athanor's own API, scoped to the current job's issue:
 
 | Tool | Endpoint | Used By |
 |------|----------|---------|
@@ -673,7 +673,7 @@ Reserved keys (`ATHANOR_GIT_PROXY_URL`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN
 
 ### Migrations Reference
 
-The migration runner (`legion/storage/migrations/runner.py`) applies these idempotently, in order, on orchestrator startup:
+The migration runner (`athanor/storage/migrations/runner.py`) applies these idempotently, in order, on orchestrator startup:
 
 | # | Description | Tables/Columns |
 |---|---|---|
@@ -693,17 +693,17 @@ The migration runner (`legion/storage/migrations/runner.py`) applies these idemp
 
 ## Job Lifecycle & Executor
 
-The `IssueExecutor` (`legion/services/issue_executor.py`) owns the lifecycle of every background coroutine spawned to run a workflow.
+The `IssueExecutor` (`athanor/services/issue_executor.py`) owns the lifecycle of every background coroutine spawned to run a workflow.
 
 **Task lifecycle.** `IssueExecutor._track_task(coro, *, kind, job_id, issue_id)` is the single entry point for creating background coroutines. It registers the task in both `_background_tasks` (set) and `_tasks_by_job` (dict) and attaches a done-callback that logs non-`CancelledError` failures and publishes a `job_failed` WS event. `IssueExecutor.cancel_job(job_id)` is the centralised cancellation flow: cancel the live task (with a 5s grace), destroy the sandbox, update job+issue status, purge LangGraph checkpoints for the thread, and emit a `job.cancelled` audit event.
 
 **Trace ID threading (Plan H).** Every job is assigned a `trace_id` (format `trc-<12hex>`) at creation; the id is bound to structlog contextvars for the duration of `_run_workflow` and persisted onto every `audit_log` row written in that span. Use it as a grep key to reconstruct an issue's full timeline across logs and audit events.
 
-**Agent-initiated questions (Plan L — `ask_user`).** Agents can pause the pipeline mid-execution by calling `legion.sandbox.ask_user(question, category, options)`. The sandbox runner emits `agent_ask_user` events; `developer_node` picks them up and the graph routes to `ask_user_interrupt`, which raises `interrupt(...)` with the pending questions. `_handle_needs_info` persists questions to `issue_inputs` and transitions status to `awaiting_input` (reusing the triage-question infrastructure). On resume via `Command(resume=answers)`, the developer re-runs with a Q&A block prepended to its prompt. Capped at 5 rounds per job; past that the job fails with `ERR_MAX_AGENT_QUESTIONS`.
+**Agent-initiated questions (Plan L — `ask_user`).** Agents can pause the pipeline mid-execution by calling `athanor.sandbox.ask_user(question, category, options)`. The sandbox runner emits `agent_ask_user` events; `developer_node` picks them up and the graph routes to `ask_user_interrupt`, which raises `interrupt(...)` with the pending questions. `_handle_needs_info` persists questions to `issue_inputs` and transitions status to `awaiting_input` (reusing the triage-question infrastructure). On resume via `Command(resume=answers)`, the developer re-runs with a Q&A block prepended to its prompt. Capped at 5 rounds per job; past that the job fails with `ERR_MAX_AGENT_QUESTIONS`.
 
 ### Failure Classification
 
-Failures populate the `jobs.error_code` column (migration 8) with one of the canonical values in `legion.safety.error_codes.ErrorCode`:
+Failures populate the `jobs.error_code` column (migration 8) with one of the canonical values in `athanor.safety.error_codes.ErrorCode`:
 
 | Code | Meaning |
 |------|---------|
@@ -723,9 +723,9 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 
 ## WebSocket Streaming
 
-Live event fan-out to the dashboard is served by `WS /ws/jobs/{id}/events`. The handler lives in `legion/api/ws/streaming.py`.
+Live event fan-out to the dashboard is served by `WS /ws/jobs/{id}/events`. The handler lives in `athanor/api/ws/streaming.py`.
 
-WebSocket fan-out is managed by `legion.api.events.EventBus` — a concurrency-safe class that holds per-`job_id` `asyncio.Queue` subscribers under an `asyncio.Lock` and exposes `subscribe`, `unsubscribe`, and `publish`. Event producers (graph nodes, the executor, the sandbox manager) call `EventBus.publish(job_id, event)` and every currently-subscribed queue for that job receives a copy.
+WebSocket fan-out is managed by `athanor.api.events.EventBus` — a concurrency-safe class that holds per-`job_id` `asyncio.Queue` subscribers under an `asyncio.Lock` and exposes `subscribe`, `unsubscribe`, and `publish`. Event producers (graph nodes, the executor, the sandbox manager) call `EventBus.publish(job_id, event)` and every currently-subscribed queue for that job receives a copy.
 
 **Replay cursor (`since_seq`).** Every broadcast event carries an `event_seq` field — the monotonic `BIGSERIAL` `id` from the `job_logs` table stamped at persist time. When a WS client reconnects after a dropped connection, it passes `?since_seq=<last_seen>`; the handler replays only rows with `id > since_seq`, tracks the highest id as a watermark, and then drops live events with `event_seq <= watermark` to prevent duplicates during the subscribe→replay race.
 
@@ -784,7 +784,7 @@ graph TB
         APR["auth_proxy.py"]
         GPR["git_proxy.py"]
         GHPR["github_proxy.py"]
-        LPR["legion_proxy.py"]
+        LPR["athanor_proxy.py"]
     end
 
     subgraph Sandbox["sandbox/ (in container)"]
@@ -837,7 +837,7 @@ graph TB
 
 ### Cloudflare Tunnel (production webhook ingress)
 
-The public endpoint at `legion.alchymielabs.com` is restricted to webhook paths only:
+The public endpoint at `athanor.example.com` is restricted to webhook paths only:
 
 | Path | Service | Purpose |
 |------|---------|---------|
@@ -845,13 +845,13 @@ The public endpoint at `legion.alchymielabs.com` is restricted to webhook paths 
 | `/api/v1/telegram/callback` | Telegram Bot API | Reply-to-message answers |
 | Everything else | **403 Forbidden** | Dashboard only accessible on LAN |
 
-Signature verification is always on in production: `GITHUB_WEBHOOK_SECRET` is set and the handler enforces HMAC-SHA256 (`verify_webhook_signature` in `legion/api/auth.py`).
+Signature verification is always on in production: `GITHUB_WEBHOOK_SECRET` is set and the handler enforces HMAC-SHA256 (`verify_webhook_signature` in `athanor/api/auth.py`).
 
 ### smee.io Relay (local development webhook ingress)
 
-For developer laptops without a public URL, Legion supports the [smee.io](https://smee.io) relay pattern. The GitHub webhook is pointed at a smee channel URL, and `smee-client` forwards received events to `http://localhost:8200/api/v1/webhook`. Because smee re-serializes the JSON payload before forwarding, GitHub's HMAC signature is invalidated — so this flow requires `DEV_MODE=true` and an empty `GITHUB_WEBHOOK_SECRET`.
+For developer laptops without a public URL, Athanor supports the [smee.io](https://smee.io) relay pattern. The GitHub webhook is pointed at a smee channel URL, and `smee-client` forwards received events to `http://localhost:8200/api/v1/webhook`. Because smee re-serializes the JSON payload before forwarding, GitHub's HMAC signature is invalidated — so this flow requires `DEV_MODE=true` and an empty `GITHUB_WEBHOOK_SECRET`.
 
-The handler in `legion/api/v1/webhooks.py` supports this flow in two ways:
+The handler in `athanor/api/v1/webhooks.py` supports this flow in two ways:
 
 1. `verify_webhook_signature(..., dev_mode=True)` skips HMAC verification when no secret is configured.
 2. After JSON parsing, the handler detects and unwraps smee's `{"payload": "<json-string>"}` envelope so downstream code sees the real GitHub payload unchanged.
@@ -869,7 +869,7 @@ See README "Webhook Setup → Option B — smee.io relay" for the end-to-end set
 
 ## Future: Spring Boot SaaS Layer
 
-Spring Boot manages a fleet of Legion instances — one per tenant. Legion remains single-tenant internally.
+Spring Boot manages a fleet of Athanor instances — one per tenant. Athanor remains single-tenant internally.
 
 ```mermaid
 graph TB
@@ -879,10 +879,10 @@ graph TB
         BL["Billing"]
     end
 
-    subgraph Fleet["Legion Fleet (K8s)"]
-        L1["Legion<br/>Tenant A"]
-        L2["Legion<br/>Tenant B"]
-        L3["Legion<br/>Tenant C"]
+    subgraph Fleet["Athanor Fleet (K8s)"]
+        L1["Athanor<br/>Tenant A"]
+        L2["Athanor<br/>Tenant B"]
+        L3["Athanor<br/>Tenant C"]
     end
 
     GW --> L1
