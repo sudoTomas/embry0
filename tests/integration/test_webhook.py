@@ -17,7 +17,7 @@ async def test_webhook_labeled_issue_triggers(app: AsyncClient):
     payload = json.dumps(
         {
             "action": "labeled",
-            "issue": {"number": 42, "title": "Fix auth", "labels": [{"name": "Legion"}]},
+            "issue": {"number": 42, "title": "Fix auth", "labels": [{"name": "Athanor"}]},
         }
     ).encode()
     sig = _sign(payload, "test-secret")

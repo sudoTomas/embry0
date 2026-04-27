@@ -79,8 +79,8 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                     "bash",
                     "-c",
                     f"{cred_cmd} && "
-                    'git config --global user.email "legion@alchymielabs.com" && '
-                    'git config --global user.name "Legion Bot"',
+                    'git config --global user.email "[removed]" && '
+                    'git config --global user.name "Athanor Bot"',
                 ]
                 await docker.run_cmd(
                     docker.build_exec_cmd(container_id, setup_cmd),

@@ -16,8 +16,8 @@ from athanor.sandbox.events import EventType, emit_event
 
 logger = structlog.get_logger(__name__)
 
-GIT_AUTHOR_NAME = "Legion"
-GIT_AUTHOR_EMAIL = "legion@getlegion.ai"
+GIT_AUTHOR_NAME = "Athanor"
+GIT_AUTHOR_EMAIL = "[removed]"
 
 
 def build_clone_url(repo: str) -> str:

@@ -45,7 +45,7 @@ def test_mask_exactly_visible_plus_one():
 @pytest.mark.asyncio
 async def test_get_returns_defaults(integration_repo: IntegrationConfigRepository):
     config = await integration_repo.get()
-    assert config["trigger_labels"] == ["Legion"]
+    assert config["trigger_labels"] == ["Athanor"]
     assert config["webhook_secret_set"] is False
     assert config["slack_webhook_url_set"] is False
     assert config["telegram_bot_token_set"] is False
@@ -58,8 +58,8 @@ async def test_get_returns_defaults(integration_repo: IntegrationConfigRepositor
 
 @pytest.mark.asyncio
 async def test_update_trigger_labels(integration_repo: IntegrationConfigRepository):
-    config = await integration_repo.update(trigger_labels=["Legion", "bot"])
-    assert config["trigger_labels"] == ["Legion", "bot"]
+    config = await integration_repo.update(trigger_labels=["Athanor", "bot"])
+    assert config["trigger_labels"] == ["Athanor", "bot"]
 
 
 @pytest.mark.asyncio

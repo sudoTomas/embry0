@@ -56,10 +56,10 @@ def test_config_cors_origins_default():
 
 def test_config_trigger_labels_parsing():
     """Comma-separated trigger labels are parsed into a list."""
-    env = {"TRIGGER_LABELS": "Legion, auto-fix, bot"}
+    env = {"TRIGGER_LABELS": "Athanor, auto-fix, bot"}
     with patch.dict(os.environ, env, clear=True):
         config = AthanorConfig(_env_file=None)  # type: ignore[call-arg]
-    assert config.trigger_labels_list == ["Legion", "auto-fix", "bot"]
+    assert config.trigger_labels_list == ["Athanor", "auto-fix", "bot"]
 
 
 def test_config_claude_max_provider():

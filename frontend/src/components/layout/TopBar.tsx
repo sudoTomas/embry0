@@ -18,7 +18,7 @@ export function TopBar() {
   const { sidebarOpen, toggleSidebar } = useLayoutStore();
   const location = useLocation();
   const pathSegments = location.pathname.split("/").filter(Boolean);
-  const currentPage = breadcrumbMap[pathSegments[0] ?? ""] ?? "Legion";
+  const currentPage = breadcrumbMap[pathSegments[0] ?? ""] ?? "Athanor";
 
   return (
     <header
@@ -33,7 +33,7 @@ export function TopBar() {
         )}
       </Button>
       <nav className="flex items-center" aria-label="Breadcrumb">
-        <span className="text-sm text-white/50">Legion</span>
+        <span className="text-sm text-white/50">Athanor</span>
         <span className="text-white/20 mx-1.5">/</span>
         <span className="text-sm text-white/80 font-medium">{currentPage}</span>
         {pathSegments.length > 1 && (

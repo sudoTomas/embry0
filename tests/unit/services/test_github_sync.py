@@ -10,9 +10,9 @@ def test_extract_labels_from_payload_skips_non_dicts():
         None,
         "accidentally-a-string",
         {"color": "red"},  # dict but no "name" key
-        {"name": "Legion"},
+        {"name": "Athanor"},
     ]
-    assert _extract_label_names(payload_labels) == ["bug", "Legion"]
+    assert _extract_label_names(payload_labels) == ["bug", "Athanor"]
 
 
 def test_extract_labels_from_empty_list():

@@ -9,7 +9,7 @@ from athanor.storage.database import DatabasePool
 logger = structlog.get_logger(__name__)
 
 _DEFAULTS: dict[str, Any] = {
-    "trigger_labels": ["Legion"],
+    "trigger_labels": ["Athanor"],
     "webhook_secret_set": False,
     "slack_webhook_url_set": False,
     "slack_webhook_url_masked": "",

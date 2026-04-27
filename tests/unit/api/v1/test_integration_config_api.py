@@ -7,7 +7,7 @@ from athanor.api.app import create_app
 from athanor.config import AthanorConfig
 
 _GET_RESPONSE = {
-    "trigger_labels": ["Legion"],
+    "trigger_labels": ["Athanor"],
     "webhook_secret_set": False,
     "slack_webhook_url_set": False,
     "slack_webhook_url_masked": "",
@@ -17,7 +17,7 @@ _GET_RESPONSE = {
 }
 
 _UPDATE_RESPONSE = {
-    "trigger_labels": ["Legion", "AutoFix"],
+    "trigger_labels": ["Athanor", "AutoFix"],
     "webhook_secret_set": False,
     "slack_webhook_url_set": False,
     "slack_webhook_url_masked": "",
@@ -44,7 +44,7 @@ async def test_get_integrations(app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/v1/config/integrations")
     assert resp.status_code == 200
-    assert resp.json()["trigger_labels"] == ["Legion"]
+    assert resp.json()["trigger_labels"] == ["Athanor"]
 
 
 @pytest.mark.asyncio
@@ -53,8 +53,8 @@ async def test_update_integrations(app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(
             "/api/v1/config/integrations",
-            json={"trigger_labels": ["Legion", "AutoFix"]},
+            json={"trigger_labels": ["Athanor", "AutoFix"]},
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
     assert resp.status_code == 200
-    assert resp.json()["trigger_labels"] == ["Legion", "AutoFix"]
+    assert resp.json()["trigger_labels"] == ["Athanor", "AutoFix"]

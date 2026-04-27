@@ -1,2 +1,2 @@
-export const APP_NAME = "Legion"
-export const SANDBOX_IMAGE_PLACEHOLDER = "legion/sandbox:latest"
+export const APP_NAME = "Athanor"
+export const SANDBOX_IMAGE_PLACEHOLDER = "athanor/sandbox:latest"

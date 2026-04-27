@@ -11,7 +11,7 @@ except ImportError:
 async def test_app_creates_successfully():
     app = create_app()
     assert app is not None
-    assert app.title == "Legion API"
+    assert app.title == "Athanor API"
 
 
 @pytest.mark.asyncio

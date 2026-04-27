@@ -26,7 +26,7 @@ class AthanorConfig(BaseSettings):
     api_key: str = ""
     dev_mode: bool = False
     allowed_cors_origins: str = ""
-    trigger_labels: str = "Legion"
+    trigger_labels: str = "Athanor"
 
     # Rate limiting
     rate_limit_per_author_per_hour: int = 5
