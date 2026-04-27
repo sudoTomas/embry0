@@ -21,7 +21,7 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
     - model: from invocation.model.
     - permission_mode: always 'bypassPermissions' (sandbox is the real boundary;
       Ring 2 permissions.deny and Ring 3 hook still run).
-    - max_turns / cwd: fixed to Legion's sandbox conventions.
+    - max_turns / cwd: fixed to Athanor's sandbox conventions.
     - system_prompt: invocation.system_prompt (None when empty to let the SDK
       apply its default rather than an empty string that shadows it).
     - setting_sources: ["project"] so the SDK loads /workspace/.claude/settings.json
@@ -32,7 +32,7 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
 
     Notes:
     - max_budget_usd is NOT set here; budget caps live at the pipeline level
-      in Legion, not per-invocation.
+      in Athanor, not per-invocation.
     - permission_mode stays 'bypassPermissions' intentionally; Rings 2 and 3
       cover the enforcement we actually want. See design §3.3.
     """

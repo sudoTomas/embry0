@@ -21,10 +21,10 @@ async def post_questions_comment(
 
     Returns the comment_id on success, or None on failure.
     """
-    lines = [f"**Legion** — `{asking_node}` has blocking questions:\n"]
+    lines = [f"**Athanor** — `{asking_node}` has blocking questions:\n"]
     for i, q in enumerate(questions, start=1):
         lines.append(f"{i}. {q}")
-    lines.append("\n_Reply in the [Legion Dashboard] or answer here._")
+    lines.append("\n_Reply in the [Athanor Dashboard] or answer here._")
     body = "\n".join(lines)
 
     headers = {

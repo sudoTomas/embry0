@@ -1,7 +1,7 @@
 """Sandbox agent runner — entrypoint for `python -m athanor.sandbox.runner`.
 
 Called by the orchestrator via `docker exec`. Parses the --config JSON into
-an AgentInvocation and delegates to SdkAgentExecutor (Phase 1). Emits Legion
+an AgentInvocation and delegates to SdkAgentExecutor (Phase 1). Emits Athanor
 events to stdout as JSON-per-line.
 """
 
@@ -59,7 +59,7 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
 async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
     invocation = _invocation_from_config(config)
     executor = select_executor(invocation)
-    # Inject a writer that serializes events to stdout (Legion's wire format).
+    # Inject a writer that serializes events to stdout (Athanor's wire format).
     test_cfg = {"configurable": {}, "_test_writer": _emit}
     result = await executor.run(invocation, test_cfg)
     return {
@@ -74,7 +74,7 @@ async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Legion sandbox agent runner")
+    parser = argparse.ArgumentParser(description="Athanor sandbox agent runner")
     parser.add_argument("--config", required=True, help="JSON agent configuration")
     args = parser.parse_args()
 

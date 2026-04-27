@@ -25,7 +25,7 @@ class EnvVarInput(BaseModel):
         # variables. Reject at the API boundary.
         if v in RESERVED_ENV_KEYS:
             raise ValueError(
-                f"Key {v!r} is reserved for Legion infrastructure. Reserved keys: {sorted(RESERVED_ENV_KEYS)}"
+                f"Key {v!r} is reserved for Athanor infrastructure. Reserved keys: {sorted(RESERVED_ENV_KEYS)}"
             )
         return v
 

@@ -39,7 +39,7 @@ def _extract_label_names(raw_labels: object) -> list[str]:
 
 
 class GitHubSyncService:
-    """Handles two-way sync between Legion issues and GitHub issues."""
+    """Handles two-way sync between Athanor issues and GitHub issues."""
 
     def __init__(self, github_token: str | None = None) -> None:
         self._token = github_token
@@ -51,7 +51,7 @@ class GitHubSyncService:
         return headers
 
     async def push_create(self, issue_id: str, issues_repo: IssuesRepository) -> dict[str, Any] | None:
-        """Create a GitHub issue from a Legion issue. Returns GitHub response data."""
+        """Create a GitHub issue from an Athanor issue. Returns GitHub response data."""
         issue = await issues_repo.get(issue_id)
         if not issue or not issue.get("repo"):
             return None
@@ -70,7 +70,7 @@ class GitHubSyncService:
         return data
 
     async def push_update(self, issue_id: str, issues_repo: IssuesRepository) -> dict[str, Any] | None:
-        """Push Legion issue changes to GitHub."""
+        """Push Athanor issue changes to GitHub."""
         issue = await issues_repo.get(issue_id)
         if not issue or not issue.get("repo") or not issue.get("github_number"):
             return None

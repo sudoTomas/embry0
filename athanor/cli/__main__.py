@@ -79,7 +79,7 @@ def _resolve_home() -> Path:
     if not (home / COMPOSE_FILE).exists():
         _err(f"{COMPOSE_FILE} not found in {home}")
         _err("Set ATHANOR_HOME to the project root, e.g.:")
-        _err("  export ATHANOR_HOME=/opt/legion")
+        _err("  export ATHANOR_HOME=/opt/athanor")
         sys.exit(1)
     return home
 
@@ -231,7 +231,7 @@ def cmd_config(args: argparse.Namespace) -> None:
 
 
 def cmd_health(args: argparse.Namespace) -> None:
-    """Check the health of a running Legion instance."""
+    """Check the health of a running Athanor instance."""
     import httpx
 
     port = os.environ.get("PROD_PORT", "8200")
@@ -271,7 +271,7 @@ def cmd_start(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     if _stack_running(home):
-        _info("Legion stack is already running")
+        _info("Athanor stack is already running")
         _run(_compose_cmd(home) + ["ps"])
         sys.exit(0)
 
@@ -285,7 +285,7 @@ def cmd_start(args: argparse.Namespace) -> None:
         _header("Building production images...")
         _run(_compose_cmd(home) + ["build"])
 
-    _header("Starting Legion stack...")
+    _header("Starting Athanor stack...")
     env = os.environ.copy()
     if args.port:
         env["PROD_PORT"] = str(args.port)
@@ -300,14 +300,14 @@ def cmd_start(args: argparse.Namespace) -> None:
     if not _sandbox_exists_in_dind():
         _build_sandbox(home)
 
-    _header("Legion is running")
+    _header("Athanor is running")
     _run(_compose_cmd(home) + ["ps"])
 
 
 def cmd_stop(args: argparse.Namespace) -> None:
     """Stop the production stack."""
     home = _resolve_home()
-    _header("Stopping Legion stack...")
+    _header("Stopping Athanor stack...")
     _run(_compose_cmd(home) + ["down"])
     _info("Stack stopped")
 
@@ -333,18 +333,18 @@ def cmd_build_sandbox(args: argparse.Namespace) -> None:
         capture=True,
     )
     if result.returncode != 0:
-        _err("DinD container is not running. Start the stack first: legion start")
+        _err("DinD container is not running. Start the stack first: athanor start")
         sys.exit(1)
 
     _build_sandbox(home)
 
 
 def cmd_purge(args: argparse.Namespace) -> None:
-    """Remove Legion Docker artifacts."""
+    """Remove Athanor Docker artifacts."""
     home = _resolve_home()
     purge_all = not (args.containers or args.images or args.volumes or args.networks)
 
-    _header("Purging Legion Docker artifacts...")
+    _header("Purging Athanor Docker artifacts...")
 
     if purge_all or args.containers:
         _info("Removing containers...")
@@ -418,7 +418,7 @@ def main() -> None:
     subparsers.add_parser("config", help="Validate and display configuration")
 
     # purge
-    purge_parser = subparsers.add_parser("purge", help="Remove all Legion Docker artifacts")
+    purge_parser = subparsers.add_parser("purge", help="Remove all Athanor Docker artifacts")
     purge_parser.add_argument("--containers", action="store_true", help="Remove only containers")
     purge_parser.add_argument("--images", action="store_true", help="Remove only images")
     purge_parser.add_argument("--volumes", action="store_true", help="Remove only volumes")

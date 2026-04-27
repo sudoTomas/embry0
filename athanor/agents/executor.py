@@ -94,7 +94,7 @@ class SdkAgentExecutor:
     - Render invocation → ClaudeAgentOptions via config_builder.
     - Write Ring-2 settings.json into <workspace>/.claude/settings.json.
     - Register Ring-3 PreToolUse hook that delegates to evaluate_policy.
-    - Stream SDK messages through the writer as Legion events.
+    - Stream SDK messages through the writer as Athanor events.
     - Aggregate into AgentOutput.
 
     Does NOT manage the sandbox container — that is the caller's concern.

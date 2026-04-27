@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AthanorConfig(BaseSettings):
-    """All runtime configuration for the Legion orchestrator."""
+    """All runtime configuration for the Athanor orchestrator."""
 
     model_config = SettingsConfigDict(
         env_file=".env",

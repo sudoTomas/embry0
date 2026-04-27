@@ -45,7 +45,7 @@ async def send_question(
     repo_tag = f"\\[{_escape_mdv2(repo)}\\]" if repo else ""
     node_tag = _escape_mdv2(asking_node)
     q_escaped = _escape_mdv2(question)
-    mdv2_text = f"*Legion* {repo_tag}\n_{node_tag}_ is asking:\n\n{q_escaped}\n\n`input:{_escape_mdv2(input_id)}`"
+    mdv2_text = f"*Athanor* {repo_tag}\n_{node_tag}_ is asking:\n\n{q_escaped}\n\n`input:{_escape_mdv2(input_id)}`"
 
     payload_mdv2 = {
         "chat_id": chat_id,
@@ -73,7 +73,7 @@ async def send_question(
             input_id=input_id,
         )
         repo_prefix = f"[{repo}] " if repo else ""
-        plain_text = f"Legion {repo_prefix}\n{asking_node} is asking:\n\n{question}\n\ninput:{input_id}"
+        plain_text = f"Athanor {repo_prefix}\n{asking_node} is asking:\n\n{question}\n\ninput:{input_id}"
         payload_plain = {
             "chat_id": chat_id,
             "text": plain_text,
