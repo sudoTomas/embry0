@@ -1,4 +1,4 @@
-"""Proxy service lifecycle manager — starts auth, git, and legion proxies."""
+"""Proxy service lifecycle manager — starts auth, git, and athanor proxies."""
 
 from __future__ import annotations
 
@@ -57,9 +57,9 @@ class ProxyManager:
         port: int = 9102,
     ) -> str:
         """Start an Athanor API proxy scoped to a specific job. Returns the URL."""
-        from athanor.execution.proxy.legion_proxy import create_legion_proxy_app
+        from athanor.execution.proxy.athanor_proxy import create_athanor_proxy_app
 
-        app = create_legion_proxy_app(
+        app = create_athanor_proxy_app(
             issues_repo=issues_repo,
             inputs_repo=inputs_repo,
             issue_id=issue_id,

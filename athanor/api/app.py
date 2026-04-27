@@ -96,7 +96,7 @@ async def _init_app_state(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config: AthanorConfig = app.state.config
-    logger.info("legion_starting")
+    logger.info("athanor_starting")
 
     db = DatabasePool(config.database_url)
     await db.connect()
@@ -317,10 +317,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         app.state.telegram_webhook_secret = ""
 
-    logger.info("legion_started")
+    logger.info("athanor_started")
     yield
 
-    logger.info("legion_stopping")
+    logger.info("athanor_stopping")
     # Snapshot the task set BEFORE cancelling so the done-callback that
     # removes tasks from the set can't mutate what we're iterating.
     tasks = list(app.state.background_tasks)
@@ -341,7 +341,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await reaper.stop()
     await proxy_mgr.stop()
     await db.close()
-    logger.info("legion_stopped")
+    logger.info("athanor_stopped")
 
 
 def create_app(

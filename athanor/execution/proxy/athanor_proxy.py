@@ -1,4 +1,4 @@
-"""Legion API proxy — gives sandbox agents controlled access to Legion's API."""
+"""Athanor API proxy — gives sandbox agents controlled access to Athanor's API."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ async def _create_issue_handler(request: web.Request) -> web.Response:
         parent_issue_id=parent_issue_id,
         created_by=data.get("created_by", "triage_agent"),
     )
-    logger.info("legion_proxy_issue_created", child_id=child_id, parent=parent_issue_id)
+    logger.info("athanor_proxy_issue_created", child_id=child_id, parent=parent_issue_id)
     return web.json_response({"status": "created", "issue_id": child_id})
 
 
@@ -38,7 +38,7 @@ async def _request_input_handler(request: web.Request) -> web.Response:
         importance=data.get("importance", "blocking"),
         auto_answer=data.get("suggested_answer"),
     )
-    logger.info("legion_proxy_input_created", input_id=input_id)
+    logger.info("athanor_proxy_input_created", input_id=input_id)
     return web.json_response({"status": "input_requested", "input_id": input_id})
 
 
@@ -62,7 +62,7 @@ async def _health(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
-def create_legion_proxy_app(
+def create_athanor_proxy_app(
     issues_repo: Any, inputs_repo: Any, issue_id: str, job_id: str, repo: str | None = None, db: Any = None
 ) -> web.Application:
     app = web.Application()
