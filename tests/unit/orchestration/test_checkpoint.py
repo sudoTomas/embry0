@@ -19,7 +19,7 @@ async def test_checkpointer_context_creates_saver():
     except ImportError:
         pytest.skip("psycopg not installed")
 
-    from legion.orchestration.checkpoint import checkpointer_context
+    from athanor.orchestration.checkpoint import checkpointer_context
 
     # This will fail to connect without a real DB, but we can verify the function exists
     # and returns the right type structure. For a real integration test, use testcontainers.
@@ -36,7 +36,7 @@ async def test_purge_thread_is_idempotent_for_nonexistent_thread(pg_pool):
     and safe to call on an already-purged / never-written thread."""
     import asyncpg
 
-    from legion.orchestration.checkpoint import checkpointer_context, purge_thread
+    from athanor.orchestration.checkpoint import checkpointer_context, purge_thread
 
     url = os.environ.get("TEST_DATABASE_URL", "postgresql://legion:legion@localhost:5432/legion_test")
 
@@ -55,7 +55,7 @@ async def test_purge_thread_deletes_only_target_thread_rows(pg_pool):
     checkpoint tables, leaving other threads' rows intact."""
     import asyncpg
 
-    from legion.orchestration.checkpoint import checkpointer_context, purge_thread
+    from athanor.orchestration.checkpoint import checkpointer_context, purge_thread
 
     url = os.environ.get("TEST_DATABASE_URL", "postgresql://legion:legion@localhost:5432/legion_test")
 

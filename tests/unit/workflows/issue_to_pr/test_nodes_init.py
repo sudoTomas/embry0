@@ -9,7 +9,7 @@ def test_extract_ask_user_events_normalizes_fields():
     """_extract_ask_user_events pulls agent_ask_user events out of the event
     stream and normalizes each to {question, category, options, asking_node,
     importance}. Non-matching events are ignored."""
-    from legion.workflows.issue_to_pr.nodes import _extract_ask_user_events
+    from athanor.workflows.issue_to_pr.nodes import _extract_ask_user_events
 
     agent_output = {
         "events": [
@@ -49,7 +49,7 @@ async def test_init_node_passes_git_proxy_url_to_sandbox():
     """Init node must pass LEGION_GIT_PROXY_URL into the sandbox env based on
     proxy_manager.git_proxy_url. Without this, git ops inside the sandbox
     can't authenticate."""
-    from legion.workflows.issue_to_pr.nodes import init_node
+    from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
     sandbox_mgr.create = AsyncMock(return_value="container-abc")
@@ -62,7 +62,7 @@ async def test_init_node_passes_git_proxy_url_to_sandbox():
     proxy_mgr = MagicMock()
     proxy_mgr.git_proxy_url = "http://host.docker.internal:9101"
 
-    import legion.workflows.issue_to_pr.nodes as nodes_module
+    import athanor.workflows.issue_to_pr.nodes as nodes_module
 
     def _noop_writer():
         return lambda _event: None
@@ -96,7 +96,7 @@ async def test_init_node_passes_git_proxy_url_to_sandbox():
 async def test_init_node_git_credential_helper_curls_proxy():
     """The git credential helper configured inside the sandbox must reference the
     proxy URL via curl, never $GITHUB_TOKEN."""
-    from legion.workflows.issue_to_pr.nodes import init_node
+    from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
     sandbox_mgr.create = AsyncMock(return_value="container-abc")
@@ -109,7 +109,7 @@ async def test_init_node_git_credential_helper_curls_proxy():
     proxy_mgr = MagicMock()
     proxy_mgr.git_proxy_url = "http://host.docker.internal:9101"
 
-    import legion.workflows.issue_to_pr.nodes as nodes_module
+    import athanor.workflows.issue_to_pr.nodes as nodes_module
 
     def _noop_writer():
         return lambda _e: None
@@ -149,7 +149,7 @@ async def test_init_node_skips_git_setup_when_no_proxy_url():
     """If proxy_manager is missing or has no git_proxy_url, init node logs a
     warning and skips the git setup step rather than silently configuring a
     broken credential helper."""
-    from legion.workflows.issue_to_pr.nodes import init_node
+    from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
     sandbox_mgr.create = AsyncMock(return_value="container-abc")
@@ -162,7 +162,7 @@ async def test_init_node_skips_git_setup_when_no_proxy_url():
     proxy_mgr = MagicMock()
     proxy_mgr.git_proxy_url = ""
 
-    import legion.workflows.issue_to_pr.nodes as nodes_module
+    import athanor.workflows.issue_to_pr.nodes as nodes_module
 
     def _noop_writer():
         return lambda _e: None
@@ -197,7 +197,7 @@ async def test_init_node_skips_git_setup_when_no_proxy_url():
 async def test_init_node_skips_git_setup_when_proxy_manager_is_none():
     """When proxy_manager is entirely absent from config (not just empty URL),
     init node must fall back to 'no credentials' path without crashing."""
-    from legion.workflows.issue_to_pr.nodes import init_node
+    from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
     sandbox_mgr.create = AsyncMock(return_value="container-abc")
@@ -207,7 +207,7 @@ async def test_init_node_skips_git_setup_when_proxy_manager_is_none():
     docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
     docker.run_cmd = AsyncMock(return_value="")
 
-    import legion.workflows.issue_to_pr.nodes as nodes_module
+    import athanor.workflows.issue_to_pr.nodes as nodes_module
 
     def _noop_writer():
         return lambda _e: None
@@ -244,7 +244,7 @@ async def test_init_node_skips_git_setup_when_proxy_manager_is_none():
 async def test_init_node_clone_failure_raises_runtime_error():
     """If the clone command exits non-zero, init node must raise RuntimeError
     (no silent success with empty /workspace)."""
-    from legion.workflows.issue_to_pr.nodes import init_node
+    from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
     sandbox_mgr.create = AsyncMock(return_value="container-abc")
@@ -265,7 +265,7 @@ async def test_init_node_clone_failure_raises_runtime_error():
     proxy_mgr = MagicMock()
     proxy_mgr.git_proxy_url = "http://host.docker.internal:9101"
 
-    import legion.workflows.issue_to_pr.nodes as nodes_module
+    import athanor.workflows.issue_to_pr.nodes as nodes_module
 
     def _noop_writer():
         return lambda _e: None

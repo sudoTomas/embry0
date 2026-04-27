@@ -1,8 +1,8 @@
 """build_sdk_options — AgentInvocation → ClaudeAgentOptions translator."""
 
-from legion.agents.config_builder import build_sdk_options
-from legion.agents.invocation import AgentInvocation
-from legion.safety.policy import default_policy_for_agent
+from athanor.agents.config_builder import build_sdk_options
+from athanor.agents.invocation import AgentInvocation
+from athanor.safety.policy import default_policy_for_agent
 
 
 def _inv(**overrides) -> AgentInvocation:  # noqa: ANN002, ANN003

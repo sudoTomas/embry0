@@ -2,11 +2,11 @@
 
 import pytest
 
-from legion.agents.executor_factory import select_executor
-from legion.agents.invocation import AgentInvocation
-from legion.execution.auth_provider import AuthConfigError
-from legion.safety.error_codes import ErrorCode
-from legion.safety.policy import default_policy_for_agent
+from athanor.agents.executor_factory import select_executor
+from athanor.agents.invocation import AgentInvocation
+from athanor.execution.auth_provider import AuthConfigError
+from athanor.safety.error_codes import ErrorCode
+from athanor.safety.policy import default_policy_for_agent
 
 
 def _inv(execution_mode: str) -> AgentInvocation:
@@ -29,7 +29,7 @@ def _inv(execution_mode: str) -> AgentInvocation:
 
 
 def test_select_executor_returns_sdk_for_sdk_mode() -> None:
-    from legion.agents.executor import SdkAgentExecutor
+    from athanor.agents.executor import SdkAgentExecutor
 
     executor = select_executor(_inv("sdk"))
     assert isinstance(executor, SdkAgentExecutor)

@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-from legion.agents.executor import SdkAgentExecutor
-from legion.agents.invocation import AgentInvocation
-from legion.safety.policy import default_policy_for_agent
+from athanor.agents.executor import SdkAgentExecutor
+from athanor.agents.invocation import AgentInvocation
+from athanor.safety.policy import default_policy_for_agent
 
 
 def _inv(**kw) -> AgentInvocation:  # noqa: ANN003
@@ -149,9 +149,7 @@ class _FakeAssistantMessageWithTool:
 
 
 @pytest.mark.asyncio
-async def test_sdk_executor_tools_called_counts_once_per_invocation(
-    tmp_path, monkeypatch
-) -> None:
+async def test_sdk_executor_tools_called_counts_once_per_invocation(tmp_path, monkeypatch) -> None:
     """Regression: tools_called must not be double-counted (hook + block)."""
     monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
 
@@ -178,21 +176,21 @@ async def test_sdk_executor_tools_called_counts_once_per_invocation(
 
 
 def test_workspace_root_respects_env_var(monkeypatch, tmp_path) -> None:
-    from legion.agents.executor import _workspace_root
+    from athanor.agents.executor import _workspace_root
 
     monkeypatch.setenv("LEGION_WORKSPACE_ROOT", str(tmp_path))
     assert _workspace_root() == tmp_path
 
 
 def test_workspace_root_default(monkeypatch) -> None:
-    from legion.agents.executor import _workspace_root
+    from athanor.agents.executor import _workspace_root
 
     monkeypatch.delenv("LEGION_WORKSPACE_ROOT", raising=False)
     assert str(_workspace_root()) == "/workspace"
 
 
 def test_resolve_writer_returns_test_writer() -> None:
-    from legion.agents.executor import _resolve_writer
+    from athanor.agents.executor import _resolve_writer
 
     calls = []
 
@@ -204,7 +202,7 @@ def test_resolve_writer_returns_test_writer() -> None:
 
 
 def test_resolve_writer_no_op_fallback() -> None:
-    from legion.agents.executor import _resolve_writer
+    from athanor.agents.executor import _resolve_writer
 
     writer = _resolve_writer(None)
     # Should not raise and should be callable
@@ -212,43 +210,43 @@ def test_resolve_writer_no_op_fallback() -> None:
 
 
 def test_summarize_tool_input_read_uses_file_path() -> None:
-    from legion.agents.executor import _summarize_tool_input
+    from athanor.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Read", {"file_path": "/a/b"}) == "/a/b"
 
 
 def test_summarize_tool_input_glob_uses_pattern() -> None:
-    from legion.agents.executor import _summarize_tool_input
+    from athanor.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Glob", {"pattern": "**/*.py"}) == "**/*.py"
 
 
 def test_summarize_tool_input_write_uses_file_path() -> None:
-    from legion.agents.executor import _summarize_tool_input
+    from athanor.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Write", {"file_path": "/out/f"}) == "/out/f"
 
 
 def test_summarize_tool_input_edit_uses_file_path() -> None:
-    from legion.agents.executor import _summarize_tool_input
+    from athanor.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Edit", {"file_path": "/out/f"}) == "/out/f"
 
 
 def test_summarize_tool_input_bash_uses_command() -> None:
-    from legion.agents.executor import _summarize_tool_input
+    from athanor.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Bash", {"command": "ls"}) == "ls"
 
 
 def test_summarize_tool_input_non_dict() -> None:
-    from legion.agents.executor import _summarize_tool_input
+    from athanor.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Read", "not a dict") == "not a dict"
 
 
 def test_summarize_tool_input_unknown_tool() -> None:
-    from legion.agents.executor import _summarize_tool_input
+    from athanor.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("MysteryTool", {"key": "val"}) == "{'key': 'val'}"
 
@@ -260,8 +258,8 @@ def test_summarize_tool_input_unknown_tool() -> None:
 
 @pytest.mark.asyncio
 async def test_evaluate_hook_allows_safe_command() -> None:
-    from legion.agents.executor import _evaluate_hook
-    from legion.safety.policy import SafetyPolicy
+    from athanor.agents.executor import _evaluate_hook
+    from athanor.safety.policy import SafetyPolicy
 
     result = await _evaluate_hook(
         policy=SafetyPolicy(),
@@ -275,8 +273,8 @@ async def test_evaluate_hook_allows_safe_command() -> None:
 
 @pytest.mark.asyncio
 async def test_evaluate_hook_denies_dangerous_command() -> None:
-    from legion.agents.executor import _evaluate_hook
-    from legion.safety.policy import ContentRule, SafetyPolicy
+    from athanor.agents.executor import _evaluate_hook
+    from athanor.safety.policy import ContentRule, SafetyPolicy
 
     deny_policy = SafetyPolicy(
         content_checks=[
@@ -299,8 +297,8 @@ async def test_evaluate_hook_denies_dangerous_command() -> None:
 @pytest.mark.asyncio
 async def test_evaluate_hook_non_dict_input_coerced() -> None:
     """Non-dict tool_input is coerced to {} (fail-safe) — should allow."""
-    from legion.agents.executor import _evaluate_hook
-    from legion.safety.policy import SafetyPolicy
+    from athanor.agents.executor import _evaluate_hook
+    from athanor.safety.policy import SafetyPolicy
 
     result = await _evaluate_hook(
         policy=SafetyPolicy(),
@@ -516,10 +514,13 @@ async def test_sdk_executor_hooks_unavailable_logs_warning(tmp_path, monkeypatch
         fset=lambda self, v: (_ for _ in ()).throw(AttributeError("hooks not supported")),
     )
 
-    with patch(
-        "claude_agent_sdk.query",
-        return_value=_scripted_query([_FakeResultMessage("done", 0.001)]),
-    ), patch("legion.agents.executor.build_sdk_options", return_value=mock_options):
+    with (
+        patch(
+            "claude_agent_sdk.query",
+            return_value=_scripted_query([_FakeResultMessage("done", 0.001)]),
+        ),
+        patch("athanor.agents.executor.build_sdk_options", return_value=mock_options),
+    ):
         executor = SdkAgentExecutor()
         out = await executor.run(
             _inv(),

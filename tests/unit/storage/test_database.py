@@ -1,7 +1,7 @@
 import asyncpg
 import pytest
 
-from legion.storage.database import DatabasePool
+from athanor.storage.database import DatabasePool
 
 
 @pytest.mark.asyncio
@@ -119,7 +119,7 @@ async def test_handle_needs_info_end_to_end_against_real_db(pg_pool):
     import os
     import uuid as uuid_mod
 
-    from legion.storage.migrations.runner import run_migrations
+    from athanor.storage.migrations.runner import run_migrations
 
     url = os.environ.get("TEST_DATABASE_URL", "postgresql://legion:legion@localhost:5432/legion_test")
     try:
@@ -151,7 +151,7 @@ async def test_handle_needs_info_end_to_end_against_real_db(pg_pool):
             # Build a minimal executor and call the real method against real DB
             from unittest.mock import AsyncMock
 
-            from legion.services.issue_executor import IssueExecutor
+            from athanor.services.issue_executor import IssueExecutor
 
             executor = IssueExecutor.__new__(IssueExecutor)
             executor._db = db

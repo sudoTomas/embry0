@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.scripts]
-legion = "legion.cli:main"
+legion = "athanor.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -38,6 +38,9 @@ dev = [
     "testcontainers[postgres]>=4.0,<5",
     "pytest-aiohttp>=1.0,<2",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["athanor"]
 
 [tool.ruff]
 line-length = 120

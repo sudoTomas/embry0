@@ -3,9 +3,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import asyncpg
 import pytest
 
-from legion.storage.database import DatabasePool
-from legion.storage.migrations.runner import run_migrations
-from legion.storage.repositories.provider_config import ProviderConfigRepository
+from athanor.storage.database import DatabasePool
+from athanor.storage.migrations.runner import run_migrations
+from athanor.storage.repositories.provider_config import ProviderConfigRepository
 
 
 @pytest.fixture

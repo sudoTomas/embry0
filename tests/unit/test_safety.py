@@ -1,4 +1,4 @@
-from legion.safety.patterns import is_dangerous_command, normalize_command
+from athanor.safety.patterns import is_dangerous_command, normalize_command
 
 
 class TestNormalizeCommand:

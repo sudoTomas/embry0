@@ -1,7 +1,7 @@
 import pytest
 from aiohttp.test_utils import TestClient
 
-from legion.execution.proxy.auth_proxy import create_auth_proxy_app
+from athanor.execution.proxy.auth_proxy import create_auth_proxy_app
 
 
 @pytest.fixture

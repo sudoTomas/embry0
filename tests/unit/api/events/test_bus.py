@@ -7,7 +7,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_event_bus_subscribe_returns_queue():
-    from legion.api.events.bus import EventBus
+    from athanor.api.events.bus import EventBus
 
     bus = EventBus()
     q = await bus.subscribe("job-1")
@@ -16,7 +16,7 @@ async def test_event_bus_subscribe_returns_queue():
 
 @pytest.mark.asyncio
 async def test_event_bus_publish_delivers_to_subscribers():
-    from legion.api.events.bus import EventBus
+    from athanor.api.events.bus import EventBus
 
     bus = EventBus()
     q1 = await bus.subscribe("job-1")
@@ -33,7 +33,7 @@ async def test_event_bus_publish_delivers_to_subscribers():
 @pytest.mark.asyncio
 async def test_event_bus_publish_ignores_unknown_job():
     """Publishing for a job with no subscribers is a no-op — no error."""
-    from legion.api.events.bus import EventBus
+    from athanor.api.events.bus import EventBus
 
     bus = EventBus()
     await bus.publish("no-subscribers", {"type": "progress"})
@@ -41,7 +41,7 @@ async def test_event_bus_publish_ignores_unknown_job():
 
 @pytest.mark.asyncio
 async def test_event_bus_unsubscribe_removes_queue():
-    from legion.api.events.bus import EventBus
+    from athanor.api.events.bus import EventBus
 
     bus = EventBus()
     q = await bus.subscribe("job-1")
@@ -54,7 +54,7 @@ async def test_event_bus_unsubscribe_removes_queue():
 @pytest.mark.asyncio
 async def test_event_bus_unsubscribe_cleans_up_empty_lists():
     """After the last subscriber leaves, the job_id entry is removed."""
-    from legion.api.events.bus import EventBus
+    from athanor.api.events.bus import EventBus
 
     bus = EventBus()
     q = await bus.subscribe("job-1")
@@ -66,7 +66,7 @@ async def test_event_bus_unsubscribe_cleans_up_empty_lists():
 async def test_event_bus_publish_does_not_block_on_failing_subscriber(capsys):
     """A subscriber whose put_nowait raises must not stop delivery to others,
     and the failure must be logged (not silently swallowed)."""
-    from legion.api.events.bus import EventBus
+    from athanor.api.events.bus import EventBus
 
     bus = EventBus()
     q_good = await bus.subscribe("job-1")
@@ -88,7 +88,7 @@ async def test_event_bus_publish_does_not_block_on_failing_subscriber(capsys):
 async def test_event_bus_concurrent_subscribe_and_publish_no_race():
     """Stress: 50 concurrent subscribes + 50 concurrent publishes must not
     raise KeyError, list-mutation-during-iteration, or drop messages."""
-    from legion.api.events.bus import EventBus
+    from athanor.api.events.bus import EventBus
 
     bus = EventBus()
     queues: list[asyncio.Queue] = []
@@ -113,7 +113,7 @@ async def test_event_bus_concurrent_subscribe_and_publish_no_race():
 @pytest.mark.asyncio
 async def test_event_bus_concurrent_unsubscribe_during_publish():
     """Unsubscribing concurrently with publish must not crash the publisher."""
-    from legion.api.events.bus import EventBus
+    from athanor.api.events.bus import EventBus
 
     bus = EventBus()
     q = await bus.subscribe("job-1")

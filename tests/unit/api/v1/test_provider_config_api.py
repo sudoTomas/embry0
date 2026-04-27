@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from legion.api.app import create_app
-from legion.config import LegionConfig
+from athanor.api.app import create_app
+from athanor.config import AthanorConfig
 
 _GET_RESPONSE = {
     "provider_mode": "anthropic_api",
@@ -25,7 +25,7 @@ _UPDATE_RESPONSE = {
 
 @pytest.fixture
 def app():
-    config = LegionConfig(_env_file=None, dev_mode=True)
+    config = AthanorConfig(_env_file=None, dev_mode=True)
     app = create_app(config)
     repo = MagicMock()
     repo.get = AsyncMock(return_value=_GET_RESPONSE)

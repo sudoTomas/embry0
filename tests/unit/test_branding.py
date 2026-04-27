@@ -1,4 +1,4 @@
-from legion.branding import API_TITLE, APP_NAME, GIT_AUTHOR_EMAIL, GIT_AUTHOR_NAME
+from athanor.branding import API_TITLE, APP_NAME, GIT_AUTHOR_EMAIL, GIT_AUTHOR_NAME
 
 
 def test_app_name():

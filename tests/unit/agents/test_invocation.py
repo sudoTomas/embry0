@@ -2,8 +2,8 @@
 
 import pytest
 
-from legion.agents.invocation import AgentInvocation, ChannelConfig
-from legion.safety.policy import SafetyPolicy, default_policy_for_agent
+from athanor.agents.invocation import AgentInvocation, ChannelConfig
+from athanor.safety.policy import SafetyPolicy, default_policy_for_agent
 
 
 def _minimal_invocation() -> AgentInvocation:

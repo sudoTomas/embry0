@@ -1,4 +1,4 @@
-from legion.workflows.registry import WorkflowRegistry
+from athanor.workflows.registry import WorkflowRegistry
 
 
 class MockWorkflow:

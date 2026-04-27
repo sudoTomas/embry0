@@ -1,9 +1,9 @@
 import asyncpg
 import pytest
 
-from legion.storage.database import DatabasePool
-from legion.storage.migrations.runner import run_migrations
-from legion.storage.repositories.pipeline_templates import PipelineTemplatesRepository
+from athanor.storage.database import DatabasePool
+from athanor.storage.migrations.runner import run_migrations
+from athanor.storage.repositories.pipeline_templates import PipelineTemplatesRepository
 
 SAMPLE_GRAPH = {
     "graph_id": "g1",

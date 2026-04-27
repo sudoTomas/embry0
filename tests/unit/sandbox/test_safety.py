@@ -1,4 +1,4 @@
-from legion.sandbox.safety import check_tool_safety
+from athanor.sandbox.safety import check_tool_safety
 
 
 def test_blocks_rm_rf():

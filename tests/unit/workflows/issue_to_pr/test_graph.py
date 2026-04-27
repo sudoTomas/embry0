@@ -1,4 +1,4 @@
-from legion.workflows.issue_to_pr.graph import IssueToprWorkflow
+from athanor.workflows.issue_to_pr.graph import IssueToprWorkflow
 
 
 def test_workflow_has_name():

@@ -2,7 +2,7 @@
 
 import pytest
 
-from legion.execution.auth_provider import (
+from athanor.execution.auth_provider import (
     RESERVED_ENV_KEYS,
     AuthConfigError,
     resolve_env,

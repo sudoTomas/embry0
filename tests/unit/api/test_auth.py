@@ -4,7 +4,7 @@ import hmac
 import pytest
 from fastapi import HTTPException
 
-from legion.api.auth import verify_api_key, verify_webhook_signature
+from athanor.api.auth import verify_api_key, verify_webhook_signature
 
 
 def test_verify_api_key_valid():

@@ -1,6 +1,6 @@
 import json
 
-from legion.execution.events import (
+from athanor.execution.events import (
     AgentCompletedEvent,
     AgentStartedEvent,
     EventType,

@@ -1,9 +1,9 @@
 import asyncpg
 import pytest
 
-from legion.storage.database import DatabasePool
-from legion.storage.migrations.runner import run_migrations
-from legion.storage.repositories.context_config import ContextConfigRepository
+from athanor.storage.database import DatabasePool
+from athanor.storage.migrations.runner import run_migrations
+from athanor.storage.repositories.context_config import ContextConfigRepository
 
 
 @pytest.fixture

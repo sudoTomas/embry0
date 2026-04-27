@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from legion.execution.sandbox_manager import SandboxManager
+from athanor.execution.sandbox_manager import SandboxManager
 
 
 @pytest.fixture

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from legion.api.schemas import (
+from athanor.api.schemas import (
     BudgetConfigResponse,
     GraphExecuteRequest,
     JobCreateRequest,

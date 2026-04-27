@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from legion.agents.resolver import ResolvedAgentConfig, resolve_agent_config
+from athanor.agents.resolver import ResolvedAgentConfig, resolve_agent_config
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers

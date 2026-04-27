@@ -1,7 +1,7 @@
 """PipelineConfig and JobCreateRequest extended with new dimensions."""
 
-from legion.api.schemas import JobCreateRequest
-from legion.orchestration.state import PipelineConfig
+from athanor.api.schemas import JobCreateRequest
+from athanor.orchestration.state import PipelineConfig
 
 
 def test_pipeline_config_accepts_execution_modes() -> None:

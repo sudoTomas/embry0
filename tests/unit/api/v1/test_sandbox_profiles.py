@@ -3,13 +3,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from legion.api.app import create_app
-from legion.config import LegionConfig
+from athanor.api.app import create_app
+from athanor.config import AthanorConfig
 
 
 @pytest.fixture
 def app():
-    config = LegionConfig(_env_file=None, dev_mode=True)
+    config = AthanorConfig(_env_file=None, dev_mode=True)
     app = create_app(config)
     mock_profiles = MagicMock()
     mock_profiles.upsert = AsyncMock()

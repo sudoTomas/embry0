@@ -7,10 +7,10 @@ import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from legion.api.app import create_app
-from legion.config import LegionConfig
-from legion.storage.database import DatabasePool
-from legion.storage.migrations.runner import run_migrations
+from athanor.api.app import create_app
+from athanor.config import AthanorConfig
+from athanor.storage.database import DatabasePool
+from athanor.storage.migrations.runner import run_migrations
 
 
 @pytest.fixture(scope="session")
@@ -51,7 +51,7 @@ async def setup_database(database_url: str) -> AsyncIterator[str]:
 @pytest.fixture
 async def app(setup_database: str) -> AsyncIterator[AsyncClient]:
     """Create a test FastAPI app with real database."""
-    config = LegionConfig(
+    config = AthanorConfig(
         _env_file=None,
         database_url=setup_database,
         dev_mode=True,

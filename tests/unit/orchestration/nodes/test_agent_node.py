@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from legion.execution.agent_runner import AgentOutput
-from legion.orchestration.nodes.agent import run_agent_node
+from athanor.execution.agent_runner import AgentOutput
+from athanor.orchestration.nodes.agent import run_agent_node
 
 
 @pytest.mark.asyncio
@@ -23,9 +23,7 @@ async def test_run_agent_node_builds_invocation_and_delegates(monkeypatch, tmp_p
         duration_ms=100,
         tools_called={"Read": 1},
     )
-    with patch(
-        "legion.orchestration.nodes.agent.select_executor"
-    ) as mock_factory:
+    with patch("athanor.orchestration.nodes.agent.select_executor") as mock_factory:
         mock_executor = AsyncMock()
         mock_executor.run = AsyncMock(return_value=fake_out)
         mock_factory.return_value = mock_executor
@@ -74,7 +72,7 @@ async def test_run_agent_node_success() -> None:
         duration_ms=15000,
         tools_called={"Read": 5, "Edit": 2},
     )
-    with patch("legion.orchestration.nodes.agent.select_executor") as mock_factory:
+    with patch("athanor.orchestration.nodes.agent.select_executor") as mock_factory:
         mock_executor = AsyncMock()
         mock_executor.run = AsyncMock(return_value=fake_out)
         mock_factory.return_value = mock_executor
@@ -105,7 +103,7 @@ async def test_run_agent_node_error() -> None:
         is_error=True,
         error_message="Timeout after 300s",
     )
-    with patch("legion.orchestration.nodes.agent.select_executor") as mock_factory:
+    with patch("athanor.orchestration.nodes.agent.select_executor") as mock_factory:
         mock_executor = AsyncMock()
         mock_executor.run = AsyncMock(return_value=fake_out)
         mock_factory.return_value = mock_executor
@@ -145,7 +143,7 @@ async def test_run_agent_node_with_resolver() -> None:
         "auth_mode": None,
     }
 
-    with patch("legion.orchestration.nodes.agent.select_executor") as mock_factory:
+    with patch("athanor.orchestration.nodes.agent.select_executor") as mock_factory:
         mock_executor = AsyncMock()
         mock_executor.run = _capture
         mock_factory.return_value = mock_executor
@@ -184,15 +182,13 @@ async def test_run_agent_node_config_error_sets_error_code() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_agent_node_select_executor_error_returns_error_updates(
-    monkeypatch, tmp_path
-) -> None:
+async def test_run_agent_node_select_executor_error_returns_error_updates(monkeypatch, tmp_path) -> None:
     """If select_executor raises AuthConfigError, return error state (Phase 2 guard)."""
-    from legion.execution.auth_provider import AuthConfigError
-    from legion.safety.error_codes import ErrorCode
+    from athanor.execution.auth_provider import AuthConfigError
+    from athanor.safety.error_codes import ErrorCode
 
     with patch(
-        "legion.orchestration.nodes.agent.select_executor",
+        "athanor.orchestration.nodes.agent.select_executor",
         side_effect=AuthConfigError(ErrorCode.INVALID_CONFIG, "forced"),
     ):
         updates = await run_agent_node(
@@ -212,9 +208,7 @@ async def test_run_agent_node_select_executor_error_returns_error_updates(
 
 
 @pytest.mark.asyncio
-async def test_run_agent_node_delegates_to_agent_runner_with_full_invocation(
-    monkeypatch, tmp_path
-) -> None:
+async def test_run_agent_node_delegates_to_agent_runner_with_full_invocation(monkeypatch, tmp_path) -> None:
     """When agent_runner is provided, run_agent_node serializes the full AgentInvocation."""
     captured_config: dict[str, Any] = {}
     captured_kwargs: dict[str, Any] = {}
@@ -275,7 +269,7 @@ async def test_run_agent_node_per_job_model_override_wins() -> None:
         captured["model"] = invocation.model
         return AgentOutput(agent_type="developer", output="done", cost_usd=0.0)
 
-    with patch("legion.orchestration.nodes.agent.select_executor") as mock_factory:
+    with patch("athanor.orchestration.nodes.agent.select_executor") as mock_factory:
         mock_executor = AsyncMock()
         mock_executor.run = _capture
         mock_factory.return_value = mock_executor

@@ -5,9 +5,9 @@ from collections.abc import AsyncIterator
 import asyncpg
 import pytest
 
-from legion.storage.database import DatabasePool
-from legion.storage.migrations.runner import run_migrations
-from legion.storage.repositories.repo_preferences import RepoPreferencesRepository
+from athanor.storage.database import DatabasePool
+from athanor.storage.migrations.runner import run_migrations
+from athanor.storage.repositories.repo_preferences import RepoPreferencesRepository
 
 
 @pytest.fixture

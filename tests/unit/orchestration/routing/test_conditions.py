@@ -2,7 +2,7 @@
 
 import json
 
-from legion.orchestration.routing.conditions import (
+from athanor.orchestration.routing.conditions import (
     check_budget,
     check_review_decision,
     check_triage_action,

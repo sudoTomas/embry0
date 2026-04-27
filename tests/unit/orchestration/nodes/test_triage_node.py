@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from legion.orchestration.nodes.triage import parse_triage_response, run_triage_node
+from athanor.orchestration.nodes.triage import parse_triage_response, run_triage_node
 
 
 def test_parse_triage_response_proceed():
@@ -63,7 +63,7 @@ def test_parse_triage_response_split():
 
 def test_parse_triage_response_invalid_json():
     """Strict parser now raises TriageParseError on invalid JSON."""
-    from legion.orchestration.state import TriageParseError
+    from athanor.orchestration.state import TriageParseError
 
     with pytest.raises(TriageParseError):
         parse_triage_response("not json at all")
@@ -71,7 +71,7 @@ def test_parse_triage_response_invalid_json():
 
 def test_parse_triage_response_raises_on_invalid_schema():
     """Schema violation (bad action value) raises TriageParseError."""
-    from legion.orchestration.state import TriageParseError
+    from athanor.orchestration.state import TriageParseError
 
     with pytest.raises(TriageParseError):
         parse_triage_response('{"action": "chaos", "confidence": 0.5}')
@@ -120,7 +120,7 @@ async def test_run_triage_node_success():
         "issue_number": 42,
     }
 
-    with patch("legion.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
+    with patch("athanor.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
         result = await run_triage_node(state=state)
 
     assert result["pipeline_config"]["action"] == "proceed"
@@ -164,7 +164,7 @@ async def test_repo_preferences_override_sandbox_profile():
     state = {"repo": "acme/widgets", "task": "Do the thing", "issue_number": 7}
     graph_config = {"configurable": {"repo_preferences_repo": prefs_repo}}
 
-    with patch("legion.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
+    with patch("athanor.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
         result = await run_triage_node(state=state, config=graph_config)
 
     prefs_repo.get.assert_awaited_once_with("acme/widgets")
@@ -196,7 +196,7 @@ async def test_no_repo_preferences_leaves_llm_choice_intact():
     state = {"repo": "acme/widgets", "task": "noop", "issue_number": 1}
     graph_config = {"configurable": {"repo_preferences_repo": prefs_repo}}
 
-    with patch("legion.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
+    with patch("athanor.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
         result = await run_triage_node(state=state, config=graph_config)
 
     assert result["pipeline_config"]["pipeline_config"]["sandbox_profile"] == "python-3.12"
@@ -230,7 +230,7 @@ async def test_repo_preferences_without_sandbox_profile_keeps_llm_choice():
     state = {"repo": "acme/widgets", "task": "noop"}
     graph_config = {"configurable": {"repo_preferences_repo": prefs_repo}}
 
-    with patch("legion.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
+    with patch("athanor.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
         result = await run_triage_node(state=state, config=graph_config)
 
     assert result["pipeline_config"]["pipeline_config"]["sandbox_profile"] == "python-3.12"
@@ -263,7 +263,7 @@ async def test_low_confidence_triggers_needs_info():
         "issue_number": 99,
     }
 
-    with patch("legion.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
+    with patch("athanor.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
         result = await run_triage_node(state=state, confidence_threshold=0.5)
 
     assert result["current_stage"] == "triage_complete"

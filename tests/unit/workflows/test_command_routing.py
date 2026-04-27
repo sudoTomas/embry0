@@ -8,15 +8,15 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from langgraph.types import Command
 
-from legion.workflows.issue_to_pr.nodes import developer_node, review_node
+from athanor.workflows.issue_to_pr.nodes import developer_node, review_node
 
 
 @pytest.fixture(autouse=True)
 def _stub_stream_writer(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replace get_stream_writer so nodes run outside a LangGraph runtime."""
-    import legion.workflows.issue_to_pr.nodes as nodes_module
+    import athanor.workflows.issue_to_pr.nodes as nodes_module
 
-    monkeypatch.setattr(nodes_module, "get_stream_writer", lambda: (lambda _e: None))
+    monkeypatch.setattr(nodes_module, "get_stream_writer", lambda: lambda _e: None)
 
 
 def _state(**over) -> dict[str, Any]:  # noqa: ANN002
@@ -43,9 +43,7 @@ def _state(**over) -> dict[str, Any]:  # noqa: ANN002
 
 @pytest.mark.asyncio
 async def test_developer_node_goes_to_review_on_happy_path() -> None:
-    with patch(
-        "legion.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()
-    ) as mock_rn:
+    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -69,9 +67,7 @@ async def test_developer_node_goes_to_review_on_happy_path() -> None:
 
 @pytest.mark.asyncio
 async def test_developer_node_goes_to_ask_user_when_questions_pending() -> None:
-    with patch(
-        "legion.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()
-    ) as mock_rn:
+    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -96,9 +92,7 @@ async def test_developer_node_goes_to_ask_user_when_questions_pending() -> None:
 async def test_developer_node_goes_to_max_retries_when_budget_over() -> None:
     state = _state(total_cost_usd=1000.0)
     state["pipeline_config"] = {"pipeline_config": {"budget_usd": 1.0}}
-    with patch(
-        "legion.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()
-    ) as mock_rn:
+    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -121,9 +115,7 @@ async def test_developer_node_goes_to_max_retries_when_budget_over() -> None:
 @pytest.mark.asyncio
 async def test_developer_node_goes_to_max_retries_when_questions_exhausted() -> None:
     state = _state(agent_questions_exhausted=True)
-    with patch(
-        "legion.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()
-    ) as mock_rn:
+    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -159,9 +151,7 @@ def _make_review_config(agent_runner: object | None) -> dict:
 
 @pytest.mark.asyncio
 async def test_review_node_goes_to_end_on_approved() -> None:
-    with patch(
-        "legion.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()
-    ) as mock_rn:
+    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -188,9 +178,7 @@ async def test_review_node_goes_to_end_on_approved() -> None:
 
 @pytest.mark.asyncio
 async def test_review_node_goes_to_retry_on_changes_requested() -> None:
-    with patch(
-        "legion.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()
-    ) as mock_rn:
+    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -215,9 +203,7 @@ async def test_review_node_goes_to_retry_on_changes_requested() -> None:
 
 @pytest.mark.asyncio
 async def test_review_node_goes_to_max_retries_when_capped() -> None:
-    with patch(
-        "legion.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()
-    ) as mock_rn:
+    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -265,9 +251,7 @@ async def test_review_node_no_runner_sets_error_code() -> None:
 @pytest.mark.asyncio
 async def test_developer_node_extracts_ask_user_from_events() -> None:
     """When the executor emits agent_ask_user events, questions get extracted."""
-    with patch(
-        "legion.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()
-    ) as mock_rn:
+    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -288,6 +272,4 @@ async def test_developer_node_extracts_ask_user_from_events() -> None:
         result = await developer_node(_state(), config=None)
 
     assert result.goto == "ask_user_interrupt"
-    assert result.update.get("pending_agent_questions") == [
-        {"question": "which db?", "options": ["pg", "mysql"]}
-    ]
+    assert result.update.get("pending_agent_questions") == [{"question": "which db?", "options": ["pg", "mysql"]}]

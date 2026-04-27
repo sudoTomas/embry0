@@ -1,4 +1,4 @@
-from legion.orchestration.nodes.output import build_output
+from athanor.orchestration.nodes.output import build_output
 
 
 def test_build_output_success():

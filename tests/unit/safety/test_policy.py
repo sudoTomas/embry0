@@ -2,7 +2,7 @@
 
 import pytest
 
-from legion.safety.policy import (
+from athanor.safety.policy import (
     ContentRule,
     SafetyPolicy,
     Verdict,
@@ -52,9 +52,7 @@ def test_evaluate_policy_allows_when_no_rules() -> None:
 
 def test_evaluate_policy_denies_matching_pattern() -> None:
     policy = SafetyPolicy(
-        content_checks=[
-            ContentRule(pattern=r"rm\s+-rf\s+/", tools=["Bash"], reason="destructive rm")
-        ],
+        content_checks=[ContentRule(pattern=r"rm\s+-rf\s+/", tools=["Bash"], reason="destructive rm")],
     )
     v = evaluate_policy(policy, "Bash", {"command": "rm -rf /"})
     assert v.allowed is False
@@ -63,9 +61,7 @@ def test_evaluate_policy_denies_matching_pattern() -> None:
 
 def test_evaluate_policy_ignores_rule_for_unrelated_tool() -> None:
     policy = SafetyPolicy(
-        content_checks=[
-            ContentRule(pattern=r"rm\s+-rf\s+/", tools=["Bash"], reason="destructive")
-        ],
+        content_checks=[ContentRule(pattern=r"rm\s+-rf\s+/", tools=["Bash"], reason="destructive")],
     )
     v = evaluate_policy(policy, "Read", {"file_path": "rm -rf /"})
     assert v.allowed is True
@@ -128,7 +124,7 @@ def test_default_policy_includes_workspace_allow_rules() -> None:
 def test_default_policy_includes_dangerous_bash_content_checks() -> None:
     policy = default_policy_for_agent("developer")
     patterns_in_policy = {r.pattern for r in policy.content_checks}
-    from legion.safety.patterns import DANGEROUS_BASH_PATTERNS
+    from athanor.safety.patterns import DANGEROUS_BASH_PATTERNS
 
     for p in DANGEROUS_BASH_PATTERNS:
         assert p in patterns_in_policy, f"missing pattern from default policy: {p}"

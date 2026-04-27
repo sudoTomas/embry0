@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from legion.api.app import create_app
-from legion.config import LegionConfig
+from athanor.api.app import create_app
+from athanor.config import AthanorConfig
 
 SAMPLE_GRAPH = {"graph_id": "g1", "name": "Test", "nodes": [], "edges": []}
 
@@ -19,7 +19,7 @@ SAMPLE_TEMPLATE = {
 
 @pytest.fixture
 def app():
-    config = LegionConfig(_env_file=None, dev_mode=True)
+    config = AthanorConfig(_env_file=None, dev_mode=True)
     app = create_app(config)
     mock_repo = MagicMock()
     mock_repo.list_all = AsyncMock(return_value=[SAMPLE_TEMPLATE])

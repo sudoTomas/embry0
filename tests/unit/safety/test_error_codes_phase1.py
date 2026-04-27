@@ -1,6 +1,6 @@
 """Phase 1 new error codes exist and are stable strings."""
 
-from legion.safety.error_codes import ErrorCode
+from athanor.safety.error_codes import ErrorCode
 
 
 def test_phase1_error_codes_present() -> None:

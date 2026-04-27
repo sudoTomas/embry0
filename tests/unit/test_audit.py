@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from legion.audit.logger import emit_audit_event
+from athanor.audit.logger import emit_audit_event
 
 
 def test_emit_audit_event_to_file(tmp_path: Path):

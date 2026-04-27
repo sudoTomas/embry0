@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from legion.execution.docker_client import DockerClient
+from athanor.execution.docker_client import DockerClient
 
 
 @pytest.fixture
@@ -88,7 +88,7 @@ def test_build_exec_cmd(docker: DockerClient):
     """Exec command targets container by name."""
     cmd = docker.build_exec_cmd(
         container="sandbox-job-123",
-        command=["python", "-m", "legion.sandbox.runner", "--config", "{}"],
+        command=["python", "-m", "athanor.sandbox.runner", "--config", "{}"],
     )
     assert "exec" in cmd
     assert "sandbox-job-123" in cmd

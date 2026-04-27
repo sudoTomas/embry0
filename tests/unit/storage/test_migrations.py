@@ -1,8 +1,8 @@
 import asyncpg
 import pytest
 
-from legion.storage.database import DatabasePool
-from legion.storage.migrations.runner import MIGRATIONS, run_migrations
+from athanor.storage.database import DatabasePool
+from athanor.storage.migrations.runner import MIGRATIONS, run_migrations
 
 
 @pytest.mark.asyncio

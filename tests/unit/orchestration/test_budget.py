@@ -1,4 +1,4 @@
-from legion.orchestration.budget import check_budget
+from athanor.orchestration.budget import check_budget
 
 
 def test_within_budget():

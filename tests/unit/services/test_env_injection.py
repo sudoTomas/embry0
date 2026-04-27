@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from legion.services.issue_executor import IssueExecutor
-from legion.storage.encryption import FernetSecretsProvider
+from athanor.services.issue_executor import IssueExecutor
+from athanor.storage.encryption import FernetSecretsProvider
 
 
 @pytest.mark.asyncio

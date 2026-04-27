@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from legion.api.app import create_app
-from legion.config import LegionConfig
+from athanor.api.app import create_app
+from athanor.config import AthanorConfig
 
 DEVELOPER_AGENT = {
     "type": "developer",
@@ -19,7 +19,7 @@ DEVELOPER_AGENT = {
 
 @pytest.fixture
 def app():
-    config = LegionConfig(_env_file=None, dev_mode=True)
+    config = AthanorConfig(_env_file=None, dev_mode=True)
     app = create_app(config)
     mock_repo = MagicMock()
     mock_repo.list_all = AsyncMock(return_value=[DEVELOPER_AGENT])

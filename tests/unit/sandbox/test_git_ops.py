@@ -1,6 +1,6 @@
 import pytest
 
-from legion.sandbox.github.git_ops import (
+from athanor.sandbox.github.git_ops import (
     build_clone_url,
     build_credential_helper_script,
     build_sandbox_credential_config_cmd,

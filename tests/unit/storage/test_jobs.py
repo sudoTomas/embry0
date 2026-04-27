@@ -1,10 +1,10 @@
 import asyncpg
 import pytest
 
-from legion.storage.database import DatabasePool
-from legion.storage.migrations.runner import run_migrations
-from legion.storage.repositories.jobs import JobsRepository
-from legion.storage.schemas import JobStatus
+from athanor.storage.database import DatabasePool
+from athanor.storage.migrations.runner import run_migrations
+from athanor.storage.repositories.jobs import JobsRepository
+from athanor.storage.schemas import JobStatus
 
 
 @pytest.fixture

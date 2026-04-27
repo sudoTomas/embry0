@@ -3,9 +3,9 @@ import os
 import asyncpg
 import pytest
 
-from legion.storage.database import DatabasePool
-from legion.storage.migrations.runner import run_migrations
-from legion.storage.repositories.agent_definitions import (
+from athanor.storage.database import DatabasePool
+from athanor.storage.migrations.runner import run_migrations
+from athanor.storage.repositories.agent_definitions import (
     BUILTIN_SEED,
     AgentDefinitionsRepository,
 )

@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from legion.agents.sdk import AgentResult, run_agent
+from athanor.agents.sdk import AgentResult, run_agent
 
 
 class _FakeResult:

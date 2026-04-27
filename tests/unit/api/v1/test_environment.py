@@ -2,7 +2,7 @@
 
 import pytest
 
-from legion.api.v1.environment import _parse_env_file
+from athanor.api.v1.environment import _parse_env_file
 
 
 def test_parse_env_file_basic():
@@ -57,7 +57,7 @@ def test_env_var_input_rejects_reserved_keys():
     every subsequent job on that repo."""
     from pydantic import ValidationError
 
-    from legion.api.schemas.environment import RESERVED_ENV_KEYS, EnvVarInput
+    from athanor.api.schemas.environment import RESERVED_ENV_KEYS, EnvVarInput
 
     assert "LEGION_GIT_PROXY_URL" in RESERVED_ENV_KEYS
     assert "GITHUB_TOKEN" in RESERVED_ENV_KEYS
@@ -77,7 +77,7 @@ def test_init_node_drops_reserved_user_env_keys(monkeypatch):
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
 
-    from legion.workflows.issue_to_pr.nodes import init_node
+    from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
     sandbox_mgr.create = AsyncMock(return_value="container-x")
@@ -88,7 +88,7 @@ def test_init_node_drops_reserved_user_env_keys(monkeypatch):
     proxy_mgr = MagicMock()
     proxy_mgr.git_proxy_url = "http://host.docker.internal:9101"
 
-    import legion.workflows.issue_to_pr.nodes as nodes_module
+    import athanor.workflows.issue_to_pr.nodes as nodes_module
 
     def _noop_writer():
         return lambda _e: None

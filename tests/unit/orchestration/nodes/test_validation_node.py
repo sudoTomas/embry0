@@ -1,4 +1,4 @@
-from legion.orchestration.nodes.validation import evaluate_validation
+from athanor.orchestration.nodes.validation import evaluate_validation
 
 
 def test_full_pass():

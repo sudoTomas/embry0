@@ -2,9 +2,9 @@
 
 import pytest
 
-from legion.agents.resolver import resolve_agent_invocation
-from legion.execution.auth_provider import AuthConfigError
-from legion.safety.error_codes import ErrorCode
+from athanor.agents.resolver import resolve_agent_invocation
+from athanor.execution.auth_provider import AuthConfigError
+from athanor.safety.error_codes import ErrorCode
 
 
 def _base_args(**over):  # noqa: ANN002

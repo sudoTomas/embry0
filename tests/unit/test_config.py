@@ -1,13 +1,13 @@
 import os
 from unittest.mock import patch
 
-from legion.config import LegionConfig
+from athanor.config import AthanorConfig
 
 
 def test_config_defaults():
     """Config loads with sensible defaults when no env vars set."""
     with patch.dict(os.environ, {}, clear=True):
-        config = LegionConfig(
+        config = AthanorConfig(
             _env_file=None,  # type: ignore[call-arg]
         )
     assert config.database_url == "postgresql://legion:legion@localhost:5432/legion"
@@ -30,7 +30,7 @@ def test_config_from_env():
         "ANTHROPIC_API_KEY": "sk-ant-test",
     }
     with patch.dict(os.environ, env, clear=True):
-        config = LegionConfig(
+        config = AthanorConfig(
             _env_file=None,  # type: ignore[call-arg]
         )
     assert config.database_url == "postgresql://user:pass@db:5432/mydb"
@@ -43,14 +43,14 @@ def test_config_cors_origins_parsing():
     """Comma-separated CORS origins are parsed into a list."""
     env = {"ALLOWED_CORS_ORIGINS": "http://localhost:3001, http://example.com"}
     with patch.dict(os.environ, env, clear=True):
-        config = LegionConfig(_env_file=None)  # type: ignore[call-arg]
+        config = AthanorConfig(_env_file=None)  # type: ignore[call-arg]
     assert config.allowed_cors_origins_list == ["http://localhost:3001", "http://example.com"]
 
 
 def test_config_cors_origins_default():
     """Empty CORS origins defaults to localhost:3001."""
     with patch.dict(os.environ, {}, clear=True):
-        config = LegionConfig(_env_file=None)  # type: ignore[call-arg]
+        config = AthanorConfig(_env_file=None)  # type: ignore[call-arg]
     assert config.allowed_cors_origins_list == ["http://localhost:3001"]
 
 
@@ -58,7 +58,7 @@ def test_config_trigger_labels_parsing():
     """Comma-separated trigger labels are parsed into a list."""
     env = {"TRIGGER_LABELS": "Legion, auto-fix, bot"}
     with patch.dict(os.environ, env, clear=True):
-        config = LegionConfig(_env_file=None)  # type: ignore[call-arg]
+        config = AthanorConfig(_env_file=None)  # type: ignore[call-arg]
     assert config.trigger_labels_list == ["Legion", "auto-fix", "bot"]
 
 
@@ -69,7 +69,7 @@ def test_config_claude_max_provider():
         "CLAUDE_MAX_OAUTH_TOKEN": "sk-ant-oat01-test",
     }
     with patch.dict(os.environ, env, clear=True):
-        config = LegionConfig(_env_file=None)  # type: ignore[call-arg]
+        config = AthanorConfig(_env_file=None)  # type: ignore[call-arg]
     assert config.provider_mode == "claude_max"
     assert config.claude_max_oauth_token == "sk-ant-oat01-test"
 
@@ -82,7 +82,7 @@ def test_config_ollama_provider():
         "OLLAMA_MODEL": "codellama",
     }
     with patch.dict(os.environ, env, clear=True):
-        config = LegionConfig(_env_file=None)  # type: ignore[call-arg]
+        config = AthanorConfig(_env_file=None)  # type: ignore[call-arg]
     assert config.provider_mode == "ollama"
     assert config.ollama_base_url == "http://gpu:11434"
     assert config.ollama_model == "codellama"

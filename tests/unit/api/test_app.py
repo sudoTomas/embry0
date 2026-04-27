@@ -2,7 +2,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 try:
-    from legion.api.app import create_app
+    from athanor.api.app import create_app
 except ImportError:
     pytest.skip("psycopg not available", allow_module_level=True)
 

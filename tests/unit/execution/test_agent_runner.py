@@ -1,4 +1,4 @@
-from legion.execution.agent_runner import AgentOutput
+from athanor.execution.agent_runner import AgentOutput
 
 
 def test_agent_output_dataclass():

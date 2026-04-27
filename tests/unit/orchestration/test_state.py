@@ -1,4 +1,4 @@
-from legion.orchestration.state import (
+from athanor.orchestration.state import (
     AgentOutputEntry,
     JobState,
     PipelineConfig,

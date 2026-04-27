@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from legion.execution.agent_runner import AgentOutput
-from legion.sandbox.events import EventType, emit_event
-from legion.sandbox.runner import _invocation_from_config, run_agent
+from athanor.execution.agent_runner import AgentOutput
+from athanor.sandbox.events import EventType, emit_event
+from athanor.sandbox.runner import _invocation_from_config, run_agent
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ async def test_run_agent_delegates_to_executor() -> None:
     mock_executor = AsyncMock()
     mock_executor.run = AsyncMock(return_value=fake_result)
 
-    with patch("legion.sandbox.runner.select_executor", return_value=mock_executor):
+    with patch("athanor.sandbox.runner.select_executor", return_value=mock_executor):
         out = await run_agent(
             {
                 "agent_type": "developer",
