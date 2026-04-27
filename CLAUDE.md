@@ -21,7 +21,7 @@
   - Both: `cd infra && docker compose build orchestrator frontend && docker compose up -d orchestrator frontend --force-recreate`
 - The frontend is served via nginx on port 8200 and proxies `/api` to the orchestrator container.
 - Always verify health after restart: `curl -s http://localhost:8200/health`
-- The Cloudflare tunnel at `athanor.example.com` is restricted to webhook paths only (`/api/v1/webhook`, `/api/v1/telegram/callback`). NEVER expose the full app via the tunnel.
+- The Cloudflare tunnel runs as a containerized service (`athanor-cloudflared` in compose). Configuration (hostname, target service, allowed paths) lives in the Cloudflare-side tunnel config, not in this repo. To provision a tunnel for a fresh deployment, use `~/workspace/cloudflare/scripts/tunnel-create.sh` and paste the resulting token into `.env` as both `CLOUDFLARED_TUNNEL_TOKEN` and `TUNNEL_TOKEN`. Webhooks-only by design — the orchestrator's full API and the dashboard stay LAN-only at `:8200`.
 - For local development without a public URL, use the smee.io relay: set `DEV_MODE=true` and leave `GITHUB_WEBHOOK_SECRET` empty, then run `npx smee-client --url https://smee.io/<channel> --target http://localhost:8200/api/v1/webhook`. `DEV_MODE=true` is required because smee re-serializes the payload, invalidating GitHub's HMAC signature. See README "Webhook Setup" for full steps. Never use this configuration in production.
 
 ## Sandbox

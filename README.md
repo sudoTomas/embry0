@@ -387,89 +387,60 @@ Athanor reacts to GitHub events (issues opened/labeled/edited/closed, issue comm
 
 ### Option A — Cloudflare Tunnel (production)
 
-Exposes your Athanor instance on a public hostname via a zero-trust tunnel. The tunnel should be **restricted to webhook paths only** — never expose the full app.
+The compose stack ships a `cloudflared` service that runs in remote-managed mode. You provision the tunnel once via the workspace scripts, paste the token into `.env`, and bring up the container.
 
-**1. Install cloudflared:**
+**Prerequisites:**
+- A Cloudflare account with the zone you want to use already onboarded.
+- A Cloudflare API token with `Account → Cloudflare Tunnel: Edit` and `Zone → DNS: Edit` permissions for the target zone. Store it at `~/workspace/cloudflare/.env` as `CLOUDFLARE_API_TOKEN` along with the relevant `CLOUDFLARE_ACCOUNT_ID_*` and `CLOUDFLARE_ZONE_*` lookup IDs (see `~/workspace/cloudflare/CLAUDE.md` for the format).
 
-```bash
-# macOS
-brew install cloudflared
-# Linux (Debian/Ubuntu)
-curl -L https://pkg.cloudflare.com/install.sh | sudo bash
-sudo apt-get install -y cloudflared
-```
-
-**2. Authenticate and create a tunnel:**
+**1. Provision the tunnel** (one-time per athanor instance):
 
 ```bash
-cloudflared tunnel login                       # opens browser, picks your CF zone
-cloudflared tunnel create athanor-webhooks       # prints a tunnel UUID
+cd ~/workspace/cloudflare && set -a && source .env && set +a
+
+TUNNEL_INFO=$(./scripts/tunnel-create.sh \
+    --account-id "$CLOUDFLARE_ACCOUNT_ID_EASTWOOD" \
+    --zone-id    "$CLOUDFLARE_ZONE_EASTWOOD_AI" \
+    --name       my-instance-name \
+    --hostname   webhooks.example.com)
+
+echo "$TUNNEL_INFO" | jq -r .tunnel_token
 ```
 
-**3. Route a DNS name at the tunnel:**
+The script is idempotent — re-running it with the same `--name` reuses the existing tunnel and refreshes its ingress + DNS to the desired state. See `~/workspace/cloudflare/CLAUDE.md` for the full API.
+
+**2. Paste the token into this instance's `.env`:**
 
 ```bash
-cloudflared tunnel route dns athanor-webhooks athanor.your-domain.com
+TOKEN=$(echo "$TUNNEL_INFO" | jq -r .tunnel_token)
+echo "TUNNEL_TOKEN=$TOKEN" >> /home/user/repos/athanor/.env
+echo "CLOUDFLARED_TUNNEL_TOKEN=$TOKEN" >> /home/user/repos/athanor/.env
 ```
 
-**4. Write the tunnel config** at `~/.cloudflared/config.yml`:
+(Both names are written because the upstream `cloudflare/cloudflared` image expects `TUNNEL_TOKEN`, while athanor's `.env.example` documents `CLOUDFLARED_TUNNEL_TOKEN` for clarity. Either alone would work; setting both is harmless and matches what `tunnel-create.sh`'s output expects.)
 
-```yaml
-tunnel: <UUID from step 2>
-credentials-file: /home/you/.cloudflared/<UUID>.json
-
-ingress:
-  # Allow only the GitHub webhook path
-  - hostname: athanor.your-domain.com
-    path: ^/api/v1/webhook$
-    service: http://localhost:8200
-  # Allow the Telegram callback path (optional)
-  - hostname: athanor.your-domain.com
-    path: ^/api/v1/telegram/callback$
-    service: http://localhost:8200
-  # Reject everything else
-  - service: http_status:404
-```
-
-> **Security:** the `path:` whitelist is critical. Without it the tunnel would expose your entire Athanor UI and API to the internet.
-
-**5. Run the tunnel** (as a service or in a tmux pane):
+**3. Bring up the tunnel container:**
 
 ```bash
-cloudflared tunnel run athanor-webhooks
-# Or install as a system service:
-sudo cloudflared service install
+cd /home/user/repos/athanor/infra
+docker compose up -d cloudflared
+sleep 8
+docker logs athanor-cloudflared --tail 20 | grep 'Registered tunnel'
 ```
 
-**6. Generate a webhook secret and set it in `.env`:**
+You should see at least one `Registered tunnel connection` log line. Webhooks posted to `https://webhooks.example.com/api/v1/webhook` now flow through the tunnel into `orchestrator:8000`.
+
+**4. Configure GitHub** to send webhooks to your hostname (Settings → Webhooks → Payload URL = `https://webhooks.example.com/api/v1/webhook`, content type `application/json`, secret = the value of `GITHUB_WEBHOOK_SECRET` in `.env`).
+
+**Tearing down:**
 
 ```bash
-openssl rand -hex 20
-```
-
-```
-GITHUB_WEBHOOK_SECRET=<generated-value>
-DEV_MODE=false
-```
-
-Rebuild the orchestrator so the new secret is picked up:
-
-```bash
-cd infra && docker compose build orchestrator && docker compose up -d orchestrator --force-recreate
-```
-
-**7. Configure the GitHub webhook** — repo → Settings → Webhooks → Add webhook:
-
-- **Payload URL:** `https://athanor.your-domain.com/api/v1/webhook`
-- **Content type:** `application/json`
-- **Secret:** the value from step 6
-- **SSL verification:** enabled
-- **Events:** select "Let me select individual events", check **Issues**, **Issue comments**, **Pull requests**
-
-**8. Verify:** trigger an event (e.g. label an issue with `Athanor`) and tail the orchestrator logs:
-
-```bash
-docker logs -f infra-orchestrator-1 | grep webhook_received
+cd /home/user/repos/athanor/infra && docker compose stop cloudflared
+~/workspace/cloudflare/scripts/tunnel-delete.sh \
+    --account-id "$CLOUDFLARE_ACCOUNT_ID_EASTWOOD" \
+    --name my-instance-name \
+    --zone-id "$CLOUDFLARE_ZONE_EASTWOOD_AI" \
+    --hostname webhooks.example.com
 ```
 
 ### Option B — smee.io relay (local development)
