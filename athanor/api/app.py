@@ -1,8 +1,8 @@
 """FastAPI application factory with async lifespan management."""
 
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
@@ -29,6 +29,68 @@ from athanor.workflows.issue_to_pr.graph import IssueToprWorkflow
 from athanor.workflows.registry import WorkflowRegistry
 
 logger = structlog.get_logger(__name__)
+
+
+async def _init_app_state(
+    app: FastAPI,
+    db: DatabasePool,
+    *,
+    database_url: str,
+    github_token: str | None = None,
+    **executor_kwargs: object,
+) -> None:
+    """Initialize app.state.* with repositories and services.
+
+    Shared by both the production lifespan and the integration-test lifespan.
+    Does NOT set up Docker/proxy/sandbox infrastructure (production-only) or
+    ``app.state.background_tasks`` (caller's responsibility).
+    Any extra keyword arguments are forwarded to IssueExecutor (e.g.
+    ``audit_log_path``, ``config``, ``sandbox_manager``, ``agent_runner``,
+    ``proxy_manager``).
+    """
+    from athanor.api.events.bus import EventBus
+    from athanor.services.github_sync import GitHubSyncService
+    from athanor.services.issue_executor import IssueExecutor
+    from athanor.storage.repositories.issue_inputs import IssueInputsRepository
+    from athanor.storage.repositories.issues import IssuesRepository
+
+    app.state.db = db
+
+    app.state.jobs_repo = JobsRepository(db)
+    app.state.traces_repo = TracesRepository(db)
+    app.state.profiles_repo = SandboxProfilesRepository(db)
+    app.state.context_repo = ContextConfigRepository(db)
+    app.state.budget_repo = BudgetConfigRepository(db)
+    app.state.agent_defs_repo = AgentDefinitionsRepository(db)
+    app.state.templates_repo = PipelineTemplatesRepository(db)
+    app.state.integration_repo = IntegrationConfigRepository(db)
+    app.state.provider_repo = ProviderConfigRepository(db)
+    app.state.env_repo = EnvironmentRepository(db)
+    app.state.repo_preferences_repo = RepoPreferencesRepository(db)
+
+    app.state.issues_repo = IssuesRepository(db)
+    app.state.inputs_repo = IssueInputsRepository(db)
+    app.state.github_sync = GitHubSyncService(github_token=github_token)
+
+    registry = WorkflowRegistry()
+    registry.register(IssueToprWorkflow())
+    app.state.workflow_registry = registry
+
+    app.state.event_bus = EventBus()
+
+    app.state.issue_executor = IssueExecutor(
+        issues_repo=app.state.issues_repo,
+        jobs_repo=app.state.jobs_repo,
+        traces_repo=app.state.traces_repo,
+        workflow_registry=registry,
+        database_url=database_url,
+        db=db,
+        inputs_repo=app.state.inputs_repo,
+        event_bus=app.state.event_bus,
+        env_repo=app.state.env_repo,
+        repo_preferences_repo=app.state.repo_preferences_repo,
+        **executor_kwargs,
+    )
 
 
 @asynccontextmanager
@@ -142,40 +204,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("stale_awaiting_input_check_failed", exc_info=True)
 
-    app.state.db = db
-
-    app.state.jobs_repo = JobsRepository(db)
-    app.state.traces_repo = TracesRepository(db)
-    app.state.profiles_repo = SandboxProfilesRepository(db)
-    app.state.context_repo = ContextConfigRepository(db)
-    app.state.budget_repo = BudgetConfigRepository(db)
-    app.state.agent_defs_repo = AgentDefinitionsRepository(db)
-    app.state.templates_repo = PipelineTemplatesRepository(db)
-    app.state.integration_repo = IntegrationConfigRepository(db)
-    app.state.provider_repo = ProviderConfigRepository(db)
-    app.state.env_repo = EnvironmentRepository(db)
-    app.state.repo_preferences_repo = RepoPreferencesRepository(db)
-
-    from athanor.services.github_sync import GitHubSyncService
-    from athanor.storage.repositories.issue_inputs import IssueInputsRepository
-    from athanor.storage.repositories.issues import IssuesRepository
-
-    app.state.issues_repo = IssuesRepository(db)
-    app.state.inputs_repo = IssueInputsRepository(db)
-    app.state.github_sync = GitHubSyncService(
-        github_token=config.github_token if hasattr(config, "github_token") else None
-    )
-
-    registry = WorkflowRegistry()
-    registry.register(IssueToprWorkflow())
-    app.state.workflow_registry = registry
-
     from athanor.execution.agent_runner import AgentRunner
     from athanor.execution.docker_client import DockerClient
     from athanor.execution.image_manager import ContainerReaper, SandboxImageManager
     from athanor.execution.proxy.manager import ProxyManager
     from athanor.execution.sandbox_manager import SandboxManager
-    from athanor.services.issue_executor import IssueExecutor
 
     docker = DockerClient(
         docker_host=config.docker_host,
@@ -259,26 +292,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("orphaned_container_scan_failed", exc_info=True)
 
     app.state.background_tasks: set[asyncio.Task] = set()
-    from athanor.api.events.bus import EventBus
 
-    app.state.event_bus = EventBus()
-
-    app.state.issue_executor = IssueExecutor(
-        issues_repo=app.state.issues_repo,
-        jobs_repo=app.state.jobs_repo,
-        traces_repo=app.state.traces_repo,
-        workflow_registry=registry,
+    await _init_app_state(
+        app,
+        db,
         database_url=config.database_url,
+        github_token=config.github_token if hasattr(config, "github_token") else None,
         audit_log_path=config.audit_log_path,
-        db=db,
-        inputs_repo=app.state.inputs_repo,
         config=config,
         sandbox_manager=sandbox_mgr,
         agent_runner=agent_runner,
         proxy_manager=proxy_mgr,
-        event_bus=app.state.event_bus,
-        env_repo=app.state.env_repo,
-        repo_preferences_repo=app.state.repo_preferences_repo,
     )
     app.state.issue_executor._background_tasks = app.state.background_tasks
 
@@ -320,7 +344,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("legion_stopped")
 
 
-def create_app(config: AthanorConfig | None = None, lifespan_override=None) -> FastAPI:
+def create_app(
+    config: AthanorConfig | None = None,
+    *,
+    lifespan_override: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
+) -> FastAPI:
     if config is None:
         config = AthanorConfig()
 
