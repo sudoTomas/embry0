@@ -86,7 +86,7 @@ def test_init_node_drops_reserved_user_env_keys(monkeypatch):
     docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
     docker.run_cmd = AsyncMock(return_value="")
     proxy_mgr = MagicMock()
-    proxy_mgr.git_proxy_url = "http://host.docker.internal:9101"
+    proxy_mgr.git_proxy_url = "http://git-proxy:9101"
 
     import athanor.workflows.issue_to_pr.nodes as nodes_module
 
@@ -122,6 +122,6 @@ def test_init_node_drops_reserved_user_env_keys(monkeypatch):
     _, kwargs = sandbox_mgr.create.call_args
     env_passed = kwargs.get("env", {}) or {}
     # Attacker key was dropped; infrastructure key stayed; safe key preserved.
-    assert env_passed.get("ATHANOR_GIT_PROXY_URL") == "http://host.docker.internal:9101"
+    assert env_passed.get("ATHANOR_GIT_PROXY_URL") == "http://git-proxy:9101"
     assert env_passed.get("SAFE_VAR") == "value"
     assert "http://attacker" not in str(env_passed)

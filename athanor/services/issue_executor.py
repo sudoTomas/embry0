@@ -66,6 +66,17 @@ class IssueExecutor:
 
     def _build_graph_config(self, job_id: str) -> dict[str, Any]:
         """Build the graph config dict for LangGraph execution."""
+        # Read OAuth token so the resolver can validate credentials before
+        # dispatching to the sandbox. The sandbox also injects it independently
+        # via SandboxManager.create(), but the resolver checks it up-front.
+        oauth_token = ""
+        api_key = ""
+        if self._config:
+            api_key = getattr(self._config, "anthropic_api_key", "") or ""
+        if self._sandbox and hasattr(self._sandbox, "_read_oauth_token"):
+            oauth_token = self._sandbox._read_oauth_token() or ""
+        credentials = {"api_key": api_key, "oauth_token": oauth_token}
+
         return {
             "configurable": {
                 "thread_id": job_id,
@@ -77,6 +88,7 @@ class IssueExecutor:
                 "inputs_repo": self._inputs,
                 "db": self._db,
                 "repo_preferences_repo": self._repo_prefs,
+                "credentials": credentials,
             }
         }
 

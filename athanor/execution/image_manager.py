@@ -69,6 +69,21 @@ class SandboxImageManager:
         except RuntimeError:
             return False
 
+    async def check_proxy_image_present(self, image: str = "athanor-proxy:latest") -> bool:
+        """Check whether the proxy image is loaded in DinD.
+
+        Production pattern is to build on the host and `docker save | docker load`
+        into DinD on deployment. This check runs at orchestrator startup to fail
+        fast with a clear message if that step was skipped.
+        """
+        try:
+            cmd = self._docker._build_base_cmd()
+            cmd.extend(["image", "inspect", image])
+            await self._docker.run_cmd(cmd)
+            return True
+        except RuntimeError:
+            return False
+
     async def ensure_image(self, image: str = "athanor-sandbox:latest", force: bool = False) -> bool:
         """Ensure the sandbox image is built and up-to-date. Returns True if build occurred."""
         async with self._build_lock:

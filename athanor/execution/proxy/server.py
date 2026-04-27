@@ -1,0 +1,74 @@
+"""Container entrypoint for the athanor-proxy image.
+
+Dispatches to one of the stateless proxy apps based on PROXY_TYPE env:
+- git    -> git_proxy.create_git_proxy_app(GITHUB_TOKEN)
+- github -> github_proxy.create_github_proxy_app(GITHUB_TOKEN)
+- auth   -> auth_proxy.create_auth_proxy_app(ANTHROPIC_API_KEY)
+
+Listens on 0.0.0.0:LISTEN_PORT (default depends on proxy type).
+"""
+
+from __future__ import annotations
+
+import os
+
+import structlog
+from aiohttp import web
+
+from athanor.execution.proxy.auth_proxy import create_auth_proxy_app
+from athanor.execution.proxy.git_proxy import create_git_proxy_app
+from athanor.execution.proxy.github_proxy import create_github_proxy_app
+
+logger = structlog.get_logger(__name__)
+
+DEFAULT_PORTS = {"git": 9101, "github": 9103, "auth": 9100}
+
+
+def _require_env(name: str) -> str:
+    value = os.environ.get(name, "")
+    if not value:
+        msg = f"{name} is required for this proxy type"
+        raise ValueError(msg)
+    return value
+
+
+def build_app_from_env() -> web.Application:
+    """Construct the aiohttp app for the configured PROXY_TYPE."""
+    proxy_type = os.environ.get("PROXY_TYPE", "")
+    if not proxy_type:
+        msg = "PROXY_TYPE env var is required"
+        raise ValueError(msg)
+
+    if proxy_type == "git":
+        return create_git_proxy_app(_require_env("GITHUB_TOKEN"))
+    if proxy_type == "github":
+        return create_github_proxy_app(_require_env("GITHUB_TOKEN"))
+    if proxy_type == "auth":
+        return create_auth_proxy_app(_require_env("ANTHROPIC_API_KEY"))
+
+    msg = f"Unknown PROXY_TYPE: {proxy_type!r}"
+    raise ValueError(msg)
+
+
+def listen_port_from_env() -> int:
+    """Resolve the listen port. LISTEN_PORT overrides the per-type default."""
+    explicit = os.environ.get("LISTEN_PORT")
+    if explicit:
+        return int(explicit)
+    proxy_type = os.environ.get("PROXY_TYPE", "")
+    return DEFAULT_PORTS.get(proxy_type, 9100)
+
+
+def main() -> None:
+    app = build_app_from_env()
+    port = listen_port_from_env()
+    logger.info(
+        "athanor_proxy_starting",
+        proxy_type=os.environ.get("PROXY_TYPE"),
+        port=port,
+    )
+    web.run_app(app, host="0.0.0.0", port=port, print=None)  # noqa: S104
+
+
+if __name__ == "__main__":
+    main()

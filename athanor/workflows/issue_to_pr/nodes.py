@@ -63,6 +63,10 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
             env[k] = v
         if git_proxy_url:
             env["ATHANOR_GIT_PROXY_URL"] = git_proxy_url
+        # Note: github_proxy_url is available on proxy_mgr but not yet consumed
+        # by sandbox/github/client.py (it takes proxy_url directly as a constructor
+        # arg; no env-var hook exists). Wiring it as a sandbox env var requires
+        # adding a base-URL env hook inside the client. Tracked as a follow-up.
         container_id = await sandbox_mgr.create(job_id, env=env)
         logger.info("sandbox_created", job_id=job_id, container_id=container_id)
         writer({"type": "progress", "message": "Sandbox container created"})
@@ -144,6 +148,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
 
     model = os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-6")
     agent_runner = config["configurable"].get("agent_runner")
+    credentials = config["configurable"].get("credentials") or {}
     container_id = state.get("sandbox_container_id")
 
     if agent_runner and container_id:
@@ -177,6 +182,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             tools=["Read", "Glob", "Grep"],
             timeout_seconds=180,
             on_event=_forward_event,
+            credentials=credentials,
         )
 
         # Parse triage decision from agent output
@@ -253,6 +259,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 tools=["Read", "Glob", "Grep"],
                 timeout_seconds=180,
                 on_event=_forward_event,
+                credentials=credentials,
             )
             if result.get("agent_outputs"):
                 last = result["agent_outputs"][-1]
@@ -368,6 +375,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
+    credentials = configurable.get("credentials") or {}
 
     # Build the developer prompt
     repo = state.get("repo", "")
@@ -436,6 +444,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         timeout_seconds=1800,
         on_event=_forward_event,
+        credentials=credentials,
     )
 
     # Scan the agent's event stream for `agent_ask_user` events. If present,
@@ -550,6 +559,7 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command:
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
+    credentials = configurable.get("credentials") or {}
     if not agent_runner:
         logger.error("review_node_no_runner")
         from athanor.safety.error_codes import ErrorCode
@@ -614,6 +624,7 @@ Return ONLY a JSON object:
         tools=["Read", "Bash", "Glob", "Grep"],
         timeout_seconds=300,
         on_event=_forward_event,
+        credentials=credentials,
     )
 
     # Extract validation and decision from output for streaming

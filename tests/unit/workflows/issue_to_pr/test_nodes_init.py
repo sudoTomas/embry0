@@ -60,7 +60,7 @@ async def test_init_node_passes_git_proxy_url_to_sandbox():
     docker.run_cmd = AsyncMock(return_value="")
 
     proxy_mgr = MagicMock()
-    proxy_mgr.git_proxy_url = "http://host.docker.internal:9101"
+    proxy_mgr.git_proxy_url = "http://git-proxy:9101"
 
     import athanor.workflows.issue_to_pr.nodes as nodes_module
 
@@ -86,7 +86,7 @@ async def test_init_node_passes_git_proxy_url_to_sandbox():
 
     _, create_kwargs = sandbox_mgr.create.call_args
     env = create_kwargs.get("env", {}) or {}
-    assert env.get("ATHANOR_GIT_PROXY_URL") == "http://host.docker.internal:9101", (
+    assert env.get("ATHANOR_GIT_PROXY_URL") == "http://git-proxy:9101", (
         f"ATHANOR_GIT_PROXY_URL must be in sandbox env. Got: {sorted(env)}"
     )
     assert "GITHUB_TOKEN" not in env, f"GITHUB_TOKEN must NOT be in sandbox env. Got: {sorted(env)}"
@@ -107,7 +107,7 @@ async def test_init_node_git_credential_helper_curls_proxy():
     docker.run_cmd = AsyncMock(return_value="")
 
     proxy_mgr = MagicMock()
-    proxy_mgr.git_proxy_url = "http://host.docker.internal:9101"
+    proxy_mgr.git_proxy_url = "http://git-proxy:9101"
 
     import athanor.workflows.issue_to_pr.nodes as nodes_module
 
@@ -138,7 +138,7 @@ async def test_init_node_git_credential_helper_curls_proxy():
         if "credential.helper" in cmd_str:
             credential_setup_found = True
             assert "curl" in cmd_str, f"Helper must curl proxy, got: {cmd_str}"
-            assert "host.docker.internal:9101" in cmd_str, f"Helper must reference proxy URL, got: {cmd_str}"
+            assert "git-proxy:9101" in cmd_str, f"Helper must reference proxy URL, got: {cmd_str}"
             assert "$GITHUB_TOKEN" not in cmd_str, f"Helper must NOT reference $GITHUB_TOKEN, got: {cmd_str}"
             break
     assert credential_setup_found, f"No credential.helper setup exec call found. All calls: {all_run_cmd_calls}"
@@ -263,7 +263,7 @@ async def test_init_node_clone_failure_raises_runtime_error():
     docker.run_cmd = AsyncMock(side_effect=_run_cmd_side)
 
     proxy_mgr = MagicMock()
-    proxy_mgr.git_proxy_url = "http://host.docker.internal:9101"
+    proxy_mgr.git_proxy_url = "http://git-proxy:9101"
 
     import athanor.workflows.issue_to_pr.nodes as nodes_module
 

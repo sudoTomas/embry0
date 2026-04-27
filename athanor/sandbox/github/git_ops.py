@@ -31,9 +31,10 @@ def build_credential_helper_script(git_proxy_url: str) -> str:
 
 
 # Strict format for git proxy URLs: http://host:port (no path, no query).
-# ProxyManager produces URLs like http://host.docker.internal:9101. We validate
-# defensively so that a future change to the source of the URL can't introduce
-# shell injection via the `git config` command we build from it.
+# ProxyManager now produces Docker DNS names (e.g. http://git-proxy:9101) that
+# resolve inside the sandbox-restricted DinD network. We validate defensively so
+# that a future change to the source of the URL can't introduce shell injection
+# via the `git config` command we build from it.
 _GIT_PROXY_URL_RE = re.compile(r"^http://[a-zA-Z0-9.\-]+:\d+$")
 
 

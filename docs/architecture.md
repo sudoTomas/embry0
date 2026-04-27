@@ -384,18 +384,24 @@ The `SandboxImageManager` handles image lifecycle inside DinD:
 
 ## Proxy Services
 
-Four proxy services run on the `sandbox-restricted` network.
+Three credential-injecting proxies (`git-proxy`, `github-proxy`, `auth-proxy`) run as **containers inside DinD** on the `sandbox-restricted` network. They are launched by `ProxyManager` at orchestrator startup using the `athanor-proxy:latest` image. Sandboxes resolve them by Docker DNS (`http://git-proxy:9101`, `http://github-proxy:9103`, `http://auth-proxy:9100`) — not via `host.docker.internal`.
 
-**Credential injection via proxies** — GitHub auth flows exclusively through the git credential proxy (port 9101): the sandbox's git credential helper curls the proxy, which injects the orchestrator's `GITHUB_TOKEN` in the response. `GITHUB_TOKEN` is never present in the sandbox env. The auth proxy (port 9100) for Anthropic API keys is started but not currently wired into the sandbox runner — currently unused. **Scoped exception:** `CLAUDE_CODE_OAUTH_TOKEN` is passed into the sandbox env when Claude Max OAuth mode is active, because the Claude CLI reads it directly from env. This is a product-level constraint (the CLI doesn't support per-request injection for OAuth), not a deferred fix.
+Proxies that need outbound internet (`github-proxy`, `auth-proxy`) are also attached to `sandbox-internet`. The `git-proxy` only returns a static credential helper response and needs no egress.
+
+A fourth proxy — the **per-job Athanor API proxy** that exposes CreateIssue / RequestInput / UpdateStatus to agents — is **currently deferred**. The `start_athanor_proxy_for_job()` method is a no-op stub. Workflows that depend on those tools (split-on-triage, agent-initiated questions) will not work until this is reworked. Tracked as a follow-up.
+
+**Credential injection via proxies** — GitHub auth flows exclusively through the git credential proxy (port 9101): the sandbox's git credential helper curls the proxy, which injects the orchestrator's `GITHUB_TOKEN` in the response. `GITHUB_TOKEN` is never present in the sandbox env. The auth proxy (port 9100) for Anthropic API keys is launched but not currently consumed by the sandbox runner — currently unused. **Scoped exception:** `CLAUDE_CODE_OAUTH_TOKEN` is passed into the sandbox env when Claude Max OAuth mode is active, because the Claude CLI reads it directly from env. This is a product-level constraint (the CLI doesn't support per-request injection for OAuth), not a deferred fix.
 
 | Proxy | Port | Purpose | Credential Injected |
 |-------|------|---------|-------------------|
 | Auth Proxy | 9100 | Claude API requests | `x-api-key` header |
 | Git Remote Proxy | 9101 | `git clone/push` | Git credential helper response |
 | GitHub API Proxy | — | GitHub REST API (PRs, comments) | `Authorization: Bearer` header |
-| Athanor API Proxy | 9102 | Athanor internal API (per-job) | Scoped to current issue/job |
+| Athanor API Proxy | 9102 (deferred) | Athanor internal API (per-job) | Scoped to current issue/job |
 
 ### Athanor API Proxy
+
+> **Status:** Deferred. The current `start_athanor_proxy_for_job()` is a no-op stub. The tools below describe the intended interface; agents calling them will currently see no-op responses. Tracked as a follow-up.
 
 Gives sandbox agents controlled access to Athanor's own API, scoped to the current job's issue:
 

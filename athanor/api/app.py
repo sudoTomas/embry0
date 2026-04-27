@@ -217,7 +217,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     sandbox_mgr = SandboxManager(docker)
     agent_runner = AgentRunner(sandbox_mgr, docker)
-    proxy_mgr = ProxyManager()
+    proxy_mgr = ProxyManager(docker)
 
     app.state.docker = docker
     app.state.sandbox_manager = sandbox_mgr
@@ -247,18 +247,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     reaper.start()
     app.state.container_reaper = reaper
 
+    # Verify the proxy image is loaded in DinD before starting proxies.
+    if not await image_mgr.check_proxy_image_present():
+        logger.error(
+            "proxy_image_missing_in_dind",
+            image="athanor-proxy:latest",
+            msg=(
+                "athanor-proxy:latest is not loaded into DinD. The credential "
+                "proxies cannot start. Build the image on the host and load it: "
+                "`docker build -t athanor-proxy:latest -f infra/Dockerfile.proxy . "
+                "&& cd infra && docker save athanor-proxy:latest | docker compose "
+                "exec -T orchestrator docker --host tcp://dind:2376 --tlsverify "
+                "--tlscacert=/certs/client/ca.pem --tlscert=/certs/client/cert.pem "
+                "--tlskey=/certs/client/key.pem load`"
+            ),
+        )
+
+    # Auto-create sandbox networks (idempotent) — must happen before proxy startup
+    # because ProxyManager attaches proxy containers to sandbox-restricted.
+    for net_name in ("sandbox-restricted", "sandbox-internet"):
+        try:
+            base_cmd = docker._build_base_cmd()
+            await docker.run_cmd(base_cmd + ["network", "create", "--driver", "bridge", net_name])
+        except RuntimeError:
+            pass  # Network already exists
+
     # Start proxy services
     await proxy_mgr.start(
         anthropic_api_key=config.anthropic_api_key,
         github_token=config.github_token,
     )
-
-    # Auto-create sandbox network (idempotent)
-    try:
-        base_cmd = docker._build_base_cmd()
-        await docker.run_cmd(base_cmd + ["network", "create", "--driver", "bridge", "sandbox-restricted"])
-    except RuntimeError:
-        pass  # Network already exists
 
     # Clean up orphaned sandbox containers from previous lifecycle
     try:

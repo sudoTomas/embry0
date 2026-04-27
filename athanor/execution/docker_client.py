@@ -81,6 +81,29 @@ class DockerClient:
         cmd.extend([image, "sleep", "infinity"])
         return cmd
 
+    def build_run_proxy_cmd(
+        self,
+        *,
+        name: str,
+        image: str,
+        network: str,
+        env: dict[str, str],
+    ) -> list[str]:
+        """Build `docker run -d` for a proxy container.
+
+        Proxies hold the orchestrator's credentials and are trusted (unlike
+        sandboxes). No cap-drop, no read-only fs — just a bare `docker run` on
+        the requested network with the env vars.
+        """
+        cmd = self._build_base_cmd()
+        cmd.extend(["run", "-d"])
+        cmd.extend(["--name", name])
+        cmd.append(f"--network={network}")
+        for key, value in env.items():
+            cmd.extend(["-e", f"{key}={value}"])
+        cmd.append(image)
+        return cmd
+
     def build_exec_cmd(
         self,
         container: str,

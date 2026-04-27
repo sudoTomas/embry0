@@ -31,6 +31,13 @@
   docker build -t athanor-sandbox:latest -f infra/Dockerfile.sandbox .
   cd infra && docker save athanor-sandbox:latest | docker compose exec -T orchestrator docker --host tcp://dind:2376 --tlsverify --tlscacert=/certs/client/ca.pem --tlscert=/certs/client/cert.pem --tlskey=/certs/client/key.pem load
   ```
+- After code changes to `athanor/execution/proxy/`, rebuild the proxy image and reload into DinD:
+  ```bash
+  docker build -t athanor-proxy:latest -f infra/Dockerfile.proxy .
+  cd infra && docker save athanor-proxy:latest | docker compose exec -T orchestrator docker --host tcp://dind:2376 --tlsverify --tlscacert=/certs/client/ca.pem --tlscert=/certs/client/cert.pem --tlskey=/certs/client/key.pem load
+  cd .. && cd infra && docker compose restart orchestrator
+  ```
+- Proxies (`git-proxy`, `github-proxy`, `auth-proxy`) run as DinD containers on the `sandbox-restricted` network. Sandboxes reach them by Docker DNS (`http://git-proxy:9101`, etc.), not via `host.docker.internal`. Restart the orchestrator after changing `GITHUB_TOKEN` or `ANTHROPIC_API_KEY` in `.env` — the proxies are recreated on each `proxy_mgr.start()`.
 - The sandbox uses OAuth via `CLAUDE_CODE_OAUTH_TOKEN` env var (read from `~/.claude/.credentials.json` on the orchestrator).
-- Git auth flows via the credential proxy (port 9101 on the orchestrator): the sandbox's git credential helper curls `$ATHANOR_GIT_PROXY_URL/git-credentials`. `GITHUB_TOKEN` never enters the sandbox env. The proxy is managed by `ProxyManager` in `athanor/execution/proxy/manager.py`.
+- Git auth flows via the credential proxy: a `git-proxy` container running in DinD on the `sandbox-restricted` network injects the orchestrator's `GITHUB_TOKEN` when the sandbox's git credential helper curls `$ATHANOR_GIT_PROXY_URL/git-credentials` (which resolves to `http://git-proxy:9101` via Docker DNS). `GITHUB_TOKEN` never enters the sandbox env. The proxy is managed by `ProxyManager` in `athanor/execution/proxy/manager.py`.
 - Read-only rootfs is disabled (`read_only_root: False`) because Claude CLI needs writable fs.

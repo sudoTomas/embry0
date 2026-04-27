@@ -1,50 +1,97 @@
-"""Proxy service lifecycle manager — starts auth, git, and athanor proxies."""
+"""Proxy lifecycle manager — launches credential-injecting proxies as DinD containers.
+
+Three stateless proxies (git, github, auth) run as containers on the
+sandbox-restricted network so sandboxes can resolve them by Docker DNS.
+The github and auth proxies are also attached to sandbox-internet so they
+can reach api.github.com and api.anthropic.com respectively.
+
+The per-job Athanor API proxy (CreateIssue / RequestInput / UpdateStatus)
+is deferred — it has DB coupling that needs separate rework. The
+``start_athanor_proxy_for_job`` method is a no-op stub.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 import structlog
-from aiohttp import web
+
+from athanor.execution.docker_client import DockerClient
 
 logger = structlog.get_logger(__name__)
 
+_IMAGE = "athanor-proxy:latest"
+_RESTRICTED = "sandbox-restricted"
+_INTERNET = "sandbox-internet"
+
 
 class ProxyManager:
-    """Manages proxy service lifecycle for sandbox agent access."""
+    """Manages proxy container lifecycle for sandbox agent access."""
 
-    def __init__(self) -> None:
-        self._runners: list[web.AppRunner] = []
-        self._sites: list[web.TCPSite] = []
+    def __init__(self, docker: DockerClient) -> None:
+        self._docker = docker
+        self._launched: list[str] = []
         self.auth_proxy_url: str = ""
         self.git_proxy_url: str = ""
-        self.athanor_proxy_url: str = ""
+        self.github_proxy_url: str = ""
+        self.athanor_proxy_url: str = ""  # Per-job — set by start_athanor_proxy_for_job (currently no-op)
 
     async def start(
         self,
         anthropic_api_key: str = "",
         github_token: str = "",
-        auth_proxy_port: int = 9100,
-        git_proxy_port: int = 9101,
     ) -> None:
-        """Start auth and git proxy services."""
-        if anthropic_api_key:
-            from athanor.execution.proxy.auth_proxy import create_auth_proxy_app
+        """Start the credential proxies as DinD containers.
 
-            auth_app = create_auth_proxy_app(anthropic_api_key)
-            await self._start_app(auth_app, "0.0.0.0", auth_proxy_port)
-            self.auth_proxy_url = f"http://host.docker.internal:{auth_proxy_port}"
-            logger.info("auth_proxy_started", port=auth_proxy_port)
+        Idempotent: any pre-existing containers with the same names are removed first.
+        """
+        # Clean up stragglers from a prior orchestrator run.
+        for name in ("git-proxy", "github-proxy", "auth-proxy"):
+            try:
+                await self._docker.run_cmd(self._docker.build_rm_cmd(name))
+            except RuntimeError:
+                pass  # Container didn't exist — fine.
 
         if github_token:
-            from athanor.execution.proxy.git_proxy import create_git_proxy_app
+            await self._launch(
+                name="git-proxy",
+                env={"PROXY_TYPE": "git", "GITHUB_TOKEN": github_token, "LISTEN_PORT": "9101"},
+                attach_internet=False,
+            )
+            self.git_proxy_url = "http://git-proxy:9101"
+            logger.info("git_proxy_started")
 
-            git_app = create_git_proxy_app(github_token)
-            await self._start_app(git_app, "0.0.0.0", git_proxy_port)
-            self.git_proxy_url = f"http://host.docker.internal:{git_proxy_port}"
-            logger.info("git_proxy_started", port=git_proxy_port)
+            await self._launch(
+                name="github-proxy",
+                env={"PROXY_TYPE": "github", "GITHUB_TOKEN": github_token, "LISTEN_PORT": "9103"},
+                attach_internet=True,
+            )
+            self.github_proxy_url = "http://github-proxy:9103"
+            logger.info("github_proxy_started")
 
-        logger.info("proxy_manager_started")
+        if anthropic_api_key:
+            await self._launch(
+                name="auth-proxy",
+                env={"PROXY_TYPE": "auth", "ANTHROPIC_API_KEY": anthropic_api_key, "LISTEN_PORT": "9100"},
+                attach_internet=True,
+            )
+            self.auth_proxy_url = "http://auth-proxy:9100"
+            logger.info("auth_proxy_started")
+
+        logger.info("proxy_manager_started", launched=list(self._launched))
+
+    async def _launch(self, *, name: str, env: dict[str, str], attach_internet: bool) -> None:
+        run_cmd = self._docker.build_run_proxy_cmd(
+            name=name,
+            image=_IMAGE,
+            network=_RESTRICTED,
+            env=env,
+        )
+        await self._docker.run_cmd(run_cmd)
+        self._launched.append(name)
+        if attach_internet:
+            connect_cmd = self._docker.build_network_cmd("connect", _INTERNET, name)
+            await self._docker.run_cmd(connect_cmd)
 
     async def start_athanor_proxy_for_job(
         self,
@@ -56,33 +103,29 @@ class ProxyManager:
         db: Any = None,
         port: int = 9102,
     ) -> str:
-        """Start an Athanor API proxy scoped to a specific job. Returns the URL."""
-        from athanor.execution.proxy.athanor_proxy import create_athanor_proxy_app
+        """[DEFERRED] Per-job Athanor API proxy is not yet running in DinD.
 
-        app = create_athanor_proxy_app(
-            issues_repo=issues_repo,
-            inputs_repo=inputs_repo,
-            issue_id=issue_id,
+        Workflows that depend on CreateIssue / RequestInput tools will not
+        receive a working proxy URL until this is reworked. Tracked separately.
+        """
+        logger.warning(
+            "athanor_proxy_for_job_not_implemented",
             job_id=job_id,
-            repo=repo,
-            db=db,
+            issue_id=issue_id,
+            msg="Per-job Athanor API proxy is deferred. CreateIssue/RequestInput tools unavailable.",
         )
-        await self._start_app(app, "0.0.0.0", port)
-        url = f"http://host.docker.internal:{port}"
-        logger.info("athanor_proxy_started_for_job", job_id=job_id, port=port)
-        return url
-
-    async def _start_app(self, app: web.Application, host: str, port: int) -> None:
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, host, port)
-        await site.start()
-        self._runners.append(runner)
-        self._sites.append(site)
+        self.athanor_proxy_url = ""
+        return ""
 
     async def stop(self) -> None:
-        for runner in self._runners:
-            await runner.cleanup()
-        self._runners.clear()
-        self._sites.clear()
+        """Force-remove all launched proxy containers."""
+        for name in self._launched:
+            try:
+                await self._docker.run_cmd(self._docker.build_rm_cmd(name))
+            except RuntimeError as exc:
+                logger.warning("proxy_container_rm_failed", name=name, error=str(exc))
+        self._launched.clear()
+        self.git_proxy_url = ""
+        self.github_proxy_url = ""
+        self.auth_proxy_url = ""
         logger.info("proxy_manager_stopped")

@@ -19,9 +19,9 @@ def test_build_credential_helper_script():
 
 
 def test_build_sandbox_credential_config_cmd_valid_url():
-    cmd = build_sandbox_credential_config_cmd("http://host.docker.internal:9101")
+    cmd = build_sandbox_credential_config_cmd("http://git-proxy:9101")
     assert "git config --global credential.helper" in cmd
-    assert "curl -sf http://host.docker.internal:9101/git-credentials" in cmd
+    assert "curl -sf http://git-proxy:9101/git-credentials" in cmd
 
 
 def test_build_sandbox_credential_config_cmd_rejects_bad_url():
