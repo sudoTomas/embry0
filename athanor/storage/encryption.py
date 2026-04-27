@@ -19,6 +19,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 # Salt is fixed/public — security comes from the secret_key, not the salt.
 # PBKDF2 is used only to expand/normalize the key to the 32-byte size Fernet needs.
+# Deliberately not renamed: changing this value rotates all stored secrets.
 _PBKDF2_SALT = b"legion-fernet-v1"
 _PBKDF2_ITERATIONS = 390_000  # OWASP-recommended minimum for PBKDF2-HMAC-SHA256
 

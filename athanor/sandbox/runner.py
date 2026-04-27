@@ -1,4 +1,4 @@
-"""Sandbox agent runner — entrypoint for `python -m legion.sandbox.runner`.
+"""Sandbox agent runner — entrypoint for `python -m athanor.sandbox.runner`.
 
 Called by the orchestrator via `docker exec`. Parses the --config JSON into
 an AgentInvocation and delegates to SdkAgentExecutor (Phase 1). Emits Legion
