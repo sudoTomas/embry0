@@ -39,7 +39,7 @@ export function StateFlowPanel({ nodeStates, phases, jobData, onAgentClick }: St
   const activeField = runningAgent ? "agent_outputs" : undefined;
 
   return (
-    <div className="legion-card p-6">
+    <div className="athanor-card p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3">

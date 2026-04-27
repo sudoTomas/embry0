@@ -46,7 +46,7 @@ export function DashboardPage() {
       ) : (
         <>
           {/* Success sparkline */}
-          <div className="legion-card p-4 animate-fade-up flex items-center gap-4" style={{ animationDelay: '240ms' }}>
+          <div className="athanor-card p-4 animate-fade-up flex items-center gap-4" style={{ animationDelay: '240ms' }}>
             <span className="text-sm font-medium text-white/40 whitespace-nowrap">
               Recent Success Rate
             </span>
@@ -73,7 +73,7 @@ export function DashboardPage() {
 
           {/* Recent issues */}
           <div
-            className="legion-card animate-fade-up"
+            className="athanor-card animate-fade-up"
             style={{
               animationDelay: '360ms',
               borderColor: 'rgba(6,182,212,0.18)',

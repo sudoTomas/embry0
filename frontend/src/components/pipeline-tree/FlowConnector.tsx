@@ -15,7 +15,7 @@ export function FlowConnector({ active = false, className }: FlowConnectorProps)
         <div className="absolute w-2 h-2 rounded-full" style={{
           left: -3, backgroundColor: "#06b6d4",
           boxShadow: "0 0 8px rgba(6,182,212,0.6)",
-          animation: "legion-flow-down 1.5s infinite",
+          animation: "athanor-flow-down 1.5s infinite",
         }} />
       )}
     </div>

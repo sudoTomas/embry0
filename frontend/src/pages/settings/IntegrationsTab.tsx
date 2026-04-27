@@ -166,7 +166,7 @@ export default function IntegrationsTab() {
                   value={form.trigger_labels}
                   onChange={(tags) => setForm((prev) => (prev ? { ...prev, trigger_labels: tags } : prev))}
                   placeholder="Add trigger label..."
-                  suggestions={["agent", "legion", "bot", "autofix"]}
+                  suggestions={["agent", "athanor", "bot", "autofix"]}
                 />
               </div>
               <p className="text-xs text-white/30 mt-1">

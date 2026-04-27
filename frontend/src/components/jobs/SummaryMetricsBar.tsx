@@ -72,7 +72,7 @@ export function SummaryMetricsBar({
           <div className="flex items-center gap-1.5 text-amber-400">
             <Activity className="w-3.5 h-3.5" />
             <span>{runningAgent.agent_type.charAt(0).toUpperCase() + runningAgent.agent_type.slice(1)}</span>
-            <div className="legion-spinner w-3 h-3" style={{ borderWidth: 1.5, color: "#f59e0b" }} />
+            <div className="athanor-spinner w-3 h-3" style={{ borderWidth: 1.5, color: "#f59e0b" }} />
           </div>
         )}
       </div>

@@ -12,6 +12,6 @@ export const useIssuesStore = create<IssuesState>()(
       viewMode: "list",
       setViewMode: (viewMode) => set({ viewMode }),
     }),
-    { name: "legion-issues-view" },
+    { name: "athanor-issues-view" },
   ),
 );

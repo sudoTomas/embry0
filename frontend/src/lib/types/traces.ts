@@ -3,8 +3,8 @@ import type { TraceResult } from "./jobs";
 /**
  * Trace record as returned by GET /api/v1/traces.
  *
- * Mirrors the columns of the `traces` table (see legion/storage/migrations/runner.py).
- * The legion schema is intentionally narrower than coding-lab's — fields like
+ * Mirrors the columns of the `traces` table (see athanor/storage/migrations/runner.py).
+ * The athanor schema is intentionally narrower than coding-lab's — fields like
  * issue_number, repo, tier, role, tokens, validation, etc. are not persisted here.
  */
 export interface TraceResponse {

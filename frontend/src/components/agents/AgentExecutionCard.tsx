@@ -56,7 +56,7 @@ export function AgentExecutionCard({ agentType, nodeState, liveOutput, onClick }
 
         {/* Status indicator */}
         {isComplete && <CheckCircle2 className="w-[18px] h-[18px] text-emerald-500 shrink-0" />}
-        {isRunning && <div className="legion-spinner shrink-0" style={{ color: phase.color }} />}
+        {isRunning && <div className="athanor-spinner shrink-0" style={{ color: phase.color }} />}
       </div>
 
       {/* Live output */}

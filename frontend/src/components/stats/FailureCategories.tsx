@@ -8,7 +8,7 @@ export function FailureCategories({ categories }: FailureCategoriesProps) {
 
   if (entries.length === 0) {
     return (
-      <div className="legion-card">
+      <div className="athanor-card">
         <div className="px-6 pt-5 pb-2">
           <h2 className="text-lg font-semibold text-white">Failure Categories</h2>
         </div>
@@ -20,7 +20,7 @@ export function FailureCategories({ categories }: FailureCategoriesProps) {
   }
 
   return (
-    <div className="legion-card">
+    <div className="athanor-card">
       <div className="px-6 pt-5 pb-2">
         <h2 className="text-lg font-semibold text-white">Failure Categories</h2>
       </div>

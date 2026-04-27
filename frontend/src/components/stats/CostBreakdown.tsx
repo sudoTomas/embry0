@@ -24,7 +24,7 @@ export function CostBreakdown({ costByTier, dailyCost, monthlyCost }: CostBreakd
   const maxCost = Math.max(...tiers.map((t) => costByTier[t] ?? 0), 0.01);
 
   return (
-    <div className="legion-card">
+    <div className="athanor-card">
       <div className="px-6 pt-5 pb-2">
         <h2 className="text-lg font-semibold text-white">Cost Breakdown</h2>
       </div>

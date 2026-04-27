@@ -16,6 +16,6 @@ export const useLayoutStore = create<LayoutState>()(
       toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
       setDensityMode: (densityMode) => set({ densityMode }),
     }),
-    { name: "legion-layout" }
+    { name: "athanor-layout" }
   )
 );
