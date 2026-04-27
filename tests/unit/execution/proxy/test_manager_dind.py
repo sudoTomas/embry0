@@ -53,7 +53,7 @@ async def test_start_launches_github_proxy_dual_network(docker_mock):
 @pytest.mark.asyncio
 async def test_start_launches_auth_proxy_when_key_set(docker_mock):
     pm = ProxyManager(docker_mock)
-    await pm.start(github_token="", anthropic_api_key="sk-ant-test")
+    await pm.start(github_token="", anthropic_api_key="sk-ant-test", enable_auth_proxy=True)
     docker_mock.build_run_proxy_cmd.assert_any_call(
         name="auth-proxy",
         image="athanor-proxy:latest",
@@ -77,7 +77,7 @@ async def test_start_skips_proxies_when_no_creds(docker_mock):
 @pytest.mark.asyncio
 async def test_stop_removes_all_launched_containers(docker_mock):
     pm = ProxyManager(docker_mock)
-    await pm.start(github_token="ghp_test", anthropic_api_key="sk-ant-test")
+    await pm.start(github_token="ghp_test", anthropic_api_key="sk-ant-test", enable_auth_proxy=True)
     docker_mock.run_cmd.reset_mock()
     await pm.stop()
     rm_calls = [c.args[0] for c in docker_mock.run_cmd.call_args_list]
@@ -114,3 +114,26 @@ async def test_start_athanor_proxy_for_job_is_stub(docker_mock):
     )
     assert url == ""
     assert pm.athanor_proxy_url == ""
+
+
+@pytest.mark.asyncio
+async def test_auth_proxy_not_launched_when_flag_disabled(docker_mock):
+    """Default behavior: no auth-proxy even with api_key set."""
+    pm = ProxyManager(docker_mock)
+    await pm.start(github_token="", anthropic_api_key="sk-ant-test", enable_auth_proxy=False)
+    # auth-proxy must NOT be in the launched run commands
+    run_calls = docker_mock.build_run_proxy_cmd.call_args_list
+    launched_names = [c.kwargs.get("name") for c in run_calls]
+    assert "auth-proxy" not in launched_names
+    assert pm.auth_proxy_url == ""
+
+
+@pytest.mark.asyncio
+async def test_auth_proxy_launched_when_flag_enabled(docker_mock):
+    """When the flag is explicitly true and api_key is set, launch the proxy."""
+    pm = ProxyManager(docker_mock)
+    await pm.start(github_token="", anthropic_api_key="sk-ant-test", enable_auth_proxy=True)
+    run_calls = docker_mock.build_run_proxy_cmd.call_args_list
+    launched_names = [c.kwargs.get("name") for c in run_calls]
+    assert "auth-proxy" in launched_names
+    assert pm.auth_proxy_url == "http://auth-proxy:9100"

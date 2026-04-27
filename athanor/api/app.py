@@ -276,6 +276,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await proxy_mgr.start(
         anthropic_api_key=config.anthropic_api_key,
         github_token=config.github_token,
+        enable_auth_proxy=config.auth_proxy_enabled,
     )
 
     # Clean up orphaned sandbox containers from previous lifecycle

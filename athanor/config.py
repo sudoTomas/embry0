@@ -78,6 +78,13 @@ class AthanorConfig(BaseSettings):
     docker_tls_verify: bool = False
     docker_cert_path: str = ""
 
+    # Auth proxy (Anthropic API key injection — currently dead path).
+    # Defaults False; only set True when wiring the sandbox to consume
+    # auth_proxy_url. The container holds ANTHROPIC_API_KEY in its env and
+    # attaches to sandbox-internet, so leaving it on idle is wasted resource +
+    # unnecessary attack surface.
+    auth_proxy_enabled: bool = False
+
     # Pluggable agent execution modes (Phase 1).
     # Both dimensions are orthogonal. Defaults preserve today's runtime
     # behavior (SDK path + OAuth from ~/.claude/.credentials.json).

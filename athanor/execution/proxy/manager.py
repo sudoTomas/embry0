@@ -40,8 +40,14 @@ class ProxyManager:
         self,
         anthropic_api_key: str = "",
         github_token: str = "",
+        enable_auth_proxy: bool = False,
     ) -> None:
         """Start the credential proxies as DinD containers.
+
+        The auth-proxy is only launched when ``enable_auth_proxy`` is true AND
+        a key is provided. Defaults False because no consumer is wired (the
+        Claude Agent SDK currently reads the OAuth token directly via env, not
+        through a proxy).
 
         Idempotent: any pre-existing containers with the same names are removed first.
         """
@@ -69,7 +75,7 @@ class ProxyManager:
             self.github_proxy_url = "http://github-proxy:9103"
             logger.info("github_proxy_started")
 
-        if anthropic_api_key:
+        if anthropic_api_key and enable_auth_proxy:
             await self._launch(
                 name="auth-proxy",
                 env={"PROXY_TYPE": "auth", "ANTHROPIC_API_KEY": anthropic_api_key, "LISTEN_PORT": "9100"},
@@ -77,6 +83,8 @@ class ProxyManager:
             )
             self.auth_proxy_url = "http://auth-proxy:9100"
             logger.info("auth_proxy_started")
+        elif anthropic_api_key and not enable_auth_proxy:
+            logger.info("auth_proxy_skipped", reason="AUTH_PROXY_ENABLED=false")
 
         logger.info("proxy_manager_started", launched=list(self._launched))
 
