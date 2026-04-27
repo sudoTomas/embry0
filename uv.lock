@@ -200,6 +200,66 @@ wheels = [
 ]
 
 [[package]]
+name = "athanor"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "anthropic" },
+    { name = "asyncpg" },
+    { name = "claude-agent-sdk" },
+    { name = "cryptography" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "langgraph" },
+    { name = "langgraph-checkpoint-postgres" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "structlog" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-aiohttp" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-timeout" },
+    { name = "ruff" },
+    { name = "testcontainers" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9,<4" },
+    { name = "anthropic", specifier = ">=0.86,<1" },
+    { name = "asyncpg", specifier = ">=0.30,<1" },
+    { name = "claude-agent-sdk", specifier = ">=0.1.50" },
+    { name = "cryptography", specifier = ">=42,<47" },
+    { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "langgraph", specifier = ">=0.4,<1" },
+    { name = "langgraph-checkpoint-postgres", specifier = ">=2.0,<3" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.14,<2" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.0,<4" },
+    { name = "pydantic", specifier = ">=2.0,<3" },
+    { name = "pydantic-settings", specifier = ">=2.0,<3" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0,<9" },
+    { name = "pytest-aiohttp", marker = "extra == 'dev'", specifier = ">=1.0,<2" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25,<1" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.0,<8" },
+    { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3,<3" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9,<1" },
+    { name = "structlog", specifier = ">=24.0,<26" },
+    { name = "testcontainers", extras = ["postgres"], marker = "extra == 'dev'", specifier = ">=4.0,<5" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32,<1" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -977,66 +1037,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/7e/d7/21ffae5ccdc3c9b8d
 wheels = [
     { url = "https://files.pythonhosted.org/packages/29/13/67889d41baf7dbaf13ffd0b334a0f284e107fad1cc8782a1abb1e56e5eeb/langsmith-0.7.25-py3-none-any.whl", hash = "sha256:55ecc24c547f6c79b5a684ff8685c669eec34e52fcac5d2c0af7d613aef5a632", size = 359417, upload-time = "2026-04-03T13:11:40.729Z" },
 ]
-
-[[package]]
-name = "legion"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "anthropic" },
-    { name = "asyncpg" },
-    { name = "claude-agent-sdk" },
-    { name = "cryptography" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "langgraph" },
-    { name = "langgraph-checkpoint-postgres" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "structlog" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-aiohttp" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-timeout" },
-    { name = "ruff" },
-    { name = "testcontainers" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.9,<4" },
-    { name = "anthropic", specifier = ">=0.86,<1" },
-    { name = "asyncpg", specifier = ">=0.30,<1" },
-    { name = "claude-agent-sdk", specifier = ">=0.1.50" },
-    { name = "cryptography", specifier = ">=42,<47" },
-    { name = "fastapi", specifier = ">=0.115,<1" },
-    { name = "httpx", specifier = ">=0.27,<1" },
-    { name = "langgraph", specifier = ">=0.4,<1" },
-    { name = "langgraph-checkpoint-postgres", specifier = ">=2.0,<3" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.14,<2" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.0,<4" },
-    { name = "pydantic", specifier = ">=2.0,<3" },
-    { name = "pydantic-settings", specifier = ">=2.0,<3" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0,<9" },
-    { name = "pytest-aiohttp", marker = "extra == 'dev'", specifier = ">=1.0,<2" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25,<1" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.0,<8" },
-    { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3,<3" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9,<1" },
-    { name = "structlog", specifier = ">=24.0,<26" },
-    { name = "testcontainers", extras = ["postgres"], marker = "extra == 'dev'", specifier = ">=4.0,<5" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32,<1" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "librt"

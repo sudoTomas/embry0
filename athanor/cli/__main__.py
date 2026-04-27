@@ -1,4 +1,4 @@
-"""Legion CLI — manage the containerized production stack."""
+"""Athanor CLI — manage the containerized production stack."""
 
 from __future__ import annotations
 
@@ -383,10 +383,10 @@ def cmd_purge(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    """Entry point for the legion CLI."""
+    """Entry point for the athanor CLI."""
     parser = argparse.ArgumentParser(
-        prog="legion",
-        description="Legion — manage the containerized production stack",
+        prog="athanor",
+        description="Athanor — manage the containerized production stack",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

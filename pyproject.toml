@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "legion"
+name = "athanor"
 version = "0.1.0"
 description = "General-purpose agent orchestration engine built on LangGraph and Claude Agent SDK"
 requires-python = ">=3.12"
@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.scripts]
-legion = "athanor.cli:main"
+athanor = "athanor.cli.__main__:main"
 
 [project.optional-dependencies]
 dev = [
