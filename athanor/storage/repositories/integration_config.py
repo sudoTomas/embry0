@@ -1,5 +1,13 @@
-"""Integration config repository — webhook, Slack, and Telegram settings."""
+"""Integration config repository — webhook, Slack, and Telegram settings.
 
+Defaults are derived from environment variables on every read, so changes
+to ``.env`` (TRIGGER_LABELS, GITHUB_WEBHOOK_SECRET, SLACK_WEBHOOK_URL,
+TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID) flow through to the Settings UI on a
+fresh DB. Once the user saves changes via the UI a row exists in
+``integration_config`` and that row takes precedence forever.
+"""
+
+import os
 from typing import Any
 
 import structlog
@@ -8,15 +16,7 @@ from athanor.storage.database import DatabasePool
 
 logger = structlog.get_logger(__name__)
 
-_DEFAULTS: dict[str, Any] = {
-    "trigger_labels": ["Athanor"],
-    "webhook_secret_set": False,
-    "slack_webhook_url_set": False,
-    "slack_webhook_url_masked": "",
-    "telegram_bot_token_set": False,
-    "telegram_bot_token_masked": "",
-    "telegram_chat_id": "",
-}
+_HARDCODED_TRIGGER_LABELS = ["Athanor"]
 
 _UPDATABLE_FIELDS = frozenset(
     {"trigger_labels", "webhook_secret", "slack_webhook_url", "telegram_bot_token", "telegram_chat_id"}
@@ -35,6 +35,29 @@ def _mask(value: str, visible: int = 4) -> str:
     return "..." + value[-visible:]
 
 
+def _env_trigger_labels(fallback: list[str]) -> list[str]:
+    raw = os.environ.get("TRIGGER_LABELS")
+    if raw is None or raw.strip() == "":
+        return list(fallback)
+    return [lbl.strip() for lbl in raw.split(",") if lbl.strip()]
+
+
+def _env_derived_defaults() -> dict[str, Any]:
+    """Read defaults from env at call time. Returns the same masked-secret shape as get()."""
+    webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+    slack_url = os.environ.get("SLACK_WEBHOOK_URL", "")
+    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    return {
+        "trigger_labels": _env_trigger_labels(_HARDCODED_TRIGGER_LABELS),
+        "webhook_secret_set": bool(webhook_secret),
+        "slack_webhook_url_set": bool(slack_url),
+        "slack_webhook_url_masked": _mask(slack_url),
+        "telegram_bot_token_set": bool(telegram_token),
+        "telegram_bot_token_masked": _mask(telegram_token),
+        "telegram_chat_id": os.environ.get("TELEGRAM_CHAT_ID", ""),
+    }
+
+
 class IntegrationConfigRepository:
     """CRUD for integration configuration (webhooks, Slack, Telegram)."""
 
@@ -42,10 +65,13 @@ class IntegrationConfigRepository:
         self._db = db
 
     async def get(self) -> dict[str, Any]:
-        """Get current integration config. Secrets are never returned raw."""
+        """Get current integration config. Secrets are never returned raw.
+
+        Falls back to env-derived defaults when no row exists.
+        """
         row = await self._db.fetchrow("SELECT * FROM integration_config WHERE id = 'default'")
         if not row:
-            return {**_DEFAULTS}
+            return _env_derived_defaults()
 
         trigger_labels = row["trigger_labels"]
 

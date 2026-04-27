@@ -92,3 +92,44 @@ async def test_telegram_token_gets_masked_on_read(integration_repo: IntegrationC
 async def test_telegram_chat_id_returned_as_plain(integration_repo: IntegrationConfigRepository):
     config = await integration_repo.update(telegram_chat_id="-1001234567890")
     assert config["telegram_chat_id"] == "-1001234567890"
+
+
+# --- Env-derived defaults: empty DB falls through to env ---
+
+
+@pytest.mark.asyncio
+async def test_get_reads_trigger_labels_from_env_when_no_row(
+    integration_repo: IntegrationConfigRepository, monkeypatch
+):
+    monkeypatch.setenv("TRIGGER_LABELS", "Athanor,bot,agent")
+    config = await integration_repo.get()
+    assert config["trigger_labels"] == ["Athanor", "bot", "agent"]
+
+
+@pytest.mark.asyncio
+async def test_get_reflects_env_secret_presence_when_no_row(integration_repo: IntegrationConfigRepository, monkeypatch):
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "abc123def456")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/X/Y/abcdefgh")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234567890:ABCDEFGHijklmnopqrstuvwxyz")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-1001234567890")
+
+    config = await integration_repo.get()
+    assert config["webhook_secret_set"] is True
+    assert config["slack_webhook_url_set"] is True
+    assert config["slack_webhook_url_masked"] == "...efgh"
+    assert config["telegram_bot_token_set"] is True
+    assert config["telegram_bot_token_masked"] == "...wxyz"
+    assert config["telegram_chat_id"] == "-1001234567890"
+    # Raw secrets must never appear
+    assert "webhook_secret" not in config
+    assert "slack_webhook_url" not in config
+    assert "telegram_bot_token" not in config
+
+
+@pytest.mark.asyncio
+async def test_db_row_overrides_env(integration_repo: IntegrationConfigRepository, monkeypatch):
+    monkeypatch.setenv("TRIGGER_LABELS", "EnvLabel")
+    await integration_repo.update(trigger_labels=["DbLabel"])
+    config = await integration_repo.get()
+    # DB wins
+    assert config["trigger_labels"] == ["DbLabel"]

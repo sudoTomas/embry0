@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -9,6 +9,7 @@ import { Select } from "@/components/ui/Select";
 import { RepoSelector } from "./RepoSelector";
 import { LabelInput } from "./LabelInput";
 import { useCreateIssue } from "@/hooks/useIssues";
+import { useGitHubRepos } from "@/hooks/useGitHub";
 import type { IssuePriority } from "@/lib/types";
 
 interface CreateIssueDialogProps {
@@ -26,6 +27,20 @@ export function CreateIssueDialog({ onClose, repos = [], labelSuggestions = [] }
   const [githubSync, setGithubSync] = useState(false);
   const [autoTriage, setAutoTriage] = useState(true);
   const createIssue = useCreateIssue();
+
+  // Pull every repo the GITHUB_TOKEN can see; merge with the locally-known
+  // ones (repos that already have issues) so a user can pick from either set.
+  const { data: gh, isLoading: ghLoading, isError: ghError } = useGitHubRepos();
+  const repoOptions = useMemo(() => {
+    const fromGitHub = gh?.repos.map((r) => r.full_name) ?? [];
+    const merged = new Set<string>([...fromGitHub, ...repos]);
+    return Array.from(merged).sort();
+  }, [gh, repos]);
+  const repoHelpText = ghError
+    ? "Could not load repos from GitHub — check GITHUB_TOKEN. Falls back to repos with existing issues."
+    : ghLoading
+      ? "Loading repos from GitHub…"
+      : `${repoOptions.length} repo${repoOptions.length === 1 ? "" : "s"} available`;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,7 +78,8 @@ export function CreateIssueDialog({ onClose, repos = [], labelSuggestions = [] }
               </div>
               <div>
                 <Label>Repository</Label>
-                <RepoSelector value={repo} onChange={setRepo} repos={repos} />
+                <RepoSelector value={repo} onChange={setRepo} repos={repoOptions} />
+                <p className="mt-1 text-xs text-muted-foreground">{repoHelpText}</p>
               </div>
               <div>
                 <Label htmlFor="issue-priority">Priority</Label>

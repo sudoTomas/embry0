@@ -21,10 +21,15 @@ async def provider_repo(pg_pool: asyncpg.Pool) -> ProviderConfigRepository:
 
 
 @pytest.mark.asyncio
-async def test_get_defaults(provider_repo: ProviderConfigRepository):
+async def test_get_defaults(provider_repo: ProviderConfigRepository, monkeypatch):
+    # Migration #13 deletes the seed row, so get() falls through to env-derived
+    # defaults. Clear all relevant env vars so the hardcoded fallbacks are exercised.
+    for var in ("PROVIDER_MODE", "MODEL_HEAVY", "MODEL_MEDIUM", "MODEL_LIGHT", "DEFAULT_MODEL", "OLLAMA_BASE_URL"):
+        monkeypatch.delenv(var, raising=False)
+
     config = await provider_repo.get()
     assert config["provider_mode"] == "anthropic_api"
-    assert config["model_heavy"] == "claude-opus-4-6"
+    assert config["model_heavy"] == "claude-opus-4-7"
     assert config["model_medium"] == "claude-sonnet-4-6"
     assert config["model_light"] == "claude-haiku-4-5"
     assert config["default_model"] == ""
@@ -203,3 +208,36 @@ async def test_test_connection_ollama_unreachable(provider_repo: ProviderConfigR
     assert result["status"] == "error"
     assert "Cannot reach Ollama" in result["message"]
     assert "http://localhost:11434" in result["message"]
+
+
+# --- Env-derived defaults: empty DB falls through to env ---
+
+
+@pytest.mark.asyncio
+async def test_get_reads_provider_mode_from_env_when_no_row(provider_repo: ProviderConfigRepository, monkeypatch):
+    """On a fresh DB (post-migration #13) get() must read env vars for defaults."""
+    monkeypatch.setenv("PROVIDER_MODE", "claude_max")
+    monkeypatch.setenv("MODEL_HEAVY", "claude-opus-4-7")
+    monkeypatch.setenv("MODEL_MEDIUM", "claude-sonnet-4-7")
+    monkeypatch.setenv("MODEL_LIGHT", "claude-haiku-4-6")
+    monkeypatch.setenv("DEFAULT_MODEL", "claude-sonnet-4-7")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://gpu:11434")
+
+    config = await provider_repo.get()
+    assert config["provider_mode"] == "claude_max"
+    assert config["model_heavy"] == "claude-opus-4-7"
+    assert config["model_medium"] == "claude-sonnet-4-7"
+    assert config["model_light"] == "claude-haiku-4-6"
+    assert config["default_model"] == "claude-sonnet-4-7"
+    assert config["ollama_base_url"] == "http://gpu:11434"
+
+
+@pytest.mark.asyncio
+async def test_db_row_overrides_env(provider_repo: ProviderConfigRepository, monkeypatch):
+    """If the user has saved via the UI (row exists) env is NOT consulted for those fields."""
+    monkeypatch.setenv("PROVIDER_MODE", "claude_max")
+    await provider_repo.update(provider_mode="ollama", ollama_base_url="http://localhost:11434")
+    config = await provider_repo.get()
+    # DB wins
+    assert config["provider_mode"] == "ollama"
+    assert config["ollama_base_url"] == "http://localhost:11434"

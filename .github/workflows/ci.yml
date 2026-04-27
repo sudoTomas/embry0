@@ -28,13 +28,13 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Ruff check
-        run: ruff check legion/ tests/
+        run: ruff check athanor/ tests/
 
       - name: Ruff format check
-        run: ruff format --check legion/ tests/
+        run: ruff format --check athanor/ tests/
 
       - name: Verify app imports
-        run: python -c "from legion.api.app import create_app; print('OK')"
+        run: python -c "from athanor.api.app import create_app; print('OK')"
 
       - name: Run unit tests
         run: pytest tests/unit/ -v --tb=short --timeout=30

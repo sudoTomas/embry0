@@ -39,7 +39,7 @@ class AthanorConfig(BaseSettings):
     ollama_base_url: str = ""
     ollama_model: str = ""
     default_model: str = ""
-    model_heavy: str = "claude-opus-4-6"
+    model_heavy: str = "claude-opus-4-7"
     model_medium: str = "claude-sonnet-4-6"
     model_light: str = "claude-haiku-4-5"
 

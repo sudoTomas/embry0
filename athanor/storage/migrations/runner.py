@@ -355,6 +355,52 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ADD COLUMN IF NOT EXISTS auth_mode TEXT;
         """,
     ),
+    (
+        13,
+        "drop untouched provider/integration config seed rows so env defaults flow through",
+        # Migration #2 seeded provider_config and integration_config with id='default'
+        # at the original hardcoded defaults. Those seed rows pin DB state to the
+        # hardcoded values and prevent the .env values from being reflected in the
+        # Settings UI. Delete the rows IFF every column matches the original seed —
+        # that signals the user has not customized anything via the UI.
+        # Repos fall back to env-derived defaults whenever the row is absent.
+        """
+        DELETE FROM provider_config
+        WHERE id = 'default'
+          AND provider_mode = 'anthropic_api'
+          AND model_heavy = 'claude-opus-4-6'
+          AND model_medium = 'claude-sonnet-4-6'
+          AND model_light = 'claude-haiku-4-5'
+          AND COALESCE(default_model, '') = ''
+          AND COALESCE(ollama_base_url, '') = ''
+          AND api_key_set = false
+          AND oauth_token_set = false;
+
+        DELETE FROM integration_config
+        WHERE id = 'default'
+          AND trigger_labels = '["Athanor"]'::jsonb
+          AND COALESCE(webhook_secret, '') = ''
+          AND COALESCE(slack_webhook_url, '') = ''
+          AND COALESCE(telegram_bot_token, '') = ''
+          AND COALESCE(telegram_chat_id, '') = '';
+        """,
+    ),
+    (
+        14,
+        "bump default developer agent model to claude-opus-4-7",
+        # Migration #2 seeded the developer agent_definitions row with
+        # claude-opus-4-6. Now that 4-7 is GA we want new installs (and any
+        # existing install that hasn't customized this row) to use it.
+        # Only update IFF the model is still at the original seed value, so
+        # users who explicitly chose a different model are not clobbered.
+        """
+        UPDATE agent_definitions
+        SET model = 'claude-opus-4-7'
+        WHERE type = 'developer'
+          AND model = 'claude-opus-4-6'
+          AND is_builtin = true;
+        """,
+    ),
 ]
 
 
