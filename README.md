@@ -307,7 +307,7 @@ curl http://localhost:8200/api/v1/sandbox-profiles
 curl -X POST http://localhost:8200/api/v1/sandbox-profiles \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
-  -d '{"name": "java-17", "base_image": "legion-sandbox-java:17", "memory": "12g"}'
+  -d '{"name": "java-17", "base_image": "athanor-sandbox-java:17", "memory": "12g"}'
 ```
 
 ### Environment Variables

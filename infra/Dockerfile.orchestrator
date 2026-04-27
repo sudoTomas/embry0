@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Python dependencies (copy minimal package for metadata, then install deps)
 COPY pyproject.toml /app/
-COPY legion/__init__.py /app/legion/__init__.py
+COPY athanor/__init__.py /app/athanor/__init__.py
 WORKDIR /app
 RUN pip install --no-cache-dir . psycopg[binary]
 
@@ -24,7 +24,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && npm install -g @anthropic-ai/claude-code@2.1.92
 
 # Application code (overwrite with full source)
-COPY legion/ /app/legion/
+COPY athanor/ /app/athanor/
 
 # Non-root user
 RUN useradd --create-home orchestrator \
@@ -38,7 +38,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "legion.api.app:create_app", "--factory", \
+CMD ["uvicorn", "athanor.api.app:create_app", "--factory", \
      "--host", "0.0.0.0", "--port", "8000", \
      "--log-level", "info", \
      "--timeout-graceful-shutdown", "30", \

@@ -3,12 +3,12 @@ set -euo pipefail
 
 # ─── Dev container helper for Claude Code ─────────────────────────────────
 # This script ONLY manages the development container.
-# For production, use the `legion` CLI.
+# For production, use the `athanor` CLI.
 
 DEV_COMPOSE="infra/docker-compose.dev.yml"
 ENV_FILE=".env"
-CONTAINER="legion"
-DEV_PROJECT="legion-dev"
+CONTAINER="athanor"
+DEV_PROJECT="athanor-dev"
 
 cd "$(dirname "$0")"
 
@@ -48,7 +48,7 @@ case "${1:-claude}" in
     echo "Usage: ./lab <command>"
     echo ""
     echo "Dev container helper for Claude Code."
-    echo "For production, use the 'legion' CLI."
+    echo "For production, use the 'athanor' CLI."
     echo ""
     echo "Commands:"
     echo "  up      Start the dev container"

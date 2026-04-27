@@ -88,14 +88,14 @@ async def test_sandbox_manager_passes_through_caller_env(manager: SandboxManager
 @pytest.mark.asyncio
 async def test_create_with_custom_profile(manager: SandboxManager):
     profile = {
-        "base_image": "legion-sandbox-java:17",
+        "base_image": "athanor-sandbox-java:17",
         "memory": "12g",
         "cpus": "6",
         "pids_limit": 512,
     }
     await manager.create(job_id="job-y", profile=profile)
     kwargs = manager._docker.build_run_cmd.call_args.kwargs
-    assert kwargs["image"] == "legion-sandbox-java:17"
+    assert kwargs["image"] == "athanor-sandbox-java:17"
     assert kwargs["memory"] == "12g"
     assert kwargs["cpus"] == "6"
     assert kwargs["pids_limit"] == 512

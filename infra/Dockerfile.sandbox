@@ -18,13 +18,13 @@ RUN pip install --no-cache-dir \
     "httpx>=0.27,<1"
 
 # Sandbox code (runs inside container)
-COPY legion/sandbox/ /app/legion/sandbox/
-COPY legion/safety/ /app/legion/safety/
-COPY legion/execution/events.py /app/legion/execution/events.py
+COPY athanor/sandbox/ /app/athanor/sandbox/
+COPY athanor/safety/ /app/athanor/safety/
+COPY athanor/execution/events.py /app/athanor/execution/events.py
 
-# Make legion packages importable
-RUN mkdir -p /app/legion/execution && \
-    touch /app/legion/__init__.py /app/legion/execution/__init__.py
+# Make athanor packages importable
+RUN mkdir -p /app/athanor/execution && \
+    touch /app/athanor/__init__.py /app/athanor/execution/__init__.py
 
 ENV PYTHONPATH=/app
 

@@ -53,7 +53,7 @@ def test_graph_execute_request():
 
 
 def test_sandbox_profile_request():
-    req = SandboxProfileRequest(name="python-3.12", base_image="legion-sandbox-python:3.12")
+    req = SandboxProfileRequest(name="python-3.12", base_image="athanor-sandbox-python:3.12")
     assert req.name == "python-3.12"
 
 

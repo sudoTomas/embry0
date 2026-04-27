@@ -1,11 +1,11 @@
-name: legion
+name: athanor
 
 services:
   frontend:
     build:
       context: ../frontend
       dockerfile: Dockerfile
-    container_name: legion-frontend
+    container_name: athanor-frontend
     ports:
       - "${PROD_PORT:-8200}:80"
     depends_on:
@@ -23,7 +23,7 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile.orchestrator
-    container_name: legion-orchestrator
+    container_name: athanor-orchestrator
     environment:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-athanor}:${POSTGRES_PASSWORD:-athanor}@postgres:5432/${POSTGRES_DB:-athanor}"
       DOCKER_HOST: tcp://dind:2376
@@ -68,7 +68,7 @@ services:
 
   postgres:
     image: postgres:16
-    container_name: legion-postgres
+    container_name: athanor-postgres
     environment:
       POSTGRES_DB: "${POSTGRES_DB:-athanor}"
       POSTGRES_USER: "${POSTGRES_USER:-athanor}"
@@ -96,7 +96,7 @@ services:
 
   dind:
     image: docker:dind
-    container_name: legion-dind
+    container_name: athanor-dind
     privileged: true
     environment:
       DOCKER_TLS_CERTDIR: /certs

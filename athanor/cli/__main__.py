@@ -122,7 +122,7 @@ def _stack_running(home: Path) -> bool:
     if result.returncode != 0:
         return False
     running = set(result.stdout.strip().splitlines())
-    required = {"legion-frontend", "legion-orchestrator", "legion-dind", "legion-postgres"}
+    required = {"athanor-frontend", "athanor-orchestrator", "athanor-dind", "athanor-postgres"}
     return required.issubset(running)
 
 
@@ -136,7 +136,7 @@ def _images_exist(home: Path) -> bool:
     if result.returncode != 0:
         return False
     images = result.stdout.strip()
-    return "legion-frontend" in images and "legion-orchestrator" in images
+    return "athanor-frontend" in images and "athanor-orchestrator" in images
 
 
 def _wait_for_dind(timeout: int = 60) -> bool:

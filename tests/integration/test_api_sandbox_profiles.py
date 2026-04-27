@@ -8,21 +8,21 @@ from httpx import AsyncClient
 async def test_create_and_get_profile(app: AsyncClient):
     resp = await app.post(
         "/api/v1/sandbox-profiles",
-        json={"name": "python-3.12", "base_image": "legion-sandbox-python:3.12", "memory": "8g", "cpus": "4"},
+        json={"name": "python-3.12", "base_image": "athanor-sandbox-python:3.12", "memory": "8g", "cpus": "4"},
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
     assert resp.status_code == 201
 
     resp = await app.get("/api/v1/sandbox-profiles/python-3.12")
     assert resp.status_code == 200
-    assert resp.json()["base_image"] == "legion-sandbox-python:3.12"
+    assert resp.json()["base_image"] == "athanor-sandbox-python:3.12"
 
 
 @pytest.mark.asyncio
 async def test_list_profiles(app: AsyncClient):
     await app.post(
         "/api/v1/sandbox-profiles",
-        json={"name": "java-17", "base_image": "legion-sandbox-java:17"},
+        json={"name": "java-17", "base_image": "athanor-sandbox-java:17"},
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
 

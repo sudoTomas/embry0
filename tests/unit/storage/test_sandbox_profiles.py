@@ -22,13 +22,13 @@ async def profiles_repo(pg_pool: asyncpg.Pool) -> SandboxProfilesRepository:
 async def test_create_and_get_profile(profiles_repo: SandboxProfilesRepository):
     await profiles_repo.upsert(
         name="python-3.12",
-        base_image="legion-sandbox-python:3.12",
+        base_image="athanor-sandbox-python:3.12",
         memory="8g",
         cpus="4",
     )
     profile = await profiles_repo.get("python-3.12")
     assert profile is not None
-    assert profile["base_image"] == "legion-sandbox-python:3.12"
+    assert profile["base_image"] == "athanor-sandbox-python:3.12"
     assert profile["memory"] == "8g"
 
 
