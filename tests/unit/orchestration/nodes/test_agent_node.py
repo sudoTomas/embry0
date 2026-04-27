@@ -296,3 +296,95 @@ async def test_run_agent_node_per_job_model_override_wins() -> None:
         )
 
     assert captured["model"] == "claude-opus-4-6"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_node_persists_trace_on_success() -> None:
+    """After a successful run, a trace row is written via traces_repo.create."""
+    fake_out = AgentOutput(
+        agent_type="developer",
+        is_error=False,
+        output="all good",
+        cost_usd=1.5,
+        duration_ms=2000,
+        tools_called={"Read": 3, "Edit": 1},
+    )
+    traces_repo = AsyncMock()
+    traces_repo.create = AsyncMock(return_value="trace-abcdef")
+
+    with patch("athanor.orchestration.nodes.agent.select_executor") as mock_factory:
+        mock_executor = AsyncMock()
+        mock_executor.run = AsyncMock(return_value=fake_out)
+        mock_factory.return_value = mock_executor
+
+        state: dict[str, Any] = {
+            "sandbox_container_id": "c1",
+            "total_cost_usd": 0.0,
+            "pipeline_config": {},
+        }
+        updates = await run_agent_node(
+            state=state,
+            agent_runner=None,
+            agent_type="developer",
+            prompt="do it",
+            agent_definition={
+                "model": "claude-opus-4-7",
+                "tools": ["Read", "Edit"],
+                "skills": [],
+                "system_prompt": "",
+                "mcp_servers": {},
+                "execution_mode": None,
+                "auth_mode": None,
+            },
+            credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+            config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+        )
+
+    assert updates["current_stage"] == "developer_complete"
+    assert traces_repo.create.await_count == 1
+    call_kwargs = traces_repo.create.call_args.kwargs
+    assert call_kwargs["job_id"] == "job-test"
+    assert call_kwargs["agent_type"] == "developer"
+    assert call_kwargs["cost_usd"] == pytest.approx(1.5)
+    assert call_kwargs["duration_ms"] == 2000
+    assert call_kwargs["result"] == "success"
+    assert call_kwargs["tools_called"] == {"Read": 3, "Edit": 1}
+
+
+@pytest.mark.asyncio
+async def test_run_agent_node_trace_persist_failure_does_not_fail_run() -> None:
+    """If traces_repo.create raises, the agent run still returns a valid updates dict."""
+    fake_out = AgentOutput(
+        agent_type="developer",
+        is_error=False,
+        output="done",
+        cost_usd=0.5,
+        duration_ms=1000,
+        tools_called={},
+    )
+    traces_repo = AsyncMock()
+    traces_repo.create = AsyncMock(side_effect=RuntimeError("DB unreachable"))
+
+    with patch("athanor.orchestration.nodes.agent.select_executor") as mock_factory:
+        mock_executor = AsyncMock()
+        mock_executor.run = AsyncMock(return_value=fake_out)
+        mock_factory.return_value = mock_executor
+
+        state: dict[str, Any] = {
+            "sandbox_container_id": "c1",
+            "total_cost_usd": 0.0,
+            "pipeline_config": {},
+        }
+        updates = await run_agent_node(
+            state=state,
+            agent_runner=None,
+            agent_type="developer",
+            prompt="do it",
+            credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+            config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+        )
+
+    # Agent run must succeed regardless of trace write failure.
+    assert updates["current_stage"] == "developer_complete"
+    assert updates["total_cost_usd"] == pytest.approx(0.5)
+    assert traces_repo.create.await_count == 1

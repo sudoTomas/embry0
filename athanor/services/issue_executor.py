@@ -80,6 +80,7 @@ class IssueExecutor:
         return {
             "configurable": {
                 "thread_id": job_id,
+                "job_id": job_id,
                 "agent_runner": self._agent_runner,
                 "sandbox_manager": self._sandbox,
                 "proxy_manager": self._proxy,
@@ -88,6 +89,7 @@ class IssueExecutor:
                 "inputs_repo": self._inputs,
                 "db": self._db,
                 "repo_preferences_repo": self._repo_prefs,
+                "traces_repo": self._traces,
                 "credentials": credentials,
             }
         }

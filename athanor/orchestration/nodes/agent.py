@@ -171,6 +171,27 @@ async def run_agent_node(
         tools_called=result.tools_called,
     )
 
+    # Persist a trace row so the job-detail UI's TracesTable / cost_breakdown
+    # endpoint actually has data. Best-effort — failure to write a trace must
+    # not fail the agent run.
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    traces_repo = configurable.get("traces_repo")
+    trace_job_id = configurable.get("job_id", "")
+    if traces_repo is not None and trace_job_id:
+        try:
+            await traces_repo.create(
+                job_id=trace_job_id,
+                agent_type=result.agent_type,
+                model=invocation.model,
+                result="error" if result.is_error else "success",
+                cost_usd=result.cost_usd,
+                duration_ms=result.duration_ms,
+                tools_called=result.tools_called or {},
+                result_summary=(result.error_message or result.output or "")[:500],
+            )
+        except Exception:
+            logger.warning("trace_persist_failed", agent_type=result.agent_type, exc_info=True)
+
     updates: dict[str, Any] = {
         "agent_outputs": [output_entry],
         "total_cost_usd": state.get("total_cost_usd", 0.0) + result.cost_usd,
