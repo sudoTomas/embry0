@@ -8,6 +8,7 @@ import { useJobLogs } from "../useJobLogs";
 
 interface MockWebSocketInstance {
   url: string;
+  protocols: string[];
   onopen: ((event: Event) => void) | null;
   onmessage: ((event: MessageEvent) => void) | null;
   onclose: ((event: CloseEvent) => void) | null;
@@ -34,6 +35,7 @@ class MockWebSocket implements MockWebSocketInstance {
   static readonly CLOSED = 3;
 
   url: string;
+  protocols: string[];
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
@@ -43,8 +45,9 @@ class MockWebSocket implements MockWebSocketInstance {
   });
   readyState: number = MockWebSocket.CONNECTING;
 
-  constructor(url: string) {
+  constructor(url: string, protocols?: string | string[]) {
     this.url = url;
+    this.protocols = Array.isArray(protocols) ? protocols : protocols ? [protocols] : [];
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     lastCreatedWs = this;
     allCreatedWs.push(this);
@@ -83,6 +86,8 @@ beforeEach(() => {
     writable: true,
     configurable: true,
   });
+  // Stub VITE_API_KEY so the subprotocol is populated in tests
+  vi.stubEnv("VITE_API_KEY", "test-api-key");
   vi.useFakeTimers();
 });
 
@@ -119,11 +124,12 @@ describe("useJobLogs", () => {
     expect(lastCreatedWs).toBeNull();
   });
 
-  it("creates a WebSocket with the correct URL when jobId is provided", () => {
+  it("creates a WebSocket with the correct URL and bearer subprotocol when jobId is provided", () => {
     renderHook(() => useJobLogs("job-123"));
 
     expect(lastCreatedWs).not.toBeNull();
-    expect(lastCreatedWs!.url).toBe("ws://localhost:3001/ws/jobs/job-123/logs");
+    expect(lastCreatedWs!.url).toBe("ws://localhost:3001/ws/jobs/job-123/events");
+    expect(lastCreatedWs!.protocols).toEqual(["athanor.bearer.test-api-key"]);
   });
 
   it("sets isConnected to true when the WebSocket opens", async () => {

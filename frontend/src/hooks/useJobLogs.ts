@@ -51,7 +51,9 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
     if (!jobId) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/jobs/${jobId}/events`);
+    const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
+    const subprotocols = apiKey ? [`athanor.bearer.${apiKey}`] : [];
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/jobs/${jobId}/events`, subprotocols);
     wsRef.current = ws;
 
     ws.onopen = () => {

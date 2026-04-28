@@ -24,14 +24,31 @@ def _passes_filter(event: dict, wanted: set[str]) -> bool:
 
 @router.websocket("/ws/jobs/{job_id}/events")
 async def job_events(websocket: WebSocket, job_id: str) -> None:
-    # Auth check
     config = websocket.app.state.config
-    if not config.auth_dev_mode and config.api_key:
-        token = websocket.query_params.get("token", "")
-        if not hmac.compare_digest(token, config.api_key):
+
+    # Auth via Sec-WebSocket-Protocol subprotocol header. Client sends:
+    #   Sec-WebSocket-Protocol: athanor.bearer.<api_key>
+    # Server validates with hmac.compare_digest and echoes the matched
+    # subprotocol back on accept (RFC 6455 requires the echo).
+    matched_subprotocol: str | None = None
+    if config.api_key and not config.auth_dev_mode:
+        subprotocols = websocket.scope.get("subprotocols", [])
+        for sp in subprotocols:
+            if sp.startswith("athanor.bearer."):
+                presented = sp[len("athanor.bearer."):]
+                if hmac.compare_digest(presented, config.api_key):
+                    matched_subprotocol = sp
+                    break
+        if matched_subprotocol is None:
+            logger.warning(
+                "ws_unauthorized",
+                job_id=job_id,
+                remote=websocket.client.host if websocket.client else "unknown",
+            )
             await websocket.close(code=4001, reason="Unauthorized")
             return
-    await websocket.accept()
+
+    await websocket.accept(subprotocol=matched_subprotocol)
 
     # Parse the replay cursor. Clients resuming a dropped connection pass
     # ``?since_seq=<last_event_seq>``; fresh clients pass 0 or omit it.

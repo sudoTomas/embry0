@@ -28,9 +28,13 @@ class EventBus:
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
         self._lock = asyncio.Lock()
 
-    async def subscribe(self, job_id: str) -> asyncio.Queue:
-        """Register a new subscriber for ``job_id``; return its queue."""
-        queue: asyncio.Queue = asyncio.Queue()
+    async def subscribe(self, job_id: str, maxsize: int = 1000) -> asyncio.Queue:
+        """Register a new subscriber for ``job_id``; return its queue.
+
+        Queues are bounded at ``maxsize`` events; on overflow, ``publish``
+        drops with a ``ws_slow_consumer`` warning rather than blocking.
+        """
+        queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
         async with self._lock:
             self._subscribers.setdefault(job_id, []).append(queue)
         return queue
@@ -67,6 +71,13 @@ class EventBus:
         for queue in subscribers:
             try:
                 queue.put_nowait(event)
+            except asyncio.QueueFull:
+                logger.warning(
+                    "ws_slow_consumer",
+                    job_id=job_id,
+                    event_type=event.get("type", "unknown"),
+                    queue_size=queue.qsize(),
+                )
             except Exception as exc:
                 logger.warning(
                     "subscriber_put_failed",
