@@ -6,7 +6,7 @@ from athanor.execution.proxy.auth_proxy import create_auth_proxy_app
 
 @pytest.fixture
 async def auth_client(aiohttp_client) -> TestClient:
-    app = create_auth_proxy_app(api_key="sk-ant-test-key")
+    app = create_auth_proxy_app(api_key="sk-ant-test-key", admin_token="test-admin-secret-not-real")
     return await aiohttp_client(app)
 
 
