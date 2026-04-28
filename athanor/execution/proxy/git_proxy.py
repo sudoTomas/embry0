@@ -8,11 +8,15 @@ sandbox-create time via /admin/enroll.
 
 import hashlib
 import hmac
+import json
+import re
 
 import structlog
 from aiohttp import web
 
 logger = structlog.get_logger(__name__)
+
+_SANDBOX_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
 def _sha256(s: str) -> str:
@@ -32,8 +36,11 @@ def create_git_proxy_app(github_token: str, admin_token: str) -> web.Application
     app = web.Application()
     app["github_token"] = github_token
     app["admin_token_hash"] = _sha256(admin_token)
-    # sandbox_id -> sha256(sandbox_token)
-    app["enrolled"] = {}
+    # in-memory only; ProxyManager.start() must re-enroll on proxy restart (Task 9 contract)
+    # sandbox_id -> sha256(sandbox_token); used by unenroll to know what to remove
+    app["enrolled_by_id"] = {}
+    # sha256(sandbox_token) -> sandbox_id; used by credentials handler for O(1) lookup
+    app["enrolled_by_hash"] = {}
     app.router.add_get("/health", _health_handler)
     app.router.add_get("/git-credentials", _credentials_handler)
     app.router.add_post("/admin/enroll", _enroll_handler)
@@ -48,8 +55,12 @@ async def _health_handler(request: web.Request) -> web.Response:
 def _check_admin(request: web.Request) -> bool:
     presented = request.headers.get("X-Admin-Token", "")
     if not presented:
+        logger.warning("git_proxy_unauthorized", path=request.path)
         return False
-    return hmac.compare_digest(_sha256(presented), request.app["admin_token_hash"])
+    result = hmac.compare_digest(_sha256(presented), request.app["admin_token_hash"])
+    if not result:
+        logger.warning("git_proxy_unauthorized", path=request.path)
+    return result
 
 
 async def _enroll_handler(request: web.Request) -> web.Response:
@@ -57,13 +68,23 @@ async def _enroll_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "unauthorized"}, status=401)
     try:
         body = await request.json()
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"error": "bad_request"}, status=400)
+    if not isinstance(body, dict):
         return web.json_response({"error": "bad_request"}, status=400)
     sandbox_id = body.get("sandbox_id", "")
     sandbox_token = body.get("sandbox_token", "")
-    if not sandbox_id or not sandbox_token:
+    if not sandbox_id or not sandbox_token or len(sandbox_token) < 32:
         return web.json_response({"error": "bad_request"}, status=400)
-    request.app["enrolled"][sandbox_id] = _sha256(sandbox_token)
+    if not _SANDBOX_ID_RE.match(sandbox_id):
+        return web.json_response({"error": "bad_request"}, status=400)
+    # Handle re-enrollment: remove old hash entry if sandbox_id was already enrolled
+    old_hash = request.app["enrolled_by_id"].get(sandbox_id)
+    if old_hash is not None:
+        request.app["enrolled_by_hash"].pop(old_hash, None)
+    new_hash = _sha256(sandbox_token)
+    request.app["enrolled_by_id"][sandbox_id] = new_hash
+    request.app["enrolled_by_hash"][new_hash] = sandbox_id
     logger.info("git_proxy_sandbox_enrolled", sandbox_id=sandbox_id)
     return web.json_response({"status": "enrolled"})
 
@@ -72,7 +93,11 @@ async def _unenroll_handler(request: web.Request) -> web.Response:
     if not _check_admin(request):
         return web.json_response({"error": "unauthorized"}, status=401)
     sandbox_id = request.match_info["sandbox_id"]
-    request.app["enrolled"].pop(sandbox_id, None)
+    if not _SANDBOX_ID_RE.match(sandbox_id):
+        return web.json_response({"error": "bad_request"}, status=400)
+    old_hash = request.app["enrolled_by_id"].pop(sandbox_id, None)
+    if old_hash is not None:
+        request.app["enrolled_by_hash"].pop(old_hash, None)
     logger.info("git_proxy_sandbox_unenrolled", sandbox_id=sandbox_id)
     return web.json_response({"status": "unenrolled"})
 
@@ -81,19 +106,17 @@ async def _credentials_handler(request: web.Request) -> web.Response:
     """Return git credentials in git-credential-fill format if bearer is valid."""
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
+        logger.warning("git_proxy_unauthorized", path=request.path)
         return web.json_response({"error": "unauthorized"}, status=401)
     presented = auth[len("Bearer "):].strip()
     if not presented:
+        logger.warning("git_proxy_unauthorized", path=request.path)
         return web.json_response({"error": "unauthorized"}, status=401)
     presented_hash = _sha256(presented)
 
-    matched_sandbox: str | None = None
-    for sandbox_id, stored_hash in request.app["enrolled"].items():
-        if hmac.compare_digest(presented_hash, stored_hash):
-            matched_sandbox = sandbox_id
-            break
-
+    matched_sandbox = request.app["enrolled_by_hash"].get(presented_hash)
     if not matched_sandbox:
+        logger.warning("git_proxy_unauthorized", path=request.path)
         return web.json_response({"error": "unauthorized"}, status=401)
 
     logger.info("git_credentials_issued", sandbox_id=matched_sandbox)

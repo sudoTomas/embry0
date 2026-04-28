@@ -22,15 +22,16 @@ async def test_health(git_client: TestClient):
 async def test_git_credentials_endpoint(git_client: TestClient):
     """The /git-credentials endpoint requires a valid bearer; enroll one first."""
     # Enroll a sandbox token
+    token = "tok-legacy-" + "x" * 32  # must be >= 32 chars
     enroll = await git_client.post(
         "/admin/enroll",
-        json={"sandbox_id": "s1", "sandbox_token": "tok-legacy"},
+        json={"sandbox_id": "s1", "sandbox_token": token},
         headers={"X-Admin-Token": "test-admin"},
     )
     assert enroll.status == 200
 
     resp = await git_client.get(
-        "/git-credentials", headers={"Authorization": "Bearer tok-legacy"}
+        "/git-credentials", headers={"Authorization": f"Bearer {token}"}
     )
     assert resp.status == 200
     body = await resp.text()
