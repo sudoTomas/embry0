@@ -1,6 +1,7 @@
 """FastAPI application factory with async lifespan management."""
 
 import asyncio
+import secrets
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
@@ -29,6 +30,31 @@ from athanor.workflows.issue_to_pr.graph import IssueToprWorkflow
 from athanor.workflows.registry import WorkflowRegistry
 
 logger = structlog.get_logger(__name__)
+
+
+def _resolve_proxy_admin_token(config: AthanorConfig) -> None:
+    """Resolve PROXY_ADMIN_TOKEN. Generates in dev_mode if missing; refuses in prod.
+
+    Args:
+        config: Application configuration to resolve the token for.
+
+    Raises:
+        RuntimeError: If dev_mode is False and proxy_admin_token is not set.
+    """
+    if config.proxy_admin_token:
+        return
+    if config.dev_mode:
+        config.proxy_admin_token = secrets.token_urlsafe(32)
+        logger.warning(
+            "proxy_admin_token_generated_for_dev",
+            msg="dev_mode=true and PROXY_ADMIN_TOKEN unset — generated a random one for this process. Set PROXY_ADMIN_TOKEN in .env to make it stable across restarts.",
+        )
+        return
+    raise RuntimeError(
+        "PROXY_ADMIN_TOKEN must be set in production. Generate one with "
+        "`python -c 'import secrets; print(secrets.token_urlsafe(32))'` "
+        "and add it to .env."
+    )
 
 
 async def _init_app_state(
@@ -272,20 +298,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Resolve PROXY_ADMIN_TOKEN. Required in production; in dev_mode we
     # generate one if missing so contributors don't need to know about it.
-    if not config.proxy_admin_token:
-        if config.dev_mode:
-            import secrets as _secrets
-            config.proxy_admin_token = _secrets.token_urlsafe(32)
-            logger.warning(
-                "proxy_admin_token_generated_for_dev",
-                msg="dev_mode=true and PROXY_ADMIN_TOKEN unset — generated a random one for this process. Set PROXY_ADMIN_TOKEN in .env to make it stable across restarts.",
-            )
-        else:
-            raise RuntimeError(
-                "PROXY_ADMIN_TOKEN must be set in production. Generate one with "
-                "`python -c 'import secrets; print(secrets.token_urlsafe(32))'` "
-                "and add it to .env."
-            )
+    _resolve_proxy_admin_token(config)
 
     from athanor.agents.executor import _assert_sdk_supports_hooks
     _assert_sdk_supports_hooks()
