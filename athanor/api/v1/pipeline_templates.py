@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from athanor.api.deps import get_templates_repo
 from athanor.api.schemas import TemplateCreateRequest, TemplateDuplicateRequest, TemplateUpdateRequest
 from athanor.storage.repositories.pipeline_templates import PipelineTemplatesRepository
+from athanor.workflows._validation import validate_pipeline_tools
 
 router = APIRouter()
 
@@ -32,6 +33,10 @@ async def create_template(
     req: TemplateCreateRequest,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict:
+    try:
+        validate_pipeline_tools(req.name, req.graph_definition)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return await repo.create(
         name=req.name,
         description=req.description,
@@ -53,6 +58,11 @@ async def update_template(
         if not template:
             raise HTTPException(status_code=404, detail="Template not found")
         return template
+    if "graph_definition" in updates:
+        try:
+            validate_pipeline_tools(str(template_id), updates["graph_definition"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     return await repo.update(template_id, **updates)
 
 

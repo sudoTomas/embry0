@@ -139,17 +139,20 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
 
 
 async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any] | Command:
-    """Run triage agent — via AgentRunner in sandbox if available, else direct SDK.
+    """Run triage agent via AgentRunner inside the sandbox.
 
     Returns a plain dict in the normal case (``route_after_triage`` decides the
     next node via conditional edge). Returns a ``Command`` to self-route when
     pending agent questions exist (→ ``ask_user_interrupt``) or the question
     cap is exhausted (→ ``max_retries``), mirroring the pattern used by
     ``developer_node`` and ``review_node``.
+
+    Raises SandboxRequiredError if agent_runner or container_id is absent —
+    there is no in-process fallback. See Plan A § 4.4.
     """
     import os
 
-    from athanor.orchestration.nodes.triage import run_triage_node
+    from athanor.orchestration.nodes.agent import SandboxRequiredError
 
     writer = get_stream_writer()
     writer({"type": "node_started", "node": "triage", "agent": "triage"})
@@ -159,76 +162,78 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     credentials = config["configurable"].get("credentials") or {}
     container_id = state.get("sandbox_container_id")
 
-    if agent_runner and container_id:
-        # Run triage inside sandbox via AgentRunner
-        from athanor.orchestration.nodes.triage import _TRIAGE_SYSTEM_PROMPT, parse_triage_response
-
-        repo = state.get("repo", "")
-        task = state.get("task", "")
-        issue_number = state.get("issue_number")
-        additional = state.get("additional_context", "")
-
-        prompt = f"Repository: {repo}\n"
-        if issue_number:
-            prompt += f"Issue #{issue_number}\n"
-        prompt += f"\nTask:\n{task}"
-        if additional:
-            prompt += f"\n\nPrevious Q&A:\n{additional}"
-
-        # Prepend system prompt since sandbox runner doesn't receive it separately
-        prompt = _TRIAGE_SYSTEM_PROMPT + "\n\n" + prompt
-
-        # Collect agent events locally so we can scan for agent_ask_user events
-        # after the agent finishes. We still forward every event to the graph
-        # stream writer for live streaming.
-        collected_events: list[dict[str, Any]] = []
-
-        def _forward_event(event: dict) -> None:
-            collected_events.append(event)
-            writer(event)
-
-        result = await run_agent_node(
-            state=state,
-            agent_runner=agent_runner,
-            agent_type="triage",
-            prompt=prompt,
-            model=model,
-            tools=["Read", "Glob", "Grep"],
-            timeout_seconds=180,
-            on_event=_forward_event,
-            credentials=credentials,
-            config=config,
+    if agent_runner is None or container_id is None:
+        raise SandboxRequiredError(
+            "triage_node requires a sandbox (agent_runner and container_id). "
+            "The legacy in-process triage fallback was removed in Plan A finalisation "
+            "(2026-04-28). Ensure the sandbox is initialised before triage runs."
         )
 
-        # Parse triage decision from agent output
-        if result.get("agent_outputs"):
-            last = result["agent_outputs"][-1]
-            if not last.get("is_error"):
-                from athanor.orchestration.nodes.triage import apply_repo_preferences_override
-                from athanor.orchestration.state import TriageParseError
-                from athanor.safety.error_codes import ErrorCode
+    # Run triage inside sandbox via AgentRunner
+    from athanor.orchestration.nodes.triage import _TRIAGE_SYSTEM_PROMPT, parse_triage_response
 
-                try:
-                    decision = parse_triage_response(last.get("output", ""))
-                    decision = await apply_repo_preferences_override(
-                        decision,
-                        state.get("repo", ""),
-                        config["configurable"].get("repo_preferences_repo"),
-                    )
-                    result["pipeline_config"] = decision
-                    result["current_stage"] = "triage_complete"
-                except TriageParseError as exc:
-                    logger.error("triage_parse_error", error=str(exc))
-                    writer({"type": "error", "message": f"Triage parse failed: {exc}"})
-                    return {
-                        "current_stage": "failed",
-                        "errors": [f"triage_malformed: {exc}"],
-                        "error_code": ErrorCode.TRIAGE_MALFORMED.value,
-                    }
-    else:
-        # Fallback: run triage directly via Agent SDK (no sandbox)
-        result = await run_triage_node(state, config=config, model=model)
-        collected_events = []
+    repo = state.get("repo", "")
+    task = state.get("task", "")
+    issue_number = state.get("issue_number")
+    additional = state.get("additional_context", "")
+
+    prompt = f"Repository: {repo}\n"
+    if issue_number:
+        prompt += f"Issue #{issue_number}\n"
+    prompt += f"\nTask:\n{task}"
+    if additional:
+        prompt += f"\n\nPrevious Q&A:\n{additional}"
+
+    # Prepend system prompt since sandbox runner doesn't receive it separately
+    prompt = _TRIAGE_SYSTEM_PROMPT + "\n\n" + prompt
+
+    # Collect agent events locally so we can scan for agent_ask_user events
+    # after the agent finishes. We still forward every event to the graph
+    # stream writer for live streaming.
+    collected_events: list[dict[str, Any]] = []
+
+    def _forward_event(event: dict) -> None:
+        collected_events.append(event)
+        writer(event)
+
+    result = await run_agent_node(
+        state=state,
+        agent_runner=agent_runner,
+        agent_type="triage",
+        prompt=prompt,
+        model=model,
+        tools=["Read", "Glob", "Grep"],
+        timeout_seconds=180,
+        on_event=_forward_event,
+        credentials=credentials,
+        config=config,
+    )
+
+    # Parse triage decision from agent output
+    if result.get("agent_outputs"):
+        last = result["agent_outputs"][-1]
+        if not last.get("is_error"):
+            from athanor.orchestration.nodes.triage import apply_repo_preferences_override
+            from athanor.orchestration.state import TriageParseError
+            from athanor.safety.error_codes import ErrorCode
+
+            try:
+                decision = parse_triage_response(last.get("output", ""))
+                decision = await apply_repo_preferences_override(
+                    decision,
+                    state.get("repo", ""),
+                    config["configurable"].get("repo_preferences_repo"),
+                )
+                result["pipeline_config"] = decision
+                result["current_stage"] = "triage_complete"
+            except TriageParseError as exc:
+                logger.error("triage_parse_error", error=str(exc))
+                writer({"type": "error", "message": f"Triage parse failed: {exc}"})
+                return {
+                    "current_stage": "failed",
+                    "errors": [f"triage_malformed: {exc}"],
+                    "error_code": ErrorCode.TRIAGE_MALFORMED.value,
+                }
 
     # Enforce the job-wide ask_user cap on any agent_ask_user events from
     # the triage agent before processing the needs_info action.
@@ -282,47 +287,43 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         updated = {**state, "additional_context": additional}
         writer({"type": "progress", "message": "Re-running triage with answers"})
 
-        if agent_runner and container_id:
-            prompt += f"\n\nPrevious Q&A:\n{additional}"
-            result = await run_agent_node(
-                state=updated,
-                agent_runner=agent_runner,
-                agent_type="triage",
-                prompt=prompt,
-                model=model,
-                tools=["Read", "Glob", "Grep"],
-                timeout_seconds=180,
-                on_event=_forward_event,
-                credentials=credentials,
-                config=config,
-            )
-            if result.get("agent_outputs"):
-                last = result["agent_outputs"][-1]
-                if not last.get("is_error"):
-                    from athanor.orchestration.nodes.triage import apply_repo_preferences_override
-                    from athanor.orchestration.state import TriageParseError
-                    from athanor.safety.error_codes import ErrorCode
+        prompt += f"\n\nPrevious Q&A:\n{additional}"
+        result = await run_agent_node(
+            state=updated,
+            agent_runner=agent_runner,
+            agent_type="triage",
+            prompt=prompt,
+            model=model,
+            tools=["Read", "Glob", "Grep"],
+            timeout_seconds=180,
+            on_event=_forward_event,
+            credentials=credentials,
+            config=config,
+        )
+        if result.get("agent_outputs"):
+            last = result["agent_outputs"][-1]
+            if not last.get("is_error"):
+                from athanor.orchestration.nodes.triage import apply_repo_preferences_override
+                from athanor.orchestration.state import TriageParseError
+                from athanor.safety.error_codes import ErrorCode
 
-                    try:
-                        decision = parse_triage_response(last.get("output", ""))
-                        decision = await apply_repo_preferences_override(
-                            decision,
-                            updated.get("repo", ""),
-                            config["configurable"].get("repo_preferences_repo"),
-                        )
-                        result["pipeline_config"] = decision
-                        result["current_stage"] = "triage_complete"
-                    except TriageParseError as exc:
-                        logger.error("triage_parse_error", error=str(exc))
-                        writer({"type": "error", "message": f"Triage parse failed: {exc}"})
-                        return {
-                            "current_stage": "failed",
-                            "errors": [f"triage_malformed: {exc}"],
-                            "error_code": ErrorCode.TRIAGE_MALFORMED.value,
-                        }
-        else:
-            result = await run_triage_node(updated, config=config, model=model)
-            collected_events = []
+                try:
+                    decision = parse_triage_response(last.get("output", ""))
+                    decision = await apply_repo_preferences_override(
+                        decision,
+                        updated.get("repo", ""),
+                        config["configurable"].get("repo_preferences_repo"),
+                    )
+                    result["pipeline_config"] = decision
+                    result["current_stage"] = "triage_complete"
+                except TriageParseError as exc:
+                    logger.error("triage_parse_error", error=str(exc))
+                    writer({"type": "error", "message": f"Triage parse failed: {exc}"})
+                    return {
+                        "current_stage": "failed",
+                        "errors": [f"triage_malformed: {exc}"],
+                        "error_code": ErrorCode.TRIAGE_MALFORMED.value,
+                    }
 
         # Enforce the cap again on the re-run's events (state now has updated rounds).
         pending_questions = _extract_ask_user_events({"events": collected_events}, calling_node="triage")

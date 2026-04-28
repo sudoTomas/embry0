@@ -2,7 +2,6 @@ import pytest
 
 from athanor.sandbox.github.git_ops import (
     build_clone_url,
-    build_credential_helper_script,
     build_sandbox_credential_config_cmd,
 )
 
@@ -12,12 +11,6 @@ _VALID_TOKEN = "a" * 43  # 43 alphanumeric chars — within [40,80] range
 def test_build_clone_url():
     url = build_clone_url("owner/repo")
     assert url == "https://github.com/owner/repo.git"
-
-
-def test_build_credential_helper_script():
-    script = build_credential_helper_script("http://git-proxy:8081")
-    assert "curl" in script
-    assert "http://git-proxy:8081/git-credentials" in script
 
 
 def test_build_sandbox_credential_config_cmd_valid_url():

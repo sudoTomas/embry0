@@ -1,10 +1,10 @@
 import json
 from dataclasses import dataclass
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
-from athanor.orchestration.nodes.triage import parse_triage_response, run_triage_node
+from athanor.orchestration.nodes.triage import parse_triage_response
 
 
 def test_parse_triage_response_proceed():
@@ -93,183 +93,81 @@ class MockAgentResult:
     usage: dict | None = None
 
 
+@pytest.mark.skip(reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
+                  "Rewrite using a real agent_runner mock + container_id if coverage of "
+                  "run_triage_node is needed.")
 @pytest.mark.asyncio
 async def test_run_triage_node_success():
-    """Verify triage node calls Agent SDK and parses the response."""
-    triage_output = json.dumps(
-        {
-            "action": "proceed",
-            "confidence": 0.9,
-            "pipeline_template": "standard",
-            "pipeline_config": {
-                "sandbox_profile": "python-3.12",
-                "agent_models": {"developer": "claude-sonnet-4-6"},
-                "budget_usd": 10.0,
-            },
-            "reasoning": "Clear task.",
-        }
-    )
-
-    mock_result = MockAgentResult(
-        success=True, raw_output=triage_output, usage={"input_tokens": 100, "output_tokens": 50}
-    )
-
-    state = {
-        "repo": "owner/repo",
-        "task": "Fix the auth bug in login.py",
-        "issue_number": 42,
-    }
-
-    with patch("athanor.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
-        result = await run_triage_node(state=state)
-
-    assert result["pipeline_config"]["action"] == "proceed"
-    assert result["current_stage"] == "triage_complete"
+    """Skipped — run_triage_node (in-process SDK path) was deleted."""
 
 
+@pytest.mark.skip(reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
+                  "apply_repo_preferences_override is covered directly below.")
 @pytest.mark.asyncio
 async def test_repo_preferences_override_sandbox_profile():
-    """A repo_preferences row with sandbox_profile must override the LLM-chosen
-    value in ``pipeline_config.sandbox_profile``, regardless of what triage
-    decided."""
-    triage_output = json.dumps(
-        {
-            "action": "proceed",
-            "confidence": 0.9,
-            "pipeline_template": "standard",
-            "pipeline_config": {
-                "sandbox_profile": "python-3.12",
-                "agent_models": {"developer": "claude-sonnet-4-6"},
-                "budget_usd": 10.0,
-            },
-            "reasoning": "Clear task.",
-        }
-    )
-
-    mock_result = MockAgentResult(
-        success=True, raw_output=triage_output, usage={"input_tokens": 100, "output_tokens": 50}
-    )
-
-    prefs_repo = AsyncMock()
-    prefs_repo.get = AsyncMock(
-        return_value={
-            "repo": "acme/widgets",
-            "sandbox_profile": "java-17",
-            "language_hint": "java",
-            "notes": "",
-            "updated_at": None,
-        }
-    )
-
-    state = {"repo": "acme/widgets", "task": "Do the thing", "issue_number": 7}
-    graph_config = {"configurable": {"repo_preferences_repo": prefs_repo}}
-
-    with patch("athanor.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
-        result = await run_triage_node(state=state, config=graph_config)
-
-    prefs_repo.get.assert_awaited_once_with("acme/widgets")
-    assert result["pipeline_config"]["pipeline_config"]["sandbox_profile"] == "java-17"
+    """Skipped — run_triage_node (in-process SDK path) was deleted."""
 
 
+@pytest.mark.skip(reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
+                  "apply_repo_preferences_override is covered directly below.")
 @pytest.mark.asyncio
 async def test_no_repo_preferences_leaves_llm_choice_intact():
-    """Without a preferences row, the LLM-picked sandbox_profile is preserved."""
-    triage_output = json.dumps(
-        {
-            "action": "proceed",
-            "confidence": 0.9,
-            "pipeline_template": "standard",
-            "pipeline_config": {
-                "sandbox_profile": "python-3.12",
-                "agent_models": {"developer": "claude-sonnet-4-6"},
-            },
-            "reasoning": "ok",
-        }
-    )
-    mock_result = MockAgentResult(
-        success=True, raw_output=triage_output, usage={"input_tokens": 10, "output_tokens": 5}
-    )
-
-    prefs_repo = AsyncMock()
-    prefs_repo.get = AsyncMock(return_value=None)
-
-    state = {"repo": "acme/widgets", "task": "noop", "issue_number": 1}
-    graph_config = {"configurable": {"repo_preferences_repo": prefs_repo}}
-
-    with patch("athanor.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
-        result = await run_triage_node(state=state, config=graph_config)
-
-    assert result["pipeline_config"]["pipeline_config"]["sandbox_profile"] == "python-3.12"
+    """Skipped — run_triage_node (in-process SDK path) was deleted."""
 
 
+@pytest.mark.skip(reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
+                  "apply_repo_preferences_override is covered directly below.")
 @pytest.mark.asyncio
 async def test_repo_preferences_without_sandbox_profile_keeps_llm_choice():
-    """A preferences row with sandbox_profile=None must not overwrite the LLM's pick."""
-    triage_output = json.dumps(
-        {
-            "action": "proceed",
-            "confidence": 0.9,
-            "pipeline_template": "standard",
-            "pipeline_config": {"sandbox_profile": "python-3.12"},
-            "reasoning": "ok",
-        }
-    )
-    mock_result = MockAgentResult(success=True, raw_output=triage_output, usage={"input_tokens": 5, "output_tokens": 5})
+    """Skipped — run_triage_node (in-process SDK path) was deleted."""
 
-    prefs_repo = AsyncMock()
-    prefs_repo.get = AsyncMock(
-        return_value={
-            "repo": "acme/widgets",
-            "sandbox_profile": None,
-            "language_hint": "python",
-            "notes": "",
-            "updated_at": None,
-        }
-    )
 
-    state = {"repo": "acme/widgets", "task": "noop"}
-    graph_config = {"configurable": {"repo_preferences_repo": prefs_repo}}
+@pytest.mark.skip(reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
+                  "Low-confidence escalation logic lives in triage_node (sandbox path).")
+@pytest.mark.asyncio
+async def test_low_confidence_triggers_needs_info():
+    """Skipped — run_triage_node (in-process SDK path) was deleted."""
 
-    with patch("athanor.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
-        result = await run_triage_node(state=state, config=graph_config)
 
-    assert result["pipeline_config"]["pipeline_config"]["sandbox_profile"] == "python-3.12"
+# ---------------------------------------------------------------------------
+# Direct unit tests for apply_repo_preferences_override (still live)
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_low_confidence_triggers_needs_info():
-    """Verify that a 'proceed' decision below confidence_threshold is escalated to needs_info."""
-    triage_output = json.dumps(
-        {
-            "action": "proceed",
-            "confidence": 0.3,
-            "pipeline_template": "standard",
-            "pipeline_config": {
-                "sandbox_profile": "python-3.12",
-                "agent_models": {"developer": "claude-sonnet-4-6"},
-                "budget_usd": 10.0,
-            },
-            "reasoning": "Vague requirements, low confidence.",
-        }
-    )
+async def test_apply_repo_preferences_override_sets_sandbox_profile():
+    """apply_repo_preferences_override replaces sandbox_profile when prefs have one."""
+    from athanor.orchestration.nodes.triage import apply_repo_preferences_override
 
-    mock_result = MockAgentResult(
-        success=True, raw_output=triage_output, usage={"input_tokens": 100, "output_tokens": 50}
-    )
+    prefs_repo = AsyncMock()
+    prefs_repo.get = AsyncMock(return_value={"repo": "acme/w", "sandbox_profile": "java-17"})
+    decision = {"pipeline_config": {"sandbox_profile": "python-3.12"}}
 
-    state = {
-        "repo": "owner/repo",
-        "task": "Do something with the thing",
-        "issue_number": 99,
-    }
+    result = await apply_repo_preferences_override(decision, "acme/w", prefs_repo)
 
-    with patch("athanor.agents.sdk.run_agent", new_callable=AsyncMock, return_value=mock_result):
-        result = await run_triage_node(state=state, confidence_threshold=0.5)
+    prefs_repo.get.assert_awaited_once_with("acme/w")
+    assert result["pipeline_config"]["sandbox_profile"] == "java-17"
 
-    assert result["current_stage"] == "triage_complete"
-    pipeline_config = result["pipeline_config"]
-    assert pipeline_config["action"] == "needs_info"
-    assert pipeline_config["confidence"] == 0.3
-    assert len(pipeline_config["questions"]) == 1
-    assert "0.3" in pipeline_config["reasoning"]
-    assert "0.5" in pipeline_config["reasoning"]
+
+@pytest.mark.asyncio
+async def test_apply_repo_preferences_override_skips_null_profile():
+    """A preferences row with sandbox_profile=None must not overwrite the LLM's pick."""
+    from athanor.orchestration.nodes.triage import apply_repo_preferences_override
+
+    prefs_repo = AsyncMock()
+    prefs_repo.get = AsyncMock(return_value={"repo": "acme/w", "sandbox_profile": None})
+    decision = {"pipeline_config": {"sandbox_profile": "python-3.12"}}
+
+    result = await apply_repo_preferences_override(decision, "acme/w", prefs_repo)
+
+    assert result["pipeline_config"]["sandbox_profile"] == "python-3.12"
+
+
+@pytest.mark.asyncio
+async def test_apply_repo_preferences_override_no_prefs_repo():
+    """Without a prefs_repo, the decision is returned unchanged."""
+    from athanor.orchestration.nodes.triage import apply_repo_preferences_override
+
+    decision = {"pipeline_config": {"sandbox_profile": "python-3.12"}}
+    result = await apply_repo_preferences_override(decision, "acme/w", None)
+    assert result == decision

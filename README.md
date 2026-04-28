@@ -575,6 +575,7 @@ Athanor uses environment variables for infrastructure config and API endpoints f
 | `TELEGRAM_WEBHOOK_URL` | — | Public URL for Telegram callback (e.g. Cloudflare tunnel) |
 | `TRIGGER_LABELS` | `Athanor` | GitHub labels that trigger jobs |
 | `ENVIRONMENT_SECRET_KEY` | — | Fernet key for encrypting env var secrets at rest |
+| `PROXY_ADMIN_TOKEN` | — | Required, gates the credential proxies' admin endpoints. Generate with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`. |
 | `PAUSED_JOB_TTL_HOURS` | `48` | Hours before a paused job's sandbox is expired |
 
 See `.env.example` for the complete list.
