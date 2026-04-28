@@ -24,11 +24,21 @@ async def telegram_callback(request: Request) -> dict:
        pipeline when all blocking inputs are answered.
     2. Callback query (inline button click): acknowledges via answerCallbackQuery.
     """
+    import hmac
+
     expected_secret = getattr(request.app.state, "telegram_webhook_secret", "")
-    if expected_secret:
-        provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if provided != expected_secret:
-            return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    if not expected_secret:
+        # Fail-closed: if the runtime secret is somehow empty (startup race or
+        # misconfig), do NOT accept the request. 503 distinguishes "server is
+        # not ready to authenticate" from 401 ("your auth was wrong").
+        logger.warning("telegram_callback_unconfigured")
+        return JSONResponse(
+            {"ok": False, "error": "telegram_callback_unconfigured"},
+            status_code=503,
+        )
+    provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not hmac.compare_digest(provided, expected_secret):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
 
     try:
         update = await request.json()
