@@ -171,7 +171,13 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         # Prepend system prompt since sandbox runner doesn't receive it separately
         prompt = _TRIAGE_SYSTEM_PROMPT + "\n\n" + prompt
 
+        # Collect agent events locally so we can scan for agent_ask_user events
+        # after the agent finishes. We still forward every event to the graph
+        # stream writer for live streaming.
+        collected_events: list[dict[str, Any]] = []
+
         def _forward_event(event: dict) -> None:
+            collected_events.append(event)
             writer(event)
 
         result = await run_agent_node(
@@ -215,6 +221,21 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     else:
         # Fallback: run triage directly via Agent SDK (no sandbox)
         result = await run_triage_node(state, config=config, model=model)
+        collected_events = []
+
+    # Enforce the job-wide ask_user cap on any agent_ask_user events from
+    # the triage agent before processing the needs_info action.
+    pending_questions = _extract_ask_user_events({"events": collected_events})
+    if pending_questions:
+        from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
+
+        exhausted, cap_updates = _enforce_ask_user_cap(
+            state, pending_questions, job_id_for_log=state.get("job_id")
+        )
+        if exhausted:
+            writer({"type": "node_completed", "node": "triage", "action": "failed"})
+            return cap_updates
+        result = {**result, **cap_updates, "current_stage": "triage_asked_user"}
 
     # Check needs_info → interrupt
     pipeline_config = result.get("pipeline_config", {})
@@ -290,6 +311,20 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                         }
         else:
             result = await run_triage_node(updated, config=config, model=model)
+            collected_events = []
+
+        # Enforce the cap again on the re-run's events (state now has updated rounds).
+        pending_questions = _extract_ask_user_events({"events": collected_events})
+        if pending_questions:
+            from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
+
+            exhausted, cap_updates = _enforce_ask_user_cap(
+                {**state, **result}, pending_questions, job_id_for_log=state.get("job_id")
+            )
+            if exhausted:
+                writer({"type": "node_completed", "node": "triage", "action": "failed"})
+                return cap_updates
+            result = {**result, **cap_updates, "current_stage": "triage_asked_user"}
 
     writer({"type": "node_completed", "node": "triage", "action": result.get("pipeline_config", {}).get("action")})
     return result
@@ -495,32 +530,20 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     }
 
     if pending_questions:
-        # Cycle guard: cap agent-question rounds at 5 so a pathological agent
-        # can't loop forever on human-in-the-loop. After the cap, treat it as
-        # a workflow failure with a clear error.
-        current_rounds = int(state.get("agent_question_rounds", 0) or 0)
-        max_rounds = 5
-        if current_rounds >= max_rounds:
-            from athanor.safety.error_codes import ErrorCode
+        from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
 
-            logger.warning(
-                "agent_question_rounds_exceeded",
-                rounds=current_rounds,
-                max_rounds=max_rounds,
-                job_id=state.get("job_id"),
-            )
-            updates["current_stage"] = "failed"
-            updates["agent_questions_exhausted"] = True
-            updates["error_code"] = ErrorCode.MAX_AGENT_QUESTIONS.value
-            updates["errors"] = [f"Agent exceeded {max_rounds} rounds of asking the user — giving up."]
+        exhausted, cap_updates = _enforce_ask_user_cap(
+            state, pending_questions, job_id_for_log=state.get("job_id")
+        )
+        updates.update(cap_updates)
+        if exhausted:
+            pass  # current_stage and error fields already set in updates
         else:
-            updates["pending_agent_questions"] = pending_questions
             updates["current_stage"] = "developer_asked_user"
-            updates["agent_question_rounds"] = current_rounds + 1
             logger.info(
                 "developer_asked_user",
                 question_count=len(pending_questions),
-                rounds=current_rounds + 1,
+                rounds=updates["agent_question_rounds"],
                 job_id=state.get("job_id"),
             )
 
@@ -616,7 +639,13 @@ Return ONLY a JSON object:
     "summary": "Overall assessment"
 }}"""
 
+    # Collect agent events locally so we can scan for agent_ask_user events
+    # after the agent finishes. We still forward every event to the graph
+    # stream writer for live streaming.
+    collected_events: list[dict[str, Any]] = []
+
     def _forward_event(event: dict) -> None:
+        collected_events.append(event)
         writer(event)
 
     result = await run_agent_node(
@@ -650,21 +679,41 @@ Return ONLY a JSON object:
 
     updates: dict[str, Any] = {**result, "current_stage": "review_complete"}
 
+    # Scan the agent's event stream for `agent_ask_user` events and enforce
+    # the job-wide cap before routing.
+    pending_questions = _extract_ask_user_events({"events": collected_events})
+    if pending_questions:
+        from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
+
+        exhausted, cap_updates = _enforce_ask_user_cap(
+            state, pending_questions, job_id_for_log=state.get("job_id")
+        )
+        updates.update(cap_updates)
+        if exhausted:
+            pass  # terminal failure shape already in updates
+        else:
+            updates["current_stage"] = "review_asked_user"
+
     # Self-routing: inline check_review_decision against the merged agent_outputs
     # (existing state plus whatever this review run appended). Approved → END,
     # changes_requested → retry (or max_retries if retry cap hit).
-    from athanor.orchestration.routing.conditions import check_review_decision
-
-    merged_outputs = list(state.get("agent_outputs", []) or []) + list(result.get("agent_outputs", []) or [])
-    merged_state = {**state, "agent_outputs": merged_outputs}
-    decision = check_review_decision(merged_state)
-
-    if decision == "approved":
-        goto: Any = END
-    elif decision == "max_retries":
-        goto = "max_retries"
+    if updates.get("agent_questions_exhausted") or state.get("agent_questions_exhausted"):
+        goto: Any = "max_retries"
+    elif updates.get("pending_agent_questions") or state.get("pending_agent_questions"):
+        goto = "ask_user_interrupt"
     else:
-        goto = "retry"
+        from athanor.orchestration.routing.conditions import check_review_decision
+
+        merged_outputs = list(state.get("agent_outputs", []) or []) + list(result.get("agent_outputs", []) or [])
+        merged_state = {**state, "agent_outputs": merged_outputs}
+        decision = check_review_decision(merged_state)
+
+        if decision == "approved":
+            goto = END
+        elif decision == "max_retries":
+            goto = "max_retries"
+        else:
+            goto = "retry"
 
     return Command(goto=goto, update=updates)
 

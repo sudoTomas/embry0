@@ -225,3 +225,44 @@ async def run_agent_node(
         auth_mode=invocation.auth_mode,
     )
     return updates
+
+
+def _enforce_ask_user_cap(
+    state: dict[str, Any],
+    pending_questions: list[dict[str, Any]],
+    *,
+    max_rounds: int = 5,
+    job_id_for_log: str | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """Apply the job-wide ask_user round cap.
+
+    Returns ``(exhausted, updates)``:
+    - ``exhausted=True`` means the cap was hit; ``updates`` carries the
+      terminal-failure shape (``current_stage="failed"``, ``error_code``,
+      ``errors``, ``agent_questions_exhausted=True``).
+    - ``exhausted=False`` means the cap is not yet hit; ``updates`` carries
+      ``pending_agent_questions`` and the incremented ``agent_question_rounds``.
+
+    The cap is incremented on every node invocation that produces questions
+    (triage, developer, review), so the cap is job-wide rather than per-node.
+    """
+    from athanor.safety.error_codes import ErrorCode
+
+    current_rounds = int(state.get("agent_question_rounds", 0) or 0)
+    if current_rounds >= max_rounds:
+        logger.warning(
+            "agent_question_rounds_exceeded",
+            rounds=current_rounds,
+            max_rounds=max_rounds,
+            job_id=job_id_for_log or state.get("job_id"),
+        )
+        return True, {
+            "current_stage": "failed",
+            "agent_questions_exhausted": True,
+            "error_code": ErrorCode.MAX_AGENT_QUESTIONS.value,
+            "errors": [f"Agent exceeded {max_rounds} rounds of asking the user — giving up."],
+        }
+    return False, {
+        "pending_agent_questions": pending_questions,
+        "agent_question_rounds": current_rounds + 1,
+    }
