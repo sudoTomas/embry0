@@ -140,6 +140,60 @@ class DockerClient:
         cmd.extend(["network", action, network, container])
         return cmd
 
+    async def inspect_network(self, name: str) -> dict:
+        """Return parsed `docker network inspect <name>` output.
+
+        Raises RuntimeError if the network does not exist or inspect fails.
+        """
+        import json as _json
+
+        cmd = self._build_base_cmd()
+        cmd.extend(["network", "inspect", name])
+        output = await self.run_cmd(cmd, timeout=15)
+        try:
+            data = _json.loads(output)
+        except _json.JSONDecodeError as exc:
+            raise RuntimeError(f"docker network inspect {name} returned non-JSON: {output[:200]}") from exc
+        if not isinstance(data, list) or not data:
+            raise RuntimeError(f"docker network inspect {name} returned empty list")
+        return data[0]
+
+    async def assert_sandbox_networks_or_die(self) -> None:
+        """Verify sandbox-restricted has masquerade disabled and sandbox-internet exists.
+
+        Refuses to return on misconfiguration. Called from app startup before
+        any proxy launches; failure means the orchestrator does not start.
+        """
+        try:
+            restricted = await self.inspect_network("sandbox-restricted")
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "sandbox-restricted network missing — refusing to start. "
+                "Run infra/scripts/setup-sandbox-networks.sh inside DinD; "
+                "see docs/architecture.md § Docker Network Segmentation. "
+                f"(inspect error: {exc})"
+            ) from exc
+
+        opts = (restricted.get("Options") or {})
+        masq = opts.get("com.docker.network.bridge.enable_ip_masquerade")
+        if masq != "false":
+            raise RuntimeError(
+                "sandbox-restricted exists but enable_ip_masquerade is "
+                f"{masq!r} (expected 'false'). Sandboxes would have direct "
+                "internet egress. Delete the network and re-run "
+                "infra/scripts/setup-sandbox-networks.sh."
+            )
+
+        try:
+            await self.inspect_network("sandbox-internet")
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "sandbox-internet network missing — refusing to start. "
+                "Run infra/scripts/setup-sandbox-networks.sh inside DinD."
+            ) from exc
+
+        logger.info("sandbox_networks_verified")
+
     async def run_cmd(self, cmd: list[str], timeout: int = 60) -> str:
         """Execute a Docker command and return stdout.
 

@@ -263,14 +263,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ),
         )
 
-    # Auto-create sandbox networks (idempotent) — must happen before proxy startup
-    # because ProxyManager attaches proxy containers to sandbox-restricted.
-    for net_name in ("sandbox-restricted", "sandbox-internet"):
-        try:
-            base_cmd = docker._build_base_cmd()
-            await docker.run_cmd(base_cmd + ["network", "create", "--driver", "bridge", net_name])
-        except RuntimeError:
-            pass  # Network already exists
+    # Verify sandbox networks are present and restricted. We do NOT auto-create:
+    # silently making `sandbox-restricted` without enable_ip_masquerade=false would
+    # leave sandboxes with direct internet egress and bypass every credential proxy.
+    # The init-sandbox-networks compose service runs setup-sandbox-networks.sh once
+    # at stack start. If it didn't run (or its output was clobbered), refuse to boot.
+    await docker.assert_sandbox_networks_or_die()
 
     # Start proxy services
     await proxy_mgr.start(
