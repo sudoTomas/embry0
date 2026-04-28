@@ -1,3 +1,5 @@
+import pytest
+
 from athanor.safety.patterns import is_dangerous_command, normalize_command
 
 
@@ -69,3 +71,23 @@ class TestIsDangerousCommand:
     def test_python_subprocess(self):
         cmd = 'python3 -c \'import subprocess; subprocess.run(["rm", "-rf", "/"])\''
         assert is_dangerous_command(cmd) is not None
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo $CLAUDE_CODE_OAUTH_TOKEN",
+    "echo ${CLAUDE_CODE_OAUTH_TOKEN}",
+    "echo $ANTHROPIC_API_KEY",
+    "echo $GITHUB_TOKEN",
+    "head -c 9999 /proc/self/environ",
+    "awk '{print}' /proc/self/environ",
+    "xxd /proc/self/environ",
+    "od -c /proc/self/environ",
+    "less /proc/self/environ",
+    "python -c \"import os; print(os.environ['CLAUDE_CODE_OAUTH_TOKEN'])\"",
+    "python3 -c 'open(\"/proc/self/environ\").read()'",
+    "echo $MY_API_KEY",  # generic sensitive-name pattern
+    "echo $MY_PASSWORD",
+    "echo $SESSION_COOKIE",
+])
+def test_blocks_env_exfil_pattern(cmd):
+    assert is_dangerous_command(cmd) is not None, f"expected to block: {cmd!r}"

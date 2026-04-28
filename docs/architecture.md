@@ -101,6 +101,12 @@ graph TB
 | `sandbox-restricted` | Proxy services, Sandbox containers | No internet, proxy-only access |
 | `sandbox-internet` | Sandbox containers (research only) | Filtered egress for web search |
 
+> **Networks are asserted at orchestrator startup, not auto-created.** The
+> orchestrator inspects each network and refuses to start if `sandbox-restricted`
+> lacks `enable_ip_masquerade=false`. The compose `init-sandbox-networks`
+> one-shot service runs `infra/scripts/setup-sandbox-networks.sh` inside DinD
+> as a prerequisite; the orchestrator depends on its successful completion.
+
 ### Services
 
 | Service | Image | Purpose | Resources |
@@ -369,6 +375,7 @@ graph LR
 | Command blocking | 34 regex patterns, NFKC unicode normalization, Glob path restriction, symlink defense via `os.path.realpath()` |
 | Code retention | None — repo cloned inside container, deleted on teardown |
 | OAuth credentials | Mounted read-only from orchestrator (`~/.claude`) |
+| Ring-3 enforcement | Asserted at orchestrator startup (refuses to boot if the installed `claude_agent_sdk` does not expose `hooks`). Per-run hook attachment is unconditional — no fall-back. The in-process executor fallback was removed in 2026-04 hardening. |
 
 **Sandbox env surface:** The container env contains only non-sensitive config: `ATHANOR_GIT_PROXY_URL` (just the proxy URL; not a secret), plus `CLAUDE_CODE_OAUTH_TOKEN` when Claude Max OAuth mode is active (see the Credentials row above). No `GITHUB_TOKEN`. No `ANTHROPIC_API_KEY`.
 
@@ -378,7 +385,7 @@ The `SandboxImageManager` handles image lifecycle inside DinD:
 
 - **Auto-build on startup** — computes SHA256 hash of `Dockerfile.sandbox` + sandbox source files, compares with image label `athanor.build-hash`, rebuilds if stale
 - **Profile-specific images** — `athanor-sandbox:{profile_name}` extends the base image with additional packages/commands
-- **Container reaper** — background task destroys containers older than 24 hours
+- **Container reaper** — background task destroys containers older than 24 hours, **unless the matching job is still active in the DB**. Active-status lookup failures fail closed (the reaper does nothing rather than risk killing live work).
 
 ---
 
@@ -398,6 +405,14 @@ A fourth proxy — the **per-job Athanor API proxy** that exposes CreateIssue / 
 | Git Remote Proxy | 9101 | `git clone/push` | Git credential helper response |
 | GitHub API Proxy | — | GitHub REST API (PRs, comments) | `Authorization: Bearer` header |
 | Athanor API Proxy | 9102 (deferred) | Athanor internal API (per-job) | Scoped to current issue/job |
+
+> **Per-sandbox bearer authentication.** Each credential proxy validates an
+> `Authorization: Bearer <token>` header on every request. Bearers are minted
+> by `ProxyManager.enroll_sandbox()` at sandbox-create time (one per sandbox),
+> stored in each proxy as `sha256(token)`, and verified with `hmac.compare_digest`.
+> The orchestrator's `GITHUB_TOKEN` and `ANTHROPIC_API_KEY` are never exposed
+> over the network; only sandbox-scoped bearers are. Bearers are revoked when
+> the sandbox is destroyed (`unenroll_sandbox`).
 
 ### Athanor API Proxy
 

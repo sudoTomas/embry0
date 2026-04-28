@@ -48,6 +48,14 @@ DANGEROUS_BASH_PATTERNS: list[str] = [
     r"\bgit\s+config\s+.*credential",
     # Symlink escape attempts
     r"\bln\s+-s\s+/(?!workspace\b)",
+    # Env-var exfiltration (CLAUDE_CODE_OAUTH_TOKEN exists in sandbox env by design;
+    # block reads via shell echo, /proc/self/environ, etc.)
+    r"\becho\s+\$(?:CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_(?:API|AUTH)_TOKEN|GITHUB_TOKEN)",
+    r"\b(head|tail|nl|tac|less|more|awk|xxd|od|strings)\s+.*?/proc/self/environ",
+    r"python[23]?\s+-c\s+.*os\.environ",
+    r"python[23]?\s+-c\s+.*open\(\s*['\"]/proc/self/environ",
+    # Generic: echo of any sensitive-named env var (paperclip-style heuristic)
+    r"\becho\s+\$\{?[A-Z_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTHORIZATION|COOKIE)[A-Z_]*\}?",
 ]
 
 

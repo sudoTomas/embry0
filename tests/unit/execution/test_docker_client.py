@@ -170,3 +170,35 @@ async def test_run_cmd_kills_subprocess_on_timeout(monkeypatch):
         await client.run_cmd(["docker", "ps"], timeout=1)
 
     assert killed, "subprocess was not killed on timeout"
+
+
+def test_run_cmd_includes_memory_swap_and_nofile():
+    cmd = DockerClient().build_run_cmd(image="img:latest", name="sandbox-test")
+    assert "--memory-swap=8g" in cmd
+    assert "--ulimit=nofile=4096:8192" in cmd
+
+
+def test_proxy_run_cmd_uses_env_file(tmp_path):
+    import os
+
+    cmd, env_file = DockerClient().build_run_proxy_cmd(
+        name="git-proxy",
+        image="athanor-proxy:latest",
+        network="sandbox-restricted",
+        env={"PROXY_TYPE": "git", "GITHUB_TOKEN": "x", "PROXY_ADMIN_TOKEN": "y"},
+    )
+    try:
+        assert "--env-file" in cmd
+        assert env_file in cmd
+        assert os.path.exists(env_file)
+        st = os.stat(env_file)
+        assert oct(st.st_mode & 0o777) == "0o600"
+        with open(env_file) as f:
+            content = f.read()
+        assert "PROXY_TYPE=git" in content
+        assert "GITHUB_TOKEN=x" in content
+        assert "PROXY_ADMIN_TOKEN=y" in content
+        # Env values must not appear in the argv
+        assert all("GITHUB_TOKEN=" not in arg for arg in cmd)
+    finally:
+        os.unlink(env_file)

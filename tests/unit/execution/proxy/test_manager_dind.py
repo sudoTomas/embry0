@@ -17,8 +17,10 @@ _ADMIN_TOKEN = "test-admin-token"
 def docker_mock():
     docker = MagicMock()
     docker.run_cmd = AsyncMock(return_value=b"ok")
+    # build_run_proxy_cmd now returns (cmd, env_file_path) — return a fake tuple so
+    # _launch can unpack it; the env_file_path uses /dev/null so os.unlink is a no-op.
     docker.build_run_proxy_cmd = MagicMock(
-        side_effect=lambda **kwargs: ["docker", "run", "FAKE", kwargs.get("name", "")]
+        side_effect=lambda **kwargs: (["docker", "run", "FAKE", kwargs.get("name", "")], "/dev/null")
     )
     docker.build_network_cmd = MagicMock(side_effect=lambda *args: ["docker", "network", *args])
     docker.build_rm_cmd = MagicMock(side_effect=lambda c: ["docker", "rm", "-f", c])
@@ -118,19 +120,18 @@ async def test_start_cleans_existing_containers_first(docker_mock):
 
 @pytest.mark.asyncio
 async def test_start_athanor_proxy_for_job_is_stub(docker_mock):
-    """The per-job Athanor API proxy is deferred — the method must return ''
-    and not crash so workflows that call it don't blow up at startup."""
+    """The per-job Athanor API proxy is deferred — the method must raise
+    NotImplementedError loudly rather than silently returning an empty URL."""
     pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
-    url = await pm.start_athanor_proxy_for_job(
-        issues_repo=None,
-        inputs_repo=None,
-        issue_id="iss-test",
-        job_id="job-test",
-        repo="owner/repo",
-        db=None,
-    )
-    assert url == ""
-    assert pm.athanor_proxy_url == ""
+    with pytest.raises(NotImplementedError, match="Athanor API proxy is deferred"):
+        await pm.start_athanor_proxy_for_job(
+            issues_repo=None,
+            inputs_repo=None,
+            issue_id="iss-test",
+            job_id="job-test",
+            repo="owner/repo",
+            db=None,
+        )
 
 
 @pytest.mark.asyncio

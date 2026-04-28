@@ -166,3 +166,16 @@ def test_default_policy_unknown_agent_falls_back_to_developer_tools() -> None:
     unknown = default_policy_for_agent("nonexistent_agent_type")
     developer = default_policy_for_agent("developer")
     assert unknown.allowed_tools == developer.allowed_tools
+
+
+def test_baseline_denies_workspace_claude_writes():
+    pol = default_policy_for_agent("developer")
+    assert "Write(/workspace/.claude/**)" in pol.deny_rules
+    assert "Edit(/workspace/.claude/**)" in pol.deny_rules
+
+
+def test_baseline_denies_glob_grep_for_host_paths():
+    pol = default_policy_for_agent("triage")
+    for path in ("/etc/**", "/root/**", "~/.ssh/**", "~/.aws/**", "~/.gnupg/**", "/proc/**"):
+        assert f"Glob({path})" in pol.deny_rules
+        assert f"Grep({path})" in pol.deny_rules

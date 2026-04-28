@@ -61,6 +61,8 @@ class DockerClient:
         cmd.append(f"--memory={memory}")
         cmd.append(f"--cpus={cpus}")
         cmd.append(f"--pids-limit={pids_limit}")
+        cmd.append(f"--memory-swap={memory}")  # equal to --memory => no swap
+        cmd.append("--ulimit=nofile=4096:8192")
 
         for cap in cap_drop or ["ALL"]:
             cmd.append(f"--cap-drop={cap}")
@@ -90,21 +92,39 @@ class DockerClient:
         image: str,
         network: str,
         env: dict[str, str],
-    ) -> list[str]:
-        """Build `docker run -d` for a proxy container.
+    ) -> tuple[list[str], str]:
+        """Build `docker run -d` for a proxy container, returning (cmd, env_file_path).
 
-        Proxies hold the orchestrator's credentials and are trusted (unlike
-        sandboxes). No cap-drop, no read-only fs — just a bare `docker run` on
-        the requested network with the env vars.
+        Proxies hold the orchestrator's credentials. Pass them via --env-file
+        (mode 0600) instead of -e KEY=VAL argv to keep them out of host
+        `ps -ef` output. Caller is responsible for unlinking env_file_path
+        after `docker run` returns (the container has snapshotted its env).
         """
+        import os
+        import tempfile
+
+        fd, env_file_path = tempfile.mkstemp(prefix=f"athanor-proxy-env-{name}-", suffix=".env")
+        try:
+            with os.fdopen(fd, "w") as f:
+                for key, value in env.items():
+                    # No quoting: docker --env-file does not interpret quotes;
+                    # value is taken literally up to newline.
+                    f.write(f"{key}={value}\n")
+            os.chmod(env_file_path, 0o600)
+        except Exception:
+            try:
+                os.unlink(env_file_path)
+            except OSError:
+                pass
+            raise
+
         cmd = self._build_base_cmd()
         cmd.extend(["run", "-d"])
         cmd.extend(["--name", name])
         cmd.append(f"--network={network}")
-        for key, value in env.items():
-            cmd.extend(["-e", f"{key}={value}"])
+        cmd.extend(["--env-file", env_file_path])
         cmd.append(image)
-        return cmd
+        return cmd, env_file_path
 
     def build_exec_cmd(
         self,

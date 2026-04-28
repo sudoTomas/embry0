@@ -133,6 +133,22 @@ _BASELINE_DENY_RULES: list[str] = [
     "Edit(/usr/**)",
     "Edit(/bin/**)",
     "Edit(/sbin/**)",
+    # Sandbox must not rewrite its own permission file
+    "Write(/workspace/.claude/**)",
+    "Edit(/workspace/.claude/**)",
+    # Cover Glob/Grep for the host-sensitive paths the existing Read denials cover
+    "Glob(/etc/**)",
+    "Glob(/root/**)",
+    "Glob(~/.ssh/**)",
+    "Glob(~/.aws/**)",
+    "Glob(~/.gnupg/**)",
+    "Glob(/proc/**)",
+    "Grep(/etc/**)",
+    "Grep(/root/**)",
+    "Grep(~/.ssh/**)",
+    "Grep(~/.aws/**)",
+    "Grep(~/.gnupg/**)",
+    "Grep(/proc/**)",
 ]
 
 # Ring-2 baseline: allow workspace ops and common developer commands.

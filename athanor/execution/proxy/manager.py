@@ -113,13 +113,21 @@ class ProxyManager:
         logger.info("proxy_manager_started", launched=list(self._launched))
 
     async def _launch(self, *, name: str, env: dict[str, str], attach_internet: bool) -> None:
-        run_cmd = self._docker.build_run_proxy_cmd(
+        import os
+
+        run_cmd, env_file_path = self._docker.build_run_proxy_cmd(
             name=name,
             image=_IMAGE,
             network=_RESTRICTED,
             env=env,
         )
-        await self._docker.run_cmd(run_cmd)
+        try:
+            await self._docker.run_cmd(run_cmd)
+        finally:
+            try:
+                os.unlink(env_file_path)
+            except OSError:
+                logger.warning("proxy_env_file_unlink_failed", path=env_file_path)
         self._launched.append(name)
         if attach_internet:
             connect_cmd = self._docker.build_network_cmd("connect", _INTERNET, name)
@@ -135,19 +143,18 @@ class ProxyManager:
         db: Any = None,
         port: int = 9102,
     ) -> str:
-        """[DEFERRED] Per-job Athanor API proxy is not yet running in DinD.
+        """Per-job Athanor API proxy — DEFERRED. See docs/architecture.md.
 
-        Workflows that depend on CreateIssue / RequestInput tools will not
-        receive a working proxy URL until this is reworked. Tracked separately.
+        Workflows that depend on CreateIssue / RequestInput / UpdateStatus
+        agent tools must not be registered until this is implemented.
+        Workflow registration validation rejects such templates; if a caller
+        somehow reaches this method, raise loudly rather than return ``""``.
         """
-        logger.warning(
-            "athanor_proxy_for_job_not_implemented",
-            job_id=job_id,
-            issue_id=issue_id,
-            msg="Per-job Athanor API proxy is deferred. CreateIssue/RequestInput tools unavailable.",
+        raise NotImplementedError(
+            "Athanor API proxy is deferred — see docs/architecture.md § Athanor "
+            "API Proxy. Workflows depending on CreateIssue/RequestInput/UpdateStatus "
+            "must not be registered yet."
         )
-        self.athanor_proxy_url = ""
-        return ""
 
     async def enroll_sandbox(self, sandbox_id: str) -> str:
         """Enroll a new sandbox with all running proxies. Returns the bearer token.
