@@ -441,7 +441,6 @@ def create_app(
     app = FastAPI(title=API_TITLE, version="0.1.0", lifespan=lifespan_override or lifespan)
     app.state.config = config
 
-    app.add_middleware(BodySizeMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=config.allowed_cors_origins_list,
@@ -451,6 +450,7 @@ def create_app(
     )
     app.add_middleware(RateLimitMiddleware, requests_per_minute=config.api_rate_limit_per_minute)
     app.add_middleware(CSRFMiddleware)
+    app.add_middleware(BodySizeMiddleware)
 
     @app.get("/health")
     async def health() -> dict:
