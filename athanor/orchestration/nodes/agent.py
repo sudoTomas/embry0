@@ -245,6 +245,11 @@ def _enforce_ask_user_cap(
 
     The cap is incremented on every node invocation that produces questions
     (triage, developer, review), so the cap is job-wide rather than per-node.
+
+    Reads ``agent_question_rounds`` from ``state``, not from any prior call's
+    output. Calling twice in the same node body increments only once because
+    ``state`` is captured at function entry — the second call sees the same
+    snapshot value, not the value written by the first call.
     """
     from athanor.safety.error_codes import ErrorCode
 

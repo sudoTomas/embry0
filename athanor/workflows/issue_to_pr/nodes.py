@@ -138,8 +138,15 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
     }
 
 
-async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-    """Run triage agent — via AgentRunner in sandbox if available, else direct SDK."""
+async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any] | Command:
+    """Run triage agent — via AgentRunner in sandbox if available, else direct SDK.
+
+    Returns a plain dict in the normal case (``route_after_triage`` decides the
+    next node via conditional edge). Returns a ``Command`` to self-route when
+    pending agent questions exist (→ ``ask_user_interrupt``) or the question
+    cap is exhausted (→ ``max_retries``), mirroring the pattern used by
+    ``developer_node`` and ``review_node``.
+    """
     import os
 
     from athanor.orchestration.nodes.triage import run_triage_node
@@ -225,7 +232,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
 
     # Enforce the job-wide ask_user cap on any agent_ask_user events from
     # the triage agent before processing the needs_info action.
-    pending_questions = _extract_ask_user_events({"events": collected_events})
+    pending_questions = _extract_ask_user_events({"events": collected_events}, calling_node="triage")
     if pending_questions:
         from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
 
@@ -234,8 +241,12 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         )
         if exhausted:
             writer({"type": "node_completed", "node": "triage", "action": "failed"})
-            return cap_updates
-        result = {**result, **cap_updates, "current_stage": "triage_asked_user"}
+            return Command(goto="max_retries", update=cap_updates)
+        writer({"type": "node_completed", "node": "triage", "action": "ask_user"})
+        return Command(
+            goto="ask_user_interrupt",
+            update={**result, **cap_updates, "current_stage": "triage_asked_user"},
+        )
 
     # Check needs_info → interrupt
     pipeline_config = result.get("pipeline_config", {})
@@ -314,7 +325,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             collected_events = []
 
         # Enforce the cap again on the re-run's events (state now has updated rounds).
-        pending_questions = _extract_ask_user_events({"events": collected_events})
+        pending_questions = _extract_ask_user_events({"events": collected_events}, calling_node="triage")
         if pending_questions:
             from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
 
@@ -323,8 +334,12 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             )
             if exhausted:
                 writer({"type": "node_completed", "node": "triage", "action": "failed"})
-                return cap_updates
-            result = {**result, **cap_updates, "current_stage": "triage_asked_user"}
+                return Command(goto="max_retries", update=cap_updates)
+            writer({"type": "node_completed", "node": "triage", "action": "ask_user"})
+            return Command(
+                goto="ask_user_interrupt",
+                update={**result, **cap_updates, "current_stage": "triage_asked_user"},
+            )
 
     writer({"type": "node_completed", "node": "triage", "action": result.get("pipeline_config", {}).get("action")})
     return result
@@ -347,13 +362,21 @@ def _format_question_text(question: str, category: str | None, options: list[str
     )
 
 
-def _extract_ask_user_events(agent_output: dict[str, Any]) -> list[dict[str, Any]]:
+def _extract_ask_user_events(
+    agent_output: dict[str, Any],
+    calling_node: str,
+) -> list[dict[str, Any]]:
     """Pull any agent_ask_user events out of the agent's streamed events.
 
     Returns a list of normalized question dicts: {question, category, options,
     asking_node, importance}. The ``question`` string is formatted with inline
     category/options markers so those context hints survive persistence
     through issue_inputs (which only has a plain ``question`` TEXT column).
+
+    ``calling_node`` is embedded in each question dict so that
+    ``ask_user_interrupt``, WS events, and persisted ``issue_inputs`` rows
+    correctly attribute the questions to the node that produced them
+    (``"triage"``, ``"developer"``, or ``"review"``).
     """
     events = agent_output.get("events", []) if isinstance(agent_output, dict) else []
     pending: list[dict[str, Any]] = []
@@ -367,7 +390,7 @@ def _extract_ask_user_events(agent_output: dict[str, Any]) -> list[dict[str, Any
                     "question": _format_question_text(raw_q, category, options),
                     "category": category,
                     "options": options,
-                    "asking_node": "developer",
+                    "asking_node": calling_node,
                     "importance": "blocking",
                 }
             )
@@ -488,7 +511,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
 
     # Scan the agent's event stream for `agent_ask_user` events. If present,
     # surface them to the graph so the router can divert to ask_user_interrupt.
-    pending_questions = _extract_ask_user_events({"events": collected_events})
+    pending_questions = _extract_ask_user_events({"events": collected_events}, calling_node="developer")
 
     # Try to extract PR URL from agent output
     pr_url = None
@@ -681,7 +704,7 @@ Return ONLY a JSON object:
 
     # Scan the agent's event stream for `agent_ask_user` events and enforce
     # the job-wide cap before routing.
-    pending_questions = _extract_ask_user_events({"events": collected_events})
+    pending_questions = _extract_ask_user_events({"events": collected_events}, calling_node="review")
     if pending_questions:
         from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
 

@@ -1,4 +1,4 @@
-"""developer_node returns Command with correct goto based on executor output."""
+"""developer_node / review_node / triage_node Command routing tests."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from langgraph.types import Command
 
-from athanor.workflows.issue_to_pr.nodes import developer_node, review_node
+from athanor.workflows.issue_to_pr.nodes import developer_node, review_node, triage_node
 
 
 @pytest.fixture(autouse=True)
@@ -273,3 +273,103 @@ async def test_developer_node_extracts_ask_user_from_events() -> None:
 
     assert result.goto == "ask_user_interrupt"
     assert result.update.get("pending_agent_questions") == [{"question": "which db?", "options": ["pg", "mysql"]}]
+
+
+# ---------------------------------------------------------------------------
+# Node-level cap wiring: triage_node and review_node actually call the helper
+# ---------------------------------------------------------------------------
+#
+# These tests feed each node a state with agent_question_rounds=5 and arrange
+# for run_agent_node to emit an agent_ask_user event via the on_event callback.
+# If a future refactor accidentally drops the _enforce_ask_user_cap call, the
+# node returns the wrong shape and the assertions here catch it.
+# The helper itself is unit-tested in tests/unit/orchestration/nodes/test_ask_user_cap.py.
+
+
+def _make_run_agent_node_with_event(event: dict[str, Any]):
+    """Return an AsyncMock for run_agent_node that fires ``event`` through the
+    ``on_event`` callback before returning a minimal success result."""
+
+    async def _side_effect(**kwargs):
+        on_event = kwargs.get("on_event")
+        if on_event is not None:
+            on_event(event)
+        return {
+            "agent_outputs": [
+                {
+                    "agent_type": kwargs.get("agent_type", "unknown"),
+                    "is_error": False,
+                    "output": '{"decision": "proceed"}',
+                    "cost_usd": 0.0,
+                    "duration_ms": 10,
+                    "tools_called": {},
+                }
+            ],
+            "total_cost_usd": 0.0,
+            "current_stage": "triage_complete",
+        }
+
+    return AsyncMock(side_effect=_side_effect)
+
+
+def _triage_config(agent_runner: object) -> dict:
+    """Build a minimal config dict that triage_node accepts."""
+    return {
+        "configurable": {
+            "agent_runner": agent_runner,
+            "credentials": {},
+            "repo_preferences_repo": None,
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_triage_node_enforces_ask_user_cap() -> None:
+    """triage_node must call _enforce_ask_user_cap and self-route to max_retries
+    when the job-wide cap (agent_question_rounds >= 5) is already exhausted."""
+    ask_event = {"type": "agent_ask_user", "question": "clarify?", "category": "general"}
+    mock_runner = object()  # non-None so the sandbox branch runs
+    mock_run_agent = _make_run_agent_node_with_event(ask_event)
+
+    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=mock_run_agent):
+        # Also stub parse_triage_response so we don't need real agent output parsing
+        with patch(
+            "athanor.orchestration.nodes.triage.parse_triage_response",
+            return_value={"action": "proceed"},
+        ):
+            state = _state(
+                sandbox_container_id="c1",
+                agent_question_rounds=5,  # cap already reached
+                agent_questions_exhausted=False,
+            )
+            result = await triage_node(state, config=_triage_config(mock_runner))
+
+    assert isinstance(result, Command), f"Expected Command, got {type(result)}"
+    assert result.goto == "max_retries", f"Expected max_retries, got {result.goto}"
+    assert result.update.get("current_stage") == "failed"
+    assert result.update.get("error_code") == "ERR_MAX_AGENT_QUESTIONS"
+    assert result.update.get("agent_questions_exhausted") is True
+
+
+@pytest.mark.asyncio
+async def test_review_node_enforces_ask_user_cap() -> None:
+    """review_node must call _enforce_ask_user_cap and self-route to max_retries
+    when the job-wide cap (agent_question_rounds >= 5) is already exhausted."""
+    ask_event = {"type": "agent_ask_user", "question": "is this safe?", "category": "general"}
+    mock_runner = object()  # non-None so review_node doesn't short-circuit
+    mock_run_agent = _make_run_agent_node_with_event(ask_event)
+
+    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=mock_run_agent):
+        state = _state(
+            agent_outputs=[],
+            agent_question_rounds=5,  # cap already reached
+            agent_questions_exhausted=False,
+            pr_url="http://x",
+        )
+        result = await review_node(state, config=_make_review_config(mock_runner))
+
+    assert isinstance(result, Command), f"Expected Command, got {type(result)}"
+    assert result.goto == "max_retries", f"Expected max_retries, got {result.goto}"
+    assert result.update.get("current_stage") == "failed"
+    assert result.update.get("error_code") == "ERR_MAX_AGENT_QUESTIONS"
+    assert result.update.get("agent_questions_exhausted") is True

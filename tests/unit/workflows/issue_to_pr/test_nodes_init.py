@@ -25,7 +25,7 @@ def test_extract_ask_user_events_normalizes_fields():
         ]
     }
 
-    pending = _extract_ask_user_events(agent_output)
+    pending = _extract_ask_user_events(agent_output, calling_node="developer")
 
     assert len(pending) == 2
     # question is inlined with category prefix + options suffix so the
@@ -42,6 +42,25 @@ def test_extract_ask_user_events_normalizes_fields():
     assert pending[1]["question"] == "q2"
     assert pending[1]["category"] == "general"
     assert pending[1]["options"] == []
+
+
+def test_extract_ask_user_events_calling_node_propagated():
+    """calling_node is embedded in each question so triage/review questions
+    are attributed correctly — not hardcoded to 'developer'."""
+    from athanor.workflows.issue_to_pr.nodes import _extract_ask_user_events
+
+    agent_output = {
+        "events": [
+            {"type": "agent_ask_user", "question": "Should we split?", "category": "general"},
+        ]
+    }
+
+    for node in ("triage", "developer", "review"):
+        pending = _extract_ask_user_events(agent_output, calling_node=node)
+        assert len(pending) == 1
+        assert pending[0]["asking_node"] == node, (
+            f"asking_node must be '{node}', got '{pending[0]['asking_node']}'"
+        )
 
 
 @pytest.mark.asyncio
