@@ -154,6 +154,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     headers.pop("Authorization", None)
     headers.pop("authorization", None)
     headers["Authorization"] = f"Bearer {token}"
+    # Header forwarding is intentionally permissive in Plan A; an allowlist is tracked
+    # for follow-up. The sandbox's Authorization header is stripped here; other headers
+    # pass through to api.github.com.
     headers["Accept"] = "application/vnd.github+json"
     headers["X-GitHub-Api-Version"] = "2022-11-28"
 

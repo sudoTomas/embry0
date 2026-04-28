@@ -229,3 +229,69 @@ async def test_enroll_rejects_malformed_sandbox_id(client):
 async def test_create_app_rejects_empty_admin():
     with pytest.raises(ValueError, match="admin_token is required"):
         create_github_proxy_app(github_token="x", admin_token="")
+
+
+async def test_proxy_connect_error_returns_502(client):
+    """Upstream connect error to api.github.com surfaces as 502."""
+    enroll = await client.post(
+        "/admin/enroll",
+        json={"sandbox_id": "s1", "sandbox_token": TOK_S1},
+        headers={"X-Admin-Token": ADMIN},
+    )
+    assert enroll.status == 200
+
+    import httpx
+
+    with patch.object(
+        client.app["http_client"], "request", side_effect=httpx.ConnectError("refused")
+    ):
+        resp = await client.get(
+            "/repos/owner/repo", headers={"Authorization": f"Bearer {TOK_S1}"}
+        )
+    assert resp.status == 502
+
+
+async def test_proxy_timeout_returns_504(client):
+    """Upstream timeout to api.github.com surfaces as 504."""
+    enroll = await client.post(
+        "/admin/enroll",
+        json={"sandbox_id": "s1", "sandbox_token": TOK_S1},
+        headers={"X-Admin-Token": ADMIN},
+    )
+    assert enroll.status == 200
+
+    import httpx
+
+    with patch.object(
+        client.app["http_client"], "request", side_effect=httpx.TimeoutException("timeout")
+    ):
+        resp = await client.get(
+            "/repos/owner/repo", headers={"Authorization": f"Bearer {TOK_S1}"}
+        )
+    assert resp.status == 504
+
+
+async def test_proxy_forwards_upstream_404(client):
+    """A 404 from api.github.com is forwarded as-is (not swallowed)."""
+    enroll = await client.post(
+        "/admin/enroll",
+        json={"sandbox_id": "s1", "sandbox_token": TOK_S1},
+        headers={"X-Admin-Token": ADMIN},
+    )
+    assert enroll.status == 200
+
+    # Build a mock httpx response
+    fake_404 = MagicMock()
+    fake_404.status_code = 404
+    fake_404.content = b'{"message":"Not Found"}'
+    fake_404.headers = {"content-type": "application/json"}
+
+    with patch.object(
+        client.app["http_client"], "request", return_value=fake_404
+    ):
+        resp = await client.get(
+            "/repos/owner/missing", headers={"Authorization": f"Bearer {TOK_S1}"}
+        )
+    assert resp.status == 404
+    body = await resp.json()
+    assert body["message"] == "Not Found"
