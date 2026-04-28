@@ -4,13 +4,31 @@ Handles: create (persistent container), exec (agent runs), destroy (cleanup).
 No customer code on the host — sandbox clones repo internally.
 """
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from athanor.execution.docker_client import DockerClient
 
+if TYPE_CHECKING:
+    from athanor.execution.proxy.manager import ProxyManager
+
 logger = structlog.get_logger(__name__)
+
+
+class SandboxInitError(RuntimeError):
+    """Sandbox container creation or enrollment failed.
+
+    Carries an ErrorCode so the workflow handler can populate jobs.error_code
+    consistently.
+    """
+
+    def __init__(self, message: str, *, error_code: object) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
 
 _DEFAULT_PROFILE: dict[str, Any] = {
     "base_image": "athanor-sandbox:latest",
@@ -29,16 +47,17 @@ _DEFAULT_PROFILE: dict[str, Any] = {
 class SandboxManager:
     """Manages sandbox container lifecycle for job execution."""
 
-    def __init__(self, docker: DockerClient) -> None:
+    def __init__(self, docker: DockerClient, *, proxy_manager: ProxyManager) -> None:
         self._docker = docker
+        self._proxy_manager = proxy_manager
 
     async def create(
         self,
         job_id: str,
         profile: dict[str, Any] | None = None,
         env: dict[str, str] | None = None,
-    ) -> str:
-        """Create a persistent sandbox container. Returns container ID."""
+    ) -> tuple[str, str]:
+        """Create a persistent sandbox container. Returns (container_id, sandbox_token)."""
         p = {**_DEFAULT_PROFILE, **(profile or {})}
         name = f"sandbox-{job_id}"
 
@@ -62,8 +81,23 @@ class SandboxManager:
             env=env,
         )
         container_id = await self._docker.run_cmd(cmd)
+        try:
+            sandbox_token = await self._proxy_manager.enroll_sandbox(container_id)
+        except RuntimeError as exc:
+            logger.error("sandbox_enroll_failed_rolling_back", container=name, error=str(exc))
+            try:
+                await self._docker.run_cmd(self._docker.build_rm_cmd(name))
+            except RuntimeError:
+                logger.warning("sandbox_rollback_rm_failed", container=name)
+            from athanor.safety.error_codes import ErrorCode
+
+            raise SandboxInitError(
+                f"Sandbox enrollment failed: {exc}",
+                error_code=ErrorCode.SANDBOX_INIT,
+            ) from exc
+
         logger.info("sandbox_created", job_id=job_id, container=name, image=p.get("base_image"))
-        return container_id
+        return container_id, sandbox_token
 
     @staticmethod
     def _read_oauth_token() -> str | None:
@@ -88,6 +122,11 @@ class SandboxManager:
 
     async def destroy(self, container: str, timeout: int = 10) -> None:
         """Stop and remove a sandbox container."""
+        try:
+            await self._proxy_manager.unenroll_sandbox(container)
+        except Exception:
+            logger.warning("sandbox_unenroll_threw", container=container, exc_info=True)
+
         try:
             stop_cmd = self._docker.build_stop_cmd(container, timeout=timeout)
             await self._docker.run_cmd(stop_cmd)

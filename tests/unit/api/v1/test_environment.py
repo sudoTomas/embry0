@@ -80,7 +80,7 @@ def test_init_node_drops_reserved_user_env_keys(monkeypatch):
     from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
-    sandbox_mgr.create = AsyncMock(return_value="container-x")
+    sandbox_mgr.create = AsyncMock(return_value=("container-x", "a" * 43))
     sandbox_mgr.destroy = AsyncMock()
     docker = MagicMock()
     docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])

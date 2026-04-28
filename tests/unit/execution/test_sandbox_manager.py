@@ -5,6 +5,14 @@ import pytest
 from athanor.execution.sandbox_manager import SandboxManager
 
 
+def _make_proxy_manager(token: str = "tok-abc123") -> MagicMock:
+    """Return a mock ProxyManager whose enroll_sandbox returns a fake token."""
+    proxy_mgr = MagicMock()
+    proxy_mgr.enroll_sandbox = AsyncMock(return_value=token)
+    proxy_mgr.unenroll_sandbox = AsyncMock()
+    return proxy_mgr
+
+
 @pytest.fixture
 def manager() -> SandboxManager:
     docker = MagicMock()
@@ -13,13 +21,14 @@ def manager() -> SandboxManager:
     docker.build_stop_cmd = MagicMock(return_value=["docker", "stop", "..."])
     docker.build_rm_cmd = MagicMock(return_value=["docker", "rm", "..."])
     docker.build_network_cmd = MagicMock(return_value=["docker", "network", "..."])
-    return SandboxManager(docker=docker)
+    return SandboxManager(docker=docker, proxy_manager=_make_proxy_manager())
 
 
 @pytest.mark.asyncio
 async def test_create_sandbox(manager: SandboxManager):
-    container_id = await manager.create(job_id="job-abc123")
+    container_id, sandbox_token = await manager.create(job_id="job-abc123")
     assert container_id == "container-abc123"
+    assert sandbox_token == "tok-abc123"
     manager._docker.build_run_cmd.assert_called_once()
     call_kwargs = manager._docker.build_run_cmd.call_args
     assert call_kwargs.kwargs["name"] == "sandbox-job-abc123"
@@ -28,6 +37,7 @@ async def test_create_sandbox(manager: SandboxManager):
 @pytest.mark.asyncio
 async def test_destroy_sandbox(manager: SandboxManager):
     await manager.destroy("sandbox-job-abc123")
+    manager._proxy_manager.unenroll_sandbox.assert_awaited_once_with("sandbox-job-abc123")
     manager._docker.build_stop_cmd.assert_called_once()
     manager._docker.build_rm_cmd.assert_called_once()
 
@@ -99,3 +109,25 @@ async def test_create_with_custom_profile(manager: SandboxManager):
     assert kwargs["memory"] == "12g"
     assert kwargs["cpus"] == "6"
     assert kwargs["pids_limit"] == 512
+
+
+@pytest.mark.asyncio
+async def test_create_rolls_back_on_enrollment_failure():
+    """If enroll_sandbox fails, the container is removed and SandboxInitError raised."""
+    from athanor.execution.sandbox_manager import SandboxInitError
+
+    docker = MagicMock()
+    docker.run_cmd = AsyncMock(return_value="container-fail")
+    docker.build_run_cmd = MagicMock(return_value=["docker", "run"])
+    docker.build_rm_cmd = MagicMock(return_value=["docker", "rm", "sandbox-job-fail"])
+
+    proxy_mgr = MagicMock()
+    proxy_mgr.enroll_sandbox = AsyncMock(side_effect=RuntimeError("proxy unreachable"))
+    proxy_mgr.unenroll_sandbox = AsyncMock()
+
+    mgr = SandboxManager(docker=docker, proxy_manager=proxy_mgr)
+
+    with pytest.raises(SandboxInitError, match="enrollment failed"):
+        await mgr.create(job_id="job-fail")
+
+    docker.build_rm_cmd.assert_called()  # rollback was attempted

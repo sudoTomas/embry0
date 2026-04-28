@@ -241,9 +241,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         tls_verify=config.docker_tls_verify,
         cert_path=config.docker_cert_path,
     )
-    sandbox_mgr = SandboxManager(docker)
+    proxy_mgr = ProxyManager(docker, proxy_admin_token=config.proxy_admin_token)
+    sandbox_mgr = SandboxManager(docker, proxy_manager=proxy_mgr)
     agent_runner = AgentRunner(sandbox_mgr, docker)
-    proxy_mgr = ProxyManager(docker)
 
     app.state.docker = docker
     app.state.sandbox_manager = sandbox_mgr

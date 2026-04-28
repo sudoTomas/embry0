@@ -52,7 +52,7 @@ async def test_init_node_passes_git_proxy_url_to_sandbox():
     from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
-    sandbox_mgr.create = AsyncMock(return_value="container-abc")
+    sandbox_mgr.create = AsyncMock(return_value=("container-abc", "a" * 43))
     sandbox_mgr.destroy = AsyncMock()
 
     docker = MagicMock()
@@ -99,7 +99,7 @@ async def test_init_node_git_credential_helper_curls_proxy():
     from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
-    sandbox_mgr.create = AsyncMock(return_value="container-abc")
+    sandbox_mgr.create = AsyncMock(return_value=("container-abc", "a" * 43))
     sandbox_mgr.destroy = AsyncMock()
 
     docker = MagicMock()
@@ -152,7 +152,7 @@ async def test_init_node_skips_git_setup_when_no_proxy_url():
     from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
-    sandbox_mgr.create = AsyncMock(return_value="container-abc")
+    sandbox_mgr.create = AsyncMock(return_value=("container-abc", "a" * 43))
     sandbox_mgr.destroy = AsyncMock()
 
     docker = MagicMock()
@@ -200,7 +200,7 @@ async def test_init_node_skips_git_setup_when_proxy_manager_is_none():
     from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
-    sandbox_mgr.create = AsyncMock(return_value="container-abc")
+    sandbox_mgr.create = AsyncMock(return_value=("container-abc", "a" * 43))
     sandbox_mgr.destroy = AsyncMock()
 
     docker = MagicMock()
@@ -247,7 +247,7 @@ async def test_init_node_clone_failure_raises_runtime_error():
     from athanor.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
-    sandbox_mgr.create = AsyncMock(return_value="container-abc")
+    sandbox_mgr.create = AsyncMock(return_value=("container-abc", "a" * 43))
     sandbox_mgr.destroy = AsyncMock()
 
     docker = MagicMock()

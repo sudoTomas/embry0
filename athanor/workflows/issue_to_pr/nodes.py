@@ -67,18 +67,19 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
         # by sandbox/github/client.py (it takes proxy_url directly as a constructor
         # arg; no env-var hook exists). Wiring it as a sandbox env var requires
         # adding a base-URL env hook inside the client. Tracked as a follow-up.
-        container_id = await sandbox_mgr.create(job_id, env=env)
+        container_id, sandbox_token = await sandbox_mgr.create(job_id, env=env)
         logger.info("sandbox_created", job_id=job_id, container_id=container_id)
         writer({"type": "progress", "message": "Sandbox container created"})
 
         # Clone repo inside container. Git auth flows via credential proxy — the
-        # helper curls $ATHANOR_GIT_PROXY_URL/git-credentials which returns the
-        # orchestrator's token without the token ever being visible to agent code.
+        # helper curls $ATHANOR_GIT_PROXY_URL/git-credentials with the per-sandbox
+        # bearer token, which returns the orchestrator's token without the token
+        # ever being visible to agent code.
         if repo and docker:
             if git_proxy_url:
                 from athanor.sandbox.github.git_ops import build_sandbox_credential_config_cmd
 
-                cred_cmd = build_sandbox_credential_config_cmd(git_proxy_url)
+                cred_cmd = build_sandbox_credential_config_cmd(git_proxy_url, sandbox_token)
                 setup_cmd = [
                     "bash",
                     "-c",

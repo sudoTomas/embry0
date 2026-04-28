@@ -12,8 +12,10 @@ is deferred — it has DB coupling that needs separate rework. The
 
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
+import aiohttp
 import structlog
 
 from athanor.execution.docker_client import DockerClient
@@ -28,9 +30,13 @@ _INTERNET = "sandbox-internet"
 class ProxyManager:
     """Manages proxy container lifecycle for sandbox agent access."""
 
-    def __init__(self, docker: DockerClient) -> None:
+    def __init__(self, docker: DockerClient, *, proxy_admin_token: str) -> None:
+        if not proxy_admin_token:
+            raise ValueError("proxy_admin_token is required")
         self._docker = docker
         self._launched: list[str] = []
+        self._proxy_admin_token = proxy_admin_token
+        self._http: aiohttp.ClientSession | None = None
         self.auth_proxy_url: str = ""
         self.git_proxy_url: str = ""
         self.github_proxy_url: str = ""
@@ -51,6 +57,9 @@ class ProxyManager:
 
         Idempotent: any pre-existing containers with the same names are removed first.
         """
+        if self._http is None:
+            self._http = aiohttp.ClientSession()
+
         # Clean up stragglers from a prior orchestrator run.
         for name in ("git-proxy", "github-proxy", "auth-proxy"):
             try:
@@ -61,7 +70,12 @@ class ProxyManager:
         if github_token:
             await self._launch(
                 name="git-proxy",
-                env={"PROXY_TYPE": "git", "GITHUB_TOKEN": github_token, "LISTEN_PORT": "9101"},
+                env={
+                    "PROXY_TYPE": "git",
+                    "GITHUB_TOKEN": github_token,
+                    "LISTEN_PORT": "9101",
+                    "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
+                },
                 attach_internet=False,
             )
             self.git_proxy_url = "http://git-proxy:9101"
@@ -69,7 +83,12 @@ class ProxyManager:
 
             await self._launch(
                 name="github-proxy",
-                env={"PROXY_TYPE": "github", "GITHUB_TOKEN": github_token, "LISTEN_PORT": "9103"},
+                env={
+                    "PROXY_TYPE": "github",
+                    "GITHUB_TOKEN": github_token,
+                    "LISTEN_PORT": "9103",
+                    "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
+                },
                 attach_internet=True,
             )
             self.github_proxy_url = "http://github-proxy:9103"
@@ -78,7 +97,12 @@ class ProxyManager:
         if anthropic_api_key and enable_auth_proxy:
             await self._launch(
                 name="auth-proxy",
-                env={"PROXY_TYPE": "auth", "ANTHROPIC_API_KEY": anthropic_api_key, "LISTEN_PORT": "9100"},
+                env={
+                    "PROXY_TYPE": "auth",
+                    "ANTHROPIC_API_KEY": anthropic_api_key,
+                    "LISTEN_PORT": "9100",
+                    "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
+                },
                 attach_internet=True,
             )
             self.auth_proxy_url = "http://auth-proxy:9100"
@@ -125,6 +149,60 @@ class ProxyManager:
         self.athanor_proxy_url = ""
         return ""
 
+    async def enroll_sandbox(self, sandbox_id: str) -> str:
+        """Enroll a new sandbox with all running proxies. Returns the bearer token.
+
+        Raises RuntimeError if any enrollment HTTP call fails. Caller (SandboxManager)
+        rolls back the just-created container in that case.
+        """
+        if self._http is None:
+            raise RuntimeError("ProxyManager.start() must be called before enroll_sandbox")
+
+        sandbox_token = secrets.token_urlsafe(32)
+        headers = {"X-Admin-Token": self._proxy_admin_token}
+        body = {"sandbox_id": sandbox_id, "sandbox_token": sandbox_token}
+
+        endpoints: list[str] = []
+        if self.git_proxy_url:
+            endpoints.append(f"{self.git_proxy_url}/admin/enroll")
+        if self.github_proxy_url:
+            endpoints.append(f"{self.github_proxy_url}/admin/enroll")
+        if self.auth_proxy_url:
+            endpoints.append(f"{self.auth_proxy_url}/admin/enroll")
+
+        for url in endpoints:
+            try:
+                async with self._http.post(url, json=body, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        raise RuntimeError(f"enroll {url} returned {resp.status}: {text[:200]}")
+            except aiohttp.ClientError as exc:
+                raise RuntimeError(f"enroll {url} failed: {exc!r}") from exc
+
+        logger.info("sandbox_enrolled_with_proxies", sandbox_id=sandbox_id, endpoints=endpoints)
+        return sandbox_token
+
+    async def unenroll_sandbox(self, sandbox_id: str) -> None:
+        """Best-effort unenrollment. Failures are logged at warning, never raised."""
+        if self._http is None:
+            return
+        headers = {"X-Admin-Token": self._proxy_admin_token}
+        endpoints: list[str] = []
+        if self.git_proxy_url:
+            endpoints.append(f"{self.git_proxy_url}/admin/enroll/{sandbox_id}")
+        if self.github_proxy_url:
+            endpoints.append(f"{self.github_proxy_url}/admin/enroll/{sandbox_id}")
+        if self.auth_proxy_url:
+            endpoints.append(f"{self.auth_proxy_url}/admin/enroll/{sandbox_id}")
+
+        for url in endpoints:
+            try:
+                async with self._http.delete(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status not in (200, 404):
+                        logger.warning("sandbox_unenroll_non_200", url=url, status=resp.status)
+            except aiohttp.ClientError as exc:
+                logger.warning("sandbox_unenroll_failed", url=url, error=str(exc))
+
     async def stop(self) -> None:
         """Force-remove all launched proxy containers."""
         for name in self._launched:
@@ -136,4 +214,7 @@ class ProxyManager:
         self.git_proxy_url = ""
         self.github_proxy_url = ""
         self.auth_proxy_url = ""
+        if self._http is not None:
+            await self._http.close()
+            self._http = None
         logger.info("proxy_manager_stopped")

@@ -37,21 +37,36 @@ def build_credential_helper_script(git_proxy_url: str) -> str:
 # via the `git config` command we build from it.
 _GIT_PROXY_URL_RE = re.compile(r"^http://[a-zA-Z0-9.\-]+:\d+$")
 
+# Strict regex for sandbox bearer tokens. Allows only URL-safe base64 characters
+# (produced by secrets.token_urlsafe), preventing any shell metacharacters from
+# appearing in the single-quoted credential helper string.
+_SANDBOX_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{40,80}$")
 
-def build_sandbox_credential_config_cmd(git_proxy_url: str) -> str:
+
+def build_sandbox_credential_config_cmd(git_proxy_url: str, sandbox_token: str) -> str:
     """Build the bash snippet that configures git inside a sandbox container
-    to use the credential proxy.
+    to use the credential proxy with the per-sandbox bearer.
 
     Used by the orchestrator-side init node to set up git via ``docker exec``.
-    The returned string is a single ``git config --global credential.helper ...``
-    command (no trailing semicolon) suitable for chaining with ``&&``.
+    Returns a single ``git config --global credential.helper ...`` command
+    (no trailing semicolon) suitable for chaining with ``&&``.
 
     Raises:
-        ValueError: if ``git_proxy_url`` does not match ``http://host:port``.
+        ValueError: if ``git_proxy_url`` does not match ``http://host:port``,
+        or if ``sandbox_token`` does not match the strict regex.
     """
     if not _GIT_PROXY_URL_RE.fullmatch(git_proxy_url):
         raise ValueError(f"git_proxy_url must match http://host:port (got: {git_proxy_url!r})")
-    return f'git config --global credential.helper "!f() {{ curl -sf {git_proxy_url}/git-credentials; }}; f"'
+    if not _SANDBOX_TOKEN_RE.fullmatch(sandbox_token):
+        raise ValueError("sandbox_token must match ^[A-Za-z0-9_-]{40,80}$")
+    # Single-quoted helper script: bearer is interpolated into a single-quoted
+    # shell argument that contains no shell-active characters by virtue of the
+    # token regex above.
+    return (
+        f"git config --global credential.helper "
+        f"'!f() {{ curl -sf -H \"Authorization: Bearer {sandbox_token}\" "
+        f"{git_proxy_url}/git-credentials; }}; f'"
+    )
 
 
 def configure_git_credentials(git_proxy_url: str) -> str:
