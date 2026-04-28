@@ -130,7 +130,7 @@ services:
     restart: unless-stopped
 
   init-sandbox-networks:
-    image: docker:dind
+    image: docker:cli
     container_name: athanor-init-sandbox-networks
     entrypoint: ["sh"]
     command: ["/scripts/setup-sandbox-networks.sh"]
