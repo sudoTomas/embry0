@@ -38,4 +38,5 @@ class ErrorCode(StrEnum):
     AGENT_KILLED = "ERR_AGENT_KILLED"  # Subprocess killed externally
     AGENT_NO_RESULT = "ERR_AGENT_NO_RESULT"  # Agent exited with no ResultMessage (new AgentExecutor path; supersedes NO_RESULT for executor-managed failures)
     SAFETY_HOOK_FAILED = "ERR_SAFETY_HOOK_FAILED"  # Hook raised or malformed — fails closed
+    SANDBOX_REQUIRED = "ERR_SANDBOX_REQUIRED"  # Sandbox-less in-process execution refused (no fallback by design)
     TOOL_DENIED = "ERR_TOOL_DENIED"  # Safety policy denied a tool call

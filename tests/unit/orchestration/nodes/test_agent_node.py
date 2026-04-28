@@ -11,6 +11,24 @@ from athanor.execution.agent_runner import AgentOutput
 from athanor.orchestration.nodes.agent import run_agent_node
 
 
+def _make_fake_runner(agent_type: str = "developer", **kwargs: Any) -> AsyncMock:
+    """Return an AsyncMock runner whose .run returns a minimal successful AgentOutput."""
+    defaults = {
+        "is_error": False,
+        "error_message": None,
+        "output": "ok",
+        "cost_usd": 0.0,
+        "duration_ms": 10,
+        "tools_called": {},
+    }
+    defaults.update(kwargs)
+    out = AgentOutput(agent_type=agent_type, **defaults)
+    runner = AsyncMock()
+    runner.run = AsyncMock(return_value=out)
+    return runner
+
+
+@pytest.mark.skip(reason="In-process executor fallback removed in 2026-04-28-sandbox-hardening")
 @pytest.mark.asyncio
 async def test_run_agent_node_builds_invocation_and_delegates(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
@@ -61,6 +79,7 @@ async def test_run_agent_node_builds_invocation_and_delegates(monkeypatch, tmp_p
     assert updates["agent_outputs"][0]["cost_usd"] == pytest.approx(0.02)
 
 
+@pytest.mark.skip(reason="In-process executor fallback removed in 2026-04-28-sandbox-hardening")
 @pytest.mark.asyncio
 async def test_run_agent_node_success() -> None:
     """Legacy calling convention (no agent_definition/credentials/defaults) still works."""
@@ -95,6 +114,7 @@ async def test_run_agent_node_success() -> None:
     assert result["current_stage"] == "developer_complete"
 
 
+@pytest.mark.skip(reason="In-process executor fallback removed in 2026-04-28-sandbox-hardening")
 @pytest.mark.asyncio
 async def test_run_agent_node_error() -> None:
     """Executor-level error (is_error=True) surfaces on the returned updates dict."""
@@ -125,12 +145,12 @@ async def test_run_agent_node_error() -> None:
 
 @pytest.mark.asyncio
 async def test_run_agent_node_with_resolver() -> None:
-    """When agent_definition is provided, resolved model/tools reach the executor."""
+    """When agent_definition is provided, resolved model/tools reach the sandbox runner."""
     captured: dict[str, Any] = {}
 
-    async def _capture(invocation, _config):  # type: ignore[no-untyped-def]
-        captured["model"] = invocation.model
-        captured["tools"] = list(invocation.tools)
+    async def _capture(**kwargs: Any) -> AgentOutput:
+        captured["model"] = kwargs["config"]["model"]
+        captured["tools"] = kwargs["config"]["tools"]
         return AgentOutput(agent_type="developer", output="done", cost_usd=0.5)
 
     agent_def = {
@@ -143,20 +163,18 @@ async def test_run_agent_node_with_resolver() -> None:
         "auth_mode": None,
     }
 
-    with patch("athanor.orchestration.nodes.agent.select_executor") as mock_factory:
-        mock_executor = AsyncMock()
-        mock_executor.run = _capture
-        mock_factory.return_value = mock_executor
+    class _Runner:
+        run = staticmethod(_capture)
 
-        await run_agent_node(
-            state={"sandbox_container_id": "c1", "total_cost_usd": 0.0},
-            agent_runner=None,
-            agent_type="developer",
-            prompt="implement feature",
-            model="claude-sonnet-4-6",  # default, should be overridden by agent_def
-            agent_definition=agent_def,
-            credentials={"api_key": "", "oauth_token": "oauth-xyz"},
-        )
+    await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0},
+        agent_runner=_Runner(),
+        agent_type="developer",
+        prompt="implement feature",
+        model="claude-sonnet-4-6",  # default, should be overridden by agent_def
+        agent_definition=agent_def,
+        credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+    )
 
     assert captured["model"] == "claude-opus-4-6"
     assert captured["tools"] == ["Read", "Write", "Edit"]
@@ -181,6 +199,7 @@ async def test_run_agent_node_config_error_sets_error_code() -> None:
     assert result["errors"][0].startswith("developer:")
 
 
+@pytest.mark.skip(reason="In-process executor fallback removed in 2026-04-28-sandbox-hardening")
 @pytest.mark.asyncio
 async def test_run_agent_node_select_executor_error_returns_error_updates(monkeypatch, tmp_path) -> None:
     """If select_executor raises AuthConfigError, return error state (Phase 2 guard)."""
@@ -213,7 +232,7 @@ async def test_run_agent_node_delegates_to_agent_runner_with_full_invocation(mon
     captured_config: dict[str, Any] = {}
     captured_kwargs: dict[str, Any] = {}
 
-    async def fake_run(**kwargs):
+    async def fake_run(**kwargs: Any) -> AgentOutput:
         captured_kwargs.update(kwargs)
         captured_config.update(kwargs["config"])
         return AgentOutput(
@@ -265,35 +284,33 @@ async def test_run_agent_node_per_job_model_override_wins() -> None:
     """agent_models_override on state overrides the agent_definition model."""
     captured: dict[str, Any] = {}
 
-    async def _capture(invocation, _config):  # type: ignore[no-untyped-def]
-        captured["model"] = invocation.model
+    async def _capture(**kwargs: Any) -> AgentOutput:
+        captured["model"] = kwargs["config"]["model"]
         return AgentOutput(agent_type="developer", output="done", cost_usd=0.0)
 
-    with patch("athanor.orchestration.nodes.agent.select_executor") as mock_factory:
-        mock_executor = AsyncMock()
-        mock_executor.run = _capture
-        mock_factory.return_value = mock_executor
+    class _Runner:
+        run = staticmethod(_capture)
 
-        await run_agent_node(
-            state={
-                "sandbox_container_id": "c1",
-                "total_cost_usd": 0.0,
-                "agent_models_override": {"developer": "claude-opus-4-6"},
-            },
-            agent_runner=None,
-            agent_type="developer",
-            prompt="do it",
-            agent_definition={
-                "model": "claude-sonnet-4-6",
-                "tools": ["Read"],
-                "skills": [],
-                "system_prompt": "",
-                "mcp_servers": {},
-                "execution_mode": None,
-                "auth_mode": None,
-            },
-            credentials={"api_key": "", "oauth_token": "oauth-xyz"},
-        )
+    await run_agent_node(
+        state={
+            "sandbox_container_id": "c1",
+            "total_cost_usd": 0.0,
+            "agent_models_override": {"developer": "claude-opus-4-6"},
+        },
+        agent_runner=_Runner(),
+        agent_type="developer",
+        prompt="do it",
+        agent_definition={
+            "model": "claude-sonnet-4-6",
+            "tools": ["Read"],
+            "skills": [],
+            "system_prompt": "",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        },
+        credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+    )
 
     assert captured["model"] == "claude-opus-4-6"
 
@@ -312,33 +329,31 @@ async def test_run_agent_node_persists_trace_on_success() -> None:
     traces_repo = AsyncMock()
     traces_repo.create = AsyncMock(return_value="trace-abcdef")
 
-    with patch("athanor.orchestration.nodes.agent.select_executor") as mock_factory:
-        mock_executor = AsyncMock()
-        mock_executor.run = AsyncMock(return_value=fake_out)
-        mock_factory.return_value = mock_executor
+    runner = AsyncMock()
+    runner.run = AsyncMock(return_value=fake_out)
 
-        state: dict[str, Any] = {
-            "sandbox_container_id": "c1",
-            "total_cost_usd": 0.0,
-            "pipeline_config": {},
-        }
-        updates = await run_agent_node(
-            state=state,
-            agent_runner=None,
-            agent_type="developer",
-            prompt="do it",
-            agent_definition={
-                "model": "claude-opus-4-7",
-                "tools": ["Read", "Edit"],
-                "skills": [],
-                "system_prompt": "",
-                "mcp_servers": {},
-                "execution_mode": None,
-                "auth_mode": None,
-            },
-            credentials={"api_key": "", "oauth_token": "oauth-xyz"},
-            config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
-        )
+    state: dict[str, Any] = {
+        "sandbox_container_id": "c1",
+        "total_cost_usd": 0.0,
+        "pipeline_config": {},
+    }
+    updates = await run_agent_node(
+        state=state,
+        agent_runner=runner,
+        agent_type="developer",
+        prompt="do it",
+        agent_definition={
+            "model": "claude-opus-4-7",
+            "tools": ["Read", "Edit"],
+            "skills": [],
+            "system_prompt": "",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        },
+        credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+        config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+    )
 
     assert updates["current_stage"] == "developer_complete"
     assert traces_repo.create.await_count == 1
@@ -365,24 +380,22 @@ async def test_run_agent_node_trace_persist_failure_does_not_fail_run() -> None:
     traces_repo = AsyncMock()
     traces_repo.create = AsyncMock(side_effect=RuntimeError("DB unreachable"))
 
-    with patch("athanor.orchestration.nodes.agent.select_executor") as mock_factory:
-        mock_executor = AsyncMock()
-        mock_executor.run = AsyncMock(return_value=fake_out)
-        mock_factory.return_value = mock_executor
+    runner = AsyncMock()
+    runner.run = AsyncMock(return_value=fake_out)
 
-        state: dict[str, Any] = {
-            "sandbox_container_id": "c1",
-            "total_cost_usd": 0.0,
-            "pipeline_config": {},
-        }
-        updates = await run_agent_node(
-            state=state,
-            agent_runner=None,
-            agent_type="developer",
-            prompt="do it",
-            credentials={"api_key": "", "oauth_token": "oauth-xyz"},
-            config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
-        )
+    state: dict[str, Any] = {
+        "sandbox_container_id": "c1",
+        "total_cost_usd": 0.0,
+        "pipeline_config": {},
+    }
+    updates = await run_agent_node(
+        state=state,
+        agent_runner=runner,
+        agent_type="developer",
+        prompt="do it",
+        credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+        config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+    )
 
     # Agent run must succeed regardless of trace write failure.
     assert updates["current_stage"] == "developer_complete"

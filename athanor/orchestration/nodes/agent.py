@@ -6,13 +6,20 @@ from typing import Any
 
 import structlog
 
-from athanor.agents.executor_factory import select_executor
 from athanor.agents.resolver import resolve_agent_invocation
-from athanor.execution.agent_runner import AgentOutput
 from athanor.execution.auth_provider import AuthConfigError
 from athanor.orchestration.state import AgentOutputEntry
 
 logger = structlog.get_logger(__name__)
+
+
+class SandboxRequiredError(RuntimeError):
+    """Raised when run_agent_node is invoked without an agent_runner.
+
+    There is no in-process fallback by design: running the agent inside the
+    orchestrator process would expose the orchestrator's full credential set
+    to the agent, defeating the sandbox trust boundary.
+    """
 
 
 def _auth_error_updates(
@@ -62,13 +69,12 @@ async def run_agent_node(
     global_defaults: dict[str, Any] | None = None,
     config: Any | None = None,
 ) -> dict[str, Any]:
-    """Resolve an AgentInvocation and run it via the chosen executor.
+    """Resolve an AgentInvocation and run it via the sandbox executor.
 
-    When ``agent_runner`` is provided (production), the fully-resolved
-    invocation is serialized and shipped to the sandbox container via
-    ``AgentRunner.run``; the in-container ``SdkAgentExecutor`` performs the
-    actual Claude call. When ``agent_runner`` is ``None`` (legacy/non-sandboxed
-    fallback), the executor runs in-process.
+    The fully-resolved invocation is serialized and shipped to the sandbox
+    container via ``AgentRunner.run``; the in-container ``SdkAgentExecutor``
+    performs the actual Claude call. Passing ``agent_runner=None`` raises
+    ``SandboxRequiredError`` — there is no in-process fallback by design.
 
     Returns a LangGraph state update dict. Does NOT return a Command here;
     Command returns live in the workflow nodes (see Task 16).
@@ -143,21 +149,28 @@ async def run_agent_node(
 
     container = state.get("sandbox_container_id", "")
 
+    if agent_runner is None:
+        logger.error(
+            "sandbox_required_but_missing",
+            agent_type=agent_type,
+            job_id=state.get("job_id"),
+        )
+        raise SandboxRequiredError(
+            "agent_runner not configured — refusing to run agent in-process. "
+            "The in-process executor fallback was removed in 2026-04-28 sandbox "
+            "hardening. See docs/superpowers/specs/2026-04-28-sandbox-safety-hardening-design.md."
+        )
+
     try:
-        if agent_runner is None:
-            # No sandbox available (legacy non-sandboxed fallback) — run in-process.
-            executor = select_executor(invocation)
-            result: AgentOutput = await executor.run(invocation, config)
-        else:
-            # Production path: docker-exec the sandbox runner with the
-            # serialized invocation; the in-container SdkAgentExecutor
-            # handles the actual Claude call.
-            result = await agent_runner.run(
-                container=container,
-                config=serialized,
-                network=network,
-                on_event=on_event,
-            )
+        # Production path: docker-exec the sandbox runner with the serialized
+        # invocation; the in-container SdkAgentExecutor handles the actual
+        # Claude call.
+        result = await agent_runner.run(
+            container=container,
+            config=serialized,
+            network=network,
+            on_event=on_event,
+        )
     except AuthConfigError as exc:
         return _auth_error_updates(agent_type, exc, state)
 

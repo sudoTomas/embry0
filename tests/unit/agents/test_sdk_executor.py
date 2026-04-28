@@ -500,6 +500,7 @@ async def test_sdk_executor_with_tool_result_block(tmp_path, monkeypatch) -> Non
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="sdk_hooks try/except removed in 2026-04-28-sandbox-hardening Task 3; hooks now fail-closed at boot")
 @pytest.mark.asyncio
 async def test_sdk_executor_hooks_unavailable_logs_warning(tmp_path, monkeypatch) -> None:
     """If options.hooks assignment raises, executor logs warning and continues."""
