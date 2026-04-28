@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from athanor.api.deps import get_jobs_repo
 from athanor.api.schemas import JobCreateRequest, JobListResponse, JobResponse
+from athanor.api.schemas.jobs import JobResumeRequest
 from athanor.audit.logger import emit_audit_event
 from athanor.storage.repositories.jobs import JobsRepository
 
@@ -98,7 +99,12 @@ async def get_job_log_events(job_id: str, jobs: JobsRepository = Depends(get_job
 
 
 @router.post("/jobs/{job_id}/resume")
-async def resume_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
+async def resume_job(
+    job_id: str,
+    req: JobResumeRequest,
+    request: Request,
+    jobs: JobsRepository = Depends(get_jobs_repo),
+) -> dict:
     """Resume a paused job with optional guidance."""
     job = await jobs.get(job_id)
     if not job:
@@ -106,23 +112,19 @@ async def resume_job(job_id: str, request: Request, jobs: JobsRepository = Depen
     if job["status"] != "paused":
         raise HTTPException(status_code=409, detail=f"Job is {job['status']}, not paused")
 
-    body = await request.json()
-    choice = body.get("choice", "continue_retrying")
-    guidance = body.get("guidance", "")
-
     executor = request.app.state.issue_executor
     issue_id = job.get("issue_id")
     if not issue_id:
         raise HTTPException(status_code=400, detail="Job has no associated issue")
 
     executor._track_task(
-        executor.resume(issue_id, job_id, {"choice": choice, "guidance": guidance}),
+        executor.resume(issue_id, job_id, {"choice": req.choice, "guidance": req.guidance}),
         kind="resume_via_api",
         job_id=job_id,
         issue_id=issue_id,
     )
 
-    return {"job_id": job_id, "status": "resuming", "choice": choice}
+    return {"job_id": job_id, "status": "resuming", "choice": req.choice}
 
 
 @router.post("/jobs/{job_id}/cancel")
