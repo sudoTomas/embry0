@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class InputResponse(BaseModel):
@@ -21,4 +21,6 @@ class InputResponse(BaseModel):
 
 
 class AnswerInputRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     answer: str = Field(..., min_length=1, max_length=10000)
