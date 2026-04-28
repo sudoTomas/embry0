@@ -9,6 +9,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from athanor.api.middleware.body_size import BodySizeMiddleware
 from athanor.api.middleware.csrf import CSRFMiddleware
 from athanor.api.middleware.rate_limit import RateLimitMiddleware
 from athanor.branding import API_TITLE
@@ -440,6 +441,7 @@ def create_app(
     app = FastAPI(title=API_TITLE, version="0.1.0", lifespan=lifespan_override or lifespan)
     app.state.config = config
 
+    app.add_middleware(BodySizeMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=config.allowed_cors_origins_list,
