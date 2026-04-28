@@ -13,8 +13,8 @@ export function useJobInputs(jobId: string) {
 export function useAnswerInput() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ jobId, inputId, answer }: { jobId: string; inputId: string; answer: string }) =>
-      answerInput(jobId, inputId, answer),
+    mutationFn: ({ issueId, inputId, answer }: { issueId: string; jobId: string; inputId: string; answer: string }) =>
+      answerInput(issueId, inputId, answer),
     onSuccess: (_, { jobId }) => qc.invalidateQueries({ queryKey: ["job-inputs", jobId] }),
   });
 }

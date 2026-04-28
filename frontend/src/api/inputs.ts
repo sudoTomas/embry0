@@ -7,11 +7,11 @@ export async function fetchJobInputs(jobId: string): Promise<JobInput[]> {
 }
 
 export async function answerInput(
-  jobId: string,
+  issueId: string,
   inputId: string,
   answer: string,
 ): Promise<void> {
-  await api.post(`/jobs/${jobId}/inputs/${inputId}/answer`, { answer });
+  await api.post(`/issues/${issueId}/inputs/${inputId}/answer`, { answer });
 }
 
 export async function rejectInput(
@@ -25,8 +25,4 @@ export async function rejectInput(
 export async function fetchIssueInputs(issueId: string): Promise<InputResponse[]> {
   const { data } = await api.get(`/issues/${issueId}/inputs`);
   return data;
-}
-
-export async function answerIssueInput(issueId: string, inputId: string, answer: string): Promise<void> {
-  await api.post(`/issues/${issueId}/inputs/${inputId}/answer`, { answer });
 }

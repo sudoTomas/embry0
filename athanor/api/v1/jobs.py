@@ -75,16 +75,6 @@ async def get_job_inputs(job_id: str, request: Request) -> list:
     return await inputs_repo.list_by_job(job_id)
 
 
-@router.post("/jobs/{job_id}/inputs/{input_id}/answer")
-async def answer_job_input(job_id: str, input_id: str, request: Request) -> dict:
-    """Answer an input question for a job."""
-    body = await request.json()
-    answer = body.get("answer", "")
-    inputs_repo = request.app.state.inputs_repo
-    await inputs_repo.answer(input_id, answer, answered_by="user")
-    return {"status": "answered", "input_id": input_id}
-
-
 @router.get("/jobs/{job_id}/logs/events")
 async def get_job_log_events(job_id: str, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
     """Get persisted pipeline events for a job."""

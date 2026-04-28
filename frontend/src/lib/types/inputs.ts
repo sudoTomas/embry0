@@ -3,6 +3,7 @@ export type InputStatus = "pending" | "answered" | "auto_answered" | "rejected" 
 export interface JobInput {
   input_id: string;
   job_id: string;
+  issue_id: string;
   question: string;
   category: string;
   options: string[] | null;

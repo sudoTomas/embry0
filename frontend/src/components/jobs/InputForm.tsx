@@ -17,7 +17,7 @@ export function InputForm({ input, jobId }: InputFormProps) {
 
   const handleSubmit = () => {
     if (!effectiveAnswer.trim()) return;
-    answerMutation.mutate({ jobId, inputId: input.input_id, answer: effectiveAnswer });
+    answerMutation.mutate({ issueId: input.issue_id, jobId, inputId: input.input_id, answer: effectiveAnswer });
   };
 
   return (
