@@ -206,6 +206,7 @@ class ContainerReaper:
         check_interval_seconds: int = 3600,
         db: Any = None,
         paused_ttl_hours: int = 48,
+        jobs_repo: Any = None,
     ) -> None:
         self._docker = docker
         self._max_age_hours = max_age_hours
@@ -213,6 +214,7 @@ class ContainerReaper:
         self._task: asyncio.Task | None = None
         self._db = db
         self._paused_ttl_hours = paused_ttl_hours
+        self._jobs_repo = jobs_repo
 
     def start(self) -> None:
         """Start the reaper background task."""
@@ -242,60 +244,65 @@ class ContainerReaper:
                 logger.exception("reaper_error")
 
     async def _reap(self) -> None:
-        """Find and destroy stale sandbox containers."""
+        """Find and destroy stale sandbox containers, skipping live jobs."""
+        from datetime import UTC, datetime
+
         try:
             cmd = self._docker._build_base_cmd()
             cmd.extend(
                 [
-                    "ps",
-                    "-a",
-                    "--filter",
-                    "name=sandbox-",
-                    "--format",
-                    "{{.ID}} {{.Names}} {{.RunningFor}}",
+                    "ps", "-a",
+                    "--filter", "name=sandbox-",
+                    "--format", "{{.ID}}\t{{.Names}}\t{{.CreatedAt}}",
                 ]
             )
             output = await self._docker.run_cmd(cmd, timeout=15)
-
-            for line in output.strip().split("\n"):
-                if not line.strip():
-                    continue
-                parts = line.split()
-                if len(parts) < 3:
-                    continue
-
-                container_id = parts[0]
-                name = parts[1]
-                running_for = " ".join(parts[2:])
-
-                if "hours" in running_for or "days" in running_for:
-                    hours = 0
-                    if "days" in running_for:
-                        try:
-                            hours = int(running_for.split()[0]) * 24
-                        except ValueError:
-                            continue
-                    elif "hours" in running_for:
-                        try:
-                            hours = int(running_for.split()[0])
-                        except ValueError:
-                            continue
-
-                    if hours >= self._max_age_hours:
-                        logger.info("reaping_stale_container", name=name, age_hours=hours)
-                        try:
-                            stop_cmd = self._docker.build_stop_cmd(container_id, timeout=5)
-                            await self._docker.run_cmd(stop_cmd)
-                        except RuntimeError:
-                            pass
-                        try:
-                            rm_cmd = self._docker.build_rm_cmd(container_id)
-                            await self._docker.run_cmd(rm_cmd)
-                        except RuntimeError:
-                            pass
-
         except RuntimeError:
             logger.warning("reaper_list_failed")
+            return
+
+        active: set[str] = set()
+        if self._jobs_repo is not None:
+            try:
+                active = await self._jobs_repo.fetch_active_sandbox_containers()
+            except Exception:
+                logger.warning("reaper_active_fetch_failed", exc_info=True)
+                return  # Fail-closed: if we can't tell which jobs are active, don't reap.
+
+        now = datetime.now(UTC)
+        for line in output.strip().split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            container_id, name, created_at = parts[0], parts[1], parts[2]
+
+            if name in active:
+                logger.info("reaper_skip_active_job", name=name)
+                continue
+
+            try:
+                # Docker emits e.g. "2026-04-28 07:05:11 +0000 UTC"
+                cleaned = created_at.replace(" UTC", "")
+                created = datetime.strptime(cleaned, "%Y-%m-%d %H:%M:%S %z")
+            except ValueError:
+                logger.warning("reaper_unparseable_timestamp", name=name, created_at=created_at)
+                continue
+
+            age_hours = (now - created).total_seconds() / 3600
+            if age_hours < self._max_age_hours:
+                continue
+
+            logger.info("reaping_stale_container", name=name, age_hours=age_hours)
+            try:
+                await self._docker.run_cmd(self._docker.build_stop_cmd(container_id, timeout=5))
+            except RuntimeError:
+                pass
+            try:
+                await self._docker.run_cmd(self._docker.build_rm_cmd(container_id))
+            except RuntimeError:
+                pass
 
     async def _expire_paused_jobs(self) -> None:
         """Transition paused jobs past their TTL to expired, destroy their sandboxes."""

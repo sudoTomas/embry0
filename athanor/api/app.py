@@ -275,6 +275,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_age_hours=24,
         db=db,
         paused_ttl_hours=config.paused_job_ttl_hours,
+        jobs_repo=app.state.jobs_repo,
     )
     reaper.start()
     app.state.container_reaper = reaper

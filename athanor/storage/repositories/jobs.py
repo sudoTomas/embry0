@@ -223,6 +223,18 @@ class JobsRepository:
         )
         return int(row["id"])
 
+    async def fetch_active_sandbox_containers(self) -> set[str]:
+        """Return the set of `sandbox-<job_id>` container names that back
+        currently-active jobs (any non-terminal status).
+
+        Used by ContainerReaper to avoid destroying live work.
+        """
+        rows = await self._db.fetch(
+            "SELECT job_id FROM jobs "
+            "WHERE status IN ('pending', 'running', 'awaiting_input', 'paused')"
+        )
+        return {f"sandbox-{row['job_id']}" for row in rows}
+
     async def get_log_events(
         self,
         job_id: str,
