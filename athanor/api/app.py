@@ -396,12 +396,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         webhook_url = f"{config.telegram_webhook_url.rstrip('/')}/api/v1/telegram/callback"
         app.state.telegram_webhook_secret = secrets.token_hex(32)
         await register_webhook(config.telegram_bot_token, webhook_url, secret_token=app.state.telegram_webhook_secret)
-        if not app.state.telegram_webhook_secret:
-            raise RuntimeError(
-                "Telegram is configured (bot_token + webhook_url set) but the "
-                "webhook secret could not be established. Refusing to start: "
-                "the callback would otherwise be reachable without auth."
-            )
+        # register_webhook raises on failure (which propagates out of lifespan and
+        # crashes startup). The runtime handler additionally fail-closes with 503
+        # if app.state.telegram_webhook_secret is somehow empty at request time.
     else:
         app.state.telegram_webhook_secret = ""
 

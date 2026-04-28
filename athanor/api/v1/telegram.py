@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -24,8 +26,6 @@ async def telegram_callback(request: Request) -> dict:
        pipeline when all blocking inputs are answered.
     2. Callback query (inline button click): acknowledges via answerCallbackQuery.
     """
-    import hmac
-
     expected_secret = getattr(request.app.state, "telegram_webhook_secret", "")
     if not expected_secret:
         # Fail-closed: if the runtime secret is somehow empty (startup race or
