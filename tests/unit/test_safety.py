@@ -78,6 +78,13 @@ class TestIsDangerousCommand:
     "echo ${CLAUDE_CODE_OAUTH_TOKEN}",
     "echo $ANTHROPIC_API_KEY",
     "echo $GITHUB_TOKEN",
+    # Quoted forms — previously bypassed the bare-$ patterns
+    'echo "$CLAUDE_CODE_OAUTH_TOKEN"',
+    'echo "$GITHUB_TOKEN"',
+    "echo '$ANTHROPIC_API_KEY'",
+    'echo "${GITHUB_TOKEN}"',
+    # printf equivalent — functionally identical to echo
+    'printf "%s" $CLAUDE_CODE_OAUTH_TOKEN',
     "head -c 9999 /proc/self/environ",
     "awk '{print}' /proc/self/environ",
     "xxd /proc/self/environ",

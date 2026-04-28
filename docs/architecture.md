@@ -395,7 +395,7 @@ Three credential-injecting proxies (`git-proxy`, `github-proxy`, `auth-proxy`) r
 
 Proxies that need outbound internet (`github-proxy`, `auth-proxy`) are also attached to `sandbox-internet`. The `git-proxy` only returns a static credential helper response and needs no egress.
 
-A fourth proxy — the **per-job Athanor API proxy** that exposes CreateIssue / RequestInput / UpdateStatus to agents — is **currently deferred**. The `start_athanor_proxy_for_job()` method is a no-op stub. Workflows that depend on those tools (split-on-triage, agent-initiated questions) will not work until this is reworked. Tracked as a follow-up.
+A fourth proxy — the **per-job Athanor API proxy** that exposes CreateIssue / RequestInput / UpdateStatus to agents — is **currently deferred**. `start_athanor_proxy_for_job()` raises `NotImplementedError`, and `WorkflowRegistry.register()` rejects any `pipeline_template` that declares `CreateIssue`, `RequestInput`, or `UpdateStatus` tools at registration time. Until this is implemented, those tools are unavailable to all workflows. Tracked as a follow-up.
 
 **Credential injection via proxies** — GitHub auth flows exclusively through the git credential proxy (port 9101): the sandbox's git credential helper curls the proxy, which injects the orchestrator's `GITHUB_TOKEN` in the response. `GITHUB_TOKEN` is never present in the sandbox env. The auth proxy (port 9100) for Anthropic API keys is launched but not currently consumed by the sandbox runner — currently unused. **Scoped exception:** `CLAUDE_CODE_OAUTH_TOKEN` is passed into the sandbox env when Claude Max OAuth mode is active, because the Claude CLI reads it directly from env. This is a product-level constraint (the CLI doesn't support per-request injection for OAuth), not a deferred fix.
 
@@ -416,7 +416,7 @@ A fourth proxy — the **per-job Athanor API proxy** that exposes CreateIssue / 
 
 ### Athanor API Proxy
 
-> **Status:** Deferred. The current `start_athanor_proxy_for_job()` is a no-op stub. The tools below describe the intended interface; agents calling them will currently see no-op responses. Tracked as a follow-up.
+> **Status:** Deferred. `start_athanor_proxy_for_job()` raises `NotImplementedError` and `WorkflowRegistry.register()` rejects any `pipeline_template` that declares `CreateIssue`/`RequestInput`/`UpdateStatus` tools. Until this is implemented, those tools are unavailable to all workflows. The table below describes the intended interface; tracked as a follow-up.
 
 Gives sandbox agents controlled access to Athanor's own API, scoped to the current job's issue:
 

@@ -176,6 +176,6 @@ def test_baseline_denies_workspace_claude_writes():
 
 def test_baseline_denies_glob_grep_for_host_paths():
     pol = default_policy_for_agent("triage")
-    for path in ("/etc/**", "/root/**", "~/.ssh/**", "~/.aws/**", "~/.gnupg/**", "/proc/**"):
+    for path in ("/etc/**", "/root/**", "~/.claude/**", "~/.ssh/**", "~/.aws/**", "~/.gnupg/**", "/proc/**"):
         assert f"Glob({path})" in pol.deny_rules
         assert f"Grep({path})" in pol.deny_rules
