@@ -24,7 +24,7 @@ async def github_webhook(
         body=body,
         signature=x_hub_signature_256,
         secret=config.github_webhook_secret,
-        dev_mode=config.dev_mode,
+        webhook_dev_mode=config.webhook_dev_mode,
     )
 
     try:

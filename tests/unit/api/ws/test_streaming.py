@@ -10,7 +10,7 @@ from athanor.config import AthanorConfig
 
 def test_websocket_connect():
     """WebSocket connects successfully."""
-    config = AthanorConfig(_env_file=None, dev_mode=True)
+    config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True)
     app = create_app(config)
     from athanor.api.events.bus import EventBus
 

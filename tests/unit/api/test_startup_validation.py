@@ -14,19 +14,19 @@ def test_proxy_admin_token_passed_through_when_set():
     with patch.dict(os.environ, {}, clear=True):
         cfg = AthanorConfig(
             _env_file=None,
-            dev_mode=False,
+            auth_dev_mode=False,
             proxy_admin_token="preset-token-1234567890ab",
         )
     _resolve_proxy_admin_token(cfg)
     assert cfg.proxy_admin_token == "preset-token-1234567890ab"
 
 
-def test_proxy_admin_token_auto_generated_in_dev_mode():
-    """Token is auto-generated when dev_mode=True and token is empty."""
-    with patch.dict(os.environ, {"DEV_MODE": "true"}, clear=True):
+def test_proxy_admin_token_auto_generated_in_auth_dev_mode():
+    """Token is auto-generated when auth_dev_mode=True and token is empty."""
+    with patch.dict(os.environ, {}, clear=True):
         cfg = AthanorConfig(
             _env_file=None,
-            dev_mode=True,
+            auth_dev_mode=True,
             proxy_admin_token="",
         )
     _resolve_proxy_admin_token(cfg)
@@ -36,11 +36,11 @@ def test_proxy_admin_token_auto_generated_in_dev_mode():
 
 
 def test_proxy_admin_token_required_in_production():
-    """RuntimeError is raised when dev_mode=False and token is empty."""
-    with patch.dict(os.environ, {"DEV_MODE": "false"}, clear=True):
+    """RuntimeError is raised when auth_dev_mode=False and token is empty."""
+    with patch.dict(os.environ, {}, clear=True):
         cfg = AthanorConfig(
             _env_file=None,
-            dev_mode=False,
+            auth_dev_mode=False,
             proxy_admin_token="",
         )
     with pytest.raises(RuntimeError, match="PROXY_ADMIN_TOKEN must be set in production"):

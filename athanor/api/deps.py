@@ -14,7 +14,7 @@ def _auth_dependency(
     verify_api_key(
         api_key=config.api_key or "",
         authorization=authorization,
-        dev_mode=config.dev_mode,
+        auth_dev_mode=config.auth_dev_mode,
     )
 
 

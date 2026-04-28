@@ -33,21 +33,21 @@ logger = structlog.get_logger(__name__)
 
 
 def _resolve_proxy_admin_token(config: AthanorConfig) -> None:
-    """Resolve PROXY_ADMIN_TOKEN. Generates in dev_mode if missing; refuses in prod.
+    """Resolve PROXY_ADMIN_TOKEN. Generates in auth_dev_mode if missing; refuses in prod.
 
     Args:
         config: Application configuration to resolve the token for.
 
     Raises:
-        RuntimeError: If dev_mode is False and proxy_admin_token is not set.
+        RuntimeError: If auth_dev_mode is False and proxy_admin_token is not set.
     """
     if config.proxy_admin_token:
         return
-    if config.dev_mode:
+    if config.auth_dev_mode:
         config.proxy_admin_token = secrets.token_urlsafe(32)
         logger.warning(
             "proxy_admin_token_generated_for_dev",
-            msg="dev_mode=true and PROXY_ADMIN_TOKEN unset — generated a random one for this process. Set PROXY_ADMIN_TOKEN in .env to make it stable across restarts.",
+            msg="auth_dev_mode=true and PROXY_ADMIN_TOKEN unset — generated a random one for this process. Set PROXY_ADMIN_TOKEN in .env to make it stable across restarts.",
         )
         return
     raise RuntimeError(
@@ -242,8 +242,42 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cert_path=config.docker_cert_path,
     )
 
+    # Warn loudly and emit audit rows if any dev-mode bypass is active.
+    if config.auth_dev_mode:
+        logger.critical(
+            "auth_dev_mode_enabled",
+            msg="AUTH_DEV_MODE=true bypasses API key authentication. NEVER use in production.",
+        )
+        try:
+            from athanor.audit.logger import emit_audit_event
+
+            emit_audit_event(
+                "dev_mode_enabled",
+                actor="system",
+                details={"flag": "AUTH_DEV_MODE"},
+                audit_log_path=config.audit_log_path,
+            )
+        except Exception:
+            logger.warning("dev_mode_audit_emit_failed", exc_info=True)
+    if config.webhook_dev_mode:
+        logger.critical(
+            "webhook_dev_mode_enabled",
+            msg="WEBHOOK_DEV_MODE=true bypasses webhook HMAC verification. NEVER use in production.",
+        )
+        try:
+            from athanor.audit.logger import emit_audit_event
+
+            emit_audit_event(
+                "dev_mode_enabled",
+                actor="system",
+                details={"flag": "WEBHOOK_DEV_MODE"},
+                audit_log_path=config.audit_log_path,
+            )
+        except Exception:
+            logger.warning("dev_mode_audit_emit_failed", exc_info=True)
+
     # Resolve PROXY_ADMIN_TOKEN before constructing ProxyManager: the constructor
-    # raises ValueError on an empty token, so in dev_mode with PROXY_ADMIN_TOKEN
+    # raises ValueError on an empty token, so in auth_dev_mode with PROXY_ADMIN_TOKEN
     # unset this call must run first to generate (and set) a valid token.
     _resolve_proxy_admin_token(config)
 

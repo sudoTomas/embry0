@@ -26,7 +26,7 @@ def _passes_filter(event: dict, wanted: set[str]) -> bool:
 async def job_events(websocket: WebSocket, job_id: str) -> None:
     # Auth check
     config = websocket.app.state.config
-    if not config.dev_mode and config.api_key:
+    if not config.auth_dev_mode and config.api_key:
         token = websocket.query_params.get("token", "")
         if not hmac.compare_digest(token, config.api_key):
             await websocket.close(code=4001, reason="Unauthorized")

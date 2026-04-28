@@ -6,13 +6,13 @@ import hmac
 from fastapi import HTTPException
 
 
-def verify_api_key(api_key: str, authorization: str, dev_mode: bool) -> None:
+def verify_api_key(api_key: str, authorization: str, auth_dev_mode: bool) -> None:
     """Verify the API key from explicit parameters.
 
     Raises HTTPException 401 if the key is missing or invalid.
-    Skips verification when dev_mode is True or no key is configured.
+    Skips verification when auth_dev_mode is True or no key is configured.
     """
-    if dev_mode or not api_key:
+    if auth_dev_mode or not api_key:
         return
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
@@ -21,15 +21,15 @@ def verify_api_key(api_key: str, authorization: str, dev_mode: bool) -> None:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
-def verify_webhook_signature(body: bytes, signature: str, secret: str, dev_mode: bool = False) -> None:
+def verify_webhook_signature(body: bytes, signature: str, secret: str, webhook_dev_mode: bool = False) -> None:
     """Verify a GitHub webhook HMAC-SHA256 signature.
 
     - If ``secret`` is set: always require and verify a valid signature (401 on mismatch).
-    - If ``secret`` is empty and ``dev_mode`` is True: skip verification (smee.io local relay flow).
-    - If ``secret`` is empty and ``dev_mode`` is False: raise 503 (not configured for production).
+    - If ``secret`` is empty and ``webhook_dev_mode`` is True: skip verification (smee.io local relay flow).
+    - If ``secret`` is empty and ``webhook_dev_mode`` is False: raise 503 (not configured for production).
     """
     if not secret:
-        if dev_mode:
+        if webhook_dev_mode:
             return
         raise HTTPException(status_code=503, detail="Webhook secret not configured")
     if not signature:

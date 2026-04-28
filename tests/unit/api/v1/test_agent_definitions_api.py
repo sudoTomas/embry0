@@ -19,7 +19,7 @@ DEVELOPER_AGENT = {
 
 @pytest.fixture
 def app():
-    config = AthanorConfig(_env_file=None, dev_mode=True)
+    config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True)
     app = create_app(config)
     mock_repo = MagicMock()
     mock_repo.list_all = AsyncMock(return_value=[DEVELOPER_AGENT])

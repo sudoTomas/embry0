@@ -11,13 +11,13 @@ from athanor.config import AthanorConfig
 
 @pytest.fixture
 def app_with_token():
-    config = AthanorConfig(_env_file=None, dev_mode=True, github_token="ghp_test_token")
+    config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_token="ghp_test_token")
     return create_app(config)
 
 
 @pytest.fixture
 def app_without_token():
-    config = AthanorConfig(_env_file=None, dev_mode=True, github_token="")
+    config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_token="")
     return create_app(config)
 
 

@@ -73,7 +73,8 @@ async def app(setup_database: str) -> AsyncIterator[AsyncClient]:
     config = AthanorConfig(
         _env_file=None,
         database_url=setup_database,
-        dev_mode=True,
+        auth_dev_mode=True,
+        webhook_dev_mode=True,
         api_key="",
         github_webhook_secret="test-secret",
     )

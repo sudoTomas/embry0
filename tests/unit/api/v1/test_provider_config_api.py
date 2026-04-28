@@ -25,7 +25,7 @@ _UPDATE_RESPONSE = {
 
 @pytest.fixture
 def app():
-    config = AthanorConfig(_env_file=None, dev_mode=True)
+    config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True)
     app = create_app(config)
     repo = MagicMock()
     repo.get = AsyncMock(return_value=_GET_RESPONSE)
