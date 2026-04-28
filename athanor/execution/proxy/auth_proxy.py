@@ -14,8 +14,14 @@ logger = structlog.get_logger(__name__)
 ANTHROPIC_API_BASE = "https://api.anthropic.com"
 
 
-def create_auth_proxy_app(api_key: str) -> web.Application:
-    """Create the auth proxy ASGI app."""
+def create_auth_proxy_app(api_key: str, admin_token: str = "") -> web.Application:
+    """Create the auth proxy ASGI app.
+
+    Args:
+        api_key: Anthropic API key injected into forwarded requests.
+        admin_token: Reserved for Task 8 enrollment endpoints; accepted but not
+            yet enforced. Passing a non-empty value is a no-op until Task 8 lands.
+    """
     app = web.Application()
     app["api_key"] = api_key
     app.on_startup.append(_on_startup)

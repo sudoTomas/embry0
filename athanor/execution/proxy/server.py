@@ -1,11 +1,12 @@
 """Container entrypoint for the athanor-proxy image.
 
 Dispatches to one of the stateless proxy apps based on PROXY_TYPE env:
-- git    -> git_proxy.create_git_proxy_app(GITHUB_TOKEN)
-- github -> github_proxy.create_github_proxy_app(GITHUB_TOKEN)
-- auth   -> auth_proxy.create_auth_proxy_app(ANTHROPIC_API_KEY)
+- git    -> git_proxy.create_git_proxy_app(GITHUB_TOKEN, PROXY_ADMIN_TOKEN)
+- github -> github_proxy.create_github_proxy_app(GITHUB_TOKEN, PROXY_ADMIN_TOKEN)
+- auth   -> auth_proxy.create_auth_proxy_app(ANTHROPIC_API_KEY, PROXY_ADMIN_TOKEN)
 
 Listens on 0.0.0.0:LISTEN_PORT (default depends on proxy type).
+PROXY_ADMIN_TOKEN must be set; all proxy factories require it.
 """
 
 from __future__ import annotations
@@ -39,12 +40,14 @@ def build_app_from_env() -> web.Application:
         msg = "PROXY_TYPE env var is required"
         raise ValueError(msg)
 
+    admin_token = _require_env("PROXY_ADMIN_TOKEN")
+
     if proxy_type == "git":
-        return create_git_proxy_app(_require_env("GITHUB_TOKEN"))
+        return create_git_proxy_app(_require_env("GITHUB_TOKEN"), admin_token)
     if proxy_type == "github":
-        return create_github_proxy_app(_require_env("GITHUB_TOKEN"))
+        return create_github_proxy_app(_require_env("GITHUB_TOKEN"), admin_token)
     if proxy_type == "auth":
-        return create_auth_proxy_app(_require_env("ANTHROPIC_API_KEY"))
+        return create_auth_proxy_app(_require_env("ANTHROPIC_API_KEY"), admin_token)
 
     msg = f"Unknown PROXY_TYPE: {proxy_type!r}"
     raise ValueError(msg)

@@ -13,8 +13,14 @@ logger = structlog.get_logger(__name__)
 GITHUB_API_BASE = "https://api.github.com"
 
 
-def create_github_proxy_app(github_token: str) -> web.Application:
-    """Create the GitHub API proxy app."""
+def create_github_proxy_app(github_token: str, admin_token: str = "") -> web.Application:
+    """Create the GitHub API proxy app.
+
+    Args:
+        github_token: PAT injected into forwarded requests.
+        admin_token: Reserved for Task 7 enrollment endpoints; accepted but not
+            yet enforced. Passing a non-empty value is a no-op until Task 7 lands.
+    """
     app = web.Application()
     app["github_token"] = github_token
     app.on_startup.append(_on_startup)
