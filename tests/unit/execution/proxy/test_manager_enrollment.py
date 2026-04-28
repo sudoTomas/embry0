@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import structlog
 
 from athanor.execution.proxy.manager import ProxyManager
 
@@ -67,11 +68,13 @@ async def test_unenroll_best_effort_swallows_404(manager):
 
 
 @pytest.mark.asyncio
-async def test_unenroll_logs_warning_on_other_failure(manager, caplog):
+async def test_unenroll_logs_warning_on_other_failure(manager):
     manager._http = _fake_session(delete_status=500)
-    await manager.unenroll_sandbox("sandbox-x")
-    # structlog doesn't route through caplog by default; assert it doesn't raise
-    assert True  # no exception = pass
+    with structlog.testing.capture_logs() as captured:
+        await manager.unenroll_sandbox("sandbox-x")
+    # 500 from a proxy → sandbox_unenroll_non_200 warning per registered URL
+    events = [e["event"] for e in captured]
+    assert "sandbox_unenroll_non_200" in events
 
 
 def test_proxy_admin_token_required():

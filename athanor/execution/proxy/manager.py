@@ -176,7 +176,7 @@ class ProxyManager:
                     if resp.status != 200:
                         text = await resp.text()
                         raise RuntimeError(f"enroll {url} returned {resp.status}: {text[:200]}")
-            except aiohttp.ClientError as exc:
+            except (aiohttp.ClientError, TimeoutError) as exc:
                 raise RuntimeError(f"enroll {url} failed: {exc!r}") from exc
 
         logger.info("sandbox_enrolled_with_proxies", sandbox_id=sandbox_id, endpoints=endpoints)
@@ -200,7 +200,7 @@ class ProxyManager:
                 async with self._http.delete(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status not in (200, 404):
                         logger.warning("sandbox_unenroll_non_200", url=url, status=resp.status)
-            except aiohttp.ClientError as exc:
+            except (aiohttp.ClientError, TimeoutError) as exc:
                 logger.warning("sandbox_unenroll_failed", url=url, error=str(exc))
 
     async def stop(self) -> None:

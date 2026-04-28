@@ -131,3 +131,29 @@ async def test_create_rolls_back_on_enrollment_failure():
         await mgr.create(job_id="job-fail")
 
     docker.build_rm_cmd.assert_called()  # rollback was attempted
+
+
+@pytest.mark.asyncio
+async def test_create_rolls_back_partial_enrollment_on_enroll_failure():
+    """On enroll_sandbox failure, unenroll_sandbox is called before container rm
+    to clean up any partial proxy enrollments that succeeded before the failure.
+    """
+    from athanor.execution.sandbox_manager import SandboxInitError
+
+    docker = MagicMock()
+    docker.run_cmd = AsyncMock(return_value="container-partial")
+    docker.build_run_cmd = MagicMock(return_value=["docker", "run"])
+    docker.build_rm_cmd = MagicMock(return_value=["docker", "rm", "sandbox-job-partial"])
+
+    proxy_mgr = MagicMock()
+    proxy_mgr.enroll_sandbox = AsyncMock(side_effect=RuntimeError("github-proxy unreachable"))
+    proxy_mgr.unenroll_sandbox = AsyncMock()
+
+    mgr = SandboxManager(docker=docker, proxy_manager=proxy_mgr)
+
+    with pytest.raises(SandboxInitError, match="enrollment failed"):
+        await mgr.create(job_id="job-partial")
+
+    # unenroll_sandbox must have been called exactly once with the container_id
+    assert proxy_mgr.unenroll_sandbox.call_count == 1
+    assert proxy_mgr.unenroll_sandbox.call_args_list[0].args[0] == "container-partial"

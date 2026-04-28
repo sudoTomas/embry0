@@ -85,6 +85,9 @@ class SandboxManager:
             sandbox_token = await self._proxy_manager.enroll_sandbox(container_id)
         except RuntimeError as exc:
             logger.error("sandbox_enroll_failed_rolling_back", container=name, error=str(exc))
+            # Clean any partial enrollment from earlier proxies before rm.
+            # unenroll_sandbox is best-effort and never raises.
+            await self._proxy_manager.unenroll_sandbox(container_id)
             try:
                 await self._docker.run_cmd(self._docker.build_rm_cmd(name))
             except RuntimeError:
@@ -122,6 +125,9 @@ class SandboxManager:
 
     async def destroy(self, container: str, timeout: int = 10) -> None:
         """Stop and remove a sandbox container."""
+        # Unenroll first so the proxy stops accepting the bearer; if this races
+        # with `docker rm -f` below the worst case is a stale entry that the next
+        # enrollment overwrites (sandbox_id == container_id; docker IDs are unique).
         try:
             await self._proxy_manager.unenroll_sandbox(container)
         except Exception:

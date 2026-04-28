@@ -241,6 +241,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         tls_verify=config.docker_tls_verify,
         cert_path=config.docker_cert_path,
     )
+
+    # Resolve PROXY_ADMIN_TOKEN before constructing ProxyManager: the constructor
+    # raises ValueError on an empty token, so in dev_mode with PROXY_ADMIN_TOKEN
+    # unset this call must run first to generate (and set) a valid token.
+    _resolve_proxy_admin_token(config)
+
     proxy_mgr = ProxyManager(docker, proxy_admin_token=config.proxy_admin_token)
     sandbox_mgr = SandboxManager(docker, proxy_manager=proxy_mgr)
     agent_runner = AgentRunner(sandbox_mgr, docker)
@@ -295,10 +301,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The init-sandbox-networks compose service runs setup-sandbox-networks.sh once
     # at stack start. If it didn't run (or its output was clobbered), refuse to boot.
     await docker.assert_sandbox_networks_or_die()
-
-    # Resolve PROXY_ADMIN_TOKEN. Required in production; in dev_mode we
-    # generate one if missing so contributors don't need to know about it.
-    _resolve_proxy_admin_token(config)
 
     from athanor.agents.executor import _assert_sdk_supports_hooks
     _assert_sdk_supports_hooks()
