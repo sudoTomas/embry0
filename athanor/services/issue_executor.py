@@ -515,10 +515,13 @@ class IssueExecutor:
                 job_id=job_id,
                 error=str(exc),
             )
+            from athanor.orchestration.nodes.agent import SandboxRequiredError
             from athanor.orchestration.state import TriageParseError
             from athanor.safety.error_codes import ErrorCode
 
-            if isinstance(exc, TriageParseError):
+            if isinstance(exc, SandboxRequiredError):
+                code = ErrorCode.SANDBOX_REQUIRED
+            elif isinstance(exc, TriageParseError):
                 code = ErrorCode.TRIAGE_MALFORMED
             elif isinstance(exc, RuntimeError) and "not registered" in str(exc):
                 code = ErrorCode.WORKFLOW_UNKNOWN
@@ -875,10 +878,13 @@ class IssueExecutor:
 
         except Exception as exc:
             logger.error("pipeline_resume_failed", issue_id=issue_id, job_id=job_id, error=str(exc))
+            from athanor.orchestration.nodes.agent import SandboxRequiredError
             from athanor.orchestration.state import TriageParseError
             from athanor.safety.error_codes import ErrorCode
 
-            if isinstance(exc, TriageParseError):
+            if isinstance(exc, SandboxRequiredError):
+                code = ErrorCode.SANDBOX_REQUIRED
+            elif isinstance(exc, TriageParseError):
                 code = ErrorCode.TRIAGE_MALFORMED
             elif isinstance(exc, RuntimeError) and "not registered" in str(exc):
                 code = ErrorCode.WORKFLOW_UNKNOWN

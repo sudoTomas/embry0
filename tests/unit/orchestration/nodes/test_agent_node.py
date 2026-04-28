@@ -182,12 +182,17 @@ async def test_run_agent_node_with_resolver() -> None:
 
 @pytest.mark.asyncio
 async def test_run_agent_node_config_error_sets_error_code() -> None:
-    """AuthConfigError from resolver surfaces as an error entry with error_code set."""
+    """AuthConfigError from resolver surfaces as an error entry with error_code set.
+
+    We must supply a real runner (not None) so agent_runner is None guard does not
+    fire first. The AuthConfigError is raised by resolve_agent_invocation because
+    auth_mode=api_key with an empty api_key — the runner.run path is never reached.
+    """
     state = {"sandbox_container_id": "c1", "total_cost_usd": 0.0}
     # auth_mode=api_key but no api_key in credentials -> MISSING_API_KEY
     result = await run_agent_node(
         state=state,
-        agent_runner=None,
+        agent_runner=_make_fake_runner(),
         agent_type="developer",
         prompt="do it",
         credentials={"api_key": "", "oauth_token": ""},
@@ -224,6 +229,42 @@ async def test_run_agent_node_select_executor_error_returns_error_updates(monkey
     assert updates["agent_outputs"][0]["is_error"] is True
     assert updates["error_code"] == "ERR_INVALID_CONFIG"
     assert updates["current_stage"] == "developer_failed"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_node_runner_auth_error_returns_error_updates() -> None:
+    """AuthConfigError raised by runner.run is caught and returned as a soft error dict."""
+    from athanor.execution.auth_provider import AuthConfigError
+    from athanor.safety.error_codes import ErrorCode
+
+    runner = AsyncMock()
+    runner.run = AsyncMock(
+        side_effect=AuthConfigError(ErrorCode.INVALID_CONFIG, "token rejected by upstream")
+    )
+
+    updates = await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
+        agent_runner=runner,
+        agent_type="developer",
+        prompt="do it",
+        agent_definition={
+            "model": "claude-sonnet-4-6",
+            "tools": ["Read"],
+            "skills": [],
+            "system_prompt": "",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        },
+        credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+        global_defaults={"execution_mode": "sdk", "auth_mode": "oauth"},
+    )
+
+    assert updates["current_stage"] == "developer_failed"
+    assert updates["agent_outputs"][0]["is_error"] is True
+    assert updates["error_code"] == ErrorCode.INVALID_CONFIG.value
+    assert "token rejected by upstream" in updates["errors"][0]
+    runner.run.assert_awaited_once()
 
 
 @pytest.mark.asyncio

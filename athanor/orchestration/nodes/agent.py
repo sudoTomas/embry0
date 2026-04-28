@@ -79,6 +79,21 @@ async def run_agent_node(
     Returns a LangGraph state update dict. Does NOT return a Command here;
     Command returns live in the workflow nodes (see Task 16).
     """
+    # Hard-fail immediately if no sandbox runner was supplied. This check must
+    # come before any resolution work so that a None runner with bad credentials
+    # raises SandboxRequiredError rather than silently returning a soft error.
+    if agent_runner is None:
+        logger.error(
+            "sandbox_required_but_missing",
+            agent_type=agent_type,
+            job_id=state.get("job_id"),
+        )
+        raise SandboxRequiredError(
+            "agent_runner not configured — refusing to run agent in-process. "
+            "The in-process executor fallback was removed in 2026-04-28 sandbox "
+            "hardening. See docs/superpowers/specs/2026-04-28-sandbox-safety-hardening-design.md."
+        )
+
     # Build a default agent_definition if the caller didn't supply one. We
     # thread the model/tools kwargs through so legacy callers still get the
     # same effective configuration.
@@ -148,18 +163,6 @@ async def run_agent_node(
     }
 
     container = state.get("sandbox_container_id", "")
-
-    if agent_runner is None:
-        logger.error(
-            "sandbox_required_but_missing",
-            agent_type=agent_type,
-            job_id=state.get("job_id"),
-        )
-        raise SandboxRequiredError(
-            "agent_runner not configured — refusing to run agent in-process. "
-            "The in-process executor fallback was removed in 2026-04-28 sandbox "
-            "hardening. See docs/superpowers/specs/2026-04-28-sandbox-safety-hardening-design.md."
-        )
 
     try:
         # Production path: docker-exec the sandbox runner with the serialized
