@@ -473,11 +473,6 @@ graph TB
         JX["POST /api/v1/jobs/{id}/cancel"]
     end
 
-    subgraph "Graph Engine (Low-Level)"
-        EX["POST /api/v1/graphs/execute"]
-        GS["GET /api/v1/graphs/{id}/state"]
-        RS["POST /api/v1/graphs/{id}/resume"]
-    end
 
     subgraph "Ops & Debug"
         SBL["GET /api/v1/sandboxes"]
@@ -750,6 +745,8 @@ WebSocket fan-out is managed by `athanor.api.events.EventBus` — a concurrency-
 
 **Replay cursor (`since_seq`).** Every broadcast event carries an `event_seq` field — the monotonic `BIGSERIAL` `id` from the `job_logs` table stamped at persist time. When a WS client reconnects after a dropped connection, it passes `?since_seq=<last_seen>`; the handler replays only rows with `id > since_seq`, tracks the highest id as a watermark, and then drops live events with `event_seq <= watermark` to prevent duplicates during the subscribe→replay race.
 
+**Authentication.** WS clients authenticate via the `Sec-WebSocket-Protocol` subprotocol header: `athanor.bearer.<api_key>`. The server validates with `hmac.compare_digest` and echoes the matched subprotocol back on accept (RFC 6455). Token-in-URL is no longer supported. Per-job event queues are bounded at 1000 events; on overflow, the publisher drops the event with a `ws_slow_consumer` warning.
+
 ---
 
 ## Budget Controls
@@ -870,11 +867,11 @@ Signature verification is always on in production: `GITHUB_WEBHOOK_SECRET` is se
 
 ### smee.io Relay (local development webhook ingress)
 
-For developer laptops without a public URL, Athanor supports the [smee.io](https://smee.io) relay pattern. The GitHub webhook is pointed at a smee channel URL, and `smee-client` forwards received events to `http://localhost:8200/api/v1/webhook`. Because smee re-serializes the JSON payload before forwarding, GitHub's HMAC signature is invalidated — so this flow requires `DEV_MODE=true` and an empty `GITHUB_WEBHOOK_SECRET`.
+For developer laptops without a public URL, Athanor supports the [smee.io](https://smee.io) relay pattern. The GitHub webhook is pointed at a smee channel URL, and `smee-client` forwards received events to `http://localhost:8200/api/v1/webhook`. Because smee re-serializes the JSON payload before forwarding, GitHub's HMAC signature is invalidated — so this flow requires `WEBHOOK_DEV_MODE=true` and an empty `GITHUB_WEBHOOK_SECRET`. (`AUTH_DEV_MODE` is the unrelated separate flag for bypassing API key auth; do NOT enable it just for the webhook flow.)
 
 The handler in `athanor/api/v1/webhooks.py` supports this flow in two ways:
 
-1. `verify_webhook_signature(..., dev_mode=True)` skips HMAC verification when no secret is configured.
+1. `verify_webhook_signature(..., webhook_dev_mode=True)` skips HMAC verification when no secret is configured.
 2. After JSON parsing, the handler detects and unwraps smee's `{"payload": "<json-string>"}` envelope so downstream code sees the real GitHub payload unchanged.
 
 See README "Webhook Setup → Option B — smee.io relay" for the end-to-end setup. **Never enable this configuration in production** — any unsigned `POST` to `/api/v1/webhook` will be accepted and could trigger jobs.

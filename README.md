@@ -383,7 +383,7 @@ Athanor reacts to GitHub events (issues opened/labeled/edited/closed, issue comm
 | Approach | Use when | Signature verification |
 |----------|----------|------------------------|
 | **Cloudflare Tunnel** | Production / always-on demo / shared team instance | **Required** — real HMAC secret |
-| **smee.io relay** | Local dev on a laptop / ephemeral testing | **Skipped** — DEV_MODE=true, no secret |
+| **smee.io relay** | Local dev on a laptop / ephemeral testing | **Skipped** — WEBHOOK_DEV_MODE=true, no secret |
 
 ### Option A — Cloudflare Tunnel (production)
 
@@ -445,7 +445,7 @@ cd /home/user/repos/athanor/infra && docker compose stop cloudflared
 
 ### Option B — smee.io relay (local development)
 
-For testing real GitHub events against a local Athanor instance on your laptop, with no public hostname needed. smee.io re-serializes the webhook body before forwarding, which invalidates GitHub's HMAC — so this flow uses `DEV_MODE=true` and no secret.
+For testing real GitHub events against a local Athanor instance on your laptop, with no public hostname needed. smee.io re-serializes the webhook body before forwarding, which invalidates GitHub's HMAC — so this flow uses `WEBHOOK_DEV_MODE=true` and no secret.
 
 **1. Get a smee channel:** visit [https://smee.io](https://smee.io), click **Start a new channel**, and copy the channel URL (e.g. `https://smee.io/aBcDeF1234`).
 
@@ -457,10 +457,10 @@ npx smee-client --url https://smee.io/aBcDeF1234 --target http://localhost:8200/
 
 Leave this running in a terminal pane — it prints every forwarded event.
 
-**3. Enable DEV_MODE** in `.env` and clear the webhook secret:
+**3. Enable WEBHOOK_DEV_MODE** in `.env` and clear the webhook secret:
 
 ```
-DEV_MODE=true
+WEBHOOK_DEV_MODE=true
 GITHUB_WEBHOOK_SECRET=
 ```
 
@@ -564,6 +564,8 @@ Athanor uses environment variables for infrastructure config and API endpoints f
 | `CLAUDE_MAX_OAUTH_TOKEN` | — | OAuth token (for `claude_max` mode) |
 | `GITHUB_TOKEN` | — | GitHub personal access token |
 | `GITHUB_WEBHOOK_SECRET` | — | HMAC secret for webhook verification |
+| `AUTH_DEV_MODE` | `false` | Bypass API key authentication. NEVER use in production. |
+| `WEBHOOK_DEV_MODE` | `false` | Bypass webhook HMAC verification. Required for smee.io relay. NEVER use in production. |
 | `DATABASE_URL` | `postgresql://athanor:athanor@postgres:5432/athanor` | PostgreSQL connection |
 | `MAX_BUDGET_USD` | `10.0` | Default per-job budget |
 | `DAILY_BUDGET_CAP_USD` | `100.0` | Daily spending cap |
@@ -577,6 +579,7 @@ Athanor uses environment variables for infrastructure config and API endpoints f
 | `ENVIRONMENT_SECRET_KEY` | — | Fernet key for encrypting env var secrets at rest |
 | `PROXY_ADMIN_TOKEN` | — | Required, gates the credential proxies' admin endpoints. Generate with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`. |
 | `PAUSED_JOB_TTL_HOURS` | `48` | Hours before a paused job's sandbox is expired |
+| `DEV_MODE` | (deprecated) | **Deprecated in 2026-04-28.** Set `AUTH_DEV_MODE` and `WEBHOOK_DEV_MODE` explicitly. Honoured for one release as a compat shim; remove in next release. |
 
 See `.env.example` for the complete list.
 
