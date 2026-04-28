@@ -175,12 +175,11 @@ class SdkAgentExecutor:
             # Denial telemetry lives in the "error" event emitted below.
             return await _evaluate_hook(invocation.safety_policy, tool_name, tool_input, tools_called, writer)
 
-        # Attach hook to options. Newer SDK versions expose a hooks kwarg;
-        # if unavailable, proceed without (legacy installs — noop).
-        try:
-            options.hooks = {"PreToolUse": [{"matcher": None, "hooks": [pre_tool_use_hook]}]}
-        except Exception:
-            logger.warning("sdk_hooks_unavailable")
+        # Attach hook to options. The SDK's support for `hooks` is asserted at
+        # orchestrator startup (see _assert_sdk_supports_hooks); a per-run
+        # try/except would silently fail-open and is the explicit anti-pattern
+        # the 2026-04-28 review (S3) flagged. Set unconditionally.
+        options.hooks = {"PreToolUse": [{"matcher": None, "hooks": [pre_tool_use_hook]}]}
 
         # --- Prompt assembly: system_context prepended (legacy behavior).
         prompt = invocation.prompt
@@ -301,3 +300,33 @@ class SdkAgentExecutor:
             }
         )
         return result
+
+
+def _assert_sdk_supports_hooks() -> None:
+    """Verify claude_agent_sdk exposes a writable `hooks` attribute.
+
+    Called from orchestrator startup. Refuses to return on failure so the
+    orchestrator dies at boot rather than fail-opening on the first agent run.
+    """
+    try:
+        from claude_agent_sdk import ClaudeAgentOptions
+    except ImportError as exc:
+        raise RuntimeError(
+            "claude_agent_sdk is not importable — refusing to start. "
+            "Install/pin the SDK before launching the orchestrator."
+        ) from exc
+
+    sentinel = {"_athanor_hook_check": True}
+    try:
+        opts = ClaudeAgentOptions()
+        opts.hooks = sentinel  # type: ignore[assignment]
+        if getattr(opts, "hooks", None) is not sentinel:
+            raise RuntimeError("read-back mismatch")
+    except Exception as exc:
+        raise RuntimeError(
+            "Installed claude_agent_sdk does not expose a writable `hooks` "
+            "attribute. Ring-3 PreToolUse cannot be enforced. Refusing to "
+            f"start. (exception: {exc!r})"
+        ) from exc
+
+    logger.info("sdk_hooks_supported")

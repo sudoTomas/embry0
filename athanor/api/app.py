@@ -270,6 +270,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # at stack start. If it didn't run (or its output was clobbered), refuse to boot.
     await docker.assert_sandbox_networks_or_die()
 
+    from athanor.agents.executor import _assert_sdk_supports_hooks
+    _assert_sdk_supports_hooks()
+
     # Start proxy services
     await proxy_mgr.start(
         anthropic_api_key=config.anthropic_api_key,
