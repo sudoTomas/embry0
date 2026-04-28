@@ -73,6 +73,13 @@ class AthanorConfig(BaseSettings):
     # Environment variable encryption
     environment_secret_key: str = ""
 
+    # Shared secret between orchestrator and credential proxies. The orchestrator
+    # passes this as PROXY_ADMIN_TOKEN env var into each proxy container; admin
+    # endpoints (/admin/enroll, etc.) require it via X-Admin-Token. Required in
+    # production. If empty in dev_mode, the orchestrator generates a random
+    # value at startup with a warning. Required (refuses to start) otherwise.
+    proxy_admin_token: str = ""
+
     # Docker / DinD
     docker_host: str = ""
     docker_tls_verify: bool = False

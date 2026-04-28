@@ -270,6 +270,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # at stack start. If it didn't run (or its output was clobbered), refuse to boot.
     await docker.assert_sandbox_networks_or_die()
 
+    # Resolve PROXY_ADMIN_TOKEN. Required in production; in dev_mode we
+    # generate one if missing so contributors don't need to know about it.
+    if not config.proxy_admin_token:
+        if config.dev_mode:
+            import secrets as _secrets
+            config.proxy_admin_token = _secrets.token_urlsafe(32)
+            logger.warning(
+                "proxy_admin_token_generated_for_dev",
+                msg="dev_mode=true and PROXY_ADMIN_TOKEN unset — generated a random one for this process. Set PROXY_ADMIN_TOKEN in .env to make it stable across restarts.",
+            )
+        else:
+            raise RuntimeError(
+                "PROXY_ADMIN_TOKEN must be set in production. Generate one with "
+                "`python -c 'import secrets; print(secrets.token_urlsafe(32))'` "
+                "and add it to .env."
+            )
+
     from athanor.agents.executor import _assert_sdk_supports_hooks
     _assert_sdk_supports_hooks()
 
