@@ -24,11 +24,11 @@ async def test_proxy_injects_api_key(auth_client: TestClient):
     """Verify the proxy adds x-api-key header (will fail upstream but we check the attempt).
 
     Offline: 502 (can't reach upstream).
-    Online:  401 (upstream rejects invalid test key — key was present and forwarded).
+    Online:  401 (bearer-gate rejects unauthenticated request, or upstream rejects invalid key).
     Either way, this is NOT a 403/missing-key error from the proxy itself.
     """
     resp = await auth_client.post("/v1/messages", json={"test": True})
-    # 502 = no network, 401 = upstream rejected invalid key (key was injected and forwarded)
+    # 502 = no network, 401 = bearer-gate rejection (no enrolled token) or upstream rejected invalid key
     assert resp.status in (401, 502)
 
 

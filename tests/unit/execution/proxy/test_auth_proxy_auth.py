@@ -326,3 +326,125 @@ async def test_proxy_timeout_returns_504(client):
             headers={"Authorization": f"Bearer {TOK_S1}"},
         )
     assert resp.status == 504
+
+
+async def test_proxy_strips_incoming_x_api_key(client):
+    """Sandbox-supplied X-Api-Key header must be stripped before the real key is injected."""
+    enroll = await client.post(
+        "/admin/enroll",
+        json={"sandbox_id": "s1", "sandbox_token": TOK_S1},
+        headers={"X-Admin-Token": ADMIN},
+    )
+    assert enroll.status == 200
+
+    captured: list[dict] = []
+
+    class CapturingStreamCtx:
+        async def __aenter__(self_inner):
+            return FakeStreamResp(status_code=200, body=b'{"ok":true}')
+
+        async def __aexit__(self_inner, *a):
+            return None
+
+    def fake_stream(method, url, headers, content):
+        captured.append({"headers": dict(headers)})
+        return CapturingStreamCtx()
+
+    with patch.object(client.app["http_client"], "stream", side_effect=fake_stream):
+        resp = await client.post(
+            "/v1/messages",
+            json={"model": "claude-3-5-haiku-20241022"},
+            headers={
+                "Authorization": f"Bearer {TOK_S1}",
+                "X-Api-Key": "bogus-key-from-sandbox",
+            },
+        )
+
+    assert resp.status == 200
+    assert len(captured) == 1
+    fwd_headers = captured[0]["headers"]
+
+    # Exactly one x-api-key entry, and it must be the real key (not the bogus one)
+    api_key_values = [v for k, v in fwd_headers.items() if k.lower() == "x-api-key"]
+    assert api_key_values == [API_KEY], (
+        f"Expected exactly one x-api-key={API_KEY!r}, got {api_key_values!r}"
+    )
+    assert "bogus-key-from-sandbox" not in str(fwd_headers)
+
+
+async def test_proxy_handles_mid_stream_read_error(client, capsys):
+    """A TCP drop mid-stream logs a warning and truncates gracefully (status already committed)."""
+    enroll = await client.post(
+        "/admin/enroll",
+        json={"sandbox_id": "s1", "sandbox_token": TOK_S1},
+        headers={"X-Admin-Token": ADMIN},
+    )
+    assert enroll.status == 200
+
+    PARTIAL_CHUNK = b'{"partial":'
+
+    class ErrorAfterOneChunkResp:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        async def aiter_bytes(self):
+            yield PARTIAL_CHUNK
+            raise httpx.ReadError("connection dropped")
+
+    class ErrorStreamCtx:
+        async def __aenter__(self):
+            return ErrorAfterOneChunkResp()
+
+        async def __aexit__(self, *a):
+            return None
+
+    with patch.object(
+        client.app["http_client"],
+        "stream",
+        return_value=ErrorStreamCtx(),
+    ):
+        resp = await client.post(
+            "/v1/messages",
+            json={"model": "claude-3-5-haiku-20241022"},
+            headers={"Authorization": f"Bearer {TOK_S1}"},
+        )
+
+    # Response was already prepared with 200 before the error
+    assert resp.status == 200
+
+    # Partial body was flushed before the error
+    body = await resp.read()
+    assert PARTIAL_CHUNK in body
+
+    # structlog writes to stdout by default; verify the warning was emitted
+    captured = capsys.readouterr()
+    assert "auth_proxy_stream_truncated" in captured.out, (
+        f"Expected auth_proxy_stream_truncated in stdout, got: {captured.out!r}"
+    )
+
+
+async def test_proxy_forwards_upstream_404_streaming(client):
+    """A 404 from api.anthropic.com is forwarded as-is via the streaming path."""
+    enroll = await client.post(
+        "/admin/enroll",
+        json={"sandbox_id": "s1", "sandbox_token": TOK_S1},
+        headers={"X-Admin-Token": ADMIN},
+    )
+    assert enroll.status == 200
+
+    fake_client, _ = make_fake_stream(
+        status_code=404,
+        body=b'{"error":{"type":"not_found_error","message":"Not found"}}',
+        headers={"content-type": "application/json"},
+    )
+
+    with patch.object(client.app["http_client"], "stream", fake_client.stream):
+        resp = await client.post(
+            "/v1/messages",
+            json={"model": "claude-3-5-haiku-20241022"},
+            headers={"Authorization": f"Bearer {TOK_S1}"},
+        )
+
+    assert resp.status == 404
+    body = await resp.json()
+    assert body["error"]["type"] == "not_found_error"

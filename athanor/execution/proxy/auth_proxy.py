@@ -152,6 +152,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     # Strip sandbox bearer before injecting real API key
     headers.pop("Authorization", None)
     headers.pop("authorization", None)
+    # Strip any sandbox-supplied x-api-key before injecting the real one
+    headers.pop("x-api-key", None)
+    headers.pop("X-Api-Key", None)  # case variants from dict() of CIMultiDict
     headers["x-api-key"] = api_key
 
     body = await request.read()
@@ -171,8 +174,12 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
                 if hdr in upstream_resp.headers:
                     response.headers[hdr] = upstream_resp.headers[hdr]
             await response.prepare(request)
-            async for chunk in upstream_resp.aiter_bytes():
-                await response.write(chunk)
+            try:
+                async for chunk in upstream_resp.aiter_bytes():
+                    await response.write(chunk)
+            except httpx.TransportError as exc:
+                logger.warning("auth_proxy_stream_truncated", error=str(exc))
+                # Cannot signal to client — response already prepared. Truncate gracefully.
             await response.write_eof()
             return response
     except httpx.ConnectError:
