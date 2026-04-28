@@ -467,7 +467,6 @@ def _register_routers(app: FastAPI) -> None:
         config,
         environment,
         github,
-        graphs,
         health,
         issues,
         jobs,
@@ -488,7 +487,6 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(agents.router, prefix="/api/v1", tags=["agents"], dependencies=auth_deps)
     app.include_router(issues.router, prefix="/api/v1", tags=["issues"], dependencies=auth_deps)
     app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"], dependencies=auth_deps)
-    app.include_router(graphs.router, prefix="/api/v1", tags=["graphs"], dependencies=auth_deps)
     app.include_router(sandbox_profiles.router, prefix="/api/v1", tags=["sandbox-profiles"], dependencies=auth_deps)
     app.include_router(sandboxes.router, prefix="/api/v1", tags=["sandboxes"], dependencies=auth_deps)
     app.include_router(config.router, prefix="/api/v1", tags=["config"], dependencies=auth_deps)

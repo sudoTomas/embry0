@@ -3,7 +3,6 @@ from pydantic import ValidationError
 
 from athanor.api.schemas import (
     BudgetConfigResponse,
-    GraphExecuteRequest,
     JobCreateRequest,
     JobResponse,
     SandboxProfileRequest,
@@ -42,14 +41,6 @@ def test_job_response_serialization():
     data = resp.model_dump()
     assert data["job_id"] == "job-abc123"
     assert data["status"] == "pending"
-
-
-def test_graph_execute_request():
-    req = GraphExecuteRequest(
-        workflow="issue-to-pr",
-        input_state={"repo": "o/r", "task": "Fix"},
-    )
-    assert req.workflow == "issue-to-pr"
 
 
 def test_sandbox_profile_request():

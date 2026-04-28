@@ -19,6 +19,11 @@ def app():
     mock_traces = MagicMock()
     mock_traces.list = AsyncMock(return_value=([], 0))
     app.state.traces_repo = mock_traces
+    mock_jobs = MagicMock()
+    mock_jobs.queue_summary = AsyncMock(
+        return_value={"pending": 0, "running": 0, "awaiting_input": 0, "paused": 0}
+    )
+    app.state.jobs_repo = mock_jobs
     return app
 
 
@@ -51,4 +56,9 @@ async def test_get_queue(app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/v1/queue")
     assert resp.status_code == 200
-    assert "depth" in resp.json()
+    data = resp.json()
+    assert "depth" in data
+    assert "pending" in data
+    assert "running" in data
+    assert "awaiting_input" in data
+    assert isinstance(data["paused"], int)

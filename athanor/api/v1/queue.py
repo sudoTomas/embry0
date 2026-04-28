@@ -1,20 +1,25 @@
-"""Queue API."""
+"""Queue API — real per-status counts for active jobs."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from athanor.api.deps import get_jobs_repo
+from athanor.storage.repositories.jobs import JobsRepository
 
 router = APIRouter()
 
 
 @router.get("/queue")
-async def get_queue() -> dict:
-    return {"depth": 0, "paused": False, "active_jobs": 0, "max_concurrent": 10}
+async def get_queue(jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
+    """Active-job counts grouped by status.
 
-
-@router.post("/queue/pause")
-async def pause_queue() -> dict:
-    return {"status": "paused"}
-
-
-@router.post("/queue/resume")
-async def resume_queue() -> dict:
-    return {"status": "resumed"}
+    Response includes the four non-terminal statuses; `depth` is an alias
+    for `pending` retained for backward compatibility with the dashboard.
+    """
+    summary = await jobs.queue_summary()
+    return {
+        "depth": summary["pending"],  # back-compat
+        "pending": summary["pending"],
+        "running": summary["running"],
+        "awaiting_input": summary["awaiting_input"],
+        "paused": summary["paused"],
+    }

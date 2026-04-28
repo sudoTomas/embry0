@@ -66,16 +66,6 @@ class JobListResponse(BaseModel):
     limit: int
 
 
-class GraphExecuteRequest(BaseModel):
-    workflow: str = Field(..., description="Workflow name")
-    input_state: dict[str, Any] = Field(default_factory=dict)
-    config: dict[str, Any] | None = None
-
-
-class GraphResumeRequest(BaseModel):
-    command: dict[str, Any] = Field(default_factory=dict)
-
-
 class SandboxProfileRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     base_image: str = "athanor-sandbox:latest"

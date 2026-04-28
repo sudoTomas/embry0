@@ -1,7 +1,7 @@
-import type { JobResponse } from "./jobs";
-
 export interface QueueResponse {
   depth: number;
-  paused: boolean;
-  jobs: JobResponse[];
+  pending: number;
+  running: number;
+  awaiting_input: number;
+  paused: number;
 }

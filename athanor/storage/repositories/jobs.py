@@ -235,6 +235,25 @@ class JobsRepository:
         )
         return {f"sandbox-{row['job_id']}" for row in rows}
 
+    async def queue_summary(self) -> dict[str, int]:
+        """Return per-status counts for currently-active jobs.
+
+        Used by GET /api/v1/queue. Statuses returned:
+        - pending: jobs not yet started
+        - running: jobs currently executing
+        - awaiting_input: jobs paused on user questions
+        - paused: jobs paused by the reaper or operator
+        """
+        rows = await self._db.fetch(
+            "SELECT status, COUNT(*) AS n FROM jobs "
+            "WHERE status IN ('pending', 'running', 'awaiting_input', 'paused') "
+            "GROUP BY status"
+        )
+        result = {"pending": 0, "running": 0, "awaiting_input": 0, "paused": 0}
+        for row in rows:
+            result[row["status"]] = int(row["n"])
+        return result
+
     async def get_log_events(
         self,
         job_id: str,
