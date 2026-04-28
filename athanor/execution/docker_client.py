@@ -5,6 +5,8 @@ settings for Docker-in-Docker communication.
 """
 
 import asyncio
+import json
+from typing import Any, cast
 
 import structlog
 
@@ -140,23 +142,21 @@ class DockerClient:
         cmd.extend(["network", action, network, container])
         return cmd
 
-    async def inspect_network(self, name: str) -> dict:
+    async def inspect_network(self, name: str) -> dict[str, Any]:
         """Return parsed `docker network inspect <name>` output.
 
         Raises RuntimeError if the network does not exist or inspect fails.
         """
-        import json as _json
-
         cmd = self._build_base_cmd()
         cmd.extend(["network", "inspect", name])
         output = await self.run_cmd(cmd, timeout=15)
         try:
-            data = _json.loads(output)
-        except _json.JSONDecodeError as exc:
+            data = json.loads(output)
+        except json.JSONDecodeError as exc:
             raise RuntimeError(f"docker network inspect {name} returned non-JSON: {output[:200]}") from exc
         if not isinstance(data, list) or not data:
             raise RuntimeError(f"docker network inspect {name} returned empty list")
-        return data[0]
+        return cast(dict[str, Any], data[0])
 
     async def assert_sandbox_networks_or_die(self) -> None:
         """Verify sandbox-restricted has masquerade disabled and sandbox-internet exists.

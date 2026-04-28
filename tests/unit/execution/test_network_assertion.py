@@ -65,3 +65,12 @@ async def test_fails_when_internet_missing(docker_with_inspect):
     ]
     with pytest.raises(RuntimeError, match="sandbox-internet network missing"):
         await docker_with_inspect.assert_sandbox_networks_or_die()
+
+
+@pytest.mark.asyncio
+async def test_fails_when_options_null(docker_with_inspect):
+    docker_with_inspect.run_cmd.side_effect = [
+        json.dumps([{"Name": "sandbox-restricted", "Options": None}]),
+    ]
+    with pytest.raises(RuntimeError, match="enable_ip_masquerade is None"):
+        await docker_with_inspect.assert_sandbox_networks_or_die()

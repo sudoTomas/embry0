@@ -9,10 +9,10 @@ ensure_network_with_opts() {
     local name=$1
     local expected_masq=$2
     shift 2
-    if docker network inspect "$name" >/dev/null 2>&1; then
-        local actual_masq
-        actual_masq=$(docker network inspect "$name" \
-            --format '{{ index .Options "com.docker.network.bridge.enable_ip_masquerade" }}')
+    local actual_masq
+    if actual_masq=$(docker network inspect "$name" \
+        --format '{{ index .Options "com.docker.network.bridge.enable_ip_masquerade" }}' \
+        2>/dev/null); then
         if [ "$actual_masq" != "$expected_masq" ]; then
             echo "ERROR: network '$name' exists with enable_ip_masquerade=${actual_masq:-<unset>}" >&2
             echo "       expected '${expected_masq}'. Delete it and re-run:" >&2
