@@ -120,25 +120,27 @@ async def github_webhook(
                 parts = branch.split("/", 1)[1].split("-", 1)
                 if len(parts) >= 1:
                     issue_id_prefix = parts[0]
-                    issues_list, _ = await issues_repo.list(limit=100, offset=0)
-                    for issue in issues_list:
-                        if issue["id"].startswith(f"iss-{issue_id_prefix}"):
-                            jobs_list, _ = await jobs_repo.list(issue_id=issue["id"], limit=10, offset=0)
+                    matched = await issues_repo.find_by_id_prefix(f"iss-{issue_id_prefix}")
+                    if matched:
+                        issue = matched[0]
+                        jobs_list, _ = await jobs_repo.list(issue_id=issue["id"], limit=10, offset=0)
+                        for job in jobs_list:
+                            if not job.get("pr_url"):
+                                await jobs_repo.update(job["job_id"], pr_url=pr_url)
+
+                        if action == "closed" and merged:
+                            await issues_repo.update(issue["id"], status="closed")
                             for job in jobs_list:
-                                if not job.get("pr_url"):
-                                    await jobs_repo.update(job["job_id"], pr_url=pr_url)
+                                if job["status"] in ("completed", "running"):
+                                    await jobs_repo.update(job["job_id"], status="pr_merged")
+                        elif action == "closed" and not merged:
+                            for job in jobs_list:
+                                if job["status"] in ("completed", "running"):
+                                    await jobs_repo.update(job["job_id"], status="pr_closed")
 
-                            if action == "closed" and merged:
-                                await issues_repo.update(issue["id"], status="closed")
-                                for job in jobs_list:
-                                    if job["status"] in ("completed", "running"):
-                                        await jobs_repo.update(job["job_id"], status="pr_merged")
-                            elif action == "closed" and not merged:
-                                for job in jobs_list:
-                                    if job["status"] in ("completed", "running"):
-                                        await jobs_repo.update(job["job_id"], status="pr_closed")
-
-                            return {"status": "accepted", "action": f"pr_{action}"}
+                        return {"status": "accepted", "action": f"pr_{action}"}
+                    else:
+                        logger.info("pr_link_no_matching_issue", branch=branch, prefix=issue_id_prefix)
 
         return {"status": "ignored", "event": "pull_request", "action": action}
 

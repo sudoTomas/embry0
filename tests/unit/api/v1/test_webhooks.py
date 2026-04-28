@@ -182,6 +182,80 @@ async def test_webhook_non_envelope_payload_field_preserved(app):
 
 
 @pytest.mark.asyncio
+async def test_pr_webhook_uses_prefix_lookup(app):
+    """PR-linking now uses a single SQL prefix query, not a 100-issue scan."""
+    # Use dev-mode + no secret so the test doesn't need to sign the payload.
+    app.state.config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret="")
+    mock_issues_repo = MagicMock()
+    mock_issues_repo.find_by_id_prefix = AsyncMock(return_value=[{"id": "iss-abc12345efgh"}])
+    mock_jobs_repo = MagicMock()
+    mock_jobs_repo.list = AsyncMock(return_value=([{"job_id": "job-1", "pr_url": None, "status": "running"}], 1))
+    mock_jobs_repo.update = AsyncMock()
+    app.state.issues_repo = mock_issues_repo
+    app.state.jobs_repo = mock_jobs_repo
+
+    payload = json.dumps({
+        "action": "opened",
+        "repository": {"full_name": "o/r"},
+        "pull_request": {
+            "html_url": "https://github.com/o/r/pull/1",
+            "head": {"ref": "athanor/abc12345-fix-bug"},
+            "merged": False,
+        },
+    }).encode()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/webhook",
+            content=payload,
+            headers={
+                "X-GitHub-Event": "pull_request",
+                "Content-Type": "application/json",
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "accepted", "action": "pr_opened"}
+    mock_issues_repo.find_by_id_prefix.assert_awaited_once_with("iss-abc12345")
+    mock_jobs_repo.update.assert_awaited_once()  # pr_url updated
+
+
+@pytest.mark.asyncio
+async def test_pr_webhook_no_matching_issue_returns_ignored(app):
+    """PR-linking returns 'ignored' and logs when no matching issue found."""
+    app.state.config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret="")
+    mock_issues_repo = MagicMock()
+    mock_issues_repo.find_by_id_prefix = AsyncMock(return_value=[])
+    mock_jobs_repo = MagicMock()
+    app.state.issues_repo = mock_issues_repo
+    app.state.jobs_repo = mock_jobs_repo
+
+    payload = json.dumps({
+        "action": "opened",
+        "repository": {"full_name": "o/r"},
+        "pull_request": {
+            "html_url": "https://github.com/o/r/pull/2",
+            "head": {"ref": "athanor/zzzzz-unknown"},
+            "merged": False,
+        },
+    }).encode()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/webhook",
+            content=payload,
+            headers={
+                "X-GitHub-Event": "pull_request",
+                "Content-Type": "application/json",
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ignored"
+    mock_issues_repo.find_by_id_prefix.assert_awaited_once_with("iss-zzzzz")
+
+
+@pytest.mark.asyncio
 async def test_webhook_does_not_recursively_unwrap_nested_envelopes(app):
     """Handler unwraps smee envelope exactly once.
 

@@ -224,3 +224,43 @@ class TestGetByGitHub:
     async def test_get_by_github_not_found(self, issues_repo: IssuesRepository):
         result = await issues_repo.get_by_github("owner/nonexistent", 999)
         assert result is None
+
+
+class TestFindByIdPrefix:
+    @pytest.mark.asyncio
+    async def test_find_by_id_prefix_finds_match(self, issues_repo: IssuesRepository):
+        """Basic prefix match returns the right issue."""
+        iid = await issues_repo.create(title="t", body="b", repo="o/r", created_by="user")
+        short = iid[:8]  # e.g. "iss-abc1"
+        matches = await issues_repo.find_by_id_prefix(short)
+        assert len(matches) == 1
+        assert matches[0]["id"] == iid
+
+    @pytest.mark.asyncio
+    async def test_find_by_id_prefix_no_match(self, issues_repo: IssuesRepository):
+        """Prefix that matches no issue returns empty list."""
+        matches = await issues_repo.find_by_id_prefix("iss-zzzzz")
+        assert matches == []
+
+    @pytest.mark.asyncio
+    async def test_find_by_id_prefix_escapes_underscore(self, issues_repo: IssuesRepository):
+        """Underscore must not act as a single-char wildcard."""
+        # Create an issue so there is something in the table that a wildcard would match
+        await issues_repo.create(title="t", body="b", repo="o/r", created_by="user")
+        # 'iss-_' as a prefix would match anything starting with 'iss-' if not escaped
+        matches = await issues_repo.find_by_id_prefix("iss-_")
+        # Only literal "iss-_..." would match; no real ID starts with underscore after "iss-"
+        assert matches == []
+
+    @pytest.mark.asyncio
+    async def test_find_by_id_prefix_escapes_percent(self, issues_repo: IssuesRepository):
+        """Percent must not act as multi-char wildcard."""
+        await issues_repo.create(title="t", body="b", repo="o/r", created_by="user")
+        matches = await issues_repo.find_by_id_prefix("iss-%")
+        assert matches == []
+
+    @pytest.mark.asyncio
+    async def test_find_by_id_prefix_empty(self, issues_repo: IssuesRepository):
+        """Empty prefix returns empty list without querying DB."""
+        matches = await issues_repo.find_by_id_prefix("")
+        assert matches == []

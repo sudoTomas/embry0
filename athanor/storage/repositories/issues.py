@@ -337,6 +337,26 @@ class IssuesRepository:
         if parent and parent["status"] != new_status:
             await self.update(parent_id, status=new_status)
 
+    async def find_by_id_prefix(self, prefix: str) -> list[dict]:
+        """Return issues whose id starts with ``prefix``.
+
+        Used by the PR-linking webhook to match a branch name like
+        ``athanor/<short-id>-<slug>`` to its parent issue. Issue IDs are
+        unique 12-char hex prefixes so this returns 0 or 1 row in practice.
+
+        Escapes backslashes, underscores and percent signs in ``prefix`` so a
+        malicious branch name can't act as a LIKE wildcard.
+        """
+        if not prefix:
+            return []
+        # Escape LIKE special chars so user-supplied prefix can't act as a glob.
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        rows = await self._db.fetch(
+            "SELECT * FROM issues WHERE id LIKE $1 ESCAPE '\\' LIMIT 10",
+            escaped + "%",
+        )
+        return [dict(r) for r in rows]
+
     async def get_activity(
         self,
         issue_id: str,
