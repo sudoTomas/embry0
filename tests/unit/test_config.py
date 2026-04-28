@@ -86,3 +86,37 @@ def test_config_ollama_provider():
     assert config.provider_mode == "ollama"
     assert config.ollama_base_url == "http://gpu:11434"
     assert config.ollama_model == "codellama"
+
+
+def test_legacy_dev_mode_shim_respects_explicit_false():
+    """If operator explicitly sets new flags to False, legacy DEV_MODE must NOT override."""
+    env = {"DEV_MODE": "true", "AUTH_DEV_MODE": "false", "WEBHOOK_DEV_MODE": "false"}
+    with patch.dict(os.environ, env, clear=True):
+        cfg = AthanorConfig(_env_file=None)  # type: ignore[call-arg]
+    assert cfg.auth_dev_mode is False
+    assert cfg.webhook_dev_mode is False
+
+
+def test_legacy_dev_mode_shim_triggers_when_only_dev_mode_set():
+    """Bare DEV_MODE=true (legacy operator) → both flags flipped on."""
+    # Ensure the new flags are NOT in the environment at all
+    base = {k: v for k, v in os.environ.items() if k not in ("AUTH_DEV_MODE", "WEBHOOK_DEV_MODE")}
+    base["DEV_MODE"] = "true"
+    with patch.dict(os.environ, base, clear=True):
+        cfg = AthanorConfig(_env_file=None)  # type: ignore[call-arg]
+    assert cfg.auth_dev_mode is True
+    assert cfg.webhook_dev_mode is True
+
+
+def test_legacy_dev_mode_shim_partial_explicit():
+    """If only one of the new flags is explicit, legacy must not override either."""
+    # AUTH_DEV_MODE is explicitly set; WEBHOOK_DEV_MODE is absent.
+    base = {k: v for k, v in os.environ.items() if k not in ("AUTH_DEV_MODE", "WEBHOOK_DEV_MODE")}
+    base["DEV_MODE"] = "true"
+    base["AUTH_DEV_MODE"] = "true"
+    with patch.dict(os.environ, base, clear=True):
+        cfg = AthanorConfig(_env_file=None)  # type: ignore[call-arg]
+    # Operator explicitly set at least one new flag → honour new flags, ignore legacy shim.
+    # AUTH_DEV_MODE=true was explicit; WEBHOOK_DEV_MODE absent defaults to False.
+    assert cfg.auth_dev_mode is True
+    assert cfg.webhook_dev_mode is False

@@ -1,7 +1,9 @@
 """Application configuration via Pydantic BaseSettings."""
 
+import os
 from pathlib import Path
 
+import structlog
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -106,23 +108,31 @@ class AthanorConfig(BaseSettings):
     def _apply_legacy_dev_mode(self) -> "AthanorConfig":
         """One-release deprecation shim for the old DEV_MODE env var.
 
-        If DEV_MODE=true was set and neither narrower flag was set explicitly,
-        treat as both true and warn loudly. Remove in next release.
+        If DEV_MODE=true was set and the new flags were NOT explicitly set in
+        the environment, treat as both true and warn loudly. If the new flags
+        WERE explicitly set (even to False), honour them and log a different
+        warning telling the operator to remove DEV_MODE.
         """
-        import os
-
-        if os.environ.get("DEV_MODE", "").lower() in ("true", "1", "yes") and not (
-            self.auth_dev_mode or self.webhook_dev_mode
-        ):
-            import structlog
-
-            structlog.get_logger(__name__).warning(
-                "dev_mode_legacy_var",
-                msg="DEV_MODE is deprecated. Set AUTH_DEV_MODE and WEBHOOK_DEV_MODE explicitly. "
-                "Treating as both true for this release; remove in next release.",
+        log = structlog.get_logger(__name__)
+        legacy = os.environ.get("DEV_MODE", "").lower() in ("true", "1", "yes")
+        if not legacy:
+            return self
+        explicit_auth = "AUTH_DEV_MODE" in os.environ
+        explicit_webhook = "WEBHOOK_DEV_MODE" in os.environ
+        if explicit_auth or explicit_webhook:
+            log.warning(
+                "dev_mode_legacy_var_ignored",
+                msg="DEV_MODE is set but AUTH_DEV_MODE/WEBHOOK_DEV_MODE were also "
+                    "explicit; honouring the new flags. Remove DEV_MODE from .env.",
             )
-            self.auth_dev_mode = True
-            self.webhook_dev_mode = True
+            return self
+        log.warning(
+            "dev_mode_legacy_var",
+            msg="DEV_MODE is deprecated. Set AUTH_DEV_MODE and WEBHOOK_DEV_MODE "
+                "explicitly. Treating as both true for this release; remove in next release.",
+        )
+        self.auth_dev_mode = True
+        self.webhook_dev_mode = True
         return self
 
     @field_validator("audit_log_path", mode="before")

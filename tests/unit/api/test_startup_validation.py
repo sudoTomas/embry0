@@ -45,3 +45,19 @@ def test_proxy_admin_token_required_in_production():
         )
     with pytest.raises(RuntimeError, match="PROXY_ADMIN_TOKEN must be set in production"):
         _resolve_proxy_admin_token(cfg)
+
+
+def test_proxy_admin_token_auto_generated_in_webhook_dev_mode():
+    """smee.io workflow: webhook_dev_mode alone should still trigger auto-gen."""
+    with patch.dict(os.environ, {}, clear=True):
+        cfg = AthanorConfig(_env_file=None, auth_dev_mode=False, webhook_dev_mode=True, proxy_admin_token="")
+    _resolve_proxy_admin_token(cfg)
+    assert cfg.proxy_admin_token != ""
+
+
+def test_proxy_admin_token_required_when_no_dev_mode():
+    """Production posture: both flags off, missing token → refuse to start."""
+    with patch.dict(os.environ, {}, clear=True):
+        cfg = AthanorConfig(_env_file=None, auth_dev_mode=False, webhook_dev_mode=False, proxy_admin_token="")
+    with pytest.raises(RuntimeError, match="must be set in production"):
+        _resolve_proxy_admin_token(cfg)

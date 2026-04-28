@@ -33,21 +33,25 @@ logger = structlog.get_logger(__name__)
 
 
 def _resolve_proxy_admin_token(config: AthanorConfig) -> None:
-    """Resolve PROXY_ADMIN_TOKEN. Generates in auth_dev_mode if missing; refuses in prod.
+    """Resolve PROXY_ADMIN_TOKEN. Generates in any dev-mode if missing; refuses in prod.
+
+    Auto-generation is triggered by either auth_dev_mode or webhook_dev_mode so
+    that the smee.io developer workflow (WEBHOOK_DEV_MODE=true AUTH_DEV_MODE=false)
+    does not fail to boot when PROXY_ADMIN_TOKEN is unset.
 
     Args:
         config: Application configuration to resolve the token for.
 
     Raises:
-        RuntimeError: If auth_dev_mode is False and proxy_admin_token is not set.
+        RuntimeError: If both dev-mode flags are False and proxy_admin_token is not set.
     """
     if config.proxy_admin_token:
         return
-    if config.auth_dev_mode:
+    if config.auth_dev_mode or config.webhook_dev_mode:
         config.proxy_admin_token = secrets.token_urlsafe(32)
         logger.warning(
             "proxy_admin_token_generated_for_dev",
-            msg="auth_dev_mode=true and PROXY_ADMIN_TOKEN unset — generated a random one for this process. Set PROXY_ADMIN_TOKEN in .env to make it stable across restarts.",
+            msg="dev mode active and PROXY_ADMIN_TOKEN unset — generated a random one for this process. Set PROXY_ADMIN_TOKEN in .env to make it stable across restarts.",
         )
         return
     raise RuntimeError(
@@ -55,6 +59,25 @@ def _resolve_proxy_admin_token(config: AthanorConfig) -> None:
         "`python -c 'import secrets; print(secrets.token_urlsafe(32))'` "
         "and add it to .env."
     )
+
+
+def _warn_and_audit_dev_mode(flag_name: str, audit_log_path: object) -> None:
+    """Emit a CRITICAL log and an audit event for an active dev-mode bypass flag."""
+    logger.critical(
+        f"{flag_name.lower()}_enabled",
+        msg=f"{flag_name}=true bypasses security checks. NEVER use in production.",
+    )
+    try:
+        from athanor.audit.logger import emit_audit_event
+
+        emit_audit_event(
+            "dev_mode_enabled",
+            actor="system",
+            details={"flag": flag_name},
+            audit_log_path=audit_log_path,
+        )
+    except Exception:
+        logger.warning("dev_mode_audit_emit_failed", flag=flag_name, exc_info=True)
 
 
 async def _init_app_state(
@@ -244,37 +267,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Warn loudly and emit audit rows if any dev-mode bypass is active.
     if config.auth_dev_mode:
-        logger.critical(
-            "auth_dev_mode_enabled",
-            msg="AUTH_DEV_MODE=true bypasses API key authentication. NEVER use in production.",
-        )
-        try:
-            from athanor.audit.logger import emit_audit_event
-
-            emit_audit_event(
-                "dev_mode_enabled",
-                actor="system",
-                details={"flag": "AUTH_DEV_MODE"},
-                audit_log_path=config.audit_log_path,
-            )
-        except Exception:
-            logger.warning("dev_mode_audit_emit_failed", exc_info=True)
+        _warn_and_audit_dev_mode("AUTH_DEV_MODE", config.audit_log_path)
     if config.webhook_dev_mode:
-        logger.critical(
-            "webhook_dev_mode_enabled",
-            msg="WEBHOOK_DEV_MODE=true bypasses webhook HMAC verification. NEVER use in production.",
-        )
-        try:
-            from athanor.audit.logger import emit_audit_event
-
-            emit_audit_event(
-                "dev_mode_enabled",
-                actor="system",
-                details={"flag": "WEBHOOK_DEV_MODE"},
-                audit_log_path=config.audit_log_path,
-            )
-        except Exception:
-            logger.warning("dev_mode_audit_emit_failed", exc_info=True)
+        _warn_and_audit_dev_mode("WEBHOOK_DEV_MODE", config.audit_log_path)
 
     # Resolve PROXY_ADMIN_TOKEN before constructing ProxyManager: the constructor
     # raises ValueError on an empty token, so in auth_dev_mode with PROXY_ADMIN_TOKEN
