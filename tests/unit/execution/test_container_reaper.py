@@ -8,10 +8,10 @@ import pytest
 from athanor.execution.image_manager import ContainerReaper
 
 
-def _ago(hours: float) -> str:
-    """Format a UTC timestamp as Docker would: '2026-04-28 07:05:11 +0000 UTC'."""
+def _ago(hours: float, tz_abbrev: str = "UTC") -> str:
+    """Format a UTC timestamp as Docker would: '<ts> <offset> <tz>'."""
     t = datetime.now(UTC) - timedelta(hours=hours)
-    return t.strftime("%Y-%m-%d %H:%M:%S +0000 UTC")
+    return t.strftime(f"%Y-%m-%d %H:%M:%S %z {tz_abbrev}")
 
 
 @pytest.mark.asyncio
@@ -81,3 +81,25 @@ async def test_fails_closed_when_active_fetch_errors():
     reaper = ContainerReaper(docker, max_age_hours=24, jobs_repo=jobs_repo)
     await reaper._reap()
     assert docker.run_cmd.await_count == 1  # only ps -a
+
+
+@pytest.mark.asyncio
+async def test_reaps_old_container_with_non_utc_tz_abbrev():
+    """Production runs with TZ=America/New_York — Docker emits EDT/EST suffix."""
+    docker = MagicMock()
+    docker._build_base_cmd = MagicMock(return_value=["docker"])
+    docker.build_stop_cmd = MagicMock(return_value=["docker", "stop"])
+    docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
+    # Same timestamp as _ago(48), but with EDT suffix and -0400 offset
+    t = datetime.now(UTC) - timedelta(hours=48)
+    edt = t.strftime("%Y-%m-%d %H:%M:%S -0400 EDT")
+    docker.run_cmd = AsyncMock(side_effect=[
+        f"abc123\tsandbox-job-1\t{edt}",
+        "",
+        "",
+    ])
+    jobs_repo = MagicMock()
+    jobs_repo.fetch_active_sandbox_containers = AsyncMock(return_value=set())
+    reaper = ContainerReaper(docker, max_age_hours=24, jobs_repo=jobs_repo)
+    await reaper._reap()
+    assert docker.run_cmd.await_count == 3  # ps + stop + rm

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -245,8 +246,6 @@ class ContainerReaper:
 
     async def _reap(self) -> None:
         """Find and destroy stale sandbox containers, skipping live jobs."""
-        from datetime import UTC, datetime
-
         try:
             cmd = self._docker._build_base_cmd()
             cmd.extend(
@@ -283,8 +282,12 @@ class ContainerReaper:
                 continue
 
             try:
-                # Docker emits e.g. "2026-04-28 07:05:11 +0000 UTC"
-                cleaned = created_at.replace(" UTC", "")
+                # Docker emits "<timestamp> <offset> <tz_abbrev>", e.g.
+                #   "2026-04-28 07:05:11 +0000 UTC" (when CLI runs with TZ=UTC)
+                #   "2026-04-27 15:32:08 -0400 EDT" (when CLI runs with TZ=America/New_York)
+                # Strip any trailing alphabetic timezone abbreviation; %z parses the offset.
+                parts = created_at.rsplit(" ", 1)
+                cleaned = parts[0] if len(parts) == 2 and parts[1].isalpha() else created_at
                 created = datetime.strptime(cleaned, "%Y-%m-%d %H:%M:%S %z")
             except ValueError:
                 logger.warning("reaper_unparseable_timestamp", name=name, created_at=created_at)
@@ -294,7 +297,7 @@ class ContainerReaper:
             if age_hours < self._max_age_hours:
                 continue
 
-            logger.info("reaping_stale_container", name=name, age_hours=age_hours)
+            logger.info("reaping_stale_container", name=name, age_hours=round(age_hours, 1))
             try:
                 await self._docker.run_cmd(self._docker.build_stop_cmd(container_id, timeout=5))
             except RuntimeError:
