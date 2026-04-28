@@ -44,6 +44,8 @@ services:
         condition: service_healthy
       dind:
         condition: service_healthy
+      init-sandbox-networks:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -126,6 +128,24 @@ services:
         max-size: "50m"
         max-file: "5"
     restart: unless-stopped
+
+  init-sandbox-networks:
+    image: docker:dind
+    container_name: athanor-init-sandbox-networks
+    entrypoint: ["sh"]
+    command: ["/scripts/setup-sandbox-networks.sh"]
+    environment:
+      DOCKER_HOST: tcp://dind:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+    volumes:
+      - dind-certs-client:/certs/client:ro
+      - ./scripts:/scripts:ro
+    depends_on:
+      dind:
+        condition: service_healthy
+    networks: [backend]
+    restart: "no"
 
   cloudflared:
     image: cloudflare/cloudflared:latest
