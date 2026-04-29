@@ -447,6 +447,38 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         -- audit_log.trace_id: soft reference — no FK by design (audit outlives entities)
         """,
     ),
+    (
+        16,
+        "performance indexes — GIN on labels/title/body, composite on job_logs+traces",
+        # Note: CREATE INDEX CONCURRENTLY cannot run inside a transaction block.
+        # The migration runner wraps each migration in conn.transaction(), so
+        # CONCURRENTLY is intentionally omitted. Plain CREATE INDEX takes a
+        # ShareLock briefly but is correct on Athanor's dataset sizes.
+        """
+        CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+        -- GIN index for labels JSONB containment queries (issues.labels @> $1::jsonb)
+        CREATE INDEX IF NOT EXISTS idx_issues_labels_gin
+            ON issues USING GIN (labels);
+
+        -- Trigram GIN indexes for ILIKE full-text search on title and body
+        CREATE INDEX IF NOT EXISTS idx_issues_title_trgm
+            ON issues USING GIN (title gin_trgm_ops);
+        CREATE INDEX IF NOT EXISTS idx_issues_body_trgm
+            ON issues USING GIN (body gin_trgm_ops);
+
+        -- Composite index for log replay cursor query:
+        --   WHERE job_id=$1 AND id > $2 ORDER BY id ASC LIMIT $3
+        CREATE INDEX IF NOT EXISTS idx_job_logs_job_id_id
+            ON job_logs (job_id, id);
+
+        -- Composite indexes for trace filtering by agent_type and result
+        CREATE INDEX IF NOT EXISTS idx_traces_job_agent
+            ON traces (job_id, agent_type);
+        CREATE INDEX IF NOT EXISTS idx_traces_job_result
+            ON traces (job_id, result);
+        """,
+    ),
 ]
 
 
