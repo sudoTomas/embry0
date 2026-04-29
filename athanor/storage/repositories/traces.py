@@ -30,7 +30,7 @@ class TracesRepository:
         result_summary: str = "",
     ) -> str:
         """Create a trace record and return its ID."""
-        trace_id = f"trace-{uuid.uuid4().hex[:12]}"
+        trace_id = f"trc-{uuid.uuid4().hex[:12]}"
         await self._db.execute(
             """
             INSERT INTO traces (

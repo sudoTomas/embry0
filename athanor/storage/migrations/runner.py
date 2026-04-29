@@ -479,6 +479,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON traces (job_id, result);
         """,
     ),
+    (
+        17,
+        "unify trace_id prefix from trace- to trc- in traces table",
+        # traces.trace_id rows created before this migration use the 'trace-' prefix.
+        # jobs.trace_id and audit_log.trace_id have always used 'trc-'.
+        # Standardise on 'trc-' so all IDs in the system follow the same convention.
+        # Idempotent: rows already starting with 'trc-' do not match the LIKE clause.
+        """
+        UPDATE traces
+           SET trace_id = REPLACE(trace_id, 'trace-', 'trc-')
+         WHERE trace_id LIKE 'trace-%';
+        """,
+    ),
 ]
 
 

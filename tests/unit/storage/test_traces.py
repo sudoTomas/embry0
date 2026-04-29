@@ -35,6 +35,7 @@ async def test_create_and_get_trace(repos: tuple[JobsRepository, TracesRepositor
         result_summary="Fixed the auth bug",
     )
     assert trace_id is not None
+    assert trace_id.startswith("trc-"), f"Expected trc- prefix, got {trace_id!r}"
 
     trace = await traces_repo.get(trace_id)
     assert trace is not None
