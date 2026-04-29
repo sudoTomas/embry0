@@ -122,3 +122,94 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  security:
+    name: Security scanning
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks needs full history
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Re-build images from cache (fast; GHA cache populated by build-images job)
+      - name: Restore orchestrator image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/Dockerfile.orchestrator
+          push: false
+          tags: athanor-orchestrator:ci
+          load: true
+          cache-from: type=gha,scope=orchestrator
+
+      - name: Restore sandbox image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/Dockerfile.sandbox
+          push: false
+          tags: athanor-sandbox:ci
+          load: true
+          cache-from: type=gha,scope=sandbox
+
+      - name: Restore proxy image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/Dockerfile.proxy
+          push: false
+          tags: athanor-proxy:ci
+          load: true
+          cache-from: type=gha,scope=proxy
+
+      - name: Restore frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: false
+          tags: athanor-frontend:ci
+          load: true
+          cache-from: type=gha,scope=frontend
+
+      - name: Hadolint — orchestrator
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: infra/Dockerfile.orchestrator
+          config: .hadolint.yaml
+
+      - name: Hadolint — sandbox
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: infra/Dockerfile.sandbox
+          config: .hadolint.yaml
+
+      - name: Hadolint — proxy
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: infra/Dockerfile.proxy
+          config: .hadolint.yaml
+
+      - name: Hadolint — frontend
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: frontend/Dockerfile
+          config: .hadolint.yaml
+
+      - name: Trivy — scan images
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: athanor-orchestrator:ci
+          format: table
+          exit-code: "0"
+          severity: CRITICAL,HIGH
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml

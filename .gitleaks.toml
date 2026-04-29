@@ -1,0 +1,23 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Allow .env.example placeholder values"
+paths = [
+    '''.env\.example''',
+]
+
+[[allowlists]]
+description = "Allow test fixtures with placeholder credentials"
+paths = [
+    '''tests/.*''',
+]
+regexes = [
+    # Placeholder GitHub token pattern in tests
+    '''ghp_your-github-personal-access-token''',
+    # sk-ant prefix without a real key shape
+    '''sk-ant-your-api-key-here''',
+]

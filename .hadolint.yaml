@@ -1,0 +1,10 @@
+# Hadolint configuration
+# https://github.com/hadolint/hadolint
+
+# Ignore DL3008 (Pin versions in apt-get install) — we pin Python/Node versions
+# at the FROM layer; individual apt packages that are distro-managed are fine.
+# Ignore DL3009 (Delete the apt-get lists after installing something) — we use
+# --no-install-recommends and rm -rf var/lib/apt/lists/* consistently.
+ignore:
+  - DL3008
+  - DL3009
