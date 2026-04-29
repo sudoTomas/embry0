@@ -20,7 +20,7 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
     },
     "developer": {
         "description": "Implements code changes, creates branches, commits, pushes, and opens PRs. Runs inside a sandbox container via Claude Code.",
-        "model": "claude-opus-4-6",
+        "model": "claude-opus-4-7",
         "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         "skills": ["superpowers:subagent-driven-development", "superpowers:verification-before-completion"],
         "system_prompt": "",

@@ -152,3 +152,22 @@ async def test_reset_custom_raises_value_error(agent_repo: AgentDefinitionsRepos
     )
     with pytest.raises(ValueError, match="'custom-no-reset' is not a built-in agent"):
         await agent_repo.reset("custom-no-reset")
+
+
+def test_builtin_seed_developer_model_is_current():
+    """BUILTIN_SEED developer model must match migration 14's post-state.
+
+    Migration 14 bumped the model from claude-opus-4-6 to claude-opus-4-7.
+    reset() must restore to the same version, not downgrade.
+    """
+    assert BUILTIN_SEED["developer"]["model"] == "claude-opus-4-7", (
+        "BUILTIN_SEED['developer']['model'] is out of sync with migration 14. "
+        "Update agent_definitions.py when bumping the default model."
+    )
+
+
+@pytest.mark.asyncio
+async def test_reset_developer_returns_current_model(agent_repo: AgentDefinitionsRepository):
+    """reset('developer') must return claude-opus-4-7 after migration 14."""
+    result = await agent_repo.reset("developer")
+    assert result["model"] == "claude-opus-4-7"
