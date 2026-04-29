@@ -1,19 +1,22 @@
-import asyncpg
 import pytest
 
 from athanor.storage.database import DatabasePool
 from athanor.storage.migrations.runner import run_migrations
 from athanor.storage.repositories.integration_config import IntegrationConfigRepository, _mask
 
+pytestmark = pytest.mark.requires_postgres
+
 
 @pytest.fixture
-async def integration_repo(pg_pool: asyncpg.Pool) -> IntegrationConfigRepository:
+async def integration_repo() -> IntegrationConfigRepository:
     import os
 
     url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
     db = DatabasePool(url)
     await db.connect()
     await run_migrations(db)
+    # Reset table state so tests that check env-fallback (no DB row) pass in any order.
+    await db.execute("DELETE FROM integration_config")
     yield IntegrationConfigRepository(db)
     await db.close()
 

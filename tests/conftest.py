@@ -5,6 +5,39 @@ from collections.abc import AsyncIterator
 import asyncpg
 import pytest
 
+from athanor.storage.database import DatabasePool
+from athanor.storage.migrations.runner import run_migrations
+
+
+@pytest.fixture
+async def db_with_migrations() -> AsyncIterator[DatabasePool]:
+    """Function-scoped DatabasePool with all migrations applied.
+
+    Requires a live PostgreSQL instance at TEST_DATABASE_URL (or the default
+    athanor_test database). Tests consuming this fixture are expected to be
+    marked @pytest.mark.requires_postgres.
+
+    Migrations are idempotent — run_migrations() is fast on subsequent calls
+    (SELECT MAX(version) + no-op). Individual tests must not drop the schema;
+    use the pg_pool fixture with its per-test TRUNCATE/DROP SCHEMA teardown
+    if you need a clean slate.
+    """
+    import os
+
+    url = os.environ.get(
+        "TEST_DATABASE_URL",
+        "postgresql://athanor:athanor@localhost:5432/athanor_test",
+    )
+    db = DatabasePool(url, min_size=1, max_size=5)
+    try:
+        await db.connect()
+    except Exception as exc:
+        pytest.skip(f"PostgreSQL unavailable: {exc}")
+        return
+    await run_migrations(db)
+    yield db
+    await db.close()
+
 
 @pytest.fixture
 async def pg_pool() -> AsyncIterator[asyncpg.Pool]:

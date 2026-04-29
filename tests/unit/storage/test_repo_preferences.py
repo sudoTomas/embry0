@@ -1,27 +1,18 @@
 """Integration tests for RepoPreferencesRepository against real postgres."""
 
-from collections.abc import AsyncIterator
-
-import asyncpg
 import pytest
 
 from athanor.storage.database import DatabasePool
-from athanor.storage.migrations.runner import run_migrations
 from athanor.storage.repositories.repo_preferences import RepoPreferencesRepository
+
+pytestmark = pytest.mark.requires_postgres
 
 
 @pytest.fixture
-async def prefs_repo(pg_pool: asyncpg.Pool) -> AsyncIterator[RepoPreferencesRepository]:
-    import os
-
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
-    db = DatabasePool(url)
-    await db.connect()
-    await run_migrations(db)
-    # Isolate from other tests that may share the database.
-    await db.execute("DELETE FROM repo_preferences")
-    yield RepoPreferencesRepository(db)
-    await db.close()
+async def prefs_repo(db_with_migrations: DatabasePool) -> RepoPreferencesRepository:
+    # Delete any existing rows to isolate this test run.
+    await db_with_migrations.execute("DELETE FROM repo_preferences")
+    return RepoPreferencesRepository(db_with_migrations)
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,8 @@ import pytest
 
 from athanor.storage.database import DatabasePool
 
+pytestmark = pytest.mark.requires_postgres
+
 
 @pytest.fixture
 async def db_url() -> str:

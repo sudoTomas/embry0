@@ -1,9 +1,9 @@
-import asyncpg
 import pytest
 
 from athanor.storage.database import DatabasePool
-from athanor.storage.migrations.runner import run_migrations
 from athanor.storage.repositories.pipeline_templates import PipelineTemplatesRepository
+
+pytestmark = pytest.mark.requires_postgres
 
 SAMPLE_GRAPH = {
     "graph_id": "g1",
@@ -14,15 +14,8 @@ SAMPLE_GRAPH = {
 
 
 @pytest.fixture
-async def templates_repo(pg_pool: asyncpg.Pool) -> PipelineTemplatesRepository:
-    import os
-
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
-    db = DatabasePool(url)
-    await db.connect()
-    await run_migrations(db)
-    yield PipelineTemplatesRepository(db)
-    await db.close()
+async def templates_repo(db_with_migrations: DatabasePool) -> PipelineTemplatesRepository:
+    return PipelineTemplatesRepository(db_with_migrations)
 
 
 @pytest.mark.asyncio

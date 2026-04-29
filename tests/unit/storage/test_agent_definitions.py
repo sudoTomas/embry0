@@ -1,24 +1,17 @@
-import os
-
-import asyncpg
 import pytest
 
 from athanor.storage.database import DatabasePool
-from athanor.storage.migrations.runner import run_migrations
 from athanor.storage.repositories.agent_definitions import (
     BUILTIN_SEED,
     AgentDefinitionsRepository,
 )
 
+pytestmark = pytest.mark.requires_postgres
+
 
 @pytest.fixture
-async def agent_repo(pg_pool: asyncpg.Pool) -> AgentDefinitionsRepository:
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
-    db = DatabasePool(url)
-    await db.connect()
-    await run_migrations(db)
-    yield AgentDefinitionsRepository(db)
-    await db.close()
+async def agent_repo(db_with_migrations: DatabasePool) -> AgentDefinitionsRepository:
+    return AgentDefinitionsRepository(db_with_migrations)
 
 
 @pytest.mark.asyncio

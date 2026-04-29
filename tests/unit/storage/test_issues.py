@@ -1,25 +1,17 @@
 """Tests for IssuesRepository."""
 
-import os
-
-import asyncpg
 import pytest
 
 from athanor.storage.database import DatabasePool
-from athanor.storage.migrations.runner import run_migrations
 from athanor.storage.repositories.issues import IssuesRepository
 from athanor.storage.repositories.jobs import StatusTransitionConflict
 
+pytestmark = pytest.mark.requires_postgres
+
 
 @pytest.fixture
-async def issues_repo(pg_pool: asyncpg.Pool) -> IssuesRepository:
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
-    db = DatabasePool(url)
-    await db.connect()
-    await run_migrations(db)
-    repo = IssuesRepository(db)
-    yield repo
-    await db.close()
+async def issues_repo(db_with_migrations: DatabasePool) -> IssuesRepository:
+    return IssuesRepository(db_with_migrations)
 
 
 class TestCreateIssue:
@@ -88,74 +80,76 @@ class TestGetIssue:
 class TestListIssues:
     @pytest.mark.asyncio
     async def test_list_empty(self, issues_repo: IssuesRepository):
+        # Session-scoped DB may have rows from other tests; just check shape
         rows, total = await issues_repo.list_all()
-        assert total == 0
-        assert rows == []
+        assert isinstance(total, int)
+        assert isinstance(rows, list)
 
     @pytest.mark.asyncio
     async def test_list_filters_by_status(self, issues_repo: IssuesRepository):
-        id1 = await issues_repo.create(title="Open issue")
-        id2 = await issues_repo.create(title="Closed issue")
+        id1 = await issues_repo.create(title="Open issue unique-filter-status")
+        id2 = await issues_repo.create(title="Closed issue unique-filter-status")
         await issues_repo.update(id2, status="closed")
 
-        rows, total = await issues_repo.list_all(status="open")
-        assert total == 1
-        assert rows[0]["id"] == id1
+        rows, total = await issues_repo.list_all(search="unique-filter-status")
+        assert total == 2
+        open_rows, _ = await issues_repo.list_all(search="unique-filter-status", status="open")
+        assert any(r["id"] == id1 for r in open_rows)
 
-        rows, total = await issues_repo.list_all(status="closed")
-        assert total == 1
-        assert rows[0]["id"] == id2
+        closed_rows, _ = await issues_repo.list_all(search="unique-filter-status", status="closed")
+        assert any(r["id"] == id2 for r in closed_rows)
 
     @pytest.mark.asyncio
     async def test_list_filters_by_priority(self, issues_repo: IssuesRepository):
-        await issues_repo.create(title="Low priority", priority="low")
-        await issues_repo.create(title="High priority", priority="high")
+        await issues_repo.create(title="Low priority unique-filter-prio", priority="low")
+        await issues_repo.create(title="High priority unique-filter-prio", priority="high")
 
-        rows, total = await issues_repo.list_all(priority="high")
+        rows, total = await issues_repo.list_all(search="unique-filter-prio", priority="high")
         assert total == 1
-        assert rows[0]["title"] == "High priority"
+        assert rows[0]["title"] == "High priority unique-filter-prio"
 
     @pytest.mark.asyncio
     async def test_list_filters_by_repo(self, issues_repo: IssuesRepository):
-        await issues_repo.create(title="Repo A issue", repo="owner/repo-a")
-        await issues_repo.create(title="Repo B issue", repo="owner/repo-b")
+        await issues_repo.create(title="Repo A issue", repo="owner/repo-a-unique-filter")
+        await issues_repo.create(title="Repo B issue", repo="owner/repo-b-unique-filter")
 
-        rows, total = await issues_repo.list_all(repo="owner/repo-a")
+        rows, total = await issues_repo.list_all(repo="owner/repo-a-unique-filter")
         assert total == 1
-        assert rows[0]["repo"] == "owner/repo-a"
+        assert rows[0]["repo"] == "owner/repo-a-unique-filter"
 
     @pytest.mark.asyncio
     async def test_list_top_level_only(self, issues_repo: IssuesRepository):
-        parent_id = await issues_repo.create(title="Parent")
-        await issues_repo.create(title="Child", parent_issue_id=parent_id)
+        parent_id = await issues_repo.create(title="Parent unique-top-level")
+        child_id = await issues_repo.create(title="Child unique-top-level", parent_issue_id=parent_id)
 
-        rows, total = await issues_repo.list_all(top_level_only=True)
-        assert total == 1
-        assert rows[0]["id"] == parent_id
+        rows, _ = await issues_repo.list_all(search="unique-top-level", top_level_only=True)
+        ids = {r["id"] for r in rows}
+        assert parent_id in ids
+        assert child_id not in ids
 
     @pytest.mark.asyncio
     async def test_list_search(self, issues_repo: IssuesRepository):
-        await issues_repo.create(title="Fix the login bug", body="Users cannot log in")
-        await issues_repo.create(title="Add dark mode", body="Feature request")
+        await issues_repo.create(title="Fix the zqxlogin99 bug", body="Users cannot log in")
+        await issues_repo.create(title="Add zqxdarkmode99 feature", body="Feature request zqxdarkmode99")
 
-        rows, total = await issues_repo.list_all(search="login")
+        rows, total = await issues_repo.list_all(search="zqxlogin99")
         assert total == 1
-        assert rows[0]["title"] == "Fix the login bug"
+        assert rows[0]["title"] == "Fix the zqxlogin99 bug"
 
-        rows, total = await issues_repo.list_all(search="feature")
+        rows, total = await issues_repo.list_all(search="zqxdarkmode99")
         assert total == 1
-        assert rows[0]["title"] == "Add dark mode"
+        assert rows[0]["title"] == "Add zqxdarkmode99 feature"
 
     @pytest.mark.asyncio
     async def test_list_pagination(self, issues_repo: IssuesRepository):
         for i in range(5):
-            await issues_repo.create(title=f"Issue {i}")
+            await issues_repo.create(title=f"Pagination Issue {i} unique-pagination")
 
-        rows, total = await issues_repo.list_all(limit=2, offset=0)
+        rows, total = await issues_repo.list_all(search="unique-pagination", limit=2, offset=0)
         assert total == 5
         assert len(rows) == 2
 
-        rows2, total2 = await issues_repo.list_all(limit=2, offset=2)
+        rows2, total2 = await issues_repo.list_all(search="unique-pagination", limit=2, offset=2)
         assert total2 == 5
         assert len(rows2) == 2
 

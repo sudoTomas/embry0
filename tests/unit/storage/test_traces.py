@@ -1,22 +1,15 @@
-import asyncpg
 import pytest
 
 from athanor.storage.database import DatabasePool
-from athanor.storage.migrations.runner import run_migrations
 from athanor.storage.repositories.jobs import JobsRepository
 from athanor.storage.repositories.traces import TracesRepository
 
+pytestmark = pytest.mark.requires_postgres
+
 
 @pytest.fixture
-async def repos(pg_pool: asyncpg.Pool) -> tuple[JobsRepository, TracesRepository]:
-    import os
-
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
-    db = DatabasePool(url)
-    await db.connect()
-    await run_migrations(db)
-    yield JobsRepository(db), TracesRepository(db)
-    await db.close()
+async def repos(db_with_migrations: DatabasePool) -> tuple[JobsRepository, TracesRepository]:
+    return JobsRepository(db_with_migrations), TracesRepository(db_with_migrations)
 
 
 @pytest.mark.asyncio
