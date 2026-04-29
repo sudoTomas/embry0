@@ -559,6 +559,18 @@ class IssueExecutor:
                 issue_id=issue_id,
             )
 
+            # Purge checkpoint state for failed jobs.
+            from athanor.orchestration.checkpoint import purge_thread as _purge_thread_on_error
+
+            try:
+                await _purge_thread_on_error(self._database_url, job_id)
+            except Exception:
+                logger.warning(
+                    "checkpoint_purge_on_error_failed",
+                    job_id=job_id,
+                    exc_info=True,
+                )
+
             # Cleanup sandbox on error
             await self._cleanup_sandbox(final_state, job_id)
         finally:
@@ -615,6 +627,20 @@ class IssueExecutor:
                 total_cost_usd=result.get("total_cost_usd", 0.0),
                 finished_at=datetime.now(UTC),
             )
+            # Purge LangGraph checkpoint state for completed/failed jobs.
+            # Best-effort: job status is already written; failure here does not
+            # affect the job outcome.
+            from athanor.orchestration.checkpoint import purge_thread
+
+            try:
+                await purge_thread(self._database_url, job_id)
+            except Exception:
+                logger.warning(
+                    "checkpoint_purge_on_complete_failed",
+                    job_id=job_id,
+                    status=final_status,
+                    exc_info=True,
+                )
             issue_status = "closed" if final_status == "completed" else "open"
             await self._issues.update(issue_id, status=issue_status)
             await self._issues.update_parent_status(issue_id)

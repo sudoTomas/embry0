@@ -46,3 +46,37 @@ async def purge_thread(database_url: str, thread_id: str) -> None:
         logger.info("checkpoint_thread_purged", thread_id=thread_id)
     finally:
         await conn.close()
+
+
+async def sweep_orphan_checkpoints(database_url: str) -> int:
+    """Delete checkpoint rows whose thread_id has no matching row in jobs.
+
+    These are orphan rows left over when per-job purge was skipped (e.g.
+    orchestrator crashed after writing job terminal status but before calling
+    purge_thread). Runs once daily from the app lifespan background task.
+
+    Returns the total number of checkpoint rows deleted across all three tables.
+    """
+    import asyncpg
+    import structlog as _structlog
+
+    _logger = _structlog.get_logger(__name__)
+
+    conn = await asyncpg.connect(database_url)
+    total = 0
+    try:
+        async with conn.transaction():
+            for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
+                result = await conn.execute(
+                    f"DELETE FROM {table} WHERE thread_id NOT IN (SELECT job_id FROM jobs)"
+                )
+                # result is a string like "DELETE 5"; parse the count
+                try:
+                    n = int(result.split()[-1])
+                except (ValueError, IndexError):
+                    n = 0
+                total += n
+        _logger.info("orphan_checkpoints_swept", total_deleted=total)
+    finally:
+        await conn.close()
+    return total

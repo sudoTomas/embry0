@@ -474,6 +474,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.issue_executor._background_tasks = app.state.background_tasks
 
+    # Daily orphan checkpoint sweep — purges checkpoint rows for job_ids
+    # that no longer exist in the jobs table (covers cases where per-job
+    # purge was missed due to an orchestrator crash).
+    from athanor.orchestration.checkpoint import sweep_orphan_checkpoints as _sweep_checkpoints
+
+    async def _daily_checkpoint_sweep() -> None:
+        while True:
+            await asyncio.sleep(86400)  # 24 h
+            try:
+                n = await _sweep_checkpoints(config.database_url)
+                logger.info("orphan_checkpoints_swept", rows_deleted=n)
+            except Exception:
+                logger.warning("orphan_checkpoint_sweep_failed", exc_info=True)
+
+    sweep_task = asyncio.create_task(_daily_checkpoint_sweep())
+    app.state.background_tasks.add(sweep_task)
+    sweep_task.add_done_callback(app.state.background_tasks.discard)
+
     if config.telegram_bot_token and getattr(config, "telegram_webhook_url", ""):
         import secrets
 
