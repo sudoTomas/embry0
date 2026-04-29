@@ -61,6 +61,7 @@ def test_job_state_has_required_keys():
         "task",
         "sandbox_container_id",
         "pipeline_config",
+        "triage_decision",
         "global_context",
         "repo_context",
         "agent_outputs",

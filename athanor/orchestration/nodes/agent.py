@@ -111,11 +111,9 @@ async def run_agent_node(
     credentials = credentials or {"api_key": "", "oauth_token": ""}
     global_defaults = global_defaults or {"execution_mode": "sdk", "auth_mode": "oauth"}
 
-    # pipeline_config on state may be a raw PipelineConfig OR a TriageDecision
-    # that wraps one under the "pipeline_config" key. Unwrap one level if so.
+    # pipeline_config on state is always the flat PipelineConfig dict (never a
+    # TriageDecision wrapper) — triage_node writes the flat inner dict since D4.
     pipeline_config = state.get("pipeline_config") or {}
-    if isinstance(pipeline_config, dict) and "pipeline_config" in pipeline_config:
-        pipeline_config = pipeline_config.get("pipeline_config") or {}
 
     # Per-job agent_models override (JobCreateRequest.agent_models) — surfaced
     # onto state by IssueExecutor. It wins over template/definition precedence,

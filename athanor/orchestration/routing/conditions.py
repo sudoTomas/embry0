@@ -7,9 +7,14 @@ from typing import Any, Literal
 
 
 def check_triage_action(state: dict[str, Any]) -> Literal["proceed", "split"]:
-    """Route after triage. needs_info is handled by interrupt(), not routing."""
-    config = state.get("pipeline_config", {})
-    action = config.get("action", "proceed")
+    """Route after triage. needs_info is handled by interrupt(), not routing.
+
+    action lives in triage_decision (the full TriageDecision dict stored on state
+    after D4 shape standardization). state["pipeline_config"] is the flat
+    PipelineConfig dict and does NOT carry an "action" key.
+    """
+    triage_decision = state.get("triage_decision", {})
+    action = triage_decision.get("action", "proceed") if isinstance(triage_decision, dict) else "proceed"
     if action == "split":
         return "split"
     return "proceed"
@@ -58,11 +63,7 @@ def check_review_decision(state: dict[str, Any]) -> Literal["approved", "changes
     if decision == "changes_requested":
         retry_count = state.get("retry_count", 0)
         config = state.get("pipeline_config", {})
-        max_loops = 3
-        if isinstance(config, dict):
-            pipeline = config.get("pipeline_config", {})
-            if isinstance(pipeline, dict):
-                max_loops = pipeline.get("max_feedback_loops", 3)
+        max_loops = config.get("max_feedback_loops", 3) if isinstance(config, dict) else 3
         if retry_count >= max_loops:
             return "max_retries"
         return "changes_requested"
@@ -73,8 +74,7 @@ def check_review_decision(state: dict[str, Any]) -> Literal["approved", "changes
 def check_budget(state: dict[str, Any]) -> Literal["within_budget", "over_budget"]:
     cost = state.get("total_cost_usd", 0.0)
     config = state.get("pipeline_config", {})
-    pipeline = config.get("pipeline_config", {}) if isinstance(config, dict) else {}
-    max_budget = pipeline.get("budget_usd", 10.0) if isinstance(pipeline, dict) else 10.0
+    max_budget = config.get("budget_usd", 10.0) if isinstance(config, dict) else 10.0
     if cost > max_budget:
         return "over_budget"
     return "within_budget"

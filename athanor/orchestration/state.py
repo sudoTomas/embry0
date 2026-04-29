@@ -75,7 +75,7 @@ class PipelineConfigModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sandbox_profile: str = "default"
-    max_feedback_loops: int = Field(default=2, ge=0, le=20)
+    max_feedback_loops: int = Field(default=3, ge=0, le=20)
     reviewer_enabled: bool = True
     validator_modes: list[str] = Field(default_factory=list)
     agent_models: dict[str, str] = Field(default_factory=dict)
@@ -117,7 +117,8 @@ class JobState(TypedDict, total=False):
     issue_number: int | None
     issue_id: str | None
     sandbox_container_id: str | None
-    pipeline_config: TriageDecision
+    pipeline_config: PipelineConfig  # always the flat inner PipelineConfig dict (never TriageDecision)
+    triage_decision: TriageDecision  # full triage output including action/reasoning/questions
     global_context: str | None
     repo_context: str | None
     additional_context: str | None

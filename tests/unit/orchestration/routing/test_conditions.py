@@ -12,18 +12,19 @@ from athanor.orchestration.routing.conditions import (
 
 
 def test_triage_action_proceed():
-    state = {"pipeline_config": {"action": "proceed"}}
+    # action lives in triage_decision (D4: pipeline_config is now the flat dict)
+    state = {"triage_decision": {"action": "proceed"}}
     assert check_triage_action(state) == "proceed"
 
 
 def test_triage_action_split():
-    state = {"pipeline_config": {"action": "split"}}
+    state = {"triage_decision": {"action": "split"}}
     assert check_triage_action(state) == "split"
 
 
 def test_triage_action_needs_info_routes_to_proceed():
     """needs_info is handled by interrupt, not routing — should map to proceed."""
-    state = {"pipeline_config": {"action": "needs_info"}}
+    state = {"triage_decision": {"action": "needs_info"}}
     assert check_triage_action(state) == "proceed"
 
 
@@ -56,7 +57,7 @@ def test_review_decision_changes_requested_under_max_retries():
     state = {
         "agent_outputs": [{"agent_type": "review", "output": review_data}],
         "retry_count": 1,
-        "pipeline_config": {"pipeline_config": {"max_feedback_loops": 3}},
+        "pipeline_config": {"max_feedback_loops": 3},  # flat dict (D4)
     }
     assert check_review_decision(state) == "changes_requested"
 
@@ -66,7 +67,7 @@ def test_review_decision_changes_requested_at_max_retries():
     state = {
         "agent_outputs": [{"agent_type": "review", "output": review_data}],
         "retry_count": 3,
-        "pipeline_config": {"pipeline_config": {"max_feedback_loops": 3}},
+        "pipeline_config": {"max_feedback_loops": 3},  # flat dict (D4)
     }
     assert check_review_decision(state) == "max_retries"
 
@@ -76,7 +77,7 @@ def test_review_decision_changes_requested_over_max_retries():
     state = {
         "agent_outputs": [{"agent_type": "review", "output": review_data}],
         "retry_count": 5,
-        "pipeline_config": {"pipeline_config": {"max_feedback_loops": 3}},
+        "pipeline_config": {"max_feedback_loops": 3},  # flat dict (D4)
     }
     assert check_review_decision(state) == "max_retries"
 
@@ -91,7 +92,7 @@ def test_review_decision_approved_but_docs_need_update():
     state = {
         "agent_outputs": [{"agent_type": "review", "output": review_data}],
         "retry_count": 0,
-        "pipeline_config": {"pipeline_config": {"max_feedback_loops": 3}},
+        "pipeline_config": {"max_feedback_loops": 3},  # flat dict (D4)
     }
     assert check_review_decision(state) == "changes_requested"
 
@@ -111,16 +112,17 @@ def test_review_decision_approved_docs_no_update():
 
 
 def test_budget_within():
-    state = {"total_cost_usd": 5.0, "pipeline_config": {"pipeline_config": {"budget_usd": 10.0}}}
+    # pipeline_config is now the flat dict (D4: no nested "pipeline_config" wrapper)
+    state = {"total_cost_usd": 5.0, "pipeline_config": {"budget_usd": 10.0}}
     assert check_budget(state) == "within_budget"
 
 
 def test_budget_over():
-    state = {"total_cost_usd": 15.0, "pipeline_config": {"pipeline_config": {"budget_usd": 10.0}}}
+    state = {"total_cost_usd": 15.0, "pipeline_config": {"budget_usd": 10.0}}
     assert check_budget(state) == "over_budget"
 
 
 def test_budget_at_boundary():
     """Exactly at budget should be within (not strictly over)."""
-    state = {"total_cost_usd": 10.0, "pipeline_config": {"pipeline_config": {"budget_usd": 10.0}}}
+    state = {"total_cost_usd": 10.0, "pipeline_config": {"budget_usd": 10.0}}
     assert check_budget(state) == "within_budget"

@@ -622,8 +622,10 @@ class IssueExecutor:
 
     async def _handle_workflow_result(self, issue_id: str, job_id: str, result: dict[str, Any]) -> None:
         """Process the workflow result and update issue/job status."""
-        triage_decision = result.get("pipeline_config", {})
-        action = triage_decision.get("action", "proceed")
+        # action lives in triage_decision (D4: state["pipeline_config"] is now the
+        # flat PipelineConfig dict; it has no "action" key).
+        triage_decision = result.get("triage_decision", {})
+        action = triage_decision.get("action", "proceed") if isinstance(triage_decision, dict) else "proceed"
         current_stage = result.get("current_stage", "")
 
         logger.info(
@@ -635,7 +637,7 @@ class IssueExecutor:
         )
 
         if current_stage == "awaiting_input":
-            triage_decision = result.get("pipeline_config", {})
+            triage_decision = result.get("triage_decision", {})
             await self._handle_needs_info(issue_id, job_id, triage_decision)
             return
 

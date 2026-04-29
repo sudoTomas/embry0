@@ -228,7 +228,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                     state.get("repo", ""),
                     config["configurable"].get("repo_preferences_repo"),
                 )
-                result["pipeline_config"] = triage_dict
+                result["pipeline_config"] = triage_dict.get("pipeline_config") or {}
+                result["triage_decision"] = triage_dict
                 result["current_stage"] = "triage_complete"
             except TriageParseError as exc:
                 logger.error("triage_parse_error", error=str(exc))
@@ -282,8 +283,10 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         )
 
     # Check needs_info → interrupt
-    pipeline_config = result.get("pipeline_config", {})
-    action = pipeline_config.get("action", "proceed")
+    # action lives in triage_decision (the full TriageDecision dict), not in the
+    # flat pipeline_config dict written to state["pipeline_config"].
+    triage_decision_result = result.get("triage_decision", {})
+    action = triage_decision_result.get("action", "proceed")
 
     if action == "needs_info":
         # Cycle guard: prevent infinite triage interrupt loops.
@@ -308,8 +311,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 },
             )
 
-        questions = pipeline_config.get("questions", [])
-        reasoning = pipeline_config.get("reasoning", "")
+        questions = triage_decision_result.get("questions", [])
+        reasoning = triage_decision_result.get("reasoning", "")
         writer({"type": "interrupt", "node": "triage", "questions": questions})
         logger.info("triage_needs_info", questions=len(questions))
 
@@ -365,7 +368,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                         updated.get("repo", ""),
                         config["configurable"].get("repo_preferences_repo"),
                     )
-                    result["pipeline_config"] = triage_dict2
+                    result["pipeline_config"] = triage_dict2.get("pipeline_config") or {}
+                    result["triage_decision"] = triage_dict2
                     result["current_stage"] = "triage_complete"
                 except TriageParseError as exc:
                     logger.error("triage_parse_error", error=str(exc))
@@ -420,7 +424,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 update={**result, **cap_updates, "current_stage": "triage_asked_user"},
             )
 
-    writer({"type": "node_completed", "node": "triage", "action": result.get("pipeline_config", {}).get("action")})
+    writer({"type": "node_completed", "node": "triage", "action": result.get("triage_decision", {}).get("action")})
     return result
 
 
@@ -522,7 +526,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     task = state.get("task", "")
     issue_number = state.get("issue_number")
     issue_id = state.get("issue_id", "")
-    triage_decision = state.get("pipeline_config", {})
+    triage_decision = state.get("triage_decision", {})
     additional_context = state.get("additional_context", "")
     feedback_context = state.get("feedback_context", "")
     user_answers = state.get("user_answers")
@@ -584,7 +588,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         agent_runner=agent_runner,
         agent_type="developer",
         prompt=prompt,
-        model=triage_decision.get("pipeline_config", {}).get("agent_models", {}).get("developer", "claude-sonnet-4-6"),
+        model=state.get("pipeline_config", {}).get("agent_models", {}).get("developer", "claude-sonnet-4-6"),
         tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
         timeout_seconds=1800,
         on_event=_forward_event,
@@ -664,8 +668,6 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     #   3. Budget overrun also diverts to max_retries.
     #   4. Otherwise proceed to review.
     pipeline = state.get("pipeline_config", {}) or {}
-    if isinstance(pipeline, dict) and "pipeline_config" in pipeline:
-        pipeline = pipeline.get("pipeline_config") or {}
     budget = pipeline.get("budget_usd", 10.0) if isinstance(pipeline, dict) else 10.0
 
     if updates.get("agent_questions_exhausted") or state.get("agent_questions_exhausted"):

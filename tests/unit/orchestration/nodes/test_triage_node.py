@@ -174,6 +174,83 @@ async def test_apply_repo_preferences_override_no_prefs_repo():
 
 
 @pytest.mark.asyncio
+async def test_triage_node_writes_flat_pipeline_config_to_state() -> None:
+    """triage_node must write the flat PipelineConfig dict (not TriageDecision wrapper)
+    to state['pipeline_config'], and the full decision to state['triage_decision']."""
+    import json as _json
+
+    from athanor.workflows.issue_to_pr.nodes import triage_node
+
+    valid_decision_json = _json.dumps(
+        {
+            "action": "proceed",
+            "confidence": 0.9,
+            "pipeline_template": "standard",
+            "pipeline_config": {
+                "sandbox_profile": "default",
+                "max_feedback_loops": 3,
+                "reviewer_enabled": True,
+                "validator_modes": [],
+                "agent_models": {"developer": "claude-sonnet-4-6"},
+                "agent_tools": {},
+                "agent_skills": {},
+                "budget_usd": 10.0,
+                "execution_modes": {},
+                "auth_modes": {},
+                "system_prompts": {},
+                "mcp_servers": {},
+            },
+            "questions": [],
+            "sub_tasks": [],
+            "reasoning": "Standard task",
+        }
+    )
+
+    agent_output = {
+        "agent_outputs": [
+            {"agent_type": "triage", "is_error": False, "output": valid_decision_json}
+        ],
+        "total_cost_usd": 0.02,
+        "current_stage": "triage_complete",
+    }
+
+    state = {
+        "job_id": "job-shape-test",
+        "repo": "owner/repo",
+        "task": "Fix the thing",
+        "sandbox_container_id": "container-abc",
+        "agent_outputs": [],
+        "errors": [],
+    }
+    config = {
+        "configurable": {
+            "agent_runner": MagicMock(),
+            "credentials": {},
+            "repo_preferences_repo": None,
+        }
+    }
+
+    with (
+        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=agent_output)),
+        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+    ):
+        result = await triage_node(state, config)
+
+    # Result must be a plain dict (successful triage returns dict, not Command)
+    assert isinstance(result, dict)
+
+    # pipeline_config must be the flat inner dict (no "action" key)
+    pc = result.get("pipeline_config", {})
+    assert "action" not in pc, "pipeline_config must be flat PipelineConfig, not TriageDecision wrapper"
+    assert "budget_usd" in pc
+
+    # triage_decision must carry the full TriageDecision
+    td = result.get("triage_decision", {})
+    assert td.get("action") == "proceed"
+    assert "reasoning" in td
+
+
+@pytest.mark.asyncio
 async def test_triage_cycle_guard_terminates_at_round_5() -> None:
     """After 5 triage_question_rounds, triage_node must return Command(goto=END)."""
     from langgraph.graph import END
