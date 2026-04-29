@@ -230,11 +230,35 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             except TriageParseError as exc:
                 logger.error("triage_parse_error", error=str(exc))
                 writer({"type": "error", "message": f"Triage parse failed: {exc}"})
-                return {
-                    "current_stage": "failed",
-                    "errors": [f"triage_malformed: {exc}"],
-                    "error_code": ErrorCode.TRIAGE_MALFORMED.value,
-                }
+                writer({"type": "node_completed", "node": "triage", "action": "failed"})
+                return Command(
+                    goto=END,
+                    update={
+                        "current_stage": "failed",
+                        "errors": [f"triage_malformed: {exc}"],
+                        "error_code": ErrorCode.TRIAGE_MALFORMED.value,
+                    },
+                )
+
+    # Guard: if the agent produced no output or an error output, fail fast.
+    # Returning a plain dict here would let route_after_triage default to "proceed"
+    # and send the job to developer_node with an empty pipeline_config.
+    _last_triage_output = (result.get("agent_outputs") or [{}])[-1]
+    if not result.get("agent_outputs") or _last_triage_output.get("is_error"):
+        from athanor.safety.error_codes import ErrorCode
+
+        _err_msg = _last_triage_output.get("error_message", "Triage agent returned no output")
+        logger.error("triage_agent_error", error=_err_msg)
+        writer({"type": "error", "message": f"Triage agent failed: {_err_msg}"})
+        writer({"type": "node_completed", "node": "triage", "action": "failed"})
+        return Command(
+            goto=END,
+            update={
+                "current_stage": "failed",
+                "errors": [f"triage_agent_error: {_err_msg}"],
+                "error_code": ErrorCode.TRIAGE_MALFORMED.value,
+            },
+        )
 
     # Enforce the job-wide ask_user cap on any agent_ask_user events from
     # the triage agent before processing the needs_info action.
@@ -321,11 +345,33 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 except TriageParseError as exc:
                     logger.error("triage_parse_error", error=str(exc))
                     writer({"type": "error", "message": f"Triage parse failed: {exc}"})
-                    return {
-                        "current_stage": "failed",
-                        "errors": [f"triage_malformed: {exc}"],
-                        "error_code": ErrorCode.TRIAGE_MALFORMED.value,
-                    }
+                    writer({"type": "node_completed", "node": "triage", "action": "failed"})
+                    return Command(
+                        goto=END,
+                        update={
+                            "current_stage": "failed",
+                            "errors": [f"triage_malformed: {exc}"],
+                            "error_code": ErrorCode.TRIAGE_MALFORMED.value,
+                        },
+                    )
+
+        # Guard: if the resume re-run produced no output or an error, fail fast.
+        _last_resume_output = (result.get("agent_outputs") or [{}])[-1]
+        if not result.get("agent_outputs") or _last_resume_output.get("is_error"):
+            from athanor.safety.error_codes import ErrorCode
+
+            _err_msg = _last_resume_output.get("error_message", "Triage agent returned no output on resume")
+            logger.error("triage_agent_error_resume", error=_err_msg)
+            writer({"type": "error", "message": f"Triage agent failed on resume: {_err_msg}"})
+            writer({"type": "node_completed", "node": "triage", "action": "failed"})
+            return Command(
+                goto=END,
+                update={
+                    "current_stage": "failed",
+                    "errors": [f"triage_agent_error: {_err_msg}"],
+                    "error_code": ErrorCode.TRIAGE_MALFORMED.value,
+                },
+            )
 
         # Enforce the cap again on the re-run's events (state now has updated rounds).
         pending_questions = _extract_ask_user_events({"events": collected_events}, calling_node="triage")

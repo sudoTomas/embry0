@@ -614,7 +614,7 @@ class IssueExecutor:
             from datetime import UTC, datetime
 
             # Pipeline ends at review_complete (approved) or abandoned (user gave up)
-            failed_stages = {"abandoned", "failed", "triage_failed", "developer_retry"}
+            failed_stages = {"abandoned", "failed", "developer_retry"}
             has_errors = bool(result.get("errors"))
             final_status = "failed" if current_stage in failed_stages or has_errors else "completed"
             # Classify the failure: graph nodes may have set a specific error_code
