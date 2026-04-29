@@ -63,7 +63,9 @@ class ProviderConfigRepository:
             data = _env_derived_defaults()
 
         data["api_key_set"] = bool(os.environ.get("ANTHROPIC_API_KEY"))
-        data["oauth_token_set"] = bool(os.environ.get("CLAUDE_MAX_OAUTH_TOKEN"))
+        # Historically CLAUDE_MAX_OAUTH_TOKEN; renamed to CLAUDE_CODE_OAUTH_TOKEN
+        # in 2026-04-28 storage hardening (Plan D) to match auth_provider.py and CLAUDE.md.
+        data["oauth_token_set"] = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
         return data
 
     async def update(self, **fields: Any) -> dict[str, Any]:
@@ -111,7 +113,7 @@ class ProviderConfigRepository:
 
         if mode == "claude_max":
             if not config.get("oauth_token_set"):
-                return {"status": "error", "message": "CLAUDE_MAX_OAUTH_TOKEN environment variable is not set."}
+                return {"status": "error", "message": "CLAUDE_CODE_OAUTH_TOKEN environment variable is not set."}
             return {"status": "ok", "message": "Claude Max OAuth token is configured."}
 
         if mode == "ollama":

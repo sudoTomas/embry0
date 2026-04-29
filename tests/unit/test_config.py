@@ -66,12 +66,12 @@ def test_config_claude_max_provider():
     """Claude Max provider mode reads OAuth token."""
     env = {
         "PROVIDER_MODE": "claude_max",
-        "CLAUDE_MAX_OAUTH_TOKEN": "sk-ant-oat01-test",
+        "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-test",
     }
     with patch.dict(os.environ, env, clear=True):
         config = AthanorConfig(_env_file=None)  # type: ignore[call-arg]
     assert config.provider_mode == "claude_max"
-    assert config.claude_max_oauth_token == "sk-ant-oat01-test"
+    assert config.claude_code_oauth_token == "sk-ant-oat01-test"
 
 
 def test_config_ollama_provider():

@@ -41,7 +41,9 @@ class AthanorConfig(BaseSettings):
     # Agent provider (anthropic_api | claude_max | ollama)
     provider_mode: str = "anthropic_api"
     anthropic_api_key: str = ""
-    claude_max_oauth_token: str = ""
+    # Renamed from CLAUDE_MAX_OAUTH_TOKEN to CLAUDE_CODE_OAUTH_TOKEN (2026-04-28, Plan D)
+    # to match auth_provider.py, sandbox, and CLAUDE.md documentation.
+    claude_code_oauth_token: str = ""
     ollama_base_url: str = ""
     ollama_model: str = ""
     default_model: str = ""

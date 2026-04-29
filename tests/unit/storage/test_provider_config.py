@@ -41,7 +41,7 @@ async def test_get_defaults(provider_repo: ProviderConfigRepository, monkeypatch
 @pytest.mark.asyncio
 async def test_get_includes_derived_booleans(provider_repo: ProviderConfigRepository, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
-    monkeypatch.delenv("CLAUDE_MAX_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     config = await provider_repo.get()
     assert config["api_key_set"] is True
     assert config["oauth_token_set"] is False
@@ -50,7 +50,7 @@ async def test_get_includes_derived_booleans(provider_repo: ProviderConfigReposi
 @pytest.mark.asyncio
 async def test_get_booleans_false_when_env_unset(provider_repo: ProviderConfigRepository, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("CLAUDE_MAX_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     config = await provider_repo.get()
     assert config["api_key_set"] is False
     assert config["oauth_token_set"] is False
@@ -115,7 +115,7 @@ async def test_test_connection_anthropic_api_error(provider_repo: ProviderConfig
 
 @pytest.mark.asyncio
 async def test_test_connection_claude_max_ok(provider_repo: ProviderConfigRepository, monkeypatch):
-    monkeypatch.setenv("CLAUDE_MAX_OAUTH_TOKEN", "oauth-token-value")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token-value")
     await provider_repo.update(provider_mode="claude_max")
     result = await provider_repo.test_connection()
     assert result["status"] == "ok"
@@ -123,11 +123,11 @@ async def test_test_connection_claude_max_ok(provider_repo: ProviderConfigReposi
 
 @pytest.mark.asyncio
 async def test_test_connection_claude_max_error(provider_repo: ProviderConfigRepository, monkeypatch):
-    monkeypatch.delenv("CLAUDE_MAX_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     await provider_repo.update(provider_mode="claude_max")
     result = await provider_repo.test_connection()
     assert result["status"] == "error"
-    assert "CLAUDE_MAX_OAUTH_TOKEN" in result["message"]
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in result["message"]
 
 
 @pytest.mark.asyncio
