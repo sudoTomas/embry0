@@ -5,6 +5,7 @@ import shutil
 import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import asyncpg
 import pytest
@@ -92,15 +93,25 @@ async def app(setup_database: str) -> AsyncIterator[AsyncClient]:
             yield client
 
 
-@pytest.fixture(scope="session", autouse=False)
-def docker_available() -> None:
-    """Skip requires_docker tests when no Docker daemon is reachable."""
+def _is_docker_available() -> bool:
+    """Return True when Docker is installed and the daemon is reachable."""
     if shutil.which("docker") is None:
-        pytest.skip("Docker not available — skipping requires_docker tests")
+        return False
     result = subprocess.run(
         ["docker", "info"],
         capture_output=True,
         timeout=10,
     )
-    if result.returncode != 0:
-        pytest.skip("Docker daemon not reachable — skipping requires_docker tests")
+    return result.returncode == 0
+
+
+def pytest_collection_modifyitems(items: list[Any], config: Any) -> None:
+    """Auto-skip any test marked requires_docker when Docker is unavailable."""
+    if _is_docker_available():
+        return
+    skip_marker = pytest.mark.skip(
+        reason="Docker not available or daemon not reachable"
+    )
+    for item in items:
+        if item.get_closest_marker("requires_docker"):
+            item.add_marker(skip_marker)
