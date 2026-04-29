@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -171,3 +171,57 @@ async def test_apply_repo_preferences_override_no_prefs_repo():
     decision = {"pipeline_config": {"sandbox_profile": "python-3.12"}}
     result = await apply_repo_preferences_override(decision, "acme/w", None)
     assert result == decision
+
+
+@pytest.mark.asyncio
+async def test_triage_cycle_guard_terminates_at_round_5() -> None:
+    """After 5 triage_question_rounds, triage_node must return Command(goto=END)."""
+    from langgraph.graph import END
+    from langgraph.types import Command
+
+    from athanor.workflows.issue_to_pr.nodes import triage_node
+
+    state = {
+        "job_id": "job-cycle-test",
+        "repo": "owner/repo",
+        "task": "Fix the thing",
+        "sandbox_container_id": "container-abc",
+        "agent_outputs": [],
+        "errors": [],
+        "triage_question_rounds": 5,  # already at cap
+        "total_cost_usd": 0.0,
+    }
+    config = {
+        "configurable": {
+            "agent_runner": MagicMock(),
+            "credentials": {},
+            "repo_preferences_repo": None,
+        }
+    }
+
+    # The agent returns needs_info (would trigger interrupt in normal path)
+    needs_info_output = {
+        "agent_outputs": [
+            {
+                "agent_type": "triage",
+                "is_error": False,
+                "output": '{"action":"needs_info","confidence":0.3,"questions":[],"reasoning":"x"}',
+            }
+        ],
+        "total_cost_usd": 0.01,
+        "current_stage": "triage_complete",
+    }
+
+    # The cycle guard fires BEFORE the interrupt() call, so interrupt should
+    # not be called at all when rounds >= 5.
+    with (
+        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=needs_info_output)),
+        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("athanor.workflows.issue_to_pr.nodes.interrupt") as mock_interrupt,
+    ):
+        result = await triage_node(state, config)
+
+    assert isinstance(result, Command)
+    assert result.goto == END
+    assert "ERR_MAX_TRIAGE_QUESTIONS" in str(result.update.get("error_code", ""))
+    mock_interrupt.assert_not_called()

@@ -137,10 +137,14 @@ class JobState(TypedDict, total=False):
     result_summary: str | None
     pending_agent_questions: list[dict[str, Any]]
     user_answers: Any
-    # Job-wide counter: incremented every time any node (triage, developer,
-    # review) produces agent_ask_user events. Capped by _enforce_ask_user_cap
-    # at 5 rounds; exceeding raises ERR_MAX_AGENT_QUESTIONS as a terminal
-    # failure for the job.
+    # Job-wide counters for interrupt/resume cycle guards.
+    # agent_question_rounds: incremented each time any node (triage, developer,
+    #   review) produces agent_ask_user events; capped at 5 by _enforce_ask_user_cap.
+    # triage_question_rounds: incremented each time the triage interrupt loop
+    #   resumes with a needs_info response; capped at 5 in triage_node.
+    # user_retry_rounds: incremented each time the user clicks "continue" in
+    #   max_retries_node; capped at 3.
     agent_question_rounds: int
     agent_questions_exhausted: bool  # set True when agent_question_rounds cap hit; routes to terminal failure
+    triage_question_rounds: int  # cycle guard for triage interrupt/resume loops, capped at 5
     user_retry_rounds: int  # cycle guard — capped at 3 continue_retrying clicks in max_retries_node

@@ -77,8 +77,9 @@ def test_job_state_has_required_keys():
 
 
 def test_job_state_has_cycle_guard_fields():
-    """Both cycle-guard fields exist for agent questions and user retries."""
+    """All cycle-guard fields exist: agent questions, triage questions, and user retries."""
     annotations = JobState.__annotations__
     assert "agent_question_rounds" in annotations
     assert "agent_questions_exhausted" in annotations
+    assert "triage_question_rounds" in annotations
     assert "user_retry_rounds" in annotations

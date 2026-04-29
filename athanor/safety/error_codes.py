@@ -27,6 +27,7 @@ class ErrorCode(StrEnum):
     SANDBOX_INIT = "ERR_SANDBOX_INIT"  # Sandbox container setup failed
     DOCKER_TIMEOUT = "ERR_DOCKER_TIMEOUT"  # Underlying docker command timed out
     MAX_AGENT_QUESTIONS = "ERR_MAX_AGENT_QUESTIONS"  # Agent exceeded the ask_user round cap
+    MAX_TRIAGE_QUESTIONS = "ERR_MAX_TRIAGE_QUESTIONS"  # Triage interrupt/resume loop exceeded the 5-round cap
     UNKNOWN = "ERR_UNKNOWN"  # Uncategorised — should diminish over time
 
     # Phase 1 — pluggable agent execution modes

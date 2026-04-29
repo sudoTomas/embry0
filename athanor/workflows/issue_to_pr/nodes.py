@@ -106,7 +106,10 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
             clone_cmd = [
                 "bash",
                 "-c",
-                f"set -e && git clone --depth=1 https://github.com/{repo}.git /workspace",
+                (
+                    f"set -e && git clone --depth=50 https://github.com/{repo}.git /workspace"
+                    f" && git -C /workspace fetch origin main:main --depth=50 || true"
+                ),
             ]
             try:
                 await docker.run_cmd(
@@ -283,6 +286,28 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     action = pipeline_config.get("action", "proceed")
 
     if action == "needs_info":
+        # Cycle guard: prevent infinite triage interrupt loops.
+        # Mirror the 5-round cap used by agent_question_rounds / ask_user.
+        _triage_rounds = int(state.get("triage_question_rounds", 0) or 0)
+        if _triage_rounds >= 5:
+            from athanor.safety.error_codes import ErrorCode
+
+            logger.warning(
+                "triage_question_rounds_exceeded",
+                rounds=_triage_rounds,
+                job_id=state.get("job_id"),
+            )
+            writer({"type": "node_completed", "node": "triage", "action": "failed"})
+            return Command(
+                goto=END,
+                update={
+                    "current_stage": "failed",
+                    "triage_question_rounds": _triage_rounds,
+                    "error_code": ErrorCode.MAX_TRIAGE_QUESTIONS.value,
+                    "errors": ["Triage exceeded 5 interrupt rounds — giving up."],
+                },
+            )
+
         questions = pipeline_config.get("questions", [])
         reasoning = pipeline_config.get("reasoning", "")
         writer({"type": "interrupt", "node": "triage", "questions": questions})
@@ -372,6 +397,11 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                     "error_code": ErrorCode.TRIAGE_MALFORMED.value,
                 },
             )
+
+        # Increment triage_question_rounds so the next interrupt cycle's cycle
+        # guard sees the updated counter. This persists via the result dict which
+        # LangGraph merges into state on node completion.
+        result["triage_question_rounds"] = _triage_rounds + 1
 
         # Enforce the cap again on the re-run's events (state now has updated rounds).
         pending_questions = _extract_ask_user_events({"events": collected_events}, calling_node="triage")
@@ -518,9 +548,13 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     if reasoning:
         prompt_parts.append(f"\nTriage Analysis:\n{reasoning}")
 
-    # Branch naming
+    # Branch naming — slug must be git-ref-safe: only [a-z0-9-] characters.
+    # git rejects refs containing .., ~, ^, :, ?, *, [, \, control chars,
+    # or names ending in .lock. re.sub strips all non-safe chars in one pass.
+    import re as _re
+
     short_id = issue_id[:12] if issue_id else "unknown"
-    slug = task[:30].lower().replace(" ", "-").replace("/", "-")
+    slug = _re.sub(r"[^a-z0-9-]+", "-", task[:30].lower()).strip("-") or "task"
     branch_name = f"athanor/{short_id}-{slug}"
 
     prompt_parts.append("\nInstructions:")
