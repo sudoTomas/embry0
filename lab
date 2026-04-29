@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ─── Dev container helper for Claude Code ─────────────────────────────────
-# This script ONLY manages the development container.
-# For production, use the `athanor` CLI.
+# ─── Claude Code shortcut into the running production orchestrator ─────────
+# This script opens a Claude Code session inside the athanor-orchestrator
+# container. The orchestrator must already be running via:
+#   cd infra && docker compose up -d
+#
+# Usage:
+#   ./lab              — open Claude Code (default)
+#   ./lab claude       — same as above, with optional extra args forwarded
+#   ./lab help         — show this message
 
-DEV_COMPOSE="infra/docker-compose.dev.yml"
-ENV_FILE=".env"
-CONTAINER="athanor"
-DEV_PROJECT="athanor-dev"
+CONTAINER="athanor-orchestrator"
 
 cd "$(dirname "$0")"
 
@@ -17,43 +20,21 @@ if [ -t 0 ]; then
   TTY_FLAGS="-it"
 fi
 
-start_dev() {
-  if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-    echo "Starting dev container..."
-    docker compose -f "$DEV_COMPOSE" -p "$DEV_PROJECT" --env-file "$ENV_FILE" up -d --build
-  fi
-}
-
 case "${1:-claude}" in
-  up)
-    echo "Starting dev container..."
-    docker compose -f "$DEV_COMPOSE" -p "$DEV_PROJECT" --env-file "$ENV_FILE" up -d
-    ;;
-  down)
-    echo "Stopping dev container..."
-    docker compose -f "$DEV_COMPOSE" -p "$DEV_PROJECT" --env-file "$ENV_FILE" down
-    ;;
   claude)
-    start_dev
     shift 2>/dev/null || true
-    # Wait for Claude Code to be installed (init-dev.sh installs it at startup)
-    for i in $(seq 1 120); do
-      docker exec "$CONTAINER" command -v claude &>/dev/null && break
-      [ "$i" -eq 1 ] && echo "Waiting for Claude Code to be ready..."
-      sleep 1
-    done
-    exec docker exec $TTY_FLAGS -w /workspace "$CONTAINER" claude --dangerously-skip-permissions "$@"
+    exec docker exec $TTY_FLAGS -w /workspace "$CONTAINER" \
+      claude --dangerously-skip-permissions "$@"
     ;;
   help|--help|-h)
-    echo "Usage: ./lab <command>"
+    echo "Usage: ./lab [claude] [extra-claude-args...]"
     echo ""
-    echo "Dev container helper for Claude Code."
-    echo "For production, use the 'athanor' CLI."
+    echo "Opens Claude Code inside the running athanor-orchestrator container."
+    echo "The container must be started first: cd infra && docker compose up -d"
     echo ""
     echo "Commands:"
-    echo "  up      Start the dev container"
-    echo "  down    Stop the dev container"
     echo "  claude  Open Claude Code (default if no args)"
+    echo "  help    Show this message"
     ;;
   *)
     echo "Unknown command: $1"
