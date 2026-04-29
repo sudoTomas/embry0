@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Button } from "@/components/ui/Button";
 import { X } from "lucide-react";
 import type { EnvVar } from "@/lib/types/environment";
+import { createFocusTrap } from "@/lib/focus-trap";
 
 interface EnvVarModalProps {
   variable?: EnvVar | null; // null = add mode, populated = edit mode
@@ -13,6 +14,7 @@ interface EnvVarModalProps {
 
 export function EnvVarModal({ variable, onSave, onClose }: EnvVarModalProps) {
   const isEdit = !!variable;
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const [key, setKey] = useState(variable?.key ?? "");
   const [value, setValue] = useState(variable?.var_type === "secret" ? "" : (variable?.value ?? ""));
@@ -35,6 +37,16 @@ export function EnvVarModal({ variable, onSave, onClose }: EnvVarModalProps) {
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    document.body.style.overflow = "hidden";
+    const cleanup = createFocusTrap(containerRef.current);
+    return () => {
+      cleanup();
+      document.body.style.overflow = "";
+    };
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,7 +75,13 @@ export function EnvVarModal({ variable, onSave, onClose }: EnvVarModalProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="relative w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl">
+      <div
+        ref={containerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={isEdit ? "Edit Variable" : "Add Variable"}
+        className="relative w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl"
+      >
         <button
           onClick={onClose}
           className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"

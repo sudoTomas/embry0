@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -11,6 +11,7 @@ import { LabelInput } from "./LabelInput";
 import { useCreateIssue } from "@/hooks/useIssues";
 import { useGitHubRepos } from "@/hooks/useGitHub";
 import type { IssuePriority } from "@/lib/types";
+import { createFocusTrap } from "@/lib/focus-trap";
 
 interface CreateIssueDialogProps {
   onClose: () => void;
@@ -19,6 +20,7 @@ interface CreateIssueDialogProps {
 }
 
 export function CreateIssueDialog({ onClose, repos = [], labelSuggestions = [] }: CreateIssueDialogProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [repo, setRepo] = useState("");
@@ -27,6 +29,16 @@ export function CreateIssueDialog({ onClose, repos = [], labelSuggestions = [] }
   const [githubSync, setGithubSync] = useState(false);
   const [autoTriage, setAutoTriage] = useState(true);
   const createIssue = useCreateIssue();
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    document.body.style.overflow = "hidden";
+    const cleanup = createFocusTrap(containerRef.current);
+    return () => {
+      cleanup();
+      document.body.style.overflow = "";
+    };
+  }, []);
 
   // Pull every repo the GITHUB_TOKEN can see; merge with the locally-known
   // ones (repos that already have issues) so a user can pick from either set.
@@ -55,6 +67,7 @@ export function CreateIssueDialog({ onClose, repos = [], labelSuggestions = [] }
 
   return (
     <div
+      ref={containerRef}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       onClick={onClose}
       onKeyDown={(e) => e.key === "Escape" && onClose()}

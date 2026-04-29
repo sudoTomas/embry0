@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import type { Node } from "@xyflow/react";
 import { X, ChevronDown, ChevronRight } from "lucide-react";
 import { useAgents } from "@/hooks/useAgents";
@@ -7,6 +7,7 @@ import { getAgentIcon } from "@/lib/agentIcons";
 import { cn } from "@/lib/utils";
 import type { SkillConfig } from "@/lib/types";
 import { SANDBOX_IMAGE_PLACEHOLDER } from "@/lib/branding";
+import { createFocusTrap } from "@/lib/focus-trap";
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                              */
@@ -221,10 +222,21 @@ export function AgentDetailPopup({
   onUpdate,
   onClose,
 }: AgentDetailPopupProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const d = node.data as Record<string, unknown>;
   const { data: agents } = useAgents();
   const [editing, setEditing] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    document.body.style.overflow = "hidden";
+    const cleanup = createFocusTrap(containerRef.current);
+    return () => {
+      cleanup();
+      document.body.style.overflow = "";
+    };
+  }, []);
 
   /* ---- derived data ---- */
   const agentType = (d.agentType as string) ?? "custom";
@@ -291,6 +303,7 @@ export function AgentDetailPopup({
       onClick={onClose}
     >
       <div
+        ref={containerRef}
         role="dialog"
         aria-modal="true"
         className="w-[560px] max-h-[85vh] overflow-y-auto rounded-2xl"
