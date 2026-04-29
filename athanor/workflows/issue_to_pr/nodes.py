@@ -711,7 +711,6 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[
     repo = state.get("repo", "")
     pr_url = state.get("pr_url", "")
     branch = state.get("branch_name", "")
-    triage_decision = state.get("pipeline_config", {})
 
     prompt = f"""Repository: {repo}
 Branch: {branch}
@@ -761,7 +760,7 @@ Return ONLY a JSON object:
         agent_runner=agent_runner,
         agent_type="review",
         prompt=prompt,
-        model=triage_decision.get("pipeline_config", {}).get("agent_models", {}).get("review", "claude-sonnet-4-6"),
+        model=state.get("pipeline_config", {}).get("agent_models", {}).get("review", "claude-sonnet-4-6"),
         tools=["Read", "Bash", "Glob", "Grep"],
         timeout_seconds=300,
         on_event=_forward_event,

@@ -352,6 +352,51 @@ async def test_triage_node_enforces_ask_user_cap() -> None:
 
 
 @pytest.mark.asyncio
+async def test_review_node_uses_per_agent_model_from_pipeline_config() -> None:
+    """review_node passes agent_models['review'] from the flat pipeline_config to run_agent_node.
+
+    Regression for the bug where review_node used the old TriageDecision-wrapper chain
+    triage_decision.get("pipeline_config", {}).get("agent_models", ...) after Task 6
+    standardised on the flat PipelineConfig shape. The chain silently returned {} and
+    review always fell back to claude-sonnet-4-6 regardless of the configured model.
+    """
+    captured: dict[str, Any] = {}
+
+    async def fake_run_agent_node(**kwargs: Any) -> dict[str, Any]:
+        captured["model"] = kwargs.get("model")
+        captured["agent_type"] = kwargs.get("agent_type")
+        return {
+            "agent_outputs": [
+                {
+                    "agent_type": "review",
+                    "is_error": False,
+                    "output": '{"decision": "approved", "reasoning": "ok"}',
+                    "cost_usd": 0.0,
+                    "duration_ms": 10,
+                    "tools_called": {},
+                }
+            ],
+            "total_cost_usd": 0.0,
+            "current_stage": "review_complete",
+        }
+
+    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=fake_run_agent_node):
+        state = _state(
+            agent_outputs=[],
+            pr_url="http://x",
+            pipeline_config={"agent_models": {"review": "claude-opus-4-7"}},
+        )
+        await review_node(state, config=_make_review_config(object()))
+
+    assert captured.get("agent_type") == "review"
+    assert captured.get("model") == "claude-opus-4-7", (
+        f"Expected claude-opus-4-7 from pipeline_config, got {captured.get('model')!r}. "
+        "The old wrapper chain `triage_decision.get('pipeline_config', {}).get('agent_models', ...)` "
+        "would have returned the fallback 'claude-sonnet-4-6' instead."
+    )
+
+
+@pytest.mark.asyncio
 async def test_review_node_enforces_ask_user_cap() -> None:
     """review_node must call _enforce_ask_user_cap and self-route to max_retries
     when the job-wide cap (agent_question_rounds >= 5) is already exhausted."""
