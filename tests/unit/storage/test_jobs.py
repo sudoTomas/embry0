@@ -3,7 +3,7 @@ import pytest
 
 from athanor.storage.database import DatabasePool
 from athanor.storage.migrations.runner import run_migrations
-from athanor.storage.repositories.jobs import JobsRepository
+from athanor.storage.repositories.jobs import JobsRepository, StatusTransitionConflict
 from athanor.storage.schemas import JobStatus
 
 
@@ -106,6 +106,28 @@ async def test_append_log_event_returns_monotonic_seq(jobs_repo):
     assert isinstance(seq1, int) and seq1 > 0
     assert seq2 > seq1
     assert seq3 > seq2
+
+
+def test_status_transition_conflict_is_runtime_error():
+    """StatusTransitionConflict must subclass RuntimeError (spec §4.6)."""
+    exc = StatusTransitionConflict("test message")
+    assert isinstance(exc, RuntimeError)
+    assert "test message" in str(exc)
+
+
+@pytest.mark.asyncio
+async def test_cas_valid_transition_succeeds(jobs_repo: JobsRepository):
+    """A valid status transition applies correctly via the CAS path."""
+    job_id = await jobs_repo.create(repo="test/repo", task="cas test")
+    await jobs_repo.update(job_id, status="running")
+    result = await jobs_repo.get(job_id)
+    assert result is not None
+    assert result["status"] == "running"
+
+    await jobs_repo.update(job_id, status="completed")
+    result = await jobs_repo.get(job_id)
+    assert result is not None
+    assert result["status"] == "completed"
 
 
 @pytest.mark.asyncio

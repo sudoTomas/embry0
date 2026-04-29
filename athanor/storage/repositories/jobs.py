@@ -12,6 +12,15 @@ from athanor.storage.schemas import JobStatus
 
 logger = structlog.get_logger(__name__)
 
+
+class StatusTransitionConflict(RuntimeError):
+    """Raised when a CAS status update finds no matching row.
+
+    Indicates that another writer has already changed the job's status since
+    the caller last read it. Callers should treat this as a 409 Conflict.
+    """
+
+
 # Valid status transitions: current_status -> set of allowed next statuses
 VALID_JOB_TRANSITIONS: dict[str, set[str]] = {
     JobStatus.PENDING: {JobStatus.RUNNING, JobStatus.CANCELLED},
@@ -147,42 +156,53 @@ class JobsRepository:
         return [dict(r) for r in rows], int(total or 0)
 
     async def update(self, job_id: str, **fields: Any) -> None:
-        """Update specific fields on a job. Validates status transitions."""
+        """Update specific fields on a job. Validates status transitions.
+
+        When a status transition is requested, uses a compare-and-swap UPDATE
+        (WHERE status=$expected RETURNING job_id) to eliminate the read-then-write
+        race. Raises StatusTransitionConflict if no row is updated (another
+        writer changed the status concurrently).
+        """
         valid = {k: v for k, v in fields.items() if k in _UPDATABLE_FIELDS}
         if not valid:
             return
 
-        # Validate status transition if status is being changed
         new_status = valid.get("status")
-        if new_status is not None:
-            row = await self._db.fetchrow("SELECT status FROM jobs WHERE job_id = $1", job_id)
-            if row is not None:
-                current_status = row["status"]
-                if current_status == new_status:
-                    # No-op: same status, skip the transition check but still update other fields
-                    valid.pop("status")
-                    if not valid:
-                        logger.debug(
-                            "job_status_update_noop",
-                            job_id=job_id,
-                            status=new_status,
-                        )
-                        return
-                else:
-                    allowed = VALID_JOB_TRANSITIONS.get(current_status, set())
-                    if new_status not in allowed:
-                        logger.warning(
-                            "invalid_job_status_transition",
-                            job_id=job_id,
-                            current=current_status,
-                            requested=new_status,
-                            allowed=sorted(allowed),
-                        )
-                        raise ValueError(
-                            f"Invalid job status transition: {current_status} -> {new_status}. "
-                            f"Allowed: {sorted(allowed)}"
-                        )
+        current_status: str | None = None
 
+        if new_status is not None:
+            # Pre-read current status for transition validation and CAS guard.
+            row = await self._db.fetchrow("SELECT status FROM jobs WHERE job_id = $1", job_id)
+            if row is None:
+                # Job does not exist — skip silently (existing behaviour).
+                return
+            current_status = row["status"]
+
+            if current_status == new_status:
+                # No-op: same status; still apply other fields if any.
+                valid.pop("status")
+                if not valid:
+                    logger.debug("job_status_update_noop", job_id=job_id, status=new_status)
+                    return
+                # Fall through to update remaining fields without status CAS.
+                new_status = None
+
+            else:
+                allowed = VALID_JOB_TRANSITIONS.get(current_status, set())
+                if new_status not in allowed:
+                    logger.warning(
+                        "invalid_job_status_transition",
+                        job_id=job_id,
+                        current=current_status,
+                        requested=new_status,
+                        allowed=sorted(allowed),
+                    )
+                    raise ValueError(
+                        f"Invalid job status transition: {current_status} -> {new_status}. "
+                        f"Allowed: {sorted(allowed)}"
+                    )
+
+        # Build SET clause for all fields in valid.
         sets: list[str] = []
         args: list[Any] = [job_id]
         idx = 2
@@ -194,10 +214,24 @@ class JobsRepository:
         if not sets:
             return
 
-        await self._db.execute(
-            f"UPDATE jobs SET {', '.join(sets)} WHERE job_id = $1",
-            *args,
-        )
+        if new_status is not None:
+            # CAS: add WHERE status=$current_status to detect concurrent updates.
+            args.append(current_status)
+            result_row = await self._db.fetchrow(
+                f"UPDATE jobs SET {', '.join(sets)} WHERE job_id = $1 AND status = ${idx} RETURNING job_id",
+                *args,
+            )
+            if result_row is None:
+                raise StatusTransitionConflict(
+                    f"job {job_id}: expected status={current_status!r}; "
+                    "not found or status already changed by concurrent writer"
+                )
+        else:
+            # No status change — plain UPDATE without CAS guard.
+            await self._db.execute(
+                f"UPDATE jobs SET {', '.join(sets)} WHERE job_id = $1",
+                *args,
+            )
 
     async def increment_cost(self, job_id: str, cost_delta: float) -> None:
         """Atomically add cost_delta to total_cost_usd."""

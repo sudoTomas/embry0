@@ -8,6 +8,7 @@ import pytest
 from athanor.storage.database import DatabasePool
 from athanor.storage.migrations.runner import run_migrations
 from athanor.storage.repositories.issues import IssuesRepository
+from athanor.storage.repositories.jobs import StatusTransitionConflict
 
 
 @pytest.fixture
@@ -224,6 +225,24 @@ class TestGetByGitHub:
     async def test_get_by_github_not_found(self, issues_repo: IssuesRepository):
         result = await issues_repo.get_by_github("owner/nonexistent", 999)
         assert result is None
+
+
+class TestIssueStatusTransitionConflict:
+    @pytest.mark.asyncio
+    async def test_cas_valid_transition_succeeds(self, issues_repo: IssuesRepository):
+        """A valid status transition applies correctly via the CAS path."""
+        issue_id = await issues_repo.create(title="CAS test")
+        await issues_repo.update(issue_id, status="in_progress")
+        issue = await issues_repo.get(issue_id)
+        assert issue is not None
+        assert issue["status"] == "in_progress"
+
+    @pytest.mark.asyncio
+    async def test_status_transition_conflict_is_runtime_error(self, issues_repo: IssuesRepository):
+        """StatusTransitionConflict must be importable and a RuntimeError subclass."""
+        exc = StatusTransitionConflict("conflict")
+        assert isinstance(exc, RuntimeError)
+        assert "conflict" in str(exc)
 
 
 class TestFindByIdPrefix:

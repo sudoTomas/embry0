@@ -11,6 +11,7 @@ from typing import Any
 import structlog
 
 from athanor.execution.docker_client import DockerClient
+from athanor.storage.repositories.jobs import StatusTransitionConflict
 
 logger = structlog.get_logger(__name__)
 
@@ -330,10 +331,19 @@ class ContainerReaper:
                     await self._docker.run_cmd(rm_cmd)
                 except RuntimeError:
                     pass
-                await self._db.execute(
-                    "UPDATE jobs SET status = 'expired' WHERE job_id = $1",
-                    job_id,
-                )
+                # Route through repository to enforce VALID_JOB_TRANSITIONS
+                # and the CAS guard (P1 #33).
+                try:
+                    if self._jobs_repo is not None:
+                        await self._jobs_repo.update(job_id, status="expired")
+                    else:
+                        # Fallback for environments where jobs_repo was not injected.
+                        await self._db.execute(
+                            "UPDATE jobs SET status = 'expired' WHERE job_id = $1",
+                            job_id,
+                        )
+                except StatusTransitionConflict:
+                    logger.warning("expire_paused_job_status_race", job_id=job_id)
                 issue_row = await self._db.fetchrow("SELECT issue_id FROM jobs WHERE job_id = $1", job_id)
                 if issue_row and issue_row.get("issue_id"):
                     await self._db.execute(

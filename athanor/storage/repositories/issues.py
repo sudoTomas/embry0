@@ -8,6 +8,7 @@ from typing import Any
 import structlog
 
 from athanor.storage.database import DatabasePool
+from athanor.storage.repositories.jobs import StatusTransitionConflict
 from athanor.storage.schemas import IssueStatus
 
 logger = structlog.get_logger(__name__)
@@ -215,38 +216,50 @@ class IssuesRepository:
     async def update(self, issue_id: str, **fields: Any) -> None:
         """Update specific fields on an issue. updated_at is always refreshed.
 
-        Validates status transitions if status is being changed.
+        When a status transition is requested, uses a compare-and-swap UPDATE
+        (WHERE status=$expected RETURNING id) to eliminate the read-then-write
+        race. Raises StatusTransitionConflict if no row is updated (another
+        writer changed the status concurrently).
         """
         valid = {k: v for k, v in fields.items() if k in _ALLOWED_UPDATE_FIELDS}
         if not valid:
             return
 
-        # Validate status transition if status is being changed
         new_status = valid.get("status")
-        if new_status is not None:
-            row = await self._db.fetchrow("SELECT status FROM issues WHERE id = $1", issue_id)
-            if row is not None:
-                current_status = row["status"]
-                if current_status == new_status:
-                    # No-op: same status, skip transition check but update other fields
-                    valid.pop("status")
-                    if not valid:
-                        return
-                else:
-                    allowed = VALID_ISSUE_TRANSITIONS.get(current_status, set())
-                    if new_status not in allowed:
-                        logger.warning(
-                            "invalid_issue_status_transition",
-                            issue_id=issue_id,
-                            current=current_status,
-                            requested=new_status,
-                            allowed=sorted(allowed),
-                        )
-                        raise ValueError(
-                            f"Invalid issue status transition: {current_status} -> {new_status}. "
-                            f"Allowed: {sorted(allowed)}"
-                        )
+        current_status: str | None = None
 
+        if new_status is not None:
+            # Pre-read current status for transition validation and CAS guard.
+            row = await self._db.fetchrow("SELECT status FROM issues WHERE id = $1", issue_id)
+            if row is None:
+                # Issue does not exist — skip silently (existing behaviour).
+                return
+            current_status = row["status"]
+
+            if current_status == new_status:
+                # No-op: same status; still apply other fields if any.
+                valid.pop("status")
+                if not valid:
+                    return
+                # Fall through to update remaining fields without status CAS.
+                new_status = None
+
+            else:
+                allowed = VALID_ISSUE_TRANSITIONS.get(current_status, set())
+                if new_status not in allowed:
+                    logger.warning(
+                        "invalid_issue_status_transition",
+                        issue_id=issue_id,
+                        current=current_status,
+                        requested=new_status,
+                        allowed=sorted(allowed),
+                    )
+                    raise ValueError(
+                        f"Invalid issue status transition: {current_status} -> {new_status}. "
+                        f"Allowed: {sorted(allowed)}"
+                    )
+
+        # Build SET clause — updated_at is always refreshed.
         sets: list[str] = ["updated_at = NOW()"]
         args: list[Any] = []
         idx = 1
@@ -255,11 +268,27 @@ class IssuesRepository:
             args.append(value)
             idx += 1
 
-        args.append(issue_id)
-        await self._db.execute(
-            f"UPDATE issues SET {', '.join(sets)} WHERE id = ${idx}",
-            *args,
-        )
+        if new_status is not None:
+            # CAS: add WHERE status=$current_status to detect concurrent updates.
+            args.append(issue_id)
+            args.append(current_status)
+            result_row = await self._db.fetchrow(
+                f"UPDATE issues SET {', '.join(sets)} WHERE id = ${idx} AND status = ${idx + 1} RETURNING id",
+                *args,
+            )
+            if result_row is None:
+                raise StatusTransitionConflict(
+                    f"issue {issue_id}: expected status={current_status!r}; "
+                    "not found or status already changed by concurrent writer"
+                )
+        else:
+            # No status change — plain UPDATE without CAS guard.
+            args.append(issue_id)
+            await self._db.execute(
+                f"UPDATE issues SET {', '.join(sets)} WHERE id = ${idx}",
+                *args,
+            )
+
         logger.info("issue_updated", issue_id=issue_id, fields=list(valid.keys()))
 
     async def get_children(self, parent_issue_id: str) -> list[dict[str, Any]]:

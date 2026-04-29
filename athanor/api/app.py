@@ -559,6 +559,18 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "athanor"}
 
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    from athanor.storage.repositories.jobs import StatusTransitionConflict
+
+    @app.exception_handler(StatusTransitionConflict)
+    async def status_conflict_handler(request: Request, exc: StatusTransitionConflict) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "Job or issue status has already changed; retry if needed."},
+        )
+
     _register_routers(app)
 
     # Prometheus metrics endpoint — LAN-only by network topology (not via cloudflared)

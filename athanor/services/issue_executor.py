@@ -18,7 +18,7 @@ from athanor.audit.helpers import emit_audit
 from athanor.orchestration.checkpoint import checkpointer_context
 from athanor.storage.database import DatabasePool
 from athanor.storage.repositories.issues import IssuesRepository
-from athanor.storage.repositories.jobs import JobsRepository
+from athanor.storage.repositories.jobs import JobsRepository, StatusTransitionConflict
 from athanor.storage.repositories.traces import TracesRepository
 from athanor.workflows.registry import WorkflowRegistry
 
@@ -313,6 +313,12 @@ class IssueExecutor:
 
         try:
             await self._jobs.update(job_id, status="cancelled")
+        except StatusTransitionConflict:
+            logger.warning(
+                "job_status_race_on_cancel",
+                job_id=job_id,
+                msg="Status changed by concurrent writer before cancel could apply; treating as already resolved.",
+            )
         except Exception:
             logger.warning("job_status_cancel_update_failed", job_id=job_id, exc_info=True)
         job = None
