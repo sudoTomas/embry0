@@ -147,8 +147,8 @@ describe("useJobLogs", () => {
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t1", content: "hello" });
-      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t2", content: "world" });
+      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t1", text: "hello" });
+      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t2", text: "world" });
     });
 
     // Events not visible yet (batch pending)
@@ -157,8 +157,8 @@ describe("useJobLogs", () => {
     await flushBatch();
 
     expect(result.current.events).toHaveLength(2);
-    expect(result.current.events[0].content).toBe("hello");
-    expect(result.current.events[1].content).toBe("world");
+    expect((result.current.events[0] as { text: string }).text).toBe("hello");
+    expect((result.current.events[1] as { text: string }).text).toBe("world");
   });
 
   it("marks isComplete and flushes events immediately on stream_end", async () => {
@@ -166,14 +166,14 @@ describe("useJobLogs", () => {
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t1", content: "partial" });
+      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t1", text: "partial" });
       lastCreatedWs!.simulateMessage({ type: "stream_end", timestamp: "t2" });
     });
 
     // stream_end triggers an immediate flush without needing to advance timers
     expect(result.current.isComplete).toBe(true);
     expect(result.current.events).toHaveLength(1);
-    expect(result.current.events[0].content).toBe("partial");
+    expect((result.current.events[0] as { text: string }).text).toBe("partial");
   });
 
   it("marks isComplete and flushes events immediately on complete event", async () => {
@@ -203,8 +203,8 @@ describe("useJobLogs", () => {
     // Initial connection with some events
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t1", content: "msg1" });
-      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t2", content: "msg2" });
+      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t1", text: "msg1" });
+      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t2", text: "msg2" });
     });
     await flushBatch();
 
@@ -231,15 +231,15 @@ describe("useJobLogs", () => {
     // Simulate new connection opening and receiving more events
     await act(async () => {
       newWs.simulateOpen();
-      newWs.simulateMessage({ type: "text", timestamp: "t3", content: "msg3" });
+      newWs.simulateMessage({ type: "text", timestamp: "t3", text: "msg3" });
     });
     await flushBatch();
 
     // Events should accumulate: original 2 + 1 new = 3 total
     expect(result.current.events).toHaveLength(3);
-    expect(result.current.events[0].content).toBe("msg1");
-    expect(result.current.events[1].content).toBe("msg2");
-    expect(result.current.events[2].content).toBe("msg3");
+    expect((result.current.events[0] as { text: string }).text).toBe("msg1");
+    expect((result.current.events[1] as { text: string }).text).toBe("msg2");
+    expect((result.current.events[2] as { text: string }).text).toBe("msg3");
   });
 
   it("does not reconnect after stream_end close (isComplete=true)", async () => {
@@ -286,7 +286,7 @@ describe("useJobLogs", () => {
         cost_usd: 0.123,
         tokens_in: 500,
         tokens_out: 250,
-        turns: 7,
+        num_turns: 7,
       });
     });
 

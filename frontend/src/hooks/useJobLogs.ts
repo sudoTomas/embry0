@@ -4,6 +4,7 @@ import type {
   PipelineGraph,
   NodeStateEvent,
   FeedbackTriggeredEvent,
+  FeedbackResolvedEvent,
   AwaitingInputEvent,
 } from "@/lib/types";
 import { fetchJobLogEvents } from "@/api/logs";
@@ -87,7 +88,13 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
           }, 50);
         }
 
-        if (event.type === "cost_update" || event.type === "complete") {
+        if (event.type === "cost_update") {
+          setCost(event.cost_usd);
+          setTokensIn(event.tokens_in);
+          setTokensOut(event.tokens_out);
+          setTurns(event.num_turns);
+        }
+        if (event.type === "complete") {
           if (event.cost_usd != null) setCost(event.cost_usd);
           if (event.tokens_in != null) setTokensIn(event.tokens_in);
           if (event.tokens_out != null) setTokensOut(event.tokens_out);
@@ -95,38 +102,35 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
         }
 
         // Graph-specific events
-        if (event.type === "pipeline_graph" && event.graph) {
+        if (event.type === "pipeline_graph") {
           setPipelineGraph(event.graph);
         }
         if (event.type === "node_state") {
-          const ns = event as unknown as NodeStateEvent;
-          setNodeStates((prev) => ({ ...prev, [ns.node_id]: ns }));
+          setNodeStates((prev) => ({ ...prev, [event.node_id]: event }));
         }
         if (event.type === "feedback_triggered") {
-          const fb = event as unknown as FeedbackTriggeredEvent;
-          setFeedbackStates((prev) => ({ ...prev, [fb.edge_id]: fb }));
+          setFeedbackStates((prev) => ({ ...prev, [event.edge_id]: event }));
         }
         if (event.type === "feedback_resolved") {
-          const fr = event as unknown as { edge_id: string };
+          const { edge_id } = event as FeedbackResolvedEvent;
           setFeedbackStates((prev) => {
             const next = { ...prev };
-            delete next[fr.edge_id];
+            delete next[edge_id];
             return next;
           });
         }
 
         // Skill responder input events
-        if (event.type === "awaiting_input" && event.input_id) {
-          const ai = event as unknown as AwaitingInputEvent;
-          setPendingInputs((prev) => ({ ...prev, [ai.input_id]: ai }));
+        if (event.type === "awaiting_input") {
+          setPendingInputs((prev) => ({ ...prev, [event.input_id]: event }));
         }
-        if (event.type === "auto_answered" && event.input_id) {
-          setAutoAnsweredInputIds((prev) => new Set(prev).add(event.input_id!));
+        if (event.type === "auto_answered") {
+          setAutoAnsweredInputIds((prev) => new Set(prev).add(event.input_id));
         }
-        if (event.type === "input_resumed" && event.input_id) {
+        if (event.type === "input_resumed") {
           setPendingInputs((prev) => {
             const next = { ...prev };
-            delete next[event.input_id!];
+            delete next[event.input_id];
             return next;
           });
         }
@@ -209,20 +213,26 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
   useEffect(() => {
     if (fallbackEvents.length === 0) return;
     for (const event of fallbackEvents) {
-      if (event.type === "pipeline_graph" && event.graph) {
-        setPipelineGraph(event.graph as PipelineGraph);
+      if (event.type === "pipeline_graph") {
+        setPipelineGraph(event.graph);
       }
-      if (event.type === "node_state" && event.node_id) {
+      if (event.type === "node_state") {
         setNodeStates((prev) => ({
           ...prev,
-          [event.node_id!]: event as unknown as NodeStateEvent,
+          [event.node_id]: event,
         }));
       }
-      if (event.type === "cost_update" || event.type === "complete") {
-        if (event.cost_usd != null) setCost(event.cost_usd as number);
-        if (event.tokens_in != null) setTokensIn(event.tokens_in as number);
-        if (event.tokens_out != null) setTokensOut(event.tokens_out as number);
-        if (event.turns != null) setTurns(event.turns as number);
+      if (event.type === "cost_update") {
+        setCost(event.cost_usd);
+        setTokensIn(event.tokens_in);
+        setTokensOut(event.tokens_out);
+        setTurns(event.num_turns);
+      }
+      if (event.type === "complete") {
+        if (event.cost_usd != null) setCost(event.cost_usd);
+        if (event.tokens_in != null) setTokensIn(event.tokens_in);
+        if (event.tokens_out != null) setTokensOut(event.tokens_out);
+        if (event.turns != null) setTurns(event.turns);
       }
       if (event.type === "complete" || event.type === "stream_end") {
         setIsComplete(true);

@@ -89,8 +89,8 @@ export function StructuredView({ events }: StructuredViewProps) {
           break;
         }
         case "text":
-          if (event.content && typeof event.content === "string") {
-            result.push({ kind: "text", content: event.content, timestamp: event.timestamp });
+          if (event.text) {
+            result.push({ kind: "text", content: event.text, timestamp: event.timestamp });
           }
           break;
         case "error":

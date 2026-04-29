@@ -47,10 +47,11 @@ export function JobLogsPage() {
   const filteredEvents = useMemo(() => {
     if (!selectedNodeId) return events;
     return events.filter((e) => {
+      const nodeId = "node_id" in e ? (e as { node_id?: string }).node_id : undefined;
       // Show events that match the selected node_id
-      if (e.node_id === selectedNodeId) return true;
+      if (nodeId === selectedNodeId) return true;
       // Always show stream-level events (complete, stream_end, error without node_id)
-      if (!e.node_id && (e.type === "complete" || e.type === "stream_end" || e.type === "error")) return true;
+      if (!nodeId && (e.type === "complete" || e.type === "stream_end" || e.type === "error")) return true;
       return false;
     });
   }, [events, selectedNodeId]);

@@ -38,9 +38,11 @@ export function ConversationView({ events }: ConversationViewProps) {
   const [turnsShown, setTurnsShown] = useState(INITIAL_TURNS_SHOWN);
 
   // Extract the initial prompt from agent_started event
+  // The "prompt" field is a legacy extra field on agent_started not in the spec type;
+  // access it via bracket notation with a type assertion.
   const initialPrompt = useMemo(() => {
-    const started = events.find((e) => e.type === "agent_started" && e.prompt);
-    return started?.prompt as string | undefined;
+    const started = events.find((e) => e.type === "agent_started");
+    return started ? (started as unknown as { prompt?: string }).prompt : undefined;
   }, [events]);
 
   // Group events into turns. Supports both legacy `conversation_message` events
@@ -51,8 +53,6 @@ export function ConversationView({ events }: ConversationViewProps) {
     let currentTurnNum = 0;
 
     for (const event of events) {
-      const raw = event as unknown as Record<string, unknown>;
-
       // Legacy path: conversation_message events
       if (event.type === "conversation_message") {
         const turnNum = event.turn_number ?? 0;
@@ -89,7 +89,7 @@ export function ConversationView({ events }: ConversationViewProps) {
           assistantBlocks: [],
           userBlocks: [],
           timestamp: event.timestamp,
-          model: (raw.model as string) || event.model,
+          model: event.model,
         });
         continue;
       }
@@ -100,34 +100,34 @@ export function ConversationView({ events }: ConversationViewProps) {
 
       switch (event.type) {
         case "thinking": {
-          const text = (raw.text as string) || "";
-          if (text) {
-            turn.assistantBlocks.push({ type: "thinking", thinking: text });
+          // ThinkingEvent.text is the backend field name
+          if (event.text) {
+            turn.assistantBlocks.push({ type: "thinking", thinking: event.text });
           }
           break;
         }
         case "text": {
-          const text = (raw.text as string) || "";
-          if (text) {
-            turn.assistantBlocks.push({ type: "text", text });
+          // TextEvent.text is the backend field name
+          if (event.text) {
+            turn.assistantBlocks.push({ type: "text", text: event.text });
           }
           break;
         }
         case "tool_call": {
           turn.assistantBlocks.push({
             type: "tool_use",
-            id: (raw.tool_id as string) || "",
-            name: (raw.tool_name as string) || "",
-            input: (raw.input as Record<string, unknown>) || { value: raw.input },
+            id: event.tool_id,
+            name: event.tool_name,
+            input: event.input,
           } as ConversationContentBlock);
           break;
         }
         case "tool_result": {
           turn.userBlocks.push({
             type: "tool_result",
-            tool_use_id: (raw.tool_use_id as string) || "",
-            content: (raw.content as string) || "",
-            is_error: (raw.is_error as boolean) || null,
+            tool_use_id: event.tool_use_id,
+            content: event.content,
+            is_error: event.is_error,
           } as ConversationContentBlock);
           break;
         }

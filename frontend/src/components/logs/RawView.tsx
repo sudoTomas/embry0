@@ -12,7 +12,7 @@ function eventToText(event: LogEvent): string {
     case "tool_end":
       return `[tool] ${event.tool} ${event.error ? "FAILED" : "done"}\n${event.output ?? ""}`;
     case "text":
-      return typeof event.content === "string" ? event.content : "";
+      return event.text ?? "";
     case "system":
       return `[system] ${event.message ?? ""}`;
     case "error":
