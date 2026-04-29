@@ -1,4 +1,5 @@
-import { useMemo, useRef, useEffect, useState, useCallback } from "react";
+import { useMemo } from "react";
+import { Virtuoso } from "react-virtuoso";
 import { ToolCallCard } from "./ToolCallCard";
 import { cn, extractRole } from "@/lib/utils";
 import { ROLE_COLORS, ROLE_BG_COLORS, ROLE_LABELS } from "@/lib/constants";
@@ -27,9 +28,6 @@ type StructuredItem =
   | { kind: "agent-transition"; role: string; name: string; timestamp: string };
 
 export function StructuredView({ events }: StructuredViewProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [userScrolledUp, setUserScrolledUp] = useState(false);
-
   const items = useMemo(() => {
     const result: StructuredItem[] = [];
     const activeTools = new Map<string, number>();
@@ -115,36 +113,19 @@ export function StructuredView({ events }: StructuredViewProps) {
     return result;
   }, [events]);
 
-  // Detect user scrolling up
-  const handleScroll = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    // Consider "at bottom" if within 40px of the bottom
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-    setUserScrolledUp(!atBottom);
-  }, []);
-
-  // Auto-scroll to bottom when new events arrive (unless user scrolled up)
-  useEffect(() => {
-    if (!userScrolledUp && containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [items, userScrolledUp]);
-
   return (
-    <div
-      ref={containerRef}
-      className="space-y-2 overflow-auto h-[calc(100vh-280px)]"
-      onScroll={handleScroll}
-    >
-      {items.map((item, i) => {
+    <Virtuoso
+      style={{ height: "calc(100vh - 280px)" }}
+      className="space-y-2"
+      totalCount={items.length}
+      itemContent={(i) => {
+        const item = items[i];
         switch (item.kind) {
           case "agent-transition":
-            return <AgentTransitionMarker key={i} role={item.role} name={item.name} />;
+            return <AgentTransitionMarker role={item.role} name={item.name} />;
           case "tool":
             return (
               <ToolCallCard
-                key={i}
                 tool={item.data.tool}
                 input={item.data.input}
                 output={item.data.output}
@@ -155,25 +136,27 @@ export function StructuredView({ events }: StructuredViewProps) {
             );
           case "text":
             return (
-              <div key={i} className="px-3 py-2 text-sm whitespace-pre-wrap">
+              <div className="px-3 py-2 text-sm whitespace-pre-wrap">
                 {item.content}
               </div>
             );
           case "error":
             return (
-              <div key={i} className="px-3 py-2 text-sm text-destructive bg-destructive/5 rounded-md">
+              <div className="px-3 py-2 text-sm text-destructive bg-destructive/5 rounded-md">
                 {item.message}
               </div>
             );
           case "system":
             return (
-              <div key={i} className="px-3 py-1 text-xs text-muted-foreground">
+              <div className="px-3 py-1 text-xs text-muted-foreground">
                 {item.message}
               </div>
             );
         }
-      })}
-    </div>
+      }}
+      followOutput="smooth"
+      increaseViewportBy={300}
+    />
   );
 }
 

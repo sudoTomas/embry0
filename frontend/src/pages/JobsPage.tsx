@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useJobs, useRunJob, useCancelJob } from "@/hooks/useJobs";
 import { JobsTable } from "@/components/jobs/JobsTable";
 import { CreateJobDialog } from "@/components/jobs/CreateJobDialog";
@@ -15,12 +15,11 @@ export function JobsPage() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [repoFilter, setRepoFilter] = useState<string | undefined>();
   const limit = 20;
-  const { data, isLoading, isError, refetch } = useJobs({
-    limit,
-    offset,
-    status: statusFilter,
-    repo: repoFilter,
-  });
+  const jobFilters = useMemo(
+    () => ({ limit, offset, status: statusFilter, repo: repoFilter }),
+    [limit, offset, statusFilter, repoFilter],
+  );
+  const { data, isLoading, isError, refetch } = useJobs(jobFilters);
   const runJob = useRunJob();
   const cancelJob = useCancelJob();
 

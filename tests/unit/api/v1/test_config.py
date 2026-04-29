@@ -33,6 +33,25 @@ def app():
 
 
 @pytest.mark.asyncio
+async def test_get_model_config_returns_configured_models(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/v1/config/models")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "heavy" in data
+    assert "medium" in data
+    assert "light" in data
+    assert isinstance(data["heavy"], str) and data["heavy"]
+    assert isinstance(data["medium"], str) and data["medium"]
+    assert isinstance(data["light"], str) and data["light"]
+    # Verify values match the AthanorConfig defaults
+    assert data["heavy"] == "claude-opus-4-7"
+    assert data["medium"] == "claude-sonnet-4-6"
+    assert data["light"] == "claude-haiku-4-5"
+
+
+@pytest.mark.asyncio
 async def test_get_budget(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

@@ -10,13 +10,8 @@ import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { TagInput } from "@/components/ui/TagInput";
 import { useAgent, useCreateAgent, useUpdateAgent } from "@/hooks/useAgents";
+import { useModels } from "@/hooks/useModels";
 import type { AgentCreateRequest, AgentUpdateRequest } from "@/lib/types/agents";
-
-const KNOWN_MODELS = [
-  "claude-opus-4-6",
-  "claude-sonnet-4-6",
-  "claude-haiku-4-5",
-];
 
 const AVAILABLE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
 
@@ -36,10 +31,12 @@ interface FormState {
   system_prompt: string;
 }
 
+const DEFAULT_MODEL = "claude-sonnet-4-6";
+
 const EMPTY_FORM: FormState = {
   type: "",
   description: "",
-  model: KNOWN_MODELS[1],
+  model: DEFAULT_MODEL,
   customModel: "",
   tools: [],
   skills: [],
@@ -52,6 +49,7 @@ export function AgentFormPage() {
 
   const isEdit = !!typeParam && typeParam !== "new";
   const { data: existing, isLoading } = useAgent(isEdit ? typeParam : null);
+  const { models: knownModels, isLoading: modelsLoading } = useModels();
 
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
@@ -61,7 +59,7 @@ export function AgentFormPage() {
   // Populate form when editing an existing agent
   useEffect(() => {
     if (!existing) return;
-    const isCustomModel = !KNOWN_MODELS.includes(existing.model);
+    const isCustomModel = !knownModels.includes(existing.model);
     setForm({
       type: existing.type,
       description: existing.description ?? "",
@@ -71,7 +69,7 @@ export function AgentFormPage() {
       skills: existing.skills ?? [],
       system_prompt: existing.system_prompt ?? "",
     });
-  }, [existing]);
+  }, [existing, knownModels]);
 
   const resolvedModel = form.model === "__custom__" ? form.customModel : form.model;
 
@@ -209,8 +207,9 @@ export function AgentFormPage() {
                 value={form.model}
                 onChange={(e) => setForm((prev) => ({ ...prev, model: e.target.value }))}
                 className="mt-1"
+                disabled={modelsLoading}
               >
-                {KNOWN_MODELS.map((m) => (
+                {knownModels.map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
                 <option value="__custom__">Custom...</option>

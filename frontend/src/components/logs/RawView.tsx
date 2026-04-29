@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Virtuoso } from "react-virtuoso";
 import type { LogEvent } from "@/lib/types";
 
 interface RawViewProps {
@@ -18,11 +18,11 @@ function eventToText(event: LogEvent): string {
     case "error":
       return `[ERROR] ${event.message ?? ""}`;
     case "cost_update":
-      return `[cost] $${event.cost_usd?.toFixed(4)} | tokens: ${event.tokens_in}\u2193 ${event.tokens_out}\u2191`;
+      return `[cost] $${event.cost_usd?.toFixed(4)} | tokens: ${event.tokens_in}↓ ${event.tokens_out}↑`;
     case "complete":
       return `[complete] cost=$${event.cost_usd?.toFixed(4)} turns=${event.turns} error=${event.is_error}`;
     case "progress":
-      return `[progress] ${event.step}: ${event.status} \u2014 ${event.detail ?? ""}`;
+      return `[progress] ${event.step}: ${event.status} — ${event.detail ?? ""}`;
     case "turn_start":
       return `[turn] Turn started`;
     case "subagent_start":
@@ -34,37 +34,25 @@ function eventToText(event: LogEvent): string {
   }
 }
 
-export function RawView({ events }: RawViewProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [userScrolledUp, setUserScrolledUp] = useState(false);
-
-  const handleScroll = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-    setUserScrolledUp(!atBottom);
-  }, []);
-
-  useEffect(() => {
-    if (!userScrolledUp && containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [events, userScrolledUp]);
-
+function RawEventRow({ event }: { event: LogEvent }) {
   return (
-    <div
-      ref={containerRef}
-      className="bg-background rounded-md border font-mono text-xs p-4 overflow-auto h-[calc(100vh-280px)]"
-      onScroll={handleScroll}
-    >
-      {events.map((event, i) => (
-        <div key={i} className="py-0.5 whitespace-pre-wrap">
-          <span className="text-muted-foreground select-none">
-            {new Date(event.timestamp).toLocaleTimeString()}{" "}
-          </span>
-          {eventToText(event)}
-        </div>
-      ))}
+    <div className="py-0.5 whitespace-pre-wrap">
+      <span className="text-muted-foreground select-none">
+        {new Date(event.timestamp).toLocaleTimeString()}{" "}
+      </span>
+      {eventToText(event)}
     </div>
+  );
+}
+
+export function RawView({ events }: RawViewProps) {
+  return (
+    <Virtuoso
+      className="bg-background rounded-md border font-mono text-xs p-4"
+      style={{ height: "calc(100vh - 280px)" }}
+      totalCount={events.length}
+      itemContent={(i) => <RawEventRow event={events[i]} />}
+      followOutput="smooth"
+    />
   );
 }

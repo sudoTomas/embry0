@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
-from athanor.api.deps import get_budget_repo, get_context_repo, get_integration_repo, get_provider_repo
+from athanor.api.deps import get_budget_repo, get_config, get_context_repo, get_integration_repo, get_provider_repo
 from athanor.api.schemas import (
     BudgetConfigRequest,
     BudgetConfigResponse,
@@ -13,12 +13,29 @@ from athanor.api.schemas import (
     ProviderConfigUpdate,
 )
 from athanor.audit.helpers import emit_audit
+from athanor.config import AthanorConfig
 from athanor.storage.repositories.budget_config import BudgetConfigRepository
 from athanor.storage.repositories.context_config import ContextConfigRepository
 from athanor.storage.repositories.integration_config import IntegrationConfigRepository
 from athanor.storage.repositories.provider_config import ProviderConfigRepository
 
 router = APIRouter()
+
+
+@router.get("/config/models")
+async def get_model_config(
+    config: AthanorConfig = Depends(get_config),
+) -> dict[str, str]:
+    """Return the current model family configuration.
+
+    Returns the three tier model IDs configured in AthanorConfig.
+    Used by the frontend to populate the model selector in AgentFormPage.
+    """
+    return {
+        "heavy": config.model_heavy,
+        "medium": config.model_medium,
+        "light": config.model_light,
+    }
 
 
 @router.get("/config/budget")
