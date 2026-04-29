@@ -1,5 +1,5 @@
 # Stage 1: Build the React SPA
-FROM node:20-alpine AS build
+FROM node:20.18-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -8,7 +8,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Serve with nginx
-FROM nginx:alpine
+FROM nginx:1.27-alpine
 
 # Remove default nginx config
 RUN rm /etc/nginx/conf.d/default.conf

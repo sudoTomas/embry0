@@ -39,6 +39,41 @@ jobs:
       - name: Run unit tests
         run: pytest tests/unit/ -v --tb=short --timeout=30
 
+  build-images:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: orchestrator
+            dockerfile: infra/Dockerfile.orchestrator
+            context: .
+          - name: sandbox
+            dockerfile: infra/Dockerfile.sandbox
+            context: .
+          - name: proxy
+            dockerfile: infra/Dockerfile.proxy
+            context: .
+          - name: frontend
+            dockerfile: frontend/Dockerfile
+            context: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          tags: athanor-${{ matrix.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
   frontend:
     name: Frontend Build & Typecheck
     runs-on: ubuntu-latest

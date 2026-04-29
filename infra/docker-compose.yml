@@ -69,7 +69,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16
+    image: postgres:16.6-alpine
     container_name: athanor-postgres
     environment:
       POSTGRES_DB: "${POSTGRES_DB:-athanor}"
@@ -97,7 +97,7 @@ services:
     restart: unless-stopped
 
   dind:
-    image: docker:dind
+    image: docker:27-dind
     container_name: athanor-dind
     privileged: true
     environment:
@@ -130,7 +130,7 @@ services:
     restart: unless-stopped
 
   init-sandbox-networks:
-    image: docker:cli
+    image: docker:27-cli
     container_name: athanor-init-sandbox-networks
     entrypoint: ["sh"]
     command: ["/scripts/setup-sandbox-networks.sh"]
@@ -148,7 +148,7 @@ services:
     restart: "no"
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2024.10.0
     container_name: athanor-cloudflared
     restart: unless-stopped
     command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 run
