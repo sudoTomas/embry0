@@ -165,6 +165,10 @@ async def _init_app_state(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config: AthanorConfig = app.state.config
+    from athanor.observability import configure_structlog
+
+    # json=True in production (auth_dev_mode=False); human-readable in dev
+    configure_structlog(json=not config.auth_dev_mode)
     logger.info("athanor_starting")
 
     # Refuse to start in production with the well-known default Postgres password.
@@ -479,6 +483,12 @@ def create_app(
         return {"status": "ok", "service": "athanor"}
 
     _register_routers(app)
+
+    # Prometheus metrics endpoint — LAN-only by network topology (not via cloudflared)
+    from prometheus_fastapi_instrumentator import Instrumentator
+
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
     return app
 
 
