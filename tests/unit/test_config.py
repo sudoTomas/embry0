@@ -14,10 +14,18 @@ def test_config_defaults():
     assert config.max_budget_usd == 10.0
     assert config.daily_budget_cap_usd == 100.0
     assert config.monthly_budget_cap_usd == 500.0
-    assert config.max_global_concurrent_jobs == 10
     assert config.sandbox_memory == "8g"
     assert config.sandbox_cpus == "4"
     assert config.provider_mode == "anthropic_api"
+
+
+def test_dead_env_var_is_silently_ignored():
+    """Unknown env vars (like the deleted max_global_concurrent_jobs) must not raise."""
+    env = {"MAX_GLOBAL_CONCURRENT_JOBS": "5"}
+    with patch.dict(os.environ, env, clear=True):
+        cfg = AthanorConfig(_env_file=None)  # type: ignore[call-arg]
+    # Pydantic extra="ignore" means this just works; no assertion needed beyond no exception.
+    assert cfg is not None
 
 
 def test_config_from_env():
