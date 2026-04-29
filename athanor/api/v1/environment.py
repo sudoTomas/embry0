@@ -89,7 +89,7 @@ async def get_global_environment(request: Request) -> EnvironmentResponse:
 
 @router.put("/environment/global", response_model=EnvironmentResponse)
 async def set_global_environment(req: EnvironmentSetRequest, request: Request) -> EnvironmentResponse:
-    provider = _get_secrets_provider(request.app.state.config.environment_secret_key)
+    provider = request.app.state.secrets_provider
     env_repo = request.app.state.env_repo
     raw = [v.model_dump() for v in req.variables]
     encrypted = await _encrypt_vars(raw, provider)
@@ -106,7 +106,7 @@ async def reveal_global_secret(key: str, request: Request) -> RevealResponse:
     if not var:
         raise HTTPException(status_code=404, detail=f"Variable '{key}' not found")
     if var.get("var_type") == "secret":
-        provider = _get_secrets_provider(request.app.state.config.environment_secret_key)
+        provider = request.app.state.secrets_provider
         try:
             var["value"] = await provider.decrypt(var["value"])
         except Exception:
@@ -151,7 +151,7 @@ async def resolve_repo_environment(owner: str, repo: str, request: Request) -> E
 async def set_repo_environment(
     owner: str, repo: str, req: EnvironmentSetRequest, request: Request
 ) -> EnvironmentResponse:
-    provider = _get_secrets_provider(request.app.state.config.environment_secret_key)
+    provider = request.app.state.secrets_provider
     env_repo = request.app.state.env_repo
     raw = [v.model_dump() for v in req.variables]
     encrypted = await _encrypt_vars(raw, provider)
@@ -168,7 +168,7 @@ async def reveal_repo_secret(owner: str, repo: str, key: str, request: Request) 
     if not var:
         raise HTTPException(status_code=404, detail=f"Variable '{key}' not found")
     if var.get("var_type") == "secret":
-        provider = _get_secrets_provider(request.app.state.config.environment_secret_key)
+        provider = request.app.state.secrets_provider
         try:
             var["value"] = await provider.decrypt(var["value"])
         except Exception:

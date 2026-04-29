@@ -4,6 +4,7 @@ import asyncio
 import secrets
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import TYPE_CHECKING
 
 import structlog
 from fastapi import FastAPI
@@ -29,6 +30,9 @@ from athanor.storage.repositories.sandbox_profiles import SandboxProfilesReposit
 from athanor.storage.repositories.traces import TracesRepository
 from athanor.workflows.issue_to_pr.graph import IssueToprWorkflow
 from athanor.workflows.registry import WorkflowRegistry
+
+if TYPE_CHECKING:
+    from athanor.storage.encryption import FernetSecretsProvider
 
 logger = structlog.get_logger(__name__)
 
@@ -76,6 +80,55 @@ def _resolve_proxy_admin_token(config: AthanorConfig) -> None:
         "`python -c 'import secrets; print(secrets.token_urlsafe(32))'` "
         "and add it to .env."
     )
+
+
+def _resolve_secrets_provider(config: AthanorConfig) -> "FernetSecretsProvider":
+    """Resolve and validate ENVIRONMENT_SECRET_KEY, returning a FernetSecretsProvider.
+
+    In production (auth_dev_mode=False):
+      - Raises RuntimeError if the key is empty.
+      - Raises RuntimeError if the key equals the hardcoded example default.
+
+    In dev mode (auth_dev_mode=True):
+      - If the key is missing or default-valued, generates a process-local
+        ephemeral key and logs CRITICAL (secrets encrypted this run cannot be
+        decrypted after restart).
+      - Otherwise uses the configured key.
+
+    This mirrors the _resolve_proxy_admin_token pattern.
+    """
+    from cryptography.fernet import Fernet
+
+    from athanor.storage.encryption import FernetSecretsProvider
+
+    _INSECURE_DEFAULT = "athanor-dev-secret-key"
+    key = config.environment_secret_key
+
+    if not key or key == _INSECURE_DEFAULT:
+        if config.auth_dev_mode:
+            ephemeral = Fernet.generate_key().decode()
+            logger.critical(
+                "fernet_ephemeral_key_generated",
+                msg=(
+                    "auth_dev_mode active and ENVIRONMENT_SECRET_KEY is missing or default — "
+                    "generated a random ephemeral key for this process. "
+                    "Env-var secrets will NOT survive a restart. "
+                    "Set ENVIRONMENT_SECRET_KEY in .env for persistent encryption."
+                ),
+            )
+            return FernetSecretsProvider(secret_key=ephemeral)
+        raise RuntimeError(
+            "ENVIRONMENT_SECRET_KEY must be set to a strong random value in production. "
+            "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\" "
+            "and add it to .env. "
+            + (
+                "The current value is the insecure example default — rotate it immediately."
+                if key == _INSECURE_DEFAULT
+                else "The key is currently empty."
+            )
+        )
+
+    return FernetSecretsProvider(secret_key=key)
 
 
 def _warn_and_audit_dev_mode(flag_name: str, audit_log_path: object) -> None:
@@ -158,6 +211,7 @@ async def _init_app_state(
         event_bus=app.state.event_bus,
         env_repo=app.state.env_repo,
         repo_preferences_repo=app.state.repo_preferences_repo,
+        secrets_provider=getattr(app.state, "secrets_provider", None),
         **executor_kwargs,
     )
 
@@ -302,6 +356,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # raises ValueError on an empty token, so in auth_dev_mode with PROXY_ADMIN_TOKEN
     # unset this call must run first to generate (and set) a valid token.
     _resolve_proxy_admin_token(config)
+
+    # Validate and cache the Fernet secrets provider — single PBKDF2 derivation
+    # per process (390k iterations). Raises RuntimeError in production if the key
+    # is missing or still set to the insecure example default.
+    app.state.secrets_provider = _resolve_secrets_provider(config)
 
     proxy_mgr = ProxyManager(docker, proxy_admin_token=config.proxy_admin_token)
     sandbox_mgr = SandboxManager(docker, proxy_manager=proxy_mgr)

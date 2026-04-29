@@ -45,6 +45,7 @@ class IssueExecutor:
         event_bus: EventBus | None = None,
         env_repo: EnvironmentRepository | None = None,
         repo_preferences_repo: RepoPreferencesRepository | None = None,
+        secrets_provider: Any = None,  # FernetSecretsProvider; injected at startup
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
@@ -61,6 +62,7 @@ class IssueExecutor:
         self._event_bus = event_bus
         self._env_repo = env_repo
         self._repo_prefs = repo_preferences_repo
+        self._secrets_provider = secrets_provider
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._tasks_by_job: dict[str, asyncio.Task[Any]] = {}
 
@@ -457,9 +459,17 @@ class IssueExecutor:
             repo_name = issue.get("repo") or ""
             if repo_name and self._env_repo is not None:
                 try:
-                    from athanor.api.v1.environment import _decrypt_vars, _get_secrets_provider
+                    from athanor.api.v1.environment import _decrypt_vars
 
-                    provider = _get_secrets_provider(self._config.environment_secret_key if self._config else "")
+                    provider = self._secrets_provider
+                    if provider is None:
+                        # Fallback for test environments that construct IssueExecutor
+                        # without a secrets_provider. Mirrors the legacy behaviour.
+                        from athanor.api.v1.environment import _get_secrets_provider
+
+                        provider = _get_secrets_provider(
+                            self._config.environment_secret_key if self._config else ""
+                        )
                     global_rows = await self._env_repo.get_global()
                     repo_rows = await self._env_repo.get_repo(repo_name)
                     merged: dict[str, dict[str, Any]] = {}
