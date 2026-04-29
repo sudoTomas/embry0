@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, ExternalLink, Clock, DollarSign, Layers } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { useJob } from "@/hooks/useJobs";
@@ -79,7 +80,7 @@ export function JobDetailPage() {
       await resumeJob(job.job_id, choice, guidance);
       refetch();
     } catch (err) {
-      console.error("Failed to resume job:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to resume job");
     }
   };
 
@@ -88,7 +89,7 @@ export function JobDetailPage() {
       await discardJob(job.job_id);
       refetch();
     } catch (err) {
-      console.error("Failed to discard job:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to discard job");
     }
   };
 
