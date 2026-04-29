@@ -1,11 +1,21 @@
 import { Card, CardContent } from "@/components/ui/Card";
 
 interface TableSkeletonProps {
-  columns: number;
+  columns?: number;
   rows?: number;
 }
 
 export function TableSkeleton({ columns, rows = 5 }: TableSkeletonProps) {
+  if (columns === undefined) {
+    // No column count provided — render a single spanning skeleton row per row.
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: rows }).map((_, i) => (
+          <div key={i} className="h-10 w-full bg-muted/60 rounded animate-pulse" />
+        ))}
+      </div>
+    );
+  }
   return (
     <Card>
       <CardContent className="p-0">

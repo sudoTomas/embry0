@@ -2,7 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router";
 import { lazy, Suspense } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageError } from "../components/PageError";
-import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 const DashboardPage = lazy(() => import("../pages/DashboardPage").then(m => ({ default: m.DashboardPage })));
 const JobsPage = lazy(() => import("../pages/JobsPage").then(m => ({ default: m.JobsPage })));
@@ -26,24 +26,24 @@ export const router = createBrowserRouter([
     element: <AppLayout />,
     errorElement: <PageError message="Something went wrong" />,
     children: [
-      { index: true, element: <ErrorBoundary><Suspense fallback={fallback}><DashboardPage /></Suspense></ErrorBoundary> },
-      { path: "jobs", element: <ErrorBoundary><Suspense fallback={fallback}><JobsPage /></Suspense></ErrorBoundary> },
-      { path: "jobs/:jobId", element: <ErrorBoundary><Suspense fallback={fallback}><JobDetailPage /></Suspense></ErrorBoundary> },
-      { path: "jobs/:jobId/logs", element: <ErrorBoundary><Suspense fallback={fallback}><JobLogsPage /></Suspense></ErrorBoundary> },
-      { path: "agents", element: <ErrorBoundary><Suspense fallback={fallback}><AgentsPage /></Suspense></ErrorBoundary> },
-      { path: "agents/new", element: <ErrorBoundary><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
-      { path: "agents/:type", element: <ErrorBoundary><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
-      { path: "sandboxes", element: <ErrorBoundary><Suspense fallback={fallback}><SandboxesPage /></Suspense></ErrorBoundary> },
-      { path: "sandboxes/new", element: <ErrorBoundary><Suspense fallback={fallback}><SandboxFormPage /></Suspense></ErrorBoundary> },
-      { path: "sandboxes/:name", element: <ErrorBoundary><Suspense fallback={fallback}><SandboxFormPage /></Suspense></ErrorBoundary> },
-      { path: "pipelines", element: <ErrorBoundary><Suspense fallback={fallback}><PipelinesPage /></Suspense></ErrorBoundary> },
+      { index: true, element: <ErrorBoundary inline><Suspense fallback={fallback}><DashboardPage /></Suspense></ErrorBoundary> },
+      { path: "jobs", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobsPage /></Suspense></ErrorBoundary> },
+      { path: "jobs/:jobId", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobDetailPage /></Suspense></ErrorBoundary> },
+      { path: "jobs/:jobId/logs", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobLogsPage /></Suspense></ErrorBoundary> },
+      { path: "agents", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentsPage /></Suspense></ErrorBoundary> },
+      { path: "agents/new", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
+      { path: "agents/:type", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
+      { path: "sandboxes", element: <ErrorBoundary inline><Suspense fallback={fallback}><SandboxesPage /></Suspense></ErrorBoundary> },
+      { path: "sandboxes/new", element: <ErrorBoundary inline><Suspense fallback={fallback}><SandboxFormPage /></Suspense></ErrorBoundary> },
+      { path: "sandboxes/:name", element: <ErrorBoundary inline><Suspense fallback={fallback}><SandboxFormPage /></Suspense></ErrorBoundary> },
+      { path: "pipelines", element: <ErrorBoundary inline><Suspense fallback={fallback}><PipelinesPage /></Suspense></ErrorBoundary> },
       { path: "traces", element: <Navigate to="/jobs" replace /> },
       { path: "triage", element: <Navigate to="/settings" replace /> },
-      { path: "issues", element: <ErrorBoundary><Suspense fallback={fallback}><IssuesPage /></Suspense></ErrorBoundary> },
-      { path: "issues/:id", element: <ErrorBoundary><Suspense fallback={fallback}><IssueDetailPage /></Suspense></ErrorBoundary> },
-      { path: "environments", element: <ErrorBoundary><Suspense fallback={fallback}><EnvironmentsPage /></Suspense></ErrorBoundary> },
-      { path: "settings", element: <ErrorBoundary><Suspense fallback={fallback}><SettingsPage /></Suspense></ErrorBoundary> },
-      { path: "*", element: <ErrorBoundary><Suspense fallback={fallback}><NotFoundPage /></Suspense></ErrorBoundary> },
+      { path: "issues", element: <ErrorBoundary inline><Suspense fallback={fallback}><IssuesPage /></Suspense></ErrorBoundary> },
+      { path: "issues/:id", element: <ErrorBoundary inline><Suspense fallback={fallback}><IssueDetailPage /></Suspense></ErrorBoundary> },
+      { path: "environments", element: <ErrorBoundary inline><Suspense fallback={fallback}><EnvironmentsPage /></Suspense></ErrorBoundary> },
+      { path: "settings", element: <ErrorBoundary inline><Suspense fallback={fallback}><SettingsPage /></Suspense></ErrorBoundary> },
+      { path: "*", element: <ErrorBoundary inline><Suspense fallback={fallback}><NotFoundPage /></Suspense></ErrorBoundary> },
     ],
   },
 ]);

@@ -4,6 +4,8 @@ import { AlertTriangle } from "lucide-react";
 
 interface Props {
   children: ReactNode;
+  fallback?: ReactNode;
+  inline?: boolean;
 }
 
 interface State {
@@ -38,6 +40,22 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      if (this.props.fallback) return this.props.fallback;
+      if (this.props.inline) {
+        return (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <AlertTriangle size={40} className="text-amber-400/50 mb-4" />
+            <p className="text-white/40 text-sm font-medium">Something went wrong</p>
+            <p className="text-white/20 text-xs mt-1 max-w-md">{this.state.error?.message}</p>
+            <button
+              onClick={() => this.setState({ hasError: false, error: null })}
+              className="mt-4 text-xs text-blue-400 hover:text-blue-300"
+            >
+              Try again
+            </button>
+          </div>
+        );
+      }
       return (
         <div className="flex h-screen items-center justify-center bg-background text-foreground">
           <div className="mx-auto max-w-md text-center space-y-4">

@@ -13,18 +13,6 @@ export async function updateConfig(config: ConfigUpdateRequest): Promise<ConfigR
   return data;
 }
 
-// Budget config (explicit typed aliases)
-export type BudgetConfig = ConfigResponse;
-
-export async function fetchBudgetConfig(): Promise<BudgetConfig> {
-  const { data } = await api.get<BudgetConfig>("/config/budget");
-  return data;
-}
-
-export async function updateBudgetConfig(config: Partial<BudgetConfig>): Promise<void> {
-  await api.put("/config/budget", config);
-}
-
 // Context config
 export interface ContextConfig {
   system_context: string;

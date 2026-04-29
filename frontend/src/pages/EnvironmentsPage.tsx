@@ -14,7 +14,7 @@ import { EnvVarTable } from "@/components/environments/EnvVarTable";
 import { EnvVarModal } from "@/components/environments/EnvVarModal";
 import { DetectBanner } from "@/components/environments/DetectBanner";
 import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
-import { TableSkeleton } from "@/components/ui/PageSkeleton";
+import { TableSkeleton } from "@/components/TableSkeleton";
 import { FolderOpen, Plus } from "lucide-react";
 import { toast } from "sonner";
 import type { EnvVar, DetectedEnvVar } from "@/lib/types/environment";
