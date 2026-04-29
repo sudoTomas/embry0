@@ -151,8 +151,10 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
       setIsConnected(false);
       if (!isCompleteRef.current && retryCountRef.current < MAX_RECONNECT_RETRIES) {
         retryCountRef.current += 1;
-        eventsRef.current = [];
-        setEvents([]);
+        // Buffer is intentionally preserved across reconnects. The backend's
+        // since_seq replay cursor (Plan A) ensures events received after reconnect
+        // are appended without duplicates. The buffer is only reset when jobId
+        // changes (see useEffect cleanup above).
         reconnectTimeoutRef.current = setTimeout(connect, 3000);
       }
     };

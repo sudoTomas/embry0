@@ -196,24 +196,50 @@ describe("useJobLogs", () => {
     expect(result.current.events[0].type).toBe("complete");
   });
 
-  it("clears events on reconnection after close", async () => {
+  it("preserves accumulated events across reconnect after close", async () => {
     const { result } = renderHook(() => useJobLogs("job-abc"));
+    const initialWsCount = allCreatedWs.length;
 
+    // Initial connection with some events
     await act(async () => {
       lastCreatedWs!.simulateOpen();
       lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t1", content: "msg1" });
+      lastCreatedWs!.simulateMessage({ type: "text", timestamp: "t2", content: "msg2" });
     });
     await flushBatch();
 
-    expect(result.current.events).toHaveLength(1);
+    expect(result.current.events).toHaveLength(2);
 
-    // Simulate close (triggers reconnect logic which clears events)
+    // Simulate close (triggers reconnect logic)
     await act(async () => {
       lastCreatedWs!.simulateClose();
     });
 
-    expect(result.current.events).toHaveLength(0);
+    // Events should be preserved (not wiped)
+    expect(result.current.events).toHaveLength(2);
     expect(result.current.isConnected).toBe(false);
+
+    // Advance to trigger reconnect (3000 ms)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    // New socket should be created
+    expect(allCreatedWs.length).toBe(initialWsCount + 1);
+    const newWs = lastCreatedWs!;
+
+    // Simulate new connection opening and receiving more events
+    await act(async () => {
+      newWs.simulateOpen();
+      newWs.simulateMessage({ type: "text", timestamp: "t3", content: "msg3" });
+    });
+    await flushBatch();
+
+    // Events should accumulate: original 2 + 1 new = 3 total
+    expect(result.current.events).toHaveLength(3);
+    expect(result.current.events[0].content).toBe("msg1");
+    expect(result.current.events[1].content).toBe("msg2");
+    expect(result.current.events[2].content).toBe("msg3");
   });
 
   it("does not reconnect after stream_end close (isComplete=true)", async () => {
