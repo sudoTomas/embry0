@@ -33,6 +33,22 @@ from athanor.workflows.registry import WorkflowRegistry
 logger = structlog.get_logger(__name__)
 
 
+def _check_postgres_password(config: AthanorConfig) -> None:
+    """Refuse to start in production with the well-known default Postgres password."""
+    from urllib.parse import urlparse
+
+    url = urlparse(config.database_url)
+    if url.password == "athanor" and not config.auth_dev_mode:
+        raise RuntimeError(
+            "Refusing to start: POSTGRES_PASSWORD is the insecure default 'athanor'. "
+            "Generate a strong password with: openssl rand -hex 20\n"
+            "Then update DATABASE_URL in .env and run:\n"
+            "  docker exec athanor-postgres psql -U athanor "
+            "-c \"ALTER USER athanor PASSWORD '<new-password>';\"\n"
+            "  docker compose up -d --force-recreate orchestrator"
+        )
+
+
 def _resolve_proxy_admin_token(config: AthanorConfig) -> None:
     """Resolve PROXY_ADMIN_TOKEN. Generates in any dev-mode if missing; refuses in prod.
 
@@ -147,6 +163,9 @@ async def _init_app_state(
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config: AthanorConfig = app.state.config
     logger.info("athanor_starting")
+
+    # Refuse to start in production with the well-known default Postgres password.
+    _check_postgres_password(config)
 
     db = DatabasePool(config.database_url)
     await db.connect()
