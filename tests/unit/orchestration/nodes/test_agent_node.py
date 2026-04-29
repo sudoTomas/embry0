@@ -368,7 +368,7 @@ async def test_run_agent_node_persists_trace_on_success() -> None:
         tools_called={"Read": 3, "Edit": 1},
     )
     traces_repo = AsyncMock()
-    traces_repo.create = AsyncMock(return_value="trace-abcdef")
+    traces_repo.create = AsyncMock(return_value="trc-abcdef")
 
     runner = AsyncMock()
     runner.run = AsyncMock(return_value=fake_out)
