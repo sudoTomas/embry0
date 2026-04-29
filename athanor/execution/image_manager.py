@@ -209,6 +209,7 @@ class ContainerReaper:
         db: Any = None,
         paused_ttl_hours: int = 48,
         jobs_repo: Any = None,
+        database_url: str | None = None,
     ) -> None:
         self._docker = docker
         self._max_age_hours = max_age_hours
@@ -217,6 +218,7 @@ class ContainerReaper:
         self._db = db
         self._paused_ttl_hours = paused_ttl_hours
         self._jobs_repo = jobs_repo
+        self._database_url = database_url
 
     def start(self) -> None:
         """Start the reaper background task."""
@@ -344,6 +346,14 @@ class ContainerReaper:
                         )
                 except StatusTransitionConflict:
                     logger.warning("expire_paused_job_status_race", job_id=job_id)
+                # Purge checkpoint state immediately (spec § 3.7). Failure is
+                # non-fatal — the daily orphan sweep is a fallback.
+                if self._database_url:
+                    try:
+                        from athanor.orchestration.checkpoint import purge_thread
+                        await purge_thread(self._database_url, job_id)
+                    except Exception:
+                        logger.warning("expire_paused_job_purge_failed", job_id=job_id, exc_info=True)
                 issue_row = await self._db.fetchrow("SELECT issue_id FROM jobs WHERE job_id = $1", job_id)
                 if issue_row and issue_row.get("issue_id"):
                     await self._db.execute(

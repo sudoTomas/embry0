@@ -73,6 +73,119 @@ async def test_expire_paused_jobs_uses_jobs_repo():
 
 
 @pytest.mark.asyncio
+async def test_expire_paused_jobs_calls_purge_thread(monkeypatch):
+    """After expiring a paused job, purge_thread should be called with database_url + job_id."""
+    import athanor.orchestration.checkpoint as ckpt_mod
+
+    purge_calls: list[tuple[str, str]] = []
+
+    async def _fake_purge(database_url: str, thread_id: str) -> None:
+        purge_calls.append((database_url, thread_id))
+
+    monkeypatch.setattr(ckpt_mod, "purge_thread", _fake_purge)
+
+    mock_db = AsyncMock()
+    mock_db.fetch = AsyncMock(return_value=[{"job_id": "job-purge-test"}])
+    mock_db.fetchrow = AsyncMock(return_value=None)
+
+    mock_jobs_repo = AsyncMock()
+    mock_jobs_repo.update = AsyncMock()
+
+    mock_docker = MagicMock()
+    mock_docker.build_stop_cmd = MagicMock(return_value=["docker", "stop"])
+    mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
+    mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
+
+    reaper = ContainerReaper(
+        mock_docker,
+        db=mock_db,
+        jobs_repo=mock_jobs_repo,
+        paused_ttl_hours=0,
+        database_url="postgresql://test:test@localhost/test",
+    )
+
+    await reaper._expire_paused_jobs()
+
+    assert purge_calls == [("postgresql://test:test@localhost/test", "job-purge-test")], (
+        f"purge_thread was not called as expected; calls={purge_calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_expire_paused_jobs_purge_failure_does_not_break_loop(monkeypatch):
+    """A purge_thread failure must not propagate — the job is still marked expired."""
+    import athanor.orchestration.checkpoint as ckpt_mod
+
+    async def _failing_purge(database_url: str, thread_id: str) -> None:
+        raise RuntimeError("db gone")
+
+    monkeypatch.setattr(ckpt_mod, "purge_thread", _failing_purge)
+
+    mock_db = AsyncMock()
+    mock_db.fetch = AsyncMock(return_value=[{"job_id": "job-fail-purge"}])
+    mock_db.fetchrow = AsyncMock(return_value=None)
+
+    mock_jobs_repo = AsyncMock()
+    mock_jobs_repo.update = AsyncMock()
+
+    mock_docker = MagicMock()
+    mock_docker.build_stop_cmd = MagicMock(return_value=["docker", "stop"])
+    mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
+    mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
+
+    reaper = ContainerReaper(
+        mock_docker,
+        db=mock_db,
+        jobs_repo=mock_jobs_repo,
+        paused_ttl_hours=0,
+        database_url="postgresql://test:test@localhost/test",
+    )
+
+    # Must not raise even though purge_thread raises
+    await reaper._expire_paused_jobs()
+
+    # Status update must still have happened
+    mock_jobs_repo.update.assert_awaited_once_with("job-fail-purge", status="expired")
+
+
+@pytest.mark.asyncio
+async def test_expire_paused_jobs_no_purge_without_database_url(monkeypatch):
+    """When database_url is not set, purge_thread must not be called."""
+    import athanor.orchestration.checkpoint as ckpt_mod
+
+    purge_calls: list[tuple[str, str]] = []
+
+    async def _fake_purge(database_url: str, thread_id: str) -> None:
+        purge_calls.append((database_url, thread_id))
+
+    monkeypatch.setattr(ckpt_mod, "purge_thread", _fake_purge)
+
+    mock_db = AsyncMock()
+    mock_db.fetch = AsyncMock(return_value=[{"job_id": "job-no-url"}])
+    mock_db.fetchrow = AsyncMock(return_value=None)
+
+    mock_jobs_repo = AsyncMock()
+    mock_jobs_repo.update = AsyncMock()
+
+    mock_docker = MagicMock()
+    mock_docker.build_stop_cmd = MagicMock(return_value=["docker", "stop"])
+    mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
+    mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
+
+    reaper = ContainerReaper(
+        mock_docker,
+        db=mock_db,
+        jobs_repo=mock_jobs_repo,
+        paused_ttl_hours=0,
+        # no database_url
+    )
+
+    await reaper._expire_paused_jobs()
+
+    assert purge_calls == [], f"purge_thread should not be called without database_url; calls={purge_calls}"
+
+
+@pytest.mark.asyncio
 async def test_expire_paused_jobs_fallback_without_jobs_repo():
     """When jobs_repo is None, _expire_paused_jobs falls back to raw db.execute."""
     mock_db = AsyncMock()

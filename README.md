@@ -561,7 +561,7 @@ Athanor uses environment variables for infrastructure config and API endpoints f
 |----------|---------|-------------|
 | `PROVIDER_MODE` | `anthropic_api` | LLM provider: `anthropic_api`, `claude_max`, `ollama` |
 | `ANTHROPIC_API_KEY` | — | API key (for `anthropic_api` mode) |
-| `CLAUDE_MAX_OAUTH_TOKEN` | — | OAuth token (for `claude_max` mode) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | — | OAuth token (for `claude_max` mode) |
 | `GITHUB_TOKEN` | — | GitHub personal access token |
 | `GITHUB_WEBHOOK_SECRET` | — | HMAC secret for webhook verification |
 | `AUTH_DEV_MODE` | `false` | Bypass API key authentication. NEVER use in production. |
