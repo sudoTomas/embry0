@@ -401,6 +401,52 @@ MIGRATIONS: list[tuple[int, str, str]] = [
           AND is_builtin = true;
         """,
     ),
+    (
+        15,
+        "FK ON DELETE policies — CASCADE for child rows, SET NULL for soft references",
+        # Redefine every FK with an explicit ON DELETE clause.
+        # Policy:
+        #   CASCADE  — child rows are owned by their parent; delete together.
+        #   SET NULL — child rows can survive parent deletion (soft reference).
+        #
+        # Not FKs (soft references, intentionally):
+        #   audit_log.issue_id — audit must outlive any deleted entity; no FK by design.
+        #   audit_log.trace_id — same audit-trail rationale.
+        """
+        -- traces.job_id: CASCADE (traces are owned by their job)
+        ALTER TABLE traces DROP CONSTRAINT IF EXISTS traces_job_id_fkey;
+        ALTER TABLE traces ADD CONSTRAINT traces_job_id_fkey
+            FOREIGN KEY (job_id) REFERENCES jobs(job_id) ON DELETE CASCADE;
+
+        -- job_logs.job_id: CASCADE (logs are owned by their job)
+        ALTER TABLE job_logs DROP CONSTRAINT IF EXISTS job_logs_job_id_fkey;
+        ALTER TABLE job_logs ADD CONSTRAINT job_logs_job_id_fkey
+            FOREIGN KEY (job_id) REFERENCES jobs(job_id) ON DELETE CASCADE;
+
+        -- issue_inputs.issue_id: CASCADE (inputs are owned by their issue)
+        ALTER TABLE issue_inputs DROP CONSTRAINT IF EXISTS issue_inputs_issue_id_fkey;
+        ALTER TABLE issue_inputs ADD CONSTRAINT issue_inputs_issue_id_fkey
+            FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE;
+
+        -- issue_inputs.job_id: CASCADE (inputs are owned by their job)
+        ALTER TABLE issue_inputs DROP CONSTRAINT IF EXISTS issue_inputs_job_id_fkey;
+        ALTER TABLE issue_inputs ADD CONSTRAINT issue_inputs_job_id_fkey
+            FOREIGN KEY (job_id) REFERENCES jobs(job_id) ON DELETE CASCADE;
+
+        -- jobs.issue_id: SET NULL (jobs survive issue deletion)
+        ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_issue_id_fkey;
+        ALTER TABLE jobs ADD CONSTRAINT jobs_issue_id_fkey
+            FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE SET NULL;
+
+        -- issues.parent_issue_id: SET NULL (children survive parent deletion)
+        ALTER TABLE issues DROP CONSTRAINT IF EXISTS issues_parent_issue_id_fkey;
+        ALTER TABLE issues ADD CONSTRAINT issues_parent_issue_id_fkey
+            FOREIGN KEY (parent_issue_id) REFERENCES issues(id) ON DELETE SET NULL;
+
+        -- audit_log.issue_id: soft reference — no FK by design (audit outlives entities)
+        -- audit_log.trace_id: soft reference — no FK by design (audit outlives entities)
+        """,
+    ),
 ]
 
 
