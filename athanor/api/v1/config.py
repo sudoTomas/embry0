@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from athanor.api.deps import get_budget_repo, get_context_repo, get_integration_repo, get_provider_repo
 from athanor.api.schemas import (
@@ -12,6 +12,7 @@ from athanor.api.schemas import (
     IntegrationConfigUpdate,
     ProviderConfigUpdate,
 )
+from athanor.audit.helpers import emit_audit
 from athanor.storage.repositories.budget_config import BudgetConfigRepository
 from athanor.storage.repositories.context_config import ContextConfigRepository
 from athanor.storage.repositories.integration_config import IntegrationConfigRepository
@@ -27,10 +28,23 @@ async def get_budget(budget: BudgetConfigRepository = Depends(get_budget_repo)) 
 
 
 @router.put("/config/budget")
-async def update_budget(req: BudgetConfigRequest, budget: BudgetConfigRepository = Depends(get_budget_repo)) -> dict[str, Any]:
+async def update_budget(
+    req: BudgetConfigRequest,
+    request: Request,
+    budget: BudgetConfigRepository = Depends(get_budget_repo),
+) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     if updates:
         await budget.update(**updates)
+        db = getattr(request.app.state, "db", None)
+        config = getattr(request.app.state, "config", None)
+        await emit_audit(
+            db,
+            "budget_config_updated",
+            actor=request.client.host if request.client else "api",
+            details=updates,
+            audit_log_path=getattr(config, "audit_log_path", None),
+        )
     return {"status": "updated"}
 
 
@@ -75,11 +89,22 @@ async def get_integrations(
 @router.put("/config/integrations")
 async def update_integrations(
     req: IntegrationConfigUpdate,
+    request: Request,
     repo: IntegrationConfigRepository = Depends(get_integration_repo),
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     if updates:
-        return await repo.update(**updates)
+        result = await repo.update(**updates)
+        db = getattr(request.app.state, "db", None)
+        config = getattr(request.app.state, "config", None)
+        await emit_audit(
+            db,
+            "integration_config_updated",
+            actor=request.client.host if request.client else "api",
+            details=updates,
+            audit_log_path=getattr(config, "audit_log_path", None),
+        )
+        return result
     return await repo.get()
 
 
@@ -96,11 +121,22 @@ async def get_provider(
 @router.put("/config/provider")
 async def update_provider(
     req: ProviderConfigUpdate,
+    request: Request,
     repo: ProviderConfigRepository = Depends(get_provider_repo),
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     if updates:
-        return await repo.update(**updates)
+        result = await repo.update(**updates)
+        db = getattr(request.app.state, "db", None)
+        config = getattr(request.app.state, "config", None)
+        await emit_audit(
+            db,
+            "provider_config_updated",
+            actor=request.client.host if request.client else "api",
+            details=updates,
+            audit_log_path=getattr(config, "audit_log_path", None),
+        )
+        return result
     return await repo.get()
 
 

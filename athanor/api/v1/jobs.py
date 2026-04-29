@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from athanor.api.deps import get_jobs_repo
 from athanor.api.schemas import JobCreateRequest, JobListResponse, JobResponse
 from athanor.api.schemas.jobs import JobResumeRequest
-from athanor.audit.logger import emit_audit_event
+from athanor.audit.helpers import emit_audit
 from athanor.storage.repositories.jobs import JobsRepository
 
 router = APIRouter()
@@ -30,9 +30,11 @@ async def create_job(req: JobCreateRequest, request: Request, jobs: JobsReposito
         sandbox_profile=req.sandbox_profile,
     )
     config = request.app.state.config
-    emit_audit_event(
+    db = getattr(request.app.state, "db", None)
+    await emit_audit(
+        db,
         "job_created",
-        actor=request.client.host if request.client else "unknown",
+        actor=request.client.host if request.client else "api",
         details={"job_id": job_id, "repo": req.repo},
         audit_log_path=config.audit_log_path,
     )
