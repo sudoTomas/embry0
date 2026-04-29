@@ -1,9 +1,9 @@
+
 import pytest
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import patch, AsyncMock, MagicMock
 
 try:
-    from athanor.api.app import create_app, _check_postgres_password
+    from athanor.api.app import _check_postgres_password, create_app
 except ImportError:
     pytest.skip("psycopg not available", allow_module_level=True)
 
