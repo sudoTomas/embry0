@@ -508,3 +508,103 @@ async def test_handle_interrupt_no_value_sets_awaiting_input():
     await executor._handle_interrupt("iss-1", "job-1", None)
     executor._jobs.update.assert_any_await("job-1", status="awaiting_input")
     executor._issues.update.assert_any_await("iss-1", status="awaiting_input")
+
+
+@pytest.mark.asyncio
+async def test_auto_answerable_retriage_folds_answers_into_context() -> None:
+    """When all triage questions are auto-answerable, execute() receives a
+    non-empty additional_context containing the Q&A pairs."""
+    from athanor.services.issue_executor import _fold_auto_answers_into_context
+
+    # Unit-test the helper directly
+    questions = [
+        {"question": "Which database?", "importance": "auto_answerable", "auto_answer": "PostgreSQL"},
+        {"question": "Use TypeScript?", "importance": "auto_answerable", "auto_answer": "Yes"},
+    ]
+    result = _fold_auto_answers_into_context(questions)
+    assert "Which database?" in result
+    assert "PostgreSQL" in result
+    assert "Use TypeScript?" in result
+    assert "Yes" in result
+
+
+@pytest.mark.asyncio
+async def test_fold_auto_answers_returns_empty_when_no_answers() -> None:
+    """Helper returns empty string if no auto_answers are present."""
+    from athanor.services.issue_executor import _fold_auto_answers_into_context
+
+    questions = [
+        {"question": "Which database?", "importance": "blocking", "auto_answer": None},
+    ]
+    result = _fold_auto_answers_into_context(questions)
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_handle_needs_info_all_auto_passes_context_to_execute(monkeypatch) -> None:
+    """When all questions are auto-answerable, _handle_needs_info must call
+    execute() with a non-empty additional_context containing the Q&A text."""
+    from athanor.services.issue_executor import IssueExecutor
+
+    # Minimal fake DB with transaction support
+    class _FakeConn:
+        async def execute(self, query: str, *args):
+            pass
+
+    class _FakeDb:
+        def transaction(self):
+            conn = _FakeConn()
+
+            class _TxnCM:
+                async def __aenter__(self_inner):
+                    return conn
+
+                async def __aexit__(self_inner, exc_type, exc, tb):
+                    return False
+
+            return _TxnCM()
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._db = _FakeDb()
+    executor._inputs = MagicMock()
+    executor._jobs = MagicMock()
+    executor._jobs.update = AsyncMock()
+    executor._issues = MagicMock()
+    executor._issues.update = AsyncMock()
+    executor._config = None
+    executor._audit_log_path = None
+
+    # Capture execute() calls
+    captured_context: list[str] = []
+
+    async def _fake_execute(issue_id: str, additional_context: str = "") -> str:
+        captured_context.append(additional_context)
+        return "job-new"
+
+    executor.execute = _fake_execute  # type: ignore[method-assign]
+
+    # Stub emit_audit
+    import athanor.services.issue_executor as exec_mod
+
+    monkeypatch.setattr(exec_mod, "emit_audit", AsyncMock())
+
+    await executor._handle_needs_info(
+        issue_id="iss-1",
+        job_id="job-1",
+        decision={
+            "questions": [
+                {
+                    "question": "Which database?",
+                    "importance": "auto_answerable",
+                    "suggested_answer": "PostgreSQL",
+                },
+            ],
+            "asking_node": "triage",
+        },
+    )
+
+    assert len(captured_context) == 1, "execute() must be called exactly once"
+    ctx = captured_context[0]
+    assert ctx, "additional_context must be non-empty"
+    assert "Which database?" in ctx
+    assert "PostgreSQL" in ctx

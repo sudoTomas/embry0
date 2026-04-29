@@ -25,6 +25,27 @@ from athanor.workflows.registry import WorkflowRegistry
 logger = structlog.get_logger(__name__)
 
 
+def _fold_auto_answers_into_context(enriched_questions: list[dict[str, Any]]) -> str:
+    """Build a Q&A context block from auto-answered triage questions.
+
+    ``enriched_questions`` is the list of dicts produced by ``_handle_needs_info``
+    after DB insertion — each dict has ``question``, ``importance``, and
+    ``auto_answer`` keys.
+
+    Returns a formatted block suitable for prepending to ``additional_context``
+    in the next triage call, so the triage agent sees the answers and can
+    proceed without re-asking.
+    """
+    lines: list[str] = ["Triage auto-answers (questions the system can answer automatically):"]
+    for q in enriched_questions:
+        if q.get("auto_answer") is not None:
+            lines.append(f"\nQ: {q['question']}\nA: {q['auto_answer']}")
+    if len(lines) == 1:
+        # No auto-answers found — return empty so caller doesn't set context
+        return ""
+    return "\n".join(lines)
+
+
 class IssueExecutor:
     """Orchestrates triage and pipeline execution for issues."""
 
@@ -139,10 +160,12 @@ class IssueExecutor:
 
         return final_state, False, None
 
-    async def execute(self, issue_id: str) -> str:
+    async def execute(self, issue_id: str, additional_context: str = "") -> str:
         """Create a job for the issue and execute the workflow in the background.
 
         Returns the job_id. The workflow runs asynchronously.
+        ``additional_context`` is threaded into ``initial_state`` so the triage
+        agent can see prior Q&A answers (e.g. from an auto-answerable retriage).
         """
         import uuid
 
@@ -186,7 +209,7 @@ class IssueExecutor:
         logger.info("issue_job_created", issue_id=issue_id, job_id=job_id)
 
         self._track_task(
-            self._run_workflow(issue_id, job_id, issue),
+            self._run_workflow(issue_id, job_id, issue, additional_context=additional_context),
             kind="workflow_execute",
             job_id=job_id,
             issue_id=issue_id,
@@ -412,7 +435,13 @@ class IssueExecutor:
         await self._jobs.update(job_id, status="awaiting_input")
         await self._issues.update(issue_id, status="awaiting_input")
 
-    async def _run_workflow(self, issue_id: str, job_id: str, issue: dict[str, Any]) -> None:
+    async def _run_workflow(
+        self,
+        issue_id: str,
+        job_id: str,
+        issue: dict[str, Any],
+        additional_context: str = "",
+    ) -> None:
         """Execute the issue-to-pr workflow via astream() with interrupt handling."""
         from datetime import UTC, datetime
 
@@ -459,6 +488,11 @@ class IssueExecutor:
                 agent_models_override = overrides.get("agent_models_override")
                 if agent_models_override:
                     initial_state["agent_models_override"] = agent_models_override
+
+            # Fold auto-answer Q&A block into the triage prompt when retriage is
+            # triggered after all questions were auto-answerable (B3 fix).
+            if additional_context:
+                initial_state["additional_context"] = additional_context
 
             # Fetch merged env (global + repo) decrypted — to be injected into
             # the sandbox. Repo vars override globals of the same key.
@@ -879,12 +913,21 @@ class IssueExecutor:
                     config=self._config,
                 )
         else:
-            # All auto-answerable — re-run triage with answers.
+            # All auto-answerable — re-run triage with the answers folded into
+            # additional_context. Previously this called execute(issue_id) with
+            # no context, causing the new triage agent to re-ask the same
+            # questions. Now the agent sees the Q&A block and can proceed.
+            qa_block = _fold_auto_answers_into_context(enriched_questions)
             await self._jobs.update(job_id, status="completed")
             await self._issues.update(issue_id, status="triaging")
             try:
-                new_job_id = await self.execute(issue_id)
-                logger.info("auto_answer_retriage", issue_id=issue_id, new_job_id=new_job_id)
+                new_job_id = await self.execute(issue_id, additional_context=qa_block)
+                logger.info(
+                    "auto_answer_retriage",
+                    issue_id=issue_id,
+                    new_job_id=new_job_id,
+                    qa_block_len=len(qa_block),
+                )
             except Exception:
                 logger.warning("auto_answer_retriage_failed", issue_id=issue_id, exc_info=True)
                 await self._issues.update(issue_id, status="open")
