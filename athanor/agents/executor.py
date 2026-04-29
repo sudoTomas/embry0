@@ -43,7 +43,8 @@ def _resolve_writer(config: dict[str, Any] | None) -> Callable[[dict[str, Any]],
     a _test_writer key for unit tests; falls back to a no-op otherwise.
     """
     if config and "_test_writer" in config:
-        return config["_test_writer"]
+        writer_fn: Callable[[dict[str, Any]], None] = config["_test_writer"]
+        return writer_fn
     try:
         from langgraph.config import get_stream_writer
 
@@ -53,13 +54,14 @@ def _resolve_writer(config: dict[str, Any] | None) -> Callable[[dict[str, Any]],
         return lambda _e: None
 
 
-def _summarize_tool_input(tool_name: str, tool_input: dict) -> str:
+def _summarize_tool_input(tool_name: str, tool_input: dict[str, Any]) -> str:
     if not isinstance(tool_input, dict):
         return str(tool_input)[:200]
     if tool_name in ("Read", "Glob", "Grep"):
-        return tool_input.get("file_path", "") or tool_input.get("path", "") or tool_input.get("pattern", "")
+        result = tool_input.get("file_path", "") or tool_input.get("path", "") or tool_input.get("pattern", "")
+        return str(result)
     if tool_name in ("Write", "Edit"):
-        return tool_input.get("file_path", "")
+        return str(tool_input.get("file_path", ""))
     if tool_name == "Bash":
         return str(tool_input.get("command", ""))[:200]
     return str(tool_input)[:200]
@@ -107,20 +109,23 @@ class SdkAgentExecutor:
     ) -> AgentOutput:
         from claude_agent_sdk import (  # local import; SDK is optional in some contexts
             AssistantMessage,
+            HookContext,
+            HookMatcher,
             ResultMessage,
             TextBlock,
             ToolUseBlock,
             query,
         )
+        from claude_agent_sdk.types import HookInput, HookJSONOutput
 
         try:
             from claude_agent_sdk import ThinkingBlock
         except ImportError:
-            ThinkingBlock = None  # type: ignore[assignment]
+            ThinkingBlock = None  # type: ignore[assignment,misc]
         try:
             from claude_agent_sdk import ToolResultBlock
         except ImportError:
-            ToolResultBlock = None  # type: ignore[assignment]
+            ToolResultBlock = None  # type: ignore[assignment,misc]
 
         # Duck-type message/block detection so tests can swap in fakes with
         # equivalent structure. Real SDK classes satisfy the same shape.
@@ -163,23 +168,24 @@ class SdkAgentExecutor:
         options = build_sdk_options(invocation)
 
         # --- Ring 3: PreToolUse hook as Python callable
-        async def pre_tool_use_hook(hook_input: Any) -> dict[str, Any]:
-            tool_name = getattr(hook_input, "tool_name", None) or (
-                hook_input.get("tool_name", "") if isinstance(hook_input, dict) else ""
-            )
-            tool_input = getattr(hook_input, "tool_input", None)
-            if tool_input is None and isinstance(hook_input, dict):
-                tool_input = hook_input.get("tool_input", {})
+        async def pre_tool_use_hook(  # noqa: ARG001 — tool_use_id/context unused by design
+            hook_input: HookInput,
+            tool_use_id: str | None,  # noqa: ARG001
+            context: HookContext,  # noqa: ARG001
+        ) -> HookJSONOutput:
+            tool_name = getattr(hook_input, "tool_name", None) or ""
+            raw_tool_input = getattr(hook_input, "tool_input", None)
+            hook_tool_input: dict[str, Any] = raw_tool_input if isinstance(raw_tool_input, dict) else {}
             # NOTE: tools_called is incremented on ToolUseBlock emission (after
             # hook allows) — not here — so denied tools don't inflate the counter.
             # Denial telemetry lives in the "error" event emitted below.
-            return await _evaluate_hook(invocation.safety_policy, tool_name, tool_input, tools_called, writer)
+            return await _evaluate_hook(invocation.safety_policy, tool_name, hook_tool_input, tools_called, writer)  # type: ignore[return-value]
 
         # Attach hook to options. The SDK's support for `hooks` is asserted at
         # orchestrator startup (see _assert_sdk_supports_hooks); a per-run
         # try/except would silently fail-open and is the explicit anti-pattern
         # the 2026-04-28 review (S3) flagged. Set unconditionally.
-        options.hooks = {"PreToolUse": [{"matcher": None, "hooks": [pre_tool_use_hook]}]}
+        options.hooks = {"PreToolUse": [HookMatcher(matcher=None, hooks=[pre_tool_use_hook])]}
 
         # --- Prompt assembly: system_context prepended (legacy behavior).
         prompt = invocation.prompt
@@ -202,13 +208,14 @@ class SdkAgentExecutor:
                             "node": invocation.agent_type,
                         }
                     )
-                    for block in message.content:
+                    for block in getattr(message, "content", []):
                         if _is_text_block(block):
-                            output_text += block.text
+                            block_text = str(getattr(block, "text", ""))
+                            output_text += block_text
                             writer(
                                 {
                                     "type": "text",
-                                    "text": block.text[:2000],
+                                    "text": block_text[:2000],
                                     "node": invocation.agent_type,
                                 }
                             )
@@ -245,7 +252,7 @@ class SdkAgentExecutor:
                             )
                 elif _is_result(message):
                     if getattr(message, "result", None) and not output_text:
-                        output_text = message.result
+                        output_text = str(getattr(message, "result", ""))
                     cost_usd = getattr(message, "total_cost_usd", 0.0) or 0.0
                     usage = getattr(message, "usage", {}) or {}
                     writer(

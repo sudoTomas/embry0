@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import operator
 from enum import StrEnum
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,8 +39,10 @@ _PIPELINE_DEFAULTS: dict[str, Any] = {
 
 
 def make_pipeline_config(**kwargs: Any) -> PipelineConfig:
-    merged = {**_PIPELINE_DEFAULTS, **kwargs}
-    return PipelineConfig(**merged)
+    merged: dict[str, Any] = {**_PIPELINE_DEFAULTS, **kwargs}
+    # cast() avoids the TypedDict(**dict[str, Any]) unsafe-expansion error;
+    # the caller controls kwargs so shape is known to be correct.
+    return cast(PipelineConfig, merged)
 
 
 class TriageDecision(TypedDict, total=False):
@@ -95,8 +97,8 @@ class TriageDecisionModel(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     pipeline_template: str = "standard"
     pipeline_config: PipelineConfigModel = Field(default_factory=PipelineConfigModel)
-    questions: list[dict] = Field(default_factory=list)
-    sub_tasks: list[dict] = Field(default_factory=list)
+    questions: list[dict[str, Any]] = Field(default_factory=list)
+    sub_tasks: list[dict[str, Any]] = Field(default_factory=list)
     reasoning: str = ""
 
 

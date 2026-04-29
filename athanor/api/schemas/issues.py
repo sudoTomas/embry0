@@ -1,6 +1,7 @@
 """Pydantic request/response models for issues."""
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -98,7 +99,7 @@ class IssueResponse(BaseModel):
 
 class IssueDetailResponse(IssueResponse):
     children: list[IssueResponse] = Field(default_factory=list)
-    jobs: list[dict] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class IssueListResponse(BaseModel):

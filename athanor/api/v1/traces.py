@@ -16,6 +16,6 @@ async def list_traces(
     limit: int = 50,
     offset: int = 0,
     traces: TracesRepository = Depends(get_traces_repo),
-) -> dict:
+) -> dict[str, object]:
     rows, total = await traces.list(job_id=job_id, agent_type=agent_type, result=result, limit=limit, offset=offset)
     return {"traces": rows, "total": total, "offset": offset, "limit": limit}

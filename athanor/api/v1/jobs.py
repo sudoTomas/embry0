@@ -1,5 +1,7 @@
 """Jobs API — create, list, get, cancel jobs."""
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from athanor.api.deps import get_jobs_repo
@@ -12,7 +14,7 @@ router = APIRouter()
 
 
 @router.post("/jobs", status_code=201)
-async def create_job(req: JobCreateRequest, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
+async def create_job(req: JobCreateRequest, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict[str, Any]:
     # Merge any per-agent model override into pipeline_config so triage/dispatch
     # can honour it downstream (see IssueExecutor._run_workflow + agent node).
     effective_config = dict(req.pipeline_config) if req.pipeline_config else None
@@ -51,7 +53,7 @@ async def list_jobs(
 
 
 @router.get("/jobs/{job_id}")
-async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
+async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict[str, Any]:
     job = await jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -69,14 +71,15 @@ async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(
 
 
 @router.get("/jobs/{job_id}/inputs")
-async def get_job_inputs(job_id: str, request: Request) -> list:
+async def get_job_inputs(job_id: str, request: Request) -> list[Any]:
     """Get all inputs (questions) for a job."""
     inputs_repo = request.app.state.inputs_repo
-    return await inputs_repo.list_by_job(job_id)
+    result: list[Any] = await inputs_repo.list_by_job(job_id)
+    return result
 
 
 @router.get("/jobs/{job_id}/logs/events")
-async def get_job_log_events(job_id: str, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
+async def get_job_log_events(job_id: str, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict[str, Any]:
     """Get persisted pipeline events for a job."""
     events = await jobs.get_log_events(job_id)
     # Extract the parsed payload from each row
@@ -94,7 +97,7 @@ async def resume_job(
     req: JobResumeRequest,
     request: Request,
     jobs: JobsRepository = Depends(get_jobs_repo),
-) -> dict:
+) -> dict[str, Any]:
     """Resume a paused job with optional guidance."""
     job = await jobs.get(job_id)
     if not job:
@@ -118,7 +121,7 @@ async def resume_job(
 
 
 @router.post("/jobs/{job_id}/cancel")
-async def cancel_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
+async def cancel_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict[str, Any]:
     job = await jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")

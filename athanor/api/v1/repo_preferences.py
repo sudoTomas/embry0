@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 @router.get("/repos/{owner}/{repo}/preferences", response_model=RepoPreferencesResponse | None)
-async def get_repo_preferences(owner: str, repo: str, request: Request):
+async def get_repo_preferences(owner: str, repo: str, request: Request) -> RepoPreferencesResponse | None:
     prefs_repo = request.app.state.repo_preferences_repo
     row = await prefs_repo.get(f"{owner}/{repo}")
     if row is None:
@@ -22,7 +22,7 @@ async def get_repo_preferences(owner: str, repo: str, request: Request):
 
 
 @router.put("/repos/{owner}/{repo}/preferences", response_model=RepoPreferencesResponse)
-async def put_repo_preferences(owner: str, repo: str, req: RepoPreferencesUpdateRequest, request: Request):
+async def put_repo_preferences(owner: str, repo: str, req: RepoPreferencesUpdateRequest, request: Request) -> RepoPreferencesResponse:
     # Validate sandbox_profile exists if provided. The orchestrator attaches
     # the repository as ``profiles_repo`` on app.state (see athanor/api/app.py).
     if req.sandbox_profile:

@@ -89,10 +89,11 @@ def _check_bearer(request: web.Request) -> "str | None":
         logger.warning("github_proxy_unauthorized", path=request.path)
         return None
     presented_hash = _sha256(presented)
-    matched_sandbox = request.app["enrolled_by_hash"].get(presented_hash)
-    if not matched_sandbox:
+    raw_match = request.app["enrolled_by_hash"].get(presented_hash)
+    if not raw_match:
         logger.warning("github_proxy_unauthorized", path=request.path)
         return None
+    matched_sandbox: str = str(raw_match)
     return matched_sandbox
 
 

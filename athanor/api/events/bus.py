@@ -8,6 +8,7 @@ Callers are the WS streaming endpoint (subscribe/unsubscribe) and IssueExecutor
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import structlog
 
@@ -25,21 +26,21 @@ class EventBus:
     """
 
     def __init__(self) -> None:
-        self._subscribers: dict[str, list[asyncio.Queue]] = {}
+        self._subscribers: dict[str, list[asyncio.Queue[Any]]] = {}
         self._lock = asyncio.Lock()
 
-    async def subscribe(self, job_id: str, maxsize: int = 1000) -> asyncio.Queue:
+    async def subscribe(self, job_id: str, maxsize: int = 1000) -> asyncio.Queue[Any]:
         """Register a new subscriber for ``job_id``; return its queue.
 
         Queues are bounded at ``maxsize`` events; on overflow, ``publish``
         drops with a ``ws_slow_consumer`` warning rather than blocking.
         """
-        queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
+        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=maxsize)
         async with self._lock:
             self._subscribers.setdefault(job_id, []).append(queue)
         return queue
 
-    async def unsubscribe(self, job_id: str, queue: asyncio.Queue) -> None:
+    async def unsubscribe(self, job_id: str, queue: asyncio.Queue[Any]) -> None:
         """Remove ``queue`` from the subscriber list for ``job_id``.
 
         Cleans up the dict entry if the list becomes empty. Silent no-op if
@@ -56,7 +57,7 @@ class EventBus:
             if not subs:
                 self._subscribers.pop(job_id, None)
 
-    async def publish(self, job_id: str, event: dict) -> None:
+    async def publish(self, job_id: str, event: dict[str, Any]) -> None:
         """Deliver ``event`` to every subscriber of ``job_id``.
 
         A failing subscriber (e.g. full queue, closed connection) does NOT

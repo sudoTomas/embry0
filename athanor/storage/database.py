@@ -83,7 +83,7 @@ class DatabasePool:
         if self.pool is None:
             raise RuntimeError("Call connect() first")
         async with self.pool.acquire() as conn:
-            return await conn.execute(query, *args)
+            return str(await conn.execute(query, *args))
 
     async def fetchval(self, query: str, *args: Any) -> Any:
         """Execute a query and return a single value."""
@@ -99,12 +99,12 @@ class DatabasePool:
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(query, *args)
 
-    async def fetch(self, query: str, *args: Any) -> list[asyncpg.Record]:
+    async def fetch(self, query: str, *args: Any) -> list[Any]:
         """Execute a query and return all rows."""
         if self.pool is None:
             raise RuntimeError("Call connect() first")
         async with self.pool.acquire() as conn:
-            return await conn.fetch(query, *args)
+            return list(await conn.fetch(query, *args))
 
     @property
     def _redacted_url(self) -> str:

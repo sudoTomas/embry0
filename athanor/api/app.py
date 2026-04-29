@@ -80,6 +80,8 @@ def _resolve_proxy_admin_token(config: AthanorConfig) -> None:
 
 def _warn_and_audit_dev_mode(flag_name: str, audit_log_path: object) -> None:
     """Emit a CRITICAL log and an audit event for an active dev-mode bypass flag."""
+    from pathlib import Path
+
     logger.critical(
         f"{flag_name.lower()}_enabled",
         msg=f"{flag_name}=true bypasses security checks. NEVER use in production.",
@@ -87,11 +89,12 @@ def _warn_and_audit_dev_mode(flag_name: str, audit_log_path: object) -> None:
     try:
         from athanor.audit.logger import emit_audit_event
 
+        path = audit_log_path if isinstance(audit_log_path, Path) else None
         emit_audit_event(
             "dev_mode_enabled",
             actor="system",
             details={"flag": flag_name},
-            audit_log_path=audit_log_path,
+            audit_log_path=path,
         )
     except Exception:
         logger.warning("dev_mode_audit_emit_failed", flag=flag_name, exc_info=True)
@@ -393,7 +396,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("orphaned_container_scan_failed", exc_info=True)
 
-    app.state.background_tasks: set[asyncio.Task] = set()
+    app.state.background_tasks = set()
 
     await _init_app_state(
         app,
@@ -472,7 +475,7 @@ def create_app(
     app.add_middleware(BodySizeMiddleware)
 
     @app.get("/health")
-    async def health() -> dict:
+    async def health() -> dict[str, str]:
         return {"status": "ok", "service": "athanor"}
 
     _register_routers(app)

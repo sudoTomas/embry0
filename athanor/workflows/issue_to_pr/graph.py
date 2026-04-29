@@ -35,13 +35,13 @@ class IssueToprWorkflow:
     def compile(self, config: Any = None) -> Any:
         builder = StateGraph(JobState)
 
-        builder.add_node("init", init_node)
-        builder.add_node("triage", triage_node)
-        builder.add_node("developer", developer_node)
-        builder.add_node("review", review_node)
-        builder.add_node("retry", retry_node)
-        builder.add_node("max_retries", max_retries_node)
-        builder.add_node("ask_user_interrupt", ask_user_interrupt)
+        builder.add_node("init", init_node)  # type: ignore[type-var]
+        builder.add_node("triage", triage_node)  # type: ignore[type-var]
+        builder.add_node("developer", developer_node)  # type: ignore[type-var]
+        builder.add_node("review", review_node)  # type: ignore[type-var]
+        builder.add_node("retry", retry_node)  # type: ignore[type-var]
+        builder.add_node("max_retries", max_retries_node)  # type: ignore[type-var]
+        builder.add_node("ask_user_interrupt", ask_user_interrupt)  # type: ignore[type-var]
 
         builder.add_edge(START, "init")
         builder.add_edge("init", "triage")

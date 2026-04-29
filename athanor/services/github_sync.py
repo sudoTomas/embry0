@@ -62,7 +62,7 @@ class GitHubSyncService:
                 f"{_GITHUB_API}/repos/{repo}/issues", json=payload, headers=self._headers(), timeout=15.0
             )
             resp.raise_for_status()
-            data = resp.json()
+            data: dict[str, Any] = resp.json()
         await issues_repo.update(
             issue_id, github_number=data["number"], github_url=data["html_url"], github_synced_at=datetime.now(UTC)
         )
@@ -88,7 +88,7 @@ class GitHubSyncService:
                 f"{_GITHUB_API}/repos/{repo}/issues/{number}", json=payload, headers=self._headers(), timeout=15.0
             )
             resp.raise_for_status()
-            data = resp.json()
+            data: dict[str, Any] = resp.json()
         await issues_repo.update(issue_id, github_synced_at=datetime.now(UTC))
         logger.info("github_issue_updated", issue_id=issue_id, github_number=number)
         return data

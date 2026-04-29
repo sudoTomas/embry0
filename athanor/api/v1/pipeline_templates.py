@@ -1,5 +1,7 @@
 """Pipeline templates API — CRUD for pipeline template management."""
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from athanor.api.deps import get_templates_repo
@@ -13,7 +15,7 @@ router = APIRouter()
 @router.get("/pipelines/templates")
 async def list_templates(
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     return await repo.list_all()
 
 
@@ -21,7 +23,7 @@ async def list_templates(
 async def get_template(
     template_id: str,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
-) -> dict:
+) -> dict[str, Any]:
     template = await repo.get(template_id)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -32,7 +34,7 @@ async def get_template(
 async def create_template(
     req: TemplateCreateRequest,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
-) -> dict:
+) -> dict[str, Any]:
     try:
         validate_pipeline_tools(req.name, req.graph_definition)
     except ValueError as exc:
@@ -51,7 +53,7 @@ async def update_template(
     template_id: str,
     req: TemplateUpdateRequest,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
-) -> dict:
+) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     if not updates:
         template = await repo.get(template_id)
@@ -70,7 +72,7 @@ async def update_template(
 async def delete_template(
     template_id: str,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
-) -> dict:
+) -> dict[str, Any]:
     await repo.delete(template_id)
     return {"id": template_id, "status": "deleted"}
 
@@ -80,7 +82,7 @@ async def duplicate_template(
     template_id: str,
     req: TemplateDuplicateRequest,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
-) -> dict:
+) -> dict[str, Any]:
     try:
         return await repo.duplicate(template_id, new_name=req.name)
     except ValueError as exc:
@@ -88,7 +90,7 @@ async def duplicate_template(
 
 
 @router.post("/pipelines/validate")
-async def validate_pipeline(graph: dict) -> dict:
+async def validate_pipeline(graph: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
     nodes = graph.get("nodes", [])
     edges = graph.get("edges", [])

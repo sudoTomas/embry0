@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hmac
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from athanor.api.deps import get_inputs_repo, get_issue_executor, get_issues_repo
 from athanor.api.v1.issues import _resume_pipeline
@@ -17,7 +18,7 @@ router = APIRouter()
 
 
 @router.post("/telegram/callback")
-async def telegram_callback(request: Request) -> dict:
+async def telegram_callback(request: Request) -> Response | dict[str, Any]:
     """Handle incoming Telegram update events.
 
     Supports two update types:

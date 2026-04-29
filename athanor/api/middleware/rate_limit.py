@@ -2,6 +2,7 @@
 
 import time
 from collections import defaultdict
+from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -11,19 +12,21 @@ _EXEMPT_PREFIXES = ("/health", "/webhook", "/api/v1/webhook", "/ws/", "/api/v1/t
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, requests_per_minute: int = 60):
+    def __init__(self, app: Any, requests_per_minute: int = 60):
         super().__init__(app)
         self._max_rpm = requests_per_minute
         self._window = 60.0
         self._requests: dict[str, list[float]] = defaultdict(list)
         self._request_count = 0
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
         path = request.url.path
         if not path.startswith("/api/"):
-            return await call_next(request)
+            resp: Response = await call_next(request)
+            return resp
         if any(path.startswith(p) for p in _EXEMPT_PREFIXES):
-            return await call_next(request)
+            resp = await call_next(request)
+            return resp
         ip = request.client.host if request.client else "unknown"
         now = time.time()
         self._requests[ip] = [t for t in self._requests[ip] if t > now - self._window]
@@ -40,4 +43,5 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             stale = [k for k, v in self._requests.items() if not v]
             for k in stale:
                 del self._requests[k]
-        return await call_next(request)
+        resp = await call_next(request)
+        return resp

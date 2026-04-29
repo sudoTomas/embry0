@@ -8,9 +8,11 @@ endpoints are not affected.
 
 from __future__ import annotations
 
+from typing import Any
+
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 logger = structlog.get_logger(__name__)
@@ -32,12 +34,14 @@ class BodySizeMiddleware(BaseHTTPMiddleware):
         self._max_bytes = max_bytes
         self._protected = protected_paths
 
-    async def dispatch(self, request, call_next):
+    async def dispatch(self, request: Any, call_next: Any) -> Response:
         path = request.url.path
         if not any(path.startswith(p) for p in self._protected):
-            return await call_next(request)
+            resp: Response = await call_next(request)
+            return resp
         if request.method != "POST":
-            return await call_next(request)
+            resp = await call_next(request)
+            return resp
 
         cl_header = request.headers.get("content-length")
         if cl_header is None:
@@ -64,4 +68,5 @@ class BodySizeMiddleware(BaseHTTPMiddleware):
                 {"error": f"Payload Too Large: max {self._max_bytes} bytes"},
                 status_code=413,
             )
-        return await call_next(request)
+        resp = await call_next(request)
+        return resp

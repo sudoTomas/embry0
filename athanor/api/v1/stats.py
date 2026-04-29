@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 @router.get("/stats")
-async def get_stats(db: DatabasePool = Depends(get_db)) -> dict:
+async def get_stats(db: DatabasePool = Depends(get_db)) -> dict[str, object]:
     row = await db.fetchrow(
         """
         SELECT

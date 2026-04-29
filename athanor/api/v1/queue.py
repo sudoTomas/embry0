@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 @router.get("/queue")
-async def get_queue(jobs: JobsRepository = Depends(get_jobs_repo)) -> dict:
+async def get_queue(jobs: JobsRepository = Depends(get_jobs_repo)) -> dict[str, int]:
     """Active-job counts grouped by status.
 
     Response includes the four non-terminal statuses; `depth` is an alias

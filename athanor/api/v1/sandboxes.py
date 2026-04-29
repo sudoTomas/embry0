@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 @router.get("/sandboxes")
-async def list_sandboxes(request: Request, include_stopped: bool = False) -> dict:
+async def list_sandboxes(request: Request, include_stopped: bool = False) -> dict[str, object]:
     """List sandbox-* containers and their ages.
 
     Shells out to ``docker ps`` (via the app's DockerClient) filtered on the
@@ -44,7 +44,7 @@ async def list_sandboxes(request: Request, include_stopped: bool = False) -> dic
         logger.warning("sandbox_list_failed", exc_info=True)
         return {"containers": [], "count": 0}
 
-    containers: list[dict] = []
+    containers: list[dict[str, str]] = []
     for line in (output or "").strip().split("\n"):
         if not line.strip():
             continue

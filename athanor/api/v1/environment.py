@@ -139,7 +139,7 @@ async def get_repo_environment(owner: str, repo: str, request: Request) -> Envir
 @router.get("/repos/{owner}/{repo}/environment/resolve", response_model=EnvironmentResponse)
 async def resolve_repo_environment(owner: str, repo: str, request: Request) -> EnvironmentResponse:
     env_repo = request.app.state.env_repo
-    merged: dict[str, dict] = {}
+    merged: dict[str, dict[str, object]] = {}
     for v in await env_repo.get_global():
         merged[v["key"]] = dict(v)
     for v in await env_repo.get_repo(f"{owner}/{repo}"):

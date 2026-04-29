@@ -61,8 +61,8 @@ class IssueExecutor:
         self._event_bus = event_bus
         self._env_repo = env_repo
         self._repo_prefs = repo_preferences_repo
-        self._background_tasks: set[asyncio.Task] = set()
-        self._tasks_by_job: dict[str, asyncio.Task] = {}
+        self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._tasks_by_job: dict[str, asyncio.Task[Any]] = {}
 
     def _build_graph_config(self, job_id: str) -> dict[str, Any]:
         """Build the graph config dict for LangGraph execution."""
@@ -199,7 +199,7 @@ class IssueExecutor:
         kind: str,
         job_id: str,
         issue_id: str | None = None,
-    ) -> asyncio.Task:
+    ) -> asyncio.Task[Any]:
         """Create an asyncio.Task from ``coro``, register it, and attach a
         done-callback that logs failures and publishes a ``job_failed`` event.
 
@@ -213,11 +213,11 @@ class IssueExecutor:
           via the event bus so WS clients see the failure even if the coro
           died outside its own try/except.
         """
-        task = asyncio.create_task(coro)
+        task: asyncio.Task[Any] = asyncio.create_task(coro)
         self._background_tasks.add(task)
         self._tasks_by_job[job_id] = task
 
-        def _on_done(t: asyncio.Task) -> None:
+        def _on_done(t: asyncio.Task[Any]) -> None:
             self._background_tasks.discard(t)
             # Only remove from _tasks_by_job if this task is still the one
             # registered for that job_id (it may have been overwritten by a
@@ -676,7 +676,7 @@ class IssueExecutor:
 
         logger.info("issue_decomposed", issue_id=issue_id, children=child_ids)
 
-    async def _broadcast_event(self, job_id: str, event: dict) -> None:
+    async def _broadcast_event(self, job_id: str, event: dict[str, Any]) -> None:
         """Forward event to WebSocket subscribers and persist to job_logs."""
         # Add timestamp if missing (events from StreamWriter don't include one)
         if "timestamp" not in event:
@@ -747,6 +747,8 @@ class IssueExecutor:
         has_blocking = any(n["importance"] == "blocking" for n in normalized)
 
         # Transactional writes: inputs + status updates as one unit.
+        if self._db is None:
+            raise RuntimeError("IssueExecutor._db is None — cannot write inputs")
         enriched_questions: list[dict[str, Any]] = []
         async with self._db.transaction() as conn:
             for n in normalized:

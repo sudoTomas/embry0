@@ -1,5 +1,7 @@
 """Sandbox profiles API."""
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from athanor.api.deps import get_profiles_repo
@@ -10,14 +12,14 @@ router = APIRouter()
 
 
 @router.get("/sandbox-profiles")
-async def list_profiles(profiles: SandboxProfilesRepository = Depends(get_profiles_repo)) -> list[dict]:
+async def list_profiles(profiles: SandboxProfilesRepository = Depends(get_profiles_repo)) -> list[dict[str, Any]]:
     return await profiles.list()
 
 
 @router.post("/sandbox-profiles", status_code=201)
 async def create_profile(
     req: SandboxProfileRequest, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)
-) -> dict:
+) -> dict[str, Any]:
     await profiles.upsert(
         name=req.name,
         base_image=req.base_image,
@@ -36,7 +38,7 @@ async def create_profile(
 
 
 @router.get("/sandbox-profiles/{name}")
-async def get_profile(name: str, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)) -> dict:
+async def get_profile(name: str, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)) -> dict[str, Any]:
     profile = await profiles.get(name)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -46,7 +48,7 @@ async def get_profile(name: str, profiles: SandboxProfilesRepository = Depends(g
 @router.put("/sandbox-profiles/{name}")
 async def update_profile(
     name: str, req: SandboxProfileRequest, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)
-) -> dict:
+) -> dict[str, Any]:
     await profiles.upsert(
         name=name,
         base_image=req.base_image,
@@ -65,6 +67,6 @@ async def update_profile(
 
 
 @router.delete("/sandbox-profiles/{name}")
-async def delete_profile(name: str, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)) -> dict:
+async def delete_profile(name: str, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)) -> dict[str, Any]:
     await profiles.delete(name)
     return {"name": name, "status": "deleted"}

@@ -138,7 +138,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
     }
 
 
-async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any] | Command:
+async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any] | Command[str]:
     """Run triage agent via AgentRunner inside the sandbox.
 
     Returns a plain dict in the normal case (``route_after_triage`` decides the
@@ -192,7 +192,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # stream writer for live streaming.
     collected_events: list[dict[str, Any]] = []
 
-    def _forward_event(event: dict) -> None:
+    def _forward_event(event: dict[str, Any]) -> None:
         collected_events.append(event)
         writer(event)
 
@@ -218,13 +218,14 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             from athanor.safety.error_codes import ErrorCode
 
             try:
-                decision = parse_triage_response(last.get("output", ""))
-                decision = await apply_repo_preferences_override(
-                    decision,
+                from typing import cast as _cast
+                triage_dict: dict[str, Any] = _cast(dict[str, Any], parse_triage_response(last.get("output", "")))
+                triage_dict = await apply_repo_preferences_override(
+                    triage_dict,
                     state.get("repo", ""),
                     config["configurable"].get("repo_preferences_repo"),
                 )
-                result["pipeline_config"] = decision
+                result["pipeline_config"] = triage_dict
                 result["current_stage"] = "triage_complete"
             except TriageParseError as exc:
                 logger.error("triage_parse_error", error=str(exc))
@@ -308,13 +309,14 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 from athanor.safety.error_codes import ErrorCode
 
                 try:
-                    decision = parse_triage_response(last.get("output", ""))
-                    decision = await apply_repo_preferences_override(
-                        decision,
+                    from typing import cast as _cast
+                    triage_dict2: dict[str, Any] = _cast(dict[str, Any], parse_triage_response(last.get("output", "")))
+                    triage_dict2 = await apply_repo_preferences_override(
+                        triage_dict2,
                         updated.get("repo", ""),
                         config["configurable"].get("repo_preferences_repo"),
                     )
-                    result["pipeline_config"] = decision
+                    result["pipeline_config"] = triage_dict2
                     result["current_stage"] = "triage_complete"
                 except TriageParseError as exc:
                     logger.error("triage_parse_error", error=str(exc))
@@ -425,7 +427,7 @@ def _format_user_answers_block(user_answers: Any) -> str:
     return "The user has answered your prior questions as follows:\n" + "\n\n".join(lines)
 
 
-async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Command:
+async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Command[str]:
     """Run developer agent — write code, create branch, commit, push, open PR.
 
     Uses AgentRunner.run() to execute a full Claude Code session in the sandbox.
@@ -493,7 +495,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     # stream writer for live streaming.
     collected_events: list[dict[str, Any]] = []
 
-    def _forward_event(event: dict) -> None:
+    def _forward_event(event: dict[str, Any]) -> None:
         collected_events.append(event)
         writer(event)
 
@@ -598,7 +600,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     return Command(goto=goto, update=updates)
 
 
-async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command:
+async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[str]:
     """Run review agent — tests, lint, typecheck, code review.
 
     Returns structured JSON with decision, validation results, and comments,
@@ -668,7 +670,7 @@ Return ONLY a JSON object:
     # stream writer for live streaming.
     collected_events: list[dict[str, Any]] = []
 
-    def _forward_event(event: dict) -> None:
+    def _forward_event(event: dict[str, Any]) -> None:
         collected_events.append(event)
         writer(event)
 

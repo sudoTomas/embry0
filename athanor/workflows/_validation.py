@@ -7,10 +7,12 @@ must not be able to smuggle deferred tools past the registry gate).
 
 from __future__ import annotations
 
+from typing import Any
+
 _DEFERRED_TOOLS = frozenset({"CreateIssue", "RequestInput", "UpdateStatus"})
 
 
-def validate_pipeline_tools(name: str, pipeline_config: dict) -> None:
+def validate_pipeline_tools(name: str, pipeline_config: dict[str, Any]) -> None:
     """Reject pipelines that declare tools served by the deferred Athanor API proxy.
 
     ``pipeline_config`` is any dict that may contain an ``agent_tools`` key

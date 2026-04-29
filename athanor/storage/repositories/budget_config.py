@@ -15,12 +15,18 @@ from athanor.storage.database import DatabasePool
 
 logger = structlog.get_logger(__name__)
 
-_HARDCODED_FALLBACKS = {
-    "max_budget_per_job_usd": 10.0,
-    "daily_cap_usd": 100.0,
-    "monthly_cap_usd": 500.0,
-    "rate_limit_per_author_per_hour": 5,
-    "overrun_mode": "soft",
+_FALLBACK_MAX_BUDGET: float = 10.0
+_FALLBACK_DAILY_CAP: float = 100.0
+_FALLBACK_MONTHLY_CAP: float = 500.0
+_FALLBACK_RATE_LIMIT: int = 5
+_FALLBACK_OVERRUN_MODE: str = "soft"
+
+_HARDCODED_FALLBACKS: dict[str, Any] = {
+    "max_budget_per_job_usd": _FALLBACK_MAX_BUDGET,
+    "daily_cap_usd": _FALLBACK_DAILY_CAP,
+    "monthly_cap_usd": _FALLBACK_MONTHLY_CAP,
+    "rate_limit_per_author_per_hour": _FALLBACK_RATE_LIMIT,
+    "overrun_mode": _FALLBACK_OVERRUN_MODE,
 }
 
 _UPDATABLE_FIELDS = frozenset(_HARDCODED_FALLBACKS.keys())
@@ -59,13 +65,11 @@ def _env_overrun_mode(fallback: str) -> str:
 def _env_derived_defaults() -> dict[str, Any]:
     """Read defaults from env at call time, falling back to hardcoded values."""
     return {
-        "max_budget_per_job_usd": _env_float("MAX_BUDGET_USD", _HARDCODED_FALLBACKS["max_budget_per_job_usd"]),
-        "daily_cap_usd": _env_float("DAILY_BUDGET_CAP_USD", _HARDCODED_FALLBACKS["daily_cap_usd"]),
-        "monthly_cap_usd": _env_float("MONTHLY_BUDGET_CAP_USD", _HARDCODED_FALLBACKS["monthly_cap_usd"]),
-        "rate_limit_per_author_per_hour": _env_int(
-            "RATE_LIMIT_PER_AUTHOR_PER_HOUR", _HARDCODED_FALLBACKS["rate_limit_per_author_per_hour"]
-        ),
-        "overrun_mode": _env_overrun_mode(_HARDCODED_FALLBACKS["overrun_mode"]),
+        "max_budget_per_job_usd": _env_float("MAX_BUDGET_USD", _FALLBACK_MAX_BUDGET),
+        "daily_cap_usd": _env_float("DAILY_BUDGET_CAP_USD", _FALLBACK_DAILY_CAP),
+        "monthly_cap_usd": _env_float("MONTHLY_BUDGET_CAP_USD", _FALLBACK_MONTHLY_CAP),
+        "rate_limit_per_author_per_hour": _env_int("RATE_LIMIT_PER_AUTHOR_PER_HOUR", _FALLBACK_RATE_LIMIT),
+        "overrun_mode": _env_overrun_mode(_FALLBACK_OVERRUN_MODE),
     }
 
 

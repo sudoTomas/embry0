@@ -1,5 +1,7 @@
 """GitHub API client inside the sandbox — all requests go through the proxy."""
 
+from typing import Any
+
 import httpx
 import structlog
 
@@ -35,7 +37,7 @@ class SandboxGitHubClient:
             json={"head": branch, "base": base, "title": title, "body": body},
         )
         resp.raise_for_status()
-        pr_url = resp.json()["html_url"]
+        pr_url: str = resp.json()["html_url"]
         emit_event(EventType.GITHUB_API, op="create_pr", pr_url=pr_url)
         return pr_url
 
@@ -49,9 +51,10 @@ class SandboxGitHubClient:
         resp.raise_for_status()
         emit_event(EventType.GITHUB_API, op="post_comment", issue_number=issue_number)
 
-    async def get_issue(self, issue_number: int) -> dict:
+    async def get_issue(self, issue_number: int) -> dict[str, Any]:
         """Fetch issue details."""
         assert self._client is not None
         resp = await self._client.get(f"/repos/{self._repo}/issues/{issue_number}")
         resp.raise_for_status()
-        return resp.json()
+        result: dict[str, Any] = resp.json()
+        return result

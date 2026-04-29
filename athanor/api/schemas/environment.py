@@ -4,7 +4,18 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from athanor.execution.auth_provider import RESERVED_ENV_KEYS  # noqa: F401  # re-exported
+from athanor.execution.auth_provider import RESERVED_ENV_KEYS  # re-exported
+
+__all__ = [
+    "RESERVED_ENV_KEYS",
+    "DetectResponse",
+    "DetectedEnvVar",
+    "EnvVarInput",
+    "EnvVarResponse",
+    "EnvironmentResponse",
+    "EnvironmentSetRequest",
+    "RevealResponse",
+]
 
 
 class EnvVarInput(BaseModel):

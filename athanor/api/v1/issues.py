@@ -1,5 +1,7 @@
 """Issues API — create, list, get, update, delete, triage, sync, and activity endpoints."""
 
+from typing import Any
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -36,7 +38,7 @@ async def create_issue(
     req: CreateIssueRequest,
     request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
-    sync=Depends(get_github_sync),
+    sync: Any = Depends(get_github_sync),
     executor: IssueExecutor = Depends(get_issue_executor),
 ) -> IssueResponse:
     issue_id = await issues.create(
@@ -86,6 +88,7 @@ async def create_issue(
                 logger.warning("github_sync_failed", issue_id=issue_id, exc_info=True)
 
     issue = await issues.get(issue_id)
+    assert issue is not None, "Newly created issue must exist"
     return IssueResponse(**issue)
 
 
@@ -163,7 +166,7 @@ async def update_issue(
     req: UpdateIssueRequest,
     request: Request,
     issues: IssuesRepository = Depends(get_issues_repo),
-    sync=Depends(get_github_sync),
+    sync: Any = Depends(get_github_sync),
 ) -> IssueResponse:
     existing = await issues.get(issue_id)
     if not existing:
@@ -209,6 +212,7 @@ async def update_issue(
                 logger.warning("github_sync_failed", issue_id=issue_id, exc_info=True)
 
     updated = await issues.get(issue_id)
+    assert updated is not None, "Updated issue must exist"
     return IssueResponse(**updated)
 
 
@@ -303,6 +307,7 @@ async def triage_issue(
         await issues.update(issue_id, status="open")
 
     updated = await issues.get(issue_id)
+    assert updated is not None, "Triaged issue must exist"
     return IssueResponse(**updated)
 
 
@@ -315,8 +320,8 @@ async def triage_issue(
 async def sync_issue(
     issue_id: str,
     issues: IssuesRepository = Depends(get_issues_repo),
-    sync=Depends(get_github_sync),
-) -> dict:
+    sync: Any = Depends(get_github_sync),
+) -> dict[str, object]:
     existing = await issues.get(issue_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Issue not found")
@@ -350,7 +355,7 @@ async def get_issue_activity(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     issues: IssuesRepository = Depends(get_issues_repo),
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     existing = await issues.get(issue_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Issue not found")
@@ -458,4 +463,5 @@ async def answer_issue_input(
         await _resume_pipeline(issue_id, issues, inputs, executor)
 
     updated = await inputs.get(input_id)
+    assert updated is not None, "Answered input must exist"
     return InputResponse(**updated)

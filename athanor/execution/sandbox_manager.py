@@ -115,7 +115,8 @@ class SandboxManager:
         try:
             with open(creds_path) as f:
                 creds = json.load(f)
-            token = creds.get("claudeAiOauth", {}).get("accessToken")
+            raw_token = creds.get("claudeAiOauth", {}).get("accessToken")
+            token: str | None = str(raw_token) if raw_token else None
             if token:
                 logger.info("claude_oauth_token_loaded")
             return token

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, List
 
 import structlog
 
@@ -210,7 +210,7 @@ class IssuesRepository:
             """,
             *args,
         )
-        return [dict(r) for r in rows], total or 0
+        return [dict(r) for r in rows], int(total or 0)
 
     async def update(self, issue_id: str, **fields: Any) -> None:
         """Update specific fields on an issue. updated_at is always refreshed.
@@ -262,7 +262,7 @@ class IssuesRepository:
         )
         logger.info("issue_updated", issue_id=issue_id, fields=list(valid.keys()))
 
-    async def get_children(self, parent_issue_id: str) -> list[dict[str, Any]]:
+    async def get_children(self, parent_issue_id: str) -> List[dict[str, Any]]:
         """Fetch all direct children of an issue."""
         rows = await self._db.fetch(
             """
@@ -337,7 +337,7 @@ class IssuesRepository:
         if parent and parent["status"] != new_status:
             await self.update(parent_id, status=new_status)
 
-    async def find_by_id_prefix(self, prefix: str) -> list[dict]:
+    async def find_by_id_prefix(self, prefix: str) -> List[dict[str, Any]]:
         """Return issues whose id starts with ``prefix``.
 
         Used by the PR-linking webhook to match a branch name like
@@ -362,7 +362,7 @@ class IssuesRepository:
         issue_id: str,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[dict[str, Any]]:
+    ) -> List[dict[str, Any]]:
         """Fetch audit log entries associated with an issue."""
         rows = await self._db.fetch(
             """

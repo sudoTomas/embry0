@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, List
 
 import structlog
 
@@ -144,7 +144,7 @@ class JobsRepository:
             f"SELECT * FROM jobs {where} ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
             *args,
         )
-        return [dict(r) for r in rows], total or 0
+        return [dict(r) for r in rows], int(total or 0)
 
     async def update(self, job_id: str, **fields: Any) -> None:
         """Update specific fields on a job. Validates status transitions."""
@@ -221,6 +221,7 @@ class JobsRepository:
             "pipeline",
             json_mod.dumps(event, default=str),
         )
+        assert row is not None, "INSERT ... RETURNING must return a row"
         return int(row["id"])
 
     async def fetch_active_sandbox_containers(self) -> set[str]:
@@ -260,7 +261,7 @@ class JobsRepository:
         stream: str = "pipeline",
         limit: int = 500,
         since_seq: int = 0,
-    ) -> list[dict[str, Any]]:
+    ) -> List[dict[str, Any]]:
         """Get pipeline events for a job, ordered chronologically by seq id.
 
         ``since_seq=N`` filters to rows with ``id > N`` — used as the WS replay

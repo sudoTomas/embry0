@@ -1,6 +1,7 @@
 """GitHub webhook handler."""
 
 import json as json_module
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -16,7 +17,7 @@ async def github_webhook(
     request: Request,
     x_github_event: str = Header(default=""),
     x_hub_signature_256: str = Header(default=""),
-) -> dict:
+) -> dict[str, Any]:
     config = request.app.state.config
     body = await request.body()
 
@@ -59,7 +60,7 @@ async def github_webhook(
                 trigger_labels=trigger_labels,
                 issue_executor=request.app.state.issue_executor,
             )
-            return result
+            return dict(result)
 
     # NOTE: To receive issue_comment events, add "Issue comments" to the GitHub
     # webhook event subscription at:

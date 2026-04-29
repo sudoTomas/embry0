@@ -105,7 +105,8 @@ def parse_event(line: str) -> dict[str, Any] | None:
     if not line:
         return None
     try:
-        return json.loads(line)
+        result: dict[str, Any] = json.loads(line)
+        return result
     except json.JSONDecodeError:
         logger.warning("event_parse_failed", line=line[:200])
         return None

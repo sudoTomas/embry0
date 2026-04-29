@@ -212,7 +212,7 @@ class ContainerReaper:
         self._docker = docker
         self._max_age_hours = max_age_hours
         self._interval = check_interval_seconds
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         self._db = db
         self._paused_ttl_hours = paused_ttl_hours
         self._jobs_repo = jobs_repo

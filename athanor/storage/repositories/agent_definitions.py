@@ -88,6 +88,7 @@ class AgentDefinitionsRepository:
             auth_mode,
         )
         logger.info("agent_definition_created", agent_type=agent_type)
+        assert row is not None, "INSERT ... RETURNING must return a row"
         return dict(row)
 
     async def update(self, agent_type: str, **fields: Any) -> dict[str, Any]:

@@ -6,7 +6,7 @@ router = APIRouter()
 
 
 @router.get("/health/ready")
-async def health_ready(request: Request) -> dict:
+async def health_ready(request: Request) -> dict[str, object]:
     checks: dict[str, str] = {}
     db = getattr(request.app.state, "db", None)
     if db and db.pool:

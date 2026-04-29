@@ -12,9 +12,11 @@ import asyncio
 import json
 import sys
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import structlog
+
+from langchain_core.runnables import RunnableConfig
 
 from athanor.agents.executor_factory import select_executor
 from athanor.agents.invocation import AgentInvocation
@@ -60,7 +62,7 @@ async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
     invocation = _invocation_from_config(config)
     executor = select_executor(invocation)
     # Inject a writer that serializes events to stdout (Athanor's wire format).
-    test_cfg = {"configurable": {}, "_test_writer": _emit}
+    test_cfg = cast(RunnableConfig, {"configurable": {}, "_test_writer": _emit})
     result = await executor.run(invocation, test_cfg)
     return {
         "agent_type": result.agent_type,

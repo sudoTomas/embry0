@@ -9,7 +9,7 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-def _passes_filter(event: dict, wanted: set[str]) -> bool:
+def _passes_filter(event: dict[str, object], wanted: set[str]) -> bool:
     """Return True if the event should be forwarded given the wanted type set.
 
     Empty ``wanted`` means "no filter" (everything passes). An event whose

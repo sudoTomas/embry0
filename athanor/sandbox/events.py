@@ -19,6 +19,7 @@ class EventType(StrEnum):
     PROGRESS = "progress"
     ERROR = "error"
     AGENT_ASK_USER = "agent_ask_user"
+    GITHUB_API = "github_api"
 
 
 def emit_event(event_type: str, **kwargs: Any) -> None:

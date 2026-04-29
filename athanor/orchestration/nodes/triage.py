@@ -7,7 +7,7 @@ Analyzes the issue/task and determines:
 """
 
 import json
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -77,7 +77,9 @@ def parse_triage_response(raw: str) -> TriageDecision:
         raise TriageParseError(f"Schema validation failed: {exc}") from exc
 
     # Return as TypedDict-shaped dict for downstream dict-based code.
-    return TriageDecision(**model.model_dump())
+    # cast() avoids the TypedDict(**dict[str, Any]) unsafe-expansion error;
+    # model_validate guarantees the dict has the correct shape.
+    return cast(TriageDecision, model.model_dump())
 
 
 async def apply_repo_preferences_override(
