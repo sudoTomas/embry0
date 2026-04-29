@@ -1,6 +1,8 @@
 """Integration test fixtures — requires running PostgreSQL."""
 
 import os
+import shutil
+import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -88,3 +90,17 @@ async def app(setup_database: str) -> AsyncIterator[AsyncClient]:
         transport = ASGITransport(app=fastapi_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
+
+
+@pytest.fixture(scope="session", autouse=False)
+def docker_available() -> None:
+    """Skip requires_docker tests when no Docker daemon is reachable."""
+    if shutil.which("docker") is None:
+        pytest.skip("Docker not available — skipping requires_docker tests")
+    result = subprocess.run(
+        ["docker", "info"],
+        capture_output=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        pytest.skip("Docker daemon not reachable — skipping requires_docker tests")

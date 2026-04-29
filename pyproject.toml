@@ -59,4 +59,5 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "sandbox_smoke: real-sandbox end-to-end tests. Run with `pytest -m sandbox_smoke`.",
+    "requires_docker: integration tests that need a real Docker daemon. Run with `pytest -m requires_docker`.",
 ]
