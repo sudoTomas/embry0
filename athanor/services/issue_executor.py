@@ -461,7 +461,7 @@ class IssueExecutor:
                 try:
                     from athanor.api.v1.environment import _decrypt_vars
 
-                    provider = self._secrets_provider
+                    provider = getattr(self, "_secrets_provider", None)
                     if provider is None:
                         # Fallback for test environments that construct IssueExecutor
                         # without a secrets_provider. Mirrors the legacy behaviour.
