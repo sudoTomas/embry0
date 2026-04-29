@@ -87,7 +87,7 @@ class TestGetIssue:
 class TestListIssues:
     @pytest.mark.asyncio
     async def test_list_empty(self, issues_repo: IssuesRepository):
-        rows, total = await issues_repo.list()
+        rows, total = await issues_repo.list_all()
         assert total == 0
         assert rows == []
 
@@ -97,11 +97,11 @@ class TestListIssues:
         id2 = await issues_repo.create(title="Closed issue")
         await issues_repo.update(id2, status="closed")
 
-        rows, total = await issues_repo.list(status="open")
+        rows, total = await issues_repo.list_all(status="open")
         assert total == 1
         assert rows[0]["id"] == id1
 
-        rows, total = await issues_repo.list(status="closed")
+        rows, total = await issues_repo.list_all(status="closed")
         assert total == 1
         assert rows[0]["id"] == id2
 
@@ -110,7 +110,7 @@ class TestListIssues:
         await issues_repo.create(title="Low priority", priority="low")
         await issues_repo.create(title="High priority", priority="high")
 
-        rows, total = await issues_repo.list(priority="high")
+        rows, total = await issues_repo.list_all(priority="high")
         assert total == 1
         assert rows[0]["title"] == "High priority"
 
@@ -119,7 +119,7 @@ class TestListIssues:
         await issues_repo.create(title="Repo A issue", repo="owner/repo-a")
         await issues_repo.create(title="Repo B issue", repo="owner/repo-b")
 
-        rows, total = await issues_repo.list(repo="owner/repo-a")
+        rows, total = await issues_repo.list_all(repo="owner/repo-a")
         assert total == 1
         assert rows[0]["repo"] == "owner/repo-a"
 
@@ -128,7 +128,7 @@ class TestListIssues:
         parent_id = await issues_repo.create(title="Parent")
         await issues_repo.create(title="Child", parent_issue_id=parent_id)
 
-        rows, total = await issues_repo.list(top_level_only=True)
+        rows, total = await issues_repo.list_all(top_level_only=True)
         assert total == 1
         assert rows[0]["id"] == parent_id
 
@@ -137,11 +137,11 @@ class TestListIssues:
         await issues_repo.create(title="Fix the login bug", body="Users cannot log in")
         await issues_repo.create(title="Add dark mode", body="Feature request")
 
-        rows, total = await issues_repo.list(search="login")
+        rows, total = await issues_repo.list_all(search="login")
         assert total == 1
         assert rows[0]["title"] == "Fix the login bug"
 
-        rows, total = await issues_repo.list(search="feature")
+        rows, total = await issues_repo.list_all(search="feature")
         assert total == 1
         assert rows[0]["title"] == "Add dark mode"
 
@@ -150,11 +150,11 @@ class TestListIssues:
         for i in range(5):
             await issues_repo.create(title=f"Issue {i}")
 
-        rows, total = await issues_repo.list(limit=2, offset=0)
+        rows, total = await issues_repo.list_all(limit=2, offset=0)
         assert total == 5
         assert len(rows) == 2
 
-        rows2, total2 = await issues_repo.list(limit=2, offset=2)
+        rows2, total2 = await issues_repo.list_all(limit=2, offset=2)
         assert total2 == 5
         assert len(rows2) == 2
 

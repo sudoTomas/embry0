@@ -17,7 +17,7 @@ def app():
     mock_db.fetch = AsyncMock(return_value=[])
     app.state.db = mock_db
     mock_traces = MagicMock()
-    mock_traces.list = AsyncMock(return_value=([], 0))
+    mock_traces.list_all = AsyncMock(return_value=([], 0))
     app.state.traces_repo = mock_traces
     mock_jobs = MagicMock()
     mock_jobs.queue_summary = AsyncMock(

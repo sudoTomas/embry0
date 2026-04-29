@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 import structlog
-
 from langchain_core.runnables import RunnableConfig
 
 from athanor.agents.executor_factory import select_executor

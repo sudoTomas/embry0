@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, List
+from typing import Any
 
 import structlog
 
@@ -59,7 +59,7 @@ class TracesRepository:
             return None
         return dict(row)
 
-    async def list(
+    async def list_all(
         self,
         job_id: str | None = None,
         agent_type: str | None = None,
@@ -96,7 +96,7 @@ class TracesRepository:
         )
         return [dict(r) for r in rows], int(total or 0)
 
-    async def sum_by_agent_for_job(self, job_id: str) -> List[dict[str, Any]]:
+    async def sum_by_agent_for_job(self, job_id: str) -> list[dict[str, Any]]:
         """Aggregate traces by (agent_type, model) with cost + duration totals.
 
         Used to surface per-agent cost breakdown on GET /api/v1/jobs/{id}.

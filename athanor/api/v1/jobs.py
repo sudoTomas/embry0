@@ -48,7 +48,7 @@ async def list_jobs(
     offset: int = Query(default=0, ge=0),
     jobs: JobsRepository = Depends(get_jobs_repo),
 ) -> JobListResponse:
-    rows, total = await jobs.list(status=status, repo=repo, limit=limit, offset=offset)
+    rows, total = await jobs.list_all(status=status, repo=repo, limit=limit, offset=offset)
     return JobListResponse(jobs=[JobResponse(**r) for r in rows], total=total, offset=offset, limit=limit)
 
 

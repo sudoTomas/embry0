@@ -112,7 +112,7 @@ async def list_issues(
     issues: IssuesRepository = Depends(get_issues_repo),
 ) -> IssueListResponse:
     top_level_only = parent_issue_id == "__top_level__"
-    rows, total = await issues.list(
+    rows, total = await issues.list_all(
         status=status,
         priority=priority,
         repo=repo,
@@ -150,7 +150,7 @@ async def get_issue(
     children_rows = await issues.get_children(issue_id)
     children = [IssueResponse(**c) for c in children_rows]
 
-    issue_jobs, _ = await jobs.list(issue_id=issue_id, limit=100, offset=0)
+    issue_jobs, _ = await jobs.list_all(issue_id=issue_id, limit=100, offset=0)
 
     return IssueDetailResponse(**issue, children=children, jobs=issue_jobs)
 
@@ -238,7 +238,7 @@ async def delete_issue(
 
     all_issue_ids = [issue_id] + [c["id"] for c in children]
     for iid in all_issue_ids:
-        issue_jobs, _ = await jobs.list(issue_id=iid, limit=100, offset=0)
+        issue_jobs, _ = await jobs.list_all(issue_id=iid, limit=100, offset=0)
         for j in issue_jobs:
             if j["status"] in ("pending", "running", "awaiting_input"):
                 await jobs.update(j["job_id"], status="cancelled")
@@ -388,7 +388,7 @@ async def _resume_pipeline(
 
     # Find the awaiting_input job and resume from its checkpoint
     jobs_repo = executor._jobs
-    jobs_list, _ = await jobs_repo.list(issue_id=issue_id, limit=10, offset=0)
+    jobs_list, _ = await jobs_repo.list_all(issue_id=issue_id, limit=10, offset=0)
     awaiting_jobs = [j for j in jobs_list if j["status"] == "awaiting_input"]
 
     if awaiting_jobs:

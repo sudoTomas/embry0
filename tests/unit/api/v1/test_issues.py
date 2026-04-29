@@ -46,7 +46,7 @@ def app():
     mock_executor._track_task = MagicMock()
     mock_executor.resume = MagicMock()
     mock_executor._jobs = MagicMock()
-    mock_executor._jobs.list = AsyncMock(return_value=([], 0))
+    mock_executor._jobs.list_all = AsyncMock(return_value=([], 0))
     app.state.issue_executor = mock_executor
 
     return app

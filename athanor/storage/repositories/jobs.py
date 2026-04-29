@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, List
+from typing import Any
 
 import structlog
 
@@ -109,7 +109,7 @@ class JobsRepository:
             return None
         return dict(row)
 
-    async def list(
+    async def list_all(
         self,
         status: str | None = None,
         repo: str | None = None,
@@ -261,7 +261,7 @@ class JobsRepository:
         stream: str = "pipeline",
         limit: int = 500,
         since_seq: int = 0,
-    ) -> List[dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get pipeline events for a job, ordered chronologically by seq id.
 
         ``since_seq=N`` filters to rows with ``id > N`` — used as the WS replay

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, List
+from typing import Any
 
 import structlog
 
@@ -139,7 +139,7 @@ class IssuesRepository:
             return None
         return dict(row)
 
-    async def list(
+    async def list_all(
         self,
         status: str | None = None,
         priority: str | None = None,
@@ -262,7 +262,7 @@ class IssuesRepository:
         )
         logger.info("issue_updated", issue_id=issue_id, fields=list(valid.keys()))
 
-    async def get_children(self, parent_issue_id: str) -> List[dict[str, Any]]:
+    async def get_children(self, parent_issue_id: str) -> list[dict[str, Any]]:
         """Fetch all direct children of an issue."""
         rows = await self._db.fetch(
             """
@@ -337,7 +337,7 @@ class IssuesRepository:
         if parent and parent["status"] != new_status:
             await self.update(parent_id, status=new_status)
 
-    async def find_by_id_prefix(self, prefix: str) -> List[dict[str, Any]]:
+    async def find_by_id_prefix(self, prefix: str) -> list[dict[str, Any]]:
         """Return issues whose id starts with ``prefix``.
 
         Used by the PR-linking webhook to match a branch name like
@@ -362,7 +362,7 @@ class IssuesRepository:
         issue_id: str,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch audit log entries associated with an issue."""
         rows = await self._db.fetch(
             """

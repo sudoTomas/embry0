@@ -23,7 +23,7 @@ def app():
             "budget_overrun_usd": 0.0,
         }
     )
-    mock_jobs.list = AsyncMock(
+    mock_jobs.list_all = AsyncMock(
         return_value=(
             [
                 {

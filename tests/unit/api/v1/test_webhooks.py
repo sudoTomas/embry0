@@ -189,7 +189,7 @@ async def test_pr_webhook_uses_prefix_lookup(app):
     mock_issues_repo = MagicMock()
     mock_issues_repo.find_by_id_prefix = AsyncMock(return_value=[{"id": "iss-abc12345efgh"}])
     mock_jobs_repo = MagicMock()
-    mock_jobs_repo.list = AsyncMock(return_value=([{"job_id": "job-1", "pr_url": None, "status": "running"}], 1))
+    mock_jobs_repo.list_all = AsyncMock(return_value=([{"job_id": "job-1", "pr_url": None, "status": "running"}], 1))
     mock_jobs_repo.update = AsyncMock()
     app.state.issues_repo = mock_issues_repo
     app.state.jobs_repo = mock_jobs_repo

@@ -39,7 +39,7 @@ async def test_list_jobs_with_filter(jobs_repo: JobsRepository):
     await jobs_repo.create(repo="a/b", task="Task 2")
     await jobs_repo.create(repo="c/d", task="Task 3")
 
-    rows, total = await jobs_repo.list(repo="a/b")
+    rows, total = await jobs_repo.list_all(repo="a/b")
     assert total == 2
     assert len(rows) == 2
 

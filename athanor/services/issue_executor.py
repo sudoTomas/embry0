@@ -149,7 +149,7 @@ class IssueExecutor:
             raise ValueError(f"Issue {issue_id} not found")
 
         # Concurrency guard: reject if a job is already active for this issue
-        active_jobs, _ = await self._jobs.list(issue_id=issue_id, limit=10, offset=0)
+        active_jobs, _ = await self._jobs.list_all(issue_id=issue_id, limit=10, offset=0)
         active_statuses = {"pending", "running", "awaiting_input", "paused"}
         for existing_job in active_jobs:
             if existing_job["status"] in active_statuses:

@@ -450,7 +450,7 @@ async def test_execute_generates_trace_id_and_passes_to_jobs_create(monkeypatch)
     executor._issues = issues
 
     jobs = MagicMock()
-    jobs.list = AsyncMock(return_value=([], 0))
+    jobs.list_all = AsyncMock(return_value=([], 0))
     jobs.create = AsyncMock(return_value="job-abc")
     executor._jobs = jobs
 

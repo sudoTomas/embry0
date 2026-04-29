@@ -124,7 +124,7 @@ async def github_webhook(
                     matched = await issues_repo.find_by_id_prefix(f"iss-{issue_id_prefix}")
                     if matched:
                         issue = matched[0]
-                        jobs_list, _ = await jobs_repo.list(issue_id=issue["id"], limit=10, offset=0)
+                        jobs_list, _ = await jobs_repo.list_all(issue_id=issue["id"], limit=10, offset=0)
                         for job in jobs_list:
                             if not job.get("pr_url"):
                                 await jobs_repo.update(job["job_id"], pr_url=pr_url)

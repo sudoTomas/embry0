@@ -51,7 +51,7 @@ async def test_list_traces_by_job(repos: tuple[JobsRepository, TracesRepository]
     await traces_repo.create(job_id=job_id, agent_type="developer", model="sonnet", result="pass")
     await traces_repo.create(job_id=job_id, agent_type="validator", model="haiku", result="pass")
 
-    rows, total = await traces_repo.list(job_id=job_id)
+    rows, total = await traces_repo.list_all(job_id=job_id)
     assert total == 2
     assert len(rows) == 2
 

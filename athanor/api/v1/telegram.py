@@ -17,7 +17,7 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-@router.post("/telegram/callback")
+@router.post("/telegram/callback", response_model=None)
 async def telegram_callback(request: Request) -> Response | dict[str, Any]:
     """Handle incoming Telegram update events.
 
