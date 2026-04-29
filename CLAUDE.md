@@ -43,3 +43,35 @@
 - Git auth flows via the credential proxy: a `git-proxy` container running in DinD on the `sandbox-restricted` network injects the orchestrator's `GITHUB_TOKEN` when the sandbox's git credential helper curls `$ATHANOR_GIT_PROXY_URL/git-credentials` (which resolves to `http://git-proxy:9101` via Docker DNS). `GITHUB_TOKEN` never enters the sandbox env. The proxy is managed by `ProxyManager` in `athanor/execution/proxy/manager.py`.
 - Read-only rootfs is disabled (`read_only_root: False`) because Claude CLI needs writable fs.
 - **Proxy enrollment.** As of 2026-04-28, the credential proxies (git-proxy, github-proxy, auth-proxy) require a per-sandbox bearer token enrolled via the orchestrator. The shared admin secret `PROXY_ADMIN_TOKEN` (`.env`) gates the proxies' `/admin/enroll` endpoints. Required in production; auto-generated in `AUTH_DEV_MODE=true` or `WEBHOOK_DEV_MODE=true` with a warning. Generate with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`.
+
+## Postgres Backup / Restore
+
+Athanor runs a daily `pg_dump` via the `athanor-postgres-backup` compose service. Backups are stored in the `backup-data` named volume:
+
+- `/backups/daily/` — 7 most recent daily dumps
+- `/backups/weekly/` — 4 most recent Sunday dumps
+- `/backups/monthly/` — 6 most recent month-end dumps
+- `/backups/last/` — symlink to the most recent dump
+
+**Restore from the latest backup:**
+```bash
+# List available backups
+docker exec athanor-postgres-backup ls -lh /backups/last/
+
+# Restore (replace <pass> with actual POSTGRES_PASSWORD from .env)
+LATEST=$(docker exec athanor-postgres-backup ls /backups/last/ | sort -r | head -1)
+docker exec athanor-postgres-backup sh -c \
+  "gunzip -c /backups/last/${LATEST} | psql postgresql://athanor:<pass>@postgres:5432/athanor"
+```
+
+**Upgrading POSTGRES_PASSWORD on a live deploy:**
+```bash
+# 1. Update password inside Postgres
+docker exec athanor-postgres psql -U athanor -c "ALTER USER athanor PASSWORD '<new-password>';"
+
+# 2. Update .env: POSTGRES_PASSWORD=<new-password>
+# 3. Recreate orchestrator and backup containers (postgres keeps running)
+cd infra && docker compose up -d --force-recreate orchestrator postgres-backup
+```
+
+Note: The `backup-data` volume persists across redeployments. Rotate backup credentials by updating `POSTGRES_PASSWORD` (above) — the backup container reads it from the environment.

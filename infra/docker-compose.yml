@@ -96,6 +96,31 @@ services:
         max-file: "3"
     restart: unless-stopped
 
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:16
+    container_name: athanor-postgres-backup
+    restart: unless-stopped
+    volumes:
+      - backup-data:/backups
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: "${POSTGRES_DB:-athanor}"
+      POSTGRES_USER: "${POSTGRES_USER:-athanor}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: "7"
+      BACKUP_KEEP_WEEKS: "4"
+      BACKUP_KEEP_MONTHS: "6"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   dind:
     image: docker:27-dind
     container_name: athanor-dind
@@ -176,6 +201,7 @@ volumes:
   dind-certs-ca:
   dind-certs-client:
   dind-storage:
+  backup-data:
 
 networks:
   frontend:
