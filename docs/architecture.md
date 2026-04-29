@@ -554,7 +554,7 @@ erDiagram
     jobs {
         string job_id PK
         string status "pending|running|completed|failed|cancelled|awaiting_input|paused|expired|pr_merged|pr_closed"
-        string error_code "ERR_AGENT_TIMEOUT|ERR_NO_RESULT|ERR_BUDGET_OVERRUN|ERR_MAX_RETRIES|ERR_TRIAGE_MALFORMED|ERR_ORPHANED|ERR_WORKFLOW_UNKNOWN|ERR_SANDBOX_INIT|ERR_DOCKER_TIMEOUT|ERR_MAX_AGENT_QUESTIONS|ERR_UNKNOWN"
+        string error_code "ERR_AGENT_TIMEOUT|ERR_NO_RESULT|ERR_BUDGET_OVERRUN|ERR_MAX_RETRIES|ERR_TRIAGE_MALFORMED|ERR_ORPHANED|ERR_WORKFLOW_UNKNOWN|ERR_SANDBOX_INIT|ERR_DOCKER_TIMEOUT|ERR_MAX_AGENT_QUESTIONS|ERR_MAX_TRIAGE_QUESTIONS|ERR_UNKNOWN"
         string trace_id "trc-<12hex> — grep key for the full job timeline"
         string repo
         string task
@@ -733,6 +733,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_SANDBOX_INIT` | Sandbox container creation failed. |
 | `ERR_DOCKER_TIMEOUT` | An underlying Docker command timed out. |
 | `ERR_MAX_AGENT_QUESTIONS` | Agent exceeded the 5-round `ask_user` cap (see Plan L). |
+| `ERR_MAX_TRIAGE_QUESTIONS` | Triage exceeded the 5-round needs_info cap (Plan C / B6). |
 | `ERR_UNKNOWN` | Uncategorised — dashboards should alert on growth. |
 
 ---
