@@ -14,6 +14,22 @@ jobs:
   backend:
     name: Backend Lint & Test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.6-alpine
+        env:
+          POSTGRES_USER: athanor
+          POSTGRES_PASSWORD: athanor_ci
+          POSTGRES_DB: athanor_unit_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      TEST_DATABASE_URL: postgresql://athanor:athanor_ci@localhost:5432/athanor_unit_test
     steps:
       - uses: actions/checkout@v4
 
