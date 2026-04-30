@@ -67,9 +67,7 @@ async def sweep_orphan_checkpoints(database_url: str) -> int:
     try:
         async with conn.transaction():
             for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
-                result = await conn.execute(
-                    f"DELETE FROM {table} WHERE thread_id NOT IN (SELECT job_id FROM jobs)"
-                )
+                result = await conn.execute(f"DELETE FROM {table} WHERE thread_id NOT IN (SELECT job_id FROM jobs)")
                 # result is a string like "DELETE 5"; parse the count
                 try:
                     n = int(result.split()[-1])

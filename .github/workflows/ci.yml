@@ -201,7 +201,7 @@ jobs:
           config: .hadolint.yaml
 
       - name: Trivy — orchestrator
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: athanor-orchestrator:ci
           format: table
@@ -209,7 +209,7 @@ jobs:
           severity: CRITICAL,HIGH
 
       - name: Trivy — sandbox
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: athanor-sandbox:ci
           format: table
@@ -217,7 +217,7 @@ jobs:
           severity: CRITICAL,HIGH
 
       - name: Trivy — proxy
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: athanor-proxy:ci
           format: table
@@ -225,7 +225,7 @@ jobs:
           severity: CRITICAL,HIGH
 
       - name: Trivy — frontend
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: athanor-frontend:ci
           format: table

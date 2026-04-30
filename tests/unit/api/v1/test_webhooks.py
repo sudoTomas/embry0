@@ -12,7 +12,9 @@ from athanor.config import AthanorConfig
 
 @pytest.fixture
 def app():
-    config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret="test-secret")
+    config = AthanorConfig(
+        _env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret="test-secret"
+    )
     app = create_app(config)
     # Mock required state
     mock_issues_repo = MagicMock()
@@ -67,7 +69,9 @@ async def test_webhook_invalid_signature(app):
 @pytest.mark.asyncio
 async def test_webhook_no_secret_dev_mode_accepts(app):
     """DEV_MODE=true and no secret configured: accept (smee.io local dev flow)."""
-    app.state.config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret="")
+    app.state.config = AthanorConfig(
+        _env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret=""
+    )
     payload = json.dumps({"action": "opened", "issue": {"number": 1}, "repository": {"full_name": "o/r"}}).encode()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -86,7 +90,9 @@ async def test_webhook_no_secret_dev_mode_accepts(app):
 async def test_webhook_smee_envelope_unwrapped(app):
     """Smee.io wraps the real payload in {'payload': '<json-string>'}. Handler must unwrap."""
     # Dev-mode app with NO secret, simulating local smee flow
-    app.state.config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret="")
+    app.state.config = AthanorConfig(
+        _env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret=""
+    )
 
     real_payload = {"action": "labeled", "issue": {"number": 42}, "repository": {"full_name": "o/r"}}
     smee_envelope = {"payload": json.dumps(real_payload)}
@@ -113,7 +119,9 @@ async def test_webhook_smee_envelope_unwrapped(app):
 @pytest.mark.asyncio
 async def test_webhook_dev_mode_no_secret_accepts_unsigned(app):
     """DEV_MODE=true with no secret accepts unsigned webhooks (smee flow)."""
-    app.state.config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret="")
+    app.state.config = AthanorConfig(
+        _env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret=""
+    )
     payload = json.dumps({"action": "opened", "issue": {"number": 1}, "repository": {"full_name": "o/r"}}).encode()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -131,7 +139,9 @@ async def test_webhook_dev_mode_no_secret_accepts_unsigned(app):
 @pytest.mark.asyncio
 async def test_webhook_prod_mode_no_secret_rejects_with_503(app):
     """Without dev_mode and no secret, webhook is rejected with 503."""
-    app.state.config = AthanorConfig(_env_file=None, auth_dev_mode=False, webhook_dev_mode=False, github_webhook_secret="")
+    app.state.config = AthanorConfig(
+        _env_file=None, auth_dev_mode=False, webhook_dev_mode=False, github_webhook_secret=""
+    )
     payload = b'{"action": "opened"}'
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -154,7 +164,9 @@ async def test_webhook_non_envelope_payload_field_preserved(app):
     the intended fallback behavior. Without this test a refactor that changes the fallback to
     raise 400 would go unnoticed.
     """
-    app.state.config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret="")
+    app.state.config = AthanorConfig(
+        _env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret=""
+    )
     real = {
         "action": "labeled",
         "payload": "not-json-at-all",  # looks like a smee envelope field but isn't
@@ -185,7 +197,9 @@ async def test_webhook_non_envelope_payload_field_preserved(app):
 async def test_pr_webhook_uses_prefix_lookup(app):
     """PR-linking now uses a single SQL prefix query, not a 100-issue scan."""
     # Use dev-mode + no secret so the test doesn't need to sign the payload.
-    app.state.config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret="")
+    app.state.config = AthanorConfig(
+        _env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret=""
+    )
     mock_issues_repo = MagicMock()
     mock_issues_repo.find_by_id_prefix = AsyncMock(return_value=[{"id": "iss-abc12345efgh"}])
     mock_jobs_repo = MagicMock()
@@ -194,15 +208,17 @@ async def test_pr_webhook_uses_prefix_lookup(app):
     app.state.issues_repo = mock_issues_repo
     app.state.jobs_repo = mock_jobs_repo
 
-    payload = json.dumps({
-        "action": "opened",
-        "repository": {"full_name": "o/r"},
-        "pull_request": {
-            "html_url": "https://github.com/o/r/pull/1",
-            "head": {"ref": "athanor/abc12345-fix-bug"},
-            "merged": False,
-        },
-    }).encode()
+    payload = json.dumps(
+        {
+            "action": "opened",
+            "repository": {"full_name": "o/r"},
+            "pull_request": {
+                "html_url": "https://github.com/o/r/pull/1",
+                "head": {"ref": "athanor/abc12345-fix-bug"},
+                "merged": False,
+            },
+        }
+    ).encode()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -223,22 +239,26 @@ async def test_pr_webhook_uses_prefix_lookup(app):
 @pytest.mark.asyncio
 async def test_pr_webhook_no_matching_issue_returns_ignored(app):
     """PR-linking returns 'ignored' and logs when no matching issue found."""
-    app.state.config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret="")
+    app.state.config = AthanorConfig(
+        _env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret=""
+    )
     mock_issues_repo = MagicMock()
     mock_issues_repo.find_by_id_prefix = AsyncMock(return_value=[])
     mock_jobs_repo = MagicMock()
     app.state.issues_repo = mock_issues_repo
     app.state.jobs_repo = mock_jobs_repo
 
-    payload = json.dumps({
-        "action": "opened",
-        "repository": {"full_name": "o/r"},
-        "pull_request": {
-            "html_url": "https://github.com/o/r/pull/2",
-            "head": {"ref": "athanor/zzzzz-unknown"},
-            "merged": False,
-        },
-    }).encode()
+    payload = json.dumps(
+        {
+            "action": "opened",
+            "repository": {"full_name": "o/r"},
+            "pull_request": {
+                "html_url": "https://github.com/o/r/pull/2",
+                "head": {"ref": "athanor/zzzzz-unknown"},
+                "merged": False,
+            },
+        }
+    ).encode()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -264,7 +284,9 @@ async def test_webhook_does_not_recursively_unwrap_nested_envelopes(app):
     silently recursively unwrapped — preventing unexpected attack surface if a
     crafted payload is ever delivered via an unsigned route.
     """
-    app.state.config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret="")
+    app.state.config = AthanorConfig(
+        _env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_webhook_secret=""
+    )
 
     inner_payload = {"action": "opened", "issue": {"number": 1}, "repository": {"full_name": "o/r"}}
     # A single envelope whose inner "payload" string is itself a valid envelope

@@ -194,7 +194,7 @@ class DockerClient:
                 f"(inspect error: {exc})"
             ) from exc
 
-        opts = (restricted.get("Options") or {})
+        opts = restricted.get("Options") or {}
         masq = opts.get("com.docker.network.bridge.enable_ip_masquerade")
         if masq != "false":
             raise RuntimeError(

@@ -22,7 +22,9 @@ async def get_repo_preferences(owner: str, repo: str, request: Request) -> RepoP
 
 
 @router.put("/repos/{owner}/{repo}/preferences", response_model=RepoPreferencesResponse)
-async def put_repo_preferences(owner: str, repo: str, req: RepoPreferencesUpdateRequest, request: Request) -> RepoPreferencesResponse:
+async def put_repo_preferences(
+    owner: str, repo: str, req: RepoPreferencesUpdateRequest, request: Request
+) -> RepoPreferencesResponse:
     # Validate sandbox_profile exists if provided. The orchestrator attaches
     # the repository as ``profiles_repo`` on app.state (see athanor/api/app.py).
     if req.sandbox_profile:

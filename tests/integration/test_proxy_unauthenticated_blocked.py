@@ -27,28 +27,34 @@ class TestProxyUnauthenticatedBlocked:
 
         result = subprocess.run(
             [
-                "docker", "run", "-d",
-                "--name", f"test-git-proxy-unauth-{secrets.token_hex(4)}",
-                "-e", "PROXY_TYPE=git",
-                "-e", "LISTEN_PORT=9101",
-                "-e", f"PROXY_ADMIN_TOKEN={admin_token}",
-                "-e", f"GITHUB_TOKEN={fake_github_token}",
-                "-p", "0:9101",
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                f"test-git-proxy-unauth-{secrets.token_hex(4)}",
+                "-e",
+                "PROXY_TYPE=git",
+                "-e",
+                "LISTEN_PORT=9101",
+                "-e",
+                f"PROXY_ADMIN_TOKEN={admin_token}",
+                "-e",
+                f"GITHUB_TOKEN={fake_github_token}",
+                "-p",
+                "0:9101",
                 "athanor-proxy:latest",
             ],
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
-            pytest.skip(
-                f"Could not start proxy container (is athanor-proxy:latest built?): "
-                f"{result.stderr}"
-            )
+            pytest.skip(f"Could not start proxy container (is athanor-proxy:latest built?): {result.stderr}")
         container_id = result.stdout.strip()
 
         port_result = subprocess.run(
             ["docker", "port", container_id, "9101"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         host_port = port_result.stdout.strip().split(":")[-1]
         proxy_url = f"http://localhost:{host_port}"
@@ -62,9 +68,7 @@ class TestProxyUnauthenticatedBlocked:
                     f"{proxy_url}/git-credentials",
                     timeout=aiohttp.ClientTimeout(total=10),
                 )
-                assert resp.status == 401, (
-                    f"Expected 401 for unauthenticated request but got {resp.status}"
-                )
+                assert resp.status == 401, f"Expected 401 for unauthenticated request but got {resp.status}"
                 body = await resp.text()
                 # The response must NOT contain the GitHub token value
                 assert fake_github_token not in body, (
@@ -81,13 +85,21 @@ class TestProxyUnauthenticatedBlocked:
 
         result = subprocess.run(
             [
-                "docker", "run", "-d",
-                "--name", f"test-git-proxy-admin-{secrets.token_hex(4)}",
-                "-e", "PROXY_TYPE=git",
-                "-e", "LISTEN_PORT=9101",
-                "-e", f"PROXY_ADMIN_TOKEN={admin_token}",
-                "-e", "GITHUB_TOKEN=ghp_fake",
-                "-p", "0:9101",
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                f"test-git-proxy-admin-{secrets.token_hex(4)}",
+                "-e",
+                "PROXY_TYPE=git",
+                "-e",
+                "LISTEN_PORT=9101",
+                "-e",
+                f"PROXY_ADMIN_TOKEN={admin_token}",
+                "-e",
+                "GITHUB_TOKEN=ghp_fake",
+                "-p",
+                "0:9101",
                 "athanor-proxy:latest",
             ],
             capture_output=True,
@@ -99,7 +111,8 @@ class TestProxyUnauthenticatedBlocked:
 
         port_result = subprocess.run(
             ["docker", "port", container_id, "9101"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         host_port = port_result.stdout.strip().split(":")[-1]
         proxy_url = f"http://localhost:{host_port}"
@@ -114,8 +127,6 @@ class TestProxyUnauthenticatedBlocked:
                     headers={"X-Admin-Token": "wrong-admin-token"},
                     timeout=aiohttp.ClientTimeout(total=10),
                 )
-                assert resp.status == 401, (
-                    f"Expected 401 for wrong admin token but got {resp.status}"
-                )
+                assert resp.status == 401, f"Expected 401 for wrong admin token but got {resp.status}"
         finally:
             subprocess.run(["docker", "rm", "-f", container_id], capture_output=True)

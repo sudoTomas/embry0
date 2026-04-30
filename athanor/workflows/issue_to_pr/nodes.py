@@ -222,6 +222,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
 
             try:
                 from typing import cast as _cast
+
                 triage_dict: dict[str, Any] = _cast(dict[str, Any], parse_triage_response(last.get("output", "")))
                 triage_dict = await apply_repo_preferences_override(
                     triage_dict,
@@ -270,9 +271,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     if pending_questions:
         from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
 
-        exhausted, cap_updates = _enforce_ask_user_cap(
-            state, pending_questions, job_id_for_log=state.get("job_id")
-        )
+        exhausted, cap_updates = _enforce_ask_user_cap(state, pending_questions, job_id_for_log=state.get("job_id"))
         if exhausted:
             writer({"type": "node_completed", "node": "triage", "action": "failed"})
             return Command(goto="max_retries", update=cap_updates)
@@ -362,6 +361,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
 
                 try:
                     from typing import cast as _cast
+
                     triage_dict2: dict[str, Any] = _cast(dict[str, Any], parse_triage_response(last.get("output", "")))
                     triage_dict2 = await apply_repo_preferences_override(
                         triage_dict2,
@@ -642,9 +642,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     if pending_questions:
         from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
 
-        exhausted, cap_updates = _enforce_ask_user_cap(
-            state, pending_questions, job_id_for_log=state.get("job_id")
-        )
+        exhausted, cap_updates = _enforce_ask_user_cap(state, pending_questions, job_id_for_log=state.get("job_id"))
         updates.update(cap_updates)
         if exhausted:
             pass  # current_stage and error fields already set in updates
@@ -792,9 +790,7 @@ Return ONLY a JSON object:
     if pending_questions:
         from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
 
-        exhausted, cap_updates = _enforce_ask_user_cap(
-            state, pending_questions, job_id_for_log=state.get("job_id")
-        )
+        exhausted, cap_updates = _enforce_ask_user_cap(state, pending_questions, job_id_for_log=state.get("job_id"))
         updates.update(cap_updates)
         if exhausted:
             pass  # terminal failure shape already in updates

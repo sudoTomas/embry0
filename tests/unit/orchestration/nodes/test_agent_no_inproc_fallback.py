@@ -36,9 +36,7 @@ async def test_no_runner_call_attempted_when_runner_none():
     state = {"job_id": "job-test-2"}
 
     poison_runner = MagicMock()
-    poison_runner.run = AsyncMock(
-        side_effect=AssertionError("must not be called when runner is None")
-    )
+    poison_runner.run = AsyncMock(side_effect=AssertionError("must not be called when runner is None"))
 
     with pytest.raises(SandboxRequiredError):
         await run_agent_node(

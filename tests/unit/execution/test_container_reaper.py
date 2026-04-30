@@ -20,11 +20,13 @@ async def test_reaps_old_container_with_no_active_job():
     docker._build_base_cmd = MagicMock(return_value=["docker"])
     docker.build_stop_cmd = MagicMock(return_value=["docker", "stop"])
     docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
-    docker.run_cmd = AsyncMock(side_effect=[
-        f"abc123\tsandbox-job-1\t{_ago(48)}",  # ps -a output
-        "",  # stop
-        "",  # rm
-    ])
+    docker.run_cmd = AsyncMock(
+        side_effect=[
+            f"abc123\tsandbox-job-1\t{_ago(48)}",  # ps -a output
+            "",  # stop
+            "",  # rm
+        ]
+    )
     jobs_repo = MagicMock()
     jobs_repo.fetch_active_sandbox_containers = AsyncMock(return_value=set())
     reaper = ContainerReaper(docker, max_age_hours=24, jobs_repo=jobs_repo)
@@ -93,11 +95,13 @@ async def test_reaps_old_container_with_non_utc_tz_abbrev():
     # Same timestamp as _ago(48), but with EDT suffix and -0400 offset
     t = datetime.now(UTC) - timedelta(hours=48)
     edt = t.strftime("%Y-%m-%d %H:%M:%S -0400 EDT")
-    docker.run_cmd = AsyncMock(side_effect=[
-        f"abc123\tsandbox-job-1\t{edt}",
-        "",
-        "",
-    ])
+    docker.run_cmd = AsyncMock(
+        side_effect=[
+            f"abc123\tsandbox-job-1\t{edt}",
+            "",
+            "",
+        ]
+    )
     jobs_repo = MagicMock()
     jobs_repo.fetch_active_sandbox_containers = AsyncMock(return_value=set())
     reaper = ContainerReaper(docker, max_age_hours=24, jobs_repo=jobs_repo)

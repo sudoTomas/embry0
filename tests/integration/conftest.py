@@ -109,9 +109,7 @@ def pytest_collection_modifyitems(items: list[Any], config: Any) -> None:
     """Auto-skip any test marked requires_docker when Docker is unavailable."""
     if _is_docker_available():
         return
-    skip_marker = pytest.mark.skip(
-        reason="Docker not available or daemon not reachable"
-    )
+    skip_marker = pytest.mark.skip(reason="Docker not available or daemon not reachable")
     for item in items:
         if item.get_closest_marker("requires_docker"):
             item.add_marker(skip_marker)

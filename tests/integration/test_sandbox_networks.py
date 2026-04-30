@@ -54,9 +54,7 @@ class TestSandboxNetworks:
                 capture_output=True,
                 text=True,
             )
-            assert inspect.returncode == 0, (
-                f"Network '{net}' not found after running setup script."
-            )
+            assert inspect.returncode == 0, f"Network '{net}' not found after running setup script."
 
     def test_setup_script_is_idempotent(self):
         """Running setup-sandbox-networks.sh a second time succeeds (networks exist)."""
@@ -87,19 +85,24 @@ class TestSandboxNetworks:
             timeout=30,
         )
         if setup.returncode != 0:
-            pytest.skip(
-                f"setup-sandbox-networks.sh failed, cannot run egress test: "
-                f"{setup.stderr}"
-            )
+            pytest.skip(f"setup-sandbox-networks.sh failed, cannot run egress test: {setup.stderr}")
 
         # Launch a minimal container on the restricted network and attempt
         # an outbound connection. wget exits non-zero on timeout.
         result = subprocess.run(
             [
-                "docker", "run", "--rm",
-                "--network", "sandbox-restricted",
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "sandbox-restricted",
                 "alpine:3.20",
-                "wget", "-T", "5", "-q", "-O", "-",
+                "wget",
+                "-T",
+                "5",
+                "-q",
+                "-O",
+                "-",
                 "https://example.com",
             ],
             capture_output=True,
@@ -123,18 +126,23 @@ class TestSandboxNetworks:
             timeout=30,
         )
         if setup.returncode != 0:
-            pytest.skip(
-                f"setup-sandbox-networks.sh failed, cannot run egress test: "
-                f"{setup.stderr}"
-            )
+            pytest.skip(f"setup-sandbox-networks.sh failed, cannot run egress test: {setup.stderr}")
 
         # On a normal bridge network, wget should succeed (exit 0).
         result = subprocess.run(
             [
-                "docker", "run", "--rm",
-                "--network", "sandbox-internet",
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "sandbox-internet",
                 "alpine:3.20",
-                "wget", "-T", "5", "-q", "-O", "-",
+                "wget",
+                "-T",
+                "5",
+                "-q",
+                "-O",
+                "-",
                 "https://example.com",
             ],
             capture_output=True,
@@ -142,6 +150,5 @@ class TestSandboxNetworks:
             timeout=30,
         )
         assert result.returncode == 0, (
-            "Expected wget to succeed on sandbox-internet "
-            f"but it failed. stderr: {result.stderr[:200]}"
+            f"Expected wget to succeed on sandbox-internet but it failed. stderr: {result.stderr[:200]}"
         )

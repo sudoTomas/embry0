@@ -255,8 +255,7 @@ class IssuesRepository:
                         allowed=sorted(allowed),
                     )
                     raise ValueError(
-                        f"Invalid issue status transition: {current_status} -> {new_status}. "
-                        f"Allowed: {sorted(allowed)}"
+                        f"Invalid issue status transition: {current_status} -> {new_status}. Allowed: {sorted(allowed)}"
                     )
 
         # Build SET clause — updated_at is always refreshed.

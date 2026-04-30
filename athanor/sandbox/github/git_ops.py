@@ -53,6 +53,6 @@ def build_sandbox_credential_config_cmd(git_proxy_url: str, sandbox_token: str) 
     # token regex above.
     return (
         f"git config --global credential.helper "
-        f"'!f() {{ curl -sf -H \"Authorization: Bearer {sandbox_token}\" "
+        f'\'!f() {{ curl -sf -H "Authorization: Bearer {sandbox_token}" '
         f"{git_proxy_url}/git-credentials; }}; f'"
     )

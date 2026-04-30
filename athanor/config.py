@@ -121,13 +121,13 @@ class AthanorConfig(BaseSettings):
             log.warning(
                 "dev_mode_legacy_var_ignored",
                 msg="DEV_MODE is set but AUTH_DEV_MODE/WEBHOOK_DEV_MODE were also "
-                    "explicit; honouring the new flags. Remove DEV_MODE from .env.",
+                "explicit; honouring the new flags. Remove DEV_MODE from .env.",
             )
             return self
         log.warning(
             "dev_mode_legacy_var",
             msg="DEV_MODE is deprecated. Set AUTH_DEV_MODE and WEBHOOK_DEV_MODE "
-                "explicitly. Treating as both true for this release; remove in next release.",
+            "explicitly. Treating as both true for this release; remove in next release.",
         )
         self.auth_dev_mode = True
         self.webhook_dev_mode = True

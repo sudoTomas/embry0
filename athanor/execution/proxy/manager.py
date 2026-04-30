@@ -179,7 +179,9 @@ class ProxyManager:
 
         for url in endpoints:
             try:
-                async with self._http.post(url, json=body, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with self._http.post(
+                    url, json=body, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
                     if resp.status != 200:
                         text = await resp.text()
                         raise RuntimeError(f"enroll {url} returned {resp.status}: {text[:200]}")

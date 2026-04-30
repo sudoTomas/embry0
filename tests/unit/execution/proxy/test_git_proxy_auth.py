@@ -11,8 +11,8 @@ PAT = "ghp_PAT_TESTING_ONLY"
 # Tokens used in tests must be >= 32 chars per enrollment validation
 TOK_S1 = "tok-s1-" + "a" * 30  # 37 chars
 TOK_S2 = "tok-s2-" + "b" * 30  # 37 chars
-TOK_A = "token-A-" + "a" * 30   # 38 chars
-TOK_B = "token-B-" + "b" * 30   # 38 chars
+TOK_A = "token-A-" + "a" * 30  # 38 chars
+TOK_B = "token-B-" + "b" * 30  # 38 chars
 
 
 @pytest.fixture
@@ -60,9 +60,7 @@ async def test_enrolled_bearer_returns_credentials(client):
     )
     assert enroll.status == 200
 
-    resp = await client.get(
-        "/git-credentials", headers={"Authorization": f"Bearer {TOK_S1}"}
-    )
+    resp = await client.get("/git-credentials", headers={"Authorization": f"Bearer {TOK_S1}"})
     assert resp.status == 200
     body = await resp.text()
     assert "username=x-access-token" in body
@@ -77,9 +75,7 @@ async def test_multi_tenant_both_work(client):
             headers={"X-Admin-Token": ADMIN},
         )
     for tok in (TOK_S1, TOK_S2):
-        resp = await client.get(
-            "/git-credentials", headers={"Authorization": f"Bearer {tok}"}
-        )
+        resp = await client.get("/git-credentials", headers={"Authorization": f"Bearer {tok}"})
         assert resp.status == 200
 
 
@@ -92,9 +88,7 @@ async def test_unenroll_revokes(client):
     resp = await client.delete("/admin/enroll/s1", headers={"X-Admin-Token": ADMIN})
     assert resp.status == 200
 
-    resp = await client.get(
-        "/git-credentials", headers={"Authorization": f"Bearer {TOK_S1}"}
-    )
+    resp = await client.get("/git-credentials", headers={"Authorization": f"Bearer {TOK_S1}"})
     assert resp.status == 401
 
 
@@ -104,6 +98,7 @@ async def test_create_app_rejects_empty_admin():
 
 
 # --- I-1: re-enrollment test ---
+
 
 async def test_re_enroll_replaces_old_token(client):
     """Enrolling s1 with token B replaces token A; A → 401, B → 200; unenroll removes both."""
@@ -145,6 +140,7 @@ async def test_re_enroll_replaces_old_token(client):
 
 # --- I-2: token length floor ---
 
+
 async def test_enroll_rejects_short_sandbox_token(client):
     """sandbox_token shorter than 32 chars must be rejected with 400."""
     resp = await client.post(
@@ -156,6 +152,7 @@ async def test_enroll_rejects_short_sandbox_token(client):
 
 
 # --- I-3: sandbox_id format validation ---
+
 
 async def test_enroll_rejects_malformed_sandbox_id(client):
     """sandbox_id with path-traversal characters must be rejected with 400."""

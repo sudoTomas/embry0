@@ -142,9 +142,7 @@ async def test_migration_15_cascade_deletes_traces_with_job(fresh_db: DatabasePo
     """Deleting a job must cascade-delete its traces."""
     await _apply_migrations_up_to(fresh_db, 15)
 
-    await fresh_db.execute(
-        "INSERT INTO jobs (job_id, repo, task) VALUES ('job-m15', 'owner/repo', 'test task')"
-    )
+    await fresh_db.execute("INSERT INTO jobs (job_id, repo, task) VALUES ('job-m15', 'owner/repo', 'test task')")
     await fresh_db.execute(
         """
         INSERT INTO traces (trace_id, job_id, agent_type, model, result)
@@ -168,9 +166,7 @@ async def test_migration_15_set_null_jobs_on_issue_delete(fresh_db: DatabasePool
     """Deleting an issue must SET NULL on jobs.issue_id (not cascade-delete the job)."""
     await _apply_migrations_up_to(fresh_db, 15)
 
-    await fresh_db.execute(
-        "INSERT INTO issues (id, title) VALUES ('issue-m15', 'Test Issue')"
-    )
+    await fresh_db.execute("INSERT INTO issues (id, title) VALUES ('issue-m15', 'Test Issue')")
     await fresh_db.execute(
         "INSERT INTO jobs (job_id, repo, task, issue_id) VALUES ('job-m15b', 'owner/repo', 'test task', 'issue-m15')"
     )

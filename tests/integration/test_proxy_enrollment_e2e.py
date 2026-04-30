@@ -22,23 +22,28 @@ class TestProxyEnrollmentE2E:
         """Start a git-proxy container, return (container_id, proxy_url)."""
         result = subprocess.run(
             [
-                "docker", "run", "-d",
-                "--name", f"test-git-proxy-{secrets.token_hex(4)}",
-                "-e", "PROXY_TYPE=git",
-                "-e", "LISTEN_PORT=9101",
-                "-e", f"PROXY_ADMIN_TOKEN={admin_token}",
-                "-e", f"GITHUB_TOKEN={github_token}",
-                "-p", "0:9101",
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                f"test-git-proxy-{secrets.token_hex(4)}",
+                "-e",
+                "PROXY_TYPE=git",
+                "-e",
+                "LISTEN_PORT=9101",
+                "-e",
+                f"PROXY_ADMIN_TOKEN={admin_token}",
+                "-e",
+                f"GITHUB_TOKEN={github_token}",
+                "-p",
+                "0:9101",
                 "athanor-proxy:latest",
             ],
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
-            pytest.skip(
-                f"Could not start git-proxy container (is athanor-proxy:latest built?): "
-                f"{result.stderr}"
-            )
+            pytest.skip(f"Could not start git-proxy container (is athanor-proxy:latest built?): {result.stderr}")
         container_id = result.stdout.strip()
 
         # Get the mapped host port
@@ -113,8 +118,6 @@ class TestProxyEnrollmentE2E:
                     headers={"Authorization": f"Bearer {sandbox_token}"},
                     timeout=aiohttp.ClientTimeout(total=10),
                 )
-                assert resp.status == 401, (
-                    f"Expected 401 after unenroll but got {resp.status}"
-                )
+                assert resp.status == 401, f"Expected 401 after unenroll but got {resp.status}"
         finally:
             self._stop_container(container_id)

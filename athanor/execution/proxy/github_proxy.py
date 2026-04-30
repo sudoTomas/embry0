@@ -84,7 +84,7 @@ def _check_bearer(request: web.Request) -> "str | None":
     if not auth.startswith("Bearer "):
         logger.warning("github_proxy_unauthorized", path=request.path)
         return None
-    presented = auth[len("Bearer "):].strip()
+    presented = auth[len("Bearer ") :].strip()
     if not presented:
         logger.warning("github_proxy_unauthorized", path=request.path)
         return None

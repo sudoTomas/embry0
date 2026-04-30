@@ -22,6 +22,7 @@ TOK_B = "token-B-" + "b" * 30  # 38 chars
 # Streaming mock helpers
 # ---------------------------------------------------------------------------
 
+
 class FakeStreamResp:
     def __init__(self, status_code=200, body=b'{"ok":true}', headers=None):
         self.status_code = status_code
@@ -55,6 +56,7 @@ def make_fake_stream(status_code=200, body=b'{"ok":true}', headers=None):
 # Fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 async def client():
     app = create_auth_proxy_app(api_key=API_KEY, admin_token=ADMIN)
@@ -66,6 +68,7 @@ async def client():
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 async def test_health_open(client):
     resp = await client.get("/health")
@@ -366,9 +369,7 @@ async def test_proxy_strips_incoming_x_api_key(client):
 
     # Exactly one x-api-key entry, and it must be the real key (not the bogus one)
     api_key_values = [v for k, v in fwd_headers.items() if k.lower() == "x-api-key"]
-    assert api_key_values == [API_KEY], (
-        f"Expected exactly one x-api-key={API_KEY!r}, got {api_key_values!r}"
-    )
+    assert api_key_values == [API_KEY], f"Expected exactly one x-api-key={API_KEY!r}, got {api_key_values!r}"
     assert "bogus-key-from-sandbox" not in str(fwd_headers)
 
 

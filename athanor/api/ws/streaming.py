@@ -35,7 +35,7 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
         subprotocols = websocket.scope.get("subprotocols", [])
         for sp in subprotocols:
             if sp.startswith("athanor.bearer."):
-                presented = sp[len("athanor.bearer."):]
+                presented = sp[len("athanor.bearer.") :]
                 if hmac.compare_digest(presented, config.api_key):
                     matched_subprotocol = sp
                     break

@@ -238,9 +238,7 @@ async def test_run_agent_node_runner_auth_error_returns_error_updates() -> None:
     from athanor.safety.error_codes import ErrorCode
 
     runner = AsyncMock()
-    runner.run = AsyncMock(
-        side_effect=AuthConfigError(ErrorCode.INVALID_CONFIG, "token rejected by upstream")
-    )
+    runner.run = AsyncMock(side_effect=AuthConfigError(ErrorCode.INVALID_CONFIG, "token rejected by upstream"))
 
     updates = await run_agent_node(
         state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},

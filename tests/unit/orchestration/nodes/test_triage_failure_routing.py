@@ -46,9 +46,7 @@ async def test_triage_parse_error_routes_to_end(
     from athanor.workflows.issue_to_pr.nodes import triage_node
 
     agent_output = {
-        "agent_outputs": [
-            {"agent_type": "triage", "is_error": False, "output": "NOT VALID JSON <<<"}
-        ],
+        "agent_outputs": [{"agent_type": "triage", "is_error": False, "output": "NOT VALID JSON <<<"}],
         "total_cost_usd": 0.01,
         "current_stage": "triage_complete",
     }

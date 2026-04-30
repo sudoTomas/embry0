@@ -507,9 +507,7 @@ class IssueExecutor:
                         # without a secrets_provider. Mirrors the legacy behaviour.
                         from athanor.api.v1.environment import _get_secrets_provider
 
-                        provider = _get_secrets_provider(
-                            self._config.environment_secret_key if self._config else ""
-                        )
+                        provider = _get_secrets_provider(self._config.environment_secret_key if self._config else "")
                     global_rows = await self._env_repo.get_global()
                     repo_rows = await self._env_repo.get_repo(repo_name)
                     merged: dict[str, dict[str, Any]] = {}

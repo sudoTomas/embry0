@@ -253,9 +253,12 @@ class ContainerReaper:
             cmd = self._docker._build_base_cmd()
             cmd.extend(
                 [
-                    "ps", "-a",
-                    "--filter", "name=sandbox-",
-                    "--format", "{{.ID}}\t{{.Names}}\t{{.CreatedAt}}",
+                    "ps",
+                    "-a",
+                    "--filter",
+                    "name=sandbox-",
+                    "--format",
+                    "{{.ID}}\t{{.Names}}\t{{.CreatedAt}}",
                 ]
             )
             output = await self._docker.run_cmd(cmd, timeout=15)
@@ -351,6 +354,7 @@ class ContainerReaper:
                 if self._database_url:
                     try:
                         from athanor.orchestration.checkpoint import purge_thread
+
                         await purge_thread(self._database_url, job_id)
                     except Exception:
                         logger.warning("expire_paused_job_purge_failed", job_id=job_id, exc_info=True)

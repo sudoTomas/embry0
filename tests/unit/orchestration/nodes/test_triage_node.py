@@ -93,37 +93,47 @@ class MockAgentResult:
     usage: dict | None = None
 
 
-@pytest.mark.skip(reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
-                  "Rewrite using a real agent_runner mock + container_id if coverage of "
-                  "run_triage_node is needed.")
+@pytest.mark.skip(
+    reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
+    "Rewrite using a real agent_runner mock + container_id if coverage of "
+    "run_triage_node is needed."
+)
 @pytest.mark.asyncio
 async def test_run_triage_node_success():
     """Skipped — run_triage_node (in-process SDK path) was deleted."""
 
 
-@pytest.mark.skip(reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
-                  "apply_repo_preferences_override is covered directly below.")
+@pytest.mark.skip(
+    reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
+    "apply_repo_preferences_override is covered directly below."
+)
 @pytest.mark.asyncio
 async def test_repo_preferences_override_sandbox_profile():
     """Skipped — run_triage_node (in-process SDK path) was deleted."""
 
 
-@pytest.mark.skip(reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
-                  "apply_repo_preferences_override is covered directly below.")
+@pytest.mark.skip(
+    reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
+    "apply_repo_preferences_override is covered directly below."
+)
 @pytest.mark.asyncio
 async def test_no_repo_preferences_leaves_llm_choice_intact():
     """Skipped — run_triage_node (in-process SDK path) was deleted."""
 
 
-@pytest.mark.skip(reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
-                  "apply_repo_preferences_override is covered directly below.")
+@pytest.mark.skip(
+    reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
+    "apply_repo_preferences_override is covered directly below."
+)
 @pytest.mark.asyncio
 async def test_repo_preferences_without_sandbox_profile_keeps_llm_choice():
     """Skipped — run_triage_node (in-process SDK path) was deleted."""
 
 
-@pytest.mark.skip(reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
-                  "Low-confidence escalation logic lives in triage_node (sandbox path).")
+@pytest.mark.skip(
+    reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
+    "Low-confidence escalation logic lives in triage_node (sandbox path)."
+)
 @pytest.mark.asyncio
 async def test_low_confidence_triggers_needs_info():
     """Skipped — run_triage_node (in-process SDK path) was deleted."""
@@ -207,9 +217,7 @@ async def test_triage_node_writes_flat_pipeline_config_to_state() -> None:
     )
 
     agent_output = {
-        "agent_outputs": [
-            {"agent_type": "triage", "is_error": False, "output": valid_decision_json}
-        ],
+        "agent_outputs": [{"agent_type": "triage", "is_error": False, "output": valid_decision_json}],
         "total_cost_usd": 0.02,
         "current_stage": "triage_complete",
     }

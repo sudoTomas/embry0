@@ -198,8 +198,7 @@ class JobsRepository:
                         allowed=sorted(allowed),
                     )
                     raise ValueError(
-                        f"Invalid job status transition: {current_status} -> {new_status}. "
-                        f"Allowed: {sorted(allowed)}"
+                        f"Invalid job status transition: {current_status} -> {new_status}. Allowed: {sorted(allowed)}"
                     )
 
         # Build SET clause for all fields in valid.
@@ -265,8 +264,7 @@ class JobsRepository:
         Used by ContainerReaper to avoid destroying live work.
         """
         rows = await self._db.fetch(
-            "SELECT job_id FROM jobs "
-            "WHERE status IN ('pending', 'running', 'awaiting_input', 'paused')"
+            "SELECT job_id FROM jobs WHERE status IN ('pending', 'running', 'awaiting_input', 'paused')"
         )
         return {f"sandbox-{row['job_id']}" for row in rows}
 

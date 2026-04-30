@@ -108,7 +108,7 @@ async def _credentials_handler(request: web.Request) -> web.Response:
     if not auth.startswith("Bearer "):
         logger.warning("git_proxy_unauthorized", path=request.path)
         return web.json_response({"error": "unauthorized"}, status=401)
-    presented = auth[len("Bearer "):].strip()
+    presented = auth[len("Bearer ") :].strip()
     if not presented:
         logger.warning("git_proxy_unauthorized", path=request.path)
         return web.json_response({"error": "unauthorized"}, status=401)

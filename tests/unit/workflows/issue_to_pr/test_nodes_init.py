@@ -58,9 +58,7 @@ def test_extract_ask_user_events_calling_node_propagated():
     for node in ("triage", "developer", "review"):
         pending = _extract_ask_user_events(agent_output, calling_node=node)
         assert len(pending) == 1
-        assert pending[0]["asking_node"] == node, (
-            f"asking_node must be '{node}', got '{pending[0]['asking_node']}'"
-        )
+        assert pending[0]["asking_node"] == node, f"asking_node must be '{node}', got '{pending[0]['asking_node']}'"
 
 
 @pytest.mark.asyncio

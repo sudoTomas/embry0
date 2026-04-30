@@ -30,9 +30,7 @@ async def test_git_credentials_endpoint(git_client: TestClient):
     )
     assert enroll.status == 200
 
-    resp = await git_client.get(
-        "/git-credentials", headers={"Authorization": f"Bearer {token}"}
-    )
+    resp = await git_client.get("/git-credentials", headers={"Authorization": f"Bearer {token}"})
     assert resp.status == 200
     body = await resp.text()
     assert "x-access-token" in body

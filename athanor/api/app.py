@@ -119,7 +119,7 @@ def _resolve_secrets_provider(config: AthanorConfig) -> "FernetSecretsProvider":
             return FernetSecretsProvider(secret_key=ephemeral)
         raise RuntimeError(
             "ENVIRONMENT_SECRET_KEY must be set to a strong random value in production. "
-            "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\" "
+            'Generate one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" '
             "and add it to .env. "
             + (
                 "The current value is the insecure example default — rotate it immediately."
@@ -420,6 +420,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await docker.assert_sandbox_networks_or_die()
 
     from athanor.agents.executor import _assert_sdk_supports_hooks
+
     _assert_sdk_supports_hooks()
 
     # Start proxy services
