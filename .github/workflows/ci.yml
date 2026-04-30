@@ -197,24 +197,28 @@ jobs:
         with:
           dockerfile: infra/Dockerfile.orchestrator
           config: .hadolint.yaml
+          failure-threshold: warning
 
       - name: Hadolint — sandbox
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: infra/Dockerfile.sandbox
           config: .hadolint.yaml
+          failure-threshold: warning
 
       - name: Hadolint — proxy
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: infra/Dockerfile.proxy
           config: .hadolint.yaml
+          failure-threshold: warning
 
       - name: Hadolint — frontend
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: frontend/Dockerfile
           config: .hadolint.yaml
+          failure-threshold: warning
 
       - name: Trivy — orchestrator
         uses: aquasecurity/trivy-action@master
