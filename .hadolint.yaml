@@ -5,6 +5,11 @@
 # at the FROM layer; individual apt packages that are distro-managed are fine.
 # Ignore DL3009 (Delete the apt-get lists after installing something) — we use
 # --no-install-recommends and rm -rf var/lib/apt/lists/* consistently.
-ignore:
+# Ignore DL4006 (Set SHELL -o pipefail before RUN with pipe) — pipes inside
+# RUN are confined to the orchestrator's apt-key + Node setup; failure modes
+# are well-understood and adding `SHELL ["/bin/bash", "-o", "pipefail", "-c"]`
+# breaks compatibility with the Debian slim image's default sh.
+ignored:
   - DL3008
   - DL3009
+  - DL4006
