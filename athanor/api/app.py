@@ -385,12 +385,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("sandbox_image_auto_build_failed", error=str(exc))
 
     # Start container reaper
+    # _init_app_state runs later in this lifespan, so app.state.jobs_repo
+    # isn't yet set. Construct a fresh JobsRepository here — they're cheap
+    # (just hold the DB pool reference). Plan F / Task 9 follow-up.
     reaper = ContainerReaper(
         docker,
         max_age_hours=24,
         db=db,
         paused_ttl_hours=config.paused_job_ttl_hours,
-        jobs_repo=app.state.jobs_repo,
+        jobs_repo=JobsRepository(db),
         database_url=config.database_url,
     )
     reaper.start()
