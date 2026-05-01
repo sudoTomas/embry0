@@ -110,6 +110,4 @@ async def test_migration_19_adds_scope_to_env_tables(db_with_migrations):
                 c["conname"],
             )
             constraint_defs.append(cdef or "")
-        assert any("scope" in cdef for cdef in constraint_defs), (
-            f"{table} missing scope CHECK"
-        )
+        assert any("scope" in cdef for cdef in constraint_defs), f"{table} missing scope CHECK"
