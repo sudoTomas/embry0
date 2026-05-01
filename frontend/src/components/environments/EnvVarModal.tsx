@@ -3,18 +3,36 @@ import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Button } from "@/components/ui/Button";
 import { X } from "lucide-react";
-import type { EnvVar } from "@/lib/types/environment";
+import { toast } from "sonner";
+import type { EnvVar, EnvVarScope } from "@/lib/types/environment";
 import { createFocusTrap } from "@/lib/focus-trap";
+
+const QA_KEY_PATTERN = /^QA_[A-Z0-9_]+$/;
+
+function validateQaKey(key: string): string | null {
+  if (!QA_KEY_PATTERN.test(key)) {
+    return `QA test credentials must use keys starting with "QA_" (uppercase letters, digits, underscores). Got: "${key}".`;
+  }
+  return null;
+}
 
 interface EnvVarModalProps {
   variable?: EnvVar | null; // null = add mode, populated = edit mode
+  /**
+   * Scope partition the modal is operating in. New variables are tagged with this value;
+   * QA-section keys are validated against ^QA_[A-Z0-9_]+$ before submit.
+   */
+  envScope?: EnvVarScope;
   onSave: (variable: EnvVar) => void;
   onClose: () => void;
 }
 
-export function EnvVarModal({ variable, onSave, onClose }: EnvVarModalProps) {
+export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: EnvVarModalProps) {
   const isEdit = !!variable;
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // For edits, prefer the variable's own scope; for adds, fall back to the section's scope.
+  const effectiveScope: EnvVarScope = variable?.scope ?? envScope;
 
   const [key, setKey] = useState(variable?.key ?? "");
   const [value, setValue] = useState(variable?.var_type === "secret" ? "" : (variable?.value ?? ""));
@@ -54,6 +72,14 @@ export function EnvVarModal({ variable, onSave, onClose }: EnvVarModalProps) {
 
     const trimmedKey = key.trim().toUpperCase();
 
+    if (effectiveScope === "qa") {
+      const err = validateQaKey(trimmedKey);
+      if (err) {
+        toast.error(err);
+        return;
+      }
+    }
+
     const finalValue =
       isEdit && varType === "secret" && value === "" ? variable!.value : value;
 
@@ -63,6 +89,7 @@ export function EnvVarModal({ variable, onSave, onClose }: EnvVarModalProps) {
       var_type: varType,
       description: description.trim(),
       required,
+      scope: effectiveScope,
     });
   };
 
@@ -89,7 +116,21 @@ export function EnvVarModal({ variable, onSave, onClose }: EnvVarModalProps) {
           <X className="h-4 w-4" />
         </button>
 
-        <h2 className="text-lg font-semibold mb-6">{isEdit ? "Edit Variable" : "Add Variable"}</h2>
+        <h2 className="text-lg font-semibold mb-1">
+          {isEdit ? "Edit Variable" : "Add Variable"}
+          {effectiveScope === "qa" && (
+            <span className="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-purple-500/10 text-purple-300 ring-1 ring-inset ring-purple-500/20 align-middle">
+              QA
+            </span>
+          )}
+        </h2>
+        {effectiveScope === "qa" && !isEdit && (
+          <p className="text-xs text-muted-foreground mb-5">
+            QA test credentials must use keys starting with <code className="font-mono">QA_</code>{" "}
+            (uppercase letters, digits, underscores).
+          </p>
+        )}
+        {effectiveScope !== "qa" && <div className="mb-5" />}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -98,7 +139,7 @@ export function EnvVarModal({ variable, onSave, onClose }: EnvVarModalProps) {
               id="env-key"
               value={key}
               onChange={(e) => setKey(e.target.value)}
-              placeholder="MY_VARIABLE"
+              placeholder={effectiveScope === "qa" ? "QA_TEST_USER" : "MY_VARIABLE"}
               className="font-mono mt-1"
               disabled={isEdit}
               autoFocus={!isEdit}
