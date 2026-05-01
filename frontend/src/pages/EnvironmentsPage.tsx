@@ -52,8 +52,8 @@ function mergeForSave(
   changed: EnvVar | null,
   removeKey: string | null,
 ): EnvVar[] {
-  const withDefaults = existing.map((v) => ({ ...v, scope: effectiveScope(v) }));
-  let next = withDefaults;
+  const withDefaults: EnvVar[] = existing.map((v) => ({ ...v, scope: effectiveScope(v) }));
+  let next: EnvVar[] = withDefaults;
   if (removeKey !== null) {
     next = next.filter((v) => v.key !== removeKey);
   }
