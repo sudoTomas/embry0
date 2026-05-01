@@ -511,6 +511,23 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT false;
         """,
     ),
+    (
+        19,
+        "env tables — scope column for app/qa segregation",
+        # scope='app' is injected into every sandbox; scope='qa' only when pipeline=qa
+        # or the issue→PR job's qa-state has needs_qa=true. Enforced at sandbox
+        # injection time in workflows/issue_to_pr/nodes.py.
+        """
+        ALTER TABLE global_environment
+            ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'app'
+                CHECK (scope IN ('app', 'qa'));
+        ALTER TABLE repo_environment
+            ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'app'
+                CHECK (scope IN ('app', 'qa'));
+        CREATE INDEX IF NOT EXISTS idx_global_env_scope ON global_environment (scope);
+        CREATE INDEX IF NOT EXISTS idx_repo_env_scope ON repo_environment (repo, scope);
+        """,
+    ),
 ]
 
 

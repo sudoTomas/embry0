@@ -82,3 +82,34 @@ async def test_migration_18_adds_sandbox_profile_qa_columns(db_with_migrations):
     assert by_name["extra_networks"]["data_type"] == "jsonb"
     assert by_name["env_defaults"]["data_type"] == "jsonb"
     assert by_name["is_builtin"]["data_type"] == "boolean"
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_migration_19_adds_scope_to_env_tables(db_with_migrations):
+    """Migration 19 adds scope='app'|'qa' (CHECK-enforced) to env tables."""
+    for table in ("global_environment", "repo_environment"):
+        cols = await db_with_migrations.fetch(
+            "SELECT column_name, data_type, column_default FROM information_schema.columns "
+            "WHERE table_name = $1 AND column_name = 'scope'",
+            table,
+        )
+        assert len(cols) == 1, f"{table}.scope missing"
+        assert cols[0]["data_type"] == "text"
+
+        # CHECK constraint enforces app|qa
+        constraints = await db_with_migrations.fetch(
+            "SELECT conname FROM pg_constraint c "
+            "JOIN pg_class t ON c.conrelid = t.oid WHERE t.relname = $1 AND contype = 'c'",
+            table,
+        )
+        constraint_defs = []
+        for c in constraints:
+            cdef = await db_with_migrations.fetchval(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = $1",
+                c["conname"],
+            )
+            constraint_defs.append(cdef or "")
+        assert any("scope" in cdef for cdef in constraint_defs), (
+            f"{table} missing scope CHECK"
+        )
