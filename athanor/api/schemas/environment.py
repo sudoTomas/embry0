@@ -6,10 +6,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from athanor.execution.auth_provider import RESERVED_ENV_KEYS  # re-exported
+from athanor.execution.auth_provider import (  # re-exported
+    RESERVED_ENV_KEYS,
+    RESERVED_ENV_PREFIXES,
+)
 
 __all__ = [
     "RESERVED_ENV_KEYS",
+    "RESERVED_ENV_PREFIXES",
     "DetectResponse",
     "DetectedEnvVar",
     "EnvVarInput",
@@ -39,10 +43,16 @@ class EnvVarInput(BaseModel):
         # variables. Reject at the API boundary.
         if v in RESERVED_ENV_KEYS:
             raise ValueError(
-                f"Key {v!r} is reserved for Athanor infrastructure. Reserved keys: {sorted(RESERVED_ENV_KEYS)}"
+                f"Key {v!r} is reserved for Athanor infrastructure. "
+                f"Reserved keys: {sorted(RESERVED_ENV_KEYS)}"
             )
-        # Reserved prefixes will be added by Task 13 (RESERVED_ENV_PREFIXES). Until
-        # that task lands, only the explicit RESERVED_ENV_KEYS check runs here.
+        # Reserved prefixes — every key starting with these is server-controlled.
+        for p in RESERVED_ENV_PREFIXES:
+            if v.startswith(p):
+                raise ValueError(
+                    f"Key {v!r} starts with reserved prefix {p!r}; "
+                    f"these are orchestrator-injected at sandbox start."
+                )
         return v
 
     @model_validator(mode="after")
