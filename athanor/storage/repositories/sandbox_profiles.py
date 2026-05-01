@@ -29,15 +29,28 @@ class SandboxProfilesRepository:
         security_opt: list[str] | None = None,
         agent_timeout_seconds: int = 300,
         container_timeout_seconds: int = 3600,
+        description: str = "",
+        dind_enabled: bool = False,
+        idle_timeout_seconds: int = 600,
+        extra_networks: list[str] | None = None,
+        env_defaults: dict[str, str] | None = None,
+        is_builtin: bool = False,
     ) -> None:
-        """Create or update a sandbox profile."""
+        """Create or update a sandbox profile.
+
+        Builtin profiles set is_builtin=True; they're seeded by Athanor and the
+        API rejects deletion + name changes for them.
+        """
         await self._db.execute(
             """
             INSERT INTO sandbox_profiles (
                 name, base_image, additional_packages, setup_commands,
                 memory, cpus, pids_limit, cap_drop, cap_add, security_opt,
-                agent_timeout_seconds, container_timeout_seconds, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+                agent_timeout_seconds, container_timeout_seconds,
+                description, dind_enabled, idle_timeout_seconds,
+                extra_networks, env_defaults, is_builtin, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                      $13, $14, $15, $16, $17, $18, NOW())
             ON CONFLICT (name) DO UPDATE SET
                 base_image = EXCLUDED.base_image,
                 additional_packages = EXCLUDED.additional_packages,
@@ -50,6 +63,12 @@ class SandboxProfilesRepository:
                 security_opt = EXCLUDED.security_opt,
                 agent_timeout_seconds = EXCLUDED.agent_timeout_seconds,
                 container_timeout_seconds = EXCLUDED.container_timeout_seconds,
+                description = EXCLUDED.description,
+                dind_enabled = EXCLUDED.dind_enabled,
+                idle_timeout_seconds = EXCLUDED.idle_timeout_seconds,
+                extra_networks = EXCLUDED.extra_networks,
+                env_defaults = EXCLUDED.env_defaults,
+                is_builtin = EXCLUDED.is_builtin,
                 updated_at = NOW()
             """,
             name,
@@ -64,6 +83,12 @@ class SandboxProfilesRepository:
             security_opt or ["no-new-privileges"],
             agent_timeout_seconds,
             container_timeout_seconds,
+            description,
+            dind_enabled,
+            idle_timeout_seconds,
+            extra_networks or [],
+            env_defaults or {},
+            is_builtin,
         )
         logger.info("sandbox_profile_upserted", name=name)
 
