@@ -37,15 +37,15 @@ def test_app_scope_does_not_require_prefix():
 
 
 def test_input_rejects_qa_artifact_prefix():
-    with pytest.raises(ValidationError, match="QA_ARTIFACT_"):
+    with pytest.raises(ValidationError, match=r"reserved prefix 'QA_ARTIFACT_'"):
         EnvVarInput(key="QA_ARTIFACT_BUCKET", value="x", scope="qa")
 
 
 def test_input_rejects_docker_prefix():
-    with pytest.raises(ValidationError, match="DOCKER_"):
-        EnvVarInput(key="DOCKER_HOST", value="x", scope="app")
+    with pytest.raises(ValidationError, match=r"reserved prefix 'DOCKER_'"):
+        EnvVarInput(key="DOCKER_BUILDKIT", value="x", scope="app")
 
 
 def test_qa_job_id_reserved():
-    with pytest.raises(ValidationError, match="reserved"):
+    with pytest.raises(ValidationError, match=r"reserved for Athanor infrastructure"):
         EnvVarInput(key="QA_JOB_ID", value="x", scope="qa")
