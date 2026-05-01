@@ -65,3 +65,56 @@ async def test_delete_rejects_builtin_via_api(api_client: AsyncClient, builtin_p
     r = await api_client.delete("/api/v1/sandbox-profiles/slim")
     assert r.status_code == 403
     assert "builtin" in r.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_reset_unknown_profile_returns_404(api_client: AsyncClient):
+    r = await api_client.post("/api/v1/sandbox-profiles/does-not-exist/reset")
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_reset_user_profile_returns_404(api_client: AsyncClient):
+    """Reset is for builtin profiles only — user-created profiles cannot be 'reset'."""
+    payload = {"name": "user-profile-x", "base_image": "athanor-sandbox:latest"}
+    create_r = await api_client.post("/api/v1/sandbox-profiles", json=payload)
+    assert create_r.status_code == 201
+    r = await api_client.post("/api/v1/sandbox-profiles/user-profile-x/reset")
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_reset_builtin_restores_seed(api_client: AsyncClient, builtin_profile_seeded):
+    """Mutate the builtin row through legitimate channels (the repo's seed-style upsert)
+    then call /reset and verify the canonical config is restored."""
+    # Reach the repo: import inside the test so we use the same DB.
+    import os
+
+    from athanor.storage.database import DatabasePool
+    from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+
+    database_url = os.environ.get(
+        "TEST_DATABASE_URL",
+        "postgresql://athanor:athanor@localhost:5432/athanor_unit_api_test",
+    )
+
+    # Mutate qa-jvm to flip dind_enabled OFF (simulating bit-rot or a manual edit).
+    pool = DatabasePool(database_url)
+    await pool.connect()
+    try:
+        repo = SandboxProfilesRepository(pool)
+        await repo.upsert(
+            name="qa-jvm", dind_enabled=False, is_builtin=True, _allow_builtin_overwrite=True
+        )
+        mutated = await repo.get("qa-jvm")
+        assert mutated["dind_enabled"] is False
+    finally:
+        await pool.close()
+
+    # Reset
+    r = await api_client.post("/api/v1/sandbox-profiles/qa-jvm/reset")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "qa-jvm"
+    assert body["dind_enabled"] is True
+    assert body["base_image"] == "athanor-sandbox-qa:latest"
