@@ -9,9 +9,40 @@ import { createFocusTrap } from "@/lib/focus-trap";
 
 const QA_KEY_PATTERN = /^QA_[A-Z0-9_]+$/;
 
+// Mirror of athanor/execution/auth_provider.py — keep in sync.
+// Backend will reject these with 422 even if the client doesn't catch them;
+// this list exists for fast UX feedback.
+const RESERVED_ENV_KEYS = new Set([
+  "ATHANOR_GIT_PROXY_URL",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "GITHUB_TOKEN",
+  "QA_JOB_ID",
+  "QA_ATTEMPT_N",
+  "QA_NETWORK_NAME",
+  "DOCKER_HOST",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_CERT_PATH",
+]);
+
+const RESERVED_ENV_PREFIXES = ["QA_ARTIFACT_", "DOCKER_"] as const;
+
 function validateQaKey(key: string): string | null {
   if (!QA_KEY_PATTERN.test(key)) {
     return `QA test credentials must use keys starting with "QA_" (uppercase letters, digits, underscores). Got: "${key}".`;
+  }
+  return null;
+}
+
+function validateNotReserved(key: string): string | null {
+  if (RESERVED_ENV_KEYS.has(key)) {
+    return `"${key}" is reserved for Athanor infrastructure and cannot be set here.`;
+  }
+  for (const p of RESERVED_ENV_PREFIXES) {
+    if (key.startsWith(p)) {
+      return `Keys starting with "${p}" are reserved for Athanor infrastructure.`;
+    }
   }
   return null;
 }
@@ -72,7 +103,15 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
 
     const trimmedKey = key.trim().toUpperCase();
 
-    if (effectiveScope === "qa") {
+    if (!isEdit) {
+      const reservedErr = validateNotReserved(trimmedKey);
+      if (reservedErr) {
+        toast.error(reservedErr);
+        return;
+      }
+    }
+
+    if (effectiveScope === "qa" && !isEdit) {
       const err = validateQaKey(trimmedKey);
       if (err) {
         toast.error(err);
