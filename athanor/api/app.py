@@ -232,6 +232,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await db.connect()
     await run_migrations(db)
 
+    # Seed canonical builtin sandbox profiles. Runs after migrations so the
+    # sandbox_profiles schema (incl. QA columns from migration 18) is present.
+    # The seed always overwrites builtin rows — local edits to a builtin
+    # profile are intentionally discarded on every boot.
+    from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+    from athanor.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
+
+    await seed_builtin_sandbox_profiles(SandboxProfilesRepository(db))
+
     # Recover orphaned jobs from previous orchestrator lifecycle
     try:
         from athanor.safety.error_codes import ErrorCode

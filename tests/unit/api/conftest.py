@@ -95,3 +95,30 @@ async def api_client() -> AsyncIterator[AsyncClient]:
             headers={"X-Requested-With": "XMLHttpRequest"},
         ) as c:
             yield c
+
+
+@pytest.fixture
+async def builtin_profile_seeded(api_client: AsyncClient) -> AsyncIterator[None]:
+    """Seed builtin sandbox profiles before the test runs.
+
+    Use in tests that depend on 'slim' or 'qa-jvm' being present.
+
+    Depends on `api_client` so the test DB exists, has migrations applied, and
+    has had `sandbox_profiles` truncated. Opens a short-lived DatabasePool to
+    the same TEST_DATABASE_URL and runs the seed against it; the test app's
+    own pool sees the seeded rows because they share one Postgres database.
+    """
+    from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+    from athanor.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
+
+    database_url = os.environ.get(
+        "TEST_DATABASE_URL",
+        "postgresql://athanor:athanor@localhost:5432/athanor_unit_api_test",
+    )
+    seed_db = DatabasePool(database_url)
+    await seed_db.connect()
+    try:
+        await seed_builtin_sandbox_profiles(SandboxProfilesRepository(seed_db))
+        yield
+    finally:
+        await seed_db.close()

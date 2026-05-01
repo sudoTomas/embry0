@@ -57,3 +57,11 @@ async def test_delete_user_profile_returns_200(api_client: AsyncClient):
     assert r.status_code == 200
     r = await api_client.get("/api/v1/sandbox-profiles/delete-me-test")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_builtin_via_api(api_client: AsyncClient, builtin_profile_seeded):
+    """Trying to delete a builtin profile must return 403."""
+    r = await api_client.delete("/api/v1/sandbox-profiles/slim")
+    assert r.status_code == 403
+    assert "builtin" in r.json()["detail"].lower()
