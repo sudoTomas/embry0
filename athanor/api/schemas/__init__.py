@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _REPO_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
 
@@ -67,6 +67,8 @@ class JobListResponse(BaseModel):
 
 
 class SandboxProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(..., min_length=1, max_length=100)
     base_image: str = "athanor-sandbox:latest"
     additional_packages: list[str] = Field(default_factory=list)
@@ -79,6 +81,11 @@ class SandboxProfileRequest(BaseModel):
     security_opt: list[str] = Field(default_factory=lambda: ["no-new-privileges"])
     agent_timeout_seconds: int = Field(300, ge=1)
     container_timeout_seconds: int = Field(3600, ge=1)
+    description: str = ""
+    dind_enabled: bool = False
+    idle_timeout_seconds: int = Field(default=600, gt=0)
+    extra_networks: list[str] = Field(default_factory=list)
+    env_defaults: dict[str, str] = Field(default_factory=dict)
 
 
 class ContextConfigRequest(BaseModel):
