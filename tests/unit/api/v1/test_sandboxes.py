@@ -1,4 +1,4 @@
-"""Tests for GET /api/v1/sandboxes — docker ps wrapper for ops visibility."""
+"""Tests for GET /api/v1/sandboxes/active — docker ps wrapper for ops visibility."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,7 +16,7 @@ def app():
 
 
 @pytest.mark.asyncio
-async def test_list_sandboxes_empty_when_docker_absent(app):
+async def test_list_active_sandboxes_empty_when_docker_absent(app):
     """When no docker client is on app.state, return an empty list (no 500)."""
     # Ensure no docker attribute on app.state
     if hasattr(app.state, "docker"):
@@ -24,13 +24,13 @@ async def test_list_sandboxes_empty_when_docker_absent(app):
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/v1/sandboxes")
+        resp = await client.get("/api/v1/sandboxes/active")
     assert resp.status_code == 200
     assert resp.json() == {"containers": [], "count": 0}
 
 
 @pytest.mark.asyncio
-async def test_list_sandboxes_parses_ps_output(app):
+async def test_list_active_sandboxes_parses_ps_output(app):
     """docker ps output is split on `|` into name/status/running_for fields."""
     mock_docker = MagicMock()
     mock_docker._build_base_cmd = MagicMock(return_value=["docker"])
@@ -41,7 +41,7 @@ async def test_list_sandboxes_parses_ps_output(app):
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/v1/sandboxes")
+        resp = await client.get("/api/v1/sandboxes/active")
 
     assert resp.status_code == 200
     body = resp.json()
