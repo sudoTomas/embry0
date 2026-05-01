@@ -492,6 +492,25 @@ MIGRATIONS: list[tuple[int, str, str]] = [
          WHERE trace_id LIKE 'trace-%';
         """,
     ),
+    (
+        18,
+        "sandbox_profiles — QA agent foundation columns",
+        # description: human-readable text shown in /sandboxes UI
+        # dind_enabled: when true, sandbox gets DOCKER_HOST + DinD certs mounted
+        # idle_timeout_seconds: kill the sandbox if no agent activity for this long (default 600)
+        # extra_networks: extra docker networks to join in addition to sandbox-restricted (jsonb array)
+        # env_defaults: profile-level env-var defaults (non-secret, jsonb object)
+        # is_builtin: marks profiles seeded by Athanor; UI hides destructive ops on these
+        """
+        ALTER TABLE sandbox_profiles
+            ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '',
+            ADD COLUMN IF NOT EXISTS dind_enabled BOOLEAN NOT NULL DEFAULT false,
+            ADD COLUMN IF NOT EXISTS idle_timeout_seconds INTEGER NOT NULL DEFAULT 600,
+            ADD COLUMN IF NOT EXISTS extra_networks JSONB NOT NULL DEFAULT '[]'::jsonb,
+            ADD COLUMN IF NOT EXISTS env_defaults JSONB NOT NULL DEFAULT '{}'::jsonb,
+            ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT false;
+        """,
+    ),
 ]
 
 

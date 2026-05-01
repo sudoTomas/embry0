@@ -54,3 +54,31 @@ async def test_run_migrations_is_idempotent():
     assert version == len(MIGRATIONS)
 
     await db.close()
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_migration_18_adds_sandbox_profile_qa_columns(db_with_migrations):
+    """Migration 18 must add the QA agent foundation columns to sandbox_profiles."""
+    cols = await db_with_migrations.fetch(
+        "SELECT column_name, data_type, is_nullable, column_default "
+        "FROM information_schema.columns WHERE table_name = 'sandbox_profiles' "
+        "ORDER BY column_name"
+    )
+    names = {c["column_name"] for c in cols}
+    expected_new = {
+        "description",
+        "dind_enabled",
+        "idle_timeout_seconds",
+        "extra_networks",
+        "env_defaults",
+        "is_builtin",
+    }
+    assert expected_new.issubset(names), f"Missing columns: {expected_new - names}"
+
+    by_name = {c["column_name"]: c for c in cols}
+    assert by_name["dind_enabled"]["data_type"] == "boolean"
+    assert by_name["idle_timeout_seconds"]["data_type"] == "integer"
+    assert by_name["extra_networks"]["data_type"] == "jsonb"
+    assert by_name["env_defaults"]["data_type"] == "jsonb"
+    assert by_name["is_builtin"]["data_type"] == "boolean"
