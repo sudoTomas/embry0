@@ -59,8 +59,10 @@ async def update_profile(
     if existing and existing.get("is_builtin"):
         raise HTTPException(
             status_code=403,
-            detail=f"'{name}' is a builtin profile and cannot be edited via the API. "
-            "To revert local changes, use POST /sandbox-profiles/{name}/reset.",
+            detail=(
+                f"'{name}' is a builtin profile and cannot be edited via the API. "
+                f"To revert local changes, use POST /sandbox-profiles/{name}/reset."
+            ),
         )
     await profiles.upsert(
         name=name,

@@ -35,12 +35,23 @@ class SandboxProfilesRepository:
         extra_networks: list[str] | None = None,
         env_defaults: dict[str, str] | None = None,
         is_builtin: bool = False,
+        _allow_builtin_overwrite: bool = False,
     ) -> None:
         """Create or update a sandbox profile.
 
         Builtin profiles set is_builtin=True; they're seeded by Athanor and the
         API rejects deletion + name changes for them.
+
+        Defense-in-depth: refuses to overwrite an existing builtin row unless
+        ``_allow_builtin_overwrite=True``. The API endpoints already guard at
+        the HTTP layer; this is a safety net for future callers (the seed
+        function and the /reset endpoint will pass the flag explicitly).
+        Inserting a new builtin row is unaffected — the guard only fires when
+        the target row already exists with ``is_builtin=True``.
         """
+        existing = await self.get(name)
+        if existing is not None and existing.get("is_builtin") and not _allow_builtin_overwrite:
+            raise ValueError(f"Cannot overwrite builtin profile '{name}' without _allow_builtin_overwrite=True")
         await self._db.execute(
             """
             INSERT INTO sandbox_profiles (
