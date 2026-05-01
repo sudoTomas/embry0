@@ -105,6 +105,11 @@ class SandboxProfilesRepository:
         return [dict(r) for r in rows]
 
     async def delete(self, name: str) -> None:
-        """Delete a sandbox profile."""
+        """Delete a sandbox profile. Raises ValueError for builtin profiles."""
+        existing = await self.get(name)
+        if existing is None:
+            return
+        if existing.get("is_builtin"):
+            raise ValueError(f"Cannot delete builtin profile '{name}'")
         await self._db.execute("DELETE FROM sandbox_profiles WHERE name = $1", name)
         logger.info("sandbox_profile_deleted", name=name)

@@ -39,3 +39,23 @@ async def test_upsert_defaults_preserve_old_callers(db_with_migrations):
     assert row["extra_networks"] == []
     assert row["env_defaults"] == {}
     assert row["is_builtin"] is False
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_delete_rejects_builtin(db_with_migrations):
+    repo = SandboxProfilesRepository(db_with_migrations)
+    await repo.upsert(name="builtin-test", is_builtin=True)
+    with pytest.raises(ValueError, match="builtin"):
+        await repo.delete("builtin-test")
+    # row still present
+    assert await repo.get("builtin-test") is not None
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_delete_allows_user_profile(db_with_migrations):
+    repo = SandboxProfilesRepository(db_with_migrations)
+    await repo.upsert(name="user-test", is_builtin=False)
+    await repo.delete("user-test")
+    assert await repo.get("user-test") is None
