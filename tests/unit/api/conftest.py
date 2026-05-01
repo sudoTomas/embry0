@@ -20,6 +20,7 @@ from httpx import ASGITransport, AsyncClient
 from athanor.api.app import _init_app_state, create_app
 from athanor.config import AthanorConfig
 from athanor.storage.database import DatabasePool
+from athanor.storage.encryption import FernetSecretsProvider
 from athanor.storage.migrations.runner import run_migrations
 
 
@@ -73,6 +74,11 @@ async def api_client() -> AsyncIterator[AsyncClient]:
         db = DatabasePool(database_url)
         await db.connect()
         await run_migrations(db)
+        # Set the secrets provider before _init_app_state so IssueExecutor (and
+        # any environment endpoint that reads request.app.state.secrets_provider)
+        # has a valid Fernet provider. Production wires this in the real lifespan;
+        # tests only exercise _init_app_state, so we set it here directly.
+        app.state.secrets_provider = FernetSecretsProvider(secret_key="test-secret-key")
         await _init_app_state(app, db, database_url=database_url)
         yield
         await db.close()
