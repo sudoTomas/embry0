@@ -179,12 +179,12 @@ export function SandboxFormPage() {
             <Button
               variant="destructive"
               onClick={handleReset}
-              disabled={resetMutation.isPending}
+              disabled={isPending || resetMutation.isPending}
             >
               {resetMutation.isPending ? "Resetting..." : "Reset to Default"}
             </Button>
           ) : (
-            <Button onClick={handleSave} disabled={isPending}>
+            <Button onClick={handleSave} disabled={isPending || !envDefaultsValid}>
               {isPending ? "Saving..." : "Save Profile"}
             </Button>
           )}
