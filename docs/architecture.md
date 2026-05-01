@@ -475,7 +475,7 @@ graph TB
 
 
     subgraph "Ops & Debug"
-        SBL["GET /api/v1/sandboxes"]
+        SBL["GET /api/v1/sandboxes/active"]
     end
 
     subgraph "Configuration"
@@ -503,7 +503,7 @@ graph TB
 
 **Plan G/H endpoints & fields:**
 
-- `GET /api/v1/sandboxes` — lists live sandbox containers (ops visibility).
+- `GET /api/v1/sandboxes/active` — lists live sandbox containers (ops visibility).
 - `POST /api/v1/jobs` — accepts an `agent_models` field for per-agent model override at job creation.
 - `GET /api/v1/jobs/{id}` — response includes a `cost_breakdown` field (per-agent aggregated cost/duration/tools).
 - `GET /ws/jobs/{id}/events?event_types=a,b` — optional server-side event filter; only the named event types are streamed.

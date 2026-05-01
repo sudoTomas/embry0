@@ -354,7 +354,7 @@ curl -X PUT http://localhost:8200/api/v1/repos/owner/repo/preferences \
 
 ```bash
 # List running sandbox containers (ops)
-curl http://localhost:8200/api/v1/sandboxes \
+curl http://localhost:8200/api/v1/sandboxes/active \
   -H "X-Requested-With: XMLHttpRequest"
 ```
 
