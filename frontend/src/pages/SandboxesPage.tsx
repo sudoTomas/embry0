@@ -98,21 +98,44 @@ function SandboxCard({ profile, onClick, onDelete, isDeleting }: SandboxCardProp
               {profile.name}
             </span>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
-            onClick={onDelete}
-            disabled={isDeleting}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
+          {!profile.is_builtin && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
+              onClick={onDelete}
+              disabled={isDeleting}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          )}
         </div>
 
         {/* Base image */}
         <div className="text-xs text-white/50 font-mono truncate">
           {profile.base_image}
         </div>
+
+        {/* Description */}
+        {profile.description && (
+          <p className="text-xs text-white/40 line-clamp-2">{profile.description}</p>
+        )}
+
+        {/* Badges */}
+        {(profile.dind_enabled || profile.is_builtin) && (
+          <div className="flex flex-wrap gap-2">
+            {profile.dind_enabled && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 font-mono">
+                DinD
+              </span>
+            )}
+            {profile.is_builtin && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-white/[0.05] text-white/50 border border-white/[0.06] font-mono">
+                builtin
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Resource chips */}
         <div className="flex flex-wrap gap-2">

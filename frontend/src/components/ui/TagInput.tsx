@@ -8,13 +8,15 @@ interface TagInputProps {
   placeholder?: string;
   suggestions?: string[];
   className?: string;
+  disabled?: boolean;
 }
 
-export function TagInput({ value, onChange, placeholder = "Add...", suggestions, className }: TagInputProps) {
+export function TagInput({ value, onChange, placeholder = "Add...", suggestions, className, disabled = false }: TagInputProps) {
   const [input, setInput] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   const addTag = (tag: string) => {
+    if (disabled) return;
     const trimmed = tag.trim();
     if (trimmed && !value.includes(trimmed)) {
       onChange([...value, trimmed]);
@@ -24,10 +26,12 @@ export function TagInput({ value, onChange, placeholder = "Add...", suggestions,
   };
 
   const removeTag = (index: number) => {
+    if (disabled) return;
     onChange(value.filter((_, i) => i !== index));
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (disabled) return;
     if (e.key === "Enter" && input.trim()) {
       e.preventDefault();
       addTag(input);
@@ -41,7 +45,7 @@ export function TagInput({ value, onChange, placeholder = "Add...", suggestions,
   );
 
   return (
-    <div className={cn("relative", className)}>
+    <div className={cn("relative", className, disabled && "opacity-60")}>
       <div className="flex flex-wrap gap-1.5 rounded-md border border-white/[0.08] bg-[#0c1015] px-2 py-1.5 min-h-[36px]">
         {value.map((tag, i) => (
           <span
@@ -49,9 +53,11 @@ export function TagInput({ value, onChange, placeholder = "Add...", suggestions,
             className="inline-flex items-center gap-1 rounded bg-white/[0.06] px-2 py-0.5 text-xs text-white/80"
           >
             {tag}
-            <button type="button" onClick={() => removeTag(i)} className="hover:text-destructive">
-              <X className="w-3 h-3" />
-            </button>
+            {!disabled && (
+              <button type="button" onClick={() => removeTag(i)} className="hover:text-destructive">
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </span>
         ))}
         <input
@@ -61,10 +67,11 @@ export function TagInput({ value, onChange, placeholder = "Add...", suggestions,
           onFocus={() => setShowSuggestions(true)}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
           placeholder={value.length === 0 ? placeholder : ""}
-          className="flex-1 min-w-[80px] bg-transparent text-sm outline-none text-white/80 placeholder:text-white/30"
+          disabled={disabled}
+          className="flex-1 min-w-[80px] bg-transparent text-sm outline-none text-white/80 placeholder:text-white/30 disabled:cursor-not-allowed"
         />
       </div>
-      {showSuggestions && filtered && filtered.length > 0 && (
+      {!disabled && showSuggestions && filtered && filtered.length > 0 && (
         <div className="absolute z-50 mt-1 w-full rounded-md border border-white/[0.08] bg-[#0c1015] py-1 shadow-lg max-h-40 overflow-auto">
           {filtered.map((s) => (
             <button

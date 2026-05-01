@@ -5,6 +5,7 @@ import {
   createSandboxProfile,
   updateSandboxProfile,
   deleteSandboxProfile,
+  resetSandboxProfile,
 } from "@/api/sandbox-profiles";
 import type { SandboxProfile } from "@/api/sandbox-profiles";
 
@@ -41,5 +42,16 @@ export function useDeleteSandboxProfile() {
   return useMutation({
     mutationFn: (name: string) => deleteSandboxProfile(name),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sandbox-profiles"] }),
+  });
+}
+
+export function useResetSandboxProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => resetSandboxProfile(name),
+    onSuccess: (_data, name) => {
+      qc.invalidateQueries({ queryKey: ["sandbox-profiles"] });
+      qc.invalidateQueries({ queryKey: ["sandbox-profile", name] });
+    },
   });
 }
