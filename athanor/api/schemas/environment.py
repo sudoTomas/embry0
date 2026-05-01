@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from athanor.execution.auth_provider import RESERVED_ENV_KEYS  # re-exported
 
@@ -28,6 +30,7 @@ class EnvVarInput(BaseModel):
     var_type: str = Field(default="config", pattern=r"^(config|secret)$")
     description: str = ""
     required: bool = False
+    scope: Literal["app", "qa"] = "app"
 
     @field_validator("key")
     @classmethod
@@ -38,7 +41,18 @@ class EnvVarInput(BaseModel):
             raise ValueError(
                 f"Key {v!r} is reserved for Athanor infrastructure. Reserved keys: {sorted(RESERVED_ENV_KEYS)}"
             )
+        # Reserved prefixes will be added by Task 13 (RESERVED_ENV_PREFIXES). Until
+        # that task lands, only the explicit RESERVED_ENV_KEYS check runs here.
         return v
+
+    @model_validator(mode="after")
+    def _qa_scope_requires_qa_prefix(self) -> "EnvVarInput":
+        if self.scope == "qa" and not self.key.startswith("QA_"):
+            raise ValueError(
+                f"Keys with scope='qa' must start with 'QA_' "
+                f"(got {self.key!r}). Use scope='app' for app config."
+            )
+        return self
 
 
 class EnvironmentSetRequest(BaseModel):
@@ -52,6 +66,7 @@ class EnvVarResponse(BaseModel):
     var_type: str
     description: str
     required: bool = False
+    scope: Literal["app", "qa"] = "app"
 
 
 class EnvironmentResponse(BaseModel):
