@@ -82,13 +82,17 @@ async def test_run_workflow_injects_env_vars_from_repo():
 
     state = captured["initial_state"]
     assert "user_env_vars" in state
-    envs = state["user_env_vars"]
+    # New shape: list of {"key", "value", "scope"} dicts.
+    envs = {row["key"]: row["value"] for row in state["user_env_vars"]}
     # Repo MODE wins over global MODE
     assert envs["MODE"] == "dev"
     # Repo-only var present
     assert envs["DATABASE_URL"] == "pg://x"
     # Secret was decrypted
     assert envs["API_TOKEN"] == "secret-token-value"
+    # Scope defaults to 'app' when not provided by repo.
+    scopes = {row["key"]: row.get("scope") for row in state["user_env_vars"]}
+    assert scopes["MODE"] == "app"
 
 
 @pytest.mark.asyncio

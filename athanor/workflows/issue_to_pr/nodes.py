@@ -21,6 +21,45 @@ from athanor.orchestration.nodes.agent import run_agent_node
 logger = structlog.get_logger(__name__)
 
 
+def _filter_user_env_for_sandbox(
+    user_env: list[dict[str, str]] | dict[str, str], *, qa_active: bool
+) -> dict[str, str]:
+    """Merge user env vars into the sandbox environment, filtering by scope.
+
+    - scope='app' (or unspecified): always included.
+    - scope='qa':  included only when qa_active=True.
+    - Reserved keys/prefixes: always dropped (defense-in-depth vs API validation).
+
+    Accepts either the new list-of-dicts shape or the legacy plain dict
+    (treated as all scope='app').
+    """
+    from athanor.api.schemas.environment import RESERVED_ENV_KEYS
+    from athanor.execution.auth_provider import RESERVED_ENV_PREFIXES
+
+    # Normalize to list-of-dicts
+    if isinstance(user_env, dict):
+        rows: list[dict[str, str]] = [
+            {"key": k, "value": v, "scope": "app"} for k, v in user_env.items()
+        ]
+    else:
+        rows = list(user_env)
+
+    out: dict[str, str] = {}
+    for row in rows:
+        key = row["key"]
+        if key in RESERVED_ENV_KEYS:
+            logger.warning("user_env_reserved_key_dropped", key=key)
+            continue
+        if any(key.startswith(p) for p in RESERVED_ENV_PREFIXES):
+            logger.warning("user_env_reserved_prefix_dropped", key=key)
+            continue
+        scope = row.get("scope", "app")
+        if scope == "qa" and not qa_active:
+            continue
+        out[key] = row["value"]
+    return out
+
+
 async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Create sandbox container and clone the repo."""
     writer = get_stream_writer()
@@ -44,23 +83,14 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
     container_id = None
     try:
         # Merge user env FIRST, then infrastructure vars last so they win.
-        # Defense-in-depth vs the API-layer RESERVED_ENV_KEYS check: a stored
-        # row with a reserved key (from pre-fix data) must not escape to the
-        # sandbox. Drop any user keys that collide.
-        from athanor.api.schemas.environment import RESERVED_ENV_KEYS
-
-        env: dict[str, str] = {}
-        user_env = state.get("user_env_vars") or {}
-        for k, v in user_env.items():
-            if k in RESERVED_ENV_KEYS:
-                logger.warning(
-                    "user_env_var_reserved_key_dropped",
-                    key=k,
-                    job_id=job_id,
-                    msg="Reserved key in user env var rejected at sandbox injection. Remove it via the environment API.",
-                )
-                continue
-            env[k] = v
+        # _filter_user_env_for_sandbox provides defense-in-depth vs the API-layer
+        # validators: stored rows with reserved keys/prefixes (from pre-fix data
+        # or a bypassed API) must not escape to the sandbox. It also filters
+        # scope='qa' rows unless qa_active=True (Phase 2 QA pipeline sets this).
+        env: dict[str, str] = _filter_user_env_for_sandbox(
+            state.get("user_env_vars") or [],
+            qa_active=bool(state.get("qa_active", False)),
+        )
         if git_proxy_url:
             env["ATHANOR_GIT_PROXY_URL"] = git_proxy_url
         # Note: github_proxy_url is available on proxy_mgr but not yet consumed

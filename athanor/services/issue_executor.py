@@ -528,7 +528,14 @@ class IssueExecutor:
                             keys=failed_keys,
                             msg="Encrypted values couldn't be decrypted with the current secret key. Those vars will NOT be injected into the sandbox.",
                         )
-                    env_vars = {v["key"]: v["value"] for v in decrypted if v["value"] != "[DECRYPTION_FAILED]"}
+                    # List-of-dicts shape (key/value/scope) — init_node's
+                    # _filter_user_env_for_sandbox uses scope to drop scope='qa'
+                    # rows unless qa_active is True.
+                    env_vars = [
+                        {"key": v["key"], "value": v["value"], "scope": v.get("scope", "app")}
+                        for v in decrypted
+                        if v["value"] != "[DECRYPTION_FAILED]"
+                    ]
                     if env_vars:
                         initial_state["user_env_vars"] = env_vars
                 except Exception:

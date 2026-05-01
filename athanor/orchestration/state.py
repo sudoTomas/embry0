@@ -149,3 +149,10 @@ class JobState(TypedDict, total=False):
     agent_questions_exhausted: bool  # set True when agent_question_rounds cap hit; routes to terminal failure
     triage_question_rounds: int  # cycle guard for triage interrupt/resume loops, capped at 5
     user_retry_rounds: int  # cycle guard — capped at 3 continue_retrying clicks in max_retries_node
+    # User-defined env vars merged into sandbox at init_node. List-of-dicts shape
+    # (key/value/scope); scope is 'app' or 'qa'. The legacy plain-dict shape is
+    # still accepted by _filter_user_env_for_sandbox for backwards compatibility.
+    user_env_vars: list[dict[str, str]] | dict[str, str]
+    # Set True by Phase 2's QA pipeline when running QA jobs; gates injection
+    # of scope='qa' user env vars at the sandbox boundary. Defaults to False.
+    qa_active: bool
