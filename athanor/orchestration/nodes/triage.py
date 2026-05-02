@@ -48,6 +48,37 @@ Model selection (CRITICAL):
 Set the chosen models in `pipeline_config.agent_models`:
   {"developer": "claude-sonnet-4-6", "review": "claude-sonnet-4-6"}
 
+## QA Decision
+
+After you decide whether to proceed with developer work, also decide whether
+the resulting PR should be validated by the QA agent.
+
+Inputs available:
+- The diff of the developer's intended (or actual, in the failure-routing case)
+  changes.
+- The repo's .athanor/qa.yaml if it exists, including its qa_required flag
+  ("auto", "always", or "never").
+- An optional acceptance_criteria_template from qa.yaml.
+
+Decision rules:
+- qa_required="always"  -> needs_qa = True, regardless of diff.
+- qa_required="never"   -> needs_qa = False.
+- qa_required="auto"    -> apply heuristics:
+    - Frontend file changed (.tsx, .jsx, .vue, .svelte, .css, .scss, .html) -> True.
+    - Backend route/controller/handler changed (e.g., paths matching
+      *Controller.java, *handler.go, routes/*.py, api/*.ts) -> True.
+    - Pure docs change (only .md, .rst, LICENSE, README.*) -> False.
+    - Pure dependency bump (only package*.json, pyproject.toml, requirements*.txt,
+      pom.xml, build.gradle) -> False.
+    - Pure test change (only files under tests/, __tests__/, *_test.py) -> False.
+    - Anything else -> default to True (better to run QA than skip silently).
+
+Output as a tool call to set_qa_decision with:
+  needs_qa: bool
+  reason: str (1-2 sentences explaining why)
+  acceptance_criteria: list[str] (only when needs_qa=True; if empty, the
+                                  qa.yaml.acceptance_criteria_template is used)
+
 Respond ONLY with the JSON object, no markdown fences or extra text."""
 
 
