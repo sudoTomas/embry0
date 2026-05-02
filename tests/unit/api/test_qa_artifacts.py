@@ -334,8 +334,78 @@ async def test_list_attempts_aggregates_metadata(api_with_minio):
     }
 
 
+# --- Helpers for the streaming get_result tests -----------------------------
+#
+# get_result now uses ``client.stream("GET", url)`` (an async context manager)
+# and reads the body via ``r.aiter_bytes()``. The fakes below model that shape
+# so the existing parsed-JSON test and the new size/transport-error tests
+# share one consistent mocking pattern.
+
+
+def _make_stream_response(
+    *,
+    status_code: int = 200,
+    chunks: list[bytes] | None = None,
+    content_length: str | None = None,
+):
+    """Build an async-context-manager that mimics ``httpx.AsyncClient.stream``.
+
+    ``content_length`` is the value returned by ``headers.get("content-length")``;
+    pass ``None`` to simulate the header being absent (which is what httpx
+    returns when MinIO omits it, e.g. on chunked transfer encoding).
+    """
+
+    chunks = chunks or []
+
+    class _FakeStreamResponse:
+        def __init__(self) -> None:
+            self.status_code = status_code
+            self.headers = MagicMock()
+            self.headers.get = MagicMock(return_value=content_length)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_bytes(self):
+            for c in chunks:
+                yield c
+
+    return _FakeStreamResponse()
+
+
+def _fake_async_client_factory(stream_response_or_exc):
+    """Build a `_FakeAsyncClient` whose `.stream()` returns/raises as configured.
+
+    Pass a stream-response instance to have `.stream(...)` return it; pass an
+    exception instance to have `.stream(...)` raise it (used to model
+    ``httpx.ConnectTimeout`` / ``httpx.ConnectError``).
+    """
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url):
+            if isinstance(stream_response_or_exc, BaseException):
+                raise stream_response_or_exc
+            return stream_response_or_exc
+
+    return _FakeAsyncClient
+
+
 async def test_get_result_returns_parsed_json(api_with_minio, monkeypatch):
     """Endpoint downloads result.json server-side via presigned URL and returns parsed body."""
+    import json as _json
+
     api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
         return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
     )
@@ -353,27 +423,17 @@ async def test_get_result_returns_parsed_json(api_with_minio, monkeypatch):
         "acceptance_results": [{"criterion": "x", "status": "passed", "evidence": []}],
         "anomalies": [],
     }
+    body_bytes = _json.dumps(expected_body).encode()
 
-    fake_resp = MagicMock()
-    fake_resp.status_code = 200
-    fake_resp.json = MagicMock(return_value=expected_body)
-
-    class _FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def get(self, url):
-            return fake_resp
+    stream_resp = _make_stream_response(
+        status_code=200, chunks=[body_bytes], content_length=str(len(body_bytes))
+    )
 
     import athanor.api.v1.qa_artifacts as mod
 
-    monkeypatch.setattr(mod.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
+    )
 
     r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
     assert r.status_code == 200
@@ -390,26 +450,13 @@ async def test_get_result_404_when_upstream_404(api_with_minio, monkeypatch):
         return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
     )
 
-    fake_resp = MagicMock()
-    fake_resp.status_code = 404
-    fake_resp.json = MagicMock(side_effect=AssertionError("json() must not be called on 404"))
-
-    class _FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def get(self, url):
-            return fake_resp
+    stream_resp = _make_stream_response(status_code=404, chunks=[], content_length="0")
 
     import athanor.api.v1.qa_artifacts as mod
 
-    monkeypatch.setattr(mod.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
+    )
 
     r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
     assert r.status_code == 404
@@ -420,22 +467,116 @@ async def test_get_result_502_on_invalid_json(api_with_minio, monkeypatch):
     """Upstream 200 with non-JSON body → 502, not an unhandled 500.
 
     Closes the JSONDecodeError gap: if MinIO (or a proxy) returns 200 with an
-    HTML/XML error page, `r.json()` raises and we want a clear 502 rather
+    HTML/XML error page, ``json.loads`` raises and we want a clear 502 rather
     than a FastAPI serializer 500.
     """
-    import json as _json
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    bad_body = b"<html>not json</html>"
+    stream_resp = _make_stream_response(
+        status_code=200, chunks=[bad_body], content_length=str(len(bad_body))
+    )
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
+    )
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 502
+    assert "non-JSON body" in r.json()["detail"]
+
+
+async def test_get_result_504_on_upstream_timeout(api_with_minio, monkeypatch):
+    """``httpx.ConnectTimeout`` from the streaming GET → endpoint returns 504."""
+    import httpx as _httpx
 
     api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
         return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
     )
 
-    fake_resp = MagicMock()
-    fake_resp.status_code = 200
-    fake_resp.json = MagicMock(side_effect=_json.JSONDecodeError("Expecting value", "<html>", 0))
+    import athanor.api.v1.qa_artifacts as mod
 
-    class _FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
+    monkeypatch.setattr(
+        mod.httpx,
+        "AsyncClient",
+        _fake_async_client_factory(_httpx.ConnectTimeout("timed out")),
+    )
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 504
+    assert "timeout" in r.json()["detail"].lower()
+
+
+async def test_get_result_502_on_connect_error(api_with_minio, monkeypatch):
+    """``httpx.ConnectError`` from the streaming GET → endpoint returns 502."""
+    import httpx as _httpx
+
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(
+        mod.httpx,
+        "AsyncClient",
+        _fake_async_client_factory(_httpx.ConnectError("refused")),
+    )
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 502
+    assert "upstream error" in r.json()["detail"].lower()
+
+
+async def test_get_result_413_on_oversized_body(api_with_minio, monkeypatch):
+    """Streamed body exceeding ``_MAX_RESULT_BYTES`` → endpoint returns 413.
+
+    The Content-Length header is omitted (None) so the cap is enforced by the
+    streaming check rather than the header pre-check. We yield 6 MiB in two
+    3 MiB chunks; the second chunk pushes the buffer past 5 MiB and triggers
+    the abort.
+    """
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    chunk = b"x" * (3 * 1024 * 1024)  # 3 MiB
+    stream_resp = _make_stream_response(
+        status_code=200, chunks=[chunk, chunk], content_length=None
+    )
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
+    )
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 413
+    assert "size cap" in r.json()["detail"].lower()
+
+
+async def test_get_result_413_on_oversized_content_length(api_with_minio, monkeypatch):
+    """``Content-Length`` exceeding the cap → 413 BEFORE the body is read.
+
+    If the header check works the body iterator is never consumed; the test
+    asserts that by yielding a sentinel chunk that would have OOM-ed had the
+    header check been skipped (we don't actually allocate it — the iterator
+    raises if reached, signalling the bug).
+    """
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    class _ExplodingStreamResponse:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.headers = MagicMock()
+            self.headers.get = MagicMock(return_value="10000000")  # 10 MB
 
         async def __aenter__(self):
             return self
@@ -443,13 +584,20 @@ async def test_get_result_502_on_invalid_json(api_with_minio, monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def get(self, url):
-            return fake_resp
+        async def aiter_bytes(self):
+            raise AssertionError(
+                "aiter_bytes() must not be called when Content-Length already exceeds the cap"
+            )
+            yield b""  # pragma: no cover -- needed to make this an async generator
+
+    stream_resp = _ExplodingStreamResponse()
 
     import athanor.api.v1.qa_artifacts as mod
 
-    monkeypatch.setattr(mod.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
+    )
 
     r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
-    assert r.status_code == 502
-    assert "non-JSON body" in r.json()["detail"]
+    assert r.status_code == 413
+    assert "10000000" in r.json()["detail"]

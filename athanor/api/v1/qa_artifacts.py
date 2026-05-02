@@ -41,6 +41,15 @@ _MAX_LOG_STREAMS = 8
 _active_log_streams = 0
 _log_stream_lock = asyncio.Lock()
 
+# Hard cap on the buffered ``result.json`` body in :func:`get_result`. The
+# orchestrator dereferences a presigned URL on the agent's behalf and parses
+# the body in-memory before returning it as JSON, so a hostile or buggy agent
+# could otherwise upload a multi-GB ``result.json`` and OOM the orchestrator
+# the first time anyone hits the dashboard. 5 MiB is comfortably more than a
+# real result (a couple of KB to maybe ~100 KB with screenshots-as-base64) and
+# small enough that an attacker can't get anywhere with it.
+_MAX_RESULT_BYTES = 5 * 1024 * 1024  # 5 MiB
+
 
 def _check_safe(path: str) -> None:
     # Reject empty segments and segments that are entirely dots (`.`, `..`,
@@ -276,6 +285,8 @@ async def list_attempts(
 
     objs = await qa_minio.list_objects("qa-artifacts", prefix=f"{job_id}/")
     attempts: dict[int, dict] = {}
+    # No pagination — single-job listings are bounded by the per-job retention policy.
+    # If a job ever accumulates >10k screenshots this should switch to chunked listing.
     for o in objs:
         # Keys look like "<job_id>/<attempt_n>/<rest>". Skip anything that
         # doesn't have a numeric attempt segment (defensive — same filter as
@@ -315,18 +326,61 @@ async def get_result(
 
     key = f"{job_id}/{attempt_n}/result.json"
     url = await qa_minio.presign_get("qa-artifacts", key, expires_seconds=60)
+    # Stream the upstream response so we can enforce ``_MAX_RESULT_BYTES``
+    # before the whole body lands in memory. ``httpx.AsyncClient.get`` would
+    # buffer the entire response unconditionally — fine for trusted endpoints,
+    # but ``result.json`` is uploaded by an in-sandbox agent and must be
+    # treated as untrusted. Map transport-level failures (timeout / connect
+    # error) to 504 / 502 here so they don't bubble out as a generic 500 from
+    # FastAPI's exception handler.
+    buf = bytearray()
     async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(url)
-    if r.status_code == 404:
-        raise HTTPException(status_code=404, detail="result.json not found for this attempt")
-    if r.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"upstream {r.status_code}")
+        try:
+            async with client.stream("GET", url) as r:
+                if r.status_code == 404:
+                    raise HTTPException(
+                        status_code=404, detail="result.json not found for this attempt"
+                    )
+                if r.status_code != 200:
+                    raise HTTPException(
+                        status_code=502, detail=f"upstream {r.status_code}"
+                    )
+
+                # Trust ``Content-Length`` when present and abort BEFORE
+                # touching the body. A malformed header (non-int) falls
+                # through to the streaming check below.
+                cl_header = r.headers.get("content-length")
+                if cl_header is not None:
+                    try:
+                        if int(cl_header) > _MAX_RESULT_BYTES:
+                            raise HTTPException(
+                                status_code=413,
+                                detail=f"result.json too large ({cl_header} bytes)",
+                            )
+                    except ValueError:
+                        pass
+
+                async for chunk in r.aiter_bytes():
+                    buf.extend(chunk)
+                    if len(buf) > _MAX_RESULT_BYTES:
+                        raise HTTPException(
+                            status_code=413, detail="result.json exceeded size cap"
+                        )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(
+                status_code=504, detail=f"upstream timeout: {exc}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502, detail=f"upstream error: {exc}"
+            ) from exc
+
     # MinIO can return a 200 with a non-JSON error body (rare, but possible
     # if a misconfigured bucket policy intercepts the GET, or an LB serves an
     # HTML error page). Catch JSONDecodeError and return a clear 502 instead
     # of letting it propagate as a 500 from FastAPI's response serializer.
     try:
-        return r.json()
+        return json.loads(bytes(buf))
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(
             status_code=502, detail=f"upstream returned non-JSON body: {exc}"
