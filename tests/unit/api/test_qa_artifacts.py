@@ -289,3 +289,167 @@ async def test_log_stream_streams_lines_and_terminates_on_disconnect(
     assert "data: world\n\n" in body
     # Generator's finally must terminate the subprocess on disconnect/EOF.
     assert fake_proc.terminate.called
+
+
+# ---------------------------------------------------------------------------
+# Task 4: /qa/attempts and /qa/attempts/{n}/result endpoints
+# ---------------------------------------------------------------------------
+
+
+async def test_list_attempts_empty(api_with_minio):
+    """No QA artifacts → 200 with empty list (NOT 404).
+
+    The dashboard polls this as a "does this job have any QA artifacts yet?"
+    probe and needs to distinguish 'not started' (empty list) from 'invalid
+    job id' (404).
+    """
+    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(return_value=[])
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts")
+    assert r.status_code == 200
+    assert r.json() == {"attempts": []}
+
+
+async def test_list_attempts_aggregates_metadata(api_with_minio):
+    """Mixed objects across two attempts → counts and has_result_json flags."""
+    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(
+        return_value=[
+            "JOB1/1/result.json",
+            "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png",
+            "JOB1/1/screenshots/exploratory/2026-04-30T12:05:00-login.png",
+            "JOB1/2/screenshots/boot/2026-04-30T13:00:00.png",
+            # Defensive: malformed key with non-numeric attempt segment is ignored.
+            "JOB1/notanumber/x",
+            # Non-PNG / non-result.json → no metadata bump (e.g. log file).
+            "JOB1/2/logs/full.log",
+        ]
+    )
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts")
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {
+        "attempts": [
+            {"attempt_n": 1, "has_result_json": True, "screenshots_count": 2},
+            {"attempt_n": 2, "has_result_json": False, "screenshots_count": 1},
+        ]
+    }
+
+
+async def test_get_result_returns_parsed_json(api_with_minio, monkeypatch):
+    """Endpoint downloads result.json server-side via presigned URL and returns parsed body."""
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+    expected_body = {
+        "schema_version": 1,
+        "job_id": "JOB1",
+        "attempt_n": 1,
+        "phase_reached": "report",
+        "overall": "passed",
+        "boot": {
+            "command": "x",
+            "duration_ms": 1,
+            "ready_checks": [{"url": "http://x", "status": 200, "duration_ms": 1}],
+        },
+        "acceptance_results": [{"criterion": "x", "status": "passed", "evidence": []}],
+        "anomalies": [],
+    }
+
+    fake_resp = MagicMock()
+    fake_resp.status_code = 200
+    fake_resp.json = MagicMock(return_value=expected_body)
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url):
+            return fake_resp
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _FakeAsyncClient)
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 200
+    assert r.json() == expected_body
+    # Verify the presigned key was for the requested attempt.
+    call_args = api_with_minio.app.state.qa_minio.presign_get.call_args
+    key = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["key"]
+    assert key == "JOB1/1/result.json"
+
+
+async def test_get_result_404_when_upstream_404(api_with_minio, monkeypatch):
+    """Upstream MinIO 404 (no result.json yet) → endpoint returns 404."""
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    fake_resp = MagicMock()
+    fake_resp.status_code = 404
+    fake_resp.json = MagicMock(side_effect=AssertionError("json() must not be called on 404"))
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url):
+            return fake_resp
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _FakeAsyncClient)
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 404
+    assert r.json()["detail"] == "result.json not found for this attempt"
+
+
+async def test_get_result_502_on_invalid_json(api_with_minio, monkeypatch):
+    """Upstream 200 with non-JSON body → 502, not an unhandled 500.
+
+    Closes the JSONDecodeError gap: if MinIO (or a proxy) returns 200 with an
+    HTML/XML error page, `r.json()` raises and we want a clear 502 rather
+    than a FastAPI serializer 500.
+    """
+    import json as _json
+
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    fake_resp = MagicMock()
+    fake_resp.status_code = 200
+    fake_resp.json = MagicMock(side_effect=_json.JSONDecodeError("Expecting value", "<html>", 0))
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url):
+            return fake_resp
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _FakeAsyncClient)
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 502
+    assert "non-JSON body" in r.json()["detail"]

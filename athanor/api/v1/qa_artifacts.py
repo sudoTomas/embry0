@@ -14,9 +14,11 @@ under <job_id>/. Routes that don't specify an attempt resolve it dynamically.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse, StreamingResponse
 
@@ -255,6 +257,80 @@ async def get_log(
             "X-Accel-Buffering": "no",  # disable nginx buffering
         },
     )
+
+
+@router.get("/jobs/{job_id}/qa/attempts")
+async def list_attempts(
+    job_id: str,
+    qa_minio: Any = Depends(get_qa_minio),
+) -> dict:
+    """Enumerate attempts present in MinIO with per-attempt metadata.
+
+    Returns ``{"attempts": [{attempt_n, has_result_json, screenshots_count}, ...]}``
+    sorted ascending by ``attempt_n``. Returns an empty list (200, not 404) when
+    no QA artifacts exist for the job — the dashboard uses this as a "does this
+    job have any QA artifacts?" probe and needs to distinguish "no artifacts
+    yet" from "invalid job id" (404).
+    """
+    _check_safe_job_id(job_id)
+
+    objs = await qa_minio.list_objects("qa-artifacts", prefix=f"{job_id}/")
+    attempts: dict[int, dict] = {}
+    for o in objs:
+        # Keys look like "<job_id>/<attempt_n>/<rest>". Skip anything that
+        # doesn't have a numeric attempt segment (defensive — same filter as
+        # `_resolve_latest_attempt`).
+        parts = o.split("/")
+        if len(parts) < 2 or not parts[1].isdigit():
+            continue
+        n = int(parts[1])
+        a = attempts.setdefault(
+            n,
+            {"attempt_n": n, "has_result_json": False, "screenshots_count": 0},
+        )
+        if o.endswith("/result.json"):
+            a["has_result_json"] = True
+        if o.endswith(".png") and "/screenshots/" in o:
+            a["screenshots_count"] += 1
+    return {"attempts": sorted(attempts.values(), key=lambda x: x["attempt_n"])}
+
+
+@router.get("/jobs/{job_id}/qa/attempts/{attempt_n}/result")
+async def get_result(
+    job_id: str,
+    attempt_n: int,
+    qa_minio: Any = Depends(get_qa_minio),
+) -> dict:
+    """Server-side download of ``result.json`` for a specific attempt.
+
+    Resolves a presigned GET URL via MinIO, fetches the body server-side, and
+    returns the parsed JSON so the dashboard can render structured tables
+    without a second round trip.
+    """
+    _check_safe_job_id(job_id)
+    # Defense-in-depth: FastAPI parses `attempt_n` as int, but reject 0 /
+    # negatives explicitly before they get concatenated into the MinIO key.
+    if attempt_n <= 0:
+        raise HTTPException(status_code=404, detail="not found")
+
+    key = f"{job_id}/{attempt_n}/result.json"
+    url = await qa_minio.presign_get("qa-artifacts", key, expires_seconds=60)
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(url)
+    if r.status_code == 404:
+        raise HTTPException(status_code=404, detail="result.json not found for this attempt")
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"upstream {r.status_code}")
+    # MinIO can return a 200 with a non-JSON error body (rare, but possible
+    # if a misconfigured bucket policy intercepts the GET, or an LB serves an
+    # HTML error page). Catch JSONDecodeError and return a clear 502 instead
+    # of letting it propagate as a 500 from FastAPI's response serializer.
+    try:
+        return r.json()
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502, detail=f"upstream returned non-JSON body: {exc}"
+        ) from exc
 
 
 @router.get("/jobs/{job_id}/artifacts/{path:path}")
