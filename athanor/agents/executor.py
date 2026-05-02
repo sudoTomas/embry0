@@ -223,12 +223,19 @@ class SdkAgentExecutor:
                             tn = getattr(block, "name", "") or getattr(block, "tool_name", "")
                             if tn:
                                 tools_called[tn] = tools_called.get(tn, 0) + 1
+                            raw_block_input = getattr(block, "input", {})
+                            # Preserve full structured input on the event so
+                            # downstream consumers (e.g. triage_node parsing
+                            # the set_qa_decision tool call) can re-validate
+                            # against a Pydantic schema. ``input`` stays as a
+                            # short human-readable summary for log/UI use.
                             writer(
                                 {
                                     "type": "tool_call",
                                     "tool_name": tn,
                                     "tool_id": getattr(block, "id", ""),
-                                    "input": _summarize_tool_input(tn, getattr(block, "input", {})),
+                                    "input": _summarize_tool_input(tn, raw_block_input),
+                                    "tool_input": raw_block_input if isinstance(raw_block_input, dict) else {},
                                     "node": invocation.agent_type,
                                 }
                             )

@@ -454,6 +454,20 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 update={**result, **cap_updates, "current_stage": "triage_asked_user"},
             )
 
+    # Phase 5 Task 4: parse the optional set_qa_decision tool call emitted by
+    # the triage agent (per the QA Decision section in _TRIAGE_SYSTEM_PROMPT)
+    # and merge it onto state["qa"]. When the agent didn't emit one, leave
+    # state["qa"] alone — downstream callers treat absent needs_qa as False.
+    qa_update = _extract_qa_decision_from_events(collected_events)
+    if qa_update is not None:
+        existing_qa = state.get("qa") or {}
+        merged_qa: dict[str, Any] = {**existing_qa}
+        merged_qa["needs_qa"] = qa_update["needs_qa"]
+        merged_qa["qa_required_reason"] = qa_update["qa_required_reason"]
+        if qa_update["needs_qa"]:
+            merged_qa["acceptance_criteria"] = qa_update["acceptance_criteria"]
+        result["qa"] = merged_qa
+
     writer({"type": "node_completed", "node": "triage", "action": result.get("triage_decision", {}).get("action")})
     return result
 
@@ -473,6 +487,64 @@ def _format_question_text(question: str, category: str | None, options: list[str
     return " ".join(parts[:-1]) + (
         parts[-1] if parts[-1].startswith("\n") else (" " + parts[-1] if parts[:-1] else parts[-1])
     )
+
+
+def _extract_qa_decision_from_events(
+    events: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Scan triage agent events for the most recent ``set_qa_decision`` tool call.
+
+    Phase 5 Task 4. Triage's QA-decision section in the prompt instructs the
+    agent to emit a ``set_qa_decision`` tool call carrying ``needs_qa``,
+    ``reason``, and ``acceptance_criteria``. The full structured input is
+    preserved on the streamed event in the ``tool_input`` field (the older
+    ``input`` field is a short human-readable summary, kept for backwards
+    compatibility with log/UI consumers).
+
+    Returns a normalized dict ``{needs_qa, reason, acceptance_criteria}``
+    validated by ``SetQADecision``, or ``None`` if no such tool call was
+    emitted (in which case callers should treat the job as ``needs_qa=False``).
+
+    Returns the LAST matching event so that, in the needs_info → resume flow,
+    the resume-pass decision wins over the original-pass decision.
+    """
+    from pydantic import ValidationError
+
+    from athanor.agents.triage_actions import SetQADecision
+
+    matches: list[dict[str, Any]] = []
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        if e.get("type") != "tool_call":
+            continue
+        if e.get("tool_name") != "set_qa_decision":
+            continue
+        raw_input = e.get("tool_input")
+        if not isinstance(raw_input, dict):
+            # Older event shape: only the summarized "input" field is present.
+            # Skip — we can't safely re-validate a stringified payload.
+            continue
+        matches.append(raw_input)
+
+    if not matches:
+        return None
+
+    try:
+        decision = SetQADecision.model_validate(matches[-1])
+    except ValidationError:
+        logger.warning(
+            "triage_set_qa_decision_validation_failed",
+            payload=str(matches[-1])[:500],
+            exc_info=True,
+        )
+        return None
+
+    return {
+        "needs_qa": decision.needs_qa,
+        "qa_required_reason": decision.reason,
+        "acceptance_criteria": list(decision.acceptance_criteria),
+    }
 
 
 def _extract_ask_user_events(
