@@ -21,6 +21,8 @@ from minio.lifecycleconfig import Expiration, LifecycleConfig, Rule
 
 logger = structlog.get_logger(__name__)
 
+_QA_LIFECYCLE_RULE_ID = "qa-artifact-expiry"
+
 
 class QAMinioClient:
     """Async-friendly facade over the sync `minio` SDK."""
@@ -47,7 +49,7 @@ class QAMinioClient:
             Rule(
                 ENABLED,
                 rule_filter=Filter(prefix=""),
-                rule_id="qa-artifact-expiry",
+                rule_id=_QA_LIFECYCLE_RULE_ID,
                 expiration=Expiration(days=expire_days),
             )
         ])
@@ -63,10 +65,12 @@ class QAMinioClient:
             raise
         if cfg is None or not cfg.rules:
             return None
-        rule = cfg.rules[0]
-        if rule.expiration is None:
-            return None
-        return rule.expiration.days
+        # Match the rule_id that set_lifecycle_policy writes — defensive against
+        # other tools/callers adding rules to the same bucket.
+        for rule in cfg.rules:
+            if rule.rule_id == _QA_LIFECYCLE_RULE_ID:
+                return rule.expiration.days if rule.expiration else None
+        return None
 
     async def presign_put(self, bucket: str, key: str, expires_seconds: int) -> str:
         return await self._run(
