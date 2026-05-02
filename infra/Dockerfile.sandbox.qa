@@ -28,10 +28,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL https://download.docker.com/linux/static/stable/$(uname -m)/docker-27.3.1.tgz \
        | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
     && chmod +x /usr/local/bin/docker \
+    && mkdir -p /usr/local/lib/docker/cli-plugins \
     && curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-$(uname -m) \
-       -o /usr/local/bin/docker-compose \
-    && chmod +x /usr/local/bin/docker-compose \
+       -o /usr/local/lib/docker/cli-plugins/docker-compose \
+    && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose \
+    && ln -s /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose \
     && rm -rf /var/lib/apt/lists/*
+
+# Pre-set the Playwright browsers path BEFORE installing playwright via npm —
+# otherwise the postinstall hook may drop Chromium in /root/.cache/ms-playwright
+# and we'd waste ~150 MB plus build time re-downloading it to /opt/playwright.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 
 # Node.js — required for Claude CLI AND for @playwright/mcp.
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -40,9 +47,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && npm install -g @anthropic-ai/claude-code@2.1.92 @playwright/mcp@latest playwright@latest
 
 # Pre-fetch Chromium so the QA agent doesn't pay download cost at job start.
-# `playwright install chromium` lands the browser in /root/.cache/ms-playwright;
-# we relocate to a path the non-root agent can read.
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN npx --yes playwright install chromium \
     && chmod -R a+rX /opt/playwright
 
