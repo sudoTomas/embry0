@@ -21,6 +21,9 @@ class TotalBudgetWatchdog:
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
+        if self._task is not None and not self._task.done():
+            return  # Already running; ignore duplicate start.
+
         async def _wait_and_fire() -> None:
             await asyncio.sleep(self._budget)
             await self._on_timeout()
@@ -34,7 +37,12 @@ class TotalBudgetWatchdog:
 
 
 class IdleWatchdog:
-    """Fires when no heartbeat() call in grace_seconds."""
+    """Fires when no heartbeat() call in grace_seconds.
+
+    Note: stop() does not interrupt an in-flight on_timeout callback (the
+    cancellation only fires on the next await boundary, and on_timeout is
+    awaited directly).
+    """
 
     def __init__(self, *, grace_seconds: float, on_timeout: Callable[[], Awaitable[None]]) -> None:
         self._grace = grace_seconds
@@ -47,6 +55,12 @@ class IdleWatchdog:
         self._last = time.monotonic()
 
     def start(self) -> None:
+        # Reset _last so a delay between __init__ and start() doesn't trigger
+        # an immediate fire on the first poll.
+        self._last = time.monotonic()
+        if self._task is not None and not self._task.done():
+            return  # Already running; ignore duplicate start.
+
         async def _loop() -> None:
             poll = min(self._grace / 4.0, 1.0)
             while not self._stopped:
