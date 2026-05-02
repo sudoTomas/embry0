@@ -26,7 +26,23 @@ Inputs (provided in /workspace/.qa/job.json):
   - acceptance_criteria: list of strings to verify
   - changed_files: list of paths touched by the developer (PR-flow only; may be empty)
   - frontend_url: URL Playwright should target
-  - artifact_uploads: presigned PUT URL templates
+  - artifact_uploads: presigned PUT URLs for the canonical end-of-run files
+  - presign_refresh_url: endpoint to mint additional presigned URLs on demand
+  - sandbox_token: bearer used when calling presign_refresh_url
+
+Artifact upload mechanism:
+  - You receive in /workspace/.qa/job.json:
+      artifact_uploads = {
+        "result.json": "<presigned PUT URL — for your final structured output>",
+        "logs/full.log": "<presigned PUT URL — full compose logs at end of run>",
+      }
+      presign_refresh_url = "http://presign-proxy:9104/api/v1/internal/qa/presign"
+      sandbox_token = "<your bearer for presign refresh>"
+  - For ANY OTHER artifact (screenshots, traces, per-service logs, HARs):
+      POST to presign_refresh_url with body:
+      {"sandbox_token": "<token>", "paths": ["screenshots/login.png", ...]}
+      The response contains presigned PUT URLs you can curl with the artifact body.
+  - Use curl -X PUT --data-binary @<file> '<presigned-url>' to upload.
 
 Phases (emit `qa.phase=<name>` event when entering each):
   1. boot:        run startup.command; poll ready_checks until pass or timeout.
@@ -120,7 +136,5 @@ async def seed_qa_agent(repo: AgentDefinitionsRepository) -> None:
         auth_mode=QA_AGENT_SEED["auth_mode"],
         mcp_servers=QA_AGENT_SEED["mcp_servers"],
     )
-    await repo._db.execute(
-        "UPDATE agent_definitions SET is_builtin = true WHERE type = 'qa'"
-    )
+    await repo._db.execute("UPDATE agent_definitions SET is_builtin = true WHERE type = 'qa'")
     logger.info("qa_agent_seeded")
