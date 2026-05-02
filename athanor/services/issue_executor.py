@@ -768,7 +768,7 @@ class IssueExecutor:
             initial_state: dict[str, Any] = {
                 "job_id": job_id,
                 "repo": repo,
-                "branch": branch,
+                "branch_name": branch,
                 "task": f"QA run on {repo}@{branch}",
                 "current_stage": "init",
                 "agent_outputs": [],

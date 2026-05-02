@@ -54,7 +54,7 @@ async def init_qa_node(state: dict, config: RunnableConfig) -> dict:
 
     job_id = state["job_id"]
     repo = state["repo"]
-    branch = state.get("branch") or "main"
+    branch = state.get("branch_name") or "main"
     qa = state.setdefault("qa", {})
 
     attempt_n = len(qa.get("attempts", [])) + 1

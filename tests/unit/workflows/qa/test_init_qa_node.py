@@ -85,7 +85,7 @@ async def test_init_qa_validates_qa_yaml_and_creates_network():
     state = {
         "job_id": "JOB1",
         "repo": "tomas-mcmonigal/macro-lab",
-        "branch": "main",
+        "branch_name": "main",
         "pipeline": "qa",
         "qa_active": True,
         "qa": {
@@ -203,7 +203,7 @@ async def test_init_qa_process_mode_skips_qa_net():
     state = {
         "job_id": "JOB2",
         "repo": "x/y",
-        "branch": "main",
+        "branch_name": "main",
         "pipeline": "qa",
         "qa_active": True,
         "qa": {
