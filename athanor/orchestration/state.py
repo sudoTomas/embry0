@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import operator
 from enum import StrEnum
-from typing import Annotated, Any, TypedDict, cast
+from typing import Annotated, Any, Literal, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -156,3 +156,37 @@ class JobState(TypedDict, total=False):
     # Set True by Phase 2's QA pipeline when running QA jobs; gates injection
     # of scope='qa' user env vars at the sandbox boundary. Defaults to False.
     qa_active: bool
+    # Structured QA-specific state populated by Phase 2's QA pipeline nodes.
+    # Present when pipeline=qa OR (Phase 5) triage sets needs_qa=True.
+    qa: QAStateBlock | None
+
+
+class QAAttempt(TypedDict, total=False):
+    """One attempt at running QA against a target."""
+
+    attempt_n: int
+    started_at: str  # ISO 8601
+    ended_at: str | None
+    sandbox_id: str | None
+    qa_net_name: str | None
+    artifact_prefix: str  # MinIO prefix like "<job_id>/<attempt_n>/"
+    last_phase: Literal["boot", "seed", "e2e", "exploratory", "report"] | None
+    exit_reason: str | None
+    result_summary: dict | None
+    log_artifact_url: str | None
+
+
+class QAStateBlock(TypedDict, total=False):
+    """All QA-specific state for a job. Lives at JobState['qa'] when
+    pipeline=qa OR triage set needs_qa=True (Phase 5)."""
+
+    needs_qa: bool
+    qa_required_reason: str | None
+    qa_yaml_raw: str | None
+    qa_yaml_parsed: dict | None
+    sandbox_profile_name: str
+    acceptance_criteria: list[str]
+    attempts: list[QAAttempt]
+    failure_rounds: int  # PR-flow triage↔QA cycles consumed
+    final_status: Literal["pending", "passed", "failed", "exhausted", "skipped"]
+    sandbox_token: str  # Set by init_qa, consumed by report
