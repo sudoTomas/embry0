@@ -5,6 +5,7 @@ from typing import Any
 import structlog
 
 from athanor.storage.database import DatabasePool
+from athanor.workflows.qa.agent_seed import SYSTEM_PROMPT as _QA_SYSTEM_PROMPT
 
 logger = structlog.get_logger(__name__)
 
@@ -17,6 +18,7 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "system_prompt": "",
         "execution_mode": None,
         "auth_mode": None,
+        "mcp_servers": {},
     },
     "developer": {
         "description": "Implements code changes, creates branches, commits, pushes, and opens PRs. Runs inside a sandbox container via Claude Code.",
@@ -26,6 +28,7 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "system_prompt": "",
         "execution_mode": None,
         "auth_mode": None,
+        "mcp_servers": {},
     },
     "review": {
         "description": "Reviews code changes by running tests, linting, type checking, and code review. Returns structured JSON with decision, validation results, and documentation review.",
@@ -35,10 +38,44 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "system_prompt": "",
         "execution_mode": None,
         "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "qa": {
+        # MUST stay in sync with athanor/workflows/qa/agent_seed.py::QA_AGENT_SEED.
+        # The test test_qa_seed_in_sync_with_builtin_seed enforces this.
+        # is_builtin is set separately by seed_qa_agent's trailing direct SQL.
+        "description": (
+            "Boots a target application (per .athanor/qa.yaml) and validates it via "
+            "Playwright MCP. Runs the repo's e2e suite if present, then verifies "
+            "each acceptance criterion with browser interactions. Reports failures "
+            "with screenshots, traces, browser console, network, and application logs."
+        ),
+        "model": "claude-sonnet-4-6",
+        "tools": ["Read", "Glob", "Grep", "Bash", "Edit"],
+        "skills": ["superpowers:verification-before-completion"],
+        "system_prompt": _QA_SYSTEM_PROMPT,
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {
+            "playwright": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "@playwright/mcp@latest", "--headless"],
+            }
+        },
     },
 }
 
-_ALLOWED_UPDATE_FIELDS = {"description", "model", "tools", "skills", "system_prompt", "execution_mode", "auth_mode"}
+_ALLOWED_UPDATE_FIELDS = {
+    "description",
+    "model",
+    "tools",
+    "skills",
+    "system_prompt",
+    "execution_mode",
+    "auth_mode",
+    "mcp_servers",
+}
 
 
 class AgentDefinitionsRepository:
@@ -145,8 +182,9 @@ class AgentDefinitionsRepository:
                 system_prompt = $5,
                 execution_mode = $6,
                 auth_mode = $7,
+                mcp_servers = $8,
                 updated_at = NOW()
-            WHERE type = $8
+            WHERE type = $9
             RETURNING *
             """,
             seed["description"],
@@ -156,6 +194,7 @@ class AgentDefinitionsRepository:
             seed["system_prompt"],
             seed["execution_mode"],
             seed["auth_mode"],
+            seed["mcp_servers"],
             agent_type,
         )
         if row is None:

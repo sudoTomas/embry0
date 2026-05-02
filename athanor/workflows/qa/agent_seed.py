@@ -3,12 +3,15 @@ app and exercises it via Playwright MCP. Seeded at orchestrator startup."""
 
 from __future__ import annotations
 
-import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from athanor.storage.repositories.agent_definitions import AgentDefinitionsRepository
+if TYPE_CHECKING:
+    # Lazy at runtime — the repo's BUILTIN_SEED imports SYSTEM_PROMPT from
+    # this module, so importing AgentDefinitionsRepository at module top
+    # would cycle. seed_qa_agent imports it inside the function body.
+    from athanor.storage.repositories.agent_definitions import AgentDefinitionsRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -102,22 +105,22 @@ async def seed_qa_agent(repo: AgentDefinitionsRepository) -> None:
             execution_mode=QA_AGENT_SEED["execution_mode"],
             auth_mode=QA_AGENT_SEED["auth_mode"],
         )
-    else:
-        await repo.update(
-            "qa",
-            description=QA_AGENT_SEED["description"],
-            model=QA_AGENT_SEED["model"],
-            tools=QA_AGENT_SEED["tools"],
-            skills=QA_AGENT_SEED["skills"],
-            system_prompt=QA_AGENT_SEED["system_prompt"],
-            execution_mode=QA_AGENT_SEED["execution_mode"],
-            auth_mode=QA_AGENT_SEED["auth_mode"],
-        )
-    # Mark as builtin and set mcp_servers via direct SQL since the repo's
-    # public surface doesn't expose those fields.
+    # Standard fields (including mcp_servers) flow through the public update()
+    # API — _ALLOWED_UPDATE_FIELDS includes "mcp_servers". is_builtin stays
+    # outside that set on purpose: only seeders should mark a row as builtin,
+    # so we set it via direct SQL.
+    await repo.update(
+        "qa",
+        description=QA_AGENT_SEED["description"],
+        model=QA_AGENT_SEED["model"],
+        tools=QA_AGENT_SEED["tools"],
+        skills=QA_AGENT_SEED["skills"],
+        system_prompt=QA_AGENT_SEED["system_prompt"],
+        execution_mode=QA_AGENT_SEED["execution_mode"],
+        auth_mode=QA_AGENT_SEED["auth_mode"],
+        mcp_servers=QA_AGENT_SEED["mcp_servers"],
+    )
     await repo._db.execute(
-        "UPDATE agent_definitions SET is_builtin = true, mcp_servers = $1::jsonb "
-        "WHERE type = 'qa'",
-        json.dumps(QA_AGENT_SEED["mcp_servers"]),
+        "UPDATE agent_definitions SET is_builtin = true WHERE type = 'qa'"
     )
     logger.info("qa_agent_seeded")
