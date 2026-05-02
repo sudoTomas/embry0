@@ -172,7 +172,7 @@ class QAAttempt(TypedDict, total=False):
     artifact_prefix: str  # MinIO prefix like "<job_id>/<attempt_n>/"
     last_phase: Literal["boot", "seed", "e2e", "exploratory", "report"] | None
     exit_reason: str | None
-    result_summary: dict | None
+    result_summary: dict[str, Any] | None
     log_artifact_url: str | None
 
 
@@ -183,7 +183,7 @@ class QAStateBlock(TypedDict, total=False):
     needs_qa: bool
     qa_required_reason: str | None
     qa_yaml_raw: str | None
-    qa_yaml_parsed: dict | None
+    qa_yaml_parsed: dict[str, Any] | None
     sandbox_profile_name: str
     acceptance_criteria: list[str]
     attempts: list[QAAttempt]
