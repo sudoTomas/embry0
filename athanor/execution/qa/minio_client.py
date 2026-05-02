@@ -11,6 +11,7 @@ the orchestrator's asyncio event loop isn't blocked. Used by:
 from __future__ import annotations
 
 import asyncio
+import io
 from datetime import timedelta
 
 import structlog
@@ -113,3 +114,15 @@ class QAMinioClient:
             o = self._client.stat_object(bucket, key)
             return {"size": o.size, "etag": o.etag, "last_modified": o.last_modified}
         return await self._run(_stat)
+
+    async def put_object(
+        self, bucket: str, key: str, data: bytes, *, content_type: str = "application/octet-stream",
+    ) -> None:
+        """Upload bytes to MinIO. Used by orchestrator-side report_node for log
+        capture (no presign needed — orchestrator holds the root creds).
+        """
+        def _put() -> None:
+            self._client.put_object(
+                bucket, key, io.BytesIO(data), length=len(data), content_type=content_type,
+            )
+        await self._run(_put)

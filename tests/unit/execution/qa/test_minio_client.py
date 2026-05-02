@@ -80,3 +80,16 @@ async def test_presign_get_returns_object_content(minio_client, test_bucket):
         r = await c.get(get_url)
     assert r.status_code == 200
     assert r.json() == {"hello": "world"}
+
+
+@pytest.mark.requires_minio
+@pytest.mark.asyncio
+async def test_put_object_round_trip(minio_client, test_bucket):
+    await minio_client.ensure_bucket(test_bucket)
+    payload = b'{"smoke": true}'
+    await minio_client.put_object(test_bucket, "direct/result.json", payload, content_type="application/json")
+    objects = await minio_client.list_objects(test_bucket, prefix="direct/")
+    assert any(o.endswith("direct/result.json") for o in objects)
+    # Stat to confirm size matches
+    stat = await minio_client.stat_object(test_bucket, "direct/result.json")
+    assert stat["size"] == len(payload)
