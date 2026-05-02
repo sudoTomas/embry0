@@ -150,7 +150,13 @@ async def builtin_profile_seeded(app: AsyncClient, database_url: str) -> AsyncIt
 
 @pytest.fixture
 async def qa_minio_seeded(app):
-    """Provisions qa-artifacts bucket in the test MinIO. Skip if no endpoint."""
+    """Provisions qa-artifacts bucket in the test MinIO and wires the client
+    into ``app.state.qa_minio`` so the dashboard routes that resolve via
+    ``Depends(get_qa_minio)`` see a live client (the test_lifespan defaults
+    it to None for tests that don't need MinIO).
+
+    Skip if MINIO_ENDPOINT isn't set.
+    """
     import os
 
     endpoint = os.environ.get("MINIO_ENDPOINT", "")
@@ -165,4 +171,14 @@ async def qa_minio_seeded(app):
         secure=False,
     )
     await client.ensure_bucket("qa-artifacts")
-    yield client
+
+    # Inject into the app's state so routes can resolve it via the
+    # get_qa_minio dependency. ``app`` here is an httpx.AsyncClient whose
+    # ASGITransport holds the FastAPI app instance.
+    fastapi_app = app._transport.app  # noqa: SLF001
+    previous = getattr(fastapi_app.state, "qa_minio", None)
+    fastapi_app.state.qa_minio = client
+    try:
+        yield client
+    finally:
+        fastapi_app.state.qa_minio = previous
