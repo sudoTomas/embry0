@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from athanor.execution.docker_client import DockerClient
+from athanor.safety.error_codes import ErrorCode
 
 if TYPE_CHECKING:
     from athanor.execution.proxy.manager import ProxyManager
@@ -67,16 +68,25 @@ class SandboxManager:
         if oauth_token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
 
-        # DinD: when the profile opts in, mount the dind-certs-client volume
-        # RO at /certs/client and set DOCKER_HOST/TLS env vars so the Docker
-        # CLI inside the sandbox can talk to tcp://dind:2376. The sandbox
-        # must also be on a network that can reach the DinD daemon — that's
-        # what `extra_networks` (typically ["backend"]) is for, and we
-        # connect those networks after container create below.
+        # DinD: when the profile opts in, bind-mount /certs/client RO into the
+        # sandbox and set DOCKER_HOST/TLS env vars so the Docker CLI inside the
+        # sandbox can talk to tcp://dind:2376. The sandbox must also be on a
+        # network that can reach the DinD daemon — that's what `extra_networks`
+        # (typically ["backend"]) is for, and we connect those networks after
+        # container create below.
+        #
+        # NOTE: this is a BIND-MOUNT (leading "/"), not a named volume. We are
+        # asking DinD's daemon to spawn a container, and DinD interprets volume
+        # sources in ITS OWN namespace. A name like "dind-certs-client" would
+        # be interpreted as a DinD-internal volume (which doesn't exist) and
+        # silently created empty — the sandbox would then fail TLS handshake.
+        # The host's `dind-certs-client` named volume IS mounted into the DinD
+        # container at /certs/client by compose, so bind-mounting that path
+        # surfaces the real certs to the sandbox.
         dind_enabled = bool(p.get("dind_enabled", False))
         extra_volumes: list[str] = []
         if dind_enabled:
-            extra_volumes.append("dind-certs-client:/certs/client:ro")
+            extra_volumes.append("/certs/client:/certs/client:ro")
             env.setdefault("DOCKER_HOST", "tcp://dind:2376")
             env.setdefault("DOCKER_TLS_VERIFY", "1")
             env.setdefault("DOCKER_CERT_PATH", "/certs/client")
@@ -107,8 +117,6 @@ class SandboxManager:
                 await self._docker.run_cmd(self._docker.build_rm_cmd(name))
             except RuntimeError:
                 logger.warning("sandbox_rollback_rm_failed", container=name)
-            from athanor.safety.error_codes import ErrorCode
-
             raise SandboxInitError(
                 f"Sandbox enrollment failed: {exc}",
                 error_code=ErrorCode.SANDBOX_INIT,
@@ -133,8 +141,6 @@ class SandboxManager:
                     await self._docker.run_cmd(self._docker.build_rm_cmd(name))
                 except RuntimeError:
                     logger.warning("sandbox_rollback_rm_failed", container=name)
-                from athanor.safety.error_codes import ErrorCode
-
                 raise SandboxInitError(
                     f"Sandbox extra-network attach failed ({net}): {exc}",
                     error_code=ErrorCode.SANDBOX_INIT,

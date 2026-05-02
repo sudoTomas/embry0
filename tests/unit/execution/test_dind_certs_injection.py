@@ -1,7 +1,8 @@
 """Tests for DinD certs + extra_networks injection in SandboxManager.
 
 When SandboxProfile.dind_enabled=True, SandboxManager.create() must:
-  - Mount the dind-certs-client volume RO at /certs/client.
+  - Bind-mount /certs/client RO at /certs/client (DinD-side filesystem path,
+    NOT a named volume — DinD interprets volume sources in its own namespace).
   - Set DOCKER_HOST / DOCKER_TLS_VERIFY / DOCKER_CERT_PATH env vars.
   - Connect the sandbox container to each profile.extra_networks entry.
 
@@ -95,10 +96,15 @@ async def test_dind_enabled_mounts_certs_and_sets_env() -> None:
     docker.build_run_cmd.assert_called_once()
     kwargs = docker.build_run_cmd.call_args.kwargs
 
-    # Volume: dind-certs-client mounted RO at /certs/client.
+    # Volume: bind-mount of /certs/client RO at /certs/client. Must NOT be a
+    # named volume ("dind-certs-client") — DinD would silently create an empty
+    # volume of that name in its own namespace and the sandbox would fail TLS.
     volumes = kwargs.get("volumes", []) or []
-    assert any("dind-certs-client" in v and "/certs/client" in v and ":ro" in v for v in volumes), (
-        f"DinD certs volume not mounted RO; got volumes={volumes}"
+    assert "/certs/client:/certs/client:ro" in volumes, (
+        f"DinD certs not bind-mounted RO; got volumes={volumes}"
+    )
+    assert not any("dind-certs-client" in v for v in volumes), (
+        f"DinD certs must be a bind-mount, not a named volume; got volumes={volumes}"
     )
 
     # Env: DOCKER_HOST + DOCKER_TLS_VERIFY + DOCKER_CERT_PATH must be present.
@@ -126,7 +132,7 @@ async def test_dind_disabled_does_not_mount_certs() -> None:
     kwargs = docker.build_run_cmd.call_args.kwargs
 
     volumes = kwargs.get("volumes", []) or []
-    assert not any("dind-certs-client" in v for v in volumes), (
+    assert not any("/certs/client" in v for v in volumes), (
         f"Certs volume unexpectedly mounted; got volumes={volumes}"
     )
 
@@ -159,7 +165,7 @@ async def test_dind_enabled_with_no_profile_falls_back_to_default() -> None:
     env_passed = kwargs.get("env", {}) or {}
     assert "DOCKER_HOST" not in env_passed, env_passed
     volumes = kwargs.get("volumes", []) or []
-    assert not any("dind-certs-client" in v for v in volumes)
+    assert not any("/certs/client" in v for v in volumes)
 
 
 @pytest.mark.asyncio
