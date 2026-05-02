@@ -498,8 +498,11 @@ async def report_node(state: dict, config: RunnableConfig) -> dict:
     else:
         qa["final_status"] = qa.get("final_status", "pending")
 
-    # 5. Unregister token + cleanup + destroy sandbox. Each step independently
+    # 5. Unregister token + destroy sandbox + cleanup. Each step independently
     # try/excepted so a single rollback failure doesn't mask the others.
+    # Order matters: sandbox MUST be destroyed BEFORE cleanup_qa_resources runs
+    # `network rm qa-net-<job_id>`. Otherwise the network removal fails because
+    # the still-alive sandbox container is attached as an active endpoint.
     token = qa.get("sandbox_token")
     if token:
         try:
@@ -507,13 +510,13 @@ async def report_node(state: dict, config: RunnableConfig) -> dict:
         except Exception as exc:
             logger.warning("qa_token_unregister_failed", error=str(exc))
     try:
-        await cleanup_qa_resources(docker, job_id=job_id)
-    except Exception as exc:
-        logger.warning("qa_cleanup_failed", error=str(exc))
-    try:
         await sandbox_mgr.destroy(container_id)
     except Exception as exc:
         logger.warning("qa_sandbox_destroy_failed", error=str(exc))
+    try:
+        await cleanup_qa_resources(docker, job_id=job_id)
+    except Exception as exc:
+        logger.warning("qa_cleanup_failed", error=str(exc))
 
     state["qa"] = qa
     return state
