@@ -26,8 +26,18 @@ router = APIRouter()
 
 _SAFE_ARTIFACT_PATH = re.compile(r"^[A-Za-z0-9._:\-]+(/[A-Za-z0-9._:\-]+)*$")
 _SAFE_JOB_ID = re.compile(r"^[A-Za-z0-9_\-]+$")
-# Service names: docker-style — alnum + _ - .
-_SAFE_SERVICE = re.compile(r"^[A-Za-z0-9_.-]+$")
+# Service names: docker-compose service-name spec — alnum + _ - ., MUST start
+# with an alnum character so the value can never look like a CLI flag (e.g.
+# `--no-color`) when expanded into the docker argv list.
+_SAFE_SERVICE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+# Bound concurrent `docker compose logs -f` subprocesses. 8 is generous for a
+# single dashboard user (one live tail per visible service) but still small
+# enough that an unauthenticated client can't fork-bomb the orchestrator by
+# opening hundreds of streams. Excess requests get a 503 so the client can
+# back off rather than hanging on an unbounded queue.
+_MAX_LOG_STREAMS = 8
+_active_log_streams = 0
+_log_stream_lock = asyncio.Lock()
 
 
 def _check_safe(path: str) -> None:
@@ -166,18 +176,61 @@ async def get_log(
 
     base = docker._build_base_cmd()  # noqa: SLF001
     project = f"qa_{job_id}"
-    # docker compose -p <project> logs -f --tail 200 <service>
-    cmd = base + ["compose", "-p", project, "logs", "-f", "--tail", "200", service]
+    # docker compose -p <project> logs -f --tail 200 -- <service>
+    # The `--` separator ensures `service` can never be interpreted as a flag
+    # by the docker CLI even if (defence-in-depth) `_SAFE_SERVICE` ever loosens.
+    cmd = base + ["compose", "-p", project, "logs", "-f", "--tail", "200", "--", service]
 
-    async def _stream():
+    # Bound concurrent streams. Acquire a slot BEFORE spawning so we don't
+    # leak processes when at capacity, and release it inside `_stream`'s
+    # `finally` so a client disconnect frees the slot immediately.
+    global _active_log_streams
+    async with _log_stream_lock:
+        if _active_log_streams >= _MAX_LOG_STREAMS:
+            raise HTTPException(status_code=503, detail="too many concurrent log streams")
+        _active_log_streams += 1
+
+    # Spawn the subprocess BEFORE returning the StreamingResponse so spawn
+    # failures (docker missing, malformed argv, ENOENT) become a 5xx with a
+    # useful detail rather than an empty 200 + an SSE stream that closes
+    # immediately.
+    try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
+    except (FileNotFoundError, OSError) as exc:
+        async with _log_stream_lock:
+            _active_log_streams -= 1
+        raise HTTPException(
+            status_code=500, detail=f"failed to spawn docker: {exc}"
+        ) from exc
+
+    async def _stream():
+        global _active_log_streams
         try:
             assert proc.stdout is not None
-            async for raw in proc.stdout:
+            while True:
+                try:
+                    raw = await proc.stdout.readline()
+                except asyncio.LimitOverrunError:
+                    # Default StreamReader limit is 64KiB; chatty services can
+                    # emit a single line longer than that. Drop the rest of the
+                    # offending line and emit a truncation marker so the client
+                    # sees that something was elided rather than the stream
+                    # crashing mid-flight.
+                    yield b"data: [line truncated >64KiB]\n\n"
+                    # Drain whatever bytes are buffered for this overrun line
+                    # so the next readline() starts at the next \n boundary.
+                    try:
+                        await proc.stdout.read(2**20)
+                    except asyncio.LimitOverrunError:
+                        # Successive overruns: keep yielding markers and trying.
+                        continue
+                    continue
+                if not raw:
+                    break
                 line = raw.decode("utf-8", errors="replace").rstrip()
                 # SSE format: "data: <line>\n\n"
                 yield f"data: {line}\n\n".encode()
@@ -188,6 +241,11 @@ async def get_log(
                     await asyncio.wait_for(proc.wait(), timeout=2)
                 except TimeoutError:
                     proc.kill()
+                    # Reap the zombie so the orchestrator process table doesn't
+                    # accumulate <defunct> docker entries on disconnect storms.
+                    await proc.wait()
+            async with _log_stream_lock:
+                _active_log_streams -= 1
 
     return StreamingResponse(
         _stream(),

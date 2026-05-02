@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -218,3 +219,73 @@ async def test_latest_screenshot_route_not_swallowed_by_catchall(api_with_minio)
     assert not key.endswith("/latest"), (
         f"catch-all matched `screenshots/latest` literally: {key!r}"
     )
+
+
+async def test_log_stream_rejects_flag_like_service(api_with_minio):
+    """A service name that starts with `-` must not reach the docker argv.
+
+    Without the `[A-Za-z0-9]` lead-anchor on `_SAFE_SERVICE` (and the `--`
+    separator in the cmd), a request for `/logs/--no-color` would inject a
+    flag into `docker compose ... logs ...`. The combined defence is: the
+    regex rejects leading `-`, AND the cmd places `--` before the service
+    so even a future regex regression can't smuggle a flag through.
+    """
+    api_with_minio.app.state.docker = MagicMock()
+    api_with_minio.app.state.docker._build_base_cmd = lambda: ["docker"]
+    r = await api_with_minio.get(
+        "/api/v1/jobs/JOB1/artifacts/logs/--no-color?follow=true",
+        follow_redirects=False,
+    )
+    assert r.status_code == 404
+
+
+async def test_log_stream_streams_lines_and_terminates_on_disconnect(
+    api_with_minio, monkeypatch
+):
+    """SSE framing emits `data: <line>\\n\\n` per stdout line, and closing the
+    response triggers the generator's `finally` to terminate the subprocess.
+    """
+    api_with_minio.app.state.docker = MagicMock()
+    api_with_minio.app.state.docker._build_base_cmd = lambda: ["docker"]
+
+    class _FakeStdout:
+        """Minimal StreamReader stand-in for the test.
+
+        Implements `readline()` (used by the generator) — returns each
+        configured line in order and an empty bytes object when drained,
+        which the generator treats as EOF.
+        """
+
+        def __init__(self, lines: list[bytes]) -> None:
+            self._lines = list(lines)
+
+        async def readline(self) -> bytes:
+            if self._lines:
+                return self._lines.pop(0)
+            return b""
+
+    fake_proc = MagicMock()
+    fake_proc.stdout = _FakeStdout([b"hello\n", b"world\n"])
+    fake_proc.returncode = None
+    fake_proc.terminate = MagicMock()
+    fake_proc.kill = MagicMock()
+    fake_proc.wait = AsyncMock(return_value=0)
+
+    async def _fake_create(*args, **kwargs):
+        return fake_proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+
+    # Stream the response body to completion. httpx's AsyncClient resolves
+    # the StreamingResponse by consuming it fully, then the response is
+    # closed — which fires the generator's `finally` (and our terminate).
+    r = await api_with_minio.get(
+        "/api/v1/jobs/JOB1/artifacts/logs/gateway?follow=true",
+        follow_redirects=False,
+    )
+    assert r.status_code == 200
+    body = r.text
+    assert "data: hello\n\n" in body
+    assert "data: world\n\n" in body
+    # Generator's finally must terminate the subprocess on disconnect/EOF.
+    assert fake_proc.terminate.called
