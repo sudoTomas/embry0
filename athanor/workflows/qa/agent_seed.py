@@ -92,7 +92,35 @@ QA_AGENT_SEED: dict[str, Any] = {
         "with screenshots, traces, browser console, network, and application logs."
     ),
     "model": "claude-sonnet-4-6",
-    "tools": ["Read", "Glob", "Grep", "Bash", "Edit"],
+    # claude-agent-sdk treats `tools` as an exact-name allowlist. MCP tools
+    # surface as `mcp__<server>__<tool>`, so the Playwright MCP tools must be
+    # listed explicitly — without them the SDK silently rejects browser_navigate
+    # etc., which is the WHOLE POINT of the QA agent.
+    "tools": [
+        "Read", "Glob", "Grep", "Bash", "Edit",
+        "mcp__playwright__browser_navigate",
+        "mcp__playwright__browser_navigate_back",
+        "mcp__playwright__browser_click",
+        "mcp__playwright__browser_type",
+        "mcp__playwright__browser_press_key",
+        "mcp__playwright__browser_snapshot",
+        "mcp__playwright__browser_take_screenshot",
+        "mcp__playwright__browser_console_messages",
+        "mcp__playwright__browser_network_requests",
+        "mcp__playwright__browser_network_request",
+        "mcp__playwright__browser_wait_for",
+        "mcp__playwright__browser_resize",
+        "mcp__playwright__browser_evaluate",
+        "mcp__playwright__browser_hover",
+        "mcp__playwright__browser_fill_form",
+        "mcp__playwright__browser_select_option",
+        "mcp__playwright__browser_drag",
+        "mcp__playwright__browser_drop",
+        "mcp__playwright__browser_handle_dialog",
+        "mcp__playwright__browser_file_upload",
+        "mcp__playwright__browser_close",
+        "mcp__playwright__browser_tabs",
+    ],
     "skills": ["superpowers:verification-before-completion"],
     "system_prompt": SYSTEM_PROMPT,
     "execution_mode": None,
