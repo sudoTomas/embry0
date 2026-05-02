@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 import structlog
 from langchain_core.runnables import RunnableConfig
+from langgraph.config import get_stream_writer
 from langgraph.graph import END
 from langgraph.types import Command
 
@@ -313,6 +314,18 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
         "/workspace/.qa/result.json at the end with structured results."
     )
 
+    # Forward every event the sandbox runner emits to the LangGraph stream
+    # writer. IssueExecutor._broadcast_event subscribes to the stream and
+    # persists each event to job_logs (and pushes to the WS bus). Without
+    # this hook, the agent's stdout is parsed by AgentRunner but never lands
+    # anywhere we can read back — making post-mortem debugging impossible.
+    # get_stream_writer() raises outside a LangGraph runnable context (unit
+    # tests calling qa_node directly), so fall back to a no-op there.
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        writer = lambda _event: None  # noqa: E731
+
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
@@ -320,6 +333,7 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
         prompt=prompt,
         agent_definition=agent_definition,
         timeout_seconds=qa.get("budget_seconds", 7200),
+        on_event=writer,
         credentials=credentials,
         config=config,
     )
