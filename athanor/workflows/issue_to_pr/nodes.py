@@ -473,6 +473,26 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             merged_qa["acceptance_criteria"] = qa_update["acceptance_criteria"]
         result["qa"] = merged_qa
 
+    # Phase 5 Task 7: when this triage invocation is a re-invocation after a
+    # QA failure (state.qa.final_status == "failed"), the agent must emit a
+    # qa_failure_action under the inline JSON field of the same name. Validate
+    # via the kind-specific Pydantic model (RetryDeveloper / RerunQA / AskUser)
+    # and return a Command routing the workflow accordingly. Missing or
+    # malformed action ends the job with ERR_QA_FAILURES_UNRESOLVED. The
+    # qa.failure_rounds counter is bumped by _qa_failure_bookkeeping_node in
+    # graph.py BEFORE this node is re-entered, so we do not double-bump here.
+    qa_state_in = state.get("qa") or {}
+    if qa_state_in.get("final_status") == "failed":
+        # Prefer the freshest parsed decision (resume path updates result["triage_decision"]);
+        # fall back to the first-pass triage_dict so the lookup never NPEs.
+        decision_dict = result.get("triage_decision") if isinstance(result.get("triage_decision"), dict) else triage_dict
+        return _route_qa_failure_action(
+            state=state,
+            result=result,
+            triage_decision=decision_dict if isinstance(decision_dict, dict) else {},
+            writer=writer,
+        )
+
     writer({"type": "node_completed", "node": "triage", "action": result.get("triage_decision", {}).get("action")})
     return result
 
@@ -492,6 +512,120 @@ def _format_question_text(question: str, category: str | None, options: list[str
     return " ".join(parts[:-1]) + (
         parts[-1] if parts[-1].startswith("\n") else (" " + parts[-1] if parts[:-1] else parts[-1])
     )
+
+
+def _route_qa_failure_action(
+    *,
+    state: dict[str, Any],
+    result: dict[str, Any],
+    triage_decision: dict[str, Any],
+    writer: Any,
+) -> Command[str]:
+    """Validate triage's qa_failure_action and return a routing Command.
+
+    Phase 5 Task 7. Called when ``state["qa"]["final_status"] == "failed"``,
+    i.e. triage was re-invoked after a QA failure. The agent should have
+    embedded one of three actions on its inline JSON output under the key
+    ``qa_failure_action``:
+
+      - ``{"kind": "retry_developer", "prompt": str, "focus_files": [str]}``
+        → ``Command(goto="developer", update={...})`` with
+        ``developer_prompt_addendum`` and ``developer_focus_files`` set.
+      - ``{"kind": "rerun_qa", "reason": str}``
+        → ``Command(goto="init_qa", update={"qa_rerun_reason": ...})``
+        (re-enters the QA subpath without changing the developer's diff).
+      - ``{"kind": "ask_user", "question": str}``
+        → ``Command(goto="ask_user_interrupt", update={...})`` with
+        ``pending_user_question`` set.
+
+    On missing / malformed / unknown-kind action, sets
+    ``state["qa"]["final_status"] = "exhausted"`` and
+    ``state["error_code"] = ErrorCode.QA_FAILURES_UNRESOLVED.value`` and
+    routes to ``END`` (mirroring the qa_exhausted node so the dashboard
+    sees the same shape). ``qa.failure_rounds`` is NOT bumped here — the
+    ``_qa_failure_bookkeeping_node`` in graph.py owns that counter and
+    has already incremented it before this node fires.
+    """
+    from pydantic import ValidationError
+
+    from athanor.agents.triage_actions import AskUser, RerunQA, RetryDeveloper
+    from athanor.safety.error_codes import ErrorCode
+
+    raw_action = triage_decision.get("qa_failure_action") if isinstance(triage_decision, dict) else None
+
+    def _terminate_unresolved(log_event: str, **log_fields: Any) -> Command[str]:
+        existing_qa = state.get("qa") or {}
+        merged_qa = {**existing_qa, "final_status": "exhausted"}
+        logger.warning(log_event, job_id=state.get("job_id"), **log_fields)
+        writer({"type": "node_completed", "node": "triage", "action": "qa_failure_unresolved"})
+        return Command(
+            goto=END,
+            update={
+                **result,
+                "qa": merged_qa,
+                "error_code": ErrorCode.QA_FAILURES_UNRESOLVED.value,
+                "current_stage": "failed",
+                "errors": [f"qa_failure_unresolved: {log_event}"],
+            },
+        )
+
+    if not isinstance(raw_action, dict):
+        return _terminate_unresolved(
+            "triage_qa_failure_action_missing",
+            payload_type=type(raw_action).__name__,
+        )
+
+    kind = raw_action.get("kind")
+    if kind not in ("retry_developer", "rerun_qa", "ask_user"):
+        return _terminate_unresolved(
+            "triage_qa_failure_action_unknown_kind",
+            kind=kind,
+        )
+
+    # Strip kind before model validation; the action models don't carry it.
+    payload = {k: v for k, v in raw_action.items() if k != "kind"}
+
+    try:
+        if kind == "retry_developer":
+            action = RetryDeveloper.model_validate(payload)
+            writer({"type": "node_completed", "node": "triage", "action": "qa_retry_developer"})
+            return Command(
+                goto="developer",
+                update={
+                    **result,
+                    "developer_prompt_addendum": action.prompt,
+                    "developer_focus_files": list(action.focus_files),
+                    "current_stage": "qa_retry_developer",
+                },
+            )
+        if kind == "rerun_qa":
+            action_rerun = RerunQA.model_validate(payload)
+            writer({"type": "node_completed", "node": "triage", "action": "qa_rerun"})
+            return Command(
+                goto="init_qa",
+                update={
+                    **result,
+                    "qa_rerun_reason": action_rerun.reason,
+                    "current_stage": "qa_rerun",
+                },
+            )
+        # kind == "ask_user"
+        action_ask = AskUser.model_validate(payload)
+        writer({"type": "node_completed", "node": "triage", "action": "qa_ask_user"})
+        return Command(
+            goto="ask_user_interrupt",
+            update={
+                **result,
+                "pending_user_question": action_ask.question,
+                "current_stage": "qa_ask_user",
+            },
+        )
+    except ValidationError as exc:
+        return _terminate_unresolved(
+            "triage_qa_failure_action_invalid_payload",
+            kind=kind,
+            error=str(exc)[:300],
+        )
 
 
 def _extract_qa_decision_from_triage_dict(

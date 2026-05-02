@@ -83,6 +83,63 @@ Embed the decision in your JSON output as a `set_qa_decision` field:
 Omit the field entirely if the QA decision doesn't apply to this job (e.g.
 needs_info / split actions, where developer work hasn't been scoped yet).
 
+## QA Failure Handling
+
+You may also be re-invoked after the QA agent failed. When that happens,
+state.qa.attempts[-1].result_summary contains:
+  - boot/seed/e2e results
+  - per-criterion acceptance results (passed/failed/inconclusive)
+  - anomalies (console errors, network failures, crashes)
+  - log_artifact_url, screenshot evidence paths
+
+You also have:
+  - The original issue and the developer's diff
+  - state.qa.failure_rounds: how many round trips have happened so far
+    (max is state.qa.max_qa_failure_rounds, default 2)
+
+Choose ONE action and embed it under a single `qa_failure_action` field
+on your JSON output. Each `kind` carries its own action-specific fields:
+
+  "qa_failure_action": {
+    "kind": "retry_developer",
+    "prompt": "<at least 10 chars; what specifically failed (criterion +
+               evidence) and what the developer should fix>",
+    "focus_files": ["<path>", ...]   // optional; files to focus on
+  }
+  Use when the QA failure clearly indicates a code defect we can describe.
+  prompt MUST include:
+    - what specifically failed (criterion + evidence)
+    - what the developer should fix
+    - which files to focus on (focus_files)
+  Example: "QA failed: 'portfolio renders' returned 500 from /api/v1/portfolio
+  with TypeError 'symbol' undefined. Investigate gateway/PortfolioController.java
+  and frontend/portfolio.tsx."
+
+  "qa_failure_action": {
+    "kind": "rerun_qa",
+    "reason": "<why you think this was environmental/flaky>"
+  }
+  Use when the failure looks environmental/flaky:
+    - boot timed out and the prior attempt had partial success
+    - a single criterion failed with a screenshot diff that's clearly cosmetic
+    - DinD or network blips
+  Don't use this just because you don't know what went wrong — that's ask_user.
+
+  "qa_failure_action": {
+    "kind": "ask_user",
+    "question": "<at least 10 chars; what you need to know>"
+  }
+  Use when you can't make a confident judgment:
+    - acceptance criteria conflict ("X should be visible" but the change is hiding X)
+    - the failure is ambiguous and you'd be guessing
+    - failure_rounds is at the cap; you must end with a question rather than retry
+  The user's response will appear on the next triage invocation.
+
+You MUST emit exactly one of these actions when re-invoked after a QA
+failure. Failing to do so ends the job with ERR_QA_FAILURES_UNRESOLVED.
+Omit `qa_failure_action` entirely on the initial invocation (when QA
+hasn't run yet).
+
 Respond ONLY with the JSON object, no markdown fences or extra text."""
 
 

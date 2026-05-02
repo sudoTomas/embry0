@@ -106,6 +106,14 @@ class TriageDecisionModel(BaseModel):
     # state.py free of agent-layer imports. triage_node copies these fields
     # to state["qa"]["needs_qa"] / qa_required_reason / acceptance_criteria.
     set_qa_decision: dict[str, Any] | None = None
+    # Phase 5 Task 7: when triage is re-invoked after a QA failure, it embeds
+    # one of three actions here: {"kind": "retry_developer"|"rerun_qa"|"ask_user",
+    # ...}. triage_node validates the kind-specific shape via the
+    # RetryDeveloper / RerunQA / AskUser models in athanor.agents.triage_actions
+    # and routes the workflow accordingly. Stored as a loose dict here to keep
+    # state.py free of agent-layer imports and to allow extra="forbid" on the
+    # outer model without rejecting the new key.
+    qa_failure_action: dict[str, Any] | None = None
 
 
 class TriageParseError(ValueError):
@@ -165,6 +173,19 @@ class JobState(TypedDict, total=False):
     # Structured QA-specific state populated by Phase 2's QA pipeline nodes.
     # Present when pipeline=qa OR (Phase 5) triage sets needs_qa=True.
     qa: QAStateBlock | None
+    # Phase 5 Task 7: triage→developer/QA/user routing fields populated by
+    # ``_route_qa_failure_action`` when triage is re-invoked after a QA failure.
+    # developer_prompt_addendum / developer_focus_files: consumed by developer_node
+    # to inject the failure-summary guidance into its prompt (consumer wiring is a
+    # follow-up — the routing currently sets these on state regardless).
+    # qa_rerun_reason: consumed by init_qa_node when triage opts to rerun the QA
+    # subpath unchanged (e.g. flaky/environmental failure).
+    # pending_user_question: consumed by ask_user_interrupt to surface a
+    # triage-originated escalation question to the user.
+    developer_prompt_addendum: str | None
+    developer_focus_files: list[str]
+    qa_rerun_reason: str | None
+    pending_user_question: str | None
 
 
 class QAAttempt(TypedDict, total=False):
