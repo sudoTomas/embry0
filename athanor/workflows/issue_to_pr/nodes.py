@@ -822,12 +822,20 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     return Command(goto=goto, update=updates)
 
 
-async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[str]:
+async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[str] | dict[str, Any]:
     """Run review agent — tests, lint, typecheck, code review.
 
-    Returns structured JSON with decision, validation results, and comments,
-    and self-routes via Command to approved (END), changes_requested (retry),
-    or max_retries based on the review decision.
+    Returns structured JSON with decision, validation results, and comments.
+
+    Routing (Phase 5 Task 5):
+      - The "happy path" decisions (``approved`` / ``changes_requested``) set
+        ``current_stage`` to ``review_passed`` / ``review_failed`` and return
+        a plain dict, letting the conditional edge ``route_after_review`` in
+        ``graph.py`` dispatch to ``init_qa`` / ``retry`` / ``END`` based on
+        the triage-set ``state["qa"]["needs_qa"]`` flag.
+      - The control-flow exits (no runner, ask_user cap exhausted, pending
+        agent questions, retry cap hit) keep self-routing via
+        ``Command(goto=...)`` because they bypass ``route_after_review``.
     """
     writer = get_stream_writer()
     writer({"type": "node_started", "node": "review", "agent": "review"})
@@ -939,28 +947,37 @@ Return ONLY a JSON object:
         else:
             updates["current_stage"] = "review_asked_user"
 
-    # Self-routing: inline check_review_decision against the merged agent_outputs
-    # (existing state plus whatever this review run appended). Approved → END,
-    # changes_requested → retry (or max_retries if retry cap hit).
+    # Routing:
+    #   1. Control-flow exits (cap exhausted, pending questions) keep
+    #      Command(goto=...) — they bypass route_after_review.
+    #   2. The retry-cap exhausted case (decision=changes_requested but
+    #      retry budget gone) also routes via Command(goto="max_retries").
+    #   3. The plain approved / changes_requested decisions set
+    #      current_stage and return a plain dict; route_after_review in
+    #      graph.py then dispatches to init_qa / retry / END.
     if updates.get("agent_questions_exhausted") or state.get("agent_questions_exhausted"):
-        goto: Any = "max_retries"
-    elif updates.get("pending_agent_questions") or state.get("pending_agent_questions"):
-        goto = "ask_user_interrupt"
+        return Command(goto="max_retries", update=updates)
+    if updates.get("pending_agent_questions") or state.get("pending_agent_questions"):
+        return Command(goto="ask_user_interrupt", update=updates)
+
+    from athanor.orchestration.routing.conditions import check_review_decision
+
+    merged_outputs = list(state.get("agent_outputs", []) or []) + list(result.get("agent_outputs", []) or [])
+    merged_state = {**state, "agent_outputs": merged_outputs}
+    decision = check_review_decision(merged_state)
+
+    if decision == "max_retries":
+        # Retry cap exhausted — bypass route_after_review.
+        return Command(goto="max_retries", update=updates)
+
+    # Approved or changes_requested: set the stage marker route_after_review
+    # consults and return a plain dict so the conditional edge can dispatch.
+    if decision == "approved":
+        updates["current_stage"] = "review_passed"
     else:
-        from athanor.orchestration.routing.conditions import check_review_decision
-
-        merged_outputs = list(state.get("agent_outputs", []) or []) + list(result.get("agent_outputs", []) or [])
-        merged_state = {**state, "agent_outputs": merged_outputs}
-        decision = check_review_decision(merged_state)
-
-        if decision == "approved":
-            goto = END
-        elif decision == "max_retries":
-            goto = "max_retries"
-        else:
-            goto = "retry"
-
-    return Command(goto=goto, update=updates)
+        # decision == "changes_requested" (or anything else that maps to retry)
+        updates["current_stage"] = "review_failed"
+    return updates
 
 
 async def retry_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:

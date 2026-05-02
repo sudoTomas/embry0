@@ -1,14 +1,31 @@
 """Issue-to-PR workflow — LangGraph StateGraph definition.
 
-Graph: init → triage → developer → [ask_user? | budget check] → review → END
-                            ↑             │                        │
-                            │             └── ask_user_interrupt ──┤
-                            └────────── retry ←────────────────────┘
-                                         (up to 3x, then max_retries interrupt)
+Graph (Phase 5 Task 5):
 
-`developer_node` and `review_node` self-route via `Command(goto=..., update=...)`,
-so no conditional edges are wired for them here. See
-`athanor/workflows/issue_to_pr/nodes.py` for the routing logic.
+    init → triage → developer → [ask_user? | budget check] → review →
+                        ↑             │                        │
+                        │             └── ask_user_interrupt ──┤
+                        └────────── retry ←──────── (review_failed) ─┤
+                                                                     │
+                          ┌─── (review_passed AND needs_qa) ─────────┤
+                          │                                          │
+                          ↓                                          │
+                       init_qa → qa → qa_report → END                │
+                                                                     │
+                          (review_passed AND not needs_qa) → END ────┘
+
+`developer_node` self-routes via `Command(goto=..., update=...)` for every
+exit. `review_node` keeps `Command(goto=...)` for the control-flow exits
+(ask_user_interrupt, max_retries) but returns a plain dict (with
+``current_stage`` set to ``review_passed`` / ``review_failed``) on the
+happy path so the ``route_after_review`` conditional edge can dispatch
+to the QA subpath when triage flagged ``needs_qa``.
+
+The QA subpath reuses Phase 2's QA workflow nodes verbatim
+(``init_qa_node``, ``qa_node``, ``report_node``). They are added as
+inline nodes here (rather than invoking ``QAWorkflow().compile()`` as a
+subgraph) so Task 6's ``route_after_report`` can live in this graph
+alongside the other issue→PR routing.
 """
 
 from typing import Any
@@ -25,7 +42,8 @@ from athanor.workflows.issue_to_pr.nodes import (
     review_node,
     triage_node,
 )
-from athanor.workflows.issue_to_pr.routing import route_after_triage
+from athanor.workflows.issue_to_pr.routing import route_after_review, route_after_triage
+from athanor.workflows.qa.nodes import init_qa_node, qa_node, report_node
 
 
 class IssueToprWorkflow:
@@ -43,6 +61,11 @@ class IssueToprWorkflow:
         builder.add_node("max_retries", max_retries_node)  # type: ignore[type-var]
         builder.add_node("ask_user_interrupt", ask_user_interrupt)  # type: ignore[type-var]
 
+        # Phase 5 Task 5: QA subpath nodes, reused verbatim from Phase 2.
+        builder.add_node("init_qa", init_qa_node)  # type: ignore[type-var]
+        builder.add_node("qa", qa_node)  # type: ignore[type-var]
+        builder.add_node("qa_report", report_node)  # type: ignore[type-var]
+
         builder.add_edge(START, "init")
         builder.add_edge("init", "triage")
 
@@ -52,8 +75,23 @@ class IssueToprWorkflow:
             {"proceed": "developer", "split": END},
         )
 
-        # `developer` and `review` self-route via Command(goto=..., update=...)
-        # returned from the node bodies. No conditional edges needed here.
+        # `developer` self-routes via Command(goto=..., update=...) returned
+        # from the node body. `review` self-routes for control-flow exits but
+        # returns a plain dict on approved/changes_requested so the
+        # conditional edge below can dispatch to the QA subpath.
+        builder.add_conditional_edges(
+            "review",
+            route_after_review,
+            {"developer": "retry", "qa": "init_qa", "end": END},
+        )
+
+        # QA subpath wiring. init_qa → qa → qa_report is identical to the
+        # standalone QAWorkflow (athanor/workflows/qa/graph.py). Routing OUT
+        # of qa_report is stubbed to END here; Phase 5 Task 6 replaces this
+        # with a conditional edge that bounces back to triage on QA failure.
+        builder.add_edge("init_qa", "qa")
+        builder.add_edge("qa", "qa_report")
+        builder.add_edge("qa_report", END)
 
         # After the user answers, re-run the developer so the agent sees the
         # Q&A in its rebuilt context.
