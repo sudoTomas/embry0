@@ -1,7 +1,6 @@
 """FastAPI application factory with async lifespan management."""
 
 import asyncio
-import os
 import secrets
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -244,30 +243,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # MinIO — QA artifact storage. Endpoint defaults to the compose
     # service name; creds come from the same .env that minio reads.
-    minio_endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000")
-    minio_user = os.environ.get("MINIO_ROOT_USER", "")
-    minio_password = os.environ.get("MINIO_ROOT_PASSWORD", "")
-    retention_days = int(os.environ.get("QA_ARTIFACT_RETENTION_DAYS", "14"))
-
-    if minio_user and minio_password:
+    if config.minio_root_user and config.minio_root_password:
         from athanor.execution.qa.minio_client import QAMinioClient
 
         qa_minio = QAMinioClient(
-            endpoint=minio_endpoint,
-            access_key=minio_user,
-            secret_key=minio_password,
+            endpoint=config.minio_endpoint,
+            access_key=config.minio_root_user,
+            secret_key=config.minio_root_password,
             secure=False,
         )
         try:
             await qa_minio.ensure_bucket("qa-artifacts")
-            await qa_minio.set_lifecycle_policy("qa-artifacts", expire_days=retention_days)
+            await qa_minio.set_lifecycle_policy("qa-artifacts", expire_days=config.qa_artifact_retention_days)
             app.state.qa_minio = qa_minio
-            logger.info("qa_minio_ready", retention_days=retention_days)
+            logger.info("qa_minio_ready", retention_days=config.qa_artifact_retention_days)
         except Exception as exc:
             logger.warning(
                 "qa_minio_unavailable",
                 error=str(exc),
                 msg="QA pipelines will fail; orchestrator continues so other features work.",
+                exc_info=True,
             )
             app.state.qa_minio = None
     else:

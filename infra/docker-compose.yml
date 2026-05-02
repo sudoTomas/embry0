@@ -47,7 +47,7 @@ services:
       init-sandbox-networks:
         condition: service_completed_successfully
       minio:
-        condition: service_healthy
+        condition: service_started
     deploy:
       resources:
         limits:

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import structlog
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -101,6 +101,12 @@ class AthanorConfig(BaseSettings):
     # behavior (SDK path + OAuth from ~/.claude/.credentials.json).
     default_execution_mode: str = "sdk"
     default_auth_mode: str = "oauth"
+
+    # MinIO — QA artifact storage
+    minio_endpoint: str = "minio:9000"
+    minio_root_user: str = ""
+    minio_root_password: str = ""
+    qa_artifact_retention_days: int = Field(default=14, gt=0, le=3650)
 
     @model_validator(mode="after")
     def _apply_legacy_dev_mode(self) -> "AthanorConfig":
