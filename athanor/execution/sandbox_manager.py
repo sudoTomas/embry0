@@ -67,6 +67,20 @@ class SandboxManager:
         if oauth_token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
 
+        # DinD: when the profile opts in, mount the dind-certs-client volume
+        # RO at /certs/client and set DOCKER_HOST/TLS env vars so the Docker
+        # CLI inside the sandbox can talk to tcp://dind:2376. The sandbox
+        # must also be on a network that can reach the DinD daemon — that's
+        # what `extra_networks` (typically ["backend"]) is for, and we
+        # connect those networks after container create below.
+        dind_enabled = bool(p.get("dind_enabled", False))
+        extra_volumes: list[str] = []
+        if dind_enabled:
+            extra_volumes.append("dind-certs-client:/certs/client:ro")
+            env.setdefault("DOCKER_HOST", "tcp://dind:2376")
+            env.setdefault("DOCKER_TLS_VERIFY", "1")
+            env.setdefault("DOCKER_CERT_PATH", "/certs/client")
+
         cmd = self._docker.build_run_cmd(
             image=p.get("base_image", _DEFAULT_PROFILE["base_image"]),
             name=name,
@@ -79,6 +93,7 @@ class SandboxManager:
             security_opt=p.get("security_opt", _DEFAULT_PROFILE["security_opt"]),
             read_only=p.get("read_only_root", _DEFAULT_PROFILE["read_only_root"]),
             env=env,
+            volumes=extra_volumes or None,
         )
         container_id = await self._docker.run_cmd(cmd)
         try:
@@ -99,7 +114,40 @@ class SandboxManager:
                 error_code=ErrorCode.SANDBOX_INIT,
             ) from exc
 
-        logger.info("sandbox_created", job_id=job_id, container=name, image=p.get("base_image"))
+        # Attach extra networks (typically ["backend"] for DinD daemon access).
+        # Done after enrollment so a network failure rolls back the same way as
+        # any other create-path failure: we destroy the partially-set-up sandbox.
+        extra_networks = list(p.get("extra_networks", []) or [])
+        for net in extra_networks:
+            try:
+                await self.connect_network(container_id, net)
+            except RuntimeError as exc:
+                logger.error(
+                    "sandbox_extra_network_failed_rolling_back",
+                    container=name,
+                    network=net,
+                    error=str(exc),
+                )
+                await self._proxy_manager.unenroll_sandbox(container_id)
+                try:
+                    await self._docker.run_cmd(self._docker.build_rm_cmd(name))
+                except RuntimeError:
+                    logger.warning("sandbox_rollback_rm_failed", container=name)
+                from athanor.safety.error_codes import ErrorCode
+
+                raise SandboxInitError(
+                    f"Sandbox extra-network attach failed ({net}): {exc}",
+                    error_code=ErrorCode.SANDBOX_INIT,
+                ) from exc
+
+        logger.info(
+            "sandbox_created",
+            job_id=job_id,
+            container=name,
+            image=p.get("base_image"),
+            dind_enabled=dind_enabled,
+            extra_networks=extra_networks,
+        )
         return container_id, sandbox_token
 
     @staticmethod
