@@ -2,11 +2,15 @@
 
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _REPO_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
+
+# Slash-separated alnum + . _ - : segments. Colon allowed for ISO timestamps in
+# filenames. No leading/trailing slash. No '..' segments. No double slashes.
+_SAFE_QA_PATH = re.compile(r"^[A-Za-z0-9._:\-]+(/[A-Za-z0-9._:\-]+)*$")
 
 
 class JobCreateRequest(BaseModel):
@@ -183,3 +187,49 @@ class ProviderConfigUpdate(BaseModel):
     model_light: str | None = None
     default_model: str | None = None
     ollama_base_url: str | None = None
+
+
+# --- QA Presign ---
+
+
+class QAPresignBatchRequest(BaseModel):
+    """Request a batch of presigned URLs for a QA attempt's artifacts.
+
+    The orchestrator validates the sandbox token and returns URLs scoped
+    to <job_id>/<attempt_n>/. The sandbox cannot mint URLs outside its
+    own prefix.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sandbox_token: str = Field(min_length=16, max_length=128)
+    # Each entry is a relative path under the attempt prefix
+    # (e.g., "result.json", "screenshots/login.png").
+    paths: list[str] = Field(min_length=1, max_length=64)
+    expires_seconds: int = Field(default=3600, ge=60, le=21600)
+    direction: Literal["put", "get"] = "put"
+
+    @field_validator("paths")
+    @classmethod
+    def _paths_are_safe(cls, paths: list[str]) -> list[str]:
+        for p in paths:
+            if not _SAFE_QA_PATH.match(p):
+                raise ValueError(
+                    f"Unsafe path {p!r}: must be slash-separated alnum/._:- "
+                    f"segments, no leading/trailing slash, no '..'."
+                )
+            if ".." in p.split("/"):
+                raise ValueError(f"Unsafe path {p!r}: '..' segment not allowed")
+        return paths
+
+
+class QAPresignedURL(BaseModel):
+    path: str
+    url: str
+
+
+class QAPresignBatchResponse(BaseModel):
+    bucket: str
+    prefix: str  # "<job_id>/<attempt_n>/"
+    expires_at: str  # ISO 8601
+    urls: list[QAPresignedURL]
