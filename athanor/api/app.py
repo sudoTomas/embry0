@@ -638,6 +638,7 @@ def _register_routers(app: FastAPI) -> None:
         environment,
         github,
         health,
+        internal_qa,
         issues,
         jobs,
         pipeline_templates,
@@ -669,4 +670,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(github.router, prefix="/api/v1", tags=["github"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
     app.include_router(telegram.router, prefix="/api/v1", tags=["telegram"])
+    # Internal sandbox-only endpoints — auth is via per-sandbox bearer
+    # token in the request body, not via session cookies, so these paths
+    # are also exempted from CSRF middleware.
+    app.include_router(internal_qa.router, prefix="/api/v1", tags=["internal-qa"])
     app.include_router(streaming.router)

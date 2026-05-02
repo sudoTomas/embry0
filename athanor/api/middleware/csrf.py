@@ -7,7 +7,18 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-_EXEMPT_PREFIXES = ("/webhook", "/health", "/ws/", "/api/v1/webhook", "/api/v1/telegram/callback")
+# /api/v1/internal/ — sandbox-only endpoints authenticated via a per-sandbox
+# bearer token in the request body. Sandboxes call these with curl (no
+# X-Requested-With header), so CSRF cannot apply. The endpoints carry their
+# own auth check (SandboxTokenRegistry lookup).
+_EXEMPT_PREFIXES = (
+    "/webhook",
+    "/health",
+    "/ws/",
+    "/api/v1/webhook",
+    "/api/v1/telegram/callback",
+    "/api/v1/internal/",
+)
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):

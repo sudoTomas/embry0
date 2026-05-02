@@ -100,6 +100,10 @@ async def api_client() -> AsyncIterator[AsyncClient]:
             base_url="http://test",
             headers={"X-Requested-With": "XMLHttpRequest"},
         ) as c:
+            # Expose the underlying FastAPI app on the client so tests can
+            # mutate app.state for fixture-side wiring (e.g. injecting a
+            # fake QA MinIO client / sandbox token registry).
+            c.app = fastapi_app
             yield c
 
 
