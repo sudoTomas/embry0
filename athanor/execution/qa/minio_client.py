@@ -27,8 +27,23 @@ _QA_LIFECYCLE_RULE_ID = "qa-artifact-expiry"
 class QAMinioClient:
     """Async-friendly facade over the sync `minio` SDK."""
 
-    def __init__(self, endpoint: str, access_key: str, secret_key: str, *, secure: bool = False) -> None:
-        self._client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
+    def __init__(
+        self,
+        endpoint: str,
+        access_key: str,
+        secret_key: str,
+        *,
+        secure: bool = False,
+        region: str = "us-east-1",
+    ) -> None:
+        # Pass region explicitly so presign operations skip GetBucketLocation
+        # (which requires DNS resolution of `endpoint`). The orchestrator-side
+        # process must mint URLs for the sandbox-facing endpoint (minio-proxy)
+        # which it cannot resolve itself; specifying region bypasses the lookup.
+        self._client = Minio(
+            endpoint, access_key=access_key, secret_key=secret_key,
+            secure=secure, region=region,
+        )
 
     async def _run(self, fn, *args, **kwargs):
         return await asyncio.get_running_loop().run_in_executor(None, lambda: fn(*args, **kwargs))
