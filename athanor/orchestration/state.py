@@ -180,13 +180,13 @@ class QAStateBlock(TypedDict, total=False):
     """All QA-specific state for a job. Lives at JobState['qa'] when
     pipeline=qa OR triage set needs_qa=True (Phase 5)."""
 
-    needs_qa: bool
-    qa_required_reason: str | None
+    needs_qa: bool  # Set by triage (Phase 5) on issue→PR jobs; read by post-review conditional edge to route into QA subgraph.
+    qa_required_reason: str | None  # Triage's rationale for needs_qa value; written by triage, surfaced in audit/dashboard.
     qa_yaml_raw: str | None
     qa_yaml_parsed: dict[str, Any] | None
     sandbox_profile_name: str
     acceptance_criteria: list[str]
     attempts: list[QAAttempt]
-    failure_rounds: int  # PR-flow triage↔QA cycles consumed
+    failure_rounds: int  # PR-flow triage↔QA cycles consumed; bumped when qa.report routes back to triage on failure (Phase 5), capped at max_qa_failure_rounds (default 2) — on exhaustion the job ends with ERR_QA_FAILURES_UNRESOLVED.
     final_status: Literal["pending", "passed", "failed", "exhausted", "skipped"]
     sandbox_token: str  # Set by init_qa, consumed by report
