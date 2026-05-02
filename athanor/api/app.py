@@ -682,6 +682,7 @@ def _register_routers(app: FastAPI) -> None:
         issues,
         jobs,
         pipeline_templates,
+        qa_artifacts,
         queue,
         repo_preferences,
         sandbox_profiles,
@@ -698,6 +699,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(agents.router, prefix="/api/v1", tags=["agents"], dependencies=auth_deps)
     app.include_router(issues.router, prefix="/api/v1", tags=["issues"], dependencies=auth_deps)
     app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"], dependencies=auth_deps)
+    app.include_router(qa_artifacts.router, prefix="/api/v1", tags=["qa-artifacts"], dependencies=auth_deps)
     app.include_router(sandbox_profiles.router, prefix="/api/v1", tags=["sandbox-profiles"], dependencies=auth_deps)
     app.include_router(sandboxes.router, prefix="/api/v1", tags=["sandboxes"], dependencies=auth_deps)
     app.include_router(config.router, prefix="/api/v1", tags=["config"], dependencies=auth_deps)
