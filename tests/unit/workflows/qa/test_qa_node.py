@@ -26,7 +26,8 @@ async def test_qa_node_invokes_run_agent_node():
     }
 
     agent_runner = MagicMock()  # opaque object, run_agent_node consumes it
-    config = {"configurable": {"agent_runner": agent_runner}}
+    db = MagicMock()
+    config = {"configurable": {"agent_runner": agent_runner, "db": db}}
 
     fake_run = AsyncMock(return_value={
         "agent_outputs": [{
@@ -38,7 +39,11 @@ async def test_qa_node_invokes_run_agent_node():
         }],
     })
 
-    with patch("athanor.orchestration.nodes.agent.run_agent_node", fake_run):
+    fake_repo = MagicMock()
+    fake_repo.get = AsyncMock(return_value={"model": "claude-sonnet-4-6", "tools": [], "skills": [], "system_prompt": "sp", "mcp_servers": {}, "execution_mode": None, "auth_mode": None})
+
+    with patch("athanor.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=fake_repo), \
+         patch("athanor.orchestration.nodes.agent.run_agent_node", fake_run):
         new_state = await qa_node(state, config)
 
     fake_run.assert_awaited_once()
@@ -65,7 +70,8 @@ async def test_qa_node_records_agent_error():
         },
     }
     agent_runner = MagicMock()
-    config = {"configurable": {"agent_runner": agent_runner}}
+    db = MagicMock()
+    config = {"configurable": {"agent_runner": agent_runner, "db": db}}
 
     fake_run = AsyncMock(return_value={
         "agent_outputs": [{
@@ -75,7 +81,11 @@ async def test_qa_node_records_agent_error():
         }],
     })
 
-    with patch("athanor.orchestration.nodes.agent.run_agent_node", fake_run):
+    fake_repo = MagicMock()
+    fake_repo.get = AsyncMock(return_value={"model": "claude-sonnet-4-6", "tools": [], "skills": [], "system_prompt": "sp", "mcp_servers": {}, "execution_mode": None, "auth_mode": None})
+
+    with patch("athanor.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=fake_repo), \
+         patch("athanor.orchestration.nodes.agent.run_agent_node", fake_run):
         new_state = await qa_node(state, config)
 
     last = new_state["qa"]["attempts"][-1]

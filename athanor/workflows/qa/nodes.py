@@ -274,15 +274,34 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
     via the standard run_agent_node pipeline with agent_type='qa'.
     """
     from athanor.orchestration.nodes.agent import run_agent_node
+    from athanor.storage.repositories.agent_definitions import AgentDefinitionsRepository
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
     credentials = configurable.get("credentials") or {}
+    db = configurable.get("db")
 
     if agent_runner is None:
         raise RuntimeError(
             "qa_node requires agent_runner in config['configurable'] — "
             "qa pipeline cannot run without a sandbox executor"
+        )
+    if db is None:
+        raise RuntimeError(
+            "qa_node requires db in config['configurable'] to load the qa "
+            "agent_definition (system prompt, tools, mcp_servers)"
+        )
+
+    # Load the qa agent_definition row (seeded by Phase 2 Task 5). The resolver
+    # inside run_agent_node only consumes the dict it's handed; it does not look
+    # up DB rows by agent_type, so we fetch here and pass agent_definition= so
+    # the system_prompt/tools/mcp_servers actually reach the sandbox runner.
+    repo = AgentDefinitionsRepository(db)
+    agent_definition = await repo.get("qa")
+    if agent_definition is None:
+        raise RuntimeError(
+            "qa agent_definition row missing — run AgentDefinitionsRepository.reset('qa') "
+            "or restart the orchestrator to re-seed builtin agents"
         )
 
     qa = state["qa"]
@@ -294,16 +313,12 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
         "/workspace/.qa/result.json at the end with structured results."
     )
 
-    # The qa agent definition is in the database (seeded by Phase 2 Task 5).
-    # The resolver inside run_agent_node will pick it up via agent_type='qa'.
-    # Tools come from the agent_definition row; we don't need to specify here.
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
         agent_type="qa",
         prompt=prompt,
-        # model defaults to claude-sonnet-4-6; the qa agent_definition row
-        # overrides via the resolver chain.
+        agent_definition=agent_definition,
         timeout_seconds=qa.get("budget_seconds", 7200),
         credentials=credentials,
         config=config,
