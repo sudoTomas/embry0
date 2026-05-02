@@ -47,8 +47,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && npm install -g @anthropic-ai/claude-code@2.1.92 @playwright/mcp@latest playwright@latest
 
 # Pre-fetch Chromium so the QA agent doesn't pay download cost at job start.
+# Playwright MCP creates a per-launch user-data-dir (mcp-chrome-XXXX) under
+# PLAYWRIGHT_BROWSERS_PATH at runtime, so the directory must be writable by the
+# non-root agent user — `a+rX` would only let it read/exec.
 RUN npx --yes playwright install chromium \
-    && chmod -R a+rX /opt/playwright
+    && chmod -R a+rwX /opt/playwright
 
 # Python deps — same set as the slim image. MinIO uploads from inside the
 # sandbox use presigned URLs via curl/httpx, so no MinIO SDK is needed here.
