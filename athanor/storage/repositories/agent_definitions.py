@@ -83,8 +83,8 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "mcp_servers": {
             "playwright": {
                 "type": "stdio",
-                "command": "npx",
-                "args": ["-y", "@playwright/mcp@latest", "--headless", "--browser", "chromium"],
+                "command": "playwright-mcp",
+                "args": ["--headless", "--browser", "chromium"],
             }
         },
     },

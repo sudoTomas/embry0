@@ -47,10 +47,16 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && npm install -g @anthropic-ai/claude-code@2.1.92 @playwright/mcp@latest playwright@latest
 
 # Pre-fetch Chromium so the QA agent doesn't pay download cost at job start.
-# Playwright MCP creates a per-launch user-data-dir (mcp-chrome-XXXX) under
-# PLAYWRIGHT_BROWSERS_PATH at runtime, so the directory must be writable by the
-# non-root agent user — `a+rX` would only let it read/exec.
-RUN npx --yes playwright install chromium \
+# Critically: install via @playwright/mcp's BUNDLED playwright-core (not the
+# standalone playwright package's). They pin different chromium revisions
+# (mcp@0.0.73 -> chromium-1222, standalone playwright@latest -> chromium-1217)
+# and MCP's launcher only looks for the version its own playwright-core
+# expects. Using the wrong copy here causes "BrowserIsNotInstalled" at runtime.
+#
+# Also a+rwX (not a+rX): Playwright MCP creates a per-launch user-data-dir
+# (mcp-chrome-XXXX) under PLAYWRIGHT_BROWSERS_PATH at runtime — the dir must
+# be writable by the non-root agent user.
+RUN node /usr/lib/node_modules/@playwright/mcp/node_modules/playwright-core/cli.js install chromium \
     && chmod -R a+rwX /opt/playwright
 
 # Python deps — same set as the slim image. MinIO uploads from inside the

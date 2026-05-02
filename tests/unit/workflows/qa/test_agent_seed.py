@@ -47,7 +47,7 @@ async def test_seed_inserts_qa_agent(db_with_migrations):
     assert row["model"] == "claude-sonnet-4-6"
     assert row["is_builtin"] is True
     # mcp_servers persisted via repo.update() rather than direct SQL
-    assert row["mcp_servers"]["playwright"]["command"] == "npx"
+    assert row["mcp_servers"]["playwright"]["command"] == "playwright-mcp"
     assert "--headless" in row["mcp_servers"]["playwright"]["args"]
 
 
@@ -60,4 +60,4 @@ async def test_seed_idempotent(db_with_migrations):
     row = await repo.get("qa")
     assert row is not None
     # Idempotency must preserve mcp_servers across re-seeds
-    assert row["mcp_servers"]["playwright"]["command"] == "npx"
+    assert row["mcp_servers"]["playwright"]["command"] == "playwright-mcp"

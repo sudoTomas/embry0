@@ -128,11 +128,18 @@ QA_AGENT_SEED: dict[str, Any] = {
     "mcp_servers": {
         "playwright": {
             "type": "stdio",
-            "command": "npx",
+            # Use the GLOBAL playwright-mcp binary (installed via npm install -g
+            # in the QA sandbox image) instead of `npx -y @playwright/mcp@latest`.
+            # The npx form downloads a fresh copy each invocation whose bundled
+            # playwright-core may not match the chromium pre-installed at build
+            # time, causing "BrowserIsNotInstalled" at runtime. The global
+            # install is paired with its bundled playwright-core's chromium in
+            # the Dockerfile.
+            "command": "playwright-mcp",
             # --browser chromium because the Dockerfile pre-installs Chromium,
             # not Chrome stable (Playwright MCP's default), and the QA sandbox
             # has no system Chrome at /opt/google/chrome.
-            "args": ["-y", "@playwright/mcp@latest", "--headless", "--browser", "chromium"],
+            "args": ["--headless", "--browser", "chromium"],
         }
     },
 }
