@@ -74,27 +74,45 @@ async def get_latest_screenshot(
     # is `{job_id}/` (not scoped to a single attempt) so a job that has rolled
     # over to a new attempt while the dashboard is polling still surfaces the
     # newest screenshot regardless of which attempt produced it.
-    objs = await qa_minio.list_objects("qa-artifacts", prefix=f"{job_id}/")
-    screenshots = [o for o in objs if o.endswith(".png") and "/screenshots/" in o]
+    #
+    # Use `list_objects_with_meta` so we get `last_modified` from the listing
+    # itself — this endpoint is polled every ~5s by the dashboard, and the
+    # previous "list + N stat_object" approach was N+1 round trips per poll.
+    objs = await qa_minio.list_objects_with_meta("qa-artifacts", prefix=f"{job_id}/")
+    screenshots = [
+        o for o in objs if o["key"].endswith(".png") and "/screenshots/" in o["key"]
+    ]
     if not screenshots:
         raise HTTPException(status_code=404, detail="no screenshots yet")
 
-    # The agent timestamps screenshot filenames in ISO 8601, but we re-stat
-    # each object and sort by MinIO's `last_modified` rather than trusting the
-    # filename. Two reasons:
+    # We sort by MinIO's `last_modified` rather than trusting the filename
+    # timestamp because:
     #   1) Clock drift inside the sandbox vs. MinIO can make the embedded
     #      timestamp disagree with the actual upload time.
     #   2) An agent could (in principle) upload screenshots out of order or
     #      with a non-conforming filename; we want the freshest *upload*, not
     #      the freshest *filename*.
-    # The `(last_modified, key)` sort key uses the key as a deterministic
-    # tie-breaker if two screenshots share an mtime.
-    stats = []
-    for key in screenshots:
-        stat = await qa_minio.stat_object("qa-artifacts", key)
-        stats.append((stat["last_modified"], key))
-    stats.sort(reverse=True)
-    latest_key = stats[0][1]
+    #
+    # Tie-break: `(last_modified, attempt_int, key)` — equal-mtime screenshots
+    # (possible during high-throughput bursts) resolve deterministically by
+    # higher attempt number first, then by key as a final tiebreaker. Keys
+    # whose `<attempt>` segment is missing or non-numeric are skipped
+    # defensively rather than crashing the endpoint.
+    def _sort_key(item: dict) -> tuple:
+        key = item["key"]
+        parts = key.split("/")
+        try:
+            attempt_int = int(parts[1])
+        except (IndexError, ValueError):
+            return None
+        return (item["last_modified"], attempt_int, key)
+
+    keyed = [(s, _sort_key(s)) for s in screenshots]
+    keyed = [(s, k) for s, k in keyed if k is not None]
+    if not keyed:
+        raise HTTPException(status_code=404, detail="no screenshots yet")
+    keyed.sort(key=lambda pair: pair[1], reverse=True)
+    latest_key = keyed[0][0]["key"]
     url = await qa_minio.presign_get("qa-artifacts", latest_key, expires_seconds=300)
     return RedirectResponse(url=url, status_code=302)
 

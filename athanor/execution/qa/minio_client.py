@@ -109,6 +109,21 @@ class QAMinioClient:
             return [o.object_name for o in self._client.list_objects(bucket, prefix=prefix, recursive=True)]
         return await self._run(_list)
 
+    async def list_objects_with_meta(self, bucket: str, prefix: str = "") -> list[dict]:
+        """Like `list_objects` but also returns last_modified/size from the listing.
+
+        The MinIO SDK already populates `.last_modified` and `.size` on each
+        item the iterator yields, so callers that want freshness/size info
+        no longer need a follow-up `stat_object` per key (which would turn a
+        single round trip into N+1).
+        """
+        def _list() -> list[dict]:
+            return [
+                {"key": o.object_name, "last_modified": o.last_modified, "size": o.size}
+                for o in self._client.list_objects(bucket, prefix=prefix, recursive=True)
+            ]
+        return await self._run(_list)
+
     async def stat_object(self, bucket: str, key: str) -> dict:
         def _stat():
             o = self._client.stat_object(bucket, key)

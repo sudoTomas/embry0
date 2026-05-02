@@ -80,21 +80,27 @@ async def test_artifact_numeric_attempt_sort(api_client):
 
 
 async def test_latest_screenshot_returns_most_recent(api_with_minio):
-    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(return_value=[
-        "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png",
-        "JOB1/1/screenshots/exploratory/2026-04-30T12:05:30-login.png",
-        "JOB1/1/screenshots/exploratory/2026-04-30T12:08:11-portfolio.png",
-        "JOB1/1/result.json",
+    import datetime as _dt
+
+    # Helper: build the {key, last_modified, size} dict shape returned by the
+    # new list_objects_with_meta wrapper. The screenshot timestamp is embedded
+    # in the filename (first 19 chars of the basename, ISO 8601).
+    def _meta(key: str) -> dict:
+        return {
+            "key": key, "size": 1,
+            "last_modified": _dt.datetime.fromisoformat(
+                key.split("/")[-1][:19] + "+00:00"
+            ),
+        }
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
+        _meta("JOB1/1/screenshots/boot/2026-04-30T12:00:00.png"),
+        _meta("JOB1/1/screenshots/exploratory/2026-04-30T12:05:30-login.png"),
+        _meta("JOB1/1/screenshots/exploratory/2026-04-30T12:08:11-portfolio.png"),
+        # result.json has no parseable timestamp; use a sentinel mtime so the
+        # filter (only .png in /screenshots/) is what excludes it, not a parse error.
+        {"key": "JOB1/1/result.json", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
     ])
-    # Extract the ISO timestamp embedded in the filename (e.g. `2026-04-30T12:00:00`)
-    # and use it as the mock `last_modified`. The filename may have an optional
-    # `-<slug>` suffix before `.png`, so we take the first 19 chars of the basename.
-    api_with_minio.app.state.qa_minio.stat_object = AsyncMock(side_effect=lambda b, k: {
-        "size": 1, "etag": "x",
-        "last_modified": __import__("datetime").datetime.fromisoformat(
-            k.split("/")[-1][:19] + "+00:00"
-        )
-    })
     api_with_minio.app.state.qa_minio.presign_get = AsyncMock(return_value="http://minio/latest")
 
     r = await api_with_minio.get(
@@ -106,8 +112,10 @@ async def test_latest_screenshot_returns_most_recent(api_with_minio):
 
 
 async def test_latest_screenshot_404_when_no_screenshots(api_with_minio):
-    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(return_value=[
-        "JOB1/1/result.json",  # no screenshots
+    import datetime as _dt
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
+        {"key": "JOB1/1/result.json", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
     ])
     r = await api_with_minio.get("/api/v1/jobs/JOB1/artifacts/screenshots/latest")
     assert r.status_code == 404
@@ -120,26 +128,18 @@ async def test_latest_screenshot_spans_multiple_attempts(api_with_minio):
     # attempt 2 with the latest mtime.
     import datetime as _dt
 
-    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(return_value=[
-        "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png",
-        "JOB1/1/screenshots/exploratory/2026-04-30T12:05:00-old.png",
-        "JOB1/2/screenshots/boot/2026-04-30T13:00:00.png",
-        "JOB1/2/screenshots/exploratory/2026-04-30T13:10:00-newest.png",
-        "JOB1/2/result.json",
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
+        {"key": "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
+        {"key": "JOB1/1/screenshots/exploratory/2026-04-30T12:05:00-old.png", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:05:00+00:00")},
+        {"key": "JOB1/2/screenshots/boot/2026-04-30T13:00:00.png", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:00:00+00:00")},
+        {"key": "JOB1/2/screenshots/exploratory/2026-04-30T13:10:00-newest.png", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:10:00+00:00")},
+        {"key": "JOB1/2/result.json", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:00:00+00:00")},
     ])
-    mtimes = {
-        "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png":
-            _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00"),
-        "JOB1/1/screenshots/exploratory/2026-04-30T12:05:00-old.png":
-            _dt.datetime.fromisoformat("2026-04-30T12:05:00+00:00"),
-        "JOB1/2/screenshots/boot/2026-04-30T13:00:00.png":
-            _dt.datetime.fromisoformat("2026-04-30T13:00:00+00:00"),
-        "JOB1/2/screenshots/exploratory/2026-04-30T13:10:00-newest.png":
-            _dt.datetime.fromisoformat("2026-04-30T13:10:00+00:00"),
-    }
-    api_with_minio.app.state.qa_minio.stat_object = AsyncMock(
-        side_effect=lambda b, k: {"size": 1, "etag": "x", "last_modified": mtimes[k]}
-    )
     api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
         return_value="http://minio/latest-across-attempts"
     )
@@ -153,3 +153,42 @@ async def test_latest_screenshot_spans_multiple_attempts(api_with_minio):
     call_args = api_with_minio.app.state.qa_minio.presign_get.call_args
     key = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["key"]
     assert key == "JOB1/2/screenshots/exploratory/2026-04-30T13:10:00-newest.png"
+
+
+async def test_latest_screenshot_route_not_swallowed_by_catchall(api_with_minio):
+    # Regression test: the catch-all `{path:path}` route in `get_artifact`
+    # MUST NOT match `screenshots/latest`. If a future maintainer reorders
+    # the routes (placing the catch-all first), this test fails because the
+    # catch-all would resolve the latest attempt and presign for the literal
+    # key `<job_id>/<attempt>/screenshots/latest` — which is NOT a real
+    # screenshot path. We assert the resolved key actually points at a .png
+    # under `screenshots/`.
+    import datetime as _dt
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
+        {"key": "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
+    ])
+    # `_resolve_latest_attempt` (used by the catch-all) reads `list_objects`,
+    # so wire that too in case the catch-all incorrectly handles the request.
+    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(
+        return_value=["JOB1/1/screenshots/boot/2026-04-30T12:00:00.png"]
+    )
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(return_value="http://minio/x")
+
+    r = await api_with_minio.get(
+        "/api/v1/jobs/JOB1/artifacts/screenshots/latest",
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    call_args = api_with_minio.app.state.qa_minio.presign_get.call_args
+    key = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["key"]
+    # The resolved key must be a real screenshot under JOB1/<attempt>/screenshots/,
+    # NOT the literal `JOB1/<attempt>/screenshots/latest` that the catch-all
+    # would have produced.
+    assert key.startswith("JOB1/1/screenshots/"), (
+        f"catch-all swallowed screenshots/latest -- got key={key!r}"
+    )
+    assert key.endswith(".png"), f"resolved key is not a screenshot: {key!r}"
+    assert not key.endswith("/latest"), (
+        f"catch-all matched `screenshots/latest` literally: {key!r}"
+    )

@@ -93,3 +93,71 @@ async def test_put_object_round_trip(minio_client, test_bucket):
     # Stat to confirm size matches
     stat = await minio_client.stat_object(test_bucket, "direct/result.json")
     assert stat["size"] == len(payload)
+
+
+# ---------------------------------------------------------------------------
+# Mocked-SDK unit tests (no live MinIO required)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_objects_with_meta_returns_key_mtime_size(monkeypatch):
+    """`list_objects_with_meta` must return [{key, last_modified, size}, ...]
+    derived from the SDK iterator's `.object_name`/`.last_modified`/`.size`
+    attributes — no follow-up `stat_object` calls.
+    """
+    import datetime as _dt
+    from types import SimpleNamespace
+
+    # Build a fake SDK iterator. The wrapper consumes each item in order, so
+    # the returned list must preserve that order (verified below).
+    fake_objs = [
+        SimpleNamespace(
+            object_name="JOB1/1/screenshots/boot/a.png",
+            last_modified=_dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00"),
+            size=1234,
+        ),
+        SimpleNamespace(
+            object_name="JOB1/1/screenshots/boot/b.png",
+            last_modified=_dt.datetime.fromisoformat("2026-04-30T12:00:01+00:00"),
+            size=5678,
+        ),
+    ]
+
+    captured: dict = {}
+
+    def fake_list_objects(bucket, prefix=None, recursive=False):
+        # Capture so we can assert the prefix is actually forwarded.
+        captured["bucket"] = bucket
+        captured["prefix"] = prefix
+        captured["recursive"] = recursive
+        return iter(fake_objs)
+
+    client = QAMinioClient(
+        endpoint="localhost:9000", access_key="x", secret_key="y", secure=False,
+    )
+    monkeypatch.setattr(client._client, "list_objects", fake_list_objects)
+
+    result = await client.list_objects_with_meta("qa-artifacts", prefix="JOB1/")
+
+    # Prefix forwarded to SDK.
+    assert captured["bucket"] == "qa-artifacts"
+    assert captured["prefix"] == "JOB1/"
+    assert captured["recursive"] is True
+
+    # Order preserved from SDK iterator.
+    assert [r["key"] for r in result] == [
+        "JOB1/1/screenshots/boot/a.png",
+        "JOB1/1/screenshots/boot/b.png",
+    ]
+    # Each entry has the expected shape — key, last_modified, size — pulled
+    # straight from the iterator (no stat_object round trip required).
+    assert result[0] == {
+        "key": "JOB1/1/screenshots/boot/a.png",
+        "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00"),
+        "size": 1234,
+    }
+    assert result[1]["size"] == 5678
+    assert result[1]["last_modified"] == _dt.datetime.fromisoformat(
+        "2026-04-30T12:00:01+00:00"
+    )
