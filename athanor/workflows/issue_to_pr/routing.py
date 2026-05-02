@@ -49,3 +49,48 @@ def route_after_review(state: dict[str, Any]) -> Literal["developer", "qa", "end
     if qa_block.get("needs_qa", False):
         return "qa"
     return "end"
+
+
+# Default cap on triage↔QA bounces before we give up. Mirrors the docstring
+# in QAStateBlock.failure_rounds. Overridable per-job via
+# ``state["qa"]["max_qa_failure_rounds"]``.
+DEFAULT_MAX_QA_FAILURE_ROUNDS = 2
+
+
+def route_after_qa_report(state: dict[str, Any]) -> Literal["triage", "end", "exhausted"]:
+    """Decide the next node after ``qa_report`` in the issue→PR pipeline.
+
+    Reads ``state["qa"]["final_status"]``:
+
+    - ``"passed"``    → ``"end"``  (success — wrap up the job)
+    - ``"exhausted"`` → ``"end"``  (QA's internal retry loop gave up; don't
+      bounce back to triage, surface the failure)
+    - ``"failed"``    → ``"triage"`` if ``state["qa"]["failure_rounds"]`` is
+      strictly less than ``state["qa"]["max_qa_failure_rounds"]`` (default
+      :data:`DEFAULT_MAX_QA_FAILURE_ROUNDS`), else ``"exhausted"`` so the
+      graph terminates with ``ERR_QA_FAILURES_UNRESOLVED``.
+    - anything else (e.g. ``"pending"``, missing) → ``"end"`` defensively;
+      this should never happen at this stage in practice.
+
+    Phase 1 convention: ``failure_rounds`` lives on the nested QA state
+    block (``state["qa"]["failure_rounds"]``), NOT at the top level. The
+    ``_qa_failure_bookkeeping_node`` increments it BEFORE this routing
+    function fires, so the value already reflects the just-completed round.
+
+    Pure: no state mutation, no I/O. Side effects (the increment, error
+    code writes) live in dedicated nodes.
+    """
+    qa = state.get("qa") or {}
+    status = qa.get("final_status", "pending")
+    rounds = qa.get("failure_rounds", 0)
+    max_rounds = qa.get("max_qa_failure_rounds", DEFAULT_MAX_QA_FAILURE_ROUNDS)
+
+    if status == "passed":
+        return "end"
+    if status == "exhausted":
+        return "end"
+    if status == "failed":
+        if rounds >= max_rounds:
+            return "exhausted"
+        return "triage"
+    return "end"
