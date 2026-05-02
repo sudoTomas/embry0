@@ -272,6 +272,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.qa_minio = None
 
+    from athanor.execution.qa.token_registry import SandboxTokenRegistry
+
+    app.state.qa_token_registry = SandboxTokenRegistry()
+
     # Recover orphaned jobs from previous orchestrator lifecycle
     try:
         from athanor.safety.error_codes import ErrorCode
