@@ -236,6 +236,10 @@ async def init_qa_node(state: dict, config: RunnableConfig) -> dict:
         qa["qa_yaml_raw"] = yaml_text
         qa["qa_yaml_parsed"] = qa_yaml.model_dump()
         state["qa"] = qa
+        # run_agent_node (used by qa_node) reads state["sandbox_container_id"] to
+        # know which container to docker exec into. Without this, it would pass
+        # an empty string and the runner would exec on container "" → exit 1.
+        state["sandbox_container_id"] = container_id
 
         logger.info("init_qa_done", job_id=job_id, attempt_n=attempt_n, sandbox=container_id)
         return state
