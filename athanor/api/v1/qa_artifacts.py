@@ -13,18 +13,21 @@ under <job_id>/. Routes that don't specify an attempt resolve it dynamically.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 
-from athanor.api.deps import get_qa_minio
+from athanor.api.deps import get_docker, get_qa_minio
 
 router = APIRouter()
 
 _SAFE_ARTIFACT_PATH = re.compile(r"^[A-Za-z0-9._:\-]+(/[A-Za-z0-9._:\-]+)*$")
 _SAFE_JOB_ID = re.compile(r"^[A-Za-z0-9_\-]+$")
+# Service names: docker-style — alnum + _ - .
+_SAFE_SERVICE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _check_safe(path: str) -> None:
@@ -117,12 +120,13 @@ async def get_latest_screenshot(
     return RedirectResponse(url=url, status_code=302)
 
 
-@router.get("/jobs/{job_id}/artifacts/{path:path}")
-async def get_artifact(
-    job_id: str,
-    path: str,
-    qa_minio: Any = Depends(get_qa_minio),
-) -> RedirectResponse:
+async def _redirect_to_artifact(qa_minio: Any, job_id: str, path: str) -> RedirectResponse:
+    """Resolve latest attempt and return a 302 to the MinIO presigned GET URL.
+
+    Shared by both the catch-all `get_artifact` route and the `follow=false`
+    fallback in `get_log`. Centralised so the SSE endpoint isn't coupled to
+    `get_artifact`'s function-as-dependency-callable signature.
+    """
     # Validate inputs BEFORE any storage work.
     _check_safe_job_id(job_id)
     _check_safe(path)
@@ -134,3 +138,71 @@ async def get_artifact(
     key = f"{job_id}/{n}/{path}"
     url = await qa_minio.presign_get("qa-artifacts", key, expires_seconds=300)
     return RedirectResponse(url=url, status_code=302)
+
+
+# NOTE: Route ordering matters. `get_log` MUST be declared before `get_artifact`
+# for the same reason `get_latest_screenshot` is — the `{path:path}` catch-all
+# in `get_artifact` would otherwise swallow `/logs/<service>` and treat it as
+# a static artifact path even when `?follow=true` is requested.
+@router.get("/jobs/{job_id}/artifacts/logs/{service}", response_model=None)
+async def get_log(
+    job_id: str,
+    service: str,
+    follow: bool = False,
+    qa_minio: Any = Depends(get_qa_minio),
+    docker: Any = Depends(get_docker),
+) -> RedirectResponse | StreamingResponse:
+    # Validate inputs BEFORE any storage work. We use the `{service}` path
+    # converter (no `:path`) so a slash in the service name yields a 404 from
+    # FastAPI's router rather than reaching this handler — but defend in depth
+    # anyway in case of future refactors.
+    _check_safe_job_id(job_id)
+    if "/" in service or not _SAFE_SERVICE.match(service):
+        raise HTTPException(status_code=404, detail="not found")
+
+    if not follow:
+        # Static-file path: redirect to MinIO presigned GET.
+        return await _redirect_to_artifact(qa_minio, job_id, f"logs/{service}.log")
+
+    base = docker._build_base_cmd()  # noqa: SLF001
+    project = f"qa_{job_id}"
+    # docker compose -p <project> logs -f --tail 200 <service>
+    cmd = base + ["compose", "-p", project, "logs", "-f", "--tail", "200", service]
+
+    async def _stream():
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            assert proc.stdout is not None
+            async for raw in proc.stdout:
+                line = raw.decode("utf-8", errors="replace").rstrip()
+                # SSE format: "data: <line>\n\n"
+                yield f"data: {line}\n\n".encode()
+        finally:
+            if proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2)
+                except TimeoutError:
+                    proc.kill()
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx buffering
+        },
+    )
+
+
+@router.get("/jobs/{job_id}/artifacts/{path:path}")
+async def get_artifact(
+    job_id: str,
+    path: str,
+    qa_minio: Any = Depends(get_qa_minio),
+) -> RedirectResponse:
+    return await _redirect_to_artifact(qa_minio, job_id, path)

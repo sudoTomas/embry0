@@ -112,3 +112,13 @@ def get_qa_minio(request: Request) -> Any:
     if minio is None:
         raise HTTPException(status_code=503, detail="QA artifact storage unavailable")
     return minio
+
+
+def get_docker(request: Request) -> Any:
+    """Return the Docker client from request state, or 503 if unconfigured."""
+    from fastapi import HTTPException
+
+    docker = getattr(request.app.state, "docker", None)
+    if docker is None:
+        raise HTTPException(status_code=503, detail="docker client unavailable")
+    return docker

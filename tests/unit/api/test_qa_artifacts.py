@@ -155,6 +155,32 @@ async def test_latest_screenshot_spans_multiple_attempts(api_with_minio):
     assert key == "JOB1/2/screenshots/exploratory/2026-04-30T13:10:00-newest.png"
 
 
+async def test_log_stream_returns_sse_content_type(api_with_minio):
+    """SSE endpoint with follow=false redirects to the static artifact."""
+    # `Depends(get_docker)` is resolved before the handler runs, even on the
+    # follow=false path, so we have to wire a docker stub. We don't actually
+    # touch it in this test — the static fallback only uses qa_minio.
+    api_with_minio.app.state.docker = MagicMock()
+    api_with_minio.app.state.docker._build_base_cmd = lambda: ["docker"]
+
+    r = await api_with_minio.get(
+        "/api/v1/jobs/JOB1/artifacts/logs/gateway?follow=false",
+        follow_redirects=False,
+    )
+    # follow=false routes through `_redirect_to_artifact`, which uses the
+    # api_with_minio fixture's `list_objects` (returns ["JOB1/1/result.json"])
+    # → resolves attempt 1 → presigns `JOB1/1/logs/gateway.log` → 302.
+    assert r.status_code == 302
+    assert r.headers["location"].startswith("http://minio/")
+
+
+async def test_log_stream_unsafe_service_rejected(api_with_minio):
+    api_with_minio.app.state.docker = MagicMock()
+    api_with_minio.app.state.docker._build_base_cmd = lambda: ["docker"]
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/artifacts/logs/..%2F..%2Fetc%2Fpasswd")
+    assert r.status_code == 404
+
+
 async def test_latest_screenshot_route_not_swallowed_by_catchall(api_with_minio):
     # Regression test: the catch-all `{path:path}` route in `get_artifact`
     # MUST NOT match `screenshots/latest`. If a future maintainer reorders
