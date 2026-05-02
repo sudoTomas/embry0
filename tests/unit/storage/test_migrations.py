@@ -111,3 +111,14 @@ async def test_migration_19_adds_scope_to_env_tables(db_with_migrations):
             )
             constraint_defs.append(cdef or "")
         assert any("scope" in cdef for cdef in constraint_defs), f"{table} missing scope CHECK"
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_migration_20_adds_mcp_servers_column(db_with_migrations):
+    cols = await db_with_migrations.fetch(
+        "SELECT column_name, data_type FROM information_schema.columns "
+        "WHERE table_name = 'agent_definitions' AND column_name = 'mcp_servers'"
+    )
+    assert len(cols) == 1
+    assert cols[0]["data_type"] == "jsonb"

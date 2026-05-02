@@ -528,6 +528,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_repo_env_scope ON repo_environment (repo, scope);
         """,
     ),
+    (
+        20,
+        "agent_definitions — mcp_servers JSONB column for MCP-aware agents",
+        # The QA agent needs to launch the Playwright MCP server. BUILTIN_SEED
+        # already declares mcp_servers; this migration makes the DB schema
+        # accept it. Default '{}' so legacy rows are unaffected.
+        """
+        ALTER TABLE agent_definitions
+            ADD COLUMN IF NOT EXISTS mcp_servers JSONB NOT NULL DEFAULT '{}'::jsonb;
+        """,
+    ),
 ]
 
 

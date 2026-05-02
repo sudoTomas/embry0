@@ -241,6 +241,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await seed_builtin_sandbox_profiles(SandboxProfilesRepository(db))
 
+    # Seed the qa agent definition. Idempotent — upserts on every boot so the
+    # canonical system prompt and MCP server config stay in sync with the code.
+    from athanor.workflows.qa.agent_seed import seed_qa_agent
+
+    await seed_qa_agent(AgentDefinitionsRepository(db))
+
     # MinIO — QA artifact storage.
     #
     # Two clients because the orchestrator and the sandbox see MinIO via
