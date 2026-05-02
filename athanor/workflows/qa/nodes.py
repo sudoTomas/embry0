@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 
 import structlog
 from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END
+from langgraph.types import Command
 
 from athanor.workflows.qa.qa_yaml import parse_qa_yaml
 
@@ -430,3 +432,50 @@ async def report_node(state: dict, config: RunnableConfig) -> dict:
 
     state["qa"] = qa
     return state
+
+
+async def retry_node(state: dict, config: RunnableConfig) -> Command:
+    """Decide whether to retry the QA attempt or end (Section 6.2).
+
+      - boot_timeout / seed_timeout / infra_error -> auto-retry (bounded)
+      - idle_timeout                              -> hard-fail (ERR_QA_IDLE)
+      - validation_failed                         -> standalone: END (Phase 5 routes to triage)
+      - total_budget_exceeded                     -> END (Phase 5 routes to triage)
+      - result_json_missing                       -> END (treat as inconclusive)
+      - None (success)                            -> END
+    """
+    qa = state.get("qa") or {}
+    attempts = qa.get("attempts", [])
+    if not attempts:
+        return Command(goto=END, update={"qa": {**qa, "final_status": "exhausted"}})
+
+    last = attempts[-1]
+    reason = last.get("exit_reason")
+    n = len(attempts)
+    max_retries = qa.get("max_qa_retries", 2)
+
+    # Success path — no retry, just end.
+    if reason is None:
+        return Command(goto=END, update={"qa": qa})
+
+    auto_retry_reasons = {"boot_timeout", "seed_timeout", "infra_error"}
+    if reason in auto_retry_reasons and n <= max_retries:
+        # Expand boot budget for boot timeouts: 1.5x then 2x.
+        if reason == "boot_timeout":
+            yaml_parsed = qa.get("qa_yaml_parsed") or {}
+            startup = yaml_parsed.get("startup") or {}
+            base_budget = startup.get("boot_timeout_seconds", 180)
+            multiplier = 1.5 if n == 1 else 2.0
+            qa["next_attempt_boot_timeout"] = int(base_budget * multiplier)
+        return Command(goto="init_qa", update={"qa": qa})
+
+    # Everything else terminates standalone runs.
+    final = "failed" if reason == "validation_failed" else "exhausted"
+    qa["final_status"] = final
+    if n > max_retries and reason in auto_retry_reasons:
+        qa["error_code"] = "ERR_QA_BUDGET_EXHAUSTED"
+    elif reason == "idle_timeout":
+        qa["error_code"] = "ERR_QA_IDLE"
+    elif reason == "result_json_missing":
+        qa["error_code"] = "ERR_QA_RESULT_INVALID"
+    return Command(goto=END, update={"qa": qa})
