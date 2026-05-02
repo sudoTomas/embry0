@@ -67,6 +67,10 @@ def _make_test_lifespan(database_url: str):
         # provider in tests. Production wires this in the real lifespan.
         app.state.secrets_provider = FernetSecretsProvider(secret_key="test-secret-key")
 
+        # Default qa_minio to None for tests that don't need a live MinIO.
+        # The qa_minio_seeded fixture overrides this on demand.
+        app.state.qa_minio = None
+
         await _init_app_state(app, db, database_url=database_url)
 
         yield
@@ -142,3 +146,23 @@ async def builtin_profile_seeded(app: AsyncClient, database_url: str) -> AsyncIt
         yield
     finally:
         await seed_db.close()
+
+
+@pytest.fixture
+async def qa_minio_seeded(app):
+    """Provisions qa-artifacts bucket in the test MinIO. Skip if no endpoint."""
+    import os
+
+    endpoint = os.environ.get("MINIO_ENDPOINT", "")
+    if not endpoint:
+        pytest.skip("MINIO_ENDPOINT not set")
+    from athanor.execution.qa.minio_client import QAMinioClient
+
+    client = QAMinioClient(
+        endpoint=endpoint,
+        access_key=os.environ["MINIO_ROOT_USER"],
+        secret_key=os.environ["MINIO_ROOT_PASSWORD"],
+        secure=False,
+    )
+    await client.ensure_bucket("qa-artifacts")
+    yield client

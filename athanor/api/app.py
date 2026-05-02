@@ -1,6 +1,7 @@
 """FastAPI application factory with async lifespan management."""
 
 import asyncio
+import os
 import secrets
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -240,6 +241,41 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from athanor.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
 
     await seed_builtin_sandbox_profiles(SandboxProfilesRepository(db))
+
+    # MinIO — QA artifact storage. Endpoint defaults to the compose
+    # service name; creds come from the same .env that minio reads.
+    minio_endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000")
+    minio_user = os.environ.get("MINIO_ROOT_USER", "")
+    minio_password = os.environ.get("MINIO_ROOT_PASSWORD", "")
+    retention_days = int(os.environ.get("QA_ARTIFACT_RETENTION_DAYS", "14"))
+
+    if minio_user and minio_password:
+        from athanor.execution.qa.minio_client import QAMinioClient
+
+        qa_minio = QAMinioClient(
+            endpoint=minio_endpoint,
+            access_key=minio_user,
+            secret_key=minio_password,
+            secure=False,
+        )
+        try:
+            await qa_minio.ensure_bucket("qa-artifacts")
+            await qa_minio.set_lifecycle_policy("qa-artifacts", expire_days=retention_days)
+            app.state.qa_minio = qa_minio
+            logger.info("qa_minio_ready", retention_days=retention_days)
+        except Exception as exc:
+            logger.warning(
+                "qa_minio_unavailable",
+                error=str(exc),
+                msg="QA pipelines will fail; orchestrator continues so other features work.",
+            )
+            app.state.qa_minio = None
+    else:
+        logger.warning(
+            "qa_minio_unconfigured",
+            msg="MINIO_ROOT_USER / MINIO_ROOT_PASSWORD not set — QA pipelines will fail.",
+        )
+        app.state.qa_minio = None
 
     # Recover orphaned jobs from previous orchestrator lifecycle
     try:
