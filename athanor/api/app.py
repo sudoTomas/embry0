@@ -241,8 +241,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await seed_builtin_sandbox_profiles(SandboxProfilesRepository(db))
 
-    # MinIO — QA artifact storage. Endpoint defaults to the compose
-    # service name; creds come from the same .env that minio reads.
+    # MinIO — QA artifact storage.
+    #
+    # Two clients because the orchestrator and the sandbox see MinIO via
+    # different hostnames:
+    #
+    # * ``qa_minio`` (internal endpoint, e.g. ``minio:9000``) — used for
+    #   bucket admin (ensure bucket / set lifecycle) and also for any
+    #   orchestrator-side reads (e.g. dashboard download URLs).
+    #
+    # * ``qa_minio_sandbox`` (sandbox-facing endpoint, e.g.
+    #   ``minio-proxy:9100``) — used by the presign endpoint to mint URLs the
+    #   sandbox can actually reach. The hostname is signed into the URL, so
+    #   the sandbox's Host header on the resulting PUT must match what the
+    #   orchestrator signed. Phase 1.5.
     if config.minio_root_user and config.minio_root_password:
         from athanor.execution.qa.minio_client import QAMinioClient
 
@@ -256,7 +268,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await qa_minio.ensure_bucket("qa-artifacts")
             await qa_minio.set_lifecycle_policy("qa-artifacts", expire_days=config.qa_artifact_retention_days)
             app.state.qa_minio = qa_minio
-            logger.info("qa_minio_ready", retention_days=config.qa_artifact_retention_days)
+            # Sandbox-facing client: same creds, different endpoint. We do
+            # NOT call ensure_bucket / set_lifecycle here — that work
+            # belongs to the internal client; this one only mints URLs.
+            app.state.qa_minio_sandbox = QAMinioClient(
+                endpoint=config.minio_sandbox_endpoint,
+                access_key=config.minio_root_user,
+                secret_key=config.minio_root_password,
+                secure=False,
+            )
+            logger.info(
+                "qa_minio_ready",
+                retention_days=config.qa_artifact_retention_days,
+                internal_endpoint=config.minio_endpoint,
+                sandbox_endpoint=config.minio_sandbox_endpoint,
+            )
         except Exception as exc:
             logger.warning(
                 "qa_minio_unavailable",
@@ -265,12 +291,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 exc_info=True,
             )
             app.state.qa_minio = None
+            app.state.qa_minio_sandbox = None
     else:
         logger.warning(
             "qa_minio_unconfigured",
             msg="MINIO_ROOT_USER / MINIO_ROOT_PASSWORD not set — QA pipelines will fail.",
         )
         app.state.qa_minio = None
+        app.state.qa_minio_sandbox = None
 
     from athanor.execution.qa.token_registry import SandboxTokenRegistry
 

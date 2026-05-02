@@ -23,7 +23,15 @@ router = APIRouter()
 
 @router.post("/internal/qa/presign", response_model=QAPresignBatchResponse)
 async def presign_batch(req: QAPresignBatchRequest, request: Request) -> dict[str, Any]:
-    minio = getattr(request.app.state, "qa_minio", None)
+    # Mint URLs against the SANDBOX-facing MinIO client (e.g.
+    # ``minio-proxy:9100``), not the internal one (``minio:9000``). The MinIO
+    # signature covers the request Host header, so the sandbox's Host on the
+    # eventual PUT/GET must match what the orchestrator signed here. Falling
+    # back to the internal client would mint URLs the sandbox cannot use.
+    # Phase 1.5.
+    minio = getattr(request.app.state, "qa_minio_sandbox", None) or getattr(
+        request.app.state, "qa_minio", None
+    )
     if minio is None:
         raise HTTPException(status_code=503, detail="QA artifact storage unavailable")
     tokens = request.app.state.qa_token_registry

@@ -1,6 +1,11 @@
-# Stateless credential-injection proxies (git, github, auth) running as containers
-# inside DinD on the sandbox-restricted network. Each container instance picks a
-# proxy type at startup via PROXY_TYPE env var.
+# Stateless proxies — same image is used for two distinct deployment shapes:
+#   1. Credential-injection proxies (git, github, auth) — run inside DinD on
+#      sandbox-restricted, holding orchestrator credentials.
+#   2. Network-plumbing proxies (minio, presign) — run on the HOST docker daemon
+#      on the backend network, giving DinD-spawned sandboxes a stable hostname
+#      to reach minio:9000 and orchestrator:8000 (which are NOT visible inside
+#      DinD's network namespace).
+# Each container instance picks a proxy type at startup via PROXY_TYPE env var.
 
 FROM python:3.12.7-slim-bookworm
 
@@ -20,6 +25,8 @@ COPY athanor/execution/proxy/__init__.py           /app/athanor/execution/proxy/
 COPY athanor/execution/proxy/auth_proxy.py         /app/athanor/execution/proxy/auth_proxy.py
 COPY athanor/execution/proxy/git_proxy.py          /app/athanor/execution/proxy/git_proxy.py
 COPY athanor/execution/proxy/github_proxy.py       /app/athanor/execution/proxy/github_proxy.py
+COPY athanor/execution/proxy/minio_proxy.py        /app/athanor/execution/proxy/minio_proxy.py
+COPY athanor/execution/proxy/presign_proxy.py      /app/athanor/execution/proxy/presign_proxy.py
 COPY athanor/execution/proxy/server.py             /app/athanor/execution/proxy/server.py
 
 # Health check via the proxy's own /health endpoint. Use Python's urllib since

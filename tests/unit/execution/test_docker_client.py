@@ -84,6 +84,23 @@ def test_build_run_cmd_no_volumes(docker: DockerClient):
     assert "-v" not in cmd
 
 
+def test_build_run_cmd_extra_hosts(docker: DockerClient):
+    """extra_hosts maps to --add-host=name:ip flags."""
+    cmd = docker.build_run_cmd(
+        image="athanor-sandbox:latest",
+        name="sandbox-1",
+        extra_hosts={"dind": "172.24.0.3", "minio-proxy": "172.24.0.7"},
+    )
+    assert "--add-host=dind:172.24.0.3" in cmd
+    assert "--add-host=minio-proxy:172.24.0.7" in cmd
+
+
+def test_build_run_cmd_no_extra_hosts(docker: DockerClient):
+    """Without extra_hosts, no --add-host flag is emitted."""
+    cmd = docker.build_run_cmd(image="athanor-sandbox:latest", name="sandbox-1")
+    assert not any(t.startswith("--add-host") for t in cmd)
+
+
 def test_build_exec_cmd(docker: DockerClient):
     """Exec command targets container by name."""
     cmd = docker.build_exec_cmd(

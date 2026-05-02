@@ -102,8 +102,22 @@ class AthanorConfig(BaseSettings):
     default_execution_mode: str = "sdk"
     default_auth_mode: str = "oauth"
 
-    # MinIO — QA artifact storage
+    # MinIO — QA artifact storage.
+    #
+    # Two endpoints because the orchestrator and the sandbox see MinIO via
+    # different network paths:
+    #
+    # * ``minio_endpoint`` — internal (orchestrator → minio). Used for bucket
+    #   admin (ensure bucket / set lifecycle) and orchestrator-side reads.
+    #
+    # * ``minio_sandbox_endpoint`` — sandbox-facing. Used to mint presigned
+    #   URLs the sandbox will actually hit. The hostname here MUST match the
+    #   minio-proxy container name inside DinD (see ProxyManager.start in
+    #   Phase 1.5); MinIO presigned-URL signatures cover the request Host
+    #   header, so the URL hostname is load-bearing — a mismatch silently
+    #   produces SignatureDoesNotMatch on PUT.
     minio_endpoint: str = "minio:9000"
+    minio_sandbox_endpoint: str = "minio-proxy:9100"
     minio_root_user: str = ""
     minio_root_password: str = ""
     qa_artifact_retention_days: int = Field(default=14, gt=0, le=3650)

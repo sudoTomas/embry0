@@ -67,13 +67,16 @@ async def test_qa_jvm_sandbox_can_presign_and_run_docker(app, qa_minio_seeded):
         assert result.strip(), "docker info returned empty — DinD certs not working"
 
         # 4. From inside the sandbox, hit /internal/qa/presign via curl against
-        # the orchestrator on the backend network.
+        # the presign-proxy (Phase 1.5). Sandboxes cannot reach
+        # `orchestrator:8000` directly because that service lives on the host
+        # backend network, not in DinD's network namespace; presign-proxy
+        # bridges the two.
         curl_cmd = [
             "curl", "-sf",
             "-X", "POST",
             "-H", "Content-Type: application/json",
             "-d", json.dumps({"sandbox_token": sandbox_token, "paths": ["smoke/result.json"]}),
-            "http://orchestrator:8000/api/v1/internal/qa/presign",
+            "http://presign-proxy:9104/api/v1/internal/qa/presign",
         ]
         body = await docker.run_cmd(
             docker.build_exec_cmd(container_id, curl_cmd),

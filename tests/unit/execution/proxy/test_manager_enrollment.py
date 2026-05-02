@@ -1,4 +1,10 @@
-"""Tests for ProxyManager.enroll_sandbox / unenroll_sandbox."""
+"""Tests for ProxyManager.enroll_sandbox / unenroll_sandbox.
+
+Phase 1.5 changed the transport from direct HTTP (which the orchestrator
+cannot use because the proxies live in DinD's sandbox-restricted network,
+invisible from the host) to ``docker exec`` of a tiny urllib request inside
+each proxy container. These tests assert behaviour against that transport.
+"""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -8,53 +14,75 @@ import structlog
 from athanor.execution.proxy.manager import ProxyManager
 
 
+def _make_docker_mock(http_code: int = 200):
+    """Build a DockerClient mock whose run_cmd returns the canned HTTP_CODE marker."""
+    docker = MagicMock()
+    docker.build_exec_cmd = MagicMock(
+        side_effect=lambda container, command, env=None: ["docker", "exec", container, *command]
+    )
+    docker.run_cmd = AsyncMock(return_value=f"HTTP_CODE={http_code}")
+    return docker
+
+
 @pytest.fixture
 def manager():
-    docker = MagicMock()
+    docker = _make_docker_mock(http_code=200)
     mgr = ProxyManager(docker, proxy_admin_token="admin-secret")
     mgr.git_proxy_url = "http://git-proxy:9101"
     mgr.github_proxy_url = "http://github-proxy:9103"
     # auth proxy disabled in this fixture
+    # _http is a sentinel for "ProxyManager.start() has been called"; we set
+    # it to a MagicMock since enroll_sandbox checks `is None`.
+    mgr._http = MagicMock()
     return mgr
 
 
-def _fake_session(post_status=200, delete_status=200, post_text="", delete_text=""):
-    session = MagicMock()
-    post_resp = AsyncMock()
-    post_resp.__aenter__ = AsyncMock(return_value=MagicMock(status=post_status, text=AsyncMock(return_value=post_text)))
-    post_resp.__aexit__ = AsyncMock(return_value=None)
-    session.post = MagicMock(return_value=post_resp)
-    delete_resp = AsyncMock()
-    delete_resp.__aenter__ = AsyncMock(
-        return_value=MagicMock(status=delete_status, text=AsyncMock(return_value=delete_text))
-    )
-    delete_resp.__aexit__ = AsyncMock(return_value=None)
-    session.delete = MagicMock(return_value=delete_resp)
-    session.close = AsyncMock()
-    return session
-
-
 @pytest.mark.asyncio
-async def test_enroll_posts_to_each_url(manager):
-    manager._http = _fake_session(post_status=200)
+async def test_enroll_runs_docker_exec_against_each_proxy(manager):
     token = await manager.enroll_sandbox("sandbox-job-1")
     assert len(token) >= 40
-    assert manager._http.post.call_count == 2  # git + github
-    args_list = [call[0][0] for call in manager._http.post.call_args_list]
-    assert "http://git-proxy:9101/admin/enroll" in args_list
-    assert "http://github-proxy:9103/admin/enroll" in args_list
+    # Two execs: git-proxy + github-proxy.
+    assert manager._docker.run_cmd.await_count == 2
+
+    exec_targets = [
+        call.args[0][2]  # ["docker", "exec", <container>, ...]
+        for call in manager._docker.run_cmd.await_args_list
+    ]
+    assert "git-proxy" in exec_targets
+    assert "github-proxy" in exec_targets
 
 
 @pytest.mark.asyncio
-async def test_enroll_raises_on_non_200(manager):
-    manager._http = _fake_session(post_status=401, post_text="bad admin token")
-    with pytest.raises(RuntimeError, match="returned 401"):
-        await manager.enroll_sandbox("sandbox-job-2")
+async def test_enroll_passes_admin_token_via_env(manager):
+    """The token must travel via -e ADMIN_TOK on the exec, not in argv."""
+    await manager.enroll_sandbox("s1")
+
+    # Inspect the env passed to build_exec_cmd for each call.
+    env_calls = [
+        call.kwargs.get("env") or {}
+        for call in manager._docker.build_exec_cmd.call_args_list
+    ]
+    assert env_calls, "build_exec_cmd was not called"
+    for env in env_calls:
+        assert env.get("ADMIN_TOK") == "admin-secret"
+        # Body is JSON for POST enroll.
+        assert env.get("ADMIN_BODY"), "ADMIN_BODY missing"
+        assert "sandbox_id" in env["ADMIN_BODY"]
+
+
+@pytest.mark.asyncio
+async def test_enroll_raises_on_non_200():
+    docker = _make_docker_mock(http_code=401)
+    mgr = ProxyManager(docker, proxy_admin_token="admin")
+    mgr.git_proxy_url = "http://git-proxy:9101"
+    mgr._http = MagicMock()
+    with pytest.raises(RuntimeError, match="HTTP 401"):
+        await mgr.enroll_sandbox("s2")
 
 
 @pytest.mark.asyncio
 async def test_enroll_raises_when_session_not_started():
-    docker = MagicMock()
+    docker = _make_docker_mock()
     mgr = ProxyManager(docker, proxy_admin_token="admin")
     mgr.git_proxy_url = "http://git-proxy:9101"
     with pytest.raises(RuntimeError, match="must be called before enroll_sandbox"):
@@ -62,19 +90,24 @@ async def test_enroll_raises_when_session_not_started():
 
 
 @pytest.mark.asyncio
-async def test_unenroll_best_effort_swallows_404(manager):
-    manager._http = _fake_session(delete_status=404)
-    await manager.unenroll_sandbox("sandbox-gone")  # no raise
+async def test_unenroll_best_effort_swallows_404():
+    docker = _make_docker_mock(http_code=404)
+    mgr = ProxyManager(docker, proxy_admin_token="admin")
+    mgr.git_proxy_url = "http://git-proxy:9101"
+    mgr._http = MagicMock()
+    await mgr.unenroll_sandbox("sandbox-gone")  # no raise
 
 
 @pytest.mark.asyncio
-async def test_unenroll_logs_warning_on_other_failure(manager):
-    manager._http = _fake_session(delete_status=500)
+async def test_unenroll_logs_warning_on_other_failure():
+    docker = _make_docker_mock(http_code=500)
+    mgr = ProxyManager(docker, proxy_admin_token="admin")
+    mgr.git_proxy_url = "http://git-proxy:9101"
+    mgr._http = MagicMock()
     with structlog.testing.capture_logs() as captured:
-        await manager.unenroll_sandbox("sandbox-x")
-    # 500 from a proxy → sandbox_unenroll_non_200 warning per registered URL
+        await mgr.unenroll_sandbox("sandbox-x")
     events = [e["event"] for e in captured]
-    assert "sandbox_unenroll_non_200" in events
+    assert "sandbox_unenroll_failed" in events
 
 
 def test_proxy_admin_token_required():

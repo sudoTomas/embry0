@@ -66,11 +66,49 @@ async def test_presign_rejects_path_traversal(api_with_qa):
 
 async def test_presign_503_when_minio_unconfigured(api_client):
     api_client.app.state.qa_minio = None
+    api_client.app.state.qa_minio_sandbox = None
     r = await api_client.post(
         "/api/v1/internal/qa/presign",
         json={"sandbox_token": "x" * 16, "paths": ["x"]},
     )
     assert r.status_code == 503
+
+
+async def test_presign_uses_sandbox_facing_minio_client(api_client):
+    """Phase 1.5: when both qa_minio and qa_minio_sandbox are set, the
+    SANDBOX-facing client mints URLs (so the URL hostname matches what the
+    sandbox can reach). qa_minio is the internal client used for bucket admin.
+    """
+    from athanor.execution.qa.token_registry import SandboxTokenRegistry
+
+    class _SandboxClient:
+        async def presign_put(self, bucket, key, expires_seconds):
+            return f"http://minio-proxy:9100/{bucket}/{key}?put"
+
+        async def presign_get(self, bucket, key, expires_seconds):
+            return f"http://minio-proxy:9100/{bucket}/{key}?get"
+
+    class _InternalClient:
+        async def presign_put(self, bucket, key, expires_seconds):
+            return f"http://minio:9000/{bucket}/{key}?put"
+
+        async def presign_get(self, bucket, key, expires_seconds):
+            return f"http://minio:9000/{bucket}/{key}?get"
+
+    api_client.app.state.qa_minio = _InternalClient()
+    api_client.app.state.qa_minio_sandbox = _SandboxClient()
+    reg = SandboxTokenRegistry()
+    reg.register("phase15-token-aaaaaaaaaa", job_id="P15", attempt_n=1)
+    api_client.app.state.qa_token_registry = reg
+
+    r = await api_client.post(
+        "/api/v1/internal/qa/presign",
+        json={"sandbox_token": "phase15-token-aaaaaaaaaa", "paths": ["x.json"]},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    # The minted URL must use the SANDBOX endpoint, not the internal one.
+    assert body["urls"][0]["url"].startswith("http://minio-proxy:9100/"), body["urls"]
 
 
 async def test_presign_does_not_require_csrf_header(api_with_qa):

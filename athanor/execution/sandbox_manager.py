@@ -6,6 +6,7 @@ No customer code on the host — sandbox clones repo internally.
 
 from __future__ import annotations
 
+import socket
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -85,11 +86,19 @@ class SandboxManager:
         # surfaces the real certs to the sandbox.
         dind_enabled = bool(p.get("dind_enabled", False))
         extra_volumes: list[str] = []
+        extra_hosts: dict[str, str] = {}
         if dind_enabled:
             extra_volumes.append("/certs/client:/certs/client:ro")
             env.setdefault("DOCKER_HOST", "tcp://dind:2376")
             env.setdefault("DOCKER_TLS_VERIFY", "1")
             env.setdefault("DOCKER_CERT_PATH", "/certs/client")
+            # Sandboxes on sandbox-restricted reach the dind daemon by IP via
+            # the bridge gateway (which IS the dind container). Without an
+            # /etc/hosts entry the hostname `dind` doesn't resolve from inside
+            # DinD-spawned containers; resolution would otherwise require an
+            # extra_networks attachment to a network that doesn't exist
+            # (dind's own backend membership is host-side only). Phase 1.5.
+            extra_hosts["dind"] = self._resolve_dind_gateway_ip()
 
         cmd = self._docker.build_run_cmd(
             image=p.get("base_image", _DEFAULT_PROFILE["base_image"]),
@@ -104,6 +113,7 @@ class SandboxManager:
             read_only=p.get("read_only_root", _DEFAULT_PROFILE["read_only_root"]),
             env=env,
             volumes=extra_volumes or None,
+            extra_hosts=extra_hosts or None,
         )
         container_id = await self._docker.run_cmd(cmd)
         try:
@@ -155,6 +165,31 @@ class SandboxManager:
             extra_networks=extra_networks,
         )
         return container_id, sandbox_token
+
+    @staticmethod
+    def _resolve_dind_gateway_ip() -> str:
+        """Resolve the dind container's IP on the host backend network.
+
+        DinD-spawned sandboxes reach the dind daemon at
+        ``tcp://dind:2376``, but the hostname ``dind`` only exists in the
+        HOST docker DNS (compose backend network), not inside DinD's own DNS.
+        The orchestrator IS on backend, so it can resolve the name; we then
+        inject the IP into the sandbox via ``--add-host=dind:<ip>``.
+
+        From inside DinD-spawned containers on sandbox-restricted, traffic to
+        this IP routes through the sandbox-restricted bridge gateway (which
+        is the dind container itself, with eth0 on backend) — so the
+        connection succeeds without NAT (dind's eth0 IS the destination
+        interface from the dind kernel's perspective).
+        """
+        try:
+            return socket.gethostbyname("dind")
+        except OSError as exc:
+            raise RuntimeError(
+                "Cannot resolve `dind` from the orchestrator. The orchestrator "
+                "must be on the compose `backend` network (where the dind "
+                "service lives) for dind_enabled sandboxes to function."
+            ) from exc
 
     @staticmethod
     def _read_oauth_token() -> str | None:

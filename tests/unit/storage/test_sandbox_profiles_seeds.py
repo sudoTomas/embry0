@@ -13,7 +13,12 @@ def test_builtin_seeds_define_slim_and_qa_jvm():
     qa = BUILTIN_SANDBOX_PROFILES["qa-jvm"]
     assert qa["base_image"] == "athanor-sandbox-qa:latest"
     assert qa["dind_enabled"] is True
-    assert "backend" in qa["extra_networks"]
+    # Phase 1.5: extra_networks is intentionally empty. The sandbox no longer
+    # attaches to `backend` (which doesn't exist inside DinD anyway). Instead
+    # SandboxManager injects --add-host=dind:<ip> for the docker daemon, and
+    # the Phase 1.5 minio-proxy / presign-proxy are reached by Docker DNS on
+    # sandbox-restricted.
+    assert qa["extra_networks"] == []
 
 
 @pytest.mark.requires_postgres

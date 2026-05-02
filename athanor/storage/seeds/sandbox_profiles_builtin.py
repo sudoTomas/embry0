@@ -41,9 +41,12 @@ BUILTIN_SANDBOX_PROFILES: dict[str, dict[str, Any]] = {
         "container_timeout_seconds": 7200,
         "idle_timeout_seconds": 600,
         "dind_enabled": True,
-        # backend is allowlisted because dind_enabled=True (sandbox needs
-        # to reach tcp://dind:2376 for Docker CLI calls).
-        "extra_networks": ["backend"],
+        # No extra_networks — the sandbox reaches dind via the
+        # sandbox-restricted gateway (which routes to the host backend network
+        # via DinD's NAT). minio-proxy and presign-proxy are reached the same
+        # way; SandboxManager injects their backend IPs as --add-host entries
+        # at create time. Phase 1.5.
+        "extra_networks": [],
         "env_defaults": {"LANG": "C.UTF-8"},
     },
 }
