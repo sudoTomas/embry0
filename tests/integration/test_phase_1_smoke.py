@@ -25,6 +25,20 @@ async def test_qa_jvm_sandbox_can_presign_and_run_docker(app, qa_minio_seeded):
     """End-to-end: profile resolves, sandbox starts with DinD certs, can
     mint presigned URLs, can run `docker info` against DinD."""
 
+    # 0. Precondition: this test reaches into orchestrator process state
+    # (docker client, proxy manager, qa_token_registry) which the integration
+    # `app` fixture's lifespan does NOT populate. Skip cleanly when run from
+    # pytest outside the live orchestrator container; Task 15's deployment runs
+    # this test via `docker exec orchestrator pytest ...` where state IS set.
+    if not all(
+        hasattr(app.app.state, attr)
+        for attr in ("docker", "proxy_manager", "qa_token_registry")
+    ):
+        pytest.skip(
+            "test requires live orchestrator process state — run via "
+            "'docker exec orchestrator pytest tests/integration/test_phase_1_smoke.py'"
+        )
+
     # 1. Get the qa-jvm profile from the API.
     r = await app.get("/api/v1/sandbox-profiles/qa-jvm")
     assert r.status_code == 200, f"qa-jvm profile missing: {r.status_code} {r.text}"
