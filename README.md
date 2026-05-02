@@ -36,12 +36,14 @@ graph TB
     subgraph Sandbox["Docker Sandbox (per job)"]
         DEV["Developer Agent<br/><small>Code + Git + PR</small>"]
         REV["Reviewer Agent<br/><small>Code review</small>"]
+        QA["QA Agent (optional gate)<br/><small>Boots app + Playwright validation</small>"]
     end
 
     subgraph Output
         PR["Pull Request"]
         WS["WebSocket<br/><small>Live events</small>"]
         DB[("PostgreSQL<br/><small>Jobs + Checkpoints</small>")]
+        MIN[("MinIO<br/><small>QA artifacts</small>")]
     end
 
     GH -->|webhook| TR
@@ -50,7 +52,11 @@ graph TB
     LG -->|docker exec| DEV
     DEV --> REV
     REV -->|rejected| DEV
-    REV -->|approved| PR
+    REV -->|"approved + needs_qa=false"| PR
+    REV -->|"approved + needs_qa=true"| QA
+    QA -->|"passed"| PR
+    QA -->|"failed → triage"| TR
+    QA --> MIN
     LG --> WS
     LG --> DB
 
@@ -60,14 +66,15 @@ graph TB
 
 ## Architecture
 
-Athanor runs as a Docker Compose stack with 4 services:
+Athanor runs as a Docker Compose stack with 5 services:
 
 | Service | Purpose |
 |---------|---------|
 | **Orchestrator** | FastAPI + LangGraph — manages jobs, runs pipelines, streams events |
 | **PostgreSQL** | Jobs, traces, checkpoints, sandbox profiles, budget/context config |
-| **DinD** | Docker-in-Docker — runs isolated sandbox containers for agent execution |
-| **Frontend** | React SPA — execution dashboard, pipeline visualization, configuration |
+| **DinD** | Docker-in-Docker — runs isolated sandbox containers for agent execution. The QA pipeline also runs target-application compose stacks here, on per-job networks (`qa-net-{job_id}`). |
+| **MinIO** | S3-compatible artifact store — `qa-artifacts` bucket holds per-attempt `result.json`, screenshots, traces, and full compose logs from QA runs |
+| **Frontend** | React SPA — execution dashboard, pipeline visualization, configuration, QA tab with live thumbnail + SSE log tail |
 
 ```mermaid
 graph LR
@@ -133,7 +140,12 @@ The **developer agent** owns the full lifecycle: code changes, git operations, a
 
 ## Running QA
 
-The **QA pipeline** boots a target full-stack application inside the orchestrator's DinD, drives a headless Chromium via Playwright MCP, and validates each acceptance criterion with screenshots, browser console, network activity, and per-service container logs as evidence. Standalone today; Phase 5 wires it into the issue-to-PR flow as a post-merge gate.
+The **QA pipeline** boots a target full-stack application inside the orchestrator's DinD, drives a headless Chromium via Playwright MCP, and validates each acceptance criterion with screenshots, browser console, network activity, and per-service container logs as evidence. Two ways to invoke it:
+
+- **Standalone** — `POST /api/v1/jobs` with `pipeline=qa`, used for ad-hoc validation and CI smoke (instructions below).
+- **PR-gated** — when triage decides `needs_qa=true` on an issue→PR job (based on `qa_required` in your `qa.yaml` plus diff heuristics), the QA pipeline runs after `review` succeeds and before the job ends. QA failure routes back to triage, which picks one of `retry_developer` (with diff guidance), `rerun_qa` (flaky/environmental), or `ask_user` (escalate). Bounded at 2 round-trips before failing with `ERR_QA_FAILURES_UNRESOLVED`.
+
+See [docs/architecture.md](docs/architecture.md#qa-pipeline) for the full graph + per-job lifecycle.
 
 ```mermaid
 stateDiagram-v2

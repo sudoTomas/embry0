@@ -64,7 +64,14 @@ graph TB
             DD["Docker Daemon"]
             S1["Sandbox (Job A)<br/>clones repo internally"]
             S2["Sandbox (Job B)<br/>clones repo internally"]
+            SQ["QA Sandbox (Job C)<br/>+ Chromium + Docker CLI"]
+            QAN["qa-net-jobC<br/>(per-QA-job network)"]
+            APP["Target app stack<br/>(compose -p qa_jobC)"]
+            MP["minio-proxy"]
+            PP["presign-proxy"]
         end
+
+        MIN["MinIO<br/>qa-artifacts bucket"]
     end
 
     FE <-->|reverse proxy| API
@@ -74,11 +81,19 @@ graph TB
     SM -->|"docker run/exec via TLS"| DD
     DD --> S1
     DD --> S2
+    DD --> SQ
     S1 -.-> AP
     S1 -.-> GP
     S1 -.-> LP
     S2 -.-> AP
     S2 -.-> GHP
+    SQ -.->|launches| APP
+    SQ -.->|attached to| QAN
+    APP -.->|attached to| QAN
+    SQ -.->|presigned PUT/GET| MP
+    SQ -.->|refresh URLs| PP
+    MP -.-> MIN
+    PP --> API
     LG <--> PG
 
     GH["GitHub"] -->|webhooks| API
@@ -100,6 +115,7 @@ graph TB
 | `backend` | Orchestrator, PostgreSQL, DinD | Backend services only |
 | `sandbox-restricted` | Proxy services, Sandbox containers | No internet, proxy-only access |
 | `sandbox-internet` | Sandbox containers (research only) | Filtered egress for web search |
+| `qa-net-{job_id}` | One QA sandbox + the target app's compose stack | Per-QA-job DinD network created at `init_qa` and torn down by `cleanup_qa_resources`. Lets the target app's services reach each other and the agent's Playwright reach the frontend by short DNS names (`gateway`, `redis`, `frontend`). |
 
 > **Networks are asserted at orchestrator startup, not auto-created.** The
 > orchestrator inspects each network and refuses to start if `sandbox-restricted`
@@ -115,6 +131,7 @@ graph TB
 | Orchestrator | `athanor-orchestrator` | FastAPI + LangGraph, job management, proxy services. Never touches customer code. | configurable via `.env` |
 | PostgreSQL | `postgres:16` | Application data + LangGraph checkpoints | configurable via `.env` |
 | DinD | `docker:dind` | Runs sandbox containers (privileged) | configurable via `.env` |
+| MinIO | `minio/minio` | S3-compatible artifact store. `qa-artifacts` bucket holds QA `result.json`, screenshots, traces, and `logs/full.log` per `<job_id>/<attempt_n>/...`. | configurable via `.env` |
 
 No shared workspace volumes. All resource limits, ports, image tags, and credentials are configurable via `.env` file.
 
@@ -265,12 +282,31 @@ stateDiagram-v2
         Assess2 --> ChangesReq: decision = changes_requested
     }
 
-    Review --> End1: approved
+    Review --> QAGate: approved
     ChangesReq --> Retry: inject feedback
     Retry --> Developer: retry (max 3)
     Retry --> AskUser: max retries reached
     AskUser --> Developer: user says continue
     AskUser --> End2: user says merge or abandon
+
+    state QAGate {
+        Decide: needs_qa? (set by triage)
+        Decide --> QAFlow: yes
+        Decide --> End1: no
+    }
+
+    state QAFlow {
+        InitQA: init_qa<br/>start sandbox + qa-net + load qa.yaml
+        QA: qa<br/>agent runs 5 phases via Playwright MCP
+        QAReport: qa_report<br/>parse result.json + cleanup
+        Bookkeep: qa_failure_bookkeeping<br/>bump failure_rounds on failed
+        InitQA --> QA --> QAReport --> Bookkeep
+        Bookkeep --> Pass: passed → END
+        Bookkeep --> Fail: failed → triage (retry_developer / rerun_qa / ask_user)
+        Bookkeep --> Exhaust: failure_rounds at cap → ERR_QA_FAILURES_UNRESOLVED
+    }
+
+    Fail --> Triage: re-invoke with failure summary
 
     End1 --> [*]
     End2 --> [*]
@@ -278,16 +314,23 @@ stateDiagram-v2
 
 > **Note on `split`:** The `split` action creates child issues as a side effect inside `run_triage_node` (calling the Athanor API proxy) and then terminates the current workflow; there is no dedicated child-creation node in the graph.
 
+> **Note on QA gate:** Triage emits `set_qa_decision` (initial pass) and `qa_failure_action` (after a failed QA run) inline in its JSON output. The QA subpath reuses the standalone QA workflow's nodes verbatim — see the QA Pipeline section below for the inner workings.
+
 ### Graph Nodes
 
 | Node | Agent? | Tools | Purpose |
 |------|--------|-------|---------|
 | `init` | No | — | Create sandbox container, clone repo |
-| `triage` | Yes | Read, Glob, Grep | Analyze issue, configure pipeline. Can `interrupt()` for questions. |
+| `triage` | Yes | Read, Glob, Grep | Analyze issue, configure pipeline. Can `interrupt()` for questions. Also emits `set_qa_decision` (whether QA gate runs) and, on re-invocation after QA failure, `qa_failure_action` (retry_developer / rerun_qa / ask_user). |
 | `developer` | Yes | Read, Write, Edit, Bash, Glob, Grep | Write code, create branch, commit, push, open PR |
 | `review` | Yes | Read, Bash, Glob, Grep | Code review with structured JSON output. Can request changes (triggers retry). |
 | `retry` | No | — | Inject review feedback into state, increment counter |
 | `max_retries` | No | — | `interrupt()` — ask user: continue, merge as-is, or abandon |
+| `init_qa` | No | — | (QA gate, when `needs_qa=true`) Create QA sandbox + per-job network, parse `.athanor/qa.yaml`, mint MinIO presigned PUT URLs, write `/workspace/.qa/job.json` |
+| `qa` | Yes | Read, Glob, Grep, Bash, Edit, Playwright MCP (22 tools) | Run the 5 QA phases (boot, seed, e2e, exploratory, report) and write `result.json` |
+| `qa_report` | No | — | Read + Pydantic-validate `result.json`, set `qa.final_status`, upload artifacts, destroy sandbox, cleanup network |
+| `qa_failure_bookkeeping` | No | — | Increment `qa.failure_rounds` when `final_status=failed` |
+| `qa_exhausted` | No | — | Terminal node when `failure_rounds` hits the cap; sets `error_code=ERR_QA_FAILURES_UNRESOLVED` |
 
 ### Triage Decision
 
@@ -321,6 +364,109 @@ The LLM triage node outputs a pipeline configuration.
 | `get_stream_writer()` | Nodes emit custom events (progress, tool calls, PR created) |
 | `graph.astream(stream_mode=["updates", "custom"])` | Executor captures live events |
 | `config["configurable"]` | Dependency injection: AgentRunner, SandboxManager, proxy URLs |
+
+---
+
+## QA Pipeline
+
+The QA agent boots a target full-stack application inside DinD, drives a headless Chromium via Playwright MCP, and validates each acceptance criterion with screenshots, browser console, network activity, and per-service container logs as evidence. Two modes:
+
+- **Standalone** (`POST /api/v1/jobs` with `pipeline=qa`) — run QA against any branch on demand. Used for ad-hoc validation and CI smoke.
+- **PR-gated** (issue→PR with `needs_qa=true`) — triage decides whether the resulting PR should be QA-validated; the issue→PR graph routes through `init_qa → qa → qa_report` after `review` and re-invokes triage on failure with the failure summary so it can pick `retry_developer` / `rerun_qa` / `ask_user`.
+
+Both modes share the same nodes (`init_qa`, `qa`, `qa_report`) and the same `qa-net-{job_id}` per-job network.
+
+```mermaid
+graph LR
+    subgraph DinD
+        QS["QA Sandbox<br/>athanor-sandbox-qa<br/>(JDK 21, Docker CLI, Chromium,<br/>Playwright MCP)"]
+        QN["qa-net-jobC"]
+        APP["Target app stack<br/>compose -p qa_jobC<br/>(gateway, frontend, db, ...)"]
+        MP["minio-proxy"]
+        PP["presign-proxy"]
+    end
+
+    subgraph Orch["Orchestrator"]
+        IQ["init_qa node"]
+        QR["qa_report node"]
+        AR["agent_runner.py"]
+    end
+
+    MIN["MinIO<br/>qa-artifacts"]
+
+    IQ -->|"docker network create"| QN
+    IQ -->|"sandbox_mgr.create + attach"| QS
+    IQ -->|"presign PUT URLs<br/>(internal endpoint)"| MIN
+    IQ -->|"write /workspace/.qa/job.json"| QS
+    AR -->|"docker exec runner"| QS
+    QS -->|"docker compose up<br/>-p qa_jobC"| APP
+    QS -.->|"Playwright headless<br/>http://frontend:3000"| APP
+    QS -->|"PUT screenshots/result.json<br/>(presigned URL via DNS)"| MP
+    QS -->|"refresh URLs"| PP
+    PP -->|"POST /internal/qa/presign"| Orch
+    MP -.-> MIN
+    QR -->|"cat result.json + validate"| QS
+    QR -->|"sandbox.destroy → network rm"| QN
+```
+
+### Per-job lifecycle
+
+| Step | Owner | Action |
+|------|-------|--------|
+| 1. network | `init_qa` | `docker network create qa-net-{job_id}` (DinD) |
+| 2. sandbox | `init_qa` | Create QA sandbox container, attach to qa-net + sandbox-restricted, write OAuth token |
+| 3. presign | `init_qa` | Generate two MinIO presigned PUT URLs (`result.json`, `logs/full.log`) signed against the **sandbox-facing** endpoint (`minio-proxy:9100`) so the URL host resolves over qa-net |
+| 4. job.json | `init_qa` | Write `/workspace/.qa/job.json` with the URLs, `presign_refresh_url`, `sandbox_token`, parsed `qa.yaml`, and acceptance criteria |
+| 5. clone | `init_qa` | `git clone --branch <branch>` from inside sandbox via git-proxy |
+| 6. agent | `qa` | `python -m athanor.sandbox.runner` invokes the QA agent — runs the 5 phases, uploads artifacts via curl |
+| 7. parse | `qa_report` | `cat /workspace/.qa/result.json` → `QAResult.model_validate_json` → set `qa.final_status` |
+| 8. teardown | `qa_report` | sandbox destroy → `cleanup_qa_resources` (containers/volumes/network by dual-label filter). Order matters — sandbox must die before `network rm` or it stays attached. |
+
+### Two MinIO clients
+
+Phase 1.5 architecture decision: presigned URLs are signed against whichever endpoint the *requester* will use to hit MinIO. The orchestrator and the sandbox live on different networks (host-side `backend` vs DinD-side `sandbox-restricted`), so two `QAMinioClient` instances are wired into `app.state`:
+
+| Client | Endpoint | Used by |
+|--------|----------|---------|
+| `qa_minio` | `minio:9000` (host backend network) | Orchestrator-side reads (`/jobs/{id}/qa/attempts/{n}/result` GET) |
+| `qa_minio_sandbox` | `minio-proxy:9100` (DinD sandbox-restricted) | `init_qa_node` mints PUT URLs the sandbox will follow |
+
+`minio-proxy` and `presign-proxy` are containers running inside DinD on `sandbox-restricted` (paired with the `git-proxy` family). `minio-proxy` is a thin reverse proxy onto the host MinIO; `presign-proxy` forwards `POST /api/v1/internal/qa/presign` calls to the orchestrator so the agent can mint additional URLs at runtime (screenshots, traces).
+
+### `result.json` contract
+
+The agent writes a Pydantic-validated JSON file at end of run. Top-level shape:
+
+```python
+class QAResult:
+    schema_version: Literal[1]
+    job_id: str
+    attempt_n: int
+    phase_reached: Literal["boot", "seed", "e2e", "exploratory", "report"]
+    overall: Literal["passed", "failed", "inconclusive"]
+    boot: QABootResult                                   # command, duration_ms, ready_checks
+    seed: QASeedResult | None
+    e2e: QAE2EResult | None
+    acceptance_results: list[QAAcceptanceResult]         # criterion, status, evidence, console_errors, network_failures, log_excerpts
+    anomalies: list[QAAnomaly]                           # console_error | network_error | unexpected_state | crash
+```
+
+Validation failures land an `inconclusive` attempt with `result_json_invalid` in the exit reason; the runtime prompt sent to the agent includes the schema verbatim to keep field shapes correct.
+
+### Triage QA decision (PR-gated mode)
+
+Triage emits two distinct decisions inline in its JSON output (parsed via `TriageDecisionModel`):
+
+| Field | When | Shape |
+|-------|------|-------|
+| `set_qa_decision` | Initial pass | `{needs_qa, reason, acceptance_criteria}` |
+| `qa_failure_action` | Re-invocation after `qa.final_status=failed` | `{kind: retry_developer\|rerun_qa\|ask_user, ...action-specific}` |
+
+`route_after_qa_report` consumes `qa.final_status` + `qa.failure_rounds`:
+- `passed` → END
+- `exhausted` → END
+- `failed` and `failure_rounds < max_qa_failure_rounds` (default 2) → `triage` (with failure context)
+- `failed` and at cap → `qa_exhausted` → END with `ERR_QA_FAILURES_UNRESOLVED`
 
 ---
 
@@ -385,7 +531,8 @@ The `SandboxImageManager` handles image lifecycle inside DinD:
 
 - **Auto-build on startup** — computes SHA256 hash of `Dockerfile.sandbox` + sandbox source files, compares with image label `athanor.build-hash`, rebuilds if stale
 - **Profile-specific images** — `athanor-sandbox:{profile_name}` extends the base image with additional packages/commands
-- **Container reaper** — background task destroys containers older than 24 hours, **unless the matching job is still active in the DB**. Active-status lookup failures fail closed (the reaper does nothing rather than risk killing live work).
+- **QA sandbox variant** — `athanor-sandbox-qa:latest` is a separate image (built from `infra/Dockerfile.sandbox.qa`) with the superset needed by the QA agent: JDK 21 (Adoptium Temurin), Docker CLI + compose plugin (talks to DinD daemon over TCP+TLS), Chromium + headless-shell pre-installed at `/opt/playwright`, the `playwright-mcp` global binary, and the qa-compose / qa-ready-check helpers in `/usr/local/bin`. Selected by sandbox profile `qa-jvm` (or `qa-node` / `qa-python`). The Chromium revision is pinned to whatever `@playwright/mcp`'s bundled `playwright-core` expects — installing via the standalone `playwright` package's CLI gives a different revision and breaks MCP launches.
+- **Container reaper** — background task destroys containers older than 24 hours, **unless the matching job is still active in the DB**. Active-status lookup failures fail closed (the reaper does nothing rather than risk killing live work). The reaper also sweeps DinD-side QA orphans — containers with `com.docker.compose.project=qa_*` OR `athanor.qa_job_id=*` whose owning job is no longer active.
 
 ---
 
@@ -405,6 +552,8 @@ A fourth proxy — the **per-job Athanor API proxy** that exposes CreateIssue / 
 | Git Remote Proxy | 9101 | `git clone/push` | Git credential helper response |
 | GitHub API Proxy | — | GitHub REST API (PRs, comments) | `Authorization: Bearer` header |
 | Athanor API Proxy | 9102 (deferred) | Athanor internal API (per-job) | Scoped to current issue/job |
+| MinIO Proxy | 9100 (DinD-side) | QA agent → MinIO PUT/GET via DNS-resolvable name | None — only forwards to host MinIO |
+| Presign Proxy | 9104 (DinD-side) | QA agent → orchestrator `POST /api/v1/internal/qa/presign` to mint additional URLs at runtime | Per-sandbox bearer (same scheme as the credential proxies) |
 
 > **Per-sandbox bearer authentication.** Each credential proxy validates an
 > `Authorization: Bearer <token>` header on every request. Bearers are minted
@@ -723,6 +872,9 @@ The migration runner (`athanor/storage/migrations/runner.py`) applies these idem
 | 15 | FK ON DELETE policies — CASCADE / SET NULL | All FK constraints |
 | 16 | Performance indexes — GIN + composite | `issues`, `job_logs`, `traces` |
 | 17 | Unify trace_id prefix from `trace-` to `trc-` | `traces.trace_id` |
+| 18 | Sandbox profile QA fields | `sandbox_profiles.{base_image, additional_packages, additional_commands, env_vars}` for Phase 0 QA foundation |
+| 19 | Env var scope (app vs qa) | `global_environment.scope`, `repo_environment.scope` (`app`/`qa`); QA scope only injected when QA pipeline runs |
+| 20 | Agent definitions MCP servers | `agent_definitions.mcp_servers` (JSONB) — lets the QA agent declare its Playwright MCP server in the seed |
 
 ---
 
