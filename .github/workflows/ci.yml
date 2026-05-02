@@ -90,6 +90,23 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
+  build-qa-sandbox-image:
+    name: Build QA sandbox image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build athanor-sandbox-qa
+        run: docker build -t athanor-sandbox-qa:latest -f infra/Dockerfile.sandbox.qa .
+      - name: Smoke-test runtimes
+        run: |
+          docker run --rm athanor-sandbox-qa:latest bash -c '\
+            java -version 2>&1 && \
+            node --version && \
+            python --version && \
+            docker --version && \
+            docker compose version && \
+            npx --no-install playwright --version'
+
   mypy:
     name: Mypy type-check
     runs-on: ubuntu-latest
