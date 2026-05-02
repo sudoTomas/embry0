@@ -14,6 +14,7 @@ import { useAgentStates } from "@/hooks/useAgentStates";
 import { AgentCard } from "@/components/jobs/AgentCard";
 import { PausedBanner } from "@/components/jobs/PausedBanner";
 import { TracesTable } from "@/components/traces/TracesTable";
+import { QATab } from "@/components/qa/QATab";
 import { resumeJob, discardJob } from "@/api/jobs";
 
 function useElapsedTime(startedAt: string | null, finishedAt: string | null) {
@@ -223,6 +224,9 @@ export function JobDetailPage() {
           <TabsTrigger value="traces">
             Traces{tracesData ? ` (${tracesData.total})` : ""}
           </TabsTrigger>
+          {job.pipeline_template === "qa" && (
+            <TabsTrigger value="qa">QA</TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="pipeline">
@@ -271,6 +275,12 @@ export function JobDetailPage() {
             onPageChange={setTraceOffset}
           />
         </TabsContent>
+
+        {job.pipeline_template === "qa" && (
+          <TabsContent value="qa">
+            <QATab jobId={job.job_id} jobIsLive={job.status === "running"} />
+          </TabsContent>
+        )}
       </Tabs>
 
       {/* Connection indicator */}

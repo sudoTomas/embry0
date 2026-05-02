@@ -22,6 +22,7 @@ export interface JobResponse {
   total_cost_usd: number;
   pipeline_graph?: Record<string, unknown> | null;
   pipeline_source?: string | null;
+  pipeline_template?: string | null;
   template_id?: string | null;
 }
 
