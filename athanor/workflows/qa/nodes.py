@@ -308,10 +308,57 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
     qa = state["qa"]
     last = qa["attempts"][-1]
 
+    # Includes the EXACT result.json schema. Without this the agent invents
+    # field names (overall_status vs overall, phases.* vs flat) and status
+    # values (warning, partial) that fail Pydantic validation, making every
+    # successful agent run look like a failed attempt downstream.
     prompt = (
         "Read /workspace/.qa/job.json and run the 5 phases described in your "
-        "system prompt: boot, seed, e2e, exploratory, report. Write "
-        "/workspace/.qa/result.json at the end with structured results."
+        "system prompt: boot, seed, e2e, exploratory, report. Then write "
+        "/workspace/.qa/result.json EXACTLY matching this schema (extra keys, "
+        "renamed keys, or invented status values are rejected by Pydantic):\n"
+        "\n"
+        "{\n"
+        '  "schema_version": 1,\n'
+        '  "job_id": "<from job.json>",\n'
+        '  "attempt_n": <from job.json>,\n'
+        '  "phase_reached": "boot" | "seed" | "e2e" | "exploratory" | "report",\n'
+        '  "overall": "passed" | "failed" | "inconclusive",\n'
+        '  "boot": {\n'
+        '    "command": "<startup command you ran>",\n'
+        '    "duration_ms": <int>,\n'
+        '    "ready_checks": [{"url": "...", "status": <int>, "duration_ms": <int>}, ...]  // at least one\n'
+        '  },\n'
+        '  "seed": {"ran": false, "note": "no seed config"} | null,\n'
+        '  "e2e":  {"ran": false} | null,\n'
+        '  "acceptance_results": [\n'
+        '    {\n'
+        '      "criterion": "<verbatim from job.json acceptance_criteria>",\n'
+        '      "status": "passed" | "failed" | "inconclusive",  // NOT warning/partial/etc.\n'
+        '      "evidence": ["<artifact path uploaded to MinIO>", ...],\n'
+        '      "notes": "<optional: short reason, esp. for failed/inconclusive>",\n'
+        '      "console_errors": [],\n'
+        '      "network_failures": [],\n'
+        '      "log_excerpts": []\n'
+        '    }, ...\n'
+        '  ],\n'
+        '  "anomalies": [\n'
+        '    {\n'
+        '      "category": "console_error" | "network_error" | "unexpected_state" | "crash",\n'
+        '      "detail": "<short>",\n'
+        '      "evidence_paths": ["..."]\n'
+        '    }, ...\n'
+        '  ]\n'
+        "}\n"
+        "\n"
+        "Mapping rules:\n"
+        "- A criterion with even ONE truly failing observation → status=failed.\n"
+        "  A 404 for a static asset (e.g. vite.svg) IS a console error — if the\n"
+        "  criterion forbids console errors, status MUST be failed (notes can\n"
+        "  call out it's benign). Don't paper over with 'warning' — there's no\n"
+        "  such status.\n"
+        "- overall=passed iff every acceptance_results[].status is passed.\n"
+        "  overall=failed iff any is failed. Else inconclusive.\n"
     )
 
     # Forward every event the sandbox runner emits to the LangGraph stream
