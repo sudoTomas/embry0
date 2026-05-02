@@ -264,38 +264,65 @@ async def init_qa_node(state: dict, config: RunnableConfig) -> dict:
 async def qa_node(state: dict, config: RunnableConfig) -> dict:
     """Invoke the QA agent inside the sandbox started by init_qa_node.
 
-    The agent reads /workspace/.qa/job.json on its own; we just construct
-    an AgentInvocation for the 'qa' agent type and dispatch it.
+    The agent reads /workspace/.qa/job.json on its own; we just dispatch
+    via the standard run_agent_node pipeline with agent_type='qa'.
     """
+    from athanor.orchestration.nodes.agent import run_agent_node
+
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
-    agent_resolver = configurable.get("agent_resolver")
-    executor_factory = configurable.get("executor_factory")
-    if not agent_resolver or not executor_factory:
-        raise RuntimeError("qa_node missing agent_resolver/executor_factory in config['configurable']")
+    agent_runner = configurable.get("agent_runner")
+    credentials = configurable.get("credentials") or {}
+
+    if agent_runner is None:
+        raise RuntimeError(
+            "qa_node requires agent_runner in config['configurable'] — "
+            "qa pipeline cannot run without a sandbox executor"
+        )
 
     qa = state["qa"]
     last = qa["attempts"][-1]
-    container_id = last["sandbox_id"]
 
-    # Build the AgentInvocation for the qa agent type.
-    invocation = await agent_resolver.build_invocation(
-        agent_type="qa",
-        prompt=(
-            "Read /workspace/.qa/job.json and run the 5 phases described in your "
-            "system prompt. Write /workspace/.qa/result.json at the end."
-        ),
-        sandbox_id=container_id,
-        job_id=state["job_id"],
-        repo=state.get("repo"),
+    prompt = (
+        "Read /workspace/.qa/job.json and run the 5 phases described in your "
+        "system prompt: boot, seed, e2e, exploratory, report. Write "
+        "/workspace/.qa/result.json at the end with structured results."
     )
 
-    executor = executor_factory.select_executor(invocation)
-    summary = await executor.execute(invocation)
+    # The qa agent definition is in the database (seeded by Phase 2 Task 5).
+    # The resolver inside run_agent_node will pick it up via agent_type='qa'.
+    # Tools come from the agent_definition row; we don't need to specify here.
+    result = await run_agent_node(
+        state=state,
+        agent_runner=agent_runner,
+        agent_type="qa",
+        prompt=prompt,
+        # model defaults to claude-sonnet-4-6; the qa agent_definition row
+        # overrides via the resolver chain.
+        timeout_seconds=qa.get("budget_seconds", 7200),
+        credentials=credentials,
+        config=config,
+    )
 
-    last["last_phase"] = summary.get("phase_reached")
-    last["exit_reason"] = summary.get("exit_reason")
+    # run_agent_node returns a state-update dict; the agent's outcome is in
+    # result["agent_outputs"][-1]. For now we record the basics; richer parsing
+    # of the agent's structured output happens in report_node by reading
+    # /workspace/.qa/result.json.
+    agent_outputs = result.get("agent_outputs", [])
+    if agent_outputs:
+        last_output = agent_outputs[-1]
+        if last_output.get("is_error"):
+            last["last_phase"] = None
+            last["exit_reason"] = f"agent_error: {last_output.get('error_message', 'unknown')[:200]}"
+        else:
+            # Agent completed cleanly. report_node will read /workspace/.qa/result.json
+            # to get the actual phase_reached + overall.
+            last["last_phase"] = "report"  # tentative; report_node confirms
+
     qa["attempts"][-1] = last
     state["qa"] = qa
+    # Merge any state updates run_agent_node returned (e.g. agent_outputs accumulator)
+    if "agent_outputs" in result:
+        state.setdefault("agent_outputs", []).extend(result["agent_outputs"])
     return state
 
 
