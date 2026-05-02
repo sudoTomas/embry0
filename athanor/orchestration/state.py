@@ -100,6 +100,12 @@ class TriageDecisionModel(BaseModel):
     questions: list[dict[str, Any]] = Field(default_factory=list)
     sub_tasks: list[dict[str, Any]] = Field(default_factory=list)
     reasoning: str = ""
+    # Phase 5: triage emits this inline in its JSON when the issue→PR job
+    # should be QA-validated post-review. Mirrors SetQADecision in
+    # athanor.agents.triage_actions; we duplicate the shape here to keep
+    # state.py free of agent-layer imports. triage_node copies these fields
+    # to state["qa"]["needs_qa"] / qa_required_reason / acceptance_criteria.
+    set_qa_decision: dict[str, Any] | None = None
 
 
 class TriageParseError(ValueError):

@@ -89,6 +89,51 @@ def _runner_emitting(events: list[dict[str, Any]]) -> AsyncMock:
     return AsyncMock(side_effect=_impl)
 
 
+def _triage_decision_json_with_qa(set_qa_decision: dict[str, Any] | None) -> str:
+    """Build a TriageDecisionModel-shaped JSON string with set_qa_decision inlined.
+    Mirrors how the triage agent embeds the QA decision when it follows the
+    prompt's primary path (inline JSON field) rather than emitting a tool call."""
+    payload = _json.loads(_VALID_TRIAGE_DECISION_JSON)
+    if set_qa_decision is not None:
+        payload["set_qa_decision"] = set_qa_decision
+    return _json.dumps(payload)
+
+
+@pytest.mark.asyncio
+async def test_triage_parses_inline_set_qa_decision_true() -> None:
+    """When triage embeds set_qa_decision inline in its JSON output (the prompt's
+    primary path), triage_node copies needs_qa/reason/acceptance_criteria onto
+    state["qa"] without needing a tool_call event."""
+    from athanor.workflows.issue_to_pr.nodes import triage_node
+
+    inline_json = _triage_decision_json_with_qa(
+        {
+            "needs_qa": True,
+            "reason": "Backend route changed",
+            "acceptance_criteria": ["health endpoint returns 200"],
+        }
+    )
+
+    async def _run(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "agent_outputs": [{"agent_type": "triage", "is_error": False, "output": inline_json}],
+            "total_cost_usd": 0.02,
+            "current_stage": "triage_complete",
+        }
+
+    runner_mock = AsyncMock(side_effect=_run)
+    with (
+        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+    ):
+        result = await triage_node(_make_state(), _make_config())
+
+    qa = (result.get("qa") or {}) if isinstance(result, dict) else {}
+    assert qa.get("needs_qa") is True
+    assert qa.get("qa_required_reason") == "Backend route changed"
+    assert qa.get("acceptance_criteria") == ["health endpoint returns 200"]
+
+
 @pytest.mark.asyncio
 async def test_triage_parses_set_qa_decision_true() -> None:
     """When the agent emits set_qa_decision(needs_qa=True), triage_node writes

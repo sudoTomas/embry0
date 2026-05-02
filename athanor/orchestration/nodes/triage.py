@@ -73,11 +73,15 @@ Decision rules:
     - Pure test change (only files under tests/, __tests__/, *_test.py) -> False.
     - Anything else -> default to True (better to run QA than skip silently).
 
-Output as a tool call to set_qa_decision with:
-  needs_qa: bool
-  reason: str (1-2 sentences explaining why)
-  acceptance_criteria: list[str] (only when needs_qa=True; if empty, the
-                                  qa.yaml.acceptance_criteria_template is used)
+Embed the decision in your JSON output as a `set_qa_decision` field:
+  "set_qa_decision": {
+    "needs_qa": bool,
+    "reason": "<1-2 sentences explaining why>",
+    "acceptance_criteria": ["<criterion>", ...]   // only when needs_qa=True;
+                                                  // empty list means use qa.yaml.acceptance_criteria_template
+  }
+Omit the field entirely if the QA decision doesn't apply to this job (e.g.
+needs_info / split actions, where developer work hasn't been scoped yet).
 
 Respond ONLY with the JSON object, no markdown fences or extra text."""
 

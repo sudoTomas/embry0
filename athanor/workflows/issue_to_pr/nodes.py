@@ -454,11 +454,16 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 update={**result, **cap_updates, "current_stage": "triage_asked_user"},
             )
 
-    # Phase 5 Task 4: parse the optional set_qa_decision tool call emitted by
-    # the triage agent (per the QA Decision section in _TRIAGE_SYSTEM_PROMPT)
-    # and merge it onto state["qa"]. When the agent didn't emit one, leave
-    # state["qa"] alone — downstream callers treat absent needs_qa as False.
-    qa_update = _extract_qa_decision_from_events(collected_events)
+    # Phase 5 Task 4: parse the optional set_qa_decision the triage agent
+    # emits per the QA Decision section in _TRIAGE_SYSTEM_PROMPT. The prompt
+    # asks for it as an inline JSON field on TriageDecisionModel; we also
+    # accept a streamed tool_call event as a fallback (the agent SDK may emit
+    # one if the model decides to, even though set_qa_decision isn't in the
+    # tools allowlist). When neither path produced one, leave state["qa"]
+    # alone — downstream callers treat absent needs_qa as False.
+    qa_update = _extract_qa_decision_from_triage_dict(triage_dict) or _extract_qa_decision_from_events(
+        collected_events
+    )
     if qa_update is not None:
         existing_qa = state.get("qa") or {}
         merged_qa: dict[str, Any] = {**existing_qa}
@@ -487,6 +492,41 @@ def _format_question_text(question: str, category: str | None, options: list[str
     return " ".join(parts[:-1]) + (
         parts[-1] if parts[-1].startswith("\n") else (" " + parts[-1] if parts[:-1] else parts[-1])
     )
+
+
+def _extract_qa_decision_from_triage_dict(
+    triage_dict: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Pull set_qa_decision out of the parsed triage JSON, if present.
+
+    Phase 5 primary path: triage embeds the QA decision as an optional
+    `set_qa_decision` field on TriageDecisionModel. Returns None if the
+    field is missing/null/malformed (callers fall back to the tool_call
+    event scan).
+    """
+    from pydantic import ValidationError
+
+    from athanor.agents.triage_actions import SetQADecision
+
+    if not isinstance(triage_dict, dict):
+        return None
+    raw = triage_dict.get("set_qa_decision")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        decision = SetQADecision.model_validate(raw)
+    except ValidationError:
+        logger.warning(
+            "triage_set_qa_decision_inline_validation_failed",
+            payload=str(raw)[:500],
+            exc_info=True,
+        )
+        return None
+    return {
+        "needs_qa": decision.needs_qa,
+        "qa_required_reason": decision.reason,
+        "acceptance_criteria": list(decision.acceptance_criteria),
+    }
 
 
 def _extract_qa_decision_from_events(
