@@ -259,3 +259,147 @@ async def init_qa_node(state: dict, config: RunnableConfig) -> dict:
             except Exception:
                 logger.warning("init_qa_rollback_cleanup_failed", exc_info=True)
         raise
+
+
+async def qa_node(state: dict, config: RunnableConfig) -> dict:
+    """Invoke the QA agent inside the sandbox started by init_qa_node.
+
+    The agent reads /workspace/.qa/job.json on its own; we just construct
+    an AgentInvocation for the 'qa' agent type and dispatch it.
+    """
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    agent_resolver = configurable.get("agent_resolver")
+    executor_factory = configurable.get("executor_factory")
+    if not agent_resolver or not executor_factory:
+        raise RuntimeError("qa_node missing agent_resolver/executor_factory in config['configurable']")
+
+    qa = state["qa"]
+    last = qa["attempts"][-1]
+    container_id = last["sandbox_id"]
+
+    # Build the AgentInvocation for the qa agent type.
+    invocation = await agent_resolver.build_invocation(
+        agent_type="qa",
+        prompt=(
+            "Read /workspace/.qa/job.json and run the 5 phases described in your "
+            "system prompt. Write /workspace/.qa/result.json at the end."
+        ),
+        sandbox_id=container_id,
+        job_id=state["job_id"],
+        repo=state.get("repo"),
+    )
+
+    executor = executor_factory.select_executor(invocation)
+    summary = await executor.execute(invocation)
+
+    last["last_phase"] = summary.get("phase_reached")
+    last["exit_reason"] = summary.get("exit_reason")
+    qa["attempts"][-1] = last
+    state["qa"] = qa
+    return state
+
+
+async def report_node(state: dict, config: RunnableConfig) -> dict:
+    """End-of-attempt: capture logs, validate result.json, cleanup.
+
+    Always best-effort: every cleanup step is wrapped in try/except so a
+    failing rollback doesn't mask the result. Runs after qa_node regardless
+    of pass/fail.
+    """
+    from athanor.workflows.qa.cleanup import cleanup_qa_resources
+    from athanor.workflows.qa.result_schema import QAResult
+
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    docker = configurable.get("docker")
+    sandbox_mgr = configurable.get("sandbox_manager")
+    minio_internal = configurable.get("qa_minio")
+    token_registry = configurable.get("qa_token_registry")
+
+    if not all([docker, sandbox_mgr, minio_internal, token_registry]):
+        raise RuntimeError("report_node missing required dependencies in config['configurable']")
+
+    qa = state["qa"]
+    job_id = state["job_id"]
+    last = qa["attempts"][-1]
+    container_id = last["sandbox_id"]
+    artifact_prefix = last["artifact_prefix"]
+    mode = (qa.get("qa_yaml_parsed") or {}).get("mode", "dind")
+
+    # 1. Capture end-of-attempt logs from the sandbox.
+    if mode == "dind":
+        log_cmd = [
+            "bash",
+            "-c",
+            "docker compose --project-name qa_${QA_JOB_ID} logs --no-color --timestamps 2>&1 || true",
+        ]
+    else:
+        log_cmd = [
+            "bash",
+            "-c",
+            "find /workspace/.qa/logs -type f -exec cat {} +; true",
+        ]
+    try:
+        full_log = await docker.run_cmd(docker.build_exec_cmd(container_id, log_cmd), timeout=30)
+    except Exception as exc:
+        logger.warning("qa_log_capture_failed", error=str(exc), exc_info=True)
+        full_log = f"[log capture failed: {exc}]"
+
+    # 2. Upload logs directly via internal SDK (orchestrator holds creds; no presign).
+    log_key = artifact_prefix + "logs/full.log"
+    try:
+        await minio_internal.put_object(
+            "qa-artifacts",
+            log_key,
+            full_log.encode("utf-8"),
+            content_type="text/plain",
+        )
+    except Exception as exc:
+        logger.warning("qa_log_upload_failed", error=str(exc), exc_info=True)
+
+    # 3. Read + validate result.json.
+    result_summary: dict | None = None
+    overall = "inconclusive"
+    try:
+        result_text = await docker.run_cmd(
+            docker.build_exec_cmd(container_id, ["cat", "/workspace/.qa/result.json"]),
+            timeout=10,
+        )
+        result = QAResult.model_validate_json(result_text)
+        result_summary = result.model_dump(mode="json")
+        overall = result.overall
+    except Exception as exc:
+        logger.warning("qa_result_invalid_or_missing", error=str(exc))
+        last["exit_reason"] = "result_json_missing"
+
+    # 4. Update attempt + final_status.
+    last["result_summary"] = result_summary
+    last["ended_at"] = datetime.now(UTC).isoformat()
+    last["log_artifact_url"] = f"/api/v1/jobs/{job_id}/artifacts/logs/full.log"
+
+    qa["attempts"][-1] = last
+    if overall == "passed":
+        qa["final_status"] = "passed"
+    elif overall == "failed":
+        qa["final_status"] = "failed"
+    else:
+        qa["final_status"] = qa.get("final_status", "pending")
+
+    # 5. Unregister token + cleanup + destroy sandbox. Each step independently
+    # try/excepted so a single rollback failure doesn't mask the others.
+    token = qa.get("sandbox_token")
+    if token:
+        try:
+            token_registry.unregister(token)
+        except Exception as exc:
+            logger.warning("qa_token_unregister_failed", error=str(exc))
+    try:
+        await cleanup_qa_resources(docker, job_id=job_id)
+    except Exception as exc:
+        logger.warning("qa_cleanup_failed", error=str(exc))
+    try:
+        await sandbox_mgr.destroy(container_id)
+    except Exception as exc:
+        logger.warning("qa_sandbox_destroy_failed", error=str(exc))
+
+    state["qa"] = qa
+    return state
