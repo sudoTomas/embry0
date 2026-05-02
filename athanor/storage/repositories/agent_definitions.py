@@ -84,7 +84,7 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
             "playwright": {
                 "type": "stdio",
                 "command": "npx",
-                "args": ["-y", "@playwright/mcp@latest", "--headless"],
+                "args": ["-y", "@playwright/mcp@latest", "--headless", "--browser", "chromium"],
             }
         },
     },

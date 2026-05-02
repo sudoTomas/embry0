@@ -129,7 +129,10 @@ QA_AGENT_SEED: dict[str, Any] = {
         "playwright": {
             "type": "stdio",
             "command": "npx",
-            "args": ["-y", "@playwright/mcp@latest", "--headless"],
+            # --browser chromium because the Dockerfile pre-installs Chromium,
+            # not Chrome stable (Playwright MCP's default), and the QA sandbox
+            # has no system Chrome at /opt/google/chrome.
+            "args": ["-y", "@playwright/mcp@latest", "--headless", "--browser", "chromium"],
         }
     },
 }

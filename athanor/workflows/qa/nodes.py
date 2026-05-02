@@ -332,6 +332,11 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
         agent_type="qa",
         prompt=prompt,
         agent_definition=agent_definition,
+        # QA agents do a lot of infra investigation up front (Compose
+        # introspection, log tailing, network debugging) before the
+        # exploratory phase even begins. The default 40 turns gets eaten
+        # by boot phase alone on non-trivial stacks; bump to 100.
+        max_turns=100,
         timeout_seconds=qa.get("budget_seconds", 7200),
         on_event=writer,
         credentials=credentials,
