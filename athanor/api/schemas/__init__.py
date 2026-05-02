@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _REPO_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
 
@@ -13,10 +13,32 @@ _REPO_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
 _SAFE_QA_PATH = re.compile(r"^[A-Za-z0-9._:\-]+(/[A-Za-z0-9._:\-]+)*$")
 
 
+class QAJobOverrides(BaseModel):
+    """Caller-provided knobs for a ``pipeline=qa`` job creation request.
+
+    All fields are optional. ``acceptance_criteria`` defaults to empty (the
+    QA agent then exercises the app freely); ``sandbox_profile`` defaults to
+    the qa.yaml-resolved value; ``qa_timeout_seconds`` overrides the default
+    QA budget when present.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    sandbox_profile: str | None = None  # overrides qa.yaml's value when set
+    qa_timeout_seconds: int | None = Field(default=None, gt=0, le=86400)
+
+
 class JobCreateRequest(BaseModel):
     repo: str = Field(..., max_length=200)
-    task: str = Field(..., min_length=1, max_length=50000)
+    # ``task`` is required for the legacy issue-to-pr flow but optional for
+    # ``pipeline='qa'`` (which has no LLM-author task to summarize). Validated
+    # in the handler when pipeline != 'qa'.
+    task: str | None = Field(default=None, max_length=50000)
     issue_number: int | None = None
+    pipeline: Literal["issue-to-pr", "qa"] | None = None
+    branch: str | None = Field(default=None, max_length=255)
+    qa: QAJobOverrides | None = None
     pipeline_template: str | None = None
     pipeline_config: dict[str, Any] | None = None
     sandbox_profile: str | None = None
@@ -40,6 +62,19 @@ class JobCreateRequest(BaseModel):
             msg = "repo must be in 'owner/name' format"
             raise ValueError(msg)
         return v
+
+    @model_validator(mode="after")
+    def _enforce_task_for_non_qa(self) -> "JobCreateRequest":
+        """``task`` is required (and non-empty) for everything except ``pipeline='qa'``.
+
+        QA jobs are issue-less and don't need an LLM-author task description; the
+        handler synthesizes a placeholder. All other pipelines (issue-to-pr, custom
+        templates) still need a task to drive triage / dispatch.
+        """
+        if self.pipeline != "qa":
+            if self.task is None or not self.task.strip():
+                raise ValueError("task is required and must be non-empty for non-qa pipelines")
+        return self
 
 
 class JobResponse(BaseModel):

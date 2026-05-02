@@ -212,6 +212,12 @@ async def _init_app_state(
         env_repo=app.state.env_repo,
         repo_preferences_repo=app.state.repo_preferences_repo,
         secrets_provider=getattr(app.state, "secrets_provider", None),
+        # QA deps may be absent in tests / when MinIO is unconfigured; the
+        # executor tolerates None and only init_qa_node will fail at runtime.
+        qa_minio=getattr(app.state, "qa_minio", None),
+        qa_minio_sandbox=getattr(app.state, "qa_minio_sandbox", None),
+        qa_token_registry=getattr(app.state, "qa_token_registry", None),
+        profiles_repo=app.state.profiles_repo,
         **executor_kwargs,
     )
 
