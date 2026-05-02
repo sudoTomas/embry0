@@ -1,3 +1,48 @@
 #!/usr/bin/env bash
-echo "qa-compose stub — see Task 2"
-exit 1
+# qa-compose — invoke `docker compose` with the per-job project namespace
+# and network override so cleanup is label-driven.
+#
+# Usage:
+#   qa-compose <compose-file> <up|down|logs|...> [args...]
+#
+# Required env (orchestrator-injected at sandbox start):
+#   QA_JOB_ID        e.g. "abc123"
+#   QA_NETWORK_NAME  e.g. "qa-net-abc123"
+#
+# Loaded automatically alongside the user's compose file:
+#   compose.qa.override.yml  (synthesized by the orchestrator if the repo
+#                             doesn't ship one — sets `networks.default` to
+#                             the per-job DinD network)
+
+set -euo pipefail
+
+if [[ -z "${QA_JOB_ID:-}" ]]; then
+    echo "qa-compose: QA_JOB_ID is required (orchestrator should inject it)" >&2
+    exit 64
+fi
+if [[ -z "${QA_NETWORK_NAME:-}" ]]; then
+    echo "qa-compose: QA_NETWORK_NAME is required (orchestrator should inject it)" >&2
+    exit 64
+fi
+if [[ $# -lt 2 ]]; then
+    echo "Usage: qa-compose <compose-file> <up|down|logs|...> [args...]" >&2
+    exit 64
+fi
+
+compose_file="$1"
+shift
+
+override_file="compose.qa.override.yml"
+override_args=()
+if [[ -f "${override_file}" ]]; then
+    override_args+=(-f "${override_file}")
+fi
+
+# `docker compose --project-name qa_${QA_JOB_ID}` makes every spawned container,
+# network, and volume carry `com.docker.compose.project=qa_<id>` — the cleanup
+# query in the report node filters on this label.
+exec docker compose \
+    --project-name "qa_${QA_JOB_ID}" \
+    -f "${compose_file}" \
+    "${override_args[@]}" \
+    "$@"
