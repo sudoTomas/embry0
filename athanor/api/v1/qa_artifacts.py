@@ -58,6 +58,47 @@ async def _resolve_latest_attempt(minio: Any, job_id: str) -> int | None:
     return max(attempts) if attempts else None
 
 
+# NOTE: Route ordering matters. `get_latest_screenshot` MUST be declared before
+# `get_artifact` — FastAPI matches routes in declaration order, and the
+# `{path:path}` catch-all in `get_artifact` would otherwise swallow
+# `/screenshots/latest` and treat it as an arbitrary artifact path.
+@router.get("/jobs/{job_id}/artifacts/screenshots/latest")
+async def get_latest_screenshot(
+    job_id: str,
+    qa_minio: Any = Depends(get_qa_minio),
+) -> RedirectResponse:
+    # Validate input BEFORE any storage work.
+    _check_safe_job_id(job_id)
+
+    # Find every .png under any attempt's screenshots/ for this job. The prefix
+    # is `{job_id}/` (not scoped to a single attempt) so a job that has rolled
+    # over to a new attempt while the dashboard is polling still surfaces the
+    # newest screenshot regardless of which attempt produced it.
+    objs = await qa_minio.list_objects("qa-artifacts", prefix=f"{job_id}/")
+    screenshots = [o for o in objs if o.endswith(".png") and "/screenshots/" in o]
+    if not screenshots:
+        raise HTTPException(status_code=404, detail="no screenshots yet")
+
+    # The agent timestamps screenshot filenames in ISO 8601, but we re-stat
+    # each object and sort by MinIO's `last_modified` rather than trusting the
+    # filename. Two reasons:
+    #   1) Clock drift inside the sandbox vs. MinIO can make the embedded
+    #      timestamp disagree with the actual upload time.
+    #   2) An agent could (in principle) upload screenshots out of order or
+    #      with a non-conforming filename; we want the freshest *upload*, not
+    #      the freshest *filename*.
+    # The `(last_modified, key)` sort key uses the key as a deterministic
+    # tie-breaker if two screenshots share an mtime.
+    stats = []
+    for key in screenshots:
+        stat = await qa_minio.stat_object("qa-artifacts", key)
+        stats.append((stat["last_modified"], key))
+    stats.sort(reverse=True)
+    latest_key = stats[0][1]
+    url = await qa_minio.presign_get("qa-artifacts", latest_key, expires_seconds=300)
+    return RedirectResponse(url=url, status_code=302)
+
+
 @router.get("/jobs/{job_id}/artifacts/{path:path}")
 async def get_artifact(
     job_id: str,
