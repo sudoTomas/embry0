@@ -274,3 +274,40 @@ class DockerClient:
             stderr=asyncio.subprocess.PIPE,
         )
         return proc
+
+    async def copy_into(self, container: str, src_path: str, dst_path: str) -> None:
+        """Copy a host-side file into ``container`` at ``dst_path``.
+
+        Thin wrapper around ``docker cp <src> <container>:<dst>``. Used by
+        the orchestrator to inject session blobs / config files into a
+        running sandbox before invoking the runner.
+
+        Raises RuntimeError on docker exec failure.
+        """
+        cmd = self._build_base_cmd()
+        cmd.extend(["cp", src_path, f"{container}:{dst_path}"])
+        await self.run_cmd(cmd, timeout=30)
+
+    async def copy_bytes_into(self, container: str, data: bytes, dst_path: str) -> None:
+        """Copy in-memory ``data`` into ``container`` at ``dst_path``.
+
+        Writes the bytes to a host-side temp file, ``docker cp``s it in,
+        then unlinks the temp file. Convenience wrapper for callers that
+        already hold the bytes in memory (e.g. session blobs read out of
+        the AgentSessionsRepository).
+
+        Raises RuntimeError on docker exec failure.
+        """
+        import os
+        import tempfile
+
+        fd, tmp_path = tempfile.mkstemp(prefix="athanor-copy-bytes-")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            await self.copy_into(container, tmp_path, dst_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass

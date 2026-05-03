@@ -1,0 +1,224 @@
+"""AgentRunner.run with ``resume_session`` (Plan C Task 5).
+
+Verifies that when a prior session is supplied:
+- For ``anthropic_api`` mode the messages are dumped to a host tempfile,
+  ``DockerClient.copy_into`` is invoked exactly once with the expected
+  destination path, and ``--session-blob /tmp/.athanor-resume-blob`` is
+  appended to the runner's docker exec command.
+- For ``claude_max`` mode the session bytes are streamed in via
+  ``copy_bytes_into`` and ``--session-id <id>`` is appended.
+- The legacy path (no resume_session) does not call the copy helpers and
+  does not append any --session-* args.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
+
+from athanor.agents.session import AgentSession
+from athanor.execution.agent_runner import RESUME_BLOB_SANDBOX_PATH, AgentRunner
+
+
+class _FakeStdout:
+    """Async-iterable stdout that yields a single final_result line."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._lines = [(json.dumps({"type": "final_result", **payload}) + "\n").encode()]
+
+    def __aiter__(self) -> _FakeStdout:
+        return self
+
+    async def __anext__(self) -> bytes:
+        if not self._lines:
+            raise StopAsyncIteration
+        return self._lines.pop(0)
+
+
+class _FakeProc:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.stdout = _FakeStdout(payload)
+        self.returncode = 0
+
+    async def wait(self) -> int:
+        return 0
+
+    def kill(self) -> None:  # pragma: no cover — only used by timeout path
+        pass
+
+
+def _make_runner(stream_payload: dict[str, Any]) -> tuple[AgentRunner, AsyncMock, list[list[str]]]:
+    """Build an AgentRunner with mocked DockerClient + capture exec command."""
+    docker = AsyncMock()
+    docker.copy_into = AsyncMock()
+    docker.copy_bytes_into = AsyncMock()
+
+    captured_commands: list[list[str]] = []
+
+    async def _stream_exec(*, container: str, command: list[str], workdir: str | None = None) -> _FakeProc:
+        captured_commands.append(list(command))
+        return _FakeProc(stream_payload)
+
+    docker.stream_exec = AsyncMock(side_effect=_stream_exec)
+    runner = AgentRunner(sandbox_manager=AsyncMock(), docker=docker)
+    return runner, docker, captured_commands
+
+
+@pytest.mark.asyncio
+async def test_resume_session_anthropic_api_copies_blob_and_passes_arg(tmp_path: Any) -> None:
+    """anthropic_api mode: copy_into once with dumped messages JSON, --session-blob arg."""
+    prior_messages = [{"role": "user", "content": "earlier"}, {"role": "assistant", "content": "ok"}]
+    session = AgentSession(
+        job_id="J1",
+        agent_type="developer",
+        mode="anthropic_api",
+        messages=prior_messages,
+    )
+
+    runner, docker, captured_commands = _make_runner(
+        {
+            "agent_type": "developer",
+            "is_error": False,
+            "output": "done",
+            "cost_usd": 0.01,
+            "duration_ms": 5,
+            "tools_called": {},
+        }
+    )
+
+    # Capture the host-side tempfile path so we can assert its contents
+    # before the runner unlinks it. copy_into is awaited inside the
+    # try-block; we read the file from the side_effect.
+    seen_calls: list[tuple[str, str, list[dict[str, Any]]]] = []
+
+    async def _capture_copy(container: str, src: str, dst: str) -> None:
+        with open(src) as f:
+            seen_calls.append((container, dst, json.load(f)))
+
+    docker.copy_into.side_effect = _capture_copy
+
+    result = await runner.run(
+        container="sandbox-J1",
+        config={"agent_type": "developer", "timeout_seconds": 10},
+        resume_session=session,
+    )
+
+    # Exactly one copy_into call, no copy_bytes_into.
+    docker.copy_into.assert_awaited_once()
+    docker.copy_bytes_into.assert_not_awaited()
+
+    assert len(seen_calls) == 1
+    container, dst, dumped = seen_calls[0]
+    assert container == "sandbox-J1"
+    assert dst == RESUME_BLOB_SANDBOX_PATH == "/tmp/.athanor-resume-blob"
+    assert dumped == prior_messages
+
+    # The runner exec command must include --session-blob <path>
+    assert len(captured_commands) == 1
+    cmd = captured_commands[0]
+    assert "--session-blob" in cmd
+    assert cmd[cmd.index("--session-blob") + 1] == "/tmp/.athanor-resume-blob"
+    assert "--session-id" not in cmd
+
+    # Successful round-trip — final_result was parsed and returned.
+    assert result.is_error is False
+    assert result.output == "done"
+
+
+@pytest.mark.asyncio
+async def test_resume_session_claude_max_copies_bytes_and_passes_session_id() -> None:
+    """claude_max mode: copy_bytes_into once at the canonical CLI path, --session-id arg."""
+    blob = b'{"some": "jsonl"}\n'
+    session = AgentSession(
+        job_id="J2",
+        agent_type="developer",
+        mode="claude_max",
+        session_id="sess-abc",
+        session_blob=blob,
+    )
+
+    runner, docker, captured_commands = _make_runner(
+        {
+            "agent_type": "developer",
+            "is_error": False,
+            "output": "ok",
+            "cost_usd": 0.0,
+            "duration_ms": 1,
+            "tools_called": {},
+        }
+    )
+
+    await runner.run(
+        container="sandbox-J2",
+        config={"agent_type": "developer", "timeout_seconds": 10},
+        resume_session=session,
+    )
+
+    docker.copy_into.assert_not_awaited()
+    docker.copy_bytes_into.assert_awaited_once_with(
+        "sandbox-J2",
+        blob,
+        "/home/agent/.claude/sessions/sess-abc.jsonl",
+    )
+
+    cmd = captured_commands[0]
+    assert "--session-id" in cmd
+    assert cmd[cmd.index("--session-id") + 1] == "sess-abc"
+    assert "--session-blob" not in cmd
+
+
+@pytest.mark.asyncio
+async def test_no_resume_session_is_legacy_no_op() -> None:
+    """resume_session=None → no copy_*, no --session-* args (back-compat)."""
+    runner, docker, captured_commands = _make_runner(
+        {
+            "agent_type": "developer",
+            "is_error": False,
+            "output": "",
+            "cost_usd": 0.0,
+            "duration_ms": 0,
+            "tools_called": {},
+        }
+    )
+
+    await runner.run(
+        container="sandbox-J3",
+        config={"agent_type": "developer", "timeout_seconds": 10},
+    )
+
+    docker.copy_into.assert_not_awaited()
+    docker.copy_bytes_into.assert_not_awaited()
+
+    cmd = captured_commands[0]
+    assert "--session-blob" not in cmd
+    assert "--session-id" not in cmd
+
+
+@pytest.mark.asyncio
+async def test_final_result_carries_through_session_fields() -> None:
+    """When the sandbox emits messages/session_id/session_blob_path, AgentOutput carries them."""
+    runner, _docker, _captured = _make_runner(
+        {
+            "agent_type": "developer",
+            "is_error": False,
+            "output": "done",
+            "cost_usd": 0.0,
+            "duration_ms": 0,
+            "tools_called": {},
+            "messages": [{"role": "user", "content": "hi"}],
+            "session_id": "sess-xyz",
+            "session_blob_path": "/home/agent/.claude/sessions/sess-xyz.jsonl",
+        }
+    )
+
+    result = await runner.run(
+        container="sandbox-J4",
+        config={"agent_type": "developer", "timeout_seconds": 10},
+    )
+
+    assert result.messages == [{"role": "user", "content": "hi"}]
+    assert result.session_id == "sess-xyz"
+    assert result.session_blob_path == "/home/agent/.claude/sessions/sess-xyz.jsonl"

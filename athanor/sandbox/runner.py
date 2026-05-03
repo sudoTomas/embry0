@@ -97,6 +97,10 @@ async def run_agent(
     # Inject a writer that serializes events to stdout (Athanor's wire format).
     test_cfg = cast(RunnableConfig, {"configurable": {}, "_test_writer": _emit})
     result = await executor.run(invocation, test_cfg)
+    # Plan C Task 5: forward post-run conversation state so the orchestrator
+    # can persist it via AgentSessionsRepository (Task 6). For now the
+    # executor leaves these as None — Task 6 wires the SDK-side extraction
+    # behind tests that populate them via mocks.
     return {
         "agent_type": result.agent_type,
         "is_error": result.is_error,
@@ -105,6 +109,9 @@ async def run_agent(
         "cost_usd": result.cost_usd,
         "duration_ms": result.duration_ms,
         "tools_called": result.tools_called,
+        "messages": getattr(result, "messages", None),
+        "session_id": getattr(result, "session_id", None),
+        "session_blob_path": getattr(result, "session_blob_path", None),
     }
 
 
