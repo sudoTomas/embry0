@@ -63,6 +63,7 @@ def test_build_graph_config_includes_qa_deps() -> None:
     executor._qa_minio_sandbox = MagicMock(name="qa_minio_sandbox")
     executor._qa_token_registry = MagicMock(name="qa_token_registry")
     executor._profiles_repo = MagicMock(name="profiles_repo")
+    executor._agent_sessions_repo = MagicMock(name="agent_sessions_repo")
 
     cfg = executor._build_graph_config("job-123")
     configurable = cfg["configurable"]
@@ -70,3 +71,4 @@ def test_build_graph_config_includes_qa_deps() -> None:
     assert configurable["qa_minio_sandbox"] is executor._qa_minio_sandbox
     assert configurable["qa_token_registry"] is executor._qa_token_registry
     assert configurable["profiles_repo"] is executor._profiles_repo
+    assert configurable["agent_sessions_repo"] is executor._agent_sessions_repo

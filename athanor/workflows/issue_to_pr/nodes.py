@@ -201,6 +201,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     model = os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-6")
     agent_runner = config["configurable"].get("agent_runner")
     credentials = config["configurable"].get("credentials") or {}
+    agent_sessions_repo = config["configurable"].get("agent_sessions_repo")
     container_id = state.get("sandbox_container_id")
 
     if agent_runner is None or container_id is None:
@@ -237,6 +238,35 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         collected_events.append(event)
         writer(event)
 
+    # Plan C Task 7: load any prior AgentSession for this (job, agent) so the
+    # in-sandbox executor can resume the same Claude conversation. Restore
+    # failures must NEVER block the agent run — fall back to a fresh session.
+    from athanor.agents.session import AgentSession
+
+    resume_session: AgentSession | None = None
+    if agent_sessions_repo is not None:
+        try:
+            prior = await agent_sessions_repo.get(
+                job_id=state.get("job_id", ""),
+                agent_type="triage",
+            )
+            if prior is not None:
+                resume_session = AgentSession(
+                    job_id=prior["job_id"],
+                    agent_type=prior["agent_type"],
+                    mode=prior["mode"],
+                    messages=prior.get("messages"),
+                    session_id=prior.get("session_id"),
+                    session_blob=prior.get("session_blob"),
+                )
+        except Exception:
+            logger.warning(
+                "triage_session_restore_failed",
+                job_id=state.get("job_id"),
+                exc_info=True,
+            )
+            resume_session = None
+
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
@@ -248,7 +278,40 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         on_event=_forward_event,
         credentials=credentials,
         config=config,
+        resume_session=resume_session,
     )
+
+    # Plan C Task 7: capture post-run session state so the next invocation of
+    # this node (after an ask_user pause, retry, etc.) resumes the same
+    # conversation. Skip on agent error (no useful state to persist) and skip
+    # when both messages and session_id are absent (avoids writing empty rows
+    # before the executor learns to extract these fields). Persist failures
+    # are best-effort; never block the workflow.
+    if agent_sessions_repo is not None:
+        last_output = (result.get("agent_outputs") or [None])[-1]
+        if last_output and not last_output.get("is_error"):
+            new_messages = last_output.get("messages")
+            new_session_id = last_output.get("session_id")
+            new_session_blob = last_output.get("session_blob")
+            if new_messages or new_session_id:
+                mode = last_output.get("mode") or (
+                    "claude_max" if credentials.get("oauth_token") else "anthropic_api"
+                )
+                try:
+                    await agent_sessions_repo.upsert(
+                        job_id=state.get("job_id", ""),
+                        agent_type="triage",
+                        mode=mode,
+                        messages=new_messages,
+                        session_id=new_session_id,
+                        session_blob=new_session_blob,
+                    )
+                except Exception:
+                    logger.warning(
+                        "triage_session_persist_failed",
+                        job_id=state.get("job_id"),
+                        exc_info=True,
+                    )
 
     # Parse triage decision from agent output
     if result.get("agent_outputs"):
@@ -385,6 +448,33 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         writer({"type": "progress", "message": "Re-running triage with answers"})
 
         prompt += f"\n\nPrevious Q&A:\n{additional}"
+
+        # Plan C Task 7: reload the session before the resume re-run — it may
+        # have been persisted by the initial pass above. Persist again after.
+        resume_session = None
+        if agent_sessions_repo is not None:
+            try:
+                prior = await agent_sessions_repo.get(
+                    job_id=state.get("job_id", ""),
+                    agent_type="triage",
+                )
+                if prior is not None:
+                    resume_session = AgentSession(
+                        job_id=prior["job_id"],
+                        agent_type=prior["agent_type"],
+                        mode=prior["mode"],
+                        messages=prior.get("messages"),
+                        session_id=prior.get("session_id"),
+                        session_blob=prior.get("session_blob"),
+                    )
+            except Exception:
+                logger.warning(
+                    "triage_session_restore_failed",
+                    job_id=state.get("job_id"),
+                    exc_info=True,
+                )
+                resume_session = None
+
         result = await run_agent_node(
             state=updated,
             agent_runner=agent_runner,
@@ -396,7 +486,35 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             on_event=_forward_event,
             credentials=credentials,
             config=config,
+            resume_session=resume_session,
         )
+
+        if agent_sessions_repo is not None:
+            last_output = (result.get("agent_outputs") or [None])[-1]
+            if last_output and not last_output.get("is_error"):
+                new_messages = last_output.get("messages")
+                new_session_id = last_output.get("session_id")
+                new_session_blob = last_output.get("session_blob")
+                if new_messages or new_session_id:
+                    mode = last_output.get("mode") or (
+                        "claude_max" if credentials.get("oauth_token") else "anthropic_api"
+                    )
+                    try:
+                        await agent_sessions_repo.upsert(
+                            job_id=state.get("job_id", ""),
+                            agent_type="triage",
+                            mode=mode,
+                            messages=new_messages,
+                            session_id=new_session_id,
+                            session_blob=new_session_blob,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "triage_session_persist_failed",
+                            job_id=state.get("job_id"),
+                            exc_info=True,
+                        )
+
         if result.get("agent_outputs"):
             last = result["agent_outputs"][-1]
             if not last.get("is_error"):
@@ -1095,6 +1213,7 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
     credentials = configurable.get("credentials") or {}
+    agent_sessions_repo = configurable.get("agent_sessions_repo")
     if not agent_runner:
         logger.error("review_node_no_runner")
         from athanor.safety.error_codes import ErrorCode
@@ -1155,6 +1274,35 @@ Return ONLY a JSON object:
         collected_events.append(event)
         writer(event)
 
+    # Plan C Task 7: load any prior AgentSession for this (job, agent) so the
+    # in-sandbox executor can resume the same Claude conversation. Restore
+    # failures must NEVER block the agent run — fall back to a fresh session.
+    from athanor.agents.session import AgentSession
+
+    resume_session: AgentSession | None = None
+    if agent_sessions_repo is not None:
+        try:
+            prior = await agent_sessions_repo.get(
+                job_id=state.get("job_id", ""),
+                agent_type="review",
+            )
+            if prior is not None:
+                resume_session = AgentSession(
+                    job_id=prior["job_id"],
+                    agent_type=prior["agent_type"],
+                    mode=prior["mode"],
+                    messages=prior.get("messages"),
+                    session_id=prior.get("session_id"),
+                    session_blob=prior.get("session_blob"),
+                )
+        except Exception:
+            logger.warning(
+                "review_session_restore_failed",
+                job_id=state.get("job_id"),
+                exc_info=True,
+            )
+            resume_session = None
+
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
@@ -1166,7 +1314,38 @@ Return ONLY a JSON object:
         on_event=_forward_event,
         credentials=credentials,
         config=config,
+        resume_session=resume_session,
     )
+
+    # Plan C Task 7: capture post-run session state so the next invocation of
+    # this node (after an ask_user pause, retry, etc.) resumes the same
+    # conversation. Skip on agent error and skip when both messages and
+    # session_id are absent. Persist failures are best-effort.
+    if agent_sessions_repo is not None:
+        last_output = (result.get("agent_outputs") or [None])[-1]
+        if last_output and not last_output.get("is_error"):
+            new_messages = last_output.get("messages")
+            new_session_id = last_output.get("session_id")
+            new_session_blob = last_output.get("session_blob")
+            if new_messages or new_session_id:
+                mode = last_output.get("mode") or (
+                    "claude_max" if credentials.get("oauth_token") else "anthropic_api"
+                )
+                try:
+                    await agent_sessions_repo.upsert(
+                        job_id=state.get("job_id", ""),
+                        agent_type="review",
+                        mode=mode,
+                        messages=new_messages,
+                        session_id=new_session_id,
+                        session_blob=new_session_blob,
+                    )
+                except Exception:
+                    logger.warning(
+                        "review_session_persist_failed",
+                        job_id=state.get("job_id"),
+                        exc_info=True,
+                    )
 
     # Extract validation and decision from output for streaming
     if result.get("agent_outputs"):

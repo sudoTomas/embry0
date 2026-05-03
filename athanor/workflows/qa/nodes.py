@@ -301,6 +301,7 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
     agent_runner = configurable.get("agent_runner")
     credentials = configurable.get("credentials") or {}
     db = configurable.get("db")
+    agent_sessions_repo = configurable.get("agent_sessions_repo")
 
     if agent_runner is None:
         raise RuntimeError(
@@ -393,6 +394,35 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
     except RuntimeError:
         writer = lambda _event: None  # noqa: E731
 
+    # Plan C Task 7: load any prior AgentSession for this (job, agent) so the
+    # in-sandbox executor can resume the same Claude conversation. Restore
+    # failures must NEVER block the agent run — fall back to a fresh session.
+    from athanor.agents.session import AgentSession
+
+    resume_session: AgentSession | None = None
+    if agent_sessions_repo is not None:
+        try:
+            prior = await agent_sessions_repo.get(
+                job_id=state.get("job_id", ""),
+                agent_type="qa",
+            )
+            if prior is not None:
+                resume_session = AgentSession(
+                    job_id=prior["job_id"],
+                    agent_type=prior["agent_type"],
+                    mode=prior["mode"],
+                    messages=prior.get("messages"),
+                    session_id=prior.get("session_id"),
+                    session_blob=prior.get("session_blob"),
+                )
+        except Exception:
+            logger.warning(
+                "qa_session_restore_failed",
+                job_id=state.get("job_id"),
+                exc_info=True,
+            )
+            resume_session = None
+
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
@@ -408,7 +438,38 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
         on_event=writer,
         credentials=credentials,
         config=config,
+        resume_session=resume_session,
     )
+
+    # Plan C Task 7: capture post-run session state so the next invocation of
+    # this node (after a retry, etc.) resumes the same conversation. Skip on
+    # agent error and skip when both messages and session_id are absent.
+    # Persist failures are best-effort; never block the workflow.
+    if agent_sessions_repo is not None:
+        last_output = (result.get("agent_outputs") or [None])[-1]
+        if last_output and not last_output.get("is_error"):
+            new_messages = last_output.get("messages")
+            new_session_id = last_output.get("session_id")
+            new_session_blob = last_output.get("session_blob")
+            if new_messages or new_session_id:
+                mode = last_output.get("mode") or (
+                    "claude_max" if credentials.get("oauth_token") else "anthropic_api"
+                )
+                try:
+                    await agent_sessions_repo.upsert(
+                        job_id=state.get("job_id", ""),
+                        agent_type="qa",
+                        mode=mode,
+                        messages=new_messages,
+                        session_id=new_session_id,
+                        session_blob=new_session_blob,
+                    )
+                except Exception:
+                    logger.warning(
+                        "qa_session_persist_failed",
+                        job_id=state.get("job_id"),
+                        exc_info=True,
+                    )
 
     # run_agent_node returns a state-update dict; the agent's outcome is in
     # result["agent_outputs"][-1]. For now we record the basics; richer parsing

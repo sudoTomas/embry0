@@ -180,6 +180,7 @@ async def _init_app_state(
     from athanor.api.events.bus import EventBus
     from athanor.services.github_sync import GitHubSyncService
     from athanor.services.issue_executor import IssueExecutor
+    from athanor.storage.repositories.agent_sessions import AgentSessionsRepository
     from athanor.storage.repositories.issue_inputs import IssueInputsRepository
     from athanor.storage.repositories.issues import IssuesRepository
 
@@ -199,6 +200,7 @@ async def _init_app_state(
 
     app.state.issues_repo = IssuesRepository(db)
     app.state.inputs_repo = IssueInputsRepository(db)
+    app.state.agent_sessions_repo = AgentSessionsRepository(db)
     app.state.github_sync = GitHubSyncService(github_token=github_token)
 
     registry = WorkflowRegistry()
@@ -225,6 +227,7 @@ async def _init_app_state(
         qa_minio_sandbox=getattr(app.state, "qa_minio_sandbox", None),
         qa_token_registry=getattr(app.state, "qa_token_registry", None),
         profiles_repo=app.state.profiles_repo,
+        agent_sessions_repo=app.state.agent_sessions_repo,
         github_comment_channel=github_comment_channel,
         telegram_channel=telegram_channel,
         **executor_kwargs,

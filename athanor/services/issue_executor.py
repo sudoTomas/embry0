@@ -74,6 +74,7 @@ class IssueExecutor:
         qa_minio_sandbox: Any = None,  # QAMinioClient (sandbox-facing) — used by init_qa_node
         qa_token_registry: Any = None,  # SandboxTokenRegistry — used by init_qa + report
         profiles_repo: SandboxProfilesRepository | None = None,  # SandboxProfilesRepository — init_qa
+        agent_sessions_repo: Any = None,  # AgentSessionsRepository — Plan C resume
         telegram_channel: Any = None,
         github_comment_channel: Any = None,
     ) -> None:
@@ -97,6 +98,7 @@ class IssueExecutor:
         self._qa_minio_sandbox = qa_minio_sandbox
         self._qa_token_registry = qa_token_registry
         self._profiles_repo = profiles_repo
+        self._agent_sessions_repo = agent_sessions_repo
         self._telegram_channel = telegram_channel
         self._github_comment_channel = github_comment_channel
         self._background_tasks: set[asyncio.Task[Any]] = set()
@@ -153,6 +155,7 @@ class IssueExecutor:
                 "qa_minio_sandbox": self._qa_minio_sandbox,
                 "qa_token_registry": self._qa_token_registry,
                 "profiles_repo": profiles_repo,
+                "agent_sessions_repo": self._agent_sessions_repo,
             }
         }
 
