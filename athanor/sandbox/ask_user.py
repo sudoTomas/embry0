@@ -26,16 +26,27 @@ def ask_user(
     question: str,
     category: str | None = None,
     options: list[str] | None = None,
+    *,
+    importance: str = "blocking",
+    suggested_answer: str | None = None,
 ) -> None:
     """Emit an agent_ask_user event — the pipeline will pause after the agent
     exits and wait for the user to respond via the dashboard.
 
     Doesn't block. When the user answers, the job is re-invoked from the last
     checkpoint with the Q&A pairs included in the agent's context.
+
+    ``importance`` is either ``"blocking"`` (default) or ``"auto_answerable"``.
+    When ``importance="auto_answerable"`` the orchestrator records
+    ``suggested_answer`` as the answer and continues the workflow without
+    pausing — the user can override post-hoc from the dashboard.
     """
-    emit_event(
-        EventType.AGENT_ASK_USER,
-        question=question,
-        category=category or "general",
-        options=list(options) if options else [],
-    )
+    kwargs: dict[str, object] = {
+        "question": question,
+        "category": category or "general",
+        "options": list(options) if options else [],
+        "importance": importance,
+    }
+    if importance == "auto_answerable" and suggested_answer is not None:
+        kwargs["suggested_answer"] = suggested_answer
+    emit_event(EventType.AGENT_ASK_USER, **kwargs)

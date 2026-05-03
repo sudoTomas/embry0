@@ -313,11 +313,18 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         if exhausted:
             writer({"type": "node_completed", "node": "triage", "action": "failed"})
             return Command(goto="max_retries", update=cap_updates)
-        writer({"type": "node_completed", "node": "triage", "action": "ask_user"})
-        return Command(
-            goto="ask_user_interrupt",
-            update={**result, **cap_updates, "current_stage": "triage_asked_user"},
-        )
+        # Only divert to ask_user_interrupt when there are blocking questions.
+        # Auto-answerable-only emissions don't pause; fall through to the
+        # normal needs_info / proceed routing.
+        if cap_updates.get("pending_agent_questions"):
+            writer({"type": "node_completed", "node": "triage", "action": "ask_user"})
+            return Command(
+                goto="ask_user_interrupt",
+                update={**result, **cap_updates, "current_stage": "triage_asked_user"},
+            )
+        # Auto-answerables: fold into the result so downstream nodes can see
+        # them, then continue normal triage routing below.
+        result = {**result, **cap_updates}
 
     # Check needs_info → interrupt
     # action lives in triage_decision (the full TriageDecision dict), not in the
@@ -456,11 +463,15 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             if exhausted:
                 writer({"type": "node_completed", "node": "triage", "action": "failed"})
                 return Command(goto="max_retries", update=cap_updates)
-            writer({"type": "node_completed", "node": "triage", "action": "ask_user"})
-            return Command(
-                goto="ask_user_interrupt",
-                update={**result, **cap_updates, "current_stage": "triage_asked_user"},
-            )
+            if cap_updates.get("pending_agent_questions"):
+                writer({"type": "node_completed", "node": "triage", "action": "ask_user"})
+                return Command(
+                    goto="ask_user_interrupt",
+                    update={**result, **cap_updates, "current_stage": "triage_asked_user"},
+                )
+            # Auto-answerable-only — keep the cap_updates on result and
+            # continue the post-triage routing below.
+            result = {**result, **cap_updates}
 
     # Phase 5 Task 4: parse the optional set_qa_decision the triage agent
     # emits per the QA Decision section in _TRIAGE_SYSTEM_PROMPT. The prompt
@@ -736,14 +747,20 @@ def _extract_ask_user_events(
     """Pull any agent_ask_user events out of the agent's streamed events.
 
     Returns a list of normalized question dicts: {question, category, options,
-    asking_node, importance}. The ``question`` string is formatted with inline
-    category/options markers so those context hints survive persistence
-    through issue_inputs (which only has a plain ``question`` TEXT column).
+    asking_node, importance, auto_answer}. The ``question`` string is formatted
+    with inline category/options markers so those context hints survive
+    persistence through issue_inputs (which only has a plain ``question`` TEXT
+    column).
 
     ``calling_node`` is embedded in each question dict so that
     ``ask_user_interrupt``, WS events, and persisted ``issue_inputs`` rows
     correctly attribute the questions to the node that produced them
     (``"triage"``, ``"developer"``, or ``"review"``).
+
+    ``importance`` defaults to ``"blocking"`` when the event omits the field
+    (backward-compatible). When ``importance == "auto_answerable"`` the event's
+    ``suggested_answer`` is stored under ``auto_answer`` so the caller can
+    persist it as the answer instead of pausing the workflow.
     """
     events = agent_output.get("events", []) if isinstance(agent_output, dict) else []
     pending: list[dict[str, Any]] = []
@@ -752,13 +769,16 @@ def _extract_ask_user_events(
             raw_q = e.get("question", "")
             category = e.get("category", "general")
             options = e.get("options", []) or []
+            importance = e.get("importance", "blocking")
+            auto_answer = e.get("suggested_answer") if importance == "auto_answerable" else None
             pending.append(
                 {
                     "question": _format_question_text(raw_q, category, options),
                     "category": category,
                     "options": options,
                     "asking_node": calling_node,
-                    "importance": "blocking",
+                    "importance": importance,
+                    "auto_answer": auto_answer,
                 }
             )
     return pending
@@ -947,12 +967,22 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         updates.update(cap_updates)
         if exhausted:
             pass  # current_stage and error fields already set in updates
-        else:
+        elif updates.get("pending_agent_questions"):
+            # Blocking questions exist — the cap was incremented and the
+            # workflow will pause at ask_user_interrupt.
             updates["current_stage"] = "developer_asked_user"
             logger.info(
                 "developer_asked_user",
-                question_count=len(pending_questions),
+                question_count=len(updates["pending_agent_questions"]),
                 rounds=updates["agent_question_rounds"],
+                job_id=state.get("job_id"),
+            )
+        else:
+            # All questions were auto-answerable — workflow proceeds without
+            # pausing. Log so the auto-answers remain observable in the trace.
+            logger.info(
+                "developer_auto_answered",
+                question_count=len(updates.get("auto_answered_agent_questions", [])),
                 job_id=state.get("job_id"),
             )
 
@@ -1103,8 +1133,10 @@ Return ONLY a JSON object:
         updates.update(cap_updates)
         if exhausted:
             pass  # terminal failure shape already in updates
-        else:
+        elif updates.get("pending_agent_questions"):
             updates["current_stage"] = "review_asked_user"
+        # Auto-answerable-only: leave current_stage as "review_complete" so
+        # the normal route_after_review path picks up the review decision.
 
     # Routing:
     #   1. Control-flow exits (cap exhausted, pending questions) keep

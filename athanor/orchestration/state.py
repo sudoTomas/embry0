@@ -166,6 +166,11 @@ class JobState(TypedDict, total=False):
     pr_url: str | None
     result_summary: str | None
     pending_agent_questions: list[dict[str, Any]]
+    # Agent ask-user events with importance="auto_answerable" carry a
+    # suggested_answer that the orchestrator records as the answer instead of
+    # pausing the workflow. Persisted as issue_inputs rows with
+    # status='auto_answered'; user can override post-hoc from the dashboard.
+    auto_answered_agent_questions: list[dict[str, Any]]
     user_answers: Any
     # Job-wide counters for interrupt/resume cycle guards.
     # agent_question_rounds: incremented each time any node (triage, developer,

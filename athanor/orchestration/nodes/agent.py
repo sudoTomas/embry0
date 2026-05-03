@@ -246,10 +246,20 @@ def _enforce_ask_user_cap(
       terminal-failure shape (``current_stage="failed"``, ``error_code``,
       ``errors``, ``agent_questions_exhausted=True``).
     - ``exhausted=False`` means the cap is not yet hit; ``updates`` carries
-      ``pending_agent_questions`` and the incremented ``agent_question_rounds``.
+      ``pending_agent_questions``, ``auto_answered_agent_questions``, and the
+      (possibly incremented) ``agent_question_rounds``.
 
-    The cap is incremented on every node invocation that produces questions
-    (triage, developer, review), so the cap is job-wide rather than per-node.
+    Auto-answerable questions (``importance == "auto_answerable"``) are split
+    out of the blocking set: they don't pause the workflow and don't count
+    toward the round cap. They're returned under
+    ``auto_answered_agent_questions`` so the caller can persist them as
+    ``status='auto_answered'`` rows. If only auto-answerables were emitted the
+    cap is neither incremented nor checked for exhaustion — the workflow
+    proceeds normally.
+
+    The cap is incremented on every node invocation that produces *blocking*
+    questions (triage, developer, review), so the cap is job-wide rather than
+    per-node.
 
     Reads ``agent_question_rounds`` from ``state``, not from any prior call's
     output. Calling twice in the same node body increments only once because
@@ -257,6 +267,18 @@ def _enforce_ask_user_cap(
     snapshot value, not the value written by the first call.
     """
     from athanor.safety.error_codes import ErrorCode
+
+    blocking = [q for q in pending_questions if q.get("importance") != "auto_answerable"]
+    auto = [q for q in pending_questions if q.get("importance") == "auto_answerable"]
+
+    # Auto-answerables alone never pause and never count. Persisted as answers,
+    # not as pending questions. The cap-exhaustion check is also skipped — an
+    # already-exhausted job should still record the auto-answers.
+    if not blocking:
+        return False, {
+            "pending_agent_questions": [],
+            "auto_answered_agent_questions": auto,
+        }
 
     current_rounds = int(state.get("agent_question_rounds", 0) or 0)
     if current_rounds >= max_rounds:
@@ -273,6 +295,7 @@ def _enforce_ask_user_cap(
             "errors": [f"Agent exceeded {max_rounds} rounds of asking the user — giving up."],
         }
     return False, {
-        "pending_agent_questions": pending_questions,
+        "pending_agent_questions": blocking,
+        "auto_answered_agent_questions": auto,
         "agent_question_rounds": current_rounds + 1,
     }
