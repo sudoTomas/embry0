@@ -74,6 +74,12 @@ class AthanorConfig(BaseSettings):
     telegram_chat_id: str = ""
     telegram_webhook_url: str = ""
 
+    # Public-facing base URL for the dashboard. Used in cross-channel
+    # notifications (e.g. GitHub-comment ask-user) to construct deep links the
+    # user can click to answer pending questions. Defaults to the local
+    # nginx-served dashboard port.
+    dashboard_public_url: str = "http://localhost:8200"
+
     # Environment variable encryption
     environment_secret_key: str = ""
 

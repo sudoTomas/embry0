@@ -595,6 +595,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         app.state.telegram_webhook_secret = ""
 
+    # GitHub-comment outbound channel — used by ask-user fan-out when an issue
+    # is GitHub-synced and "github" is in its notification_channels. The HTTP
+    # client is constructed once with base_url + Authorization pre-set so the
+    # channel itself is auth-free; closed at shutdown below.
+    import httpx
+
+    from athanor.notifications.github_comment import GitHubCommentChannel
+
+    github_http_headers = {"Accept": "application/vnd.github+json"}
+    if config.github_token:
+        github_http_headers["Authorization"] = f"Bearer {config.github_token}"
+    github_http_client = httpx.AsyncClient(
+        base_url="https://api.github.com",
+        headers=github_http_headers,
+        timeout=15.0,
+    )
+    app.state.github_http_client = github_http_client
+    github_comment_channel = GitHubCommentChannel(
+        http_client=github_http_client,
+        dashboard_base_url=config.dashboard_public_url or "http://localhost:8200",
+    )
+    app.state.github_comment_channel = github_comment_channel
+    # Inject into the already-constructed IssueExecutor so dispatch_questions
+    # gets the channel without needing to rebuild the executor.
+    app.state.issue_executor._github_comment_channel = github_comment_channel
+
     logger.info("athanor_started")
     yield
 
@@ -618,6 +644,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
     await reaper.stop()
     await proxy_mgr.stop()
+    # Close the long-lived GitHub HTTP client used by the github-comment channel.
+    gh_client = getattr(app.state, "github_http_client", None)
+    if gh_client is not None:
+        try:
+            await gh_client.aclose()
+        except Exception:
+            logger.warning("github_http_client_close_failed", exc_info=True)
     await db.close()
     logger.info("athanor_stopped")
 
