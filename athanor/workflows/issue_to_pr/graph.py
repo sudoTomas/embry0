@@ -64,7 +64,7 @@ from athanor.workflows.issue_to_pr.routing import (
     route_after_review,
     route_after_triage,
 )
-from athanor.workflows.qa.nodes import init_qa_node, qa_node, report_node
+from athanor.workflows.qa.nodes import boot_qa_node, init_qa_node, qa_node, report_node
 
 
 async def _qa_failure_bookkeeping_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -117,6 +117,8 @@ class IssueToprWorkflow:
 
         # Phase 5 Task 5: QA subpath nodes, reused verbatim from Phase 2.
         builder.add_node("init_qa", init_qa_node)  # type: ignore[type-var]
+        # Backend-owned boot phase between init_qa and qa (qa-boot-as-backend-node plan).
+        builder.add_node("boot_qa", boot_qa_node)  # type: ignore[type-var]
         builder.add_node("qa", qa_node)  # type: ignore[type-var]
         builder.add_node("qa_report", report_node)  # type: ignore[type-var]
         # Phase 5 Task 6: bookkeeping + exhaustion sink for the QA failure loop.
@@ -142,12 +144,14 @@ class IssueToprWorkflow:
             {"developer": "retry", "qa": "init_qa", "end": END},
         )
 
-        # QA subpath wiring. init_qa → qa → qa_report is identical to the
-        # standalone QAWorkflow (athanor/workflows/qa/graph.py). Phase 5
-        # Task 6 adds a bookkeeping node + conditional edge AFTER qa_report
-        # that bounces back to triage on QA failure (capped) or terminates
-        # with ERR_QA_FAILURES_UNRESOLVED on exhaustion.
-        builder.add_edge("init_qa", "qa")
+        # QA subpath wiring. init_qa → boot_qa → qa → qa_report mirrors the
+        # standalone QAWorkflow (athanor/workflows/qa/graph.py). boot_qa
+        # Command-routes to qa (success) or qa_report (timeout/startup_failed).
+        # Phase 5 Task 6 adds a bookkeeping node + conditional edge AFTER
+        # qa_report that bounces back to triage on QA failure (capped) or
+        # terminates with ERR_QA_FAILURES_UNRESOLVED on exhaustion.
+        builder.add_edge("init_qa", "boot_qa")
+        # boot_qa → {qa, qa_report} via Command(goto=...) — no static edge.
         builder.add_edge("qa", "qa_report")
         builder.add_edge("qa_report", "qa_failure_bookkeeping")
         builder.add_conditional_edges(

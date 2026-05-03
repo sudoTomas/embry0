@@ -84,6 +84,17 @@ async def _stub_init_qa(state: dict[str, Any], config: RunnableConfig) -> dict[s
     return {"qa": qa}
 
 
+async def _stub_boot_qa(state: dict[str, Any], config: RunnableConfig):
+    """Skip backend-owned boot phase (docker exec + httpx polling); route straight to qa."""
+    from langgraph.types import Command
+
+    qa = dict(state.get("qa") or {})
+    qa["boot_outcome"] = "passed"
+    qa["boot_attempts"] = 1
+    qa["boot_duration_ms"] = 0
+    return Command(goto="qa", update={"qa": qa})
+
+
 async def _stub_qa(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Skip the real QA agent run; mark passed so qa_report routes to END."""
     qa = dict(state.get("qa") or {})
@@ -127,6 +138,7 @@ async def test_qa_gate_routes_to_qa_when_needs_qa_true() -> None:
         patch.object(g_mod, "developer_node", _stub_developer),
         patch.object(g_mod, "review_node", _stub_review),
         patch.object(g_mod, "init_qa_node", _stub_init_qa),
+        patch.object(g_mod, "boot_qa_node", _stub_boot_qa),
         patch.object(g_mod, "qa_node", _stub_qa),
         patch.object(g_mod, "report_node", _stub_qa_report),
     ):
@@ -146,7 +158,7 @@ async def test_qa_gate_routes_to_qa_when_needs_qa_true() -> None:
         final = await compiled.ainvoke(initial, config)
 
     # Assert the QA subpath was traversed.
-    for required in ("init", "triage", "developer", "review", "init_qa", "qa", "qa_report"):
+    for required in ("init", "triage", "developer", "review", "init_qa", "boot_qa", "qa", "qa_report"):
         assert required in executed, f"missing {required!r} from {executed}"
 
     # Bookkeeping always runs after qa_report; it then routes to END
@@ -178,6 +190,7 @@ async def test_qa_gate_skips_qa_when_needs_qa_false() -> None:
         patch.object(g_mod, "developer_node", _stub_developer),
         patch.object(g_mod, "review_node", _stub_review),
         patch.object(g_mod, "init_qa_node", _forbidden_qa_node("init_qa_node")),
+        patch.object(g_mod, "boot_qa_node", _forbidden_qa_node("boot_qa_node")),
         patch.object(g_mod, "qa_node", _forbidden_qa_node("qa_node")),
         patch.object(g_mod, "report_node", _forbidden_qa_node("report_node")),
     ):
@@ -198,7 +211,7 @@ async def test_qa_gate_skips_qa_when_needs_qa_false() -> None:
 
     # Happy path only: init → triage → developer → review → END.
     assert executed == ["init", "triage", "developer", "review"], executed
-    for forbidden in ("init_qa", "qa", "qa_report", "qa_failure_bookkeeping", "qa_exhausted"):
+    for forbidden in ("init_qa", "boot_qa", "qa", "qa_report", "qa_failure_bookkeeping", "qa_exhausted"):
         assert forbidden not in executed, f"unexpected {forbidden!r} in {executed}"
 
     # Final state confirms triage flagged no QA needed.

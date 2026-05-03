@@ -17,6 +17,7 @@ import base64
 import json
 import shlex
 from datetime import UTC, datetime
+from typing import Literal
 
 import httpx
 import structlog
@@ -291,7 +292,7 @@ async def init_qa_node(state: dict, config: RunnableConfig) -> dict:
         raise
 
 
-async def boot_qa_node(state: dict, config: RunnableConfig) -> Command:
+async def boot_qa_node(state: dict, config: RunnableConfig) -> Command[Literal["qa", "qa_report"]]:
     """Backend-owned QA boot phase.
 
     Runs qa.yaml startup.command in the sandbox, polls ready_checks until all
