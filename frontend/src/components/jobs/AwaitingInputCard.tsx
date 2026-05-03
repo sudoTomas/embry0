@@ -15,23 +15,35 @@ export function AwaitingInputCard({ pendingInputs, jobInputs, jobId }: AwaitingI
   const queryClient = useQueryClient();
 
   const pendingList = Object.values(pendingInputs);
+  // Plan B Task 6: surface auto_answered rows alongside pending so the user
+  // can review and override the agent's suggestion before the pipeline moves
+  // on. We still gate "is the form interactive" on having at least one
+  // pending row; auto_answered alone wouldn't normally hold the pipeline.
   const pending = (jobInputs ?? []).filter((i) => i.status === "pending");
+  const autoAnswered = (jobInputs ?? []).filter((i) => i.status === "auto_answered");
+  const renderable = [...pending, ...autoAnswered];
 
-  // Nothing to show: no pending job inputs and no in-flight events.
-  if (pending.length === 0 && pendingList.length === 0) return null;
+  // Nothing to show: no renderable job inputs and no in-flight events.
+  if (renderable.length === 0 && pendingList.length === 0) return null;
 
-  // Map JobInput → QuestionsForm's PendingInput shape.
-  const formInputs = pending.map((i) => ({
+  // Map JobInput → QuestionsForm's PendingInput shape, forwarding the new
+  // ask-user metadata so the form can render the override affordance.
+  const formInputs = renderable.map((i) => ({
     id: i.input_id,
     question: i.question,
     options: i.options,
     category: i.category,
+    auto_answer: i.auto_answer,
+    // JobInput.status uses a wider union ("rejected" | "timeout" too) than
+    // QuestionsForm cares about; narrow to the form's status type. Anything
+    // else is filtered out above so this cast is sound.
+    status: i.status as "pending" | "answered" | "auto_answered",
   }));
 
   // We need issue_id to hit POST /issues/{issueId}/inputs/{inputId}/answer.
   // Build a quick lookup from input_id → issue_id.
   const issueIdByInput: Record<string, string> = {};
-  for (const i of pending) {
+  for (const i of renderable) {
     issueIdByInput[i.input_id] = i.issue_id;
   }
 
@@ -55,7 +67,7 @@ export function AwaitingInputCard({ pendingInputs, jobInputs, jobId }: AwaitingI
       </div>
 
       {/* Fallback: surface in-flight question events when no JobInput rows exist yet */}
-      {pending.length === 0 && pendingList.length > 0 && (
+      {renderable.length === 0 && pendingList.length > 0 && (
         <div className="space-y-2 mb-4">
           {pendingList.map((input) => (
             <div key={input.input_id} className="px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/10 text-sm text-amber-200">
@@ -65,8 +77,8 @@ export function AwaitingInputCard({ pendingInputs, jobInputs, jobId }: AwaitingI
         </div>
       )}
 
-      {/* Batched multi-question form */}
-      {pending.length > 0 && (
+      {/* Batched multi-question form (pending + auto_answered with override) */}
+      {renderable.length > 0 && (
         <QuestionsForm
           inputs={formInputs}
           onAnswer={async (inputId, answer) => {
