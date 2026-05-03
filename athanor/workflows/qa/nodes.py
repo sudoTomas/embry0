@@ -417,10 +417,12 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
     # values (warning, partial) that fail Pydantic validation, making every
     # successful agent run look like a failed attempt downstream.
     prompt = (
-        "Read /workspace/.qa/job.json and run the 5 phases described in your "
-        "system prompt: boot, seed, e2e, exploratory, report. Then write "
-        "/workspace/.qa/result.json EXACTLY matching this schema (extra keys, "
-        "renamed keys, or invented status values are rejected by Pydantic):\n"
+        "The boot phase has already completed (boot_outcome=passed) — the app "
+        "is running and ready for you. Read /workspace/.qa/job.json and run the "
+        "4 phases described in your system prompt: seed, e2e, exploratory, "
+        "report. Then write /workspace/.qa/result.json EXACTLY matching this "
+        "schema (extra keys, renamed keys, or invented status values are "
+        "rejected by Pydantic):\n"
         "\n"
         "{\n"
         '  "schema_version": 1,\n'
@@ -429,7 +431,7 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
         '  "phase_reached": "boot" | "seed" | "e2e" | "exploratory" | "report",\n'
         '  "overall": "passed" | "failed" | "inconclusive",\n'
         '  "boot": {\n'
-        '    "command": "<startup command you ran>",\n'
+        '    "command": "<startup command — was run by orchestrator before you started>",\n'
         '    "duration_ms": <int>,\n'
         '    "ready_checks": [{"url": "...", "status": <int>, "duration_ms": <int>}, ...]  // at least one\n'
         '  },\n'

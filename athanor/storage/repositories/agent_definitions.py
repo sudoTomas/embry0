@@ -45,10 +45,11 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         # The test test_qa_seed_in_sync_with_builtin_seed enforces this.
         # is_builtin is set separately by seed_qa_agent's trailing direct SQL.
         "description": (
-            "Boots a target application (per .athanor/qa.yaml) and validates it via "
-            "Playwright MCP. Runs the repo's e2e suite if present, then verifies "
-            "each acceptance criterion with browser interactions. Reports failures "
-            "with screenshots, traces, browser console, network, and application logs."
+            "Validates a target application (per .athanor/qa.yaml) that was already "
+            "booted by the orchestrator. Uses Playwright MCP to run the repo's e2e "
+            "suite if present, then verifies each acceptance criterion with browser "
+            "interactions. Reports failures with screenshots, traces, browser "
+            "console, network, and application logs."
         ),
         "model": "claude-sonnet-4-6",
         "tools": [
