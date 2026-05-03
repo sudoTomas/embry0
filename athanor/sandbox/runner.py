@@ -57,7 +57,41 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
     )
 
 
-async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
+def _build_run_kwargs(
+    config: dict[str, Any],
+    *,
+    session_blob_path: str | None,
+    session_id: str | None,
+) -> dict[str, Any]:
+    """Build the kwargs passed to ``run_agent`` based on resume CLI args.
+
+    For ``auth_mode == "api_key"`` the blob is a JSON file containing the
+    prior message list, which we deserialize and forward as
+    ``resume_messages``. For ``auth_mode == "oauth"`` (claude-max), the
+    session bytes are already on disk inside the sandbox at the canonical
+    CLI session path; we only forward the ``session_id`` so the executor
+    can pass ``--resume <id>`` to the CLI.
+    """
+    kwargs: dict[str, Any] = {"config": config}
+    if session_blob_path and config.get("auth_mode") == "api_key":
+        with open(session_blob_path) as f:
+            kwargs["resume_messages"] = json.load(f)
+    if session_id and config.get("auth_mode") == "oauth":
+        kwargs["resume_session_id"] = session_id
+    return kwargs
+
+
+async def run_agent(
+    config: dict[str, Any],
+    *,
+    resume_messages: list[dict[str, Any]] | None = None,
+    resume_session_id: str | None = None,
+) -> dict[str, Any]:
+    # NOTE: ``resume_messages`` and ``resume_session_id`` are accepted here
+    # for forward-compat with Task 5/6, which will thread them into
+    # ``SdkAgentExecutor.run()``. For now they are inert pass-throughs so
+    # the sandbox runner CLI surface is stable from this task forward.
+    del resume_messages, resume_session_id
     invocation = _invocation_from_config(config)
     executor = select_executor(invocation)
     # Inject a writer that serializes events to stdout (Athanor's wire format).
@@ -77,10 +111,25 @@ async def run_agent(config: dict[str, Any]) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Athanor sandbox agent runner")
     parser.add_argument("--config", required=True, help="JSON agent configuration")
+    parser.add_argument(
+        "--session-blob",
+        default=None,
+        help="Path to a file containing prior session state (api mode: JSON message list).",
+    )
+    parser.add_argument(
+        "--session-id",
+        default=None,
+        help="claude-max session id; the CLI's session file must already be in place.",
+    )
     args = parser.parse_args()
 
     config = json.loads(args.config)
-    result = asyncio.run(run_agent(config))
+    kwargs = _build_run_kwargs(
+        config,
+        session_blob_path=args.session_blob,
+        session_id=args.session_id,
+    )
+    result = asyncio.run(run_agent(**kwargs))
 
     sys.stdout.write(json.dumps({"type": "final_result", **result}, default=str) + "\n")
     sys.stdout.flush()
