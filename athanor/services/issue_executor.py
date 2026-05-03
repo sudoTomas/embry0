@@ -74,6 +74,8 @@ class IssueExecutor:
         qa_minio_sandbox: Any = None,  # QAMinioClient (sandbox-facing) — used by init_qa_node
         qa_token_registry: Any = None,  # SandboxTokenRegistry — used by init_qa + report
         profiles_repo: SandboxProfilesRepository | None = None,  # SandboxProfilesRepository — init_qa
+        telegram_channel: Any = None,
+        github_comment_channel: Any = None,
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
@@ -95,6 +97,8 @@ class IssueExecutor:
         self._qa_minio_sandbox = qa_minio_sandbox
         self._qa_token_registry = qa_token_registry
         self._profiles_repo = profiles_repo
+        self._telegram_channel = telegram_channel
+        self._github_comment_channel = github_comment_channel
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._tasks_by_job: dict[str, asyncio.Task[Any]] = {}
 
@@ -1167,8 +1171,8 @@ class IssueExecutor:
                 await dispatch_questions(
                     blocking_questions,
                     issue,
-                    telegram_channel=getattr(self, "_telegram_channel", None),
-                    github_comment_channel=getattr(self, "_github_comment_channel", None),
+                    telegram_channel=self._telegram_channel,
+                    github_comment_channel=self._github_comment_channel,
                 )
         else:
             # All auto-answerable — re-run triage with the answers folded into

@@ -83,3 +83,32 @@ async def test_one_channel_failure_does_not_block_others():
     )
     dashboard.dispatch.assert_awaited_once()
     telegram.dispatch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_runs_channels_concurrently():
+    """Two channels each take ~50ms; total wall-clock should be ~50ms (gather),
+    not ~100ms (sequential)."""
+    import asyncio
+    import time
+
+    from athanor.notifications.channels import dispatch_to_channels
+
+    async def slow_dispatch(_issue, _questions):
+        await asyncio.sleep(0.05)
+
+    a = MagicMock()
+    a.dispatch = slow_dispatch
+    b = MagicMock()
+    b.dispatch = slow_dispatch
+
+    start = time.monotonic()
+    await dispatch_to_channels(
+        channels=["a", "b"],
+        registry={"a": a, "b": b},
+        issue={"id": "iss-1", "github_number": None},
+        questions=[{"question": "Q?", "input_id": "inp-1"}],
+    )
+    elapsed = time.monotonic() - start
+    # Sequential would be ~100ms; concurrent ~50ms. Allow generous slack.
+    assert elapsed < 0.085, f"expected concurrent dispatch (<0.085s); got {elapsed:.3f}s"
