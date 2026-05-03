@@ -9,8 +9,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
-from athanor.api.deps import get_inputs_repo, get_issue_executor, get_issues_repo
-from athanor.api.v1.issues import _resume_pipeline
+from athanor.api.deps import get_inputs_repo, get_issue_executor
 from athanor.notifications.telegram import edit_message_answered
 
 logger = structlog.get_logger(__name__)
@@ -48,7 +47,6 @@ async def telegram_callback(request: Request) -> Response | dict[str, Any]:
 
     config = request.app.state.config
     inputs_repo = get_inputs_repo(request)
-    issues_repo = get_issues_repo(request)
     executor = get_issue_executor(request)
 
     # -----------------------------------------------------------------------
@@ -96,9 +94,25 @@ async def telegram_callback(request: Request) -> Response | dict[str, Any]:
     if not answer_text:
         return {"status": "ignored", "reason": "empty_reply"}
 
-    # Record the answer
-    await inputs_repo.answer(inp["id"], answer=answer_text, answered_by="telegram")
-    logger.info("telegram_input_answered", input_id=inp["id"])
+    # Identify the answerer for the audit trail. Telegram replies may come
+    # from a user with a username, without one (in which case we fall back
+    # to the chat id), or from neither (anonymous channel reply — rare).
+    sender = message.get("from") or {}
+    username = sender.get("username")
+    chat_id = (message.get("chat") or {}).get("id")
+    if username:
+        answered_by = f"telegram:{username}"
+    elif chat_id is not None:
+        answered_by = f"telegram:{chat_id}"
+    else:
+        answered_by = "telegram"
+
+    # Record the answer. The lookup above (``get_by_telegram_message``) does
+    # not branch on ``asking_node``: a reply-to-message routes to whichever
+    # input row owns that ``telegram_message_id`` — triage ``needs_info`` and
+    # developer/review ``agent_ask_user`` rows alike.
+    await inputs_repo.answer(inp["id"], answer=answer_text, answered_by=answered_by)
+    logger.info("telegram_input_answered", input_id=inp["id"], answered_by=answered_by)
 
     # Edit the original Telegram message to reflect the answer
     if config.telegram_bot_token and config.telegram_chat_id:
@@ -121,17 +135,18 @@ async def telegram_callback(request: Request) -> Response | dict[str, Any]:
             inputs_repo=inputs_repo,
             inp=inp,
             answer=answer_text,
-            answered_by="telegram",
+            answered_by=answered_by,
             config=config,
         )
     except Exception:
         logger.warning("cross_channel_sync_failed", input_id=inp["id"], exc_info=True)
 
-    # Resume pipeline if all blocking inputs are now answered
+    # Resume pipeline if all blocking inputs are now answered. We delegate to
+    # ``executor.resume_for_issue`` — the same entry point used by the GitHub
+    # issue_comment inbound path — so cross-channel races stay consistent and
+    # the idempotency guard lives in one place.
     pending = await inputs_repo.count_pending_blocking(inp["issue_id"])
     if pending == 0:
-        current_issue = await issues_repo.get(inp["issue_id"])
-        if current_issue and current_issue["status"] == "awaiting_input":
-            await _resume_pipeline(inp["issue_id"], issues_repo, inputs_repo, executor)
+        await executor.resume_for_issue(inp["issue_id"])
 
     return {"status": "answered", "input_id": inp["id"]}
