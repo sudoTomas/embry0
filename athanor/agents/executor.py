@@ -158,6 +158,24 @@ class SdkAgentExecutor:
         is_error = False
         error_message = ""
 
+        # --- Plan C closeout: per-mode conversation-state capture.
+        #
+        # api_key mode: build a [{role, content}] messages list as we go —
+        #   the SDK's `query()` API does not expose its internal messages
+        #   buffer publicly, so we accumulate from the prompt + each
+        #   AssistantMessage's text blocks. This is sufficient for the
+        #   anthropic_api / Messages-API resume path: AgentSession.messages
+        #   feeds straight back as the next prompt's prior context.
+        #
+        # claude_max (oauth) mode: snapshot the SDK-emitted session_id from
+        #   any message that carries one (AssistantMessage.session_id or
+        #   ResultMessage.session_id) and emit the canonical in-sandbox
+        #   path ~/.claude/sessions/<id>.jsonl as ``session_blob_path``.
+        #   The orchestrator-side AgentRunner ``docker cp``s the bytes out
+        #   before the sandbox is destroyed; see athanor/execution/agent_runner.py.
+        captured_messages: list[dict[str, Any]] = []
+        captured_session_id: str | None = None
+
         # --- Ring 2: write settings.json
         ws = _workspace_root()
         claude_dir = ws / ".claude"
@@ -194,10 +212,21 @@ class SdkAgentExecutor:
 
         writer({"type": "agent_started", "agent": invocation.agent_type})
 
+        # Seed the api_key-mode messages list with the user prompt as turn 0.
+        # We append AssistantMessage text below; this stays empty/unused in
+        # claude_max mode (the resume path uses session_id + jsonl bytes).
+        captured_messages.append({"role": "user", "content": prompt})
+
         async def execute() -> None:
-            nonlocal output_text, cost_usd
+            nonlocal output_text, cost_usd, captured_session_id
             turn_number = 0
             async for message in query(prompt=prompt, options=options):
+                # Snapshot session_id from any message that carries one.
+                # Both AssistantMessage and ResultMessage expose session_id
+                # in the SDK's types.py (see SystemMessage init payload).
+                msg_session_id = getattr(message, "session_id", None)
+                if msg_session_id and not captured_session_id:
+                    captured_session_id = str(msg_session_id)
                 if _is_assistant(message):
                     turn_number += 1
                     writer(
@@ -208,10 +237,18 @@ class SdkAgentExecutor:
                             "node": invocation.agent_type,
                         }
                     )
+                    # Accumulate this assistant turn's text into the messages
+                    # buffer (api_key resume path). We collapse all text
+                    # blocks in the message into a single content string;
+                    # tool_use / thinking blocks are intentionally dropped
+                    # because the Messages-API resume only needs the
+                    # textual conversation, not the tool wire-format.
+                    assistant_text = ""
                     for block in getattr(message, "content", []):
                         if _is_text_block(block):
                             block_text = str(getattr(block, "text", ""))
                             output_text += block_text
+                            assistant_text += block_text
                             writer(
                                 {
                                     "type": "text",
@@ -257,6 +294,12 @@ class SdkAgentExecutor:
                                     "node": invocation.agent_type,
                                 }
                             )
+                    # Record this assistant turn in the messages buffer.
+                    # Skip empty turns (assistant emitted only tool_use /
+                    # thinking — no textual reply); they're meaningless to
+                    # the Messages-API resume since it only replays text.
+                    if assistant_text:
+                        captured_messages.append({"role": "assistant", "content": assistant_text})
                 elif _is_result(message):
                     if getattr(message, "result", None) and not output_text:
                         output_text = str(getattr(message, "result", ""))
@@ -287,6 +330,34 @@ class SdkAgentExecutor:
 
         elapsed_ms = int((time.time() - now) * 1000)
         output = output_text[-10000:] if len(output_text) > 10000 else output_text
+
+        # --- Plan C closeout: per-mode session-state population.
+        # api_key (anthropic_api) mode → return the captured messages list
+        # so AgentRunner / run_agent_node forward it onto AgentOutputEntry
+        # for AgentSessionsRepository.upsert(messages=...).
+        # oauth (claude_max) mode → return session_id and the canonical
+        # in-sandbox jsonl path; AgentRunner.copy_bytes_from() pulls the
+        # bytes out before the sandbox is destroyed.
+        # On error we deliberately omit both: there's no useful state to
+        # resume from a half-failed turn.
+        out_messages: list[dict[str, Any]] | None = None
+        out_session_id: str | None = None
+        out_session_blob_path: str | None = None
+        if not is_error:
+            if invocation.auth_mode == "api_key":
+                out_messages = list(captured_messages)
+            elif invocation.auth_mode == "oauth" and captured_session_id:
+                out_session_id = captured_session_id
+                # Canonical in-sandbox path the runner / docker-cp will
+                # read. Mirrors the path AgentRunner._stage_resume_session
+                # writes to in claude_max mode (see agent_runner.py).
+                # NOTE: the Claude CLI actually writes JSONL files under
+                # ~/.claude/projects/<sanitized-cwd>/<id>.jsonl; the
+                # ~/.claude/sessions/<id>.jsonl convention here matches
+                # Plan C Task 5's stage path. Reconciling the two is
+                # tracked outside this PR (Plan C closeout doc).
+                out_session_blob_path = f"/home/agent/.claude/sessions/{captured_session_id}.jsonl"
+
         result = AgentOutput(
             agent_type=invocation.agent_type,
             is_error=is_error,
@@ -295,6 +366,9 @@ class SdkAgentExecutor:
             cost_usd=cost_usd,
             duration_ms=elapsed_ms,
             tools_called=tools_called,
+            messages=out_messages,
+            session_id=out_session_id,
+            session_blob_path=out_session_blob_path,
         )
         writer(
             {

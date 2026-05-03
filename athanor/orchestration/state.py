@@ -78,6 +78,14 @@ class AgentOutputEntry(TypedDict, total=False):
     cost_usd: float
     duration_ms: int
     tools_called: dict[str, int]
+    # Plan C: post-run conversation state forwarded by run_agent_node so
+    # workflow nodes (developer/triage/review) can persist via
+    # AgentSessionsRepository. ``messages`` for api_key mode;
+    # ``session_id`` + ``session_blob`` (bytes pulled out of the sandbox)
+    # for claude_max mode.
+    messages: list[dict[str, Any]] | None
+    session_id: str | None
+    session_blob: bytes | None
 
 
 class PipelineConfigModel(BaseModel):

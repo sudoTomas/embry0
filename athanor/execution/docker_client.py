@@ -311,3 +311,31 @@ class DockerClient:
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+    async def copy_bytes_from(self, container: str, src_path: str) -> bytes:
+        """Read ``src_path`` from inside ``container`` and return its bytes.
+
+        Mirror of ``copy_bytes_into``: ``docker cp``s the in-container file
+        to a host-side tempfile, reads it, and returns the bytes. Used by
+        the AgentRunner to extract the Claude CLI session JSONL out of the
+        sandbox after a claude_max-mode run, before the sandbox is destroyed.
+
+        Raises RuntimeError on docker exec failure (e.g. file does not
+        exist inside the container).
+        """
+        import os
+        import tempfile
+
+        fd, tmp_path = tempfile.mkstemp(prefix="athanor-copy-bytes-from-")
+        os.close(fd)
+        try:
+            cmd = self._build_base_cmd()
+            cmd.extend(["cp", f"{container}:{src_path}", tmp_path])
+            await self.run_cmd(cmd, timeout=30)
+            with open(tmp_path, "rb") as f:
+                return f.read()
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass

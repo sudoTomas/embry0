@@ -45,9 +45,21 @@ class AgentOutput:
     # Post-run conversation state (populated by the runner so Plan C Task 6
     # can persist via AgentSessionsRepository). All optional — omitted by
     # legacy code paths and by error returns.
+    #
+    # api_key mode: ``messages`` carries the full conversation history
+    #   ([{role, content}, ...]) accumulated by SdkAgentExecutor.
+    # claude_max (oauth) mode: ``session_id`` carries the CLI session UUID;
+    #   ``session_blob_path`` is the in-sandbox path to the session JSONL
+    #   file (for serialization through the runner's stdout final_result),
+    #   and ``session_blob`` carries the actual bytes after the orchestrator
+    #   has done a ``docker cp`` to pull them out of the sandbox before it
+    #   is destroyed. ``session_blob`` is what gets persisted to the
+    #   ``agent_sessions`` table; ``session_blob_path`` is an in-sandbox
+    #   pointer that is meaningless once the container is gone.
     messages: list[dict[str, Any]] | None = None
     session_id: str | None = None
     session_blob_path: str | None = None
+    session_blob: bytes | None = None
 
 
 class AgentRunner:
@@ -125,7 +137,7 @@ class AgentRunner:
                 )
 
                 if final_result:
-                    return AgentOutput(
+                    output = AgentOutput(
                         agent_type=final_result.get("agent_type", "unknown"),
                         is_error=final_result.get("is_error", False),
                         error_message=final_result.get("error_message", ""),
@@ -137,6 +149,28 @@ class AgentRunner:
                         session_id=final_result.get("session_id"),
                         session_blob_path=final_result.get("session_blob_path"),
                     )
+                    # Plan C closeout: claude_max mode persists the CLI's
+                    # JSONL session file. The file lives inside the sandbox
+                    # at ``session_blob_path``; we must ``docker cp`` the
+                    # bytes out BEFORE the caller destroys the sandbox.
+                    # Best-effort — a missing file (race / wrong path) must
+                    # not fail the agent run; the persist call upstream
+                    # tolerates ``session_blob is None`` and just won't
+                    # restore CLI state on the next turn.
+                    if output.session_id and output.session_blob_path and not output.is_error:
+                        try:
+                            output.session_blob = await self._docker.copy_bytes_from(
+                                container, output.session_blob_path
+                            )
+                        except Exception:
+                            logger.warning(
+                                "agent_runner_session_blob_copy_failed",
+                                container=container,
+                                session_id=output.session_id,
+                                session_blob_path=output.session_blob_path,
+                                exc_info=True,
+                            )
+                    return output
 
                 return AgentOutput(
                     agent_type=config.get("agent_type", "unknown"),

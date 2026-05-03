@@ -222,3 +222,137 @@ async def test_final_result_carries_through_session_fields() -> None:
     assert result.messages == [{"role": "user", "content": "hi"}]
     assert result.session_id == "sess-xyz"
     assert result.session_blob_path == "/home/agent/.claude/sessions/sess-xyz.jsonl"
+
+
+# ---------------------------------------------------------------------------
+# Plan C closeout: post-run session-blob extraction.
+#
+# When the sandbox runner reports session_id + session_blob_path (claude_max
+# / oauth mode), the AgentRunner must ``docker cp`` the JSONL bytes out of
+# the sandbox BEFORE the caller destroys it, and populate AgentOutput.session_blob
+# (bytes) so the upstream AgentSessionsRepository can persist them and the
+# next turn can re-stream them back into a fresh sandbox via copy_bytes_into.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_post_run_extracts_session_blob_when_session_id_present() -> None:
+    """oauth mode: AgentRunner copies the in-sandbox jsonl out and sets session_blob."""
+    runner, docker, _captured = _make_runner(
+        {
+            "agent_type": "developer",
+            "is_error": False,
+            "output": "done",
+            "cost_usd": 0.0,
+            "duration_ms": 0,
+            "tools_called": {},
+            "session_id": "sess-pull",
+            "session_blob_path": "/home/agent/.claude/sessions/sess-pull.jsonl",
+        }
+    )
+
+    expected_bytes = b'{"role":"assistant","content":"hi"}\n'
+    docker.copy_bytes_from = AsyncMock(return_value=expected_bytes)
+
+    result = await runner.run(
+        container="sandbox-extract",
+        config={"agent_type": "developer", "timeout_seconds": 10},
+    )
+
+    docker.copy_bytes_from.assert_awaited_once_with(
+        "sandbox-extract",
+        "/home/agent/.claude/sessions/sess-pull.jsonl",
+    )
+    assert result.session_id == "sess-pull"
+    assert result.session_blob == expected_bytes
+
+
+@pytest.mark.asyncio
+async def test_post_run_skips_extract_when_session_id_missing() -> None:
+    """api_key mode (no session_id): no docker-cp out, no session_blob."""
+    runner, docker, _captured = _make_runner(
+        {
+            "agent_type": "developer",
+            "is_error": False,
+            "output": "done",
+            "cost_usd": 0.0,
+            "duration_ms": 0,
+            "tools_called": {},
+            "messages": [{"role": "user", "content": "hi"}],
+            # session_id / session_blob_path absent — api_key path.
+        }
+    )
+
+    docker.copy_bytes_from = AsyncMock()
+
+    result = await runner.run(
+        container="sandbox-noextract",
+        config={"agent_type": "developer", "timeout_seconds": 10},
+    )
+
+    docker.copy_bytes_from.assert_not_awaited()
+    assert result.session_blob is None
+    assert result.messages == [{"role": "user", "content": "hi"}]
+
+
+@pytest.mark.asyncio
+async def test_post_run_extract_failure_is_best_effort() -> None:
+    """If docker cp fails (race / wrong path), the run still returns; session_blob stays None."""
+    runner, docker, _captured = _make_runner(
+        {
+            "agent_type": "developer",
+            "is_error": False,
+            "output": "done",
+            "cost_usd": 0.0,
+            "duration_ms": 0,
+            "tools_called": {},
+            "session_id": "sess-gone",
+            "session_blob_path": "/home/agent/.claude/sessions/sess-gone.jsonl",
+        }
+    )
+
+    docker.copy_bytes_from = AsyncMock(side_effect=RuntimeError("no such file"))
+
+    result = await runner.run(
+        container="sandbox-fail-extract",
+        config={"agent_type": "developer", "timeout_seconds": 10},
+    )
+
+    docker.copy_bytes_from.assert_awaited_once()
+    # Run completes, session metadata still threaded through.
+    assert result.is_error is False
+    assert result.session_id == "sess-gone"
+    # blob is None because copy_bytes_from raised — best-effort.
+    assert result.session_blob is None
+
+
+@pytest.mark.asyncio
+async def test_post_run_skips_extract_when_run_errored() -> None:
+    """is_error=True from the sandbox: do not attempt the post-run docker cp."""
+    runner, docker, _captured = _make_runner(
+        {
+            "agent_type": "developer",
+            "is_error": True,
+            "error_message": "boom",
+            "output": "",
+            "cost_usd": 0.0,
+            "duration_ms": 0,
+            "tools_called": {},
+            # Sandbox may still report a session_id / blob path even on
+            # error, but the runner should skip extraction since the
+            # session is half-formed and not worth resuming.
+            "session_id": "sess-half",
+            "session_blob_path": "/home/agent/.claude/sessions/sess-half.jsonl",
+        }
+    )
+
+    docker.copy_bytes_from = AsyncMock()
+
+    result = await runner.run(
+        container="sandbox-errored",
+        config={"agent_type": "developer", "timeout_seconds": 10},
+    )
+
+    docker.copy_bytes_from.assert_not_awaited()
+    assert result.is_error is True
+    assert result.session_blob is None

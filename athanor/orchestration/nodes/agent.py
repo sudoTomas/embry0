@@ -194,6 +194,17 @@ async def run_agent_node(
         duration_ms=result.duration_ms,
         tools_called=result.tools_called,
     )
+    # Plan C closeout: forward post-run conversation state so workflow nodes
+    # (triage/developer/review) can persist via AgentSessionsRepository. The
+    # values come from SdkAgentExecutor (messages/session_id) and from
+    # AgentRunner's post-run docker-cp extraction (session_blob bytes).
+    # Only set when present so the TypedDict's total=False semantics hold.
+    if getattr(result, "messages", None) is not None:
+        output_entry["messages"] = result.messages
+    if getattr(result, "session_id", None) is not None:
+        output_entry["session_id"] = result.session_id
+    if getattr(result, "session_blob", None) is not None:
+        output_entry["session_blob"] = result.session_blob
 
     # Persist a trace row so the job-detail UI's TracesTable / cost_breakdown
     # endpoint actually has data. Best-effort — failure to write a trace must
