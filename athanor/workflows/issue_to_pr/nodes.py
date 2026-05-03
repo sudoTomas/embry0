@@ -922,7 +922,20 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     if pending_questions:
         from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
 
-        exhausted, cap_updates = _enforce_ask_user_cap(state, pending_questions, job_id_for_log=state.get("job_id"))
+        # Brainstorming sessions can legitimately need many turns of design
+        # back-and-forth. Bump the cap when triage attached the brainstorming
+        # skill; everything else stays at the default of 5.
+        skills_for_dev = (
+            (state.get("pipeline_config", {}) or {}).get("agent_skills", {}).get("developer", [])
+        )
+        ask_cap = 15 if "superpowers:brainstorming" in skills_for_dev else 5
+
+        exhausted, cap_updates = _enforce_ask_user_cap(
+            state,
+            pending_questions,
+            max_rounds=ask_cap,
+            job_id_for_log=state.get("job_id"),
+        )
         updates.update(cap_updates)
         if exhausted:
             pass  # current_stage and error fields already set in updates
