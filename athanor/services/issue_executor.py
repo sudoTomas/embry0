@@ -1248,3 +1248,46 @@ class IssueExecutor:
                 error_code=code.value,
             )
             await self._issues.update(issue_id, status="open")
+
+    async def resume_for_issue(self, issue_id: str) -> None:
+        """Resume the latest awaiting_input job for ``issue_id``.
+
+        Used by inbound channels (GitHub issue_comment, Telegram reply)
+        once the dispatcher has persisted answers into ``issue_inputs``.
+        Looks up the most recent awaiting_input job and dispatches
+        ``resume(...)`` in the background — answers are read from
+        ``state["user_answers"]`` by downstream nodes (which load them
+        from the DB), so we pass ``answers=None`` here.
+
+        No-op when:
+        - the issue has no awaiting_input job (e.g. comment arrived after a
+          concurrent answer already triggered a resume),
+        - the issue itself is no longer ``awaiting_input``.
+
+        This mirrors ``athanor.api.v1.issues._resume_pipeline``'s idempotency
+        guard so cross-channel races are safe.
+        """
+        issue = await self._issues.get(issue_id)
+        if not issue or issue.get("status") != "awaiting_input":
+            logger.info(
+                "resume_for_issue_skipped_status",
+                issue_id=issue_id,
+                status=(issue or {}).get("status"),
+            )
+            return
+
+        jobs_list, _ = await self._jobs.list_all(issue_id=issue_id, limit=10, offset=0)
+        awaiting_jobs = [j for j in jobs_list if j["status"] == "awaiting_input"]
+        if not awaiting_jobs:
+            logger.info("resume_for_issue_no_awaiting_job", issue_id=issue_id)
+            return
+
+        # `list_all` orders by created_at DESC, so awaiting_jobs[0] is the latest.
+        job_id = awaiting_jobs[0]["job_id"]
+        self._track_task(
+            self.resume(issue_id, job_id, answers=None),
+            kind="resume_via_inbound",
+            job_id=job_id,
+            issue_id=issue_id,
+        )
+        logger.info("resume_for_issue_dispatched", issue_id=issue_id, job_id=job_id)

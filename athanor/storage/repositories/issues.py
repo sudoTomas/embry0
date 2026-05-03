@@ -367,6 +367,19 @@ class IssuesRepository:
             return None
         return dict(row)
 
+    async def find_by_repo_and_github_number(
+        self, repo: str, github_number: int
+    ) -> dict[str, Any] | None:
+        """Lookup helper for the inbound webhook dispatcher.
+
+        Thin alias for ``get_by_github`` — kept under the name used by
+        ``athanor/notifications`` callers so the call site reads naturally
+        ("find the issue by (repo, github number)") and so the inbound
+        contract is independent from the older synchronous ``get_by_github``
+        naming used by GitHubSync.
+        """
+        return await self.get_by_github(repo=repo, github_number=github_number)
+
     async def update_parent_status(self, issue_id: str) -> None:
         """Recalculate parent issue status based on children statuses."""
         issue = await self.get(issue_id)

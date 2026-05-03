@@ -7,6 +7,8 @@ import structlog
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from athanor.api.auth import verify_webhook_signature
+from athanor.notifications.inbound_dispatch import apply_inbound_directives
+from athanor.notifications.inbound_parser import parse_answer_directives
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -65,43 +67,66 @@ async def github_webhook(
     # NOTE: To receive issue_comment events, add "Issue comments" to the GitHub
     # webhook event subscription at:
     # https://github.com/<org>/<repo>/settings/hooks
-    # Handle issue comment events — answers to input questions
+    # Handle issue comment events — answers to input questions via /answer N:
+    # directives parsed from the comment body. Routes through the shared
+    # inbound dispatcher (athanor.notifications.inbound_dispatch) so the same
+    # answer/skip transitions apply as the dashboard's POST /answer endpoint.
     if event_type == "issue_comment" and action == "created":
+        comment = payload.get("comment") or {}
+        comment_body = comment.get("body") or ""
+        if not comment_body:
+            return {"ok": True, "applied": 0, "reason": "empty body"}
+
+        directives = parse_answer_directives(comment_body)
+        if not directives:
+            return {"ok": True, "applied": 0, "reason": "no directives"}
+
+        repo_name = (payload.get("repository") or {}).get("full_name") or ""
+        gh_number = (payload.get("issue") or {}).get("number")
+        if not repo_name:
+            logger.warning("issue_comment_missing_repo", payload_keys=list(payload.keys()))
+            return {"ok": True, "applied": 0, "reason": "missing repo"}
+        if gh_number is None:
+            logger.warning("issue_comment_missing_issue_number", repo=repo_name)
+            return {"ok": True, "applied": 0, "reason": "missing issue number"}
+
         issues_repo = request.app.state.issues_repo
         inputs_repo = getattr(request.app.state, "inputs_repo", None)
-        if issues_repo and inputs_repo:
-            comment_body = payload.get("comment", {}).get("body", "")
-            gh_issue = payload.get("issue", {})
-            repo_name = payload.get("repository", {}).get("full_name", "")
-            gh_number = gh_issue.get("number")
+        executor = getattr(request.app.state, "issue_executor", None)
+        if not (issues_repo and inputs_repo and executor):
+            logger.warning(
+                "issue_comment_missing_state",
+                has_issues=bool(issues_repo),
+                has_inputs=bool(inputs_repo),
+                has_executor=bool(executor),
+            )
+            return {"ok": True, "applied": 0, "reason": "state not initialised"}
 
-            if repo_name and gh_number and comment_body:
-                issue = await issues_repo.get_by_github(repo=repo_name, github_number=gh_number)
-                if issue and issue["status"] == "awaiting_input":
-                    pending_inputs = await inputs_repo.list_by_issue(issue["id"])
-                    answered_any = False
-                    for inp in pending_inputs:
-                        if inp["importance"] == "blocking" and inp["status"] == "pending":
-                            await inputs_repo.answer(inp["id"], comment_body, answered_by="github")
-                            answered_any = True
-                            from athanor.notifications.dispatcher import notify_answer_cross_channel
+        issue = await issues_repo.find_by_repo_and_github_number(
+            repo=repo_name, github_number=gh_number
+        )
+        if issue is None:
+            return {"ok": True, "applied": 0, "reason": "issue not tracked"}
 
-                            await notify_answer_cross_channel(inputs_repo, inp, comment_body, "github", config)
-                            break  # Only answer the first pending blocking input per comment
+        issue_id = issue["id"]
+        login = (comment.get("user") or {}).get("login") or "unknown"
 
-                    if answered_any:
-                        pending = await inputs_repo.count_pending_blocking(issue["id"])
-                        if pending == 0:
-                            current_issue = await issues_repo.get(issue["id"])
-                            if current_issue and current_issue["status"] == "awaiting_input":
-                                executor = request.app.state.issue_executor
-                                from athanor.api.v1.issues import _resume_pipeline
+        async def _resume() -> None:
+            await executor.resume_for_issue(issue_id)
 
-                                await _resume_pipeline(issue["id"], issues_repo, inputs_repo, executor)
-
-                    return {"status": "accepted", "action": "comment_processed"}
-
-        return {"status": "accepted", "action": "comment_received"}
+        result = await apply_inbound_directives(
+            issue_id=issue_id,
+            directives=directives,
+            inputs_repo=inputs_repo,
+            on_all_answered=_resume,
+            answered_by=f"github:{login}",
+        )
+        return {
+            "ok": True,
+            "applied": result.applied,
+            "skipped": result.skipped,
+            "unmatched": result.unmatched,
+        }
 
     # Handle pull request events — PR linking
     # NOTE: GitHub webhook must also subscribe to "Pull requests" events
