@@ -26,6 +26,8 @@ _ALLOWED_UPDATE_FIELDS = frozenset(
         "github_url",
         "github_sync_enabled",
         "github_synced_at",
+        # Per-issue ask-user fan-out channels (jsonb list of strings).
+        "notification_channels",
     }
 )
 
@@ -92,29 +94,60 @@ class IssuesRepository:
         parent_issue_id: str | None = None,
         github_sync_enabled: bool = False,
         created_by: str = "user",
+        notification_channels: list[str] | None = None,
     ) -> str:
-        """Create a new issue and return its ID."""
+        """Create a new issue and return its ID.
+
+        ``notification_channels``: per-issue jsonb list of channels to fan
+        agent ask-user questions out to (Plan A Task 2). When ``None`` the
+        column's DB default (``["dashboard"]``) is used; when provided the
+        list is inserted verbatim. Caller is responsible for validating the
+        contents (the API layer does this via the AskUserChannel enum).
+        """
         issue_id = f"iss-{uuid.uuid4().hex[:12]}"
         if labels is None:
             labels = []
-        await self._db.execute(
-            """
-            INSERT INTO issues (
-                id, title, body, priority, labels, repo,
-                parent_issue_id, github_sync_enabled, created_by
+        if notification_channels is None:
+            # Rely on the column DEFAULT '["dashboard"]'::jsonb.
+            await self._db.execute(
+                """
+                INSERT INTO issues (
+                    id, title, body, priority, labels, repo,
+                    parent_issue_id, github_sync_enabled, created_by
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """,
+                issue_id,
+                title,
+                body,
+                priority,
+                labels,
+                repo,
+                parent_issue_id,
+                github_sync_enabled,
+                created_by,
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            """,
-            issue_id,
-            title,
-            body,
-            priority,
-            labels,
-            repo,
-            parent_issue_id,
-            github_sync_enabled,
-            created_by,
-        )
+        else:
+            await self._db.execute(
+                """
+                INSERT INTO issues (
+                    id, title, body, priority, labels, repo,
+                    parent_issue_id, github_sync_enabled, created_by,
+                    notification_channels
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                """,
+                issue_id,
+                title,
+                body,
+                priority,
+                labels,
+                repo,
+                parent_issue_id,
+                github_sync_enabled,
+                created_by,
+                notification_channels,
+            )
         logger.info("issue_created", issue_id=issue_id, title=title)
         return issue_id
 

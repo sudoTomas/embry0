@@ -98,3 +98,89 @@ async def test_answer_input_accepts_valid_answer(client_with_pending_input):
     )
     assert resp.status_code == 200
     assert resp.json()["answer"] == "yes"
+
+
+# ---------------------------------------------------------------------------
+# notification_channels round-trip — Plan A Task 2.
+#
+# These use the real-DB ``api_client`` fixture from
+# ``tests/unit/api/conftest.py`` (cascades into this v1/ subdirectory) so the
+# round-trip exercises the schema → repository → Postgres jsonb column path.
+# auto_triage=False keeps the executor inert.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_issue_with_notification_channels(api_client):
+    payload = {
+        "repo": "owner/repo",
+        "title": "Test issue with channels",
+        "body": "...",
+        "auto_triage": False,
+        "notification_channels": ["dashboard", "telegram", "github"],
+    }
+    r = await api_client.post("/api/v1/issues", json=payload)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["notification_channels"] == ["dashboard", "telegram", "github"]
+
+    # GET round-trip — value persisted to Postgres and re-read.
+    r2 = await api_client.get(f"/api/v1/issues/{body['id']}")
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["notification_channels"] == ["dashboard", "telegram", "github"]
+
+
+@pytest.mark.asyncio
+async def test_create_issue_default_notification_channels(api_client):
+    payload = {
+        "repo": "owner/repo",
+        "title": "Test default",
+        "body": "...",
+        "auto_triage": False,
+    }
+    r = await api_client.post("/api/v1/issues", json=payload)
+    assert r.status_code == 201, r.text
+    assert r.json()["notification_channels"] == ["dashboard"]
+
+
+@pytest.mark.asyncio
+async def test_create_issue_rejects_unknown_notification_channel(api_client):
+    payload = {
+        "repo": "owner/repo",
+        "title": "Test reject",
+        "body": "...",
+        "auto_triage": False,
+        "notification_channels": ["dashboard", "carrier-pigeon"],
+    }
+    r = await api_client.post("/api/v1/issues", json=payload)
+    assert r.status_code == 422
+    assert "carrier-pigeon" in r.text or "channel" in r.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_update_issue_notification_channels(api_client):
+    # Create with default (no channels in payload → server defaults to ["dashboard"]).
+    create_r = await api_client.post(
+        "/api/v1/issues",
+        json={
+            "repo": "owner/repo",
+            "title": "T",
+            "body": "...",
+            "auto_triage": False,
+        },
+    )
+    assert create_r.status_code == 201, create_r.text
+    iid = create_r.json()["id"]
+    assert create_r.json()["notification_channels"] == ["dashboard"]
+
+    # Update via the canonical update endpoint (PUT — mirrors agents/sandbox-profiles).
+    update_r = await api_client.put(
+        f"/api/v1/issues/{iid}",
+        json={"notification_channels": ["dashboard", "telegram"]},
+    )
+    assert update_r.status_code == 200, update_r.text
+    assert update_r.json()["notification_channels"] == ["dashboard", "telegram"]
+
+    # GET round-trip — confirm persistence.
+    get_r = await api_client.get(f"/api/v1/issues/{iid}")
+    assert get_r.json()["notification_channels"] == ["dashboard", "telegram"]

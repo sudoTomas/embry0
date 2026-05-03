@@ -15,6 +15,21 @@ class TriageAction(StrEnum):
     SPLIT = "split"
 
 
+class AskUserChannel(StrEnum):
+    """Outbound channels for agent ask-user questions.
+
+    Per-issue list stored in ``issues.notification_channels`` (jsonb). When an
+    agent calls ``athanor.sandbox.ask_user``, the dispatcher fans out the
+    question to every channel selected on the originating issue. Used as the
+    typed validation set on the API request side; responses serialize as
+    plain strings so dashboard clients don't have to import the enum.
+    """
+
+    DASHBOARD = "dashboard"
+    TELEGRAM = "telegram"
+    GITHUB = "github"
+
+
 class PipelineConfig(TypedDict, total=False):
     sandbox_profile: str
     max_feedback_loops: int
@@ -208,7 +223,9 @@ class QAStateBlock(TypedDict, total=False):
     pipeline=qa OR triage set needs_qa=True (Phase 5)."""
 
     needs_qa: bool  # Set by triage (Phase 5) on issue→PR jobs; read by post-review conditional edge to route into QA subgraph.
-    qa_required_reason: str | None  # Triage's rationale for needs_qa value; written by triage, surfaced in audit/dashboard.
+    qa_required_reason: (
+        str | None
+    )  # Triage's rationale for needs_qa value; written by triage, surfaced in audit/dashboard.
     qa_yaml_raw: str | None
     qa_yaml_parsed: dict[str, Any] | None
     sandbox_profile_name: str

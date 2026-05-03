@@ -49,6 +49,11 @@ async def create_issue(
         repo=req.repo,
         github_sync_enabled=req.github_sync_enabled,
         created_by="user",
+        # Convert AskUserChannel enum members to plain strings for the jsonb
+        # column. Passing the raw StrEnum members through asyncpg's jsonb
+        # encoder works (StrEnum is a str subclass) but storing strings keeps
+        # the column free of any enum-class coupling.
+        notification_channels=[c.value for c in req.notification_channels],
     )
 
     config = request.app.state.config

@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from athanor.api.schemas import _REPO_PATTERN
+from athanor.orchestration.state import AskUserChannel
 
 
 class CreateIssueRequest(BaseModel):
@@ -16,6 +17,15 @@ class CreateIssueRequest(BaseModel):
     repo: str | None = None
     github_sync_enabled: bool = False
     auto_triage: bool = True
+    # Per-issue list of channels the orchestrator fans out agent ask-user
+    # questions to. Typed as the enum here so Pydantic 422s any unknown
+    # channel string at the API boundary. ``max_length=4`` leaves room for
+    # one future channel before requiring a breaking change. The default
+    # factory builds a fresh list per request — never share a mutable.
+    notification_channels: list[AskUserChannel] = Field(
+        default_factory=lambda: [AskUserChannel.DASHBOARD],
+        max_length=4,
+    )
 
     @field_validator("priority")
     @classmethod
@@ -43,6 +53,14 @@ class UpdateIssueRequest(BaseModel):
     labels: list[str] | None = None
     repo: str | None = None
     github_sync_enabled: bool | None = None
+    # Optional update of the per-issue notification channels. Same enum
+    # validation + max_length bound as CreateIssueRequest. Omitting the key
+    # leaves the existing value untouched (the route uses
+    # ``model_dump(exclude_none=True)``).
+    notification_channels: list[AskUserChannel] | None = Field(
+        default=None,
+        max_length=4,
+    )
 
     @field_validator("status")
     @classmethod
@@ -95,6 +113,11 @@ class IssueResponse(BaseModel):
     children_closed_count: int = 0
     jobs_count: int = 0
     active_agent: str | None = None
+    # Plain ``list[str]`` on the response side — clients (the dashboard,
+    # webhook consumers) can compare against literal channel names without
+    # importing the AskUserChannel enum. The DB jsonb default is
+    # ``["dashboard"]`` so legacy rows always populate this field.
+    notification_channels: list[str] = Field(default_factory=lambda: ["dashboard"])
 
 
 class IssueDetailResponse(IssueResponse):
