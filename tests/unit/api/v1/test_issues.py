@@ -158,6 +158,22 @@ async def test_create_issue_rejects_unknown_notification_channel(api_client):
 
 
 @pytest.mark.asyncio
+async def test_create_issue_rejects_duplicate_notification_channels(api_client):
+    r = await api_client.post(
+        "/api/v1/issues",
+        json={
+            "repo": "owner/repo",
+            "title": "T",
+            "body": "...",
+            "notification_channels": ["dashboard", "dashboard"],
+        },
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert r.status_code == 422
+    assert "duplicate" in r.text.lower() or "unique" in r.text.lower()
+
+
+@pytest.mark.asyncio
 async def test_update_issue_notification_channels(api_client):
     # Create with default (no channels in payload → server defaults to ["dashboard"]).
     create_r = await api_client.post(

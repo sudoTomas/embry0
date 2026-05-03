@@ -19,12 +19,13 @@ class CreateIssueRequest(BaseModel):
     auto_triage: bool = True
     # Per-issue list of channels the orchestrator fans out agent ask-user
     # questions to. Typed as the enum here so Pydantic 422s any unknown
-    # channel string at the API boundary. ``max_length=4`` leaves room for
-    # one future channel before requiring a breaking change. The default
-    # factory builds a fresh list per request — never share a mutable.
+    # channel string at the API boundary. The bound is ``len(AskUserChannel)
+    # + 1`` — one slot of headroom for the next channel addition without an
+    # immediate breaking change. The default factory builds a fresh list per
+    # request — never share a mutable.
     notification_channels: list[AskUserChannel] = Field(
         default_factory=lambda: [AskUserChannel.DASHBOARD],
-        max_length=4,
+        max_length=len(AskUserChannel) + 1,
     )
 
     @field_validator("priority")
@@ -44,6 +45,18 @@ class CreateIssueRequest(BaseModel):
             raise ValueError(msg)
         return v
 
+    @field_validator("notification_channels")
+    @classmethod
+    def _no_duplicate_channels(
+        cls, v: list[AskUserChannel] | None
+    ) -> list[AskUserChannel] | None:
+        if v is None:
+            return v
+        if len(v) != len(set(v)):
+            msg = "notification_channels must not contain duplicates"
+            raise ValueError(msg)
+        return v
+
 
 class UpdateIssueRequest(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=500)
@@ -59,7 +72,7 @@ class UpdateIssueRequest(BaseModel):
     # ``model_dump(exclude_none=True)``).
     notification_channels: list[AskUserChannel] | None = Field(
         default=None,
-        max_length=4,
+        max_length=len(AskUserChannel) + 1,
     )
 
     @field_validator("status")
@@ -87,6 +100,18 @@ class UpdateIssueRequest(BaseModel):
     def validate_repo_format(cls, v: str | None) -> str | None:
         if v is not None and not _REPO_PATTERN.match(v):
             msg = "repo must be in 'owner/name' format"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("notification_channels")
+    @classmethod
+    def _no_duplicate_channels(
+        cls, v: list[AskUserChannel] | None
+    ) -> list[AskUserChannel] | None:
+        if v is None:
+            return v
+        if len(v) != len(set(v)):
+            msg = "notification_channels must not contain duplicates"
             raise ValueError(msg)
         return v
 
