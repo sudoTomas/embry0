@@ -189,10 +189,23 @@ async def test_api_key_mode_concatenates_multiple_text_blocks(tmp_path: Any, mon
 
 @pytest.mark.asyncio
 async def test_oauth_mode_captures_session_id_and_blob_path(tmp_path: Any, monkeypatch: Any) -> None:
-    """oauth/claude_max mode: session_id snapshotted, blob_path is canonical."""
+    """oauth/claude_max mode: session_id snapshotted, blob_path discovered via find_session_file."""
     monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
 
     sid = "11111111-2222-3333-4444-555555555555"
+
+    # Pre-create the session file at the canonical projects path so find_session_file discovers it.
+    from athanor.agents.claude_cli_session import sanitize_cwd_for_session_dir
+
+    session_dir = tmp_path / ".claude" / "projects" / sanitize_cwd_for_session_dir(str(workspace))
+    session_dir.mkdir(parents=True)
+    session_file = session_dir / f"{sid}.jsonl"
+    session_file.write_text("{}")
+
     messages = [
         _AssistantMessage([_TextBlock("ok")], session_id=sid),
         _ResultMessage("ok", cost=0.001, session_id=sid),
@@ -206,7 +219,10 @@ async def test_oauth_mode_captures_session_id_and_blob_path(tmp_path: Any, monke
 
     assert out.is_error is False
     assert out.session_id == sid
-    assert out.session_blob_path == f"/home/agent/.claude/sessions/{sid}.jsonl"
+    assert out.session_blob_path == str(session_file)
+    # Path must go through /projects/, not the old hardcoded /sessions/ path.
+    assert "/projects/" in out.session_blob_path
+    assert "/sessions/" not in out.session_blob_path
     # oauth mode does NOT populate the messages list — that's the api_key
     # resume path; oauth resumes via the CLI's --resume <id> instead.
     assert out.messages is None
@@ -216,9 +232,22 @@ async def test_oauth_mode_captures_session_id_and_blob_path(tmp_path: Any, monke
 async def test_oauth_mode_picks_session_id_from_first_carrier(tmp_path: Any, monkeypatch: Any) -> None:
     """First message that carries a session_id wins; later mismatches don't overwrite."""
     monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
 
     first_sid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     second_sid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+    # Pre-create the session file for first_sid so find_session_file discovers it.
+    from athanor.agents.claude_cli_session import sanitize_cwd_for_session_dir
+
+    session_dir = tmp_path / ".claude" / "projects" / sanitize_cwd_for_session_dir(str(workspace))
+    session_dir.mkdir(parents=True)
+    first_session_file = session_dir / f"{first_sid}.jsonl"
+    first_session_file.write_text("{}")
+
     messages = [
         _AssistantMessage([_TextBlock("hi")], session_id=first_sid),
         _AssistantMessage([_TextBlock("again")], session_id=second_sid),
@@ -232,6 +261,10 @@ async def test_oauth_mode_picks_session_id_from_first_carrier(tmp_path: Any, mon
         )
 
     assert out.session_id == first_sid
+    assert out.session_blob_path is not None
+    assert out.session_blob_path.endswith(
+        f"/projects/{sanitize_cwd_for_session_dir(str(workspace))}/{first_sid}.jsonl"
+    )
 
 
 @pytest.mark.asyncio
@@ -295,3 +328,32 @@ async def test_oauth_error_path_omits_session_state(tmp_path: Any, monkeypatch: 
     assert out.is_error is True
     assert out.session_id is None
     assert out.session_blob_path is None
+
+
+@pytest.mark.asyncio
+async def test_oauth_mode_emits_none_when_session_file_does_not_exist(tmp_path: Any, monkeypatch: Any) -> None:
+    """If the SDK emitted a session_id but the on-disk file isn't where
+    discovery looks, session_blob_path is None — we don't lie about
+    where the file is. The runner will skip the docker cp."""
+    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+
+    sid = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    messages = [
+        _AssistantMessage([_TextBlock("ok")], session_id=sid),
+        _ResultMessage("ok", cost=0.0, session_id=sid),
+    ]
+    # Note: NO session file pre-created → find_session_file returns None.
+
+    with patch("claude_agent_sdk.query", return_value=_scripted_query(messages)):
+        out = await SdkAgentExecutor().run(
+            _inv(auth_mode="oauth"),
+            config={"configurable": {}, "_test_writer": lambda _e: None},
+        )
+
+    assert out.is_error is False
+    assert out.session_id == sid  # SDK still emitted it
+    assert out.session_blob_path is None  # but discovery found nothing

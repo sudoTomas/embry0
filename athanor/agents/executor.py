@@ -348,15 +348,20 @@ class SdkAgentExecutor:
                 out_messages = list(captured_messages)
             elif invocation.auth_mode == "oauth" and captured_session_id:
                 out_session_id = captured_session_id
-                # Canonical in-sandbox path the runner / docker-cp will
-                # read. Mirrors the path AgentRunner._stage_resume_session
-                # writes to in claude_max mode (see agent_runner.py).
-                # NOTE: the Claude CLI actually writes JSONL files under
-                # ~/.claude/projects/<sanitized-cwd>/<id>.jsonl; the
-                # ~/.claude/sessions/<id>.jsonl convention here matches
-                # Plan C Task 5's stage path. Reconciling the two is
-                # tracked outside this PR (Plan C closeout doc).
-                out_session_blob_path = f"/home/agent/.claude/sessions/{captured_session_id}.jsonl"
+                # Use claude_cli_session as single source of truth for the
+                # CLI's on-disk session file location. Returns None if the
+                # CLI didn't write a session file at any known location —
+                # in that case AgentRunner skips the docker-cp extract.
+                from athanor.agents.claude_cli_session import find_session_file
+
+                home_dir = Path(os.path.expanduser("~"))
+                project_cwd = os.getcwd()
+                discovered = find_session_file(
+                    home_dir=home_dir,
+                    session_id=captured_session_id,
+                    project_cwd=project_cwd,
+                )
+                out_session_blob_path = str(discovered) if discovered else None
 
         result = AgentOutput(
             agent_type=invocation.agent_type,
