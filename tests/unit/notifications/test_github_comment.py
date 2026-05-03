@@ -58,8 +58,11 @@ async def test_github_channel_skipped_when_issue_not_github_synced():
 
 
 @pytest.mark.asyncio
-async def test_github_channel_uses_proxy_authorization():
-    """Outbound POST routes through the github-proxy with the per-sandbox bearer."""
+async def test_github_channel_does_not_add_per_call_auth_header():
+    """Auth lives on the injected http_client's default headers (set at app
+    lifespan time with the orchestrator's GITHUB_TOKEN). The channel itself
+    must not add another Authorization header per-call — that would either
+    duplicate or override the client default."""
     from athanor.notifications.github_comment import GitHubCommentChannel
 
     fake_client = MagicMock()

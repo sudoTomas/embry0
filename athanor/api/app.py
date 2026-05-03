@@ -577,12 +577,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     github_http_client = httpx.AsyncClient(
         base_url="https://api.github.com",
         headers=github_http_headers,
-        timeout=15.0,
+        timeout=httpx.Timeout(connect=5.0, read=15.0, write=10.0, pool=5.0),
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
+        transport=httpx.AsyncHTTPTransport(retries=2),
     )
     app.state.github_http_client = github_http_client
+
+    # Item 2: warn when dashboard_public_url is localhost in production. The
+    # link in the GitHub comment is unreachable from outside the host
+    # otherwise.
+    dashboard_url = config.dashboard_public_url or "http://localhost:8200"
+    if dashboard_url.startswith("http://localhost") and not (
+        config.auth_dev_mode or config.webhook_dev_mode
+    ):
+        logger.warning(
+            "dashboard_public_url_localhost_in_prod",
+            url=dashboard_url,
+            msg="GitHub-comment deep-links will be unreachable from outside the host. "
+                "Set DASHBOARD_PUBLIC_URL to your dashboard's public URL.",
+        )
+
     github_comment_channel = GitHubCommentChannel(
         http_client=github_http_client,
-        dashboard_base_url=config.dashboard_public_url or "http://localhost:8200",
+        dashboard_base_url=dashboard_url,
     )
     app.state.github_comment_channel = github_comment_channel
 

@@ -38,10 +38,21 @@ class GitHubCommentChannel:
             )
             return
         repo = issue.get("repo")
-        if not repo or not isinstance(repo, str) or "/" not in repo:
+        if not isinstance(repo, str):
             logger.warning("github_channel_invalid_repo", repo=repo, issue_id=issue.get("id"))
             return
+        parts = (repo or "").split("/")
+        if len(parts) != 2 or not all(parts):
+            logger.warning("github_channel_invalid_repo", repo=repo)
+            return
+        if not questions:
+            logger.debug("github_channel_skipped_no_questions", issue_id=issue.get("id"))
+            return
 
+        # Question text is agent-authored and rendered as-is in the comment.
+        # Markdown chars (`_`, `[]`, etc.) are NOT escaped — agents are trusted
+        # to produce sensible question text. If issue titles or untrusted input
+        # ever ends up here, add github-flavored-markdown escaping at this layer.
         # Build comment body
         lines = [
             "🤖 **Athanor agent needs input on this issue.**",
