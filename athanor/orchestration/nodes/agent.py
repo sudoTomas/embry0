@@ -7,6 +7,7 @@ from typing import Any
 import structlog
 
 from athanor.agents.resolver import resolve_agent_invocation
+from athanor.agents.session import AgentSession
 from athanor.execution.auth_provider import AuthConfigError
 from athanor.orchestration.state import AgentOutputEntry
 
@@ -75,6 +76,7 @@ async def run_agent_node(
     credentials: dict[str, str] | None = None,
     global_defaults: dict[str, Any] | None = None,
     config: Any | None = None,
+    resume_session: AgentSession | None = None,
 ) -> dict[str, Any]:
     """Resolve an AgentInvocation and run it via the sandbox executor.
 
@@ -178,6 +180,7 @@ async def run_agent_node(
             config=serialized,
             network=network,
             on_event=on_event,
+            resume_session=resume_session,
         )
     except AuthConfigError as exc:
         return _auth_error_updates(agent_type, exc, state)

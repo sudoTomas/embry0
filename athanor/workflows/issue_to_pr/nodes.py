@@ -824,6 +824,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
     credentials = configurable.get("credentials") or {}
+    agent_sessions_repo = configurable.get("agent_sessions_repo")
 
     # Build the developer prompt
     repo = state.get("repo", "")
@@ -887,6 +888,35 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         collected_events.append(event)
         writer(event)
 
+    # Plan C Task 6: load any prior AgentSession for this (job, agent) so the
+    # in-sandbox executor can resume the same Claude conversation. Restore
+    # failures must NEVER block the agent run — fall back to a fresh session.
+    from athanor.agents.session import AgentSession
+
+    resume_session: AgentSession | None = None
+    if agent_sessions_repo is not None:
+        try:
+            prior = await agent_sessions_repo.get(
+                job_id=state.get("job_id", ""),
+                agent_type="developer",
+            )
+            if prior is not None:
+                resume_session = AgentSession(
+                    job_id=prior["job_id"],
+                    agent_type=prior["agent_type"],
+                    mode=prior["mode"],
+                    messages=prior.get("messages"),
+                    session_id=prior.get("session_id"),
+                    session_blob=prior.get("session_blob"),
+                )
+        except Exception:
+            logger.warning(
+                "developer_session_restore_failed",
+                job_id=state.get("job_id"),
+                exc_info=True,
+            )
+            resume_session = None
+
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
@@ -898,7 +928,40 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         on_event=_forward_event,
         credentials=credentials,
         config=config,
+        resume_session=resume_session,
     )
+
+    # Plan C Task 6: capture post-run session state so the next invocation of
+    # this node (after an ask_user pause, retry, etc.) resumes the same
+    # conversation. Skip on agent error (no useful state to persist) and skip
+    # when both messages and session_id are absent (avoids writing empty rows
+    # before the executor learns to extract these fields). Persist failures
+    # are best-effort; never block the workflow.
+    if agent_sessions_repo is not None:
+        last_output = (result.get("agent_outputs") or [None])[-1]
+        if last_output and not last_output.get("is_error"):
+            new_messages = last_output.get("messages")
+            new_session_id = last_output.get("session_id")
+            new_session_blob = last_output.get("session_blob")
+            if new_messages or new_session_id:
+                mode = last_output.get("mode") or (
+                    "claude_max" if credentials.get("oauth_token") else "anthropic_api"
+                )
+                try:
+                    await agent_sessions_repo.upsert(
+                        job_id=state.get("job_id", ""),
+                        agent_type="developer",
+                        mode=mode,
+                        messages=new_messages,
+                        session_id=new_session_id,
+                        session_blob=new_session_blob,
+                    )
+                except Exception:
+                    logger.warning(
+                        "developer_session_persist_failed",
+                        job_id=state.get("job_id"),
+                        exc_info=True,
+                    )
 
     # Scan the agent's event stream for `agent_ask_user` events. If present,
     # surface them to the graph so the router can divert to ask_user_interrupt.
