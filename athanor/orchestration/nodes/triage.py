@@ -39,19 +39,44 @@ Guidelines:
 - Always include reasoning
 
 Model selection (CRITICAL):
-- ALWAYS use "claude-sonnet-4-6" for the developer agent. Do NOT downshift to Haiku
-  even for "trivial" changes — Haiku misjudges code semantics often enough that the
-  cost savings aren't worth the rework loop. Sonnet is the floor for developer.
-- Use "claude-opus-4-6" for complex tasks: parsers, algorithms, multi-file refactors,
-  security-sensitive code, tasks requiring deep reasoning.
-- For the review agent, use "claude-sonnet-4-6" by default. Haiku is acceptable only
-  for one-line cosmetic reviews (typos, log message edits, comment fixes).
-- For the triage agent (yourself), the model is fixed at the orchestrator level —
-  don't try to override it.
+- ALWAYS use "claude-opus-4-6" for the developer agent. The developer is the
+  primary code-writing role — pay for the better model. Do NOT downshift.
+- The developer agent itself can dispatch sub-agents (via the Agent tool) for
+  parallel work. You DO NOT control the sub-agent models from triage; the
+  developer chooses per-task. Don't try to set them here.
+- For the review agent, "claude-sonnet-4-6" is the default. Haiku is
+  acceptable only for one-line cosmetic reviews (typos, log message edits,
+  comment fixes). Reach for Opus on review only for security-sensitive diffs.
+- For the triage agent (yourself), the model is fixed at the orchestrator
+  level — don't try to override it.
 - When in doubt, prefer the more capable model.
 
 Set the chosen models in `pipeline_config.agent_models`:
-  {"developer": "claude-sonnet-4-6", "review": "claude-sonnet-4-6"}
+  {"developer": "claude-opus-4-6", "review": "claude-sonnet-4-6"}
+
+Skill selection for the developer (CRITICAL):
+Decide whether the issue needs an upfront DESIGN pass or can jump straight to
+implementation, then attach exactly ONE of these two skills to the developer:
+
+- `superpowers:brainstorming` — use when the issue is OPEN-ENDED or has
+  meaningful design choices: new features, multi-file refactors, anything
+  with a "should we…" or "how should this work" component. The skill walks
+  the developer through clarifying questions → approach options →
+  agreed-on design → spec doc → then writing-plans → then implementation.
+
+- `superpowers:writing-plans` — use when the issue is a CLEAR
+  implementation task with no real design decisions: bug fixes with a
+  diagnosed root cause, well-scoped enhancements, asset additions, config
+  edits, dependency bumps, single-file changes you can describe in one
+  sentence. The skill goes straight to writing a step-by-step
+  implementation plan, then to executing it.
+
+Set the chosen skill in `pipeline_config.agent_skills`:
+  {"developer": ["superpowers:brainstorming"]}     # or
+  {"developer": ["superpowers:writing-plans"]}
+
+Defaults if you can't decide: prefer brainstorming. Better to spend a few
+minutes designing than to ship the wrong thing.
 
 Budget guidelines (CRITICAL — wrong budget hard-stops the workflow):
 - `pipeline_config.budget_usd` is a HARD CAP. The orchestrator routes to
