@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from athanor.agents.claude_cli_session import canonical_session_path_for
+
 
 @dataclass
 class AgentSession:
@@ -65,9 +67,15 @@ def restore_session_into_options(
         return options
     if session.mode == "claude_max":
         if session.session_blob and session.session_id:
-            session_dir = Path(options.get("session_dir", "/home/agent/.claude/sessions"))
-            session_dir.mkdir(parents=True, exist_ok=True)
-            (session_dir / f"{session.session_id}.jsonl").write_bytes(session.session_blob)
+            home_dir = Path(options.get("home_dir", "/home/agent"))
+            project_cwd = options.get("project_cwd")
+            target = canonical_session_path_for(
+                home_dir=home_dir,
+                session_id=session.session_id,
+                project_cwd=project_cwd,
+            )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(session.session_blob)
             cli_args = options.setdefault("cli_extra_args", [])
             if "--resume" not in cli_args:
                 cli_args.extend(["--resume", session.session_id])
