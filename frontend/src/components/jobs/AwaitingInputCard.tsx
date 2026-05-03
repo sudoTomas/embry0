@@ -1,5 +1,7 @@
 import { PauseCircle } from "lucide-react";
-import { InputForm } from "@/components/jobs/InputForm";
+import { useQueryClient } from "@tanstack/react-query";
+import { QuestionsForm } from "@/components/jobs/QuestionsForm";
+import { answerInput } from "@/api/inputs";
 import type { AwaitingInputEvent } from "@/lib/types";
 import type { JobInput } from "@/lib/types";
 
@@ -10,13 +12,28 @@ interface AwaitingInputCardProps {
 }
 
 export function AwaitingInputCard({ pendingInputs, jobInputs, jobId }: AwaitingInputCardProps) {
-  const pendingList = Object.values(pendingInputs);
-  if (pendingList.length === 0) return null;
+  const queryClient = useQueryClient();
 
-  // Match pending input events with job inputs
-  const inputsToShow = jobInputs.filter(
-    (input) => input.status === "pending" && pendingInputs[input.input_id],
-  );
+  const pendingList = Object.values(pendingInputs);
+  const pending = (jobInputs ?? []).filter((i) => i.status === "pending");
+
+  // Nothing to show: no pending job inputs and no in-flight events.
+  if (pending.length === 0 && pendingList.length === 0) return null;
+
+  // Map JobInput → QuestionsForm's PendingInput shape.
+  const formInputs = pending.map((i) => ({
+    id: i.input_id,
+    question: i.question,
+    options: i.options,
+    category: i.category,
+  }));
+
+  // We need issue_id to hit POST /issues/{issueId}/inputs/{inputId}/answer.
+  // Build a quick lookup from input_id → issue_id.
+  const issueIdByInput: Record<string, string> = {};
+  for (const i of pending) {
+    issueIdByInput[i.input_id] = i.issue_id;
+  }
 
   return (
     <div
@@ -37,8 +54,8 @@ export function AwaitingInputCard({ pendingInputs, jobInputs, jobId }: AwaitingI
         </div>
       </div>
 
-      {/* Show questions from pending inputs */}
-      {pendingList.length > 0 && inputsToShow.length === 0 && (
+      {/* Fallback: surface in-flight question events when no JobInput rows exist yet */}
+      {pending.length === 0 && pendingList.length > 0 && (
         <div className="space-y-2 mb-4">
           {pendingList.map((input) => (
             <div key={input.input_id} className="px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/10 text-sm text-amber-200">
@@ -48,12 +65,17 @@ export function AwaitingInputCard({ pendingInputs, jobInputs, jobId }: AwaitingI
         </div>
       )}
 
-      {/* Input forms */}
-      <div className="space-y-3">
-        {inputsToShow.map((input) => (
-          <InputForm key={input.input_id} input={input} jobId={jobId} />
-        ))}
-      </div>
+      {/* Batched multi-question form */}
+      {pending.length > 0 && (
+        <QuestionsForm
+          inputs={formInputs}
+          onAnswer={async (inputId, answer) => {
+            const issueId = issueIdByInput[inputId];
+            await answerInput(issueId, inputId, answer);
+            await queryClient.invalidateQueries({ queryKey: ["job-inputs", jobId] });
+          }}
+        />
+      )}
     </div>
   );
 }
