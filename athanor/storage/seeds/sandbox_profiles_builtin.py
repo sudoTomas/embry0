@@ -28,7 +28,15 @@ BUILTIN_SANDBOX_PROFILES: dict[str, dict[str, Any]] = {
         "container_timeout_seconds": 3600,
         "idle_timeout_seconds": 600,
         "dind_enabled": False,
-        "extra_networks": [],
+        # sandbox-internet attached so the bundled Claude CLI (claude_max OAuth
+        # mode) can reach api.anthropic.com — sandbox-restricted has
+        # enable_ip_masquerade=false and blocks all egress, which makes Claude
+        # SDK calls hang forever. Until the auth-proxy is wired through
+        # ANTHROPIC_BASE_URL, the only working path is direct egress on
+        # sandbox-internet. Defense-in-depth still applies: capability-drop,
+        # no-new-privileges, command-blocking hooks, OAuth-token-only credential
+        # surface (no GITHUB_TOKEN/ANTHROPIC_API_KEY in env).
+        "extra_networks": ["sandbox-internet"],
         "env_defaults": {},
     },
     "qa-jvm": {
