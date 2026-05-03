@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
 
+from athanor.agents.claude_cli_session import find_session_file
 from athanor.agents.config_builder import build_sdk_options
 from athanor.agents.invocation import AgentInvocation
 from athanor.execution.agent_runner import AgentOutput
@@ -352,10 +353,11 @@ class SdkAgentExecutor:
                 # CLI's on-disk session file location. Returns None if the
                 # CLI didn't write a session file at any known location —
                 # in that case AgentRunner skips the docker-cp extract.
-                from athanor.agents.claude_cli_session import find_session_file
-
                 home_dir = Path(os.path.expanduser("~"))
-                project_cwd = os.getcwd()
+                try:
+                    project_cwd: str | None = os.getcwd()
+                except (FileNotFoundError, OSError):
+                    project_cwd = None
                 discovered = find_session_file(
                     home_dir=home_dir,
                     session_id=captured_session_id,

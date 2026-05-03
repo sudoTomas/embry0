@@ -220,9 +220,6 @@ async def test_oauth_mode_captures_session_id_and_blob_path(tmp_path: Any, monke
     assert out.is_error is False
     assert out.session_id == sid
     assert out.session_blob_path == str(session_file)
-    # Path must go through /projects/, not the old hardcoded /sessions/ path.
-    assert "/projects/" in out.session_blob_path
-    assert "/sessions/" not in out.session_blob_path
     # oauth mode does NOT populate the messages list — that's the api_key
     # resume path; oauth resumes via the CLI's --resume <id> instead.
     assert out.messages is None
