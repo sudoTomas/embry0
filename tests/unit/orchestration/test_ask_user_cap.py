@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from langgraph.types import Command
 
 
 @pytest.mark.asyncio
@@ -52,9 +53,9 @@ async def test_developer_with_brainstorming_skill_uses_cap_15():
 
     # Should NOT be exhausted at round 15 — brainstorming cap is 15
     # (without the bump it would have exhausted at round 5)
-    if hasattr(result, "goto"):
-        assert result.goto != "max_retries"
-    update = getattr(result, "update", result if isinstance(result, dict) else {})
+    assert isinstance(result, Command)
+    assert result.goto != "max_retries"
+    update = result.update or {}
     assert not update.get("agent_questions_exhausted")
     assert update.get("agent_question_rounds") == 15
 
@@ -101,5 +102,6 @@ async def test_developer_without_brainstorming_skill_uses_cap_5():
     ):
         result = await developer_node(state, {"configurable": {"agent_runner": object(), "credentials": {}}})
 
-    update = getattr(result, "update", result if isinstance(result, dict) else {})
+    assert isinstance(result, Command)
+    update = result.update or {}
     assert update.get("agent_questions_exhausted") is True

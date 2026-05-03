@@ -16,7 +16,11 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END
 from langgraph.types import Command, interrupt
 
-from athanor.orchestration.nodes.agent import run_agent_node
+from athanor.orchestration.nodes.agent import (
+    BRAINSTORMING_ASK_USER_CAP,
+    DEFAULT_ASK_USER_CAP,
+    run_agent_node,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -928,7 +932,11 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         skills_for_dev = (
             (state.get("pipeline_config", {}) or {}).get("agent_skills", {}).get("developer", [])
         )
-        ask_cap = 15 if "superpowers:brainstorming" in skills_for_dev else 5
+        ask_cap = (
+            BRAINSTORMING_ASK_USER_CAP
+            if "superpowers:brainstorming" in skills_for_dev
+            else DEFAULT_ASK_USER_CAP
+        )
 
         exhausted, cap_updates = _enforce_ask_user_cap(
             state,

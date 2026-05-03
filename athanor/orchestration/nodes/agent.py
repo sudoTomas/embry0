@@ -13,6 +13,13 @@ from athanor.orchestration.state import AgentOutputEntry
 logger = structlog.get_logger(__name__)
 
 
+# Default cap on agent ask-user rounds per job. Brainstorming overrides
+# to a higher value (see BRAINSTORMING_ASK_USER_CAP) because design
+# conversations legitimately need more turns.
+DEFAULT_ASK_USER_CAP = 5
+BRAINSTORMING_ASK_USER_CAP = 15
+
+
 class SandboxRequiredError(RuntimeError):
     """Raised when run_agent_node is invoked without an agent_runner.
 
@@ -229,7 +236,7 @@ def _enforce_ask_user_cap(
     state: dict[str, Any],
     pending_questions: list[dict[str, Any]],
     *,
-    max_rounds: int = 5,
+    max_rounds: int = DEFAULT_ASK_USER_CAP,
     job_id_for_log: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """Apply the job-wide ask_user round cap.
