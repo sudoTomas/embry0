@@ -566,6 +566,34 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ADD COLUMN IF NOT EXISTS skipped_at TIMESTAMPTZ;
         """,
     ),
+    (
+        23,
+        "agent_sessions — per-(job, agent) conversation state for resume continuity",
+        # Plan C Task 1. Stores SDK conversation state so a paused agent
+        # (ask-user interrupt) can resume from exactly where it left off
+        # instead of being re-launched fresh with prior turns stitched into
+        # a prompt addendum. Two persistence formats live side-by-side:
+        #   anthropic_api mode → messages JSONB (full message history)
+        #   claude_max mode    → session_id + session_blob (CLI session file)
+        # ON DELETE CASCADE so sessions die with their parent job.
+        # UNIQUE (job_id, agent_type) — one session per (job, agent) pair.
+        # Index on job_id supports the upcoming delete_for_job(job_id) path.
+        """
+        CREATE TABLE IF NOT EXISTS agent_sessions (
+            id           text PRIMARY KEY,
+            job_id       text NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+            agent_type   text NOT NULL,
+            mode         text NOT NULL,
+            session_id   text NULL,
+            messages     jsonb NULL,
+            session_blob bytea NULL,
+            last_turn_at timestamptz NOT NULL DEFAULT now(),
+            created_at   timestamptz NOT NULL DEFAULT now(),
+            CONSTRAINT agent_sessions_job_id_agent_type_key UNIQUE (job_id, agent_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_sessions_job ON agent_sessions(job_id);
+        """,
+    ),
 ]
 
 

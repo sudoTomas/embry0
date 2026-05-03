@@ -126,6 +126,33 @@ async def test_migration_20_adds_mcp_servers_column(db_with_migrations):
 
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
+async def test_migration_23_creates_agent_sessions(db_with_migrations):
+    """Migration 23 creates agent_sessions table for per-(job, agent) conversation state."""
+    cols = await db_with_migrations.fetch(
+        "SELECT column_name, data_type FROM information_schema.columns "
+        "WHERE table_name='agent_sessions' ORDER BY ordinal_position"
+    )
+    names = {c["column_name"]: c["data_type"] for c in cols}
+    assert names["id"] == "text"
+    assert names["job_id"] == "text"
+    assert names["agent_type"] == "text"
+    assert names["mode"] == "text"
+    assert names["session_id"] == "text"
+    assert names["messages"] == "jsonb"
+    assert names["session_blob"] == "bytea"
+    assert "last_turn_at" in names
+    assert "created_at" in names
+
+    # Unique (job_id, agent_type) constraint
+    constraints = await db_with_migrations.fetch(
+        "SELECT conname FROM pg_constraint WHERE conrelid = 'agent_sessions'::regclass"
+    )
+    cnames = {c["conname"] for c in constraints}
+    assert any("job_id_agent_type" in n or "agent_sessions_job_id" in n for n in cnames)
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
 async def test_migration_21_adds_notification_channels(db_with_migrations):
     """Migration 21 adds issues.notification_channels JSONB DEFAULT '["dashboard"]'."""
     cols = await db_with_migrations.fetch(
