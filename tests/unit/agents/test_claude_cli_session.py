@@ -93,3 +93,28 @@ def test_canonical_path_for_handles_missing_project_cwd(tmp_path: Path):
     path = canonical_session_path_for(home_dir=home, session_id="sess-new")
     # Legacy layout when we can't compute the projects/ subdir
     assert path == home / ".claude" / "sessions" / "sess-new.jsonl"
+
+
+def test_multiple_matches_picks_lexicographically_first_and_warns(tmp_path: Path):
+    """When the glob fallback finds multiple session files with the same id
+    across different project_cwd directories, pick the lexicographically
+    first one for deterministic behavior and emit a warning."""
+    import structlog.testing
+
+    home = tmp_path
+    proj_a = home / ".claude" / "projects" / "-aaa"
+    proj_b = home / ".claude" / "projects" / "-bbb"
+    proj_a.mkdir(parents=True)
+    proj_b.mkdir(parents=True)
+    (proj_a / "sess-dup.jsonl").write_text("a\n")
+    (proj_b / "sess-dup.jsonl").write_text("b\n")
+
+    with structlog.testing.capture_logs() as log_entries:
+        # No project_cwd → forces the glob fallback branch
+        found = find_session_file(home_dir=home, session_id="sess-dup")
+
+    assert found == proj_a / "sess-dup.jsonl"  # -aaa sorts before -bbb
+    assert any(
+        entry.get("event") == "multiple_session_files_found_picking_first"
+        for entry in log_entries
+    )

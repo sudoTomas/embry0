@@ -72,7 +72,7 @@ def find_session_file(
 
     projects_dir = claude_root / "projects"
     if projects_dir.is_dir():
-        matches = list(projects_dir.glob(f"*/{session_id}.jsonl"))
+        matches = sorted(projects_dir.glob(f"*/{session_id}.jsonl"))
         if matches:
             if len(matches) > 1:
                 logger.warning(
