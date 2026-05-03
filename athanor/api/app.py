@@ -159,6 +159,8 @@ async def _init_app_state(
     *,
     database_url: str,
     github_token: str | None = None,
+    github_comment_channel: object = None,
+    telegram_channel: object = None,
     **executor_kwargs: object,
 ) -> None:
     """Initialize app.state.* with repositories and services.
@@ -169,6 +171,11 @@ async def _init_app_state(
     Any extra keyword arguments are forwarded to IssueExecutor (e.g.
     ``audit_log_path``, ``config``, ``sandbox_manager``, ``agent_runner``,
     ``proxy_manager``).
+
+    ``github_comment_channel`` and ``telegram_channel`` are forwarded to
+    IssueExecutor's constructor when provided. They must be built by the
+    caller (lifespan) before this function is called so the executor has
+    them available from construction onward.
     """
     from athanor.api.events.bus import EventBus
     from athanor.services.github_sync import GitHubSyncService
@@ -218,6 +225,8 @@ async def _init_app_state(
         qa_minio_sandbox=getattr(app.state, "qa_minio_sandbox", None),
         qa_token_registry=getattr(app.state, "qa_token_registry", None),
         profiles_repo=app.state.profiles_repo,
+        github_comment_channel=github_comment_channel,
+        telegram_channel=telegram_channel,
         **executor_kwargs,
     )
 
@@ -550,11 +559,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.background_tasks = set()
 
+    # GitHub-comment outbound channel — used by ask-user fan-out when an issue
+    # is GitHub-synced and "github" is in its notification_channels. The HTTP
+    # client is constructed once with base_url + Authorization pre-set so the
+    # channel itself is auth-free; closed at shutdown below.
+    #
+    # Built BEFORE _init_app_state so the channel can be passed into
+    # IssueExecutor's constructor via the proper kwarg path (rather than
+    # mutating a private attribute on an already-constructed executor).
+    import httpx
+
+    from athanor.notifications.github_comment import GitHubCommentChannel
+
+    github_http_headers = {"Accept": "application/vnd.github+json"}
+    if config.github_token:
+        github_http_headers["Authorization"] = f"Bearer {config.github_token}"
+    github_http_client = httpx.AsyncClient(
+        base_url="https://api.github.com",
+        headers=github_http_headers,
+        timeout=15.0,
+    )
+    app.state.github_http_client = github_http_client
+    github_comment_channel = GitHubCommentChannel(
+        http_client=github_http_client,
+        dashboard_base_url=config.dashboard_public_url or "http://localhost:8200",
+    )
+    app.state.github_comment_channel = github_comment_channel
+
     await _init_app_state(
         app,
         db,
         database_url=config.database_url,
         github_token=config.github_token if hasattr(config, "github_token") else None,
+        github_comment_channel=github_comment_channel,
         audit_log_path=config.audit_log_path,
         config=config,
         sandbox_manager=sandbox_mgr,
@@ -594,32 +631,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # if app.state.telegram_webhook_secret is somehow empty at request time.
     else:
         app.state.telegram_webhook_secret = ""
-
-    # GitHub-comment outbound channel — used by ask-user fan-out when an issue
-    # is GitHub-synced and "github" is in its notification_channels. The HTTP
-    # client is constructed once with base_url + Authorization pre-set so the
-    # channel itself is auth-free; closed at shutdown below.
-    import httpx
-
-    from athanor.notifications.github_comment import GitHubCommentChannel
-
-    github_http_headers = {"Accept": "application/vnd.github+json"}
-    if config.github_token:
-        github_http_headers["Authorization"] = f"Bearer {config.github_token}"
-    github_http_client = httpx.AsyncClient(
-        base_url="https://api.github.com",
-        headers=github_http_headers,
-        timeout=15.0,
-    )
-    app.state.github_http_client = github_http_client
-    github_comment_channel = GitHubCommentChannel(
-        http_client=github_http_client,
-        dashboard_base_url=config.dashboard_public_url or "http://localhost:8200",
-    )
-    app.state.github_comment_channel = github_comment_channel
-    # Inject into the already-constructed IssueExecutor so dispatch_questions
-    # gets the channel without needing to rebuild the executor.
-    app.state.issue_executor._github_comment_channel = github_comment_channel
 
     logger.info("athanor_started")
     yield
