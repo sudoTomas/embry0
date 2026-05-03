@@ -12,10 +12,12 @@ import os
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from athanor.agents.claude_cli_session import canonical_session_path_for
 from athanor.execution.docker_client import DockerClient
 from athanor.execution.events import parse_event
 from athanor.execution.sandbox_manager import SandboxManager
@@ -29,6 +31,12 @@ logger = structlog.get_logger(__name__)
 # Sandbox-side path where the orchestrator stages the resume blob for
 # anthropic_api mode. Tmpfs-backed and disposed with the sandbox.
 RESUME_BLOB_SANDBOX_PATH = "/tmp/.athanor-resume-blob"
+
+# Sandbox-side cwd for agent processes. Pinned to /workspace via the
+# DockerClient `-w` flag — used by canonical_session_path_for to
+# compute the CLI's session-file location inside the sandbox.
+SANDBOX_PROJECT_CWD = "/workspace"
+SANDBOX_HOME = Path("/home/agent")
 
 
 @dataclass
@@ -236,8 +244,14 @@ class AgentRunner:
         if resume_session.mode == "claude_max":
             if not resume_session.session_blob or not resume_session.session_id:
                 return []
-            sandbox_path = f"/home/agent/.claude/sessions/{resume_session.session_id}.jsonl"
-            await self._docker.copy_bytes_into(container, resume_session.session_blob, sandbox_path)
+            sandbox_target = canonical_session_path_for(
+                home_dir=SANDBOX_HOME,
+                session_id=resume_session.session_id,
+                project_cwd=SANDBOX_PROJECT_CWD,
+            )
+            await self._docker.copy_bytes_into(
+                container, resume_session.session_blob, str(sandbox_target)
+            )
             return ["--session-id", resume_session.session_id]
 
         # Defensive: future modes should be wired explicitly.

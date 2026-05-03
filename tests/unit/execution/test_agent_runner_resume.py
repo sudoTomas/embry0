@@ -161,7 +161,7 @@ async def test_resume_session_claude_max_copies_bytes_and_passes_session_id() ->
     docker.copy_bytes_into.assert_awaited_once_with(
         "sandbox-J2",
         blob,
-        "/home/agent/.claude/sessions/sess-abc.jsonl",
+        "/home/agent/.claude/projects/-workspace/sess-abc.jsonl",
     )
 
     cmd = captured_commands[0]
