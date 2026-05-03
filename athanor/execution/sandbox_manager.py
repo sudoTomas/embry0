@@ -42,6 +42,14 @@ _DEFAULT_PROFILE: dict[str, Any] = {
     "cap_add": [],
     "security_opt": ["no-new-privileges"],
     "default_network": "sandbox-restricted",
+    # sandbox-internet attached so the bundled Claude CLI (claude_max OAuth
+    # mode) can reach api.anthropic.com — sandbox-restricted has
+    # enable_ip_masquerade=false and blocks all egress, which makes the SDK's
+    # initial Claude call hang forever (manifested as "agent timed out" with
+    # cost=$0 and no tool_call events). Defense-in-depth still holds: cap_drop
+    # ALL, no-new-privileges, Ring-3 PreToolUse hook, no static credentials in
+    # env (only the per-job OAuth token + git credential proxy bearer).
+    "extra_networks": ["sandbox-internet"],
     "container_timeout_seconds": 3600,
 }
 
