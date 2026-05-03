@@ -9,8 +9,8 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-@router.get("/sandboxes")
-async def list_sandboxes(request: Request, include_stopped: bool = False) -> dict[str, object]:
+@router.get("/sandboxes/active")
+async def list_active_sandboxes(request: Request, include_stopped: bool = False) -> dict[str, object]:
     """List sandbox-* containers and their ages.
 
     Shells out to ``docker ps`` (via the app's DockerClient) filtered on the

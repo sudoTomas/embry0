@@ -41,3 +41,6 @@ class ErrorCode(StrEnum):
     SAFETY_HOOK_FAILED = "ERR_SAFETY_HOOK_FAILED"  # Hook raised or malformed — fails closed
     SANDBOX_REQUIRED = "ERR_SANDBOX_REQUIRED"  # Sandbox-less in-process execution refused (no fallback by design)
     TOOL_DENIED = "ERR_TOOL_DENIED"  # Safety policy denied a tool call
+
+    # Phase 5 — QA pipeline integration
+    QA_FAILURES_UNRESOLVED = "ERR_QA_FAILURES_UNRESOLVED"  # QA failed and triage↔QA loop hit max_qa_failure_rounds (default 2) without a passing run; written when QAStateBlock.failure_rounds is exhausted

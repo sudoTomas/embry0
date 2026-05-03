@@ -1,5 +1,7 @@
 """Shared test fixtures."""
 
+import os
+import socket
 from collections.abc import AsyncIterator
 
 import asyncpg
@@ -7,6 +9,39 @@ import pytest
 
 from athanor.storage.database import DatabasePool
 from athanor.storage.migrations.runner import run_migrations
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip MinIO-tagged tests when no MinIO endpoint is reachable.
+    Skip DinD-tagged tests when no DinD endpoint is reachable.
+    """
+    endpoint = os.environ.get("MINIO_ENDPOINT", "")
+    minio_ok = False
+    if endpoint:
+        host, _, port = endpoint.partition(":")
+        try:
+            with socket.create_connection((host, int(port or "9000")), timeout=1):
+                minio_ok = True
+        except OSError:
+            minio_ok = False
+
+    dind_ok = False
+    dind_endpoint = os.environ.get("DIND_ENDPOINT", "")
+    if dind_endpoint:
+        host, _, port = dind_endpoint.partition(":")
+        try:
+            with socket.create_connection((host, int(port or "2376")), timeout=1):
+                dind_ok = True
+        except OSError:
+            dind_ok = False
+
+    skip_minio = pytest.mark.skip(reason="MinIO not available — set MINIO_ENDPOINT")
+    skip_dind = pytest.mark.skip(reason="DinD not available — set DIND_ENDPOINT")
+    for item in items:
+        if "requires_minio" in item.keywords and not minio_ok:
+            item.add_marker(skip_minio)
+        if "requires_dind" in item.keywords and not dind_ok:
+            item.add_marker(skip_dind)
 
 
 @pytest.fixture

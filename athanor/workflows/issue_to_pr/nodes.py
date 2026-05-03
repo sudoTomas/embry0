@@ -21,6 +21,45 @@ from athanor.orchestration.nodes.agent import run_agent_node
 logger = structlog.get_logger(__name__)
 
 
+def _filter_user_env_for_sandbox(
+    user_env: list[dict[str, str]] | dict[str, str], *, qa_active: bool
+) -> dict[str, str]:
+    """Merge user env vars into the sandbox environment, filtering by scope.
+
+    - scope='app' (or unspecified): always included.
+    - scope='qa':  included only when qa_active=True.
+    - Reserved keys/prefixes: always dropped (defense-in-depth vs API validation).
+
+    Accepts either the new list-of-dicts shape or the legacy plain dict
+    (treated as all scope='app').
+    """
+    from athanor.api.schemas.environment import RESERVED_ENV_KEYS
+    from athanor.execution.auth_provider import RESERVED_ENV_PREFIXES
+
+    # Normalize to list-of-dicts
+    if isinstance(user_env, dict):
+        rows: list[dict[str, str]] = [
+            {"key": k, "value": v, "scope": "app"} for k, v in user_env.items()
+        ]
+    else:
+        rows = list(user_env)
+
+    out: dict[str, str] = {}
+    for row in rows:
+        key = row["key"]
+        if key in RESERVED_ENV_KEYS:
+            logger.warning("user_env_reserved_key_dropped", key=key)
+            continue
+        if any(key.startswith(p) for p in RESERVED_ENV_PREFIXES):
+            logger.warning("user_env_reserved_prefix_dropped", key=key)
+            continue
+        scope = row.get("scope", "app")
+        if scope == "qa" and not qa_active:
+            continue
+        out[key] = row["value"]
+    return out
+
+
 async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Create sandbox container and clone the repo."""
     writer = get_stream_writer()
@@ -44,23 +83,14 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
     container_id = None
     try:
         # Merge user env FIRST, then infrastructure vars last so they win.
-        # Defense-in-depth vs the API-layer RESERVED_ENV_KEYS check: a stored
-        # row with a reserved key (from pre-fix data) must not escape to the
-        # sandbox. Drop any user keys that collide.
-        from athanor.api.schemas.environment import RESERVED_ENV_KEYS
-
-        env: dict[str, str] = {}
-        user_env = state.get("user_env_vars") or {}
-        for k, v in user_env.items():
-            if k in RESERVED_ENV_KEYS:
-                logger.warning(
-                    "user_env_var_reserved_key_dropped",
-                    key=k,
-                    job_id=job_id,
-                    msg="Reserved key in user env var rejected at sandbox injection. Remove it via the environment API.",
-                )
-                continue
-            env[k] = v
+        # _filter_user_env_for_sandbox provides defense-in-depth vs the API-layer
+        # validators: stored rows with reserved keys/prefixes (from pre-fix data
+        # or a bypassed API) must not escape to the sandbox. It also filters
+        # scope='qa' rows unless qa_active=True (Phase 2 QA pipeline sets this).
+        env: dict[str, str] = _filter_user_env_for_sandbox(
+            state.get("user_env_vars") or [],
+            qa_active=bool(state.get("qa_active", False)),
+        )
         if git_proxy_url:
             env["ATHANOR_GIT_PROXY_URL"] = git_proxy_url
         # Note: github_proxy_url is available on proxy_mgr but not yet consumed
@@ -424,6 +454,45 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 update={**result, **cap_updates, "current_stage": "triage_asked_user"},
             )
 
+    # Phase 5 Task 4: parse the optional set_qa_decision the triage agent
+    # emits per the QA Decision section in _TRIAGE_SYSTEM_PROMPT. The prompt
+    # asks for it as an inline JSON field on TriageDecisionModel; we also
+    # accept a streamed tool_call event as a fallback (the agent SDK may emit
+    # one if the model decides to, even though set_qa_decision isn't in the
+    # tools allowlist). When neither path produced one, leave state["qa"]
+    # alone — downstream callers treat absent needs_qa as False.
+    qa_update = _extract_qa_decision_from_triage_dict(triage_dict) or _extract_qa_decision_from_events(
+        collected_events
+    )
+    if qa_update is not None:
+        existing_qa = state.get("qa") or {}
+        merged_qa: dict[str, Any] = {**existing_qa}
+        merged_qa["needs_qa"] = qa_update["needs_qa"]
+        merged_qa["qa_required_reason"] = qa_update["qa_required_reason"]
+        if qa_update["needs_qa"]:
+            merged_qa["acceptance_criteria"] = qa_update["acceptance_criteria"]
+        result["qa"] = merged_qa
+
+    # Phase 5 Task 7: when this triage invocation is a re-invocation after a
+    # QA failure (state.qa.final_status == "failed"), the agent must emit a
+    # qa_failure_action under the inline JSON field of the same name. Validate
+    # via the kind-specific Pydantic model (RetryDeveloper / RerunQA / AskUser)
+    # and return a Command routing the workflow accordingly. Missing or
+    # malformed action ends the job with ERR_QA_FAILURES_UNRESOLVED. The
+    # qa.failure_rounds counter is bumped by _qa_failure_bookkeeping_node in
+    # graph.py BEFORE this node is re-entered, so we do not double-bump here.
+    qa_state_in = state.get("qa") or {}
+    if qa_state_in.get("final_status") == "failed":
+        # Prefer the freshest parsed decision (resume path updates result["triage_decision"]);
+        # fall back to the first-pass triage_dict so the lookup never NPEs.
+        decision_dict = result.get("triage_decision") if isinstance(result.get("triage_decision"), dict) else triage_dict
+        return _route_qa_failure_action(
+            state=state,
+            result=result,
+            triage_decision=decision_dict if isinstance(decision_dict, dict) else {},
+            writer=writer,
+        )
+
     writer({"type": "node_completed", "node": "triage", "action": result.get("triage_decision", {}).get("action")})
     return result
 
@@ -443,6 +512,213 @@ def _format_question_text(question: str, category: str | None, options: list[str
     return " ".join(parts[:-1]) + (
         parts[-1] if parts[-1].startswith("\n") else (" " + parts[-1] if parts[:-1] else parts[-1])
     )
+
+
+def _route_qa_failure_action(
+    *,
+    state: dict[str, Any],
+    result: dict[str, Any],
+    triage_decision: dict[str, Any],
+    writer: Any,
+) -> Command[str]:
+    """Validate triage's qa_failure_action and return a routing Command.
+
+    Phase 5 Task 7. Called when ``state["qa"]["final_status"] == "failed"``,
+    i.e. triage was re-invoked after a QA failure. The agent should have
+    embedded one of three actions on its inline JSON output under the key
+    ``qa_failure_action``:
+
+      - ``{"kind": "retry_developer", "prompt": str, "focus_files": [str]}``
+        → ``Command(goto="developer", update={...})`` with
+        ``developer_prompt_addendum`` and ``developer_focus_files`` set.
+      - ``{"kind": "rerun_qa", "reason": str}``
+        → ``Command(goto="init_qa", update={"qa_rerun_reason": ...})``
+        (re-enters the QA subpath without changing the developer's diff).
+      - ``{"kind": "ask_user", "question": str}``
+        → ``Command(goto="ask_user_interrupt", update={...})`` with
+        ``pending_user_question`` set.
+
+    On missing / malformed / unknown-kind action, sets
+    ``state["qa"]["final_status"] = "exhausted"`` and
+    ``state["error_code"] = ErrorCode.QA_FAILURES_UNRESOLVED.value`` and
+    routes to ``END`` (mirroring the qa_exhausted node so the dashboard
+    sees the same shape). ``qa.failure_rounds`` is NOT bumped here — the
+    ``_qa_failure_bookkeeping_node`` in graph.py owns that counter and
+    has already incremented it before this node fires.
+    """
+    from pydantic import ValidationError
+
+    from athanor.agents.triage_actions import AskUser, RerunQA, RetryDeveloper
+    from athanor.safety.error_codes import ErrorCode
+
+    raw_action = triage_decision.get("qa_failure_action") if isinstance(triage_decision, dict) else None
+
+    def _terminate_unresolved(log_event: str, **log_fields: Any) -> Command[str]:
+        existing_qa = state.get("qa") or {}
+        merged_qa = {**existing_qa, "final_status": "exhausted"}
+        logger.warning(log_event, job_id=state.get("job_id"), **log_fields)
+        writer({"type": "node_completed", "node": "triage", "action": "qa_failure_unresolved"})
+        return Command(
+            goto=END,
+            update={
+                **result,
+                "qa": merged_qa,
+                "error_code": ErrorCode.QA_FAILURES_UNRESOLVED.value,
+                "current_stage": "failed",
+                "errors": [f"qa_failure_unresolved: {log_event}"],
+            },
+        )
+
+    if not isinstance(raw_action, dict):
+        return _terminate_unresolved(
+            "triage_qa_failure_action_missing",
+            payload_type=type(raw_action).__name__,
+        )
+
+    kind = raw_action.get("kind")
+    if kind not in ("retry_developer", "rerun_qa", "ask_user"):
+        return _terminate_unresolved(
+            "triage_qa_failure_action_unknown_kind",
+            kind=kind,
+        )
+
+    # Strip kind before model validation; the action models don't carry it.
+    payload = {k: v for k, v in raw_action.items() if k != "kind"}
+
+    try:
+        if kind == "retry_developer":
+            action = RetryDeveloper.model_validate(payload)
+            writer({"type": "node_completed", "node": "triage", "action": "qa_retry_developer"})
+            return Command(
+                goto="developer",
+                update={
+                    **result,
+                    "developer_prompt_addendum": action.prompt,
+                    "developer_focus_files": list(action.focus_files),
+                    "current_stage": "qa_retry_developer",
+                },
+            )
+        if kind == "rerun_qa":
+            action_rerun = RerunQA.model_validate(payload)
+            writer({"type": "node_completed", "node": "triage", "action": "qa_rerun"})
+            return Command(
+                goto="init_qa",
+                update={
+                    **result,
+                    "qa_rerun_reason": action_rerun.reason,
+                    "current_stage": "qa_rerun",
+                },
+            )
+        # kind == "ask_user"
+        action_ask = AskUser.model_validate(payload)
+        writer({"type": "node_completed", "node": "triage", "action": "qa_ask_user"})
+        return Command(
+            goto="ask_user_interrupt",
+            update={
+                **result,
+                "pending_user_question": action_ask.question,
+                "current_stage": "qa_ask_user",
+            },
+        )
+    except ValidationError as exc:
+        return _terminate_unresolved(
+            "triage_qa_failure_action_invalid_payload",
+            kind=kind,
+            error=str(exc)[:300],
+        )
+
+
+def _extract_qa_decision_from_triage_dict(
+    triage_dict: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Pull set_qa_decision out of the parsed triage JSON, if present.
+
+    Phase 5 primary path: triage embeds the QA decision as an optional
+    `set_qa_decision` field on TriageDecisionModel. Returns None if the
+    field is missing/null/malformed (callers fall back to the tool_call
+    event scan).
+    """
+    from pydantic import ValidationError
+
+    from athanor.agents.triage_actions import SetQADecision
+
+    if not isinstance(triage_dict, dict):
+        return None
+    raw = triage_dict.get("set_qa_decision")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        decision = SetQADecision.model_validate(raw)
+    except ValidationError:
+        logger.warning(
+            "triage_set_qa_decision_inline_validation_failed",
+            payload=str(raw)[:500],
+            exc_info=True,
+        )
+        return None
+    return {
+        "needs_qa": decision.needs_qa,
+        "qa_required_reason": decision.reason,
+        "acceptance_criteria": list(decision.acceptance_criteria),
+    }
+
+
+def _extract_qa_decision_from_events(
+    events: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Scan triage agent events for the most recent ``set_qa_decision`` tool call.
+
+    Phase 5 Task 4. Triage's QA-decision section in the prompt instructs the
+    agent to emit a ``set_qa_decision`` tool call carrying ``needs_qa``,
+    ``reason``, and ``acceptance_criteria``. The full structured input is
+    preserved on the streamed event in the ``tool_input`` field (the older
+    ``input`` field is a short human-readable summary, kept for backwards
+    compatibility with log/UI consumers).
+
+    Returns a normalized dict ``{needs_qa, reason, acceptance_criteria}``
+    validated by ``SetQADecision``, or ``None`` if no such tool call was
+    emitted (in which case callers should treat the job as ``needs_qa=False``).
+
+    Returns the LAST matching event so that, in the needs_info → resume flow,
+    the resume-pass decision wins over the original-pass decision.
+    """
+    from pydantic import ValidationError
+
+    from athanor.agents.triage_actions import SetQADecision
+
+    matches: list[dict[str, Any]] = []
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        if e.get("type") != "tool_call":
+            continue
+        if e.get("tool_name") != "set_qa_decision":
+            continue
+        raw_input = e.get("tool_input")
+        if not isinstance(raw_input, dict):
+            # Older event shape: only the summarized "input" field is present.
+            # Skip — we can't safely re-validate a stringified payload.
+            continue
+        matches.append(raw_input)
+
+    if not matches:
+        return None
+
+    try:
+        decision = SetQADecision.model_validate(matches[-1])
+    except ValidationError:
+        logger.warning(
+            "triage_set_qa_decision_validation_failed",
+            payload=str(matches[-1])[:500],
+            exc_info=True,
+        )
+        return None
+
+    return {
+        "needs_qa": decision.needs_qa,
+        "qa_required_reason": decision.reason,
+        "acceptance_criteria": list(decision.acceptance_criteria),
+    }
 
 
 def _extract_ask_user_events(
@@ -680,12 +956,20 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     return Command(goto=goto, update=updates)
 
 
-async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[str]:
+async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[str] | dict[str, Any]:
     """Run review agent — tests, lint, typecheck, code review.
 
-    Returns structured JSON with decision, validation results, and comments,
-    and self-routes via Command to approved (END), changes_requested (retry),
-    or max_retries based on the review decision.
+    Returns structured JSON with decision, validation results, and comments.
+
+    Routing (Phase 5 Task 5):
+      - The "happy path" decisions (``approved`` / ``changes_requested``) set
+        ``current_stage`` to ``review_passed`` / ``review_failed`` and return
+        a plain dict, letting the conditional edge ``route_after_review`` in
+        ``graph.py`` dispatch to ``init_qa`` / ``retry`` / ``END`` based on
+        the triage-set ``state["qa"]["needs_qa"]`` flag.
+      - The control-flow exits (no runner, ask_user cap exhausted, pending
+        agent questions, retry cap hit) keep self-routing via
+        ``Command(goto=...)`` because they bypass ``route_after_review``.
     """
     writer = get_stream_writer()
     writer({"type": "node_started", "node": "review", "agent": "review"})
@@ -797,28 +1081,37 @@ Return ONLY a JSON object:
         else:
             updates["current_stage"] = "review_asked_user"
 
-    # Self-routing: inline check_review_decision against the merged agent_outputs
-    # (existing state plus whatever this review run appended). Approved → END,
-    # changes_requested → retry (or max_retries if retry cap hit).
+    # Routing:
+    #   1. Control-flow exits (cap exhausted, pending questions) keep
+    #      Command(goto=...) — they bypass route_after_review.
+    #   2. The retry-cap exhausted case (decision=changes_requested but
+    #      retry budget gone) also routes via Command(goto="max_retries").
+    #   3. The plain approved / changes_requested decisions set
+    #      current_stage and return a plain dict; route_after_review in
+    #      graph.py then dispatches to init_qa / retry / END.
     if updates.get("agent_questions_exhausted") or state.get("agent_questions_exhausted"):
-        goto: Any = "max_retries"
-    elif updates.get("pending_agent_questions") or state.get("pending_agent_questions"):
-        goto = "ask_user_interrupt"
+        return Command(goto="max_retries", update=updates)
+    if updates.get("pending_agent_questions") or state.get("pending_agent_questions"):
+        return Command(goto="ask_user_interrupt", update=updates)
+
+    from athanor.orchestration.routing.conditions import check_review_decision
+
+    merged_outputs = list(state.get("agent_outputs", []) or []) + list(result.get("agent_outputs", []) or [])
+    merged_state = {**state, "agent_outputs": merged_outputs}
+    decision = check_review_decision(merged_state)
+
+    if decision == "max_retries":
+        # Retry cap exhausted — bypass route_after_review.
+        return Command(goto="max_retries", update=updates)
+
+    # Approved or changes_requested: set the stage marker route_after_review
+    # consults and return a plain dict so the conditional edge can dispatch.
+    if decision == "approved":
+        updates["current_stage"] = "review_passed"
     else:
-        from athanor.orchestration.routing.conditions import check_review_decision
-
-        merged_outputs = list(state.get("agent_outputs", []) or []) + list(result.get("agent_outputs", []) or [])
-        merged_state = {**state, "agent_outputs": merged_outputs}
-        decision = check_review_decision(merged_state)
-
-        if decision == "approved":
-            goto = END
-        elif decision == "max_retries":
-            goto = "max_retries"
-        else:
-            goto = "retry"
-
-    return Command(goto=goto, update=updates)
+        # decision == "changes_requested" (or anything else that maps to retry)
+        updates["current_stage"] = "review_failed"
+    return updates
 
 
 async def retry_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:

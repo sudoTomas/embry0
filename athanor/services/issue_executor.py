@@ -19,7 +19,10 @@ from athanor.orchestration.checkpoint import checkpointer_context
 from athanor.storage.database import DatabasePool
 from athanor.storage.repositories.issues import IssuesRepository
 from athanor.storage.repositories.jobs import JobsRepository, StatusTransitionConflict
+from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
 from athanor.storage.repositories.traces import TracesRepository
+from athanor.workflows.issue_to_pr.graph import IssueToprWorkflow
+from athanor.workflows.qa.graph import QAWorkflow
 from athanor.workflows.registry import WorkflowRegistry
 
 logger = structlog.get_logger(__name__)
@@ -67,6 +70,10 @@ class IssueExecutor:
         env_repo: EnvironmentRepository | None = None,
         repo_preferences_repo: RepoPreferencesRepository | None = None,
         secrets_provider: Any = None,  # FernetSecretsProvider; injected at startup
+        qa_minio: Any = None,  # QAMinioClient (internal endpoint) — used by report_node
+        qa_minio_sandbox: Any = None,  # QAMinioClient (sandbox-facing) — used by init_qa_node
+        qa_token_registry: Any = None,  # SandboxTokenRegistry — used by init_qa + report
+        profiles_repo: SandboxProfilesRepository | None = None,  # SandboxProfilesRepository — init_qa
     ) -> None:
         self._issues = issues_repo
         self._jobs = jobs_repo
@@ -84,8 +91,23 @@ class IssueExecutor:
         self._env_repo = env_repo
         self._repo_prefs = repo_preferences_repo
         self._secrets_provider = secrets_provider
+        self._qa_minio = qa_minio
+        self._qa_minio_sandbox = qa_minio_sandbox
+        self._qa_token_registry = qa_token_registry
+        self._profiles_repo = profiles_repo
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._tasks_by_job: dict[str, asyncio.Task[Any]] = {}
+
+    def _select_workflow(self, pipeline: str) -> Any:
+        """Pick the workflow class based on the pipeline name.
+
+        Unknown pipeline names fall back to the default issue-to-pr workflow
+        for backwards compatibility with callers that pass arbitrary template
+        ids in the ``pipeline_template`` column.
+        """
+        if pipeline == "qa":
+            return QAWorkflow()
+        return IssueToprWorkflow()
 
     def _build_graph_config(self, job_id: str) -> dict[str, Any]:
         """Build the graph config dict for LangGraph execution."""
@@ -99,6 +121,12 @@ class IssueExecutor:
         if self._sandbox and hasattr(self._sandbox, "_read_oauth_token"):
             oauth_token = self._sandbox._read_oauth_token() or ""
         credentials = {"api_key": api_key, "oauth_token": oauth_token}
+
+        # Lazy-construct profiles_repo from the shared DB pool when one wasn't
+        # injected (covers older test fixtures that don't pass it explicitly).
+        profiles_repo: Any = self._profiles_repo
+        if profiles_repo is None and self._db is not None:
+            profiles_repo = SandboxProfilesRepository(self._db)
 
         return {
             "configurable": {
@@ -114,6 +142,13 @@ class IssueExecutor:
                 "repo_preferences_repo": self._repo_prefs,
                 "traces_repo": self._traces,
                 "credentials": credentials,
+                # QA-specific deps. Read by athanor.workflows.qa.nodes.{init_qa,
+                # qa, report, retry}; harmless for non-QA workflows because they
+                # never look these keys up.
+                "qa_minio": self._qa_minio,
+                "qa_minio_sandbox": self._qa_minio_sandbox,
+                "qa_token_registry": self._qa_token_registry,
+                "profiles_repo": profiles_repo,
             }
         }
 
@@ -213,6 +248,68 @@ class IssueExecutor:
             kind="workflow_execute",
             job_id=job_id,
             issue_id=issue_id,
+        )
+
+        return job_id
+
+    async def start_job(
+        self,
+        repo: str,
+        branch: str,
+        pipeline: str,
+        qa_overrides: dict[str, Any] | None = None,
+    ) -> str:
+        """Issue-less job entry point — used by ``POST /api/v1/jobs`` for
+        standalone pipelines (currently ``pipeline='qa'``).
+
+        Creates a job row, seeds the workflow's initial state, and dispatches
+        the configured workflow in the background. Returns the new job id.
+        """
+        import uuid
+
+        if pipeline != "qa":
+            # Today only QA uses this path. Other pipelines still go through
+            # JobsRepository.create directly from the API handler.
+            raise ValueError(f"start_job does not support pipeline={pipeline!r}")
+
+        qa_overrides = qa_overrides or {}
+        trace_id = f"trc-{uuid.uuid4().hex[:12]}"
+
+        # Persist a thin job row. The full QA config lives in pipeline_config
+        # so the dashboard / list endpoints surface it.
+        pipeline_config: dict[str, Any] = {
+            "pipeline": "qa",
+            "branch": branch,
+            "qa": {k: v for k, v in qa_overrides.items() if v is not None},
+        }
+        sandbox_profile = qa_overrides.get("sandbox_profile") or "qa-jvm"
+        # `task` is required on the jobs row; synthesize a human-readable
+        # placeholder so the dashboard has something to display.
+        task_text = f"QA run on {repo}@{branch}"
+
+        job_id = await self._jobs.create(
+            repo=repo,
+            task=task_text,
+            pipeline_template="qa",
+            pipeline_config=pipeline_config,
+            sandbox_profile=sandbox_profile,
+            trace_id=trace_id,
+        )
+
+        await emit_audit(
+            self._db,
+            "qa.job_created",
+            actor="system",
+            details={"job_id": job_id, "repo": repo, "branch": branch},
+            audit_log_path=self._audit_log_path,
+        )
+
+        logger.info("qa_job_created", job_id=job_id, repo=repo, branch=branch)
+
+        self._track_task(
+            self._run_qa_workflow(job_id, repo=repo, branch=branch, qa_overrides=qa_overrides),
+            kind="qa_workflow_execute",
+            job_id=job_id,
         )
 
         return job_id
@@ -391,17 +488,16 @@ class IssueExecutor:
         input_value: Any,
         issue_id: str,
         job_id: str,
+        pipeline: str = "issue-to-pr",
     ) -> tuple[dict[str, Any] | None, bool, dict[str, Any] | None]:
-        """Run the issue-to-pr workflow against ``input_value``.
+        """Run a workflow against ``input_value``.
 
-        Shared body of ``_run_workflow`` (fresh initial state) and ``resume``
+        ``pipeline`` selects which workflow to compile via ``_select_workflow``
+        (defaults to ``issue-to-pr`` for the legacy issue path). Shared body of
+        ``_run_workflow`` (fresh initial state) and ``resume``
         (Command(resume=...)). Returns the tuple from ``_process_stream``.
-
-        Raises RuntimeError if the workflow isn't registered.
         """
-        workflow = self._registry.get("issue-to-pr")
-        if not workflow:
-            raise RuntimeError("Workflow 'issue-to-pr' not registered")
+        workflow = self._select_workflow(pipeline)
 
         graph_config = self._build_graph_config(job_id)
 
@@ -528,7 +624,14 @@ class IssueExecutor:
                             keys=failed_keys,
                             msg="Encrypted values couldn't be decrypted with the current secret key. Those vars will NOT be injected into the sandbox.",
                         )
-                    env_vars = {v["key"]: v["value"] for v in decrypted if v["value"] != "[DECRYPTION_FAILED]"}
+                    # List-of-dicts shape (key/value/scope) — init_node's
+                    # _filter_user_env_for_sandbox uses scope to drop scope='qa'
+                    # rows unless qa_active is True.
+                    env_vars = [
+                        {"key": v["key"], "value": v["value"], "scope": v.get("scope", "app")}
+                        for v in decrypted
+                        if v["value"] != "[DECRYPTION_FAILED]"
+                    ]
                     if env_vars:
                         initial_state["user_env_vars"] = env_vars
                 except Exception:
@@ -611,6 +714,147 @@ class IssueExecutor:
 
             # Cleanup sandbox on error
             await self._cleanup_sandbox(final_state, job_id)
+        finally:
+            if trace_id_bound:
+                try:
+                    cv.unbind_contextvars("trace_id")
+                except Exception:
+                    logger.warning("trace_id_unbind_failed", job_id=job_id, exc_info=True)
+
+    async def _run_qa_workflow(
+        self,
+        job_id: str,
+        *,
+        repo: str,
+        branch: str,
+        qa_overrides: dict[str, Any],
+    ) -> None:
+        """Background runner for issue-less QA jobs (started via ``start_job``).
+
+        Mirrors the lifecycle bits ``_run_workflow`` provides — trace_id binding,
+        status transitions, sandbox cleanup, checkpoint purge — but skips all
+        of the issue-coupled handling (triage/needs_info/split). The workflow's
+        own report/retry nodes own QA-specific success/failure semantics.
+        """
+        from datetime import UTC, datetime
+
+        import structlog.contextvars as cv
+
+        trace_id_bound = False
+        try:
+            job_row = await self._jobs.get(job_id)
+            trace_id = (job_row or {}).get("trace_id")
+            if trace_id:
+                cv.bind_contextvars(trace_id=trace_id)
+                trace_id_bound = True
+        except Exception:
+            logger.warning("trace_id_bind_failed", job_id=job_id, exc_info=True)
+
+        final_state: dict[str, Any] | None = None
+        try:
+            await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
+
+            qa_block: dict[str, Any] = {
+                "needs_qa": True,
+                "acceptance_criteria": list(qa_overrides.get("acceptance_criteria") or []),
+                "sandbox_profile_name": qa_overrides.get("sandbox_profile") or "qa-jvm",
+                "attempts": [],
+                "failure_rounds": 0,
+                "final_status": "pending",
+            }
+            if qa_overrides.get("qa_timeout_seconds"):
+                qa_block["budget_seconds"] = qa_overrides["qa_timeout_seconds"]
+
+            initial_state: dict[str, Any] = {
+                "job_id": job_id,
+                "repo": repo,
+                "branch_name": branch,
+                "task": f"QA run on {repo}@{branch}",
+                "current_stage": "init",
+                "agent_outputs": [],
+                "errors": [],
+                "retry_count": 0,
+                "total_cost_usd": 0.0,
+                "budget_overrun_usd": 0.0,
+                "qa_active": True,
+                "qa": qa_block,
+            }
+
+            final_state, interrupted, _ = await self._execute_workflow_stream(
+                initial_state,
+                issue_id="",  # QA jobs have no associated issue
+                job_id=job_id,
+                pipeline="qa",
+            )
+
+            # QA workflow does not interrupt today (retry_node returns
+            # Command(goto=END|init_qa) — never an Interrupt). If a future
+            # version adds one, surface it as a failed job rather than silently
+            # leaving the row in 'running'.
+            if interrupted:
+                logger.warning("qa_workflow_unexpected_interrupt", job_id=job_id)
+                await self._jobs.update(
+                    job_id,
+                    status="failed",
+                    error_message="QA workflow interrupted unexpectedly",
+                    finished_at=datetime.now(UTC),
+                )
+                return
+
+            qa_state = (final_state or {}).get("qa") or {}
+            qa_final = qa_state.get("final_status", "pending")
+            # passed → completed; everything else → failed.
+            job_status = "completed" if qa_final == "passed" else "failed"
+            error_code = qa_state.get("error_code") if job_status == "failed" else None
+            error_message = None
+            if job_status == "failed":
+                # Prefer the structured QA reason; fall back to a generic note.
+                error_message = qa_state.get("error_message") or f"QA final_status={qa_final}"
+
+            await self._jobs.update(
+                job_id,
+                status=job_status,
+                error_message=error_message,
+                error_code=error_code,
+                total_cost_usd=(final_state or {}).get("total_cost_usd", 0.0),
+                finished_at=datetime.now(UTC),
+            )
+
+            # Cleanup: sandbox + checkpoint state.
+            await self._cleanup_sandbox(final_state, job_id)
+            from athanor.orchestration.checkpoint import purge_thread
+
+            try:
+                await purge_thread(self._database_url, job_id)
+            except Exception:
+                logger.warning(
+                    "checkpoint_purge_on_qa_complete_failed",
+                    job_id=job_id,
+                    status=job_status,
+                    exc_info=True,
+                )
+        except Exception as exc:
+            logger.error(
+                "qa_workflow_execution_failed",
+                job_id=job_id,
+                error=str(exc),
+            )
+            from athanor.safety.error_codes import ErrorCode
+
+            await self._jobs.update(
+                job_id,
+                status="failed",
+                error_message=str(exc),
+                error_code=ErrorCode.UNKNOWN.value,
+                finished_at=datetime.now(UTC),
+            )
+            await self._cleanup_sandbox(final_state, job_id)
+            from athanor.orchestration.checkpoint import purge_thread as _purge
+
+            try:
+                await _purge(self._database_url, job_id)
+            except Exception:
+                logger.warning("checkpoint_purge_on_qa_error_failed", job_id=job_id, exc_info=True)
         finally:
             if trace_id_bound:
                 try:

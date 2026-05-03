@@ -212,6 +212,12 @@ async def _init_app_state(
         env_repo=app.state.env_repo,
         repo_preferences_repo=app.state.repo_preferences_repo,
         secrets_provider=getattr(app.state, "secrets_provider", None),
+        # QA deps may be absent in tests / when MinIO is unconfigured; the
+        # executor tolerates None and only init_qa_node will fail at runtime.
+        qa_minio=getattr(app.state, "qa_minio", None),
+        qa_minio_sandbox=getattr(app.state, "qa_minio_sandbox", None),
+        qa_token_registry=getattr(app.state, "qa_token_registry", None),
+        profiles_repo=app.state.profiles_repo,
         **executor_kwargs,
     )
 
@@ -231,6 +237,84 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     db = DatabasePool(config.database_url)
     await db.connect()
     await run_migrations(db)
+
+    # Seed canonical builtin sandbox profiles. Runs after migrations so the
+    # sandbox_profiles schema (incl. QA columns from migration 18) is present.
+    # The seed always overwrites builtin rows — local edits to a builtin
+    # profile are intentionally discarded on every boot.
+    from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+    from athanor.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
+
+    await seed_builtin_sandbox_profiles(SandboxProfilesRepository(db))
+
+    # Seed the qa agent definition. Idempotent — upserts on every boot so the
+    # canonical system prompt and MCP server config stay in sync with the code.
+    from athanor.workflows.qa.agent_seed import seed_qa_agent
+
+    await seed_qa_agent(AgentDefinitionsRepository(db))
+
+    # MinIO — QA artifact storage.
+    #
+    # Two clients because the orchestrator and the sandbox see MinIO via
+    # different hostnames:
+    #
+    # * ``qa_minio`` (internal endpoint, e.g. ``minio:9000``) — used for
+    #   bucket admin (ensure bucket / set lifecycle) and also for any
+    #   orchestrator-side reads (e.g. dashboard download URLs).
+    #
+    # * ``qa_minio_sandbox`` (sandbox-facing endpoint, e.g.
+    #   ``minio-proxy:9100``) — used by the presign endpoint to mint URLs the
+    #   sandbox can actually reach. The hostname is signed into the URL, so
+    #   the sandbox's Host header on the resulting PUT must match what the
+    #   orchestrator signed. Phase 1.5.
+    if config.minio_root_user and config.minio_root_password:
+        from athanor.execution.qa.minio_client import QAMinioClient
+
+        qa_minio = QAMinioClient(
+            endpoint=config.minio_endpoint,
+            access_key=config.minio_root_user,
+            secret_key=config.minio_root_password,
+            secure=False,
+        )
+        try:
+            await qa_minio.ensure_bucket("qa-artifacts")
+            await qa_minio.set_lifecycle_policy("qa-artifacts", expire_days=config.qa_artifact_retention_days)
+            app.state.qa_minio = qa_minio
+            # Sandbox-facing client: same creds, different endpoint. We do
+            # NOT call ensure_bucket / set_lifecycle here — that work
+            # belongs to the internal client; this one only mints URLs.
+            app.state.qa_minio_sandbox = QAMinioClient(
+                endpoint=config.minio_sandbox_endpoint,
+                access_key=config.minio_root_user,
+                secret_key=config.minio_root_password,
+                secure=False,
+            )
+            logger.info(
+                "qa_minio_ready",
+                retention_days=config.qa_artifact_retention_days,
+                internal_endpoint=config.minio_endpoint,
+                sandbox_endpoint=config.minio_sandbox_endpoint,
+            )
+        except Exception as exc:
+            logger.warning(
+                "qa_minio_unavailable",
+                error=str(exc),
+                msg="QA pipelines will fail; orchestrator continues so other features work.",
+                exc_info=True,
+            )
+            app.state.qa_minio = None
+            app.state.qa_minio_sandbox = None
+    else:
+        logger.warning(
+            "qa_minio_unconfigured",
+            msg="MINIO_ROOT_USER / MINIO_ROOT_PASSWORD not set — QA pipelines will fail.",
+        )
+        app.state.qa_minio = None
+        app.state.qa_minio_sandbox = None
+
+    from athanor.execution.qa.token_registry import SandboxTokenRegistry
+
+    app.state.qa_token_registry = SandboxTokenRegistry()
 
     # Recover orphaned jobs from previous orchestrator lifecycle
     try:
@@ -594,9 +678,11 @@ def _register_routers(app: FastAPI) -> None:
         environment,
         github,
         health,
+        internal_qa,
         issues,
         jobs,
         pipeline_templates,
+        qa_artifacts,
         queue,
         repo_preferences,
         sandbox_profiles,
@@ -613,6 +699,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(agents.router, prefix="/api/v1", tags=["agents"], dependencies=auth_deps)
     app.include_router(issues.router, prefix="/api/v1", tags=["issues"], dependencies=auth_deps)
     app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"], dependencies=auth_deps)
+    app.include_router(qa_artifacts.router, prefix="/api/v1", tags=["qa-artifacts"], dependencies=auth_deps)
     app.include_router(sandbox_profiles.router, prefix="/api/v1", tags=["sandbox-profiles"], dependencies=auth_deps)
     app.include_router(sandboxes.router, prefix="/api/v1", tags=["sandboxes"], dependencies=auth_deps)
     app.include_router(config.router, prefix="/api/v1", tags=["config"], dependencies=auth_deps)
@@ -625,4 +712,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(github.router, prefix="/api/v1", tags=["github"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
     app.include_router(telegram.router, prefix="/api/v1", tags=["telegram"])
+    # Internal sandbox-only endpoints — auth is via per-sandbox bearer
+    # token in the request body, not via session cookies, so these paths
+    # are also exempted from CSRF middleware.
+    app.include_router(internal_qa.router, prefix="/api/v1", tags=["internal-qa"])
     app.include_router(streaming.router)

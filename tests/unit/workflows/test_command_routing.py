@@ -150,7 +150,11 @@ def _make_review_config(agent_runner: object | None) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_review_node_goes_to_end_on_approved() -> None:
+async def test_review_node_marks_review_passed_on_approved() -> None:
+    """Phase 5 Task 5: approved → return plain dict with
+    ``current_stage="review_passed"``. The conditional edge
+    ``route_after_review`` in graph.py dispatches to init_qa or END
+    based on state["qa"]["needs_qa"]."""
     with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
@@ -171,13 +175,15 @@ async def test_review_node_goes_to_end_on_approved() -> None:
             config=_make_review_config(object()),
         )
 
-    from langgraph.graph import END
-
-    assert result.goto == END
+    assert isinstance(result, dict), f"Expected plain dict, got {type(result)}"
+    assert result.get("current_stage") == "review_passed"
 
 
 @pytest.mark.asyncio
-async def test_review_node_goes_to_retry_on_changes_requested() -> None:
+async def test_review_node_marks_review_failed_on_changes_requested() -> None:
+    """Phase 5 Task 5: changes_requested → return plain dict with
+    ``current_stage="review_failed"``. The conditional edge maps
+    "developer" → the existing retry node."""
     with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
@@ -198,7 +204,8 @@ async def test_review_node_goes_to_retry_on_changes_requested() -> None:
             config=_make_review_config(object()),
         )
 
-    assert result.goto == "retry"
+    assert isinstance(result, dict), f"Expected plain dict, got {type(result)}"
+    assert result.get("current_stage") == "review_failed"
 
 
 @pytest.mark.asyncio

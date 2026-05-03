@@ -102,3 +102,23 @@ def get_issue_executor(request: Request) -> Any:
 def get_inputs_repo(request: Request) -> Any:
     """Return the IssueInputsRepository from request state."""
     return request.app.state.inputs_repo
+
+
+def get_qa_minio(request: Request) -> Any:
+    """Return the QA MinIO client from request state, or 503 if unconfigured."""
+    from fastapi import HTTPException
+
+    minio = getattr(request.app.state, "qa_minio", None)
+    if minio is None:
+        raise HTTPException(status_code=503, detail="QA artifact storage unavailable")
+    return minio
+
+
+def get_docker(request: Request) -> Any:
+    """Return the Docker client from request state, or 503 if unconfigured."""
+    from fastapi import HTTPException
+
+    docker = getattr(request.app.state, "docker", None)
+    if docker is None:
+        raise HTTPException(status_code=503, detail="docker client unavailable")
+    return docker

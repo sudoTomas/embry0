@@ -241,11 +241,106 @@ class ContainerReaper:
             try:
                 await asyncio.sleep(self._interval)
                 await self._reap()
+                await self._sweep_qa_orphans()
                 await self._expire_paused_jobs()
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.exception("reaper_error")
+
+    def _older_than_max_age(self, created: str) -> bool:
+        """Return True if the given ``docker inspect --format {{.Created}}`` timestamp is older than max_age.
+
+        Docker emits RFC3339 with nanosecond precision and a trailing "Z" suffix
+        (e.g. ``2026-04-28T07:05:11.123456789Z``). Python's ``fromisoformat``
+        handles up to microseconds and (3.11+) accepts trailing ``Z``, so we
+        clamp the fractional component to 6 digits before parsing.
+        """
+        s = created.strip()
+        if not s:
+            return False
+        # Clamp fractional seconds to 6 digits if present.
+        if "." in s:
+            head, _, tail = s.partition(".")
+            # tail looks like "123456789Z" or "123456789+00:00"
+            digits = ""
+            i = 0
+            while i < len(tail) and tail[i].isdigit():
+                digits += tail[i]
+                i += 1
+            rest = tail[i:]
+            s = f"{head}.{digits[:6]}{rest}"
+        # Python <3.11 doesn't accept "Z" — normalise to +00:00.
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        try:
+            ts = datetime.fromisoformat(s)
+        except ValueError:
+            logger.warning("qa_orphan_unparseable_timestamp", created=created)
+            return False
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        age_hours = (datetime.now(UTC) - ts).total_seconds() / 3600
+        return age_hours >= self._max_age_hours
+
+    async def _sweep_qa_orphans(self) -> None:
+        """Remove QA containers/networks older than max_age_hours.
+
+        Identifies QA artifacts via:
+          - com.docker.compose.project=qa_*  (compose-spawned)
+          - athanor.qa_job_id=*              (agent-spawned)
+          - networks named qa-net-*
+
+        Best-effort: in-use resources are skipped silently and retried next sweep.
+        """
+        base = self._docker._build_base_cmd()  # noqa: SLF001
+
+        # Containers carrying either label family.
+        for label_prefix in ("com.docker.compose.project=qa_", "athanor.qa_job_id="):
+            try:
+                ids_output = await self._docker.run_cmd(
+                    base + ["ps", "-aq", "--filter", f"label={label_prefix}"],
+                    timeout=15,
+                )
+            except RuntimeError as exc:
+                logger.warning("qa_orphan_list_failed", label_prefix=label_prefix, error=str(exc))
+                continue
+            for cid in ids_output.strip().split():
+                if not cid:
+                    continue
+                try:
+                    created = await self._docker.run_cmd(
+                        base + ["inspect", cid, "--format", "{{.Created}}"],
+                        timeout=10,
+                    )
+                except RuntimeError:
+                    continue  # container vanished between list and inspect
+                if self._older_than_max_age(created.strip()):
+                    try:
+                        await self._docker.run_cmd(base + ["rm", "-f", cid], timeout=15)
+                        logger.info("qa_orphan_container_removed", container=cid)
+                    except RuntimeError as exc:
+                        logger.warning("qa_orphan_rm_failed", container=cid, error=str(exc))
+
+        # qa-net-* networks (no age check — empty networks are safe to remove).
+        try:
+            nets_output = await self._docker.run_cmd(
+                base + ["network", "ls", "-q", "--filter", "name=^qa-net-"],
+                timeout=10,
+            )
+        except RuntimeError as exc:
+            logger.warning("qa_orphan_network_list_failed", error=str(exc))
+            return
+
+        for net in nets_output.strip().split():
+            if not net:
+                continue
+            try:
+                await self._docker.run_cmd(base + ["network", "rm", net], timeout=10)
+                logger.info("qa_orphan_network_removed", network=net)
+            except RuntimeError:
+                # In-use; will retry next sweep.
+                pass
 
     async def _reap(self) -> None:
         """Find and destroy stale sandbox containers, skipping live jobs."""

@@ -492,6 +492,53 @@ MIGRATIONS: list[tuple[int, str, str]] = [
          WHERE trace_id LIKE 'trace-%';
         """,
     ),
+    (
+        18,
+        "sandbox_profiles — QA agent foundation columns",
+        # description: human-readable text shown in /sandboxes UI
+        # dind_enabled: when true, sandbox gets DOCKER_HOST + DinD certs mounted
+        # idle_timeout_seconds: kill the sandbox if no agent activity for this long (default 600)
+        # extra_networks: extra docker networks to join in addition to sandbox-restricted (jsonb array)
+        # env_defaults: profile-level env-var defaults (non-secret, jsonb object)
+        # is_builtin: marks profiles seeded by Athanor; UI hides destructive ops on these
+        """
+        ALTER TABLE sandbox_profiles
+            ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '',
+            ADD COLUMN IF NOT EXISTS dind_enabled BOOLEAN NOT NULL DEFAULT false,
+            ADD COLUMN IF NOT EXISTS idle_timeout_seconds INTEGER NOT NULL DEFAULT 600,
+            ADD COLUMN IF NOT EXISTS extra_networks JSONB NOT NULL DEFAULT '[]'::jsonb,
+            ADD COLUMN IF NOT EXISTS env_defaults JSONB NOT NULL DEFAULT '{}'::jsonb,
+            ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT false;
+        """,
+    ),
+    (
+        19,
+        "env tables — scope column for app/qa segregation",
+        # scope='app' is injected into every sandbox; scope='qa' only when pipeline=qa
+        # or the issue→PR job's qa-state has needs_qa=true. Enforced at sandbox
+        # injection time in workflows/issue_to_pr/nodes.py.
+        """
+        ALTER TABLE global_environment
+            ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'app'
+                CHECK (scope IN ('app', 'qa'));
+        ALTER TABLE repo_environment
+            ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'app'
+                CHECK (scope IN ('app', 'qa'));
+        CREATE INDEX IF NOT EXISTS idx_global_env_scope ON global_environment (scope);
+        CREATE INDEX IF NOT EXISTS idx_repo_env_scope ON repo_environment (repo, scope);
+        """,
+    ),
+    (
+        20,
+        "agent_definitions — mcp_servers JSONB column for MCP-aware agents",
+        # The QA agent needs to launch the Playwright MCP server. BUILTIN_SEED
+        # already declares mcp_servers; this migration makes the DB schema
+        # accept it. Default '{}' so legacy rows are unaffected.
+        """
+        ALTER TABLE agent_definitions
+            ADD COLUMN IF NOT EXISTS mcp_servers JSONB NOT NULL DEFAULT '{}'::jsonb;
+        """,
+    ),
 ]
 
 

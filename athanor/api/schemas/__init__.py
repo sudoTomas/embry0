@@ -2,17 +2,43 @@
 
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _REPO_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
+
+# Slash-separated alnum + . _ - : segments. Colon allowed for ISO timestamps in
+# filenames. No leading/trailing slash. No '..' segments. No double slashes.
+_SAFE_QA_PATH = re.compile(r"^[A-Za-z0-9._:\-]+(/[A-Za-z0-9._:\-]+)*$")
+
+
+class QAJobOverrides(BaseModel):
+    """Caller-provided knobs for a ``pipeline=qa`` job creation request.
+
+    All fields are optional. ``acceptance_criteria`` defaults to empty (the
+    QA agent then exercises the app freely); ``sandbox_profile`` defaults to
+    the qa.yaml-resolved value; ``qa_timeout_seconds`` overrides the default
+    QA budget when present.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    sandbox_profile: str | None = None  # overrides qa.yaml's value when set
+    qa_timeout_seconds: int | None = Field(default=None, gt=0, le=86400)
 
 
 class JobCreateRequest(BaseModel):
     repo: str = Field(..., max_length=200)
-    task: str = Field(..., min_length=1, max_length=50000)
+    # ``task`` is required for the legacy issue-to-pr flow but optional for
+    # ``pipeline='qa'`` (which has no LLM-author task to summarize). Validated
+    # in the handler when pipeline != 'qa'.
+    task: str | None = Field(default=None, max_length=50000)
     issue_number: int | None = None
+    pipeline: Literal["issue-to-pr", "qa"] | None = None
+    branch: str | None = Field(default=None, max_length=255)
+    qa: QAJobOverrides | None = None
     pipeline_template: str | None = None
     pipeline_config: dict[str, Any] | None = None
     sandbox_profile: str | None = None
@@ -36,6 +62,19 @@ class JobCreateRequest(BaseModel):
             msg = "repo must be in 'owner/name' format"
             raise ValueError(msg)
         return v
+
+    @model_validator(mode="after")
+    def _enforce_task_for_non_qa(self) -> "JobCreateRequest":
+        """``task`` is required (and non-empty) for everything except ``pipeline='qa'``.
+
+        QA jobs are issue-less and don't need an LLM-author task description; the
+        handler synthesizes a placeholder. All other pipelines (issue-to-pr, custom
+        templates) still need a task to drive triage / dispatch.
+        """
+        if self.pipeline != "qa":
+            if self.task is None or not self.task.strip():
+                raise ValueError("task is required and must be non-empty for non-qa pipelines")
+        return self
 
 
 class JobResponse(BaseModel):
@@ -67,6 +106,8 @@ class JobListResponse(BaseModel):
 
 
 class SandboxProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(..., min_length=1, max_length=100)
     base_image: str = "athanor-sandbox:latest"
     additional_packages: list[str] = Field(default_factory=list)
@@ -79,6 +120,11 @@ class SandboxProfileRequest(BaseModel):
     security_opt: list[str] = Field(default_factory=lambda: ["no-new-privileges"])
     agent_timeout_seconds: int = Field(300, ge=1)
     container_timeout_seconds: int = Field(3600, ge=1)
+    description: str = ""
+    dind_enabled: bool = False
+    idle_timeout_seconds: int = Field(default=600, gt=0)
+    extra_networks: list[str] = Field(default_factory=list)
+    env_defaults: dict[str, str] = Field(default_factory=dict)
 
 
 class ContextConfigRequest(BaseModel):
@@ -176,3 +222,49 @@ class ProviderConfigUpdate(BaseModel):
     model_light: str | None = None
     default_model: str | None = None
     ollama_base_url: str | None = None
+
+
+# --- QA Presign ---
+
+
+class QAPresignBatchRequest(BaseModel):
+    """Request a batch of presigned URLs for a QA attempt's artifacts.
+
+    The orchestrator validates the sandbox token and returns URLs scoped
+    to <job_id>/<attempt_n>/. The sandbox cannot mint URLs outside its
+    own prefix.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sandbox_token: str = Field(min_length=16, max_length=128)
+    # Each entry is a relative path under the attempt prefix
+    # (e.g., "result.json", "screenshots/login.png").
+    paths: list[str] = Field(min_length=1, max_length=64)
+    expires_seconds: int = Field(default=3600, ge=60, le=21600)
+    direction: Literal["put", "get"] = "put"
+
+    @field_validator("paths")
+    @classmethod
+    def _paths_are_safe(cls, paths: list[str]) -> list[str]:
+        for p in paths:
+            if not _SAFE_QA_PATH.match(p):
+                raise ValueError(
+                    f"Unsafe path {p!r}: must be slash-separated alnum/._:- "
+                    f"segments, no leading/trailing slash, no '..'."
+                )
+            if ".." in p.split("/"):
+                raise ValueError(f"Unsafe path {p!r}: '..' segment not allowed")
+        return paths
+
+
+class QAPresignedURL(BaseModel):
+    path: str
+    url: str
+
+
+class QAPresignBatchResponse(BaseModel):
+    bucket: str
+    prefix: str  # "<job_id>/<attempt_n>/"
+    expires_at: str  # ISO 8601
+    urls: list[QAPresignedURL]

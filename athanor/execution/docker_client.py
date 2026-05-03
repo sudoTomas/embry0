@@ -52,8 +52,15 @@ class DockerClient:
         read_only: bool = True,
         env: dict[str, str] | None = None,
         volumes: list[str] | None = None,
+        extra_hosts: dict[str, str] | None = None,
     ) -> list[str]:
-        """Build `docker run -d` command for sandbox container."""
+        """Build `docker run -d` command for sandbox container.
+
+        ``extra_hosts`` maps hostname → IP for ``--add-host=name:ip`` flags;
+        used by SandboxManager to publish the backend IPs of host-side proxies
+        (minio-proxy, presign-proxy) into a DinD-spawned sandbox's /etc/hosts
+        so the sandbox can reach those proxies by name.
+        """
         cmd = self._build_base_cmd()
         cmd.extend(["run", "-d", "--init"])
         cmd.extend(["--name", name])
@@ -75,6 +82,9 @@ class DockerClient:
             cmd.append("--read-only")
             cmd.extend(["--tmpfs", "/tmp:rw,nosuid"])
             cmd.extend(["--tmpfs", "/home/agent/.claude:rw,nosuid"])
+
+        for host, ip in (extra_hosts or {}).items():
+            cmd.append(f"--add-host={host}:{ip}")
 
         for key, value in (env or {}).items():
             cmd.extend(["-e", f"{key}={value}"])

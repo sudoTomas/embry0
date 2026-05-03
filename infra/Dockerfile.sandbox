@@ -12,15 +12,26 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && npm install -g @anthropic-ai/claude-code@2.1.92
 
 # Python dependencies for sandbox
+# langchain-core: athanor.sandbox.runner uses RunnableConfig (type hint only,
+# but imported at module load via cast()).
 RUN pip install --no-cache-dir \
     "claude-agent-sdk>=0.1.48,<0.2" \
     "structlog>=24.0,<26" \
-    "httpx>=0.27,<1"
+    "httpx>=0.27,<1" \
+    "langchain-core>=0.3,<1"
 
-# Sandbox code (runs inside container)
+# Sandbox code (runs inside container).
+# athanor/agents/ + the docker_client/sandbox_manager/auth_provider/agent_runner
+# subset are imported transitively from athanor.sandbox.runner -> executor_factory
+# -> SdkAgentExecutor; the sandbox runner cannot start without them.
 COPY athanor/sandbox/ /app/athanor/sandbox/
 COPY athanor/safety/ /app/athanor/safety/
+COPY athanor/agents/ /app/athanor/agents/
 COPY athanor/execution/events.py /app/athanor/execution/events.py
+COPY athanor/execution/agent_runner.py /app/athanor/execution/agent_runner.py
+COPY athanor/execution/auth_provider.py /app/athanor/execution/auth_provider.py
+COPY athanor/execution/docker_client.py /app/athanor/execution/docker_client.py
+COPY athanor/execution/sandbox_manager.py /app/athanor/execution/sandbox_manager.py
 
 # Make athanor packages importable
 RUN mkdir -p /app/athanor/execution && \

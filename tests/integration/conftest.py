@@ -14,6 +14,7 @@ from httpx import ASGITransport, AsyncClient
 from athanor.api.app import _init_app_state, create_app
 from athanor.config import AthanorConfig
 from athanor.storage.database import DatabasePool
+from athanor.storage.encryption import FernetSecretsProvider
 from athanor.storage.migrations.runner import run_migrations
 
 
@@ -60,6 +61,15 @@ def _make_test_lifespan(database_url: str):
         db = DatabasePool(database_url)
         await db.connect()
         await run_migrations(db)
+
+        # Set the secrets provider before _init_app_state so env PUT routes
+        # (which read request.app.state.secrets_provider) have a valid Fernet
+        # provider in tests. Production wires this in the real lifespan.
+        app.state.secrets_provider = FernetSecretsProvider(secret_key="test-secret-key")
+
+        # Default qa_minio to None for tests that don't need a live MinIO.
+        # The qa_minio_seeded fixture overrides this on demand.
+        app.state.qa_minio = None
 
         await _init_app_state(app, db, database_url=database_url)
 
@@ -113,3 +123,62 @@ def pytest_collection_modifyitems(items: list[Any], config: Any) -> None:
     for item in items:
         if item.get_closest_marker("requires_docker"):
             item.add_marker(skip_marker)
+
+
+@pytest.fixture
+async def builtin_profile_seeded(app: AsyncClient, database_url: str) -> AsyncIterator[None]:
+    """Seed builtin sandbox profiles (slim, qa-jvm) into the integration test DB.
+
+    The integration test lifespan does NOT seed builtins (the production
+    lifespan in athanor/api/app.py does, but the test lifespan stops at
+    _init_app_state). Tests that depend on builtin profiles being present
+    request this fixture; it opens a short-lived pool to the same
+    TEST_DATABASE_URL and runs the seed. The test app's own pool sees the
+    rows because they share one Postgres database. Seeding is idempotent.
+    """
+    from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+    from athanor.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
+
+    seed_db = DatabasePool(database_url)
+    await seed_db.connect()
+    try:
+        await seed_builtin_sandbox_profiles(SandboxProfilesRepository(seed_db))
+        yield
+    finally:
+        await seed_db.close()
+
+
+@pytest.fixture
+async def qa_minio_seeded(app):
+    """Provisions qa-artifacts bucket in the test MinIO and wires the client
+    into ``app.state.qa_minio`` so the dashboard routes that resolve via
+    ``Depends(get_qa_minio)`` see a live client (the test_lifespan defaults
+    it to None for tests that don't need MinIO).
+
+    Skip if MINIO_ENDPOINT isn't set.
+    """
+    import os
+
+    endpoint = os.environ.get("MINIO_ENDPOINT", "")
+    if not endpoint:
+        pytest.skip("MINIO_ENDPOINT not set")
+    from athanor.execution.qa.minio_client import QAMinioClient
+
+    client = QAMinioClient(
+        endpoint=endpoint,
+        access_key=os.environ["MINIO_ROOT_USER"],
+        secret_key=os.environ["MINIO_ROOT_PASSWORD"],
+        secure=False,
+    )
+    await client.ensure_bucket("qa-artifacts")
+
+    # Inject into the app's state so routes can resolve it via the
+    # get_qa_minio dependency. ``app`` here is an httpx.AsyncClient whose
+    # ASGITransport holds the FastAPI app instance.
+    fastapi_app = app._transport.app  # noqa: SLF001
+    previous = getattr(fastapi_app.state, "qa_minio", None)
+    fastapi_app.state.qa_minio = client
+    try:
+        yield client
+    finally:
+        fastapi_app.state.qa_minio = previous

@@ -13,6 +13,18 @@ from athanor.execution.proxy.manager import ProxyManager
 _ADMIN_TOKEN = "test-admin-token"
 
 
+@pytest.fixture(autouse=True)
+def _mock_backend_resolution(monkeypatch):
+    """Phase 1.5 minio-proxy/presign-proxy resolve `minio` and `orchestrator`
+    via the orchestrator's DNS at start() time. In unit tests that DNS isn't
+    available; stub it to a fixed IP so start() doesn't blow up.
+    """
+    monkeypatch.setattr(
+        "athanor.execution.proxy.manager.socket.gethostbyname",
+        lambda host: "10.99.0.1",
+    )
+
+
 @pytest.fixture
 def docker_mock():
     docker = MagicMock()
@@ -84,13 +96,60 @@ async def test_start_launches_auth_proxy_when_key_set(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_start_skips_proxies_when_no_creds(docker_mock):
+async def test_start_skips_credential_proxies_when_no_creds(docker_mock):
+    """Without creds, the credential-injection proxies (git/github/auth) are
+    skipped. The Phase 1.5 network-plumbing proxies (minio/presign) ALWAYS
+    launch — they don't carry credentials, only network plumbing."""
     pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
     await pm.start(github_token="", anthropic_api_key="")
-    docker_mock.build_run_proxy_cmd.assert_not_called()
+    launched_names = [
+        c.kwargs.get("name") for c in docker_mock.build_run_proxy_cmd.call_args_list
+    ]
+    assert "git-proxy" not in launched_names
+    assert "github-proxy" not in launched_names
+    assert "auth-proxy" not in launched_names
+    # minio/presign always launch — they're pure network plumbing.
+    assert "minio-proxy" in launched_names
+    assert "presign-proxy" in launched_names
     assert pm.git_proxy_url == ""
     assert pm.github_proxy_url == ""
     assert pm.auth_proxy_url == ""
+    assert pm.minio_proxy_url == "http://minio-proxy:9100"
+    assert pm.presign_proxy_url == "http://presign-proxy:9104"
+
+
+@pytest.mark.asyncio
+async def test_start_launches_minio_and_presign_proxies(docker_mock):
+    """Phase 1.5: minio-proxy and presign-proxy are spawned with resolved
+    upstream IPs and are attached to sandbox-internet (so they can NAT back
+    to host backend services)."""
+    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
+    await pm.start(github_token="", anthropic_api_key="")
+
+    docker_mock.build_run_proxy_cmd.assert_any_call(
+        name="minio-proxy",
+        image="athanor-proxy:latest",
+        network="sandbox-restricted",
+        env={
+            "PROXY_TYPE": "minio",
+            # 10.99.0.1 is the stub from _mock_backend_resolution.
+            "UPSTREAM_URL": "http://10.99.0.1:9000",
+            "LISTEN_PORT": "9100",
+        },
+    )
+    docker_mock.build_run_proxy_cmd.assert_any_call(
+        name="presign-proxy",
+        image="athanor-proxy:latest",
+        network="sandbox-restricted",
+        env={
+            "PROXY_TYPE": "presign",
+            "UPSTREAM_URL": "http://10.99.0.1:8000",
+            "LISTEN_PORT": "9104",
+        },
+    )
+    # Both must be attached to sandbox-internet for NAT egress.
+    docker_mock.build_network_cmd.assert_any_call("connect", "sandbox-internet", "minio-proxy")
+    docker_mock.build_network_cmd.assert_any_call("connect", "sandbox-internet", "presign-proxy")
 
 
 @pytest.mark.asyncio

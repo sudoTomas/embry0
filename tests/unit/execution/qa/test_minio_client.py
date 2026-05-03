@@ -1,0 +1,163 @@
+"""Tests for the MinIO async wrapper.
+
+Requires MinIO at $MINIO_ENDPOINT. The conftest at tests/conftest.py
+exposes a `requires_minio` marker that skips when MinIO isn't reachable.
+"""
+
+from __future__ import annotations
+
+import os
+import secrets
+
+import pytest
+
+from athanor.execution.qa.minio_client import QAMinioClient
+
+
+@pytest.fixture
+def minio_client():
+    return QAMinioClient(
+        endpoint=os.environ.get("MINIO_ENDPOINT", "minio:9000"),
+        access_key=os.environ.get("MINIO_ROOT_USER", "athanor"),
+        secret_key=os.environ.get("MINIO_ROOT_PASSWORD", "change-me-in-prod"),
+        secure=False,
+    )
+
+
+@pytest.fixture
+def test_bucket():
+    """Unique bucket per test, cleaned up at teardown."""
+    name = f"qa-test-{secrets.token_hex(4)}"
+    yield name
+    # No cleanup — tests are short-lived; MinIO lifecycle on real qa-artifacts will
+    # eventually expire any leaked test buckets. (Could add explicit cleanup if
+    # leaks become a problem.)
+
+
+@pytest.mark.requires_minio
+@pytest.mark.asyncio
+async def test_ensure_bucket_idempotent(minio_client, test_bucket):
+    await minio_client.ensure_bucket(test_bucket)
+    assert await minio_client.bucket_exists(test_bucket)
+    await minio_client.ensure_bucket(test_bucket)
+
+
+@pytest.mark.requires_minio
+@pytest.mark.asyncio
+async def test_set_lifecycle_policy(minio_client, test_bucket):
+    await minio_client.ensure_bucket(test_bucket)
+    await minio_client.set_lifecycle_policy(test_bucket, expire_days=14)
+    days = await minio_client.get_lifecycle_expire_days(test_bucket)
+    assert days == 14
+    await minio_client.set_lifecycle_policy(test_bucket, expire_days=30)
+    assert await minio_client.get_lifecycle_expire_days(test_bucket) == 30
+
+
+@pytest.mark.requires_minio
+@pytest.mark.asyncio
+async def test_presign_put_returns_usable_url(minio_client, test_bucket):
+    await minio_client.ensure_bucket(test_bucket)
+    url = await minio_client.presign_put(test_bucket, "smoke/result.json", expires_seconds=300)
+    assert url.startswith("http://")
+    import httpx
+    async with httpx.AsyncClient() as c:
+        r = await c.put(url, content=b'{"ok": true}')
+    assert r.status_code in (200, 204)
+    objects = await minio_client.list_objects(test_bucket, prefix="smoke/")
+    assert any(o.endswith("result.json") for o in objects)
+
+
+@pytest.mark.requires_minio
+@pytest.mark.asyncio
+async def test_presign_get_returns_object_content(minio_client, test_bucket):
+    await minio_client.ensure_bucket(test_bucket)
+    put_url = await minio_client.presign_put(test_bucket, "smoke/g.json", 300)
+    import httpx
+    async with httpx.AsyncClient() as c:
+        await c.put(put_url, content=b'{"hello": "world"}')
+    get_url = await minio_client.presign_get(test_bucket, "smoke/g.json", 300)
+    async with httpx.AsyncClient() as c:
+        r = await c.get(get_url)
+    assert r.status_code == 200
+    assert r.json() == {"hello": "world"}
+
+
+@pytest.mark.requires_minio
+@pytest.mark.asyncio
+async def test_put_object_round_trip(minio_client, test_bucket):
+    await minio_client.ensure_bucket(test_bucket)
+    payload = b'{"smoke": true}'
+    await minio_client.put_object(test_bucket, "direct/result.json", payload, content_type="application/json")
+    objects = await minio_client.list_objects(test_bucket, prefix="direct/")
+    assert any(o.endswith("direct/result.json") for o in objects)
+    # Stat to confirm size matches
+    stat = await minio_client.stat_object(test_bucket, "direct/result.json")
+    assert stat["size"] == len(payload)
+
+
+# ---------------------------------------------------------------------------
+# Mocked-SDK unit tests (no live MinIO required)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_objects_with_meta_returns_key_mtime_size(monkeypatch):
+    """`list_objects_with_meta` must return [{key, last_modified, size}, ...]
+    derived from the SDK iterator's `.object_name`/`.last_modified`/`.size`
+    attributes — no follow-up `stat_object` calls.
+    """
+    import datetime as _dt
+    from types import SimpleNamespace
+
+    # Build a fake SDK iterator. The wrapper consumes each item in order, so
+    # the returned list must preserve that order (verified below).
+    fake_objs = [
+        SimpleNamespace(
+            object_name="JOB1/1/screenshots/boot/a.png",
+            last_modified=_dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00"),
+            size=1234,
+        ),
+        SimpleNamespace(
+            object_name="JOB1/1/screenshots/boot/b.png",
+            last_modified=_dt.datetime.fromisoformat("2026-04-30T12:00:01+00:00"),
+            size=5678,
+        ),
+    ]
+
+    captured: dict = {}
+
+    def fake_list_objects(bucket, prefix=None, recursive=False):
+        # Capture so we can assert the prefix is actually forwarded.
+        captured["bucket"] = bucket
+        captured["prefix"] = prefix
+        captured["recursive"] = recursive
+        return iter(fake_objs)
+
+    client = QAMinioClient(
+        endpoint="localhost:9000", access_key="x", secret_key="y", secure=False,
+    )
+    monkeypatch.setattr(client._client, "list_objects", fake_list_objects)
+
+    result = await client.list_objects_with_meta("qa-artifacts", prefix="JOB1/")
+
+    # Prefix forwarded to SDK.
+    assert captured["bucket"] == "qa-artifacts"
+    assert captured["prefix"] == "JOB1/"
+    assert captured["recursive"] is True
+
+    # Order preserved from SDK iterator.
+    assert [r["key"] for r in result] == [
+        "JOB1/1/screenshots/boot/a.png",
+        "JOB1/1/screenshots/boot/b.png",
+    ]
+    # Each entry has the expected shape — key, last_modified, size — pulled
+    # straight from the iterator (no stat_object round trip required).
+    assert result[0] == {
+        "key": "JOB1/1/screenshots/boot/a.png",
+        "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00"),
+        "size": 1234,
+    }
+    assert result[1]["size"] == 5678
+    assert result[1]["last_modified"] == _dt.datetime.fromisoformat(
+        "2026-04-30T12:00:01+00:00"
+    )

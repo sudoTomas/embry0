@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import operator
 from enum import StrEnum
-from typing import Annotated, Any, TypedDict, cast
+from typing import Annotated, Any, Literal, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -100,6 +100,20 @@ class TriageDecisionModel(BaseModel):
     questions: list[dict[str, Any]] = Field(default_factory=list)
     sub_tasks: list[dict[str, Any]] = Field(default_factory=list)
     reasoning: str = ""
+    # Phase 5: triage emits this inline in its JSON when the issue→PR job
+    # should be QA-validated post-review. Mirrors SetQADecision in
+    # athanor.agents.triage_actions; we duplicate the shape here to keep
+    # state.py free of agent-layer imports. triage_node copies these fields
+    # to state["qa"]["needs_qa"] / qa_required_reason / acceptance_criteria.
+    set_qa_decision: dict[str, Any] | None = None
+    # Phase 5 Task 7: when triage is re-invoked after a QA failure, it embeds
+    # one of three actions here: {"kind": "retry_developer"|"rerun_qa"|"ask_user",
+    # ...}. triage_node validates the kind-specific shape via the
+    # RetryDeveloper / RerunQA / AskUser models in athanor.agents.triage_actions
+    # and routes the workflow accordingly. Stored as a loose dict here to keep
+    # state.py free of agent-layer imports and to allow extra="forbid" on the
+    # outer model without rejecting the new key.
+    qa_failure_action: dict[str, Any] | None = None
 
 
 class TriageParseError(ValueError):
@@ -149,3 +163,57 @@ class JobState(TypedDict, total=False):
     agent_questions_exhausted: bool  # set True when agent_question_rounds cap hit; routes to terminal failure
     triage_question_rounds: int  # cycle guard for triage interrupt/resume loops, capped at 5
     user_retry_rounds: int  # cycle guard — capped at 3 continue_retrying clicks in max_retries_node
+    # User-defined env vars merged into sandbox at init_node. List-of-dicts shape
+    # (key/value/scope); scope is 'app' or 'qa'. The legacy plain-dict shape is
+    # still accepted by _filter_user_env_for_sandbox for backwards compatibility.
+    user_env_vars: list[dict[str, str]] | dict[str, str]
+    # Set True by Phase 2's QA pipeline when running QA jobs; gates injection
+    # of scope='qa' user env vars at the sandbox boundary. Defaults to False.
+    qa_active: bool
+    # Structured QA-specific state populated by Phase 2's QA pipeline nodes.
+    # Present when pipeline=qa OR (Phase 5) triage sets needs_qa=True.
+    qa: QAStateBlock | None
+    # Phase 5 Task 7: triage→developer/QA/user routing fields populated by
+    # ``_route_qa_failure_action`` when triage is re-invoked after a QA failure.
+    # developer_prompt_addendum / developer_focus_files: consumed by developer_node
+    # to inject the failure-summary guidance into its prompt (consumer wiring is a
+    # follow-up — the routing currently sets these on state regardless).
+    # qa_rerun_reason: consumed by init_qa_node when triage opts to rerun the QA
+    # subpath unchanged (e.g. flaky/environmental failure).
+    # pending_user_question: consumed by ask_user_interrupt to surface a
+    # triage-originated escalation question to the user.
+    developer_prompt_addendum: str | None
+    developer_focus_files: list[str]
+    qa_rerun_reason: str | None
+    pending_user_question: str | None
+
+
+class QAAttempt(TypedDict, total=False):
+    """One attempt at running QA against a target."""
+
+    attempt_n: int
+    started_at: str  # ISO 8601
+    ended_at: str | None
+    sandbox_id: str | None
+    qa_net_name: str | None
+    artifact_prefix: str  # MinIO prefix like "<job_id>/<attempt_n>/"
+    last_phase: Literal["boot", "seed", "e2e", "exploratory", "report"] | None
+    exit_reason: str | None
+    result_summary: dict[str, Any] | None
+    log_artifact_url: str | None
+
+
+class QAStateBlock(TypedDict, total=False):
+    """All QA-specific state for a job. Lives at JobState['qa'] when
+    pipeline=qa OR triage set needs_qa=True (Phase 5)."""
+
+    needs_qa: bool  # Set by triage (Phase 5) on issue→PR jobs; read by post-review conditional edge to route into QA subgraph.
+    qa_required_reason: str | None  # Triage's rationale for needs_qa value; written by triage, surfaced in audit/dashboard.
+    qa_yaml_raw: str | None
+    qa_yaml_parsed: dict[str, Any] | None
+    sandbox_profile_name: str
+    acceptance_criteria: list[str]
+    attempts: list[QAAttempt]
+    failure_rounds: int  # PR-flow triage↔QA cycles consumed; bumped when qa.report routes back to triage on failure (Phase 5), capped at max_qa_failure_rounds (default 2) — on exhaustion the job ends with ERR_QA_FAILURES_UNRESOLVED.
+    final_status: Literal["pending", "passed", "failed", "exhausted", "skipped"]
+    sandbox_token: str  # Set by init_qa, consumed by report

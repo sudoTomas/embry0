@@ -1,0 +1,603 @@
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+
+@pytest.fixture
+async def api_with_minio(api_client):
+    minio = MagicMock()
+    minio.presign_get = AsyncMock(return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed")
+    minio.list_objects = AsyncMock(return_value=["JOB1/1/result.json"])
+    api_client.app.state.qa_minio = minio
+    yield api_client
+
+
+async def test_artifact_redirect_to_presigned_url(api_with_minio):
+    r = await api_with_minio.get(
+        "/api/v1/jobs/JOB1/artifacts/result.json",
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    assert r.headers["location"].startswith("http://minio/")
+
+
+async def test_artifact_unsafe_path_rejected(api_with_minio):
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/artifacts/../../etc/passwd")
+    assert r.status_code == 404
+
+
+async def test_artifact_503_when_minio_unconfigured(api_client):
+    api_client.app.state.qa_minio = None
+    r = await api_client.get("/api/v1/jobs/JOB1/artifacts/result.json")
+    assert r.status_code == 503
+
+
+async def test_artifact_url_encoded_traversal_rejected(api_with_minio):
+    # URL-encoded `..` segment must be rejected after FastAPI decoding.
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/artifacts/foo%2F..%2Fbar")
+    assert r.status_code == 404
+
+
+async def test_artifact_no_attempts_returns_404(api_client):
+    minio = MagicMock()
+    minio.presign_get = AsyncMock(return_value="http://minio/should-not-be-called")
+    minio.list_objects = AsyncMock(return_value=[])
+    api_client.app.state.qa_minio = minio
+
+    r = await api_client.get("/api/v1/jobs/JOB1/artifacts/result.json")
+    assert r.status_code == 404
+    assert r.json()["detail"] == "no attempts found"
+
+
+async def test_artifact_malformed_keys_returns_404(api_client):
+    # Keys whose attempt segment is missing or non-numeric should be ignored
+    # by _resolve_latest_attempt → no valid attempts → 404.
+    minio = MagicMock()
+    minio.presign_get = AsyncMock(return_value="http://minio/should-not-be-called")
+    minio.list_objects = AsyncMock(return_value=["JOB1/", "JOB1/notanumber/x", "JOB1/3a/x"])
+    api_client.app.state.qa_minio = minio
+
+    r = await api_client.get("/api/v1/jobs/JOB1/artifacts/result.json")
+    assert r.status_code == 404
+    assert r.json()["detail"] == "no attempts found"
+
+
+async def test_artifact_numeric_attempt_sort(api_client):
+    # With attempts 1, 2, 10 present, the resolver must pick 10 (numeric max),
+    # not "2" (lexical max).
+    minio = MagicMock()
+    minio.presign_get = AsyncMock(return_value="http://minio/qa-artifacts/JOB1/10/x?signed")
+    minio.list_objects = AsyncMock(return_value=["JOB1/1/x", "JOB1/2/x", "JOB1/10/x"])
+    api_client.app.state.qa_minio = minio
+
+    r = await api_client.get("/api/v1/jobs/JOB1/artifacts/x", follow_redirects=False)
+    assert r.status_code == 302
+    # Verify the resolver picked attempt 10 by inspecting the key passed to presign_get.
+    call_args = minio.presign_get.call_args
+    # presign_get(bucket, key, expires_seconds=...)
+    key = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["key"]
+    assert "/10/" in key
+
+
+async def test_latest_screenshot_returns_most_recent(api_with_minio):
+    import datetime as _dt
+
+    # Helper: build the {key, last_modified, size} dict shape returned by the
+    # new list_objects_with_meta wrapper. The screenshot timestamp is embedded
+    # in the filename (first 19 chars of the basename, ISO 8601).
+    def _meta(key: str) -> dict:
+        return {
+            "key": key, "size": 1,
+            "last_modified": _dt.datetime.fromisoformat(
+                key.split("/")[-1][:19] + "+00:00"
+            ),
+        }
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
+        _meta("JOB1/1/screenshots/boot/2026-04-30T12:00:00.png"),
+        _meta("JOB1/1/screenshots/exploratory/2026-04-30T12:05:30-login.png"),
+        _meta("JOB1/1/screenshots/exploratory/2026-04-30T12:08:11-portfolio.png"),
+        # result.json has no parseable timestamp; use a sentinel mtime so the
+        # filter (only .png in /screenshots/) is what excludes it, not a parse error.
+        {"key": "JOB1/1/result.json", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
+    ])
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(return_value="http://minio/latest")
+
+    r = await api_with_minio.get(
+        "/api/v1/jobs/JOB1/artifacts/screenshots/latest",
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    assert "http://minio/latest" in r.headers["location"]
+
+
+async def test_latest_screenshot_404_when_no_screenshots(api_with_minio):
+    import datetime as _dt
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
+        {"key": "JOB1/1/result.json", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
+    ])
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/artifacts/screenshots/latest")
+    assert r.status_code == 404
+
+
+async def test_latest_screenshot_spans_multiple_attempts(api_with_minio):
+    # Screenshots exist under both attempt 1 and attempt 2. The route uses
+    # prefix=f"{job_id}/" (not scoped to a single attempt), so it should pick
+    # the most recent screenshot across ALL attempts — here, the one in
+    # attempt 2 with the latest mtime.
+    import datetime as _dt
+
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
+        {"key": "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
+        {"key": "JOB1/1/screenshots/exploratory/2026-04-30T12:05:00-old.png", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:05:00+00:00")},
+        {"key": "JOB1/2/screenshots/boot/2026-04-30T13:00:00.png", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:00:00+00:00")},
+        {"key": "JOB1/2/screenshots/exploratory/2026-04-30T13:10:00-newest.png", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:10:00+00:00")},
+        {"key": "JOB1/2/result.json", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:00:00+00:00")},
+    ])
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/latest-across-attempts"
+    )
+
+    r = await api_with_minio.get(
+        "/api/v1/jobs/JOB1/artifacts/screenshots/latest",
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    # Verify the route picked the screenshot from attempt 2 (the most recent).
+    call_args = api_with_minio.app.state.qa_minio.presign_get.call_args
+    key = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["key"]
+    assert key == "JOB1/2/screenshots/exploratory/2026-04-30T13:10:00-newest.png"
+
+
+async def test_log_stream_returns_sse_content_type(api_with_minio):
+    """SSE endpoint with follow=false redirects to the static artifact."""
+    # `Depends(get_docker)` is resolved before the handler runs, even on the
+    # follow=false path, so we have to wire a docker stub. We don't actually
+    # touch it in this test — the static fallback only uses qa_minio.
+    api_with_minio.app.state.docker = MagicMock()
+    api_with_minio.app.state.docker._build_base_cmd = lambda: ["docker"]
+
+    r = await api_with_minio.get(
+        "/api/v1/jobs/JOB1/artifacts/logs/gateway?follow=false",
+        follow_redirects=False,
+    )
+    # follow=false routes through `_redirect_to_artifact`, which uses the
+    # api_with_minio fixture's `list_objects` (returns ["JOB1/1/result.json"])
+    # → resolves attempt 1 → presigns `JOB1/1/logs/gateway.log` → 302.
+    assert r.status_code == 302
+    assert r.headers["location"].startswith("http://minio/")
+
+
+async def test_log_stream_unsafe_service_rejected(api_with_minio):
+    api_with_minio.app.state.docker = MagicMock()
+    api_with_minio.app.state.docker._build_base_cmd = lambda: ["docker"]
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/artifacts/logs/..%2F..%2Fetc%2Fpasswd")
+    assert r.status_code == 404
+
+
+async def test_latest_screenshot_route_not_swallowed_by_catchall(api_with_minio):
+    # Regression test: the catch-all `{path:path}` route in `get_artifact`
+    # MUST NOT match `screenshots/latest`. If a future maintainer reorders
+    # the routes (placing the catch-all first), this test fails because the
+    # catch-all would resolve the latest attempt and presign for the literal
+    # key `<job_id>/<attempt>/screenshots/latest` — which is NOT a real
+    # screenshot path. We assert the resolved key actually points at a .png
+    # under `screenshots/`.
+    import datetime as _dt
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
+        {"key": "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png", "size": 1,
+         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
+    ])
+    # `_resolve_latest_attempt` (used by the catch-all) reads `list_objects`,
+    # so wire that too in case the catch-all incorrectly handles the request.
+    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(
+        return_value=["JOB1/1/screenshots/boot/2026-04-30T12:00:00.png"]
+    )
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(return_value="http://minio/x")
+
+    r = await api_with_minio.get(
+        "/api/v1/jobs/JOB1/artifacts/screenshots/latest",
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    call_args = api_with_minio.app.state.qa_minio.presign_get.call_args
+    key = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["key"]
+    # The resolved key must be a real screenshot under JOB1/<attempt>/screenshots/,
+    # NOT the literal `JOB1/<attempt>/screenshots/latest` that the catch-all
+    # would have produced.
+    assert key.startswith("JOB1/1/screenshots/"), (
+        f"catch-all swallowed screenshots/latest -- got key={key!r}"
+    )
+    assert key.endswith(".png"), f"resolved key is not a screenshot: {key!r}"
+    assert not key.endswith("/latest"), (
+        f"catch-all matched `screenshots/latest` literally: {key!r}"
+    )
+
+
+async def test_log_stream_rejects_flag_like_service(api_with_minio):
+    """A service name that starts with `-` must not reach the docker argv.
+
+    Without the `[A-Za-z0-9]` lead-anchor on `_SAFE_SERVICE` (and the `--`
+    separator in the cmd), a request for `/logs/--no-color` would inject a
+    flag into `docker compose ... logs ...`. The combined defence is: the
+    regex rejects leading `-`, AND the cmd places `--` before the service
+    so even a future regex regression can't smuggle a flag through.
+    """
+    api_with_minio.app.state.docker = MagicMock()
+    api_with_minio.app.state.docker._build_base_cmd = lambda: ["docker"]
+    r = await api_with_minio.get(
+        "/api/v1/jobs/JOB1/artifacts/logs/--no-color?follow=true",
+        follow_redirects=False,
+    )
+    assert r.status_code == 404
+
+
+async def test_log_stream_streams_lines_and_terminates_on_disconnect(
+    api_with_minio, monkeypatch
+):
+    """SSE framing emits `data: <line>\\n\\n` per stdout line, and closing the
+    response triggers the generator's `finally` to terminate the subprocess.
+    """
+    api_with_minio.app.state.docker = MagicMock()
+    api_with_minio.app.state.docker._build_base_cmd = lambda: ["docker"]
+
+    class _FakeStdout:
+        """Minimal StreamReader stand-in for the test.
+
+        Implements `readline()` (used by the generator) — returns each
+        configured line in order and an empty bytes object when drained,
+        which the generator treats as EOF.
+        """
+
+        def __init__(self, lines: list[bytes]) -> None:
+            self._lines = list(lines)
+
+        async def readline(self) -> bytes:
+            if self._lines:
+                return self._lines.pop(0)
+            return b""
+
+    fake_proc = MagicMock()
+    fake_proc.stdout = _FakeStdout([b"hello\n", b"world\n"])
+    fake_proc.returncode = None
+    fake_proc.terminate = MagicMock()
+    fake_proc.kill = MagicMock()
+    fake_proc.wait = AsyncMock(return_value=0)
+
+    async def _fake_create(*args, **kwargs):
+        return fake_proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+
+    # Stream the response body to completion. httpx's AsyncClient resolves
+    # the StreamingResponse by consuming it fully, then the response is
+    # closed — which fires the generator's `finally` (and our terminate).
+    r = await api_with_minio.get(
+        "/api/v1/jobs/JOB1/artifacts/logs/gateway?follow=true",
+        follow_redirects=False,
+    )
+    assert r.status_code == 200
+    body = r.text
+    assert "data: hello\n\n" in body
+    assert "data: world\n\n" in body
+    # Generator's finally must terminate the subprocess on disconnect/EOF.
+    assert fake_proc.terminate.called
+
+
+# ---------------------------------------------------------------------------
+# Task 4: /qa/attempts and /qa/attempts/{n}/result endpoints
+# ---------------------------------------------------------------------------
+
+
+async def test_list_attempts_empty(api_with_minio):
+    """No QA artifacts → 200 with empty list (NOT 404).
+
+    The dashboard polls this as a "does this job have any QA artifacts yet?"
+    probe and needs to distinguish 'not started' (empty list) from 'invalid
+    job id' (404).
+    """
+    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(return_value=[])
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts")
+    assert r.status_code == 200
+    assert r.json() == {"attempts": []}
+
+
+async def test_list_attempts_aggregates_metadata(api_with_minio):
+    """Mixed objects across two attempts → counts and has_result_json flags."""
+    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(
+        return_value=[
+            "JOB1/1/result.json",
+            "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png",
+            "JOB1/1/screenshots/exploratory/2026-04-30T12:05:00-login.png",
+            "JOB1/2/screenshots/boot/2026-04-30T13:00:00.png",
+            # Defensive: malformed key with non-numeric attempt segment is ignored.
+            "JOB1/notanumber/x",
+            # Non-PNG / non-result.json → no metadata bump (e.g. log file).
+            "JOB1/2/logs/full.log",
+        ]
+    )
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts")
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {
+        "attempts": [
+            {"attempt_n": 1, "has_result_json": True, "screenshots_count": 2},
+            {"attempt_n": 2, "has_result_json": False, "screenshots_count": 1},
+        ]
+    }
+
+
+# --- Helpers for the streaming get_result tests -----------------------------
+#
+# get_result now uses ``client.stream("GET", url)`` (an async context manager)
+# and reads the body via ``r.aiter_bytes()``. The fakes below model that shape
+# so the existing parsed-JSON test and the new size/transport-error tests
+# share one consistent mocking pattern.
+
+
+def _make_stream_response(
+    *,
+    status_code: int = 200,
+    chunks: list[bytes] | None = None,
+    content_length: str | None = None,
+):
+    """Build an async-context-manager that mimics ``httpx.AsyncClient.stream``.
+
+    ``content_length`` is the value returned by ``headers.get("content-length")``;
+    pass ``None`` to simulate the header being absent (which is what httpx
+    returns when MinIO omits it, e.g. on chunked transfer encoding).
+    """
+
+    chunks = chunks or []
+
+    class _FakeStreamResponse:
+        def __init__(self) -> None:
+            self.status_code = status_code
+            self.headers = MagicMock()
+            self.headers.get = MagicMock(return_value=content_length)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_bytes(self):
+            for c in chunks:
+                yield c
+
+    return _FakeStreamResponse()
+
+
+def _fake_async_client_factory(stream_response_or_exc):
+    """Build a `_FakeAsyncClient` whose `.stream()` returns/raises as configured.
+
+    Pass a stream-response instance to have `.stream(...)` return it; pass an
+    exception instance to have `.stream(...)` raise it (used to model
+    ``httpx.ConnectTimeout`` / ``httpx.ConnectError``).
+    """
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url):
+            if isinstance(stream_response_or_exc, BaseException):
+                raise stream_response_or_exc
+            return stream_response_or_exc
+
+    return _FakeAsyncClient
+
+
+async def test_get_result_returns_parsed_json(api_with_minio, monkeypatch):
+    """Endpoint downloads result.json server-side via presigned URL and returns parsed body."""
+    import json as _json
+
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+    expected_body = {
+        "schema_version": 1,
+        "job_id": "JOB1",
+        "attempt_n": 1,
+        "phase_reached": "report",
+        "overall": "passed",
+        "boot": {
+            "command": "x",
+            "duration_ms": 1,
+            "ready_checks": [{"url": "http://x", "status": 200, "duration_ms": 1}],
+        },
+        "acceptance_results": [{"criterion": "x", "status": "passed", "evidence": []}],
+        "anomalies": [],
+    }
+    body_bytes = _json.dumps(expected_body).encode()
+
+    stream_resp = _make_stream_response(
+        status_code=200, chunks=[body_bytes], content_length=str(len(body_bytes))
+    )
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
+    )
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 200
+    assert r.json() == expected_body
+    # Verify the presigned key was for the requested attempt.
+    call_args = api_with_minio.app.state.qa_minio.presign_get.call_args
+    key = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs["key"]
+    assert key == "JOB1/1/result.json"
+
+
+async def test_get_result_404_when_upstream_404(api_with_minio, monkeypatch):
+    """Upstream MinIO 404 (no result.json yet) → endpoint returns 404."""
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    stream_resp = _make_stream_response(status_code=404, chunks=[], content_length="0")
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
+    )
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 404
+    assert r.json()["detail"] == "result.json not found for this attempt"
+
+
+async def test_get_result_502_on_invalid_json(api_with_minio, monkeypatch):
+    """Upstream 200 with non-JSON body → 502, not an unhandled 500.
+
+    Closes the JSONDecodeError gap: if MinIO (or a proxy) returns 200 with an
+    HTML/XML error page, ``json.loads`` raises and we want a clear 502 rather
+    than a FastAPI serializer 500.
+    """
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    bad_body = b"<html>not json</html>"
+    stream_resp = _make_stream_response(
+        status_code=200, chunks=[bad_body], content_length=str(len(bad_body))
+    )
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
+    )
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 502
+    assert "non-JSON body" in r.json()["detail"]
+
+
+async def test_get_result_504_on_upstream_timeout(api_with_minio, monkeypatch):
+    """``httpx.ConnectTimeout`` from the streaming GET → endpoint returns 504."""
+    import httpx as _httpx
+
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(
+        mod.httpx,
+        "AsyncClient",
+        _fake_async_client_factory(_httpx.ConnectTimeout("timed out")),
+    )
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 504
+    assert "timeout" in r.json()["detail"].lower()
+
+
+async def test_get_result_502_on_connect_error(api_with_minio, monkeypatch):
+    """``httpx.ConnectError`` from the streaming GET → endpoint returns 502."""
+    import httpx as _httpx
+
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(
+        mod.httpx,
+        "AsyncClient",
+        _fake_async_client_factory(_httpx.ConnectError("refused")),
+    )
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 502
+    assert "upstream error" in r.json()["detail"].lower()
+
+
+async def test_get_result_413_on_oversized_body(api_with_minio, monkeypatch):
+    """Streamed body exceeding ``_MAX_RESULT_BYTES`` → endpoint returns 413.
+
+    The Content-Length header is omitted (None) so the cap is enforced by the
+    streaming check rather than the header pre-check. We yield 6 MiB in two
+    3 MiB chunks; the second chunk pushes the buffer past 5 MiB and triggers
+    the abort.
+    """
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    chunk = b"x" * (3 * 1024 * 1024)  # 3 MiB
+    stream_resp = _make_stream_response(
+        status_code=200, chunks=[chunk, chunk], content_length=None
+    )
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
+    )
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 413
+    assert "size cap" in r.json()["detail"].lower()
+
+
+async def test_get_result_413_on_oversized_content_length(api_with_minio, monkeypatch):
+    """``Content-Length`` exceeding the cap → 413 BEFORE the body is read.
+
+    If the header check works the body iterator is never consumed; the test
+    asserts that by yielding a sentinel chunk that would have OOM-ed had the
+    header check been skipped (we don't actually allocate it — the iterator
+    raises if reached, signalling the bug).
+    """
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
+        return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
+    )
+
+    class _ExplodingStreamResponse:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.headers = MagicMock()
+            self.headers.get = MagicMock(return_value="10000000")  # 10 MB
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_bytes(self):
+            raise AssertionError(
+                "aiter_bytes() must not be called when Content-Length already exceeds the cap"
+            )
+            yield b""  # pragma: no cover -- needed to make this an async generator
+
+    stream_resp = _ExplodingStreamResponse()
+
+    import athanor.api.v1.qa_artifacts as mod
+
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
+    )
+
+    r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
+    assert r.status_code == 413
+    assert "10000000" in r.json()["detail"]

@@ -23,7 +23,23 @@ RESERVED_ENV_KEYS: Final[frozenset[str]] = frozenset(
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "GITHUB_TOKEN",
+        # QA-injected infrastructure (orchestrator owns these):
+        "QA_JOB_ID",
+        "QA_ATTEMPT_N",
+        "QA_NETWORK_NAME",
+        # DinD certs are mounted by the orchestrator for dind_enabled profiles:
+        "DOCKER_HOST",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
     }
+)
+
+
+# Reserved prefixes — every key starting with these is server-controlled.
+# Used by EnvVarInput key validator and by the sandbox env injection filter.
+RESERVED_ENV_PREFIXES: Final[tuple[str, ...]] = (
+    "QA_ARTIFACT_",   # presigned URLs minted per-attempt by init_qa
+    "DOCKER_",        # broad — covers DOCKER_HOST etc. without enumerating
 )
 
 

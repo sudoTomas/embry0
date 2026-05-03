@@ -1,9 +1,20 @@
 """Proxy lifecycle manager — launches credential-injecting proxies as DinD containers.
 
-Three stateless proxies (git, github, auth) run as containers on the
-sandbox-restricted network so sandboxes can resolve them by Docker DNS.
-The github and auth proxies are also attached to sandbox-internet so they
-can reach api.github.com and api.anthropic.com respectively.
+Five stateless proxies run as containers on the sandbox-restricted network
+so sandboxes can resolve them by Docker DNS:
+
+Credential-injection proxies (hold orchestrator credentials, attach also to
+sandbox-internet to reach external APIs):
+- git-proxy     → injects GITHUB_TOKEN into git credential helpers
+- github-proxy  → injects GITHUB_TOKEN into REST/GraphQL calls
+- auth-proxy    → injects ANTHROPIC_API_KEY (currently dead path)
+
+Network-plumbing proxies (Phase 1.5 — sandboxes inside DinD cannot reach
+host backend services because DinD has its own daemon and DNS namespace;
+these proxies live on sandbox-internet AND sandbox-restricted, holding the
+host-side IPs of minio and orchestrator):
+- minio-proxy   → forwards to host minio:9000 (S3 API for QA artifacts)
+- presign-proxy → forwards to host orchestrator:8000 (POST /internal/qa/presign)
 
 The per-job Athanor API proxy (CreateIssue / RequestInput / UpdateStatus)
 is deferred — it has DB coupling that needs separate rework. The
@@ -13,6 +24,7 @@ is deferred — it has DB coupling that needs separate rework. The
 from __future__ import annotations
 
 import secrets
+import socket
 from typing import Any
 
 import aiohttp
@@ -25,6 +37,29 @@ logger = structlog.get_logger(__name__)
 _IMAGE = "athanor-proxy:latest"
 _RESTRICTED = "sandbox-restricted"
 _INTERNET = "sandbox-internet"
+
+
+def _resolve_backend_url(host: str, port: int) -> str:
+    """Return ``http://<ip>:<port>`` where ``<ip>`` is ``host`` resolved via DNS.
+
+    The minio-proxy / presign-proxy run inside DinD and can reach host backend
+    services via NAT through the sandbox-internet bridge — but ONLY by IP, not
+    by name (DinD's DNS doesn't know about the host docker daemon's services).
+    The orchestrator IS on backend, so it can resolve the names; we bake the
+    IP into the proxy's UPSTREAM_URL at proxy launch time.
+
+    Raises RuntimeError on resolution failure so startup fails loudly rather
+    than launching a proxy that will 502 every request.
+    """
+    try:
+        ip = socket.gethostbyname(host)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Cannot resolve `{host}` from the orchestrator. The orchestrator "
+            f"must be on a docker network that has access to `{host}` for the "
+            "Phase 1.5 proxies to function."
+        ) from exc
+    return f"http://{ip}:{port}"
 
 
 class ProxyManager:
@@ -40,6 +75,8 @@ class ProxyManager:
         self.auth_proxy_url: str = ""
         self.git_proxy_url: str = ""
         self.github_proxy_url: str = ""
+        self.minio_proxy_url: str = ""
+        self.presign_proxy_url: str = ""
         self.athanor_proxy_url: str = ""  # Per-job — set by start_athanor_proxy_for_job (currently no-op)
 
     async def start(
@@ -61,7 +98,7 @@ class ProxyManager:
             self._http = aiohttp.ClientSession()
 
         # Clean up stragglers from a prior orchestrator run.
-        for name in ("git-proxy", "github-proxy", "auth-proxy"):
+        for name in ("git-proxy", "github-proxy", "auth-proxy", "minio-proxy", "presign-proxy"):
             try:
                 await self._docker.run_cmd(self._docker.build_rm_cmd(name))
             except RuntimeError:
@@ -93,6 +130,38 @@ class ProxyManager:
             )
             self.github_proxy_url = "http://github-proxy:9103"
             logger.info("github_proxy_started")
+
+        # Phase 1.5 — network-plumbing proxies. No credentials, no admin
+        # token enrollment (auth happens at the upstream MinIO via presigned
+        # signature, and at the upstream orchestrator via sandbox bearer token
+        # in the request body). UPSTREAM_URL is resolved to an IP because the
+        # proxies live in DinD and must reach the host backend network by IP
+        # (DinD's DNS doesn't know about host services).
+        await self._launch(
+            name="minio-proxy",
+            env={
+                "PROXY_TYPE": "minio",
+                "UPSTREAM_URL": _resolve_backend_url("minio", 9000),
+                "LISTEN_PORT": "9100",
+            },
+            attach_internet=True,
+        )
+        self.minio_proxy_url = "http://minio-proxy:9100"
+        logger.info("minio_proxy_started", upstream=_resolve_backend_url("minio", 9000))
+
+        await self._launch(
+            name="presign-proxy",
+            env={
+                "PROXY_TYPE": "presign",
+                "UPSTREAM_URL": _resolve_backend_url("orchestrator", 8000),
+                "LISTEN_PORT": "9104",
+            },
+            attach_internet=True,
+        )
+        self.presign_proxy_url = "http://presign-proxy:9104"
+        logger.info(
+            "presign_proxy_started", upstream=_resolve_backend_url("orchestrator", 8000)
+        )
 
         if anthropic_api_key and enable_auth_proxy:
             await self._launch(
@@ -157,60 +226,157 @@ class ProxyManager:
         )
 
     async def enroll_sandbox(self, sandbox_id: str) -> str:
-        """Enroll a new sandbox with all running proxies. Returns the bearer token.
+        """Enroll a new sandbox with all running credential proxies.
 
-        Raises RuntimeError if any enrollment HTTP call fails. Caller (SandboxManager)
-        rolls back the just-created container in that case.
+        Returns the bearer token to plumb into the sandbox.
+
+        The orchestrator cannot reach the proxies directly via HTTP because the
+        proxies live on DinD's ``sandbox-restricted`` network, which is
+        invisible from the host backend network where the orchestrator runs.
+        Instead we ``docker exec`` a tiny Python urllib request inside each
+        proxy container — DinD's daemon DOES have a path to its own
+        sandbox-restricted, and the proxy listens on 0.0.0.0 so localhost
+        works. Phase 1.5 fix.
+
+        Network-plumbing proxies (minio, presign) have no admin endpoints and
+        require no enrollment.
+
+        Raises RuntimeError if any enrollment exec fails. Caller
+        (SandboxManager) rolls back the just-created container in that case.
         """
         if self._http is None:
             raise RuntimeError("ProxyManager.start() must be called before enroll_sandbox")
 
         sandbox_token = secrets.token_urlsafe(32)
-        headers = {"X-Admin-Token": self._proxy_admin_token}
         body = {"sandbox_id": sandbox_id, "sandbox_token": sandbox_token}
 
-        endpoints: list[str] = []
+        targets: list[tuple[str, int]] = []
         if self.git_proxy_url:
-            endpoints.append(f"{self.git_proxy_url}/admin/enroll")
+            targets.append(("git-proxy", 9101))
         if self.github_proxy_url:
-            endpoints.append(f"{self.github_proxy_url}/admin/enroll")
+            targets.append(("github-proxy", 9103))
         if self.auth_proxy_url:
-            endpoints.append(f"{self.auth_proxy_url}/admin/enroll")
+            targets.append(("auth-proxy", 9100))
 
-        for url in endpoints:
-            try:
-                async with self._http.post(
-                    url, json=body, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status != 200:
-                        text = await resp.text()
-                        raise RuntimeError(f"enroll {url} returned {resp.status}: {text[:200]}")
-            except (aiohttp.ClientError, TimeoutError) as exc:
-                raise RuntimeError(f"enroll {url} failed: {exc!r}") from exc
+        for name, port in targets:
+            await self._exec_admin_request(
+                container=name,
+                method="POST",
+                path="/admin/enroll",
+                port=port,
+                body=body,
+            )
 
-        logger.info("sandbox_enrolled_with_proxies", sandbox_id=sandbox_id, endpoints=endpoints)
+        logger.info(
+            "sandbox_enrolled_with_proxies",
+            sandbox_id=sandbox_id,
+            proxies=[t[0] for t in targets],
+        )
         return sandbox_token
 
     async def unenroll_sandbox(self, sandbox_id: str) -> None:
         """Best-effort unenrollment. Failures are logged at warning, never raised."""
         if self._http is None:
             return
-        headers = {"X-Admin-Token": self._proxy_admin_token}
-        endpoints: list[str] = []
+        targets: list[tuple[str, int]] = []
         if self.git_proxy_url:
-            endpoints.append(f"{self.git_proxy_url}/admin/enroll/{sandbox_id}")
+            targets.append(("git-proxy", 9101))
         if self.github_proxy_url:
-            endpoints.append(f"{self.github_proxy_url}/admin/enroll/{sandbox_id}")
+            targets.append(("github-proxy", 9103))
         if self.auth_proxy_url:
-            endpoints.append(f"{self.auth_proxy_url}/admin/enroll/{sandbox_id}")
+            targets.append(("auth-proxy", 9100))
 
-        for url in endpoints:
+        for name, port in targets:
             try:
-                async with self._http.delete(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status not in (200, 404):
-                        logger.warning("sandbox_unenroll_non_200", url=url, status=resp.status)
-            except (aiohttp.ClientError, TimeoutError) as exc:
-                logger.warning("sandbox_unenroll_failed", url=url, error=str(exc))
+                await self._exec_admin_request(
+                    container=name,
+                    method="DELETE",
+                    path=f"/admin/enroll/{sandbox_id}",
+                    port=port,
+                    body=None,
+                    accept_404=True,
+                )
+            except RuntimeError as exc:
+                logger.warning(
+                    "sandbox_unenroll_failed", proxy=name, error=str(exc)
+                )
+
+    async def _exec_admin_request(
+        self,
+        *,
+        container: str,
+        method: str,
+        path: str,
+        port: int,
+        body: dict | None,
+        accept_404: bool = False,
+    ) -> None:
+        """Run a tiny urllib request via ``docker exec <container> python3 -c ...``.
+
+        This is the in-DinD enrollment transport. The proxy container has
+        Python 3.12 + stdlib but no curl/wget; urllib.request is sufficient
+        for the small JSON POST/DELETE payloads. We pass the admin token via
+        environment variable on the exec call (so it never appears in argv
+        for any host-side ``ps``).
+
+        Raises RuntimeError on any non-2xx response (or non-2xx + non-404 if
+        ``accept_404`` is True).
+        """
+        import json
+
+        payload = json.dumps(body or {})
+        # The proxy image (python:3.12-slim) has Python + stdlib but no curl.
+        # We pass the admin token + body via -e on the exec so they stay out
+        # of argv and any host-side `ps`. The script must be a multi-line
+        # block; semicolons can't separate `try`/`except`, so we use '\n'.
+        script = "\n".join(
+            [
+                "import os, sys, urllib.request, urllib.error",
+                "tok = os.environ['ADMIN_TOK']",
+                "body = os.environ.get('ADMIN_BODY', '').encode()",
+                f"req = urllib.request.Request('http://localhost:{port}{path}',",
+                "    data=body if body else None,",
+                "    headers={'X-Admin-Token': tok, 'Content-Type': 'application/json'},",
+                f"    method='{method}')",
+                "try:",
+                "    resp = urllib.request.urlopen(req, timeout=10)",
+                "    sys.stdout.write(f'HTTP_CODE={resp.status}')",
+                "except urllib.error.HTTPError as e:",
+                "    sys.stdout.write(f'HTTP_CODE={e.code}')",
+                "except Exception as e:",
+                "    sys.stderr.write(f'ERR:{type(e).__name__}:{e}')",
+                "    sys.exit(2)",
+            ]
+        )
+        cmd = self._docker.build_exec_cmd(
+            container,
+            ["python3", "-c", script],
+            env={"ADMIN_TOK": self._proxy_admin_token, "ADMIN_BODY": payload},
+        )
+        try:
+            output = await self._docker.run_cmd(cmd, timeout=15)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"docker exec {container} for {method} {path} failed: {exc}"
+            ) from exc
+
+        # The Python script prints HTTP_CODE=<status> on success, or stderr on
+        # failure. run_cmd already raised on non-zero exit — so output here is
+        # the status code line.
+        marker = "HTTP_CODE="
+        idx = output.rfind(marker)
+        if idx < 0:
+            raise RuntimeError(
+                f"enroll {container} {path}: missing HTTP_CODE marker in output: {output[:200]!r}"
+            )
+        status = int(output[idx + len(marker) :].strip())
+        if 200 <= status < 300:
+            return
+        if accept_404 and status == 404:
+            return
+        raise RuntimeError(
+            f"enroll {container} {path} returned HTTP {status}"
+        )
 
     async def stop(self) -> None:
         """Force-remove all launched proxy containers."""
@@ -223,6 +389,8 @@ class ProxyManager:
         self.git_proxy_url = ""
         self.github_proxy_url = ""
         self.auth_proxy_url = ""
+        self.minio_proxy_url = ""
+        self.presign_proxy_url = ""
         if self._http is not None:
             await self._http.close()
             self._http = None

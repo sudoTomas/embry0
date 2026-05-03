@@ -23,6 +23,8 @@ dependencies = [
     "psycopg[binary]>=3.0,<4",
     "cryptography>=42,<47",
     "prometheus-fastapi-instrumentator>=6.0,<8",
+    "minio>=7.2,<8",
+    "pyyaml>=6.0,<7",
 ]
 
 [project.scripts]
@@ -62,4 +64,6 @@ markers = [
     "sandbox_smoke: real-sandbox end-to-end tests. Run with `pytest -m sandbox_smoke`.",
     "requires_docker: integration tests that need a real Docker daemon. Run with `pytest -m requires_docker`.",
     "requires_postgres: requires a live PostgreSQL instance at TEST_DATABASE_URL.",
+    "requires_minio: needs a reachable MinIO instance (set MINIO_ENDPOINT)",
+    "requires_dind: needs a reachable DinD instance (set DIND_ENDPOINT)",
 ]

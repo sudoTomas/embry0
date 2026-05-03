@@ -22,7 +22,10 @@ class EnvironmentRepository:
         self._db = db
 
     async def get_global(self) -> list[dict[str, Any]]:
-        rows = await self._db.fetch("SELECT key, value, var_type, description FROM global_environment ORDER BY key")
+        rows = await self._db.fetch(
+            "SELECT key, value, var_type, description, scope "
+            "FROM global_environment ORDER BY key"
+        )
         return [dict(r) for r in rows]
 
     async def set_global(self, variables: list[dict[str, Any]]) -> None:
@@ -32,18 +35,19 @@ class EnvironmentRepository:
             for v in variables:
                 await conn.execute(
                     """
-                    INSERT INTO global_environment (key, value, var_type, description)
-                    VALUES ($1, $2, $3, $4)
+                    INSERT INTO global_environment (key, value, var_type, description, scope)
+                    VALUES ($1, $2, $3, $4, $5)
                     """,
                     v["key"],
                     v["value"],
                     v.get("var_type", "config"),
                     v.get("description", ""),
+                    v.get("scope", "app"),
                 )
 
     async def get_repo(self, repo: str) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
-            "SELECT repo, key, value, var_type, description, required "
+            "SELECT repo, key, value, var_type, description, required, scope "
             "FROM repo_environment WHERE repo = $1 ORDER BY key",
             repo,
         )
@@ -56,8 +60,8 @@ class EnvironmentRepository:
             for v in variables:
                 await conn.execute(
                     """
-                    INSERT INTO repo_environment (repo, key, value, var_type, description, required)
-                    VALUES ($1, $2, $3, $4, $5, $6)
+                    INSERT INTO repo_environment (repo, key, value, var_type, description, required, scope)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
                     """,
                     repo,
                     v["key"],
@@ -65,6 +69,7 @@ class EnvironmentRepository:
                     v.get("var_type", "config"),
                     v.get("description", ""),
                     bool(v.get("required", False)),
+                    v.get("scope", "app"),
                 )
 
     async def delete_repo_var(self, repo: str, key: str) -> None:

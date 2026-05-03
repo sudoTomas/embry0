@@ -50,6 +50,7 @@ def _mask_var(var: dict[str, Any]) -> EnvVarResponse:
         var_type=var.get("var_type", "config"),
         description=var.get("description", ""),
         required=bool(var.get("required", False)),
+        scope=var.get("scope", "app"),
     )
 
 

@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from athanor.api.deps import get_jobs_repo
-from athanor.api.schemas import JobCreateRequest, JobListResponse, JobResponse
+from athanor.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
 from athanor.api.schemas.jobs import JobResumeRequest
 from athanor.audit.helpers import emit_audit
 from athanor.storage.repositories.jobs import JobsRepository
@@ -17,6 +17,40 @@ router = APIRouter()
 async def create_job(
     req: JobCreateRequest, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)
 ) -> dict[str, Any]:
+    # QA pipeline takes a different code path: no triage, no issue, dispatched
+    # via IssueExecutor.start_job which seeds the QA initial state.
+    if req.pipeline == "qa":
+        if not req.branch:
+            raise HTTPException(status_code=400, detail="qa pipeline requires 'branch'")
+        executor = getattr(request.app.state, "issue_executor", None)
+        if executor is None:
+            raise HTTPException(status_code=503, detail="executor not initialized")
+        qa_overrides = (req.qa or QAJobOverrides()).model_dump()
+        try:
+            job_id = await executor.start_job(
+                repo=req.repo,
+                branch=req.branch,
+                pipeline="qa",
+                qa_overrides=qa_overrides,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        config = request.app.state.config
+        await emit_audit(
+            getattr(request.app.state, "db", None),
+            "qa_job_created",
+            actor=request.client.host if request.client else "api",
+            details={"job_id": job_id, "repo": req.repo, "branch": req.branch},
+            audit_log_path=config.audit_log_path,
+        )
+        job = await jobs.get(job_id)
+        return job or {"job_id": job_id}
+
+    # Legacy issue-to-pr path. ``task`` non-empty is enforced at the schema
+    # layer (JobCreateRequest._enforce_task_for_non_qa) — assertion below is a
+    # safety net for type checkers.
+    assert req.task is not None  # noqa: S101 — schema-enforced
+
     # Merge any per-agent model override into pipeline_config so triage/dispatch
     # can honour it downstream (see IssueExecutor._run_workflow + agent node).
     effective_config = dict(req.pipeline_config) if req.pipeline_config else None

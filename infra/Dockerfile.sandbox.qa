@@ -1,0 +1,98 @@
+# QA sandbox image — extends athanor-sandbox with the runtimes the QA agent
+# needs to boot and validate full-stack apps: Java JDK 21, Docker CLI (for
+# DinD compose stacks), Playwright + Chromium, qa-compose wrapper.
+
+FROM python:3.12.7-slim-bookworm
+
+# System dependencies — superset of athanor-sandbox plus tooling needed
+# for browser automation and JVM apps. JDK 21 isn't in Debian bookworm
+# (main ships JDK 17, backports has nothing newer), so we use Eclipse
+# Temurin's apt repo — the standard Adoptium-signed OpenJDK 21 build.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg \
+    # Adoptium Temurin apt source for JDK 21.
+    && curl -fsSL https://packages.adoptium.net/artifactory/api/gpg/key/public \
+       | gpg --dearmor -o /usr/share/keyrings/adoptium.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb bookworm main" \
+       > /etc/apt/sources.list.d/adoptium.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        git jq \
+        # Playwright / Chromium runtime libs (matches @playwright/mcp's built-in browser):
+        libglib2.0-0 libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
+        libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+        libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 \
+        libasound2 libatspi2.0-0 \
+        # JVM apps (macro-lab style):
+        temurin-21-jdk \
+    # Docker CLI only — no daemon. Talks to DinD over TCP+TLS.
+    && curl -fsSL https://download.docker.com/linux/static/stable/$(uname -m)/docker-27.3.1.tgz \
+       | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
+    && chmod +x /usr/local/bin/docker \
+    && mkdir -p /usr/local/lib/docker/cli-plugins \
+    && curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-$(uname -m) \
+       -o /usr/local/lib/docker/cli-plugins/docker-compose \
+    && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose \
+    && ln -s /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pre-set the Playwright browsers path BEFORE installing playwright via npm —
+# otherwise the postinstall hook may drop Chromium in /root/.cache/ms-playwright
+# and we'd waste ~150 MB plus build time re-downloading it to /opt/playwright.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+
+# Node.js — required for Claude CLI AND for @playwright/mcp.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @anthropic-ai/claude-code@2.1.92 @playwright/mcp@latest playwright@latest
+
+# Pre-fetch Chromium so the QA agent doesn't pay download cost at job start.
+# Critically: install via @playwright/mcp's BUNDLED playwright-core (not the
+# standalone playwright package's). They pin different chromium revisions
+# (mcp@0.0.73 -> chromium-1222, standalone playwright@latest -> chromium-1217)
+# and MCP's launcher only looks for the version its own playwright-core
+# expects. Using the wrong copy here causes "BrowserIsNotInstalled" at runtime.
+#
+# Also a+rwX (not a+rX): Playwright MCP creates a per-launch user-data-dir
+# (mcp-chrome-XXXX) under PLAYWRIGHT_BROWSERS_PATH at runtime — the dir must
+# be writable by the non-root agent user.
+RUN node /usr/lib/node_modules/@playwright/mcp/node_modules/playwright-core/cli.js install chromium \
+    && chmod -R a+rwX /opt/playwright
+
+# Python deps — same set as the slim image. MinIO uploads from inside the
+# sandbox use presigned URLs via curl/httpx, so no MinIO SDK is needed here.
+# langchain-core: athanor.sandbox.runner uses RunnableConfig (type hint only,
+# but imported at module load via cast()).
+RUN pip install --no-cache-dir \
+    "claude-agent-sdk>=0.1.48,<0.2" \
+    "structlog>=24.0,<26" \
+    "httpx>=0.27,<1" \
+    "langchain-core>=0.3,<1"
+
+# Sandbox code (same layout as base image).
+# athanor/agents/ + the docker_client/sandbox_manager/auth_provider/agent_runner
+# subset are imported transitively from athanor.sandbox.runner -> executor_factory
+# -> SdkAgentExecutor; the sandbox runner cannot start without them.
+COPY athanor/sandbox/ /app/athanor/sandbox/
+COPY athanor/safety/ /app/athanor/safety/
+COPY athanor/agents/ /app/athanor/agents/
+COPY athanor/execution/events.py /app/athanor/execution/events.py
+COPY athanor/execution/agent_runner.py /app/athanor/execution/agent_runner.py
+COPY athanor/execution/auth_provider.py /app/athanor/execution/auth_provider.py
+COPY athanor/execution/docker_client.py /app/athanor/execution/docker_client.py
+COPY athanor/execution/sandbox_manager.py /app/athanor/execution/sandbox_manager.py
+RUN mkdir -p /app/athanor/execution \
+    && touch /app/athanor/__init__.py /app/athanor/execution/__init__.py
+ENV PYTHONPATH=/app
+
+# QA-specific bundled scripts.
+COPY infra/scripts/qa-compose /usr/local/bin/qa-compose
+COPY infra/scripts/qa-ready-check.py /usr/local/bin/qa-ready-check
+RUN chmod +x /usr/local/bin/qa-compose /usr/local/bin/qa-ready-check
+
+# Non-root user (same convention as the slim image).
+RUN useradd --create-home agent
+RUN mkdir -p /workspace && chown agent:agent /workspace
+
+USER agent
+WORKDIR /workspace

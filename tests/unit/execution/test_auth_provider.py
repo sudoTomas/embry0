@@ -49,5 +49,20 @@ def test_reserved_env_keys_export_expected_set() -> None:
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "GITHUB_TOKEN",
+        # QA-injected infrastructure (orchestrator owns these):
+        "QA_JOB_ID",
+        "QA_ATTEMPT_N",
+        "QA_NETWORK_NAME",
+        # DinD certs are mounted by the orchestrator for dind_enabled profiles:
+        "DOCKER_HOST",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
     }
     assert RESERVED_ENV_KEYS == expected
+
+
+def test_reserved_env_prefixes_export_expected_tuple() -> None:
+    from athanor.execution.auth_provider import RESERVED_ENV_PREFIXES
+
+    # These prefixes must NEVER be user-settable via the environment UI.
+    assert RESERVED_ENV_PREFIXES == ("QA_ARTIFACT_", "DOCKER_")
