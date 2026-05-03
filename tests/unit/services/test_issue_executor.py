@@ -480,7 +480,11 @@ async def test_execute_generates_trace_id_and_passes_to_jobs_create(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_handle_interrupt_max_retries_pauses():
-    """_handle_interrupt with reason=max_retries must pause both job and issue."""
+    """_handle_interrupt with reason=max_retries pauses the JOB but leaves
+    the ISSUE at status=open. IssueStatus has no paused value (allowed:
+    awaiting_input | cancelled | closed | in_progress | open), so paused
+    is a job-only status; the issue is reset to open so the user can
+    re-trigger triage."""
     from athanor.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
@@ -491,7 +495,7 @@ async def test_handle_interrupt_max_retries_pauses():
 
     await executor._handle_interrupt("iss-1", "job-1", {"reason": "max_retries"})
     executor._jobs.update.assert_any_await("job-1", status="paused")
-    executor._issues.update.assert_any_await("iss-1", status="paused")
+    executor._issues.update.assert_any_await("iss-1", status="open")
 
 
 @pytest.mark.asyncio

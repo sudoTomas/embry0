@@ -522,8 +522,14 @@ class IssueExecutor:
         if interrupt_value:
             reason = interrupt_value.get("reason", "")
             if reason == "max_retries":
+                # Job pauses; issue goes back to `open` so the user can either
+                # cancel from the dashboard or re-trigger triage. The Issue
+                # state machine doesn't have a `paused` value (allowed:
+                # awaiting_input | cancelled | closed | in_progress | open) —
+                # this used to crash with InvalidIssueStatusTransition because
+                # `paused` is a job-only status.
                 await self._jobs.update(job_id, status="paused")
-                await self._issues.update(issue_id, status="paused")
+                await self._issues.update(issue_id, status="open")
                 logger.info("job_paused", job_id=job_id, reason=reason)
                 return
             await self._handle_needs_info(issue_id, job_id, interrupt_value)
