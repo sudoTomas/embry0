@@ -52,6 +52,13 @@ async def run_boot_phase(
     ready_checks = startup.get("ready_checks") or []
     budget = float(startup.get("boot_timeout_seconds", 300))
 
+    if not ready_checks:
+        logger.warning(
+            "boot_no_ready_checks",
+            container=container_id,
+            note="qa.yaml has empty/missing startup.ready_checks — boot will pass after startup command without verification",
+        )
+
     started_at = time.monotonic()
 
     try:

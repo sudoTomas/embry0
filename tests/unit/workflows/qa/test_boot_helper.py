@@ -9,13 +9,13 @@ from athanor.workflows.qa.boot import BootResult, run_boot_phase
 
 
 def _make_qa_yaml(boot_timeout: int = 30, ready_checks: list | None = None) -> dict:
+    if ready_checks is None:
+        ready_checks = [{"http": "http://gateway:8080/health", "expect_status": 200}]
     return {
         "mode": "dind",
         "startup": {
             "command": "cd infra && docker compose up -d gateway",
-            "ready_checks": ready_checks or [
-                {"http": "http://gateway:8080/health", "expect_status": 200}
-            ],
+            "ready_checks": ready_checks,
             "boot_timeout_seconds": boot_timeout,
         },
         "frontend_url": "http://gateway:8080",
@@ -179,3 +179,32 @@ async def test_records_per_check_diagnostics_on_timeout():
     assert len(result.failed_checks) == 2
     assert any("gateway" in c for c in result.failed_checks)
     assert any("frontend" in c for c in result.failed_checks)
+
+
+@pytest.mark.asyncio
+async def test_empty_ready_checks_warns_then_passes():
+    """No ready_checks defined → boot passes after startup command but logs a warning."""
+    import structlog.testing
+
+    docker = MagicMock()
+    docker.run_cmd = AsyncMock(return_value="started")
+    http = MagicMock()
+    http.get = AsyncMock()  # never called
+
+    qa_yaml = _make_qa_yaml(boot_timeout=10, ready_checks=[])
+
+    with structlog.testing.capture_logs() as captured:
+        result = await run_boot_phase(
+            qa_yaml=qa_yaml,
+            container_id="C",
+            docker=docker,
+            http=http,
+            sleep_seconds=0,
+        )
+
+    assert result.outcome == "passed"
+    assert result.attempts == 1
+    http.get.assert_not_awaited()
+    assert any(
+        entry.get("event") == "boot_no_ready_checks" for entry in captured
+    ), f"Expected boot_no_ready_checks warning, got: {captured}"
