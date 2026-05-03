@@ -114,6 +114,26 @@ async def init_qa_node(state: dict, config: RunnableConfig) -> dict:
             }
         )
 
+        # PR-flow handoff: when this QA run was reached via the issue→PR
+        # graph (review → init_qa), the developer sandbox from init_node
+        # is still alive at sandbox-{job_id}. Sandbox name is derived from
+        # job_id, so sandbox_mgr.create() would hit a "container name in
+        # use" conflict. The dev sandbox has done its job by this point
+        # (developer + review both ran inside it); destroy it before we
+        # spin up the QA sandbox.
+        existing = state.get("sandbox_container_id")
+        if existing:
+            try:
+                await sandbox_mgr.destroy(existing)
+                logger.info("qa_predecessor_sandbox_destroyed", job_id=job_id, container_id=existing)
+            except Exception as exc:
+                logger.warning(
+                    "qa_predecessor_sandbox_destroy_failed",
+                    job_id=job_id,
+                    container_id=existing,
+                    error=str(exc),
+                )
+
         container_id, sandbox_token = await sandbox_mgr.create(
             job_id,
             profile=profile,
