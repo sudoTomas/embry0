@@ -48,6 +48,19 @@ Model selection (CRITICAL):
 Set the chosen models in `pipeline_config.agent_models`:
   {"developer": "claude-sonnet-4-6", "review": "claude-sonnet-4-6"}
 
+Budget guidelines (CRITICAL — wrong budget hard-stops the workflow):
+- `pipeline_config.budget_usd` is a HARD CAP. The orchestrator routes to
+  max_retries the moment cumulative agent spend exceeds it. Set it ABOVE
+  realistic per-run cost.
+- Floor of 5.0 USD for any "proceed" action. A single Sonnet developer call
+  on a small change typically costs $0.20–$2.00; review another $0.10–$0.50;
+  QA (when needs_qa=true) another $0.50–$2.00. Anything below $5.00 will
+  almost certainly trip the cap.
+- Use 10.0–25.0 for standard pipelines, 25.0–50.0 for complex/multi-file work.
+- NEVER set `reviewer_enabled: false` — the workflow always routes through
+  review on the happy path, and disabling it sends the workflow to a dead
+  end (no review → no edge to take).
+
 ## QA Decision
 
 After you decide whether to proceed with developer work, also decide whether
