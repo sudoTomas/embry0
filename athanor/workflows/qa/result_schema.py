@@ -75,7 +75,7 @@ class QAResult(BaseModel):
     phase_reached: Literal["boot", "seed", "e2e", "exploratory", "report"]
     overall: Literal["passed", "failed", "inconclusive"]
 
-    boot: QABootResult
+    boot: QABootResult | None = None
     seed: QASeedResult | None = None
     e2e: QAE2EResult | None = None
     acceptance_results: list[QAAcceptanceResult]

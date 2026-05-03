@@ -32,7 +32,7 @@ class QAStartup(BaseModel):
 
     command: str = Field(min_length=1)
     ready_checks: list[QAReadyCheck] = Field(min_length=1)
-    boot_timeout_seconds: int = Field(default=180, gt=0, le=3600)
+    boot_timeout_seconds: int = Field(default=300, gt=0, le=3600)
 
 
 class QASeed(BaseModel):

@@ -430,11 +430,7 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
         '  "attempt_n": <from job.json>,\n'
         '  "phase_reached": "boot" | "seed" | "e2e" | "exploratory" | "report",\n'
         '  "overall": "passed" | "failed" | "inconclusive",\n'
-        '  "boot": {\n'
-        '    "command": "<startup command — was run by orchestrator before you started>",\n'
-        '    "duration_ms": <int>,\n'
-        '    "ready_checks": [{"url": "...", "status": <int>, "duration_ms": <int>}, ...]  // at least one\n'
-        '  },\n'
+        '  "boot": null,  // omit or set null — orchestrator fills this in from state.qa\n'
         '  "seed": {"ran": false, "note": "no seed config"} | null,\n'
         '  "e2e":  {"ran": false} | null,\n'
         '  "acceptance_results": [\n'
@@ -640,16 +636,40 @@ async def report_node(state: dict, config: RunnableConfig) -> dict:
     result_summary: dict | None = None
     overall = "inconclusive"
     try:
+        import json
+
         result_text = await docker.run_cmd(
             docker.build_exec_cmd(container_id, ["cat", "/workspace/.qa/result.json"]),
             timeout=10,
         )
-        result = QAResult.model_validate_json(result_text)
+        parsed_dict = json.loads(result_text)
+
+        # Backend-owned boot phase: synthesize the result.json `boot` section from
+        # state so the agent never has to fabricate it. Always wins over any value
+        # the agent emitted.
+        qa_state = state.get("qa") or {}
+        if qa_state.get("boot_outcome"):
+            parsed_dict["boot"] = {
+                "command": (qa_state.get("qa_yaml_parsed") or {}).get("startup", {}).get("command", ""),
+                "duration_ms": qa_state.get("boot_duration_ms", 0),
+                "ready_checks": [
+                    {
+                        "url": rc.get("http", ""),
+                        "status": 200 if qa_state["boot_outcome"] == "passed" else 0,
+                        "duration_ms": qa_state.get("boot_duration_ms", 0),
+                    }
+                    for rc in (qa_state.get("qa_yaml_parsed") or {}).get("startup", {}).get("ready_checks", [])
+                ]
+                or [{"url": "<no-checks-configured>", "status": 200, "duration_ms": 0}],
+            }
+
+        result = QAResult.model_validate(parsed_dict)
         result_summary = result.model_dump(mode="json")
         overall = result.overall
     except Exception as exc:
         logger.warning("qa_result_invalid_or_missing", error=str(exc))
-        last["exit_reason"] = "result_json_missing"
+        if not last.get("exit_reason"):
+            last["exit_reason"] = "result_json_missing"
 
     # 4. Update attempt + final_status.
     last["result_summary"] = result_summary
