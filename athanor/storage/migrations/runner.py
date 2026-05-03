@@ -539,6 +539,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ADD COLUMN IF NOT EXISTS mcp_servers JSONB NOT NULL DEFAULT '{}'::jsonb;
         """,
     ),
+    (
+        21,
+        "issues — notification_channels JSONB column (which channels get agent questions)",
+        # Per-issue list of channels (dashboard / telegram / github) to dispatch
+        # agent ask-user questions to. Default ["dashboard"] preserves existing
+        # behavior — every legacy row keeps the dashboard form as its sole
+        # channel. Subsequent code (Tasks 4/5) reads this as a list of strings.
+        """
+        ALTER TABLE issues
+            ADD COLUMN IF NOT EXISTS notification_channels JSONB
+                NOT NULL DEFAULT '["dashboard"]'::jsonb;
+        """,
+    ),
 ]
 
 

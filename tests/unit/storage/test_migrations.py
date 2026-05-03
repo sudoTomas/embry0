@@ -122,3 +122,44 @@ async def test_migration_20_adds_mcp_servers_column(db_with_migrations):
     )
     assert len(cols) == 1
     assert cols[0]["data_type"] == "jsonb"
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_migration_21_adds_notification_channels(db_with_migrations):
+    """Migration 21 adds issues.notification_channels JSONB DEFAULT '["dashboard"]'."""
+    cols = await db_with_migrations.fetch(
+        "SELECT column_name, data_type, column_default, is_nullable "
+        "FROM information_schema.columns "
+        "WHERE table_name='issues' AND column_name='notification_channels'"
+    )
+    assert len(cols) == 1
+    assert cols[0]["data_type"] == "jsonb"
+    assert cols[0]["is_nullable"] == "NO"
+    # default text in postgres looks like: '["dashboard"]'::jsonb
+    assert "dashboard" in (cols[0]["column_default"] or "")
+
+    # Existing rows get the default applied
+    iid = "iss-test-21"
+    await db_with_migrations.execute(
+        "INSERT INTO issues (id, repo, title, body, status) VALUES ($1, $2, $3, $4, $5) "
+        "ON CONFLICT (id) DO NOTHING",
+        iid,
+        "test/test",
+        "x",
+        "x",
+        "open",
+    )
+    try:
+        row = await db_with_migrations.fetchrow(
+            "SELECT notification_channels FROM issues WHERE id = $1", iid
+        )
+        # asyncpg returns JSONB as a JSON string by default; decode if needed.
+        value = row["notification_channels"]
+        if isinstance(value, str):
+            import json
+
+            value = json.loads(value)
+        assert value == ["dashboard"]
+    finally:
+        await db_with_migrations.execute("DELETE FROM issues WHERE id = $1", iid)
