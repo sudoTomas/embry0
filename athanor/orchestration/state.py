@@ -247,3 +247,10 @@ class QAStateBlock(TypedDict, total=False):
     failure_rounds: int  # PR-flow triage↔QA cycles consumed; bumped when qa.report routes back to triage on failure (Phase 5), capped at max_qa_failure_rounds (default 2) — on exhaustion the job ends with ERR_QA_FAILURES_UNRESOLVED.
     final_status: Literal["pending", "passed", "failed", "exhausted", "skipped"]
     sandbox_token: str  # Set by init_qa, consumed by report
+    # Backend-owned boot phase (Plan: qa-boot-as-backend-node).
+    # boot_qa_node populates these; the agent (qa_node) reads them but does
+    # NOT mutate them.
+    boot_outcome: Literal["passed", "timeout", "startup_failed"] | None
+    boot_duration_ms: int | None
+    boot_attempts: int | None
+    boot_diagnostic_screenshot_path: str | None  # MinIO key, e.g. "JOB1/1/screenshots/boot-timeout.png"

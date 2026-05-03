@@ -84,3 +84,19 @@ def test_job_state_has_cycle_guard_fields():
     assert "agent_questions_exhausted" in annotations
     assert "triage_question_rounds" in annotations
     assert "user_retry_rounds" in annotations
+
+
+def test_qa_state_block_carries_boot_outcome_fields():
+    from athanor.orchestration.state import QAStateBlock
+
+    qa: QAStateBlock = {
+        "needs_qa": True,
+        "boot_outcome": "passed",
+        "boot_duration_ms": 12345,
+        "boot_attempts": 4,
+        "boot_diagnostic_screenshot_path": "JOB1/1/screenshots/boot-timeout.png",
+    }
+    assert qa["boot_outcome"] == "passed"
+    assert qa["boot_duration_ms"] == 12345
+    assert qa["boot_attempts"] == 4
+    assert qa["boot_diagnostic_screenshot_path"].endswith(".png")
