@@ -170,8 +170,9 @@ class SdkAgentExecutor:
         #
         # claude_max (oauth) mode: snapshot the SDK-emitted session_id from
         #   any message that carries one (AssistantMessage.session_id or
-        #   ResultMessage.session_id) and emit the canonical in-sandbox
-        #   path ~/.claude/sessions/<id>.jsonl as ``session_blob_path``.
+        #   ResultMessage.session_id) and emit the in-sandbox path discovered
+        #   by claude_cli_session.find_session_file (typically
+        #   ~/.claude/projects/<sanitized-cwd>/<id>.jsonl) as ``session_blob_path``.
         #   The orchestrator-side AgentRunner ``docker cp``s the bytes out
         #   before the sandbox is destroyed; see athanor/execution/agent_runner.py.
         captured_messages: list[dict[str, Any]] = []
