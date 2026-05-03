@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -55,6 +55,14 @@ def _make_runner(stream_payload: dict[str, Any]) -> tuple[AgentRunner, AsyncMock
     docker = AsyncMock()
     docker.copy_into = AsyncMock()
     docker.copy_bytes_into = AsyncMock()
+    docker.run_cmd = AsyncMock(return_value="")
+
+    # build_exec_cmd is a synchronous method; return a predictable sentinel
+    # list so that assertions on run_cmd.call_args can inspect the payload.
+    def _build_exec_cmd(container: str, command: list[str], workdir: str | None = None, env: dict | None = None) -> list[str]:
+        return ["docker", "exec", container, *command]
+
+    docker.build_exec_cmd = MagicMock(side_effect=_build_exec_cmd)
 
     captured_commands: list[list[str]] = []
 
@@ -158,6 +166,14 @@ async def test_resume_session_claude_max_copies_bytes_and_passes_session_id() ->
     )
 
     docker.copy_into.assert_not_awaited()
+
+    # mkdir -p must have been called (and before copy_bytes_into).
+    mkdir_calls = [
+        c for c in docker.run_cmd.call_args_list if "mkdir" in c.args[0]
+    ]
+    assert len(mkdir_calls) == 1
+    assert "/home/agent/.claude/projects/-workspace" in mkdir_calls[0].args[0]
+
     docker.copy_bytes_into.assert_awaited_once_with(
         "sandbox-J2",
         blob,
