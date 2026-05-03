@@ -142,9 +142,13 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                 ),
             ]
             try:
+                # 300s (was 120s): large monorepos cloned via the git-proxy at
+                # --depth=50 can exceed two minutes when the proxy adds latency
+                # or the repo has many large files. Verified against macro-lab
+                # which timed out at exactly 120s on first attempt.
                 await docker.run_cmd(
                     docker.build_exec_cmd(container_id, clone_cmd),
-                    timeout=120,
+                    timeout=300,
                 )
             except RuntimeError as exc:
                 logger.error("repo_clone_failed", job_id=job_id, repo=repo, error=str(exc))
