@@ -552,6 +552,20 @@ MIGRATIONS: list[tuple[int, str, str]] = [
                 NOT NULL DEFAULT '["dashboard"]'::jsonb;
         """,
     ),
+    (
+        22,
+        "issue_inputs — add skipped_by/skipped_at audit columns for /skip directive",
+        # The inbound dispatcher (Plan B Task 2) introduces a `skip(input_id,
+        # skipped_by)` repository method that mirrors `answer()`. The status
+        # column is plain TEXT (no CHECK), so 'skipped' is already a legal
+        # value — but we need audit columns to record who skipped and when.
+        """
+        ALTER TABLE issue_inputs
+            ADD COLUMN IF NOT EXISTS skipped_by TEXT;
+        ALTER TABLE issue_inputs
+            ADD COLUMN IF NOT EXISTS skipped_at TIMESTAMPTZ;
+        """,
+    ),
 ]
 
 

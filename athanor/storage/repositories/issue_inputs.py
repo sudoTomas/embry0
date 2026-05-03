@@ -102,6 +102,53 @@ class IssueInputsRepository:
         )
         logger.info("issue_input_answered", input_id=input_id, answered_by=answered_by)
 
+    async def skip(
+        self,
+        input_id: str,
+        skipped_by: str,
+    ) -> None:
+        """Record a skip and mark the input as skipped.
+
+        Used by the inbound dispatcher when a comment includes `/skip N`.
+        Mirrors `answer()` — sets status='skipped' and records who skipped
+        and when. Workflow downstream may continue past it (if non-blocking)
+        or escalate.
+        """
+        await self._db.execute(
+            """
+            UPDATE issue_inputs
+            SET status = 'skipped',
+                skipped_by = $1,
+                skipped_at = NOW()
+            WHERE id = $2
+            """,
+            skipped_by,
+            input_id,
+        )
+        logger.info("issue_input_skipped", input_id=input_id, skipped_by=skipped_by)
+
+    async def list_pending_for_issue(self, issue_id: str) -> list[dict[str, Any]]:
+        """Return pending inputs for an issue in stable creation order.
+
+        Sequence numbers in /answer N: are 1-based indexes into this list.
+        """
+        rows = await self._db.fetch(
+            "SELECT * FROM issue_inputs "
+            "WHERE issue_id = $1 AND status = 'pending' "
+            "ORDER BY created_at ASC, id ASC",
+            issue_id,
+        )
+        return [dict(r) for r in rows]
+
+    async def find_by_issue_and_sequence(
+        self, issue_id: str, sequence: int
+    ) -> dict[str, Any] | None:
+        """Lookup helper for the inbound parser. sequence is 1-based."""
+        rows = await self.list_pending_for_issue(issue_id)
+        if sequence < 1 or sequence > len(rows):
+            return None
+        return rows[sequence - 1]
+
     async def set_telegram_message_id(self, input_id: str, message_id: int) -> None:
         """Store the Telegram message ID associated with this input."""
         await self._db.execute(
