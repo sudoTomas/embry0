@@ -18,13 +18,16 @@ import json
 import shlex
 from datetime import UTC, datetime
 
+import httpx
 import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 from langgraph.graph import END
 from langgraph.types import Command
 
+from athanor.workflows.qa.boot import run_boot_phase
 from athanor.workflows.qa.qa_yaml import parse_qa_yaml
+from athanor.workflows.qa.screenshot import take_diagnostic_screenshot
 
 logger = structlog.get_logger(__name__)
 
@@ -286,6 +289,85 @@ async def init_qa_node(state: dict, config: RunnableConfig) -> dict:
             except Exception:
                 logger.warning("init_qa_rollback_cleanup_failed", exc_info=True)
         raise
+
+
+async def boot_qa_node(state: dict, config: RunnableConfig) -> Command:
+    """Backend-owned QA boot phase.
+
+    Runs qa.yaml startup.command in the sandbox, polls ready_checks until all
+    pass, the budget elapses, or startup fails. Routes to qa (success) or
+    qa_report (timeout / startup_failed). On non-success, captures a Playwright
+    screenshot of frontend_url best-effort and uploads to MinIO for operator
+    diagnostics.
+
+    Reads:
+      - state["qa"]["qa_yaml_parsed"]: parsed qa.yaml dict
+      - state["qa"]["attempts"][-1]["sandbox_id"], ["artifact_prefix"]
+      - state["sandbox_container_id"]: fallback container id
+      - config["configurable"]["docker"]: required
+      - config["configurable"]["qa_minio"]: required for screenshot upload
+    """
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    docker = configurable.get("docker")
+    minio = configurable.get("qa_minio")
+
+    if docker is None:
+        raise RuntimeError("boot_qa_node requires docker in config['configurable']")
+
+    qa = state.get("qa") or {}
+    qa_yaml = qa.get("qa_yaml_parsed") or {}
+    attempts = qa.get("attempts") or []
+    last_attempt = attempts[-1] if attempts else {}
+    container_id = state.get("sandbox_container_id") or last_attempt.get("sandbox_id")
+    artifact_prefix = last_attempt.get("artifact_prefix", f"{state['job_id']}/1/")
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=3.0, read=8.0, write=8.0, pool=8.0)) as http:
+        result = await run_boot_phase(
+            qa_yaml=qa_yaml,
+            container_id=container_id,
+            docker=docker,
+            http=http,
+        )
+
+    qa["boot_outcome"] = result.outcome
+    qa["boot_duration_ms"] = result.duration_ms
+    qa["boot_attempts"] = result.attempts
+
+    if result.outcome == "passed":
+        return Command(goto="qa", update={"qa": qa})
+
+    # Timeout or startup_failed — capture diagnostic screenshot best-effort.
+    frontend_url = qa_yaml.get("frontend_url", "")
+    screenshot_bytes: bytes | None = None
+    if frontend_url:
+        screenshot_bytes = await take_diagnostic_screenshot(
+            docker=docker,
+            container_id=container_id,
+            frontend_url=frontend_url,
+        )
+
+    if screenshot_bytes and minio is not None:
+        screenshot_key = f"{artifact_prefix}screenshots/boot-timeout.png"
+        try:
+            await minio.put_object(
+                "qa-artifacts",
+                screenshot_key,
+                screenshot_bytes,
+                content_type="image/png",
+            )
+            qa["boot_diagnostic_screenshot_path"] = screenshot_key
+        except Exception as exc:
+            logger.warning("boot_screenshot_upload_failed", error=str(exc))
+
+    # Stamp the exit_reason on the attempt so report_node + retry_node route correctly.
+    if attempts:
+        attempts[-1]["exit_reason"] = (
+            "boot_timeout" if result.outcome == "timeout" else "startup_failed"
+        )
+        attempts[-1]["last_phase"] = "boot"
+        qa["attempts"] = attempts
+
+    return Command(goto="qa_report", update={"qa": qa})
 
 
 async def qa_node(state: dict, config: RunnableConfig) -> dict:
