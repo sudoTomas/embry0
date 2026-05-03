@@ -1,5 +1,10 @@
 export type IssueStatus = "open" | "triaging" | "awaiting_input" | "in_progress" | "closed" | "cancelled";
 export type IssuePriority = "critical" | "high" | "medium" | "low";
+// Channels the orchestrator can fan out agent ask-user questions to. Mirrors
+// athanor.orchestration.state.AskUserChannel on the backend; the API responds
+// with these as plain strings (see IssueResponse.notification_channels in
+// athanor/api/schemas/issues.py).
+export type NotificationChannel = "dashboard" | "telegram" | "github";
 
 export interface IssueResponse {
   id: string;
@@ -21,6 +26,7 @@ export interface IssueResponse {
   children_closed_count: number;
   jobs_count: number;
   active_agent: string | null;
+  notification_channels: NotificationChannel[];
 }
 
 export interface IssueDetailResponse extends IssueResponse {
@@ -43,6 +49,7 @@ export interface CreateIssueRequest {
   repo?: string | null;
   github_sync_enabled?: boolean;
   auto_triage?: boolean;
+  notification_channels?: NotificationChannel[];
 }
 
 export interface UpdateIssueRequest {
@@ -53,6 +60,7 @@ export interface UpdateIssueRequest {
   labels?: string[];
   repo?: string | null;
   github_sync_enabled?: boolean;
+  notification_channels?: NotificationChannel[];
 }
 
 export interface IssueFilters {

@@ -4,6 +4,7 @@ import type {
   IssueDetailResponse,
   IssueFilters,
   IssueListResponse,
+  NotificationChannel,
   UpdateIssueRequest,
   ActivityEntry,
 } from "@/lib/types";
@@ -25,6 +26,17 @@ export async function createIssue(req: CreateIssueRequest): Promise<IssueDetailR
 
 export async function updateIssue(issueId: string, req: UpdateIssueRequest): Promise<IssueDetailResponse> {
   const { data } = await api.put(`/issues/${issueId}`, req);
+  return data;
+}
+
+// Targeted setter for the per-issue notification channels. Goes through the
+// same PUT route as updateIssue (the backend uses PUT, not PATCH), but ships
+// only the channels field to keep the payload focused.
+export async function updateIssueNotificationChannels(
+  issueId: string,
+  channels: NotificationChannel[],
+): Promise<IssueDetailResponse> {
+  const { data } = await api.put(`/issues/${issueId}`, { notification_channels: channels });
   return data;
 }
 

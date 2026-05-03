@@ -1,4 +1,6 @@
+import { useEffect, useState, type JSX } from "react";
 import { useNavigate, useParams } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Send, RefreshCw, X, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
@@ -12,11 +14,15 @@ import { AgentIndicator } from "@/components/issues/AgentIndicator";
 import { IssueActivityFeed } from "@/components/issues/IssueActivityFeed";
 import { IssueQuestionsPanel } from "@/components/issues/IssueQuestionsPanel";
 import { LabelInput } from "@/components/issues/LabelInput";
+import { updateIssueNotificationChannels } from "@/api/issues";
 import { useIssue, useIssueActivity, useTriageIssue, useSyncIssue, useDeleteIssue, useUpdateIssue } from "@/hooks/useIssues";
 import { formatDate } from "@/lib/utils";
 import { formatCost } from "@/lib/utils";
+import type { NotificationChannel } from "@/lib/types";
 
-export function IssueDetailPage() {
+const NOTIFICATION_CHANNELS = ["dashboard", "telegram", "github"] as NotificationChannel[];
+
+export function IssueDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
@@ -26,9 +32,42 @@ export function IssueDetailPage() {
   const syncIssue = useSyncIssue();
   const deleteIssue = useDeleteIssue();
   const updateIssue = useUpdateIssue();
+  const queryClient = useQueryClient();
 
-  const handleFieldUpdate = (field: string, value: unknown) => {
+  // Local optimistic state for the notification-channel checkboxes — kept in
+  // sync with the server value via the effect below so polling refetches
+  // (useIssue refetches every 10s) don't clobber an in-flight toggle.
+  const [channels, setChannels] = useState<NotificationChannel[]>(
+    issue?.notification_channels ?? ["dashboard"],
+  );
+  useEffect(() => {
+    if (issue?.notification_channels) {
+      setChannels(issue.notification_channels);
+    }
+  }, [issue?.notification_channels]);
+
+  const handleFieldUpdate = (field: string, value: unknown): void => {
     updateIssue.mutate({ id: issue!.id, [field]: value });
+  };
+
+  const toggleChannel = (ch: NotificationChannel): void => {
+    if (!issue) return;
+    const next = channels.includes(ch)
+      ? channels.filter((c) => c !== ch)
+      : [...channels, ch];
+    setChannels(next);
+    updateIssueNotificationChannels(issue.id, next)
+      .then(() => {
+        // Invalidate both the detail query and the list so badges/filters
+        // reflect the change without waiting for the 10s poll.
+        queryClient.invalidateQueries({ queryKey: ["issues", issue.id] });
+        queryClient.invalidateQueries({ queryKey: ["issues"] });
+      })
+      .catch((e: unknown) => {
+        // Roll back the optimistic state on failure.
+        setChannels(channels);
+        toast.error(e instanceof Error ? e.message : "Failed to update notification channels");
+      });
   };
 
   if (isError) return <PageError message="Failed to load issue" onRetry={() => refetch()} />;
@@ -333,6 +372,31 @@ export function IssueDetailPage() {
                   </div>
                 </div>
               )}
+
+              {/* Notification channels — fan-out targets for agent ask-user
+                  questions. Toggling fires updateIssueNotificationChannels
+                  immediately; the surrounding query is invalidated on success. */}
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Notify via</p>
+                <div className="flex items-center gap-3 text-sm flex-wrap">
+                  {NOTIFICATION_CHANNELS.map((ch) => (
+                    <label key={ch} className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={channels.includes(ch)}
+                        onChange={() => toggleChannel(ch)}
+                        className="rounded border-white/20"
+                      />
+                      <span className="capitalize">{ch}</span>
+                    </label>
+                  ))}
+                </div>
+                {channels.includes("github") && !issue.github_number && (
+                  <p className="text-xs text-amber-400 mt-1.5">
+                    No GitHub issue linked — comment dispatch will be a no-op.
+                  </p>
+                )}
+              </div>
 
               {/* Dates */}
               <div className="border-t border-white/[0.06] pt-3 space-y-2">
