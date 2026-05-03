@@ -1,4 +1,11 @@
-"""Notification dispatcher — routes questions and answers to configured channels."""
+"""Notification dispatcher — routes questions and answers to configured channels.
+
+Fan-out across N channels driven by ``issue.notification_channels``. Each
+channel is a small object that conforms to the
+:class:`athanor.notifications.channels.NotificationChannel` protocol. Channels
+are injected by the caller (typically ``IssueExecutor`` from ``app.state``) so
+unit tests can mock them.
+"""
 
 from __future__ import annotations
 
@@ -6,83 +13,55 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from athanor.notifications.github import post_questions_comment
-from athanor.notifications.telegram import edit_message_answered, send_question
+from athanor.notifications.channels import DashboardChannel, dispatch_to_channels
+from athanor.notifications.telegram import edit_message_answered
 
 if TYPE_CHECKING:
     from athanor.config import AthanorConfig
-    from athanor.storage.repositories.issue_inputs import IssueInputsRepository
 
 logger = structlog.get_logger(__name__)
 
 
 async def dispatch_questions(
-    inputs_repo: IssueInputsRepository,
+    questions: list[dict[str, Any]],
     issue: dict[str, Any],
-    job_id: str,
-    questions: list[tuple[str, str]],  # list of (input_id, question_text)
-    asking_node: str,
-    config: AthanorConfig,
+    *,
+    telegram_channel: Any | None = None,
+    github_comment_channel: Any | None = None,
 ) -> None:
-    """Send blocking questions to all configured channels.
+    """Fan dispatch out to every channel in ``issue.notification_channels``.
 
-    For Telegram: one message per question; stores telegram_message_id on each input.
-    For GitHub: one comment listing all questions.
-    Skips channels whose credentials are not configured.
+    The dashboard channel is always present (as a no-op — the dashboard reads
+    from ``issue_inputs`` directly). Telegram and GitHub-comment channels are
+    optional and must be injected by the caller; if not injected, those
+    channels are simply absent from the registry and a request for one logs a
+    warning.
+
+    Args:
+        questions: List of question dicts. Each must contain at least
+            ``question`` and ``input_id``; channels may consume additional
+            keys (``options``, ``asking_node``, ``importance``, ...).
+        issue: Issue dict with at least ``id``; channels may consume
+            ``repo``, ``github_number``, ``title``,
+            ``notification_channels``.
+        telegram_channel: Optional Telegram channel object conforming to the
+            :class:`NotificationChannel` protocol.
+        github_comment_channel: Optional GitHub-comment channel object
+            conforming to the :class:`NotificationChannel` protocol.
     """
-    issue_id: str = issue["id"]
-    repo: str = issue.get("repo") or ""
-    github_number: int | None = issue.get("github_number")
-
-    # --- Telegram ---
-    bot_token: str = getattr(config, "telegram_bot_token", "")
-    chat_id: str = getattr(config, "telegram_chat_id", "")
-    dashboard_url: str = getattr(config, "telegram_webhook_url", "") or ""
-
-    if bot_token and chat_id:
-        for input_id, question in questions:
-            try:
-                message_id = await send_question(
-                    bot_token=bot_token,
-                    chat_id=chat_id,
-                    issue_id=issue_id,
-                    input_id=input_id,
-                    question=question,
-                    asking_node=asking_node,
-                    repo=repo,
-                    dashboard_url=dashboard_url,
-                )
-                if message_id is not None:
-                    await inputs_repo.set_telegram_message_id(input_id, message_id)
-            except Exception:
-                logger.warning(
-                    "dispatch_telegram_failed",
-                    input_id=input_id,
-                    exc_info=True,
-                )
-    else:
-        logger.debug("dispatch_telegram_skipped", reason="not_configured")
-
-    # --- GitHub ---
-    github_token: str = getattr(config, "github_token", "")
-    if github_token and repo and github_number:
-        question_texts = [q for _, q in questions]
-        try:
-            await post_questions_comment(
-                github_token=github_token,
-                repo=repo,
-                issue_number=github_number,
-                questions=question_texts,
-                asking_node=asking_node,
-            )
-        except Exception:
-            logger.warning("dispatch_github_failed", issue_id=issue_id, exc_info=True)
-    else:
-        logger.debug("dispatch_github_skipped", reason="not_configured_or_no_github_issue")
+    requested = issue.get("notification_channels") or ["dashboard"]
+    registry: dict[str, Any] = {"dashboard": DashboardChannel()}
+    if telegram_channel is not None:
+        registry["telegram"] = telegram_channel
+    if github_comment_channel is not None:
+        registry["github"] = github_comment_channel
+    await dispatch_to_channels(
+        channels=requested, registry=registry, issue=issue, questions=questions
+    )
 
 
 async def notify_answer_cross_channel(
-    inputs_repo: IssueInputsRepository,
+    inputs_repo: Any,
     inp: dict[str, Any],
     answer: str,
     answered_by: str,

@@ -1151,16 +1151,24 @@ class IssueExecutor:
             # Best-effort notification dispatch
             issue = await self._issues.get(issue_id)
             if issue and self._config:
-                blocking_pairs = [
-                    (eq["input_id"], eq["question"]) for eq in enriched_questions if eq["importance"] == "blocking"
+                blocking_questions = [
+                    {
+                        "input_id": eq["input_id"],
+                        "question": eq["question"],
+                        "asking_node": asking_node,
+                        "importance": eq["importance"],
+                    }
+                    for eq in enriched_questions
+                    if eq["importance"] == "blocking"
                 ]
+                # Channels (telegram, github_comment) are injected by the API
+                # lifespan via app.state in Task 5; for now only the
+                # always-on dashboard no-op channel runs by default.
                 await dispatch_questions(
-                    inputs_repo=self._inputs,
-                    issue=issue,
-                    job_id=job_id,
-                    questions=blocking_pairs,
-                    asking_node=asking_node,
-                    config=self._config,
+                    blocking_questions,
+                    issue,
+                    telegram_channel=getattr(self, "_telegram_channel", None),
+                    github_comment_channel=getattr(self, "_github_comment_channel", None),
                 )
         else:
             # All auto-answerable — re-run triage with the answers folded into
