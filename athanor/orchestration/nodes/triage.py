@@ -39,10 +39,15 @@ Guidelines:
 - Always include reasoning
 
 Model selection (CRITICAL):
-- DEFAULT to "claude-sonnet-4-6" for the developer agent unless the task is genuinely trivial.
-- Use "claude-opus-4-6" for complex tasks: parsers, algorithms, multi-file refactors, security-sensitive code, tasks requiring deep reasoning.
-- ONLY use "claude-haiku-4-5" for trivial single-file changes like typos, log messages, simple config updates, or cosmetic CSS tweaks. NEVER use Haiku for new features, parsers, multi-file changes, or anything requiring careful design decisions.
-- For the review agent, use "claude-sonnet-4-6" by default (Haiku is acceptable only for trivial changes).
+- ALWAYS use "claude-sonnet-4-6" for the developer agent. Do NOT downshift to Haiku
+  even for "trivial" changes — Haiku misjudges code semantics often enough that the
+  cost savings aren't worth the rework loop. Sonnet is the floor for developer.
+- Use "claude-opus-4-6" for complex tasks: parsers, algorithms, multi-file refactors,
+  security-sensitive code, tasks requiring deep reasoning.
+- For the review agent, use "claude-sonnet-4-6" by default. Haiku is acceptable only
+  for one-line cosmetic reviews (typos, log message edits, comment fixes).
+- For the triage agent (yourself), the model is fixed at the orchestrator level —
+  don't try to override it.
 - When in doubt, prefer the more capable model.
 
 Set the chosen models in `pipeline_config.agent_models`:

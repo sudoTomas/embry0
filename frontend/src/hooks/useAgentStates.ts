@@ -47,10 +47,20 @@ export interface AgentState {
   model?: string;
 }
 
-/** Extract the node_id from any event variant that carries it. */
+/** Extract the node identifier from any event variant that carries it.
+ *
+ * The orchestrator's stream writer emits ``{"type": "node_started", "node": "init"}``
+ * (field is ``node``); a few graph-layer events use ``node_id`` instead. Accept
+ * both so the AgentCard pipeline view actually populates — without this, every
+ * node_started event slipped through silently and triage/developer/review all
+ * appeared as "Waiting" forever.
+ */
 function getNodeId(event: LogEvent): string {
   if ("node_id" in event && typeof event.node_id === "string") {
     return event.node_id;
+  }
+  if ("node" in event && typeof (event as { node?: unknown }).node === "string") {
+    return (event as { node: string }).node;
   }
   return "";
 }
