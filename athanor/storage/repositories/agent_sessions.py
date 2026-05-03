@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any
 
@@ -44,7 +43,7 @@ class AgentSessionsRepository:
             agent_type,
             mode,
             session_id,
-            json.dumps(messages) if messages is not None else None,
+            messages,
             session_blob,
         )
 
@@ -56,10 +55,7 @@ class AgentSessionsRepository:
         )
         if row is None:
             return None
-        d = dict(row)
-        if d.get("messages") is not None and isinstance(d["messages"], str):
-            d["messages"] = json.loads(d["messages"])
-        return d
+        return dict(row)
 
     async def delete(self, job_id: str, agent_type: str) -> None:
         await self._db.execute(
