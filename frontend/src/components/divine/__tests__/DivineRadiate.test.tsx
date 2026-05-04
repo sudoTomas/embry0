@@ -29,4 +29,24 @@ describe("DivineRadiate", () => {
     expect(strutGroup).not.toBeNull();
     expect(strutGroup?.querySelectorAll('path[data-strut="north-pole"]')).toHaveLength(5);
   });
+
+  it("renders a DivineOperation for the pinned operation when `operation` prop is set", () => {
+    const { container } = render(<DivineRadiate operation="ferment" />);
+    expect(container.querySelector(".divine-op-ferment-core")).not.toBeNull();
+    // Default strut-breath should NOT also render
+    expect(container.querySelector(".divine-radiate-struts")).toBeNull();
+  });
+
+  it("renders the first operation in the cycle when `operations` is set", () => {
+    const { container } = render(<DivineRadiate operations={["calcinate", "dissolve"]} />);
+    expect(container.querySelector(".divine-op-calcinate-struts")).not.toBeNull();
+  });
+
+  it("`operation` prop wins over `operations` when both are provided", () => {
+    const { container } = render(
+      <DivineRadiate operation="distill" operations={["calcinate", "dissolve"]} />,
+    );
+    expect(container.querySelector(".divine-op-distill-1")).not.toBeNull();
+    expect(container.querySelector(".divine-op-calcinate-struts")).toBeNull();
+  });
 });
