@@ -140,7 +140,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
     renameMutation.mutate({
       templateId: currentTemplateId,
       name: pipelineName,
-      graph: graph as unknown as Record<string, unknown>,
+      graph,
     });
   }, [currentTemplateId, pipelineName, serialize, renameMutation]);
 

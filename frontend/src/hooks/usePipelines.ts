@@ -37,7 +37,7 @@ export function useDeleteTemplate() {
 export function useRenameTemplate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (params: { templateId: string; name?: string; description?: string; graph?: Record<string, unknown> }) =>
+    mutationFn: (params: { templateId: string; name?: string; description?: string; graph?: PipelineGraph }) =>
       renameTemplate(params.templateId, params.name, params.description, params.graph),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["pipeline-templates"] }),
   });
