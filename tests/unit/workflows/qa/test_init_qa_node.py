@@ -34,18 +34,20 @@ async def test_init_qa_validates_qa_yaml_and_creates_network():
     )
 
     # Order of docker.run_cmd calls in init_qa_node (Mode 2 with proxy):
-    #   1. network create
-    #   2. network connect
-    #   3. git credential helper setup
-    #   4. git clone
-    #   5. cat .athanor/qa.yaml
-    #   6. write job.json (base64-encoded)
+    #   1. network create                    (init_qa_node)
+    #   2. network connect                   (prep_qa_sandbox_clone)
+    #   3. git credential helper setup       (prep_qa_sandbox_clone)
+    #   4. git clone                         (prep_qa_sandbox_clone)
+    #   5. git rev-parse HEAD                (prep_qa_sandbox_clone)
+    #   6. cat .athanor/qa.yaml              (init_qa_node)
+    #   7. write job.json (base64-encoded)   (prep_qa_sandbox_jobjson)
     docker.run_cmd = AsyncMock(
         side_effect=[
             "",  # network create
             "",  # network connect
             "",  # git credential helper setup
             "",  # git clone
+            "abc1234def5678\n",  # git rev-parse HEAD
             qa_yaml_text,  # cat qa.yaml
             "",  # write job.json
         ]
@@ -148,6 +150,9 @@ async def test_init_qa_validates_qa_yaml_and_creates_network():
     assert decoded["sandbox_token"] == _VALID_SANDBOX_TOKEN
     assert decoded["presign_refresh_url"].endswith("/api/v1/internal/qa/presign")
 
+    # head_sha is captured from git rev-parse HEAD and stored in state["qa"]
+    assert new_state["qa"]["head_sha"] == "abc1234def5678"
+
 
 @pytest.mark.asyncio
 async def test_init_qa_process_mode_skips_qa_net():
@@ -169,8 +174,9 @@ async def test_init_qa_process_mode_skips_qa_net():
         "frontend_url: 'http://localhost:3000'\n"
     )
     # In process mode with no git proxy: skip network create + connect AND
-    # skip credential setup. Only 3 calls: clone, cat qa.yaml, write job.json.
-    docker.run_cmd = AsyncMock(side_effect=["", qa_yaml_text, ""])
+    # skip credential setup. 4 calls: clone, git rev-parse HEAD, cat qa.yaml,
+    # write job.json.
+    docker.run_cmd = AsyncMock(side_effect=["", "abc1234def5678\n", qa_yaml_text, ""])
 
     sandbox_mgr = AsyncMock()
     sandbox_mgr.create = AsyncMock(return_value=("c2", "tok2"))

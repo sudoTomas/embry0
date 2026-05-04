@@ -13,9 +13,6 @@ Phase 1.5 architecture: configurable carries TWO MinIO clients —
 
 from __future__ import annotations
 
-import base64
-import json
-import shlex
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -150,83 +147,36 @@ async def init_qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
             env=env,
         )
 
-        # 4. (Mode 2) attach sandbox to qa-net so it can reach app stack by DNS.
-        if is_dind:
-            await docker.run_cmd(
-                base + ["network", "connect", qa_net, container_id],
-                timeout=10,
-            )
+        # 4–5. Network attach, git creds, clone, capture HEAD sha.
+        from athanor.workflows.qa._subtask_prep import (
+            prep_qa_sandbox_clone,
+            prep_qa_sandbox_jobjson,
+        )
 
-        # 4b. Set up git credential helper so clone (and any later git
-        # operations) flow through the credential proxy. Without this,
-        # private repos fail to clone.
-        if git_proxy_url:
-            from athanor.sandbox.github.git_ops import build_sandbox_credential_config_cmd
-
-            cred_cmd = build_sandbox_credential_config_cmd(git_proxy_url, sandbox_token)
-            setup_cmd = [
-                "bash",
-                "-c",
-                f"{cred_cmd} && "
-                'git config --global user.email "qa-agent@athanor.local" && '
-                'git config --global user.name "Athanor QA"',
-            ]
-            await docker.run_cmd(
-                docker.build_exec_cmd(container_id, setup_cmd),
-                timeout=10,
-            )
-        else:
-            logger.warning(
-                "qa_git_proxy_unavailable",
-                job_id=job_id,
-                msg="No git proxy URL — clone may fail for private repos",
-            )
-
-        # 5. Clone the target repo. shlex.quote on branch/repo prevents shell
-        # metacharacter injection from API input.
-        clone_cmd = [
-            "bash",
-            "-c",
-            (
-                f"set -e && git clone --depth=50 --branch {shlex.quote(branch)} "
-                f"https://github.com/{shlex.quote(repo)}.git /workspace && "
-                "cd /workspace && mkdir -p .qa/logs .qa/pids"
-            ),
-        ]
-        await docker.run_cmd(docker.build_exec_cmd(container_id, clone_cmd), timeout=120)
+        cloned = await prep_qa_sandbox_clone(
+            docker=docker,
+            proxy_mgr=proxy_mgr,
+            container_id=container_id,
+            sandbox_token=sandbox_token,
+            job_id=job_id,
+            repo=repo,
+            branch=branch,
+            is_dind=is_dind,
+            qa_net=qa_net,
+            base=base,
+        )
 
         # 6. Read + parse .athanor/qa.yaml from inside the sandbox.
+        # (Stays here — sub-task acquire_sandbox_node has its own qa.yaml dict
+        # already and does not go through this path.)
         yaml_text = await docker.run_cmd(
             docker.build_exec_cmd(container_id, ["cat", "/workspace/.athanor/qa.yaml"]),
             timeout=10,
         )
         qa_yaml = parse_qa_yaml(yaml_text)
 
-        # 7. Register sandbox token with the QA presign registry.
-        token_registry.register(sandbox_token, job_id=job_id, attempt_n=attempt_n)
-
-        # 8. Mint presigned URLs via the SANDBOX-FACING client (Phase 1.5).
-        # URLs are signed for endpoint=minio-proxy:9100 so the signature validates
-        # when the sandbox makes the request through that proxy.
-        # Only the canonical end-of-run artifacts are pre-minted here; anything
-        # else (per-criterion screenshots, traces, per-service logs) the agent
-        # mints on demand via the presign_refresh_url.
+        # 7–9. Register token, mint presigned URLs, write job.json.
         artifact_prefix = f"{job_id}/{attempt_n}/"
-        presign_paths = ["result.json", "logs/full.log"]
-        presigned: dict[str, str] = {}
-        for p in presign_paths:
-            url = await minio_sandbox.presign_put(
-                "qa-artifacts",
-                artifact_prefix + p,
-                expires_seconds=21600,
-            )
-            presigned[p] = url
-
-        # 9. Drop /workspace/.qa/job.json into the sandbox.
-        # Refresh URL points at presign-proxy in DinD (sandbox-restricted), NOT at
-        # the orchestrator directly — sandboxes can't reach the host backend network.
-        # Use base64 round-trip to avoid heredoc-injection from acceptance_criteria
-        # or any other string field that might contain shell-active characters.
         job_json = {
             "schema_version": 1,
             "job_id": job_id,
@@ -236,17 +186,20 @@ async def init_qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
             "acceptance_criteria": qa.get("acceptance_criteria") or qa_yaml.acceptance_criteria_template,
             "changed_files": qa.get("changed_files", []),
             "frontend_url": qa_yaml.frontend_url,
-            "artifact_uploads": presigned,
             "presign_refresh_url": "http://presign-proxy:9104/api/v1/internal/qa/presign",
             "sandbox_token": sandbox_token,
         }
-        encoded = base64.b64encode(json.dumps(job_json).encode()).decode()
-        write_cmd = [
-            "bash",
-            "-c",
-            f"echo '{encoded}' | base64 -d > /workspace/.qa/job.json",
-        ]
-        await docker.run_cmd(docker.build_exec_cmd(container_id, write_cmd), timeout=10)
+        await prep_qa_sandbox_jobjson(
+            docker=docker,
+            minio_sandbox=minio_sandbox,
+            token_registry=token_registry,
+            container_id=container_id,
+            sandbox_token=sandbox_token,
+            job_id=job_id,
+            attempt_n=attempt_n,
+            artifact_prefix=artifact_prefix,
+            job_json=job_json,
+        )
 
         # 10. Update state with the new attempt.
         qa.setdefault("attempts", []).append(
@@ -266,6 +219,7 @@ async def init_qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
         qa["sandbox_token"] = sandbox_token
         qa["qa_yaml_raw"] = yaml_text
         qa["qa_yaml_parsed"] = qa_yaml.model_dump()
+        qa["head_sha"] = cloned.head_sha
         state["qa"] = qa
         # run_agent_node (used by qa_node) reads state["sandbox_container_id"] to
         # know which container to docker exec into. Without this, it would pass
