@@ -51,5 +51,32 @@ class NpmWorkspacesTurboProvider:
         )
 
     def validate(self, apps_declared_in_qa_config: list[str]) -> list[str]:
-        # Stub for Task 7. Always-clean for now so discover tests pass.
-        return []
+        """Cross-check qa.yaml `apps:` keys against the workspace.
+
+        Returns mixed list:
+          - "error: app 'X' declared in qa.yaml but not found in workspace"
+          - "warning: app 'Y' present in workspace but missing from qa.yaml apps:"
+
+        Callers distinguish severity by the lowercase prefix.
+        """
+        apps, _ = self.discover()
+        workspace_app_names = {a.name for a in apps}
+        declared = set(apps_declared_in_qa_config)
+
+        messages: list[str] = []
+
+        # Errors: declared but not present.
+        for missing in sorted(declared - workspace_app_names):
+            messages.append(
+                f"error: app {missing!r} declared in qa.yaml apps: but not found "
+                f"in workspace (apps_glob={self.config.apps_glob!r})"
+            )
+
+        # Warnings: present but not declared. Athanor will not QA these.
+        for orphan in sorted(workspace_app_names - declared):
+            messages.append(
+                f"warning: app {orphan!r} present in workspace but missing from "
+                f"qa.yaml apps: — athanor will not QA it"
+            )
+
+        return messages
