@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router";
 import { ArrowLeft, Info } from "lucide-react";
+import { OperationGlyph } from "@/components/divine/OperationGlyph";
+import { OPERATION_NUMERAL, OPERATION_ELEMENT } from "@/components/divine/operations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -165,9 +167,17 @@ export function SandboxFormPage() {
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold">
-            {isEditMode ? `Edit "${name}"` : "New Sandbox Profile"}
-          </h1>
+          <span className="flex items-center justify-center w-9 h-9 shrink-0">
+            <OperationGlyph operation="ferment" size={36} titled />
+          </span>
+          <div className="flex flex-col">
+            <h1 className="text-2xl font-bold leading-tight">
+              {isEditMode ? `Edit "${name}"` : "New Sandbox Profile"}
+            </h1>
+            <span className="text-[10px] uppercase tracking-[0.18em] text-primary/65 font-mono mt-0.5">
+              Op {OPERATION_NUMERAL.ferment} · ferment · {OPERATION_ELEMENT.ferment}
+            </span>
+          </div>
         </div>
         <div className="flex gap-2">
           <Link to="/sandboxes">
