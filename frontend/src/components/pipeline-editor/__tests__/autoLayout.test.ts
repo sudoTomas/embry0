@@ -36,16 +36,17 @@ describe("autoLayout — LR fallback (dagre)", () => {
   });
 
   it("ignores feedback edges in dagre layout", () => {
-    const nodes = [node("a", "explorer"), node("b", "explorer"), node("c", "output")];
+    // Two nodes with a real edge + a feedback edge between them.
+    // Should fall through to LR (no canonical cycle, real edges exist,
+    // nodes < 3) and the feedback edge must not pull positions back.
+    const nodes = [node("a", "explorer"), node("b", "explorer")];
     const edges: Edge[] = [
       { id: "e1", source: "a", target: "b" },
-      { id: "e2", source: "b", target: "c" },
-      { id: "e3", source: "c", target: "a", type: "feedbackEdge" },
+      { id: "e2", source: "b", target: "a", type: "feedbackEdge" },
     ];
     const result = autoLayout(nodes, edges, "LR");
     const xs = Object.fromEntries(result.nodes.map((n) => [n.id, n.position.x]));
     expect(xs.b).toBeGreaterThan(xs.a);
-    expect(xs.c).toBeGreaterThan(xs.b);
   });
 
   it("returns existing edges unchanged when falling through to dagre", () => {
@@ -75,7 +76,8 @@ describe("autoLayout — circular dispatch", () => {
     expect(result.edges[0].data?.inferred).toBe(true);
   });
 
-  it("falls through to LR when only one cardinal stage type is present", () => {
+  it("falls through to LR when only one cardinal stage type is present AND a real edge exists", () => {
+    // 2 nodes + a real edge = clean DAG; LR is meaningful → use LR.
     const nodes = [node("d1", "developer"), node("d2", "developer")];
     const edges: Edge[] = [{ id: "e1", source: "d1", target: "d2" }];
     const result = autoLayout(nodes, edges, "LR");
@@ -83,6 +85,26 @@ describe("autoLayout — circular dispatch", () => {
     const d2 = result.nodes.find((n) => n.id === "d2")!;
     expect(d2.position.x).toBeGreaterThan(d1.position.x);
     expect(result.edges).toEqual(edges);
+  });
+
+  it("uses circular when the same-stage nodes are unconnected (would degenerate in dagre)", () => {
+    // Reported bug: 2 developers + START + END with no edges produced a vertical
+    // column. Circular + auto-connect chain is the intended behavior.
+    const nodes = [
+      node("d1", "developer"),
+      node("d2", "developer"),
+      { id: "start", position: { x: 0, y: 0 }, data: { label: "Start" }, type: "start" },
+      { id: "end", position: { x: 0, y: 0 }, data: { label: "End" }, type: "end" },
+    ];
+    const result = autoLayout(nodes, []);
+    // 3 inferred chain edges should be created
+    expect(result.edges).toHaveLength(3);
+    expect(result.edges.every((e) => e.data?.inferred === true)).toBe(true);
+    // Nodes spread on a circle (not all in a vertical column)
+    const xs = result.nodes.map((n) => n.position.x);
+    const ys = result.nodes.map((n) => n.position.y);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(100);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(100);
   });
 });
 

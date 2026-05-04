@@ -1,6 +1,6 @@
 import dagre from "@dagrejs/dagre";
 import type { Edge, Node } from "@xyflow/react";
-import { canonicalCycleDetected, circularLayout } from "./circularLayout";
+import { shouldUseCircular, circularLayout } from "./circularLayout";
 
 const NODE_WIDTH = 96;
 const NODE_HEIGHT = 96;
@@ -32,7 +32,7 @@ export function autoLayout(
 ): AutoLayoutResult {
   if (nodes.length === 0) return { nodes: [], edges };
 
-  if (canonicalCycleDetected(nodes)) {
+  if (shouldUseCircular(nodes, edges)) {
     return circularLayout(nodes, edges);
   }
 

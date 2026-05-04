@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Node } from "@xyflow/react";
-import { circularLayout, canonicalCycleDetected, CIRCLE_RADIUS } from "../circularLayout";
+import type { Edge, Node } from "@xyflow/react";
+import { circularLayout, canonicalCycleDetected, shouldUseCircular, CIRCLE_RADIUS } from "../circularLayout";
 
 const node = (id: string, agentType: string): Node => ({
   id,
@@ -140,5 +140,127 @@ describe("circularLayout — placement", () => {
     const result = circularLayout([original], []);
     expect(original.position).toEqual({ x: 999, y: 999 });
     expect(result.nodes[0]).not.toBe(original);
+  });
+});
+
+describe("shouldUseCircular", () => {
+  it("returns false for empty graph or single node", () => {
+    expect(shouldUseCircular([], [])).toBe(false);
+    expect(shouldUseCircular([node("a", "developer")], [])).toBe(false);
+  });
+
+  it("returns true when canonical cycle is detected", () => {
+    const nodes = [node("t", "triage"), node("d", "developer")];
+    expect(shouldUseCircular(nodes, [])).toBe(true);
+  });
+
+  it("returns true for ≥2 nodes with no real edges (dagre would degenerate)", () => {
+    const nodes = [node("d1", "developer"), node("d2", "developer")];
+    expect(shouldUseCircular(nodes, [])).toBe(true);
+  });
+
+  it("ignores feedback edges when deciding", () => {
+    const nodes = [node("d1", "developer"), node("d2", "developer")];
+    const feedback: Edge[] = [
+      { id: "fb", source: "d1", target: "d2", type: "feedbackEdge" },
+    ];
+    // No real edges → still circular
+    expect(shouldUseCircular(nodes, feedback)).toBe(true);
+  });
+
+  it("returns true for ≥3 nodes even when sparse edges exist (prefer circular over LR)", () => {
+    const nodes = [
+      node("a", "developer"),
+      node("b", "developer"),
+      node("c", "developer"),
+    ];
+    const edges: Edge[] = [{ id: "e", source: "a", target: "b" }];
+    expect(shouldUseCircular(nodes, edges)).toBe(true);
+  });
+
+  it("returns false for 2 nodes with a real edge between them (clean LR works)", () => {
+    const nodes = [node("a", "developer"), node("b", "developer")];
+    const edges: Edge[] = [{ id: "e", source: "a", target: "b" }];
+    expect(shouldUseCircular(nodes, edges)).toBe(false);
+  });
+});
+
+describe("circularLayout — uniform fallback (no canonical cycle)", () => {
+  const startNode = (id: string): Node => ({
+    id,
+    position: { x: 0, y: 0 },
+    data: { label: id },
+    type: "start",
+  });
+  const endNode = (id: string): Node => ({
+    id,
+    position: { x: 0, y: 0 },
+    data: { label: id },
+    type: "end",
+  });
+
+  it("distributes 4 unconnected nodes evenly around the circle starting at top", () => {
+    const nodes = [
+      node("d1", "developer"),
+      node("d2", "developer"),
+      startNode("start"),
+      endNode("end"),
+    ];
+    const result = circularLayout(nodes, []);
+    expect(result.nodes).toHaveLength(4);
+
+    // Sort order: start, dev1, dev2 (alphabetical by id), end
+    // Placed at: N (-90°), E (0°), S (90°), W (180°)
+    const positions = Object.fromEntries(result.nodes.map((n) => [n.id, n.position]));
+    expect(positions.start.y).toBeLessThan(0); // N
+    expect(positions.start.x).toBeCloseTo(0, 0);
+    expect(positions.d1.x).toBeGreaterThan(0); // E
+    expect(positions.d1.y).toBeCloseTo(0, 0);
+    expect(positions.d2.y).toBeGreaterThan(0); // S
+    expect(positions.end.x).toBeLessThan(0); // W
+  });
+
+  it("auto-connects 4 unconnected nodes as a chain (start → mid → mid → end)", () => {
+    const nodes = [
+      node("d1", "developer"),
+      node("d2", "developer"),
+      startNode("start"),
+      endNode("end"),
+    ];
+    const result = circularLayout(nodes, []);
+    // 3 inferred edges in chain order: start→d1, d1→d2, d2→end
+    expect(result.edges).toHaveLength(3);
+    const pairs = result.edges.map((e) => `${e.source}->${e.target}`);
+    expect(pairs).toEqual(["start->d1", "d1->d2", "d2->end"]);
+    for (const edge of result.edges) {
+      expect(edge.data?.inferred).toBe(true);
+    }
+  });
+
+  it("does not duplicate edges when chain already exists", () => {
+    const nodes = [
+      node("d1", "developer"),
+      node("d2", "developer"),
+    ];
+    const existing: Edge[] = [{ id: "e1", source: "d1", target: "d2" }];
+    const result = circularLayout(nodes, existing);
+    expect(result.edges).toHaveLength(1);
+    expect(result.edges[0]).toBe(existing[0]);
+  });
+
+  it("preserves existing edges and adds only the missing chain links", () => {
+    const nodes = [
+      node("d1", "developer"),
+      node("d2", "developer"),
+      node("d3", "developer"),
+    ];
+    const existing: Edge[] = [{ id: "e1", source: "d1", target: "d2" }];
+    const result = circularLayout(nodes, existing);
+    // Existing d1→d2 preserved; d2→d3 inferred
+    expect(result.edges).toHaveLength(2);
+    expect(result.edges.find((e) => e.source === "d1" && e.target === "d2")).toBe(existing[0]);
+    const newEdge = result.edges.find((e) => e.id?.startsWith("inferred-chain-"));
+    expect(newEdge?.source).toBe("d2");
+    expect(newEdge?.target).toBe("d3");
   });
 });

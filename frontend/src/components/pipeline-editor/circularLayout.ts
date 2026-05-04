@@ -48,10 +48,104 @@ export function canonicalCycleDetected(nodes: Node[]): boolean {
 }
 
 /**
+ * Decides whether circular layout should be used over LR dagre.
+ *
+ * User preference: prefer circular > horizontal > vertical. Circular is
+ * the default for any non-trivial graph. We only fall through to LR
+ * dagre when there's a meaningful DAG (real edges driving rank progression);
+ * dagre with no edges degenerates to a single vertical column, which is
+ * exactly what we want to avoid.
+ *
+ * Triggers:
+ *   1. The canonical 4-stage cardinal cycle is present (handled by the
+ *      cardinal-circular variant in `circularLayout`).
+ *   2. Multi-node graph with no real (non-feedback) edges — dagre would
+ *      degenerate; circular is unambiguously better.
+ *   3. ≥3 nodes total — circular reads better than a long LR column for
+ *      small graphs and matches the user's stated preference for circular
+ *      over horizontal.
+ */
+export function shouldUseCircular(nodes: Node[], edges: Edge[]): boolean {
+  if (nodes.length < 2) return false;
+  if (canonicalCycleDetected(nodes)) return true;
+  const realEdges = edges.filter((e) => e.type !== "feedbackEdge");
+  if (realEdges.length === 0) return true;
+  if (nodes.length >= 3) return true;
+  return false;
+}
+
+/**
+ * Distributes nodes evenly around a single circle starting at top
+ * (north) going clockwise, then auto-connects them in chain order.
+ * Used when the graph doesn't fit the canonical 4-stage cardinal
+ * arrangement but circular is still the right shape (e.g., multiple
+ * unconnected agents the user just dragged onto the canvas).
+ *
+ * Sort order for placement: START sentinel(s) first, then non-sentinel
+ * nodes by id, then END sentinel(s) last. The chain auto-connects
+ * sequential pairs unless an edge already exists between them.
+ */
+function uniformCircularLayout(
+  nodes: Node[],
+  edges: Edge[],
+): { nodes: Node[]; edges: Edge[] } {
+  if (nodes.length === 0) return { nodes: [], edges };
+
+  const starts: Node[] = [];
+  const ends: Node[] = [];
+  const middle: Node[] = [];
+  for (const n of nodes) {
+    const sentinel = isSentinel(n);
+    if (sentinel === "start") starts.push(n);
+    else if (sentinel === "end") ends.push(n);
+    else middle.push(n);
+  }
+  middle.sort((a, b) => a.id.localeCompare(b.id));
+  const ordered = [...starts, ...middle, ...ends];
+
+  const n = ordered.length;
+  const positioned: Node[] = ordered.map((node, i) => {
+    // Place starting at top (N = -π/2) going clockwise
+    const angle = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+    return {
+      ...node,
+      position: {
+        x: Math.cos(angle) * CIRCLE_RADIUS,
+        y: Math.sin(angle) * CIRCLE_RADIUS,
+      },
+    };
+  });
+
+  // Auto-connect: chain ordered nodes. Skip if an edge between the
+  // pair already exists in either direction.
+  const inferred: Edge[] = [];
+  const existingPairs = new Set(
+    edges.flatMap((e) => [`${e.source}->${e.target}`, `${e.target}->${e.source}`]),
+  );
+  for (let i = 0; i < ordered.length - 1; i++) {
+    const src = ordered[i].id;
+    const tgt = ordered[i + 1].id;
+    if (existingPairs.has(`${src}->${tgt}`)) continue;
+    inferred.push({
+      id: `inferred-chain-${src}-${tgt}`,
+      source: src,
+      target: tgt,
+      data: { inferred: true },
+    });
+  }
+
+  return { nodes: positioned, edges: [...edges, ...inferred] };
+}
+
+/**
  * Place nodes around a circle whose cardinal points (N/E/S/W) match the
  * canonical 4-stage pipeline (triage / develop / validate / qa). Non-cardinal
  * agents go on an outer ring at 1.5×R; Start/End sentinels sit on the equator
  * just outside the circle.
+ *
+ * If no canonical cycle is present, dispatches to `uniformCircularLayout`
+ * which spreads nodes evenly around the circle and auto-connects them
+ * as a chain.
  *
  * Also infers any missing edges in the canonical cycle order. Returns
  * { nodes, edges } where edges = existing + inferred (additive).
@@ -62,6 +156,9 @@ export function circularLayout(
   nodes: Node[],
   edges: Edge[],
 ): { nodes: Node[]; edges: Edge[] } {
+  if (!canonicalCycleDetected(nodes)) {
+    return uniformCircularLayout(nodes, edges);
+  }
   const stagedCount: Record<CardinalStage, number> = {
     triage: 0,
     develop: 0,
