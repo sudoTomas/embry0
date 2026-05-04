@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable  # noqa: F401  # used in Task 2 (WorkspaceProvider)
+from typing import Protocol, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,3 +66,45 @@ class WorkspaceProviderError(Exception):
 
     Distinct from `pydantic.ValidationError` (config-shape errors).
     """
+
+
+@runtime_checkable
+class WorkspaceProvider(Protocol):
+    """Contract every workspace_provider implementation must satisfy.
+
+    Implementations register via the `athanor.workspace_providers` entry-point
+    group (see registry.py). The contract is intentionally narrow: workspace
+    topology only — boot/build commands live in qa.yaml per-app.
+    """
+
+    name: str
+    """Class-level registry key, e.g. 'npm-workspaces-turbo'."""
+
+    def __init__(self, repo_root: Path, config: dict) -> None: ...
+
+    def discover(self) -> tuple[list[WorkspaceApp], list[WorkspacePackage]]:
+        """Enumerate every app and package in the workspace.
+
+        Apps appear in BOTH return values (once as `WorkspaceApp`, once as
+        `WorkspacePackage(is_app=True)`). Packages that are not runnable
+        appear only in the second list with `is_app=False`.
+        """
+
+    def affected(
+        self,
+        changed_files: list[Path],
+        no_cascade_packages: frozenset[str],
+    ) -> AffectedSet:
+        """Compute the affected set from a diff.
+
+        `changed_files` are repo-root-relative paths.
+        `no_cascade_packages` are package_names whose changes do NOT expand
+        the affected set (per-package opt-out from qa.yaml).
+        """
+
+    def validate(self, apps_declared_in_qa_config: list[str]) -> list[str]:
+        """Cross-check the user's qa.yaml `apps:` keys against reality.
+
+        Returns a list of human-readable warning/error strings. Empty list
+        means clean. Used by the orchestrator to fail-fast at run start.
+        """
