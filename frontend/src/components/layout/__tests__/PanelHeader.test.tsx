@@ -25,4 +25,26 @@ describe("PanelHeader", () => {
     const { container } = render(<PanelHeader title="x" />);
     expect(container.querySelector(".divine-element")).not.toBeNull();
   });
+
+  it("renders the equator-only lead glyph by default (no operation prop)", () => {
+    const { container } = render(<PanelHeader title="x" />);
+    // Default lead = ring + equator line, NO operation-specific frame elements
+    const cardinalDots = container.querySelectorAll('svg circle[r="2.4"]');
+    expect(cardinalDots.length).toBe(0);
+  });
+
+  it("swaps the lead glyph for an OperationGlyph when operation prop is set", () => {
+    const { container } = render(<PanelHeader title="x" operation="distill" />);
+    // OperationGlyph renders cardinal dots; the default lead does not
+    const cardinalDots = container.querySelectorAll('svg circle[r="2.4"]');
+    expect(cardinalDots.length).toBeGreaterThanOrEqual(4);
+    // Distill renders three concentric inner rings
+    const distillRings = container.querySelectorAll('svg circle[r="6"], svg circle[r="11"], svg circle[r="16"]');
+    expect(distillRings.length).toBe(3);
+  });
+
+  it("includes an aria title on the operation glyph for screen readers", () => {
+    const { container } = render(<PanelHeader title="x" operation="ferment" />);
+    expect(container.querySelector("title")?.textContent).toMatch(/ferment/i);
+  });
 });
