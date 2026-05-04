@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, ExternalLink, Clock, DollarSign, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
-import { jobToOperation } from "@/components/divine/operations";
+import { DivineRipple } from "@/components/divine/DivineRipple";
+import { jobToOperation, shouldFireCompletionFlare } from "@/components/divine/operations";
 import { Button } from "@/components/ui/Button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { useJob } from "@/hooks/useJobs";
@@ -74,6 +75,19 @@ export function JobDetailPage() {
 
   const currentOperation = jobToOperation(agents);
 
+  // Completion flare: increment flareKey when job.status transitions into a
+  // terminal-success state (completed | pr_merged). The DivineRipple is keyed
+  // on it so each transition mounts a fresh one-shot. First mount of an
+  // already-complete job is suppressed by shouldFireCompletionFlare.
+  const [flareKey, setFlareKey] = useState(0);
+  const prevStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (shouldFireCompletionFlare(prevStatusRef.current, job?.status)) {
+      setFlareKey((k) => k + 1);
+    }
+    prevStatusRef.current = job?.status ?? null;
+  }, [job?.status]);
+
   if (isError) return <div className="p-8 text-center text-red-400">Failed to load job</div>;
   if (isLoading || !job) return <div className="p-8 text-center text-white/40">Loading...</div>;
 
@@ -107,8 +121,13 @@ export function JobDetailPage() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </Link>
-        <span className="flex items-center justify-center w-8 h-8 shrink-0">
+        <span className="relative flex items-center justify-center w-8 h-8 shrink-0">
           <OperationGlyph operation={currentOperation} size={28} titled />
+          {flareKey > 0 && (
+            <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <DivineRipple key={flareKey} size={64} />
+            </span>
+          )}
         </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">

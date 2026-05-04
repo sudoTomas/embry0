@@ -5,6 +5,7 @@ import {
   OPERATION_NUMERAL,
   agentTypeToOperation,
   jobToOperation,
+  shouldFireCompletionFlare,
   type Operation,
 } from "../operations";
 
@@ -127,5 +128,42 @@ describe("jobToOperation", () => {
     expect(
       jobToOperation([{ agent: "custom-agent", status: "running" }]),
     ).toBe("ferment");
+  });
+});
+
+describe("shouldFireCompletionFlare", () => {
+  it("fires when running flips to completed", () => {
+    expect(shouldFireCompletionFlare("running", "completed")).toBe(true);
+  });
+
+  it("fires when running flips to pr_merged", () => {
+    expect(shouldFireCompletionFlare("running", "pr_merged")).toBe(true);
+  });
+
+  it("does NOT fire on first mount of an already-complete job", () => {
+    expect(shouldFireCompletionFlare(null, "completed")).toBe(false);
+    expect(shouldFireCompletionFlare(undefined, "pr_merged")).toBe(false);
+  });
+
+  it("does NOT fire when status hasn't actually changed", () => {
+    expect(shouldFireCompletionFlare("completed", "completed")).toBe(false);
+    expect(shouldFireCompletionFlare("pr_merged", "pr_merged")).toBe(false);
+  });
+
+  it("does NOT fire on failure terminals (rule #5: operator-critical)", () => {
+    expect(shouldFireCompletionFlare("running", "failed")).toBe(false);
+    expect(shouldFireCompletionFlare("running", "cancelled")).toBe(false);
+    expect(shouldFireCompletionFlare("running", "expired")).toBe(false);
+    expect(shouldFireCompletionFlare("running", "pr_closed")).toBe(false);
+  });
+
+  it("does NOT fire on intermediate transitions", () => {
+    expect(shouldFireCompletionFlare("running", "awaiting_input")).toBe(false);
+    expect(shouldFireCompletionFlare("pending", "running")).toBe(false);
+    expect(shouldFireCompletionFlare("awaiting_input", "running")).toBe(false);
+  });
+
+  it("fires when awaiting_input flips to completed (resume → success)", () => {
+    expect(shouldFireCompletionFlare("awaiting_input", "completed")).toBe(true);
   });
 });

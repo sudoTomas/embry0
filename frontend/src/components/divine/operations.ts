@@ -161,6 +161,29 @@ export function agentTypeToOperation(agentType: string | undefined | null): Oper
 }
 
 /**
+ * Decide whether a job's status transition should fire a completion flare.
+ *
+ * Returns true iff:
+ *   - both `prev` and `curr` are present (we have a real transition, not a
+ *     first-mount of an already-complete job, which would be noise),
+ *   - `prev !== curr` (status actually flipped this render), and
+ *   - `curr` is a terminal-success state (`completed` or `pr_merged`).
+ *
+ * Failure terminals (`failed` / `cancelled` / `expired` / `pr_closed`) are
+ * deliberately not success — divine layer rule #5 keeps flourishes off
+ * operator-critical paths. See
+ * `docs/superpowers/specs/2026-05-04-divine-completion-flare-design.md`.
+ */
+export function shouldFireCompletionFlare(
+  prev: string | null | undefined,
+  curr: string | null | undefined,
+): boolean {
+  if (!prev || !curr) return false;
+  if (prev === curr) return false;
+  return curr === "completed" || curr === "pr_merged";
+}
+
+/**
  * Pick the operation for a job header based on its current pipeline state.
  *
  * The glyph reflects WHERE in the magnum opus the job is right now:
