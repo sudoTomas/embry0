@@ -100,6 +100,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
     setSelectedNode,
     setSelectedEdge,
     setNodes,
+    setEdges,
     serialize,
     loadGraph,
     updateNodeData,
@@ -142,8 +143,10 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
   }, [currentTemplateId, pipelineName, serialize, renameMutation]);
 
   const handleAutoArrange = useCallback(() => {
-    setNodes((current) => autoLayout(current, edges));
-  }, [edges, setNodes]);
+    const result = autoLayout(nodes, edges);
+    setNodes(result.nodes);
+    setEdges(result.edges);
+  }, [nodes, edges, setNodes, setEdges]);
 
   const handleSaveAs = useCallback(() => {
     const name = window.prompt("Template name:", pipelineName);

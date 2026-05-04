@@ -1,24 +1,45 @@
-import dagre from '@dagrejs/dagre';
-import type { Edge, Node } from '@xyflow/react';
+import dagre from "@dagrejs/dagre";
+import type { Edge, Node } from "@xyflow/react";
+import { canonicalCycleDetected, circularLayout } from "./circularLayout";
 
-const NODE_WIDTH = 240;
-const NODE_HEIGHT = 80;
+const NODE_WIDTH = 96;
+const NODE_HEIGHT = 96;
+
+export type AutoLayoutResult = {
+  nodes: Node[];
+  edges: Edge[];
+};
 
 /**
- * Re-position React Flow nodes into a clean directed-graph layout via dagre.
+ * Re-position React Flow nodes into a clean layout.
  *
- * Pure function: returns a new node array; the input is not mutated.
- * Edges with type === 'feedbackEdge' are excluded from the layout calculation
- * (so cycles do not collapse the main flow), but the edges array itself is
- * not modified — the caller renders all edges as before.
+ * Dispatches to `circularLayout` when the canonical 4-stage pipeline cycle
+ * is detected (≥2 distinct cardinal stages — triage/develop/validate/qa);
+ * otherwise falls back to dagre LR layout.
+ *
+ * Returns { nodes, edges } because the circular path may infer new edges in
+ * the canonical pipeline order. The dagre fallback returns the existing
+ * edges unchanged.
+ *
+ * Pure: input arrays are not mutated.
+ *
+ * See `docs/superpowers/specs/2026-05-04-auto-arrange-circular-design.md`.
  */
 export function autoLayout(
   nodes: Node[],
   edges: Edge[],
-  direction: 'LR' | 'TB' = 'LR',
-): Node[] {
-  if (nodes.length === 0) return [];
+  direction: "LR" | "TB" = "LR",
+): AutoLayoutResult {
+  if (nodes.length === 0) return { nodes: [], edges };
 
+  if (canonicalCycleDetected(nodes)) {
+    return circularLayout(nodes, edges);
+  }
+
+  return { nodes: dagreLayout(nodes, edges, direction), edges };
+}
+
+function dagreLayout(nodes: Node[], edges: Edge[], direction: "LR" | "TB"): Node[] {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: direction, nodesep: 60, ranksep: 100 });
@@ -27,7 +48,7 @@ export function autoLayout(
     g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
   }
   for (const e of edges) {
-    if (e.type === 'feedbackEdge') continue;
+    if (e.type === "feedbackEdge") continue;
     g.setEdge(e.source, e.target);
   }
 
