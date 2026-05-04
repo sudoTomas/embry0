@@ -1,6 +1,14 @@
 # Stage 1: Build the React SPA
 FROM node:20.18-alpine AS build
 
+# VITE_* values are inlined into the JS bundle by Vite at build time. The
+# compose stack passes this from `${VITE_API_KEY:-${API_KEY:-}}` so a single
+# API_KEY in the root .env covers both backend auth and frontend bundling
+# without a separate frontend/.env file. Empty is fine in dev (the backend
+# short-circuits auth when API_KEY is empty).
+ARG VITE_API_KEY=""
+ENV VITE_API_KEY=$VITE_API_KEY
+
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci

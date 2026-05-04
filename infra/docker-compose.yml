@@ -5,6 +5,11 @@ services:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      args:
+        # VITE_API_KEY must match the backend API_KEY. Defaults to API_KEY so a
+        # single value in the root .env covers both surfaces. Override by
+        # setting VITE_API_KEY explicitly if you want them to differ.
+        VITE_API_KEY: "${VITE_API_KEY:-${API_KEY:-}}"
     container_name: athanor-frontend
     ports:
       - "${PROD_PORT:-8200}:80"
