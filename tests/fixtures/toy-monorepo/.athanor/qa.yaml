@@ -1,0 +1,38 @@
+version: 2
+
+workspace_provider:
+  type: npm-workspaces-turbo
+  config:
+    affected_filter: "[origin/main]"
+    turbo_config_path: turbo.json
+    apps_glob: apps/*
+    packages_glob: packages/*
+
+defaults:
+  mode: process
+  sandbox_profile: slim
+  ready_checks:
+    - http: "http://localhost:${port}"
+      expect_status: 200
+  boot_timeout_seconds: 60
+  acceptance_criteria_template:
+    - "page loads with no console errors"
+
+qa_required: auto
+parallelism:
+  max_concurrent_apps: 2
+
+apps:
+  hub:
+    boot_command: "PORT=3000 npm --workspace=@toy/hub run start"
+    frontend_url: "http://localhost:3000"
+  companion:
+    boot_command: "PORT=3001 npm --workspace=@toy/companion run start"
+    frontend_url: "http://localhost:3001"
+  lane:
+    boot_command: "PORT=3002 npm --workspace=@toy/lane run start"
+    frontend_url: "http://localhost:3002"
+
+packages:
+  "@toy/types":
+    no_cascade: true

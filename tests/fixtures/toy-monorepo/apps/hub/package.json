@@ -1,0 +1,14 @@
+{
+  "name": "@toy/hub",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo 'hub built'",
+    "dev": "echo 'hub dev'",
+    "start": "echo 'hub started'"
+  },
+  "dependencies": {
+    "@toy/auth": "*",
+    "@toy/types": "*"
+  }
+}

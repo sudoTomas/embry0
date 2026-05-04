@@ -1,0 +1,13 @@
+{
+  "name": "@toy/companion",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo 'companion built'",
+    "dev": "echo 'companion dev'",
+    "start": "echo 'companion started'"
+  },
+  "dependencies": {
+    "@toy/auth": "*"
+  }
+}

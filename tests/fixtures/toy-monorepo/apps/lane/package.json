@@ -1,0 +1,13 @@
+{
+  "name": "@toy/lane",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo 'lane built'",
+    "dev": "echo 'lane dev'",
+    "start": "echo 'lane started'"
+  },
+  "dependencies": {
+    "@toy/types": "*"
+  }
+}
