@@ -128,3 +128,140 @@ def test_comment_workspace_warnings_section_when_present():
     )
     assert "workspace warnings" in out
     assert "lane" in out
+
+
+import httpx
+import pytest
+from unittest.mock import MagicMock
+
+from athanor.notifications.qa_comment import upsert_sticky_comment
+
+
+def _stub_resp(status_code: int, payload=None, text: str = ""):
+    class _R:
+        def __init__(self):
+            self.status_code = status_code
+            self._payload = payload if payload is not None else []
+            self.text = text
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            if not (200 <= self.status_code < 300):
+                raise httpx.HTTPStatusError(
+                    "fail",
+                    request=MagicMock(),
+                    response=MagicMock(status_code=self.status_code),
+                )
+
+    return _R()
+
+
+@pytest.mark.asyncio
+async def test_upsert_creates_when_no_existing_comment_with_marker(monkeypatch):
+    posted: dict = {}
+
+    class _StubClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def get(self, url, headers=None):
+            # No existing comments
+            return _stub_resp(200, [{"id": 1, "body": "some other comment"}])
+
+        async def patch(self, url, json=None, headers=None):
+            raise AssertionError("should not patch when no existing comment")
+
+        async def post(self, url, json=None, headers=None):
+            posted["url"] = url
+            posted["body"] = json
+            return _stub_resp(201, {"id": 99})
+
+    monkeypatch.setattr("athanor.notifications.qa_comment.httpx.AsyncClient", lambda **kw: _StubClient())
+
+    new_id = await upsert_sticky_comment(
+        github_token="tok",
+        repo="org/repo",
+        issue_number=42,
+        body="rendered content",
+    )
+    assert new_id == 99
+    assert "issues/42/comments" in posted["url"]
+
+
+@pytest.mark.asyncio
+async def test_upsert_updates_when_existing_comment_has_marker(monkeypatch):
+    patched: dict = {}
+
+    class _StubClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def get(self, url, headers=None):
+            return _stub_resp(200, [
+                {"id": 1, "body": "some other comment"},
+                {"id": 7, "body": f"{COMMENT_MARKER}\nold content"},
+            ])
+
+        async def post(self, url, json=None, headers=None):
+            raise AssertionError("should not post when existing comment found")
+
+        async def patch(self, url, json=None, headers=None):
+            patched["url"] = url
+            patched["body"] = json
+            return _stub_resp(200, {"id": 7})
+
+    monkeypatch.setattr("athanor.notifications.qa_comment.httpx.AsyncClient", lambda **kw: _StubClient())
+
+    new_id = await upsert_sticky_comment(
+        github_token="tok",
+        repo="org/repo",
+        issue_number=42,
+        body="updated content",
+    )
+    assert new_id == 7
+    assert "issues/comments/7" in patched["url"]
+    assert patched["body"]["body"] == "updated content"
+
+
+@pytest.mark.asyncio
+async def test_upsert_handles_multiple_marker_matches_by_picking_first(monkeypatch):
+    patched: dict = {}
+
+    class _StubClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def get(self, url, headers=None):
+            return _stub_resp(200, [
+                {"id": 5, "body": f"{COMMENT_MARKER}\nfirst"},
+                {"id": 6, "body": f"{COMMENT_MARKER}\nsecond"},
+            ])
+
+        async def patch(self, url, json=None, headers=None):
+            patched["url"] = url
+            return _stub_resp(200, {"id": 5})
+
+        async def post(self, url, json=None, headers=None):
+            raise AssertionError("should not post")
+
+    monkeypatch.setattr("athanor.notifications.qa_comment.httpx.AsyncClient", lambda **kw: _StubClient())
+
+    new_id = await upsert_sticky_comment(
+        github_token="tok",
+        repo="x/y",
+        issue_number=1,
+        body="...",
+    )
+    assert new_id == 5
+    assert "comments/5" in patched["url"]

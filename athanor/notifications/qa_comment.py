@@ -13,10 +13,16 @@ Layout:
 
 from __future__ import annotations
 
+import httpx
+import structlog
+
 from athanor.workflows.qa.subtask_result_schema import (
     SubTaskResult,
     SubTaskStatus,
 )
+
+_logger = structlog.get_logger(__name__)
+_GITHUB_API = "https://api.github.com"
 
 COMMENT_MARKER = "<!-- athanor:qa-sticky-comment -->"
 
@@ -152,3 +158,106 @@ def render_qa_comment(
         lines.append("</details>")
 
     return "\n".join(lines)
+
+
+def _gh_headers(github_token: str) -> dict[str, str]:
+    return {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {github_token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+async def upsert_sticky_comment(
+    *,
+    github_token: str,
+    repo: str,
+    issue_number: int,
+    body: str,
+) -> int:
+    """Create or update the sticky athanor/qa comment on a PR.
+
+    Lookup is by COMMENT_MARKER substring inside the comment body. If multiple
+    comments contain the marker (race), the EARLIEST one is updated; later
+    duplicates are not touched (caller can reconcile separately).
+
+    Returns the comment id (int) of the comment created or updated. Raises
+    httpx.HTTPStatusError on GitHub API failure.
+
+    Endpoints:
+      - GET  /repos/{repo}/issues/{issue_number}/comments  (paginated)
+      - PATCH /repos/{repo}/issues/comments/{comment_id}
+      - POST /repos/{repo}/issues/{issue_number}/comments
+    """
+    headers = _gh_headers(github_token)
+    list_url = f"{_GITHUB_API}/repos/{repo}/issues/{issue_number}/comments"
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        existing_id = await _find_sticky_comment_id(client, list_url, headers)
+
+        if existing_id is not None:
+            patch_url = f"{_GITHUB_API}/repos/{repo}/issues/comments/{existing_id}"
+            resp = await client.patch(patch_url, json={"body": body}, headers=headers)
+            if resp.status_code in (200, 201):
+                _logger.info(
+                    "qa_sticky_comment_updated",
+                    repo=repo,
+                    issue_number=issue_number,
+                    comment_id=existing_id,
+                )
+                return existing_id
+            _logger.error(
+                "qa_sticky_comment_update_failed",
+                repo=repo,
+                issue_number=issue_number,
+                status=resp.status_code,
+                body=resp.text[:200],
+            )
+            resp.raise_for_status()
+            return existing_id  # unreachable
+
+        post_url = f"{_GITHUB_API}/repos/{repo}/issues/{issue_number}/comments"
+        resp = await client.post(post_url, json={"body": body}, headers=headers)
+        if resp.status_code in (200, 201):
+            new_id = int(resp.json()["id"])
+            _logger.info(
+                "qa_sticky_comment_created",
+                repo=repo,
+                issue_number=issue_number,
+                comment_id=new_id,
+            )
+            return new_id
+
+        _logger.error(
+            "qa_sticky_comment_create_failed",
+            repo=repo,
+            issue_number=issue_number,
+            status=resp.status_code,
+            body=resp.text[:200],
+        )
+        resp.raise_for_status()
+        return -1  # unreachable
+
+
+async def _find_sticky_comment_id(
+    client: httpx.AsyncClient,
+    list_url: str,
+    headers: dict[str, str],
+) -> int | None:
+    """Walk paginated comments looking for COMMENT_MARKER. Returns earliest match."""
+    page = 1
+    while True:
+        url = f"{list_url}?per_page=100&page={page}"
+        resp = await client.get(url, headers=headers)
+        if resp.status_code != 200:
+            return None
+        items = resp.json() or []
+        for item in items:
+            body = item.get("body") or ""
+            if COMMENT_MARKER in body:
+                return int(item["id"])
+        if len(items) < 100:
+            return None
+        page += 1
+        if page > 20:  # safety stop after 2000 comments — no real PR has this many
+            return None
