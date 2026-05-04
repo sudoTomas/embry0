@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, ExternalLink, Clock, DollarSign, Layers } from "lucide-react";
 import { toast } from "sonner";
+import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { Button } from "@/components/ui/Button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { useJob } from "@/hooks/useJobs";
@@ -103,6 +104,9 @@ export function JobDetailPage() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </Link>
+        <span className="flex items-center justify-center w-8 h-8 shrink-0">
+          <OperationGlyph operation="ferment" size={28} titled />
+        </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-bold text-sm truncate">{job.repo}</span>
