@@ -30,6 +30,9 @@ dependencies = [
 [project.scripts]
 athanor = "athanor.cli.__main__:main"
 
+[project.entry-points."athanor.workspace_providers"]
+npm-workspaces-turbo = "athanor.workspace_providers.npm_workspaces_turbo.provider:NpmWorkspacesTurboProvider"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0,<9",
