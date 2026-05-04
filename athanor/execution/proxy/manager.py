@@ -31,10 +31,11 @@ import aiohttp
 import structlog
 
 from athanor.execution.docker_client import DockerClient
+from athanor.execution.image_registry import qualify_image
 
 logger = structlog.get_logger(__name__)
 
-_IMAGE = "athanor-proxy:latest"
+_BASE_IMAGE = "athanor-proxy:latest"
 _RESTRICTED = "sandbox-restricted"
 _INTERNET = "sandbox-internet"
 
@@ -65,12 +66,19 @@ def _resolve_backend_url(host: str, port: int) -> str:
 class ProxyManager:
     """Manages proxy container lifecycle for sandbox agent access."""
 
-    def __init__(self, docker: DockerClient, *, proxy_admin_token: str) -> None:
+    def __init__(
+        self,
+        docker: DockerClient,
+        *,
+        proxy_admin_token: str,
+        image_registry: str = "",
+    ) -> None:
         if not proxy_admin_token:
             raise ValueError("proxy_admin_token is required")
         self._docker = docker
         self._launched: list[str] = []
         self._proxy_admin_token = proxy_admin_token
+        self._image = qualify_image(_BASE_IMAGE, image_registry)
         self._http: aiohttp.ClientSession | None = None
         self.auth_proxy_url: str = ""
         self.git_proxy_url: str = ""
@@ -186,7 +194,7 @@ class ProxyManager:
 
         run_cmd, env_file_path = self._docker.build_run_proxy_cmd(
             name=name,
-            image=_IMAGE,
+            image=self._image,
             network=_RESTRICTED,
             env=env,
         )

@@ -62,6 +62,14 @@ class AthanorConfig(BaseSettings):
     sandbox_memory: str = "8g"
     sandbox_cpus: str = "4"
 
+    # Container image registry prefix applied to athanor-* images at DinD-launch
+    # time (see athanor.execution.image_registry.qualify_image). Empty disables
+    # qualification — useful for tests and for environments that load images
+    # directly into the daemon. The bootstrapped compose stack runs a sidecar
+    # registry on the backend network; on K8s migration this becomes the
+    # production registry URL with no code changes.
+    image_registry: str = ""
+
     # Paused job TTL
     paused_job_ttl_hours: int = 48
 

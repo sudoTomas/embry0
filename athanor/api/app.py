@@ -433,6 +433,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from athanor.execution.agent_runner import AgentRunner
     from athanor.execution.docker_client import DockerClient
     from athanor.execution.image_manager import ContainerReaper, SandboxImageManager
+    from athanor.execution.image_registry import qualify_image
     from athanor.execution.proxy.manager import ProxyManager
     from athanor.execution.sandbox_manager import SandboxManager
 
@@ -458,8 +459,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # is missing or still set to the insecure example default.
     app.state.secrets_provider = _resolve_secrets_provider(config)
 
-    proxy_mgr = ProxyManager(docker, proxy_admin_token=config.proxy_admin_token)
-    sandbox_mgr = SandboxManager(docker, proxy_manager=proxy_mgr)
+    proxy_mgr = ProxyManager(
+        docker,
+        proxy_admin_token=config.proxy_admin_token,
+        image_registry=config.image_registry,
+    )
+    sandbox_mgr = SandboxManager(
+        docker, proxy_manager=proxy_mgr, image_registry=config.image_registry
+    )
     agent_runner = AgentRunner(sandbox_mgr, docker)
 
     app.state.docker = docker
@@ -467,7 +474,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.agent_runner = agent_runner
     app.state.proxy_manager = proxy_mgr
 
-    image_mgr = SandboxImageManager(docker)
+    image_mgr = SandboxImageManager(docker, image_registry=config.image_registry)
     app.state.image_manager = image_mgr
 
     # Auto-build sandbox image on startup
@@ -495,19 +502,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     reaper.start()
     app.state.container_reaper = reaper
 
-    # Verify the proxy image is loaded in DinD before starting proxies.
+    # Verify the proxy image is reachable from DinD before starting proxies.
+    # The compose stack's init-push-images service tags + pushes the host-built
+    # athanor-proxy image to the sidecar registry; DinD pulls on first reference.
     if not await image_mgr.check_proxy_image_present():
         logger.error(
             "proxy_image_missing_in_dind",
-            image="athanor-proxy:latest",
+            image=qualify_image("athanor-proxy:latest", config.image_registry),
             msg=(
-                "athanor-proxy:latest is not loaded into DinD. The credential "
-                "proxies cannot start. Build the image on the host and load it: "
-                "`docker build -t athanor-proxy:latest -f infra/Dockerfile.proxy . "
-                "&& cd infra && docker save athanor-proxy:latest | docker compose "
-                "exec -T orchestrator docker --host tcp://dind:2376 --tlsverify "
-                "--tlscacert=/certs/client/ca.pem --tlscert=/certs/client/cert.pem "
-                "--tlskey=/certs/client/key.pem load`"
+                "athanor-proxy image not present in DinD. Either init-push-images "
+                "did not run (check `docker compose logs init-push-images`) or the "
+                "host image is missing — run "
+                "`docker compose --profile images build && docker compose up -d "
+                "--force-recreate init-push-images orchestrator`."
             ),
         )
 

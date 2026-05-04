@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from athanor.execution.docker_client import DockerClient
+from athanor.execution.image_registry import qualify_image
 from athanor.safety.error_codes import ErrorCode
 
 if TYPE_CHECKING:
@@ -57,9 +58,16 @@ _DEFAULT_PROFILE: dict[str, Any] = {
 class SandboxManager:
     """Manages sandbox container lifecycle for job execution."""
 
-    def __init__(self, docker: DockerClient, *, proxy_manager: ProxyManager) -> None:
+    def __init__(
+        self,
+        docker: DockerClient,
+        *,
+        proxy_manager: ProxyManager,
+        image_registry: str = "",
+    ) -> None:
         self._docker = docker
         self._proxy_manager = proxy_manager
+        self._image_registry = image_registry
 
     async def create(
         self,
@@ -108,8 +116,9 @@ class SandboxManager:
             # (dind's own backend membership is host-side only). Phase 1.5.
             extra_hosts["dind"] = self._resolve_dind_gateway_ip()
 
+        base_image = p.get("base_image", _DEFAULT_PROFILE["base_image"])
         cmd = self._docker.build_run_cmd(
-            image=p.get("base_image", _DEFAULT_PROFILE["base_image"]),
+            image=qualify_image(base_image, self._image_registry),
             name=name,
             network=p.get("default_network", _DEFAULT_PROFILE["default_network"]),
             memory=p.get("memory", _DEFAULT_PROFILE["memory"]),

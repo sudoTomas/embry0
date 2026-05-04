@@ -46,6 +46,8 @@ services:
         condition: service_healthy
       init-sandbox-networks:
         condition: service_completed_successfully
+      init-push-images:
+        condition: service_completed_successfully
       minio:
         condition: service_started
     deploy:
@@ -160,6 +162,8 @@ services:
       - dind-certs-ca:/certs/ca
       - dind-certs-client:/certs/client
       - dind-storage:/var/lib/docker
+      # Allow DinD to pull from the in-stack `registry` service over plain HTTP.
+      - ./dind-daemon.json:/etc/docker/daemon.json:ro
     healthcheck:
       test: ["CMD", "docker", "info"]
       interval: 10s
@@ -200,6 +204,76 @@ services:
     networks: [backend]
     restart: "no"
 
+  # In-stack container registry. Sandbox + proxy images are pushed here at
+  # bootstrap so DinD (and any future K8s cluster) can pull them by name —
+  # the same flow that production registries use, just on the backend bridge.
+  # Not exposed publicly.
+  registry:
+    image: registry:2
+    container_name: athanor-registry
+    volumes:
+      - registry-data:/var/lib/registry
+    # `expose` for backend-network access from DinD/orchestrator.
+    # `ports` (loopback-only) lets the host docker daemon push images via the
+    # init-push-images sidecar, which reaches the registry through the mounted
+    # docker.sock and out of the host's network namespace. Docker treats
+    # 127.0.0.1 as insecure-by-default, so no host daemon.json edit is needed.
+    expose:
+      - "5000"
+    ports:
+      - "127.0.0.1:5001:5000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/v2/"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+    networks: [backend]
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: unless-stopped
+
+  # Build-only services. Their images aren't run as compose services — they're
+  # pushed to the local `registry` and pulled into DinD on demand. Profiled out
+  # so `docker compose up -d` does not try to start them.
+  sandbox-image-builder:
+    profiles: ["images"]
+    image: athanor-sandbox:latest
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.sandbox
+
+  proxy-image-builder:
+    profiles: ["images"]
+    image: athanor-proxy:latest
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.proxy
+
+  # Tag the host-built athanor-sandbox + athanor-proxy images and push them to
+  # the in-stack registry. The orchestrator depends on this completing so the
+  # proxy containers it launches in DinD can pull successfully on first ref.
+  init-push-images:
+    image: docker:27-cli
+    container_name: athanor-init-push-images
+    entrypoint: ["sh"]
+    command: ["/scripts/push-images-to-registry.sh"]
+    environment:
+      # Push target — host-loopback exposure of the registry. The mounted
+      # docker.sock means the actual push is performed by the host daemon,
+      # which reaches the registry via the host's loopback interface.
+      REGISTRY: 127.0.0.1:5001
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./scripts:/scripts:ro
+    depends_on:
+      registry:
+        condition: service_healthy
+    restart: "no"
+
   cloudflared:
     image: cloudflare/cloudflared:2024.10.0
     container_name: athanor-cloudflared
@@ -231,6 +305,7 @@ volumes:
   dind-storage:
   backup-data:
   minio-data:
+  registry-data:
 
 networks:
   frontend:

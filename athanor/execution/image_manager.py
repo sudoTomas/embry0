@@ -11,6 +11,7 @@ from typing import Any
 import structlog
 
 from athanor.execution.docker_client import DockerClient
+from athanor.execution.image_registry import qualify_image
 from athanor.storage.repositories.jobs import StatusTransitionConflict
 
 logger = structlog.get_logger(__name__)
@@ -19,10 +20,20 @@ logger = structlog.get_logger(__name__)
 class SandboxImageManager:
     """Manages sandbox Docker images inside the DinD daemon."""
 
-    def __init__(self, docker: DockerClient, app_root: str = "/app") -> None:
+    def __init__(
+        self,
+        docker: DockerClient,
+        app_root: str = "/app",
+        *,
+        image_registry: str = "",
+    ) -> None:
         self._docker = docker
         self._app_root = Path(app_root)
         self._build_lock = asyncio.Lock()
+        self._image_registry = image_registry
+
+    def _qualify(self, image: str) -> str:
+        return qualify_image(image, self._image_registry)
 
     def _compute_build_hash(self) -> str:
         """Compute SHA256 hash of Dockerfile.sandbox + sandbox source files."""
@@ -55,7 +66,7 @@ class SandboxImageManager:
         """Get the build hash label from a Docker image."""
         try:
             cmd = self._docker._build_base_cmd()
-            cmd.extend(["inspect", "--format", '{{index .Config.Labels "athanor.build-hash"}}', image])
+            cmd.extend(["inspect", "--format", '{{index .Config.Labels "athanor.build-hash"}}', self._qualify(image)])
             result = await self._docker.run_cmd(cmd, timeout=10)
             return result.strip() if result.strip() else None
         except RuntimeError:
@@ -65,7 +76,7 @@ class SandboxImageManager:
         """Check if an image exists in DinD."""
         try:
             cmd = self._docker._build_base_cmd()
-            cmd.extend(["image", "inspect", image])
+            cmd.extend(["image", "inspect", self._qualify(image)])
             await self._docker.run_cmd(cmd, timeout=10)
             return True
         except RuntimeError:
@@ -80,7 +91,7 @@ class SandboxImageManager:
         """
         try:
             cmd = self._docker._build_base_cmd()
-            cmd.extend(["image", "inspect", image])
+            cmd.extend(["image", "inspect", self._qualify(image)])
             await self._docker.run_cmd(cmd)
             return True
         except RuntimeError:
@@ -124,7 +135,7 @@ class SandboxImageManager:
                 [
                     "build",
                     "-t",
-                    image,
+                    self._qualify(image),
                     "--label",
                     f"athanor.build-hash={build_hash}",
                     "-f",
@@ -150,9 +161,9 @@ class SandboxImageManager:
     ) -> bool:
         """Build a profile-specific sandbox image."""
         async with self._build_lock:
-            image_tag = f"athanor-sandbox:{profile_name}"
+            image_tag = self._qualify(f"athanor-sandbox:{profile_name}")
 
-            dockerfile_content = f"FROM {base_image}\nUSER root\n"
+            dockerfile_content = f"FROM {self._qualify(base_image)}\nUSER root\n"
             if additional_packages:
                 pkg_list = " ".join(additional_packages)
                 dockerfile_content += f"RUN pip install --no-cache-dir {pkg_list}\n"
@@ -189,13 +200,14 @@ class SandboxImageManager:
 
     async def remove_image(self, image: str) -> None:
         """Remove an image from DinD."""
+        qualified = self._qualify(image)
         try:
             cmd = self._docker._build_base_cmd()
-            cmd.extend(["rmi", "-f", image])
+            cmd.extend(["rmi", "-f", qualified])
             await self._docker.run_cmd(cmd, timeout=30)
-            logger.info("sandbox_image_removed", image=image)
+            logger.info("sandbox_image_removed", image=qualified)
         except RuntimeError:
-            logger.warning("sandbox_image_remove_failed", image=image)
+            logger.warning("sandbox_image_remove_failed", image=qualified)
 
 
 class ContainerReaper:

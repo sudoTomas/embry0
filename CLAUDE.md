@@ -27,16 +27,24 @@
 
 ## Sandbox
 
-- After code changes to `athanor/sandbox/` or `athanor/safety/`, rebuild the sandbox image and load into DinD:
+- The `athanor-sandbox` and `athanor-proxy` images are pushed to the in-stack `registry:5000` sidecar at bootstrap by the `init-push-images` compose service; DinD pulls them on first reference. The `IMAGE_REGISTRY` env var (defaults to `registry:5000`) controls the prefix at orchestrator-launch time — leave at default for compose, set to your registry URL on K8s.
+- **First-time bootstrap (fresh deploy).** From `infra/`:
   ```bash
-  docker build -t athanor-sandbox:latest -f infra/Dockerfile.sandbox .
-  cd infra && docker save athanor-sandbox:latest | docker compose exec -T orchestrator docker --host tcp://dind:2376 --tlsverify --tlscacert=/certs/client/ca.pem --tlscert=/certs/client/cert.pem --tlskey=/certs/client/key.pem load
+  cd infra
+  docker compose --profile images build   # builds frontend, orchestrator, sandbox, proxy
+  docker compose up -d                    # registry → init-push-images → dind → orchestrator → frontend
   ```
-- After code changes to `athanor/execution/proxy/`, rebuild the proxy image and reload into DinD:
+- **After code changes to `athanor/sandbox/` or `athanor/safety/`** (rebuild + repush + restart orchestrator):
   ```bash
-  docker build -t athanor-proxy:latest -f infra/Dockerfile.proxy .
-  cd infra && docker save athanor-proxy:latest | docker compose exec -T orchestrator docker --host tcp://dind:2376 --tlsverify --tlscacert=/certs/client/ca.pem --tlscert=/certs/client/cert.pem --tlskey=/certs/client/key.pem load
-  cd .. && cd infra && docker compose restart orchestrator
+  cd infra
+  docker compose --profile images build sandbox-image-builder
+  docker compose up -d --force-recreate init-push-images orchestrator
+  ```
+- **After code changes to `athanor/execution/proxy/`**:
+  ```bash
+  cd infra
+  docker compose --profile images build proxy-image-builder
+  docker compose up -d --force-recreate init-push-images orchestrator
   ```
 - Proxies (`git-proxy`, `github-proxy`, `auth-proxy`) run as DinD containers on the `sandbox-restricted` network. Sandboxes reach them by Docker DNS (`http://git-proxy:9101`, etc.), not via `host.docker.internal`. Restart the orchestrator after changing `GITHUB_TOKEN` or `ANTHROPIC_API_KEY` in `.env` — the proxies are recreated on each `proxy_mgr.start()`.
 - The sandbox uses OAuth via `CLAUDE_CODE_OAUTH_TOKEN` env var (read from `~/.claude/.credentials.json` on the orchestrator).
