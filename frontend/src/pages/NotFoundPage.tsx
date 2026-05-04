@@ -9,10 +9,10 @@ export function NotFoundPage() {
         <FileQuestion className="h-16 w-16 text-muted-foreground mx-auto" />
         <h1 className="text-4xl font-bold">404</h1>
         <p className="text-muted-foreground">
-          The page you are looking for does not exist or has been moved.
+          This path does not exist in the work.
         </p>
         <Link to="/">
-          <Button>Back to Dashboard</Button>
+          <Button>Return to the Dashboard</Button>
         </Link>
       </div>
     </div>

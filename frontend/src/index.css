@@ -93,10 +93,41 @@ h1, h2, h3, h4, h5, h6 {
   --density-font-size: 0.9375rem;
 }
 
+[data-density="standard"] {
+  --density-padding: 1rem;
+  --density-gap: 1rem;
+  --density-font-size: 0.875rem;
+}
+
 [data-density="compact"] {
   --density-padding: 0.5rem;
   --density-gap: 0.5rem;
   --density-font-size: 0.8125rem;
+}
+
+/* Divine layer (Athanor identity) — see frontend/src/components/divine/CLAUDE.md */
+
+@keyframes athanor-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.78; }
+}
+
+.athanor-vessel {
+  animation: athanor-pulse 4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .athanor-vessel {
+    animation: none;
+  }
+}
+
+/* Escape hatch: one body attribute disables the entire divine layer */
+body[data-divine="off"] .divine-element {
+  display: none !important;
+}
+body[data-divine="off"] .athanor-vessel {
+  animation: none;
 }
 
 /* Glow / pulse effects for active agents */

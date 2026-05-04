@@ -2,6 +2,7 @@ import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useLocation } from "react-router";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { Button } from "@/components/ui/Button";
+import { AthanorMark } from "@/components/divine/AthanorMark";
 
 const breadcrumbMap: Record<string, string> = {
   "": "Dashboard",
@@ -31,9 +32,9 @@ export function TopBar() {
           <PanelLeftOpen className="h-4 w-4" />
         )}
       </Button>
-      <nav className="flex items-center" aria-label="Breadcrumb">
-        <span className="text-sm text-white/50">Athanor</span>
-        <span className="text-white/20 mx-1.5">/</span>
+      <nav className="flex items-center gap-2" aria-label="Breadcrumb">
+        <AthanorMark />
+        <span className="text-white/20 mx-1">/</span>
         <span className="text-sm text-white/80 font-medium">{currentPage}</span>
         {pathSegments.length > 1 && (
           <>

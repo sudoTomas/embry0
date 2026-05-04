@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useConfig, useUpdateConfig } from "@/hooks/useConfig";
 import { useProviderConfig, useUpdateProviderConfig, useTestProviderConnection } from "@/hooks/useProvider";
+import { useLayoutStore } from "@/stores/layoutStore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -11,6 +12,8 @@ import { PageError } from "@/components/PageError";
 import { toast } from "sonner";
 import type { ConfigResponse } from "@/lib/types";
 import type { ProviderConfig, ProviderConfigUpdate, ProviderMode } from "@/lib/types/provider";
+
+type DensityMode = "comfortable" | "standard" | "compact";
 
 function parseNumber(value: string, fallback: number): number {
   if (value.trim() === "") return fallback;
@@ -25,6 +28,9 @@ export default function GeneralTab() {
   const { data: providerConfig, isLoading: providerLoading, isError: providerError, refetch: refetchProvider } = useProviderConfig();
   const updateProvider = useUpdateProviderConfig();
   const testConnection = useTestProviderConnection();
+
+  const densityMode = useLayoutStore((s) => s.densityMode);
+  const setDensityMode = useLayoutStore((s) => s.setDensityMode);
 
   const [form, setForm] = useState<ConfigResponse | null>(null);
   const [providerForm, setProviderForm] = useState<ProviderConfig | null>(null);
@@ -276,6 +282,32 @@ export default function GeneralTab() {
                 <option value="soft">Soft (warn, continue)</option>
                 <option value="hard">Hard (stop at cap)</option>
               </Select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Display */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Display</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="density_mode">Density</Label>
+              <Select
+                id="density_mode"
+                value={densityMode}
+                onChange={(e) => setDensityMode(e.target.value as DensityMode)}
+              >
+                <option value="comfortable">Comfortable (default)</option>
+                <option value="standard">Standard</option>
+                <option value="compact">Compact</option>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1.5">
+                Saved locally; takes effect immediately, persists across reloads.
+              </p>
             </div>
           </div>
         </CardContent>

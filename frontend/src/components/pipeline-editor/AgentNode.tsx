@@ -1,5 +1,7 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { getAgentColor, getAgentCategory } from "@/lib/graph-utils";
+import { AlchemicalSigil } from "@/components/divine/AlchemicalSigil";
+import { categoryToStage } from "@/lib/sigils";
 
 export function AgentNode({ data, selected }: NodeProps) {
   const color = getAgentColor(data.agentType as string);
@@ -8,6 +10,7 @@ export function AgentNode({ data, selected }: NodeProps) {
   const tools = data.tools as string[] | undefined;
   const model = data.model as string | undefined;
   const budget = data.maxBudgetUsd as number | undefined;
+  const stage = categoryToStage(category);
 
   const shortModel = model?.replace("claude-", "").split("-")[0] ?? null;
 
@@ -31,9 +34,10 @@ export function AgentNode({ data, selected }: NodeProps) {
       <div className="px-3 py-2.5">
         <div className="flex items-center justify-between">
           <span
-            className="text-[9px] uppercase tracking-widest font-semibold"
+            className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest font-semibold"
             style={{ color: `${color}BB` }}
           >
+            {stage && <AlchemicalSigil stage={stage} size={11} title={stage} />}
             {category}
           </span>
           {tools && tools.length > 0 && (
