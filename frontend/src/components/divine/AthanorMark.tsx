@@ -3,13 +3,17 @@ interface AthanorMarkProps {
 }
 
 /**
- * Athanor masthead — the alchemical vessel + ATHANOR wordmark.
+ * Athanor masthead — geodesic identity mark + ATHANOR wordmark.
  *
- * The vessel breathes via a 4s opacity cycle (`@keyframes athanor-pulse`).
- * Pulse is suppressed by `prefers-reduced-motion: reduce` AND by the
- * `[data-divine="off"]` body attribute (the divine-layer escape hatch).
+ * The mark is the mid-density render of the spec's Full Geodesic Sphere:
+ * outer ring, four cardinal dots (N/E/S/W), equator line, and two simplified
+ * hemisphere triangles. See `docs/superpowers/specs/2026-05-04-geodesic-identity-design.md`
+ * for the full primitive grammar.
  *
- * Rendering target: the TopBar left edge, replacing a bare `<span>Athanor</span>`.
+ * Stroke uses currentColor so the parent's text color drives it; with the
+ * gold token swap, this resolves to #d4af37 by default.
+ *
+ * Rendering target: the TopBar left edge.
  */
 export function AthanorMark({ className }: AthanorMarkProps) {
   return (
@@ -17,45 +21,42 @@ export function AthanorMark({ className }: AthanorMarkProps) {
       className={`flex items-center gap-2 select-none divine-element ${className ?? ""}`}
       aria-label="Athanor"
     >
-      {/* Alchemical vessel — long-necked retort. Stroke uses the gold primary token. */}
       <svg
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
+        width="24"
+        height="24"
+        viewBox="0 0 64 64"
         aria-hidden="true"
-        className="athanor-vessel text-primary"
+        className="athanor-mark text-primary"
       >
-        {/* Round body */}
-        <circle cx="9" cy="16" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
-        {/* Long curving neck */}
+        <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" strokeWidth="2.2" />
+        <circle cx="32" cy="10" r="2.4" fill="currentColor" />
+        <circle cx="54" cy="32" r="2.4" fill="currentColor" />
+        <circle cx="32" cy="54" r="2.4" fill="currentColor" />
+        <circle cx="10" cy="32" r="2.4" fill="currentColor" />
+        <line
+          x1="14"
+          y1="32"
+          x2="50"
+          y2="32"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          opacity="0.7"
+        />
         <path
-          d="M11.5 11.5 Q14 8 17 5.5 L20 4"
+          d="M 32 18 L 22 32 L 32 32 L 42 32 Z"
           fill="none"
           stroke="currentColor"
           strokeWidth="1.4"
-          strokeLinecap="round"
         />
-        {/* Inner flame — slightly off-center, faint */}
         <path
-          d="M9 18 Q10 15 9 13 Q8 15 9 18 Z"
-          fill="currentColor"
-          opacity="0.45"
-        />
-        {/* Base line */}
-        <line
-          x1="3"
-          y1="22"
-          x2="15"
-          y2="22"
+          d="M 32 46 L 22 32 L 32 32 L 42 32 Z"
+          fill="none"
           stroke="currentColor"
           strokeWidth="1.4"
-          strokeLinecap="round"
-          opacity="0.6"
+          opacity="0.7"
         />
       </svg>
-      <span
-        className="font-display text-[13px] font-semibold tracking-[0.18em] text-white/85"
-      >
+      <span className="font-display text-[13px] font-semibold tracking-[0.18em] text-white/85">
         ATHANOR
       </span>
     </div>

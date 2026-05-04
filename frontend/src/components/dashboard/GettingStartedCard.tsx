@@ -15,7 +15,7 @@ export function GettingStartedCard() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Link to="/issues" className="group">
           <div className="rounded-xl p-5 border border-orange-500/15 bg-orange-500/[0.03] hover:bg-orange-500/[0.06] transition-all">
-            <IconBox icon={CircleDot} color="#f97316" size="lg" className="mb-3" />
+            <IconBox icon={CircleDot} color="#d4af37" size="lg" className="mb-3" />
             <h3 className="font-semibold text-orange-400 mb-1">Create an Issue</h3>
             <p className="text-xs text-white/40">Submit your first issue to the agent pipeline for autonomous resolution</p>
           </div>

@@ -8,7 +8,7 @@
   --color-card-foreground: #fafafa;
   --color-popover: #0f1419;
   --color-popover-foreground: #fafafa;
-  --color-primary: #f97316;
+  --color-primary: #d4af37;
   --color-primary-foreground: #09090b;
   --color-secondary: #1c2526;
   --color-secondary-foreground: #fafafa;
@@ -112,12 +112,12 @@ h1, h2, h3, h4, h5, h6 {
   50% { opacity: 0.78; }
 }
 
-.athanor-vessel {
+.athanor-mark {
   animation: athanor-pulse 4s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .athanor-vessel {
+  .athanor-mark {
     animation: none;
   }
 }
@@ -126,7 +126,7 @@ h1, h2, h3, h4, h5, h6 {
 body[data-divine="off"] .divine-element {
   display: none !important;
 }
-body[data-divine="off"] .athanor-vessel {
+body[data-divine="off"] .athanor-mark {
   animation: none;
 }
 
@@ -202,7 +202,7 @@ body[data-divine="off"] .divine-fallback {
 :root {
   --athanor-bg-primary: #09090b;
   --athanor-bg-card: #0f1419;
-  --athanor-accent-primary: #f97316;
+  --athanor-accent-primary: #d4af37;
   --athanor-glow-border: rgba(6, 182, 212, 0.15);
   --athanor-glow-shadow: rgba(6, 182, 212, 0.05);
   --athanor-gradient-card: linear-gradient(135deg, rgba(15, 20, 25, 0.95), rgba(9, 9, 11, 0.98));
@@ -253,4 +253,15 @@ body[data-divine="off"] .divine-fallback {
 
 .animate-agent-bounce {
   animation: agent-bounce 1.5s ease-in-out infinite;
+}
+
+@keyframes divine-radiate {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1.0; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-divine="off"]) .divine-radiate .divine-radiate-struts {
+    animation: divine-radiate 3s ease-in-out infinite;
+  }
 }

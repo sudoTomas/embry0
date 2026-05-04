@@ -1,5 +1,7 @@
 import { useStats } from "@/hooks/useStats";
 import { useQueue } from "@/hooks/useQueue";
+import { JobStatusRing } from "@/components/divine/JobStatusRing";
+import type { CardinalStage } from "@/lib/sigils";
 import { CompactStatCard } from "@/components/stats/CompactStatCard";
 import { TierBreakdown } from "@/components/stats/TierBreakdown";
 import { CostBreakdown } from "@/components/stats/CostBreakdown";
@@ -35,8 +37,11 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end justify-between animate-fade-up">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
+      <div className="flex items-center justify-between animate-fade-up">
+        <div className="flex items-center gap-4">
+          <JobStatusRing currentStage={pipelineStateFromQueue(running, awaitingInput)} size={56} />
+          <h1 className="text-2xl font-bold">Dashboard</h1>
+        </div>
         {paused > 0 && (
           <Badge tone="warning" title={`${paused} paused job(s)`}>
             {paused} paused
@@ -76,7 +81,7 @@ export function DashboardPage() {
           title="Spent Today"
           value={formatCost(stats.daily_cost_usd)}
           subtitle={`Month ${formatCost(stats.monthly_cost_usd)}`}
-          color="#f97316"
+          color="#d4af37"
           delay={160}
         />
         <CompactStatCard
@@ -215,6 +220,25 @@ function statusTone(
   if (status === "failed") return "error";
   if (status === "completed" || passed) return "success";
   return "neutral";
+}
+
+/**
+ * Derive the current cardinal pipeline stage from queue counts.
+ * - Running jobs → develop (active work in progress)
+ * - Awaiting-input jobs → triage (routing decision pending)
+ * - Otherwise → null (idle)
+ *
+ * The 4-stage cardinal mapping (triage / develop / validate / qa) is the
+ * subset of pipeline activity the JobStatusRing visualizes. Other states
+ * (paused, failed, queued) fall through to the idle render.
+ */
+function pipelineStateFromQueue(
+  running: number,
+  awaitingInput: number,
+): CardinalStage | null {
+  if (running > 0) return "develop";
+  if (awaitingInput > 0) return "triage";
+  return null;
 }
 
 function statusLabel(status: string | undefined, passed: boolean): string {

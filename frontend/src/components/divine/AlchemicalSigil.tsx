@@ -24,7 +24,7 @@ export function AlchemicalSigil({ stage, size = 14, className, title }: Alchemic
       aria-hidden={title ? undefined : true}
       width={size}
       height={size}
-      viewBox="0 0 24 24"
+      viewBox="0 0 64 64"
       className={`inline-block divine-element ${className ?? ""}`}
       dangerouslySetInnerHTML={{ __html: path }}
     />

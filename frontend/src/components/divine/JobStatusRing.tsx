@@ -1,0 +1,90 @@
+import type { CardinalStage } from "@/lib/sigils";
+
+interface JobStatusRingProps {
+  currentStage: CardinalStage | null;
+  size?: number;
+  className?: string;
+}
+
+const PIPELINE_ORDER: readonly CardinalStage[] = ["triage", "develop", "validate", "qa"] as const;
+
+const STAGE_LABEL: Record<CardinalStage, string> = {
+  triage: "TRG",
+  develop: "DEV",
+  validate: "REV",
+  qa: "QA",
+};
+
+const STAGE_ARC: Record<CardinalStage, string> = {
+  triage: "M 10 32 A 22 22 0 0 1 32 10",
+  develop: "M 32 10 A 22 22 0 0 1 54 32",
+  validate: "M 54 32 A 22 22 0 0 1 32 54",
+  qa: "M 32 54 A 22 22 0 0 1 10 32",
+};
+
+const RECENCY_OPACITY = ["1", "0.75", "0.4", "0.15"] as const;
+
+function arcOpacity(arc: CardinalStage, current: CardinalStage | null): string {
+  if (current === null) return "0.4";
+  const currentIndex = PIPELINE_ORDER.indexOf(current);
+  const arcIndex = PIPELINE_ORDER.indexOf(arc);
+  const stepsBack = (currentIndex - arcIndex + PIPELINE_ORDER.length) % PIPELINE_ORDER.length;
+  return RECENCY_OPACITY[stepsBack];
+}
+
+/**
+ * Dashboard primary status ring — four cardinal quarter-arcs whose opacity
+ * encodes pipeline recency (active = 1.0, one back = 0.75, two = 0.4, three = 0.15).
+ * Idle (currentStage === null) renders all four at 0.4 with a blank center.
+ *
+ * See `docs/superpowers/specs/2026-05-04-geodesic-identity-design.md` §3.3.
+ */
+export function JobStatusRing({ currentStage, size = 120, className }: JobStatusRingProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      className={`divine-element text-primary ${className ?? ""}`}
+      role="img"
+      aria-label={currentStage ? `Pipeline stage: ${currentStage}` : "Pipeline idle"}
+    >
+      <line
+        x1="14"
+        y1="32"
+        x2="50"
+        y2="32"
+        stroke="currentColor"
+        strokeWidth="0.6"
+        opacity="0.3"
+      />
+      {PIPELINE_ORDER.map((stage) => (
+        <path
+          key={stage}
+          data-arc={stage}
+          d={STAGE_ARC[stage]}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          opacity={arcOpacity(stage, currentStage)}
+          strokeLinecap="round"
+        />
+      ))}
+      <circle cx="32" cy="10" r="2.4" fill="currentColor" />
+      <circle cx="54" cy="32" r="2.4" fill="currentColor" />
+      <circle cx="32" cy="54" r="2.4" fill="currentColor" />
+      <circle cx="10" cy="32" r="2.4" fill="currentColor" />
+      <text
+        x="32"
+        y="35"
+        textAnchor="middle"
+        fontSize="6"
+        fill="currentColor"
+        fontFamily="ui-monospace, monospace"
+        letterSpacing="0.1"
+      >
+        {currentStage ? STAGE_LABEL[currentStage] : ""}
+      </text>
+    </svg>
+  );
+}

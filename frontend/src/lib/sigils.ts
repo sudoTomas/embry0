@@ -1,24 +1,24 @@
 /**
  * Alchemical sigil SVG path data per pipeline stage.
  *
- * Each value is the inner content of an `<svg viewBox="0 0 24 24">`.
- * Stroke uses currentColor so the parent text color drives it; fill is
- * intentionally none everywhere except where a sigil's classical drawing
- * has filled glyphs (currently none).
+ * Each value is the inner content of an `<svg viewBox="0 0 64 64">`.
+ * Stroke uses currentColor so the parent text color drives it; fills
+ * also use currentColor for hemisphere wedges (with opacity).
  *
- * Stages mirror Athanor's existing pipeline-stage tokens
- * (cool → warm gradient: triage → explore → develop → validate → publish),
- * mapped onto the corresponding classical alchemical symbols:
+ * The four in-scope stages of the current pipeline (triage, develop,
+ * validate, qa) render the geodesic identity mark with the cardinal
+ * hemisphere matching their pipeline position lit:
  *
- * - triage   → ☿ Mercury     (the messenger; routes incoming work)
- * - explore  → ⚯ Antimony     (the lone wolf; investigates)
- * - develop  → 🜍 Sulphur      (the active principle; transforms code)
- * - validate → 🜔 Salt         (the fixer; tests + binds correctness)
- * - qa       → 🜈 Aqua Vitae   (the proving water; runs the app)
- * - publish  → ☉ Sol           (the gold; the work made manifest)
+ *   - triage   → north hemisphere lit (top filled)
+ *   - develop  → east hemisphere lit  (right filled)  ≡ "developer"
+ *   - validate → south hemisphere lit (bottom filled) ≡ "review"
+ *   - qa       → west hemisphere lit  (left filled)
  *
- * SVGs are hand-drawn 24×24 simplifications of the classical glyphs —
- * legible at 12px, recognizable at 24px. Pure paths, no text.
+ * The legacy stages explore and publish keep their classical glyphs
+ * (Antimony ⚯ and Sol ☉) — they sit outside the 4-cardinal mapping;
+ * full reconciliation is deferred per spec §6.
+ *
+ * See `docs/superpowers/specs/2026-05-04-geodesic-identity-design.md`.
  */
 
 export type Stage =
@@ -29,40 +29,69 @@ export type Stage =
   | "qa"
   | "publish";
 
+/**
+ * Maps the four in-scope pipeline stages to their cardinal positions on
+ * the geodesic mark. See spec §3.2.
+ *
+ * Stage-name aliases (spec §6 deferred):
+ *   developer ≡ develop
+ *   review    ≡ validate
+ */
+export const CARDINAL_HEMISPHERES = {
+  triage: "north",
+  develop: "east",
+  validate: "south",
+  qa: "west",
+} as const;
+
+export type CardinalStage = keyof typeof CARDINAL_HEMISPHERES;
+
+const CARDINAL_DOTS = `
+    <circle cx="32" cy="10" r="2.4" fill="currentColor"/>
+    <circle cx="54" cy="32" r="2.4" fill="currentColor"/>
+    <circle cx="32" cy="54" r="2.4" fill="currentColor"/>
+    <circle cx="10" cy="32" r="2.4" fill="currentColor"/>
+`;
+
 export const STAGE_SIGILS: Record<Stage, string> = {
-  // Mercury ☿: circle with cross below and crescent above
+  // Triage — north hemisphere lit (top half filled)
   triage: `
-    <circle cx="12" cy="11" r="3.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
-    <path d="M8 8 Q12 4 16 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-    <line x1="12" y1="14.5" x2="12" y2="20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-    <line x1="9" y1="18" x2="15" y2="18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="2"/>
+    <line x1="14" y1="32" x2="50" y2="32" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+    <path data-hemisphere="north" d="M 10 32 A 22 22 0 0 1 54 32 Z" fill="currentColor" opacity="0.7"/>
+    ${CARDINAL_DOTS}
   `,
-  // Antimony ⚯: circle on stem with cross
+  // Antimony ⚯ — legacy classical glyph (preserved per spec §6)
   explore: `
-    <circle cx="12" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
-    <line x1="12" y1="11.5" x2="12" y2="20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-    <line x1="9" y1="16" x2="15" y2="16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="32" cy="22" r="9" fill="none" stroke="currentColor" stroke-width="2"/>
+    <line x1="32" y1="31" x2="32" y2="54" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    <line x1="24" y1="44" x2="40" y2="44" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
   `,
-  // Sulphur 🜍: triangle on a cross
+  // Develop — east hemisphere lit (right half filled) — alias: developer
   develop: `
-    <path d="M12 4 L18 13 L6 13 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-    <line x1="12" y1="13" x2="12" y2="20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-    <line x1="9" y1="17" x2="15" y2="17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="2"/>
+    <line x1="32" y1="14" x2="32" y2="50" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+    <path data-hemisphere="east" d="M 32 10 A 22 22 0 0 1 32 54 Z" fill="currentColor" opacity="0.7"/>
+    ${CARDINAL_DOTS}
   `,
-  // Salt 🜔: circle bisected horizontally
+  // Validate — south hemisphere lit (bottom half filled) — alias: review
   validate: `
-    <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/>
-    <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="2"/>
+    <line x1="14" y1="32" x2="50" y2="32" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+    <path data-hemisphere="south" d="M 54 32 A 22 22 0 0 1 10 32 Z" fill="currentColor" opacity="0.7"/>
+    ${CARDINAL_DOTS}
   `,
-  // Aqua Vitae 🜈: inverted triangle bisected
+  // QA — west hemisphere lit (left half filled)
   qa: `
-    <path d="M5 6 L19 6 L12 19 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-    <line x1="8.5" y1="12" x2="15.5" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="2"/>
+    <line x1="32" y1="14" x2="32" y2="50" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+    <path data-hemisphere="west" d="M 32 54 A 22 22 0 0 1 32 10 Z" fill="currentColor" opacity="0.7"/>
+    ${CARDINAL_DOTS}
   `,
-  // Sol ☉: circle with center dot
+  // Sol ☉ — legacy classical glyph (preserved per spec §6)
   publish: `
-    <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/>
-    <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+    <circle cx="32" cy="32" r="18" fill="none" stroke="currentColor" stroke-width="2"/>
+    <circle cx="32" cy="32" r="3" fill="currentColor"/>
   `,
 };
 

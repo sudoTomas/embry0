@@ -113,7 +113,7 @@ export function AgentsPage() {
                     {/* Type */}
                     <td className="px-6 py-3">
                       <div className="flex items-center gap-2.5">
-                        <IconBox icon={Bot} color="#f97316" size="sm" />
+                        <IconBox icon={Bot} color="#d4af37" size="sm" />
                         <div>
                           <div className="text-sm font-medium text-white/90">{agent.type}</div>
                           {agent.is_builtin && (
