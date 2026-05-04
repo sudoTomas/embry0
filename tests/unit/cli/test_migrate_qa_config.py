@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -94,3 +96,67 @@ def test_migrate_default_app_name_uses_parent_dir_when_unspecified(tmp_path: Pat
 
     parsed = parse_qa_yaml_v2(qa_path.read_text(encoding="utf-8"))
     assert "my-cool-repo" in parsed.apps
+
+
+CLI_BIN = [sys.executable, "-m", "athanor.cli"]
+
+
+def _toy_v1_in(tmp_path: Path) -> Path:
+    qa_dir = tmp_path / "demo-repo" / ".athanor"
+    qa_dir.mkdir(parents=True)
+    qa = qa_dir / "qa.yaml"
+    qa.write_text((CORPUS / "v1" / "single-app.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+    return qa
+
+
+def test_cli_dry_run_prints_v2_and_does_not_write(tmp_path: Path):
+    qa = _toy_v1_in(tmp_path)
+    original = qa.read_text(encoding="utf-8")
+    result = subprocess.run(
+        CLI_BIN + ["migrate-qa-config", "--dry-run", "--qa-path", str(qa)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "version: 2" in result.stdout
+    assert qa.read_text(encoding="utf-8") == original
+    assert not qa.with_name("qa.v1.yaml.bak").exists()
+
+
+def test_cli_write_replaces_file_and_creates_backup(tmp_path: Path):
+    qa = _toy_v1_in(tmp_path)
+    result = subprocess.run(
+        CLI_BIN + ["migrate-qa-config", "--write", "--qa-path", str(qa), "--app-name", "hub"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert qa.with_name("qa.v1.yaml.bak").exists()
+    new_text = qa.read_text(encoding="utf-8")
+    assert "version: 2" in new_text
+    assert "hub:" in new_text
+
+
+def test_cli_requires_one_of_dry_run_or_write(tmp_path: Path):
+    qa = _toy_v1_in(tmp_path)
+    result = subprocess.run(
+        CLI_BIN + ["migrate-qa-config", "--qa-path", str(qa)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "--dry-run" in result.stderr or "--write" in result.stderr
+
+
+def test_cli_missing_file_exits_nonzero_with_message(tmp_path: Path):
+    result = subprocess.run(
+        CLI_BIN + ["migrate-qa-config", "--dry-run", "--qa-path", str(tmp_path / "nope.yaml")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "not found" in result.stderr.lower()

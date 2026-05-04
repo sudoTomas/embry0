@@ -379,6 +379,23 @@ def cmd_purge(args: argparse.Namespace) -> None:
     _info("Purge complete")
 
 
+def cmd_migrate_qa_config(args) -> None:
+    """Handle `athanor migrate-qa-config`."""
+    from athanor.cli.migrate_qa_config import MigrationError, migrate_v1_to_v2
+
+    try:
+        out = migrate_v1_to_v2(args.qa_path, app_name=args.app_name, write=args.write)
+    except MigrationError as exc:
+        _err(str(exc))
+        sys.exit(2)
+
+    if args.dry_run:
+        sys.stdout.write(out)
+        return
+
+    _info(f"migrated {args.qa_path} (v1 backed up to qa.v1.yaml.bak)")
+
+
 # ── Argparse ─────────────────────────────────────────────────────────────────
 
 
@@ -424,6 +441,27 @@ def main() -> None:
     purge_parser.add_argument("--volumes", action="store_true", help="Remove only volumes")
     purge_parser.add_argument("--networks", action="store_true", help="Remove only networks")
 
+    # migrate-qa-config
+    migrate_qa = subparsers.add_parser(
+        "migrate-qa-config",
+        help="Convert .athanor/qa.yaml from v1 → v2 schema",
+    )
+    migrate_qa.add_argument(
+        "--qa-path",
+        type=Path,
+        default=Path(".athanor/qa.yaml"),
+        help="Path to qa.yaml (default: .athanor/qa.yaml)",
+    )
+    migrate_qa.add_argument(
+        "--app-name",
+        type=str,
+        default=None,
+        help="App name in v2 apps: map (default: repo directory name)",
+    )
+    mode = migrate_qa.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--dry-run", action="store_true", help="Print v2 to stdout; do not write")
+    mode.add_argument("--write", action="store_true", help="Replace qa.yaml; back up v1 to qa.v1.yaml.bak")
+
     args = parser.parse_args()
 
     commands = {
@@ -434,6 +472,7 @@ def main() -> None:
         "health": cmd_health,
         "config": cmd_config,
         "purge": cmd_purge,
+        "migrate-qa-config": cmd_migrate_qa_config,
     }
     commands[args.command](args)
 
