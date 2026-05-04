@@ -929,6 +929,44 @@ def _format_user_answers_block(user_answers: Any) -> str:
     return "The user has answered your prior questions as follows:\n" + "\n\n".join(lines)
 
 
+async def _verify_branch_pushed(
+    *,
+    docker: Any,
+    container_id: str | None,
+    branch: str,
+) -> bool:
+    """Verify that the developer's branch exists on the remote.
+
+    Returns True if the branch is on remote OR if verification cannot run
+    (no docker / no container / branch is "main" / docker call raised) —
+    the goal is to catch the LLM-forgot-to-push case, not to block on
+    infra failures. False ONLY when we can definitively confirm the
+    branch is missing from origin.
+    """
+    if not docker or not container_id or not branch or branch == "main":
+        return True
+    try:
+        out = await docker.run_cmd(
+            docker.build_exec_cmd(container_id, [
+                "git", "-C", "/workspace",
+                "ls-remote", "--heads", "origin", branch,
+            ]),
+            timeout=15,
+        )
+    except Exception as exc:
+        logger.warning(
+            "dev_branch_verify_failed",
+            branch=branch,
+            error=str(exc),
+            note="benefit of doubt — proceeding without blocking",
+        )
+        return True
+    # `git ls-remote --heads origin <branch>` returns:
+    #   - empty stdout if the branch doesn't exist on remote
+    #   - "<sha>\trefs/heads/<branch>\n" if it does
+    return bool(out and branch in out)
+
+
 async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Command[str]:
     """Run developer agent — write code, create branch, commit, push, open PR.
 
@@ -1187,7 +1225,35 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     elif updates.get("total_cost_usd", state.get("total_cost_usd", 0.0)) > budget:
         goto = "max_retries"
     else:
-        goto = "review"
+        # Programmatic verification: the LLM is INSTRUCTED to push the branch
+        # (prompt step 5) but doesn't always follow through. If we proceed to
+        # review→init_qa with no branch on remote, init_qa hits a generic
+        # "Remote branch not found" clone error after spinning up the QA
+        # sandbox — wastes time + cost + obscures the real cause. Verify
+        # here and fail fast with a clear error code.
+        push_ok = await _verify_branch_pushed(
+            docker=configurable.get("docker"),
+            container_id=state.get("sandbox_container_id"),
+            branch=branch,
+        )
+        if not push_ok:
+            from athanor.safety.error_codes import ErrorCode
+
+            logger.error(
+                "dev_branch_not_pushed",
+                branch=branch,
+                job_id=state.get("job_id"),
+            )
+            updates["errors"] = (state.get("errors") or []) + [
+                f"Developer agent did not push branch {branch!r} to origin. "
+                f"This breaks the QA handoff: init_qa_node cannot clone what was never pushed. "
+                f"Restart the job after the dev agent has been corrected, or push the branch manually."
+            ]
+            updates["error_code"] = ErrorCode.DEV_BRANCH_NOT_PUSHED.value
+            updates["current_stage"] = "dev_branch_missing"
+            goto = "max_retries"
+        else:
+            goto = "review"
 
     return Command(goto=goto, update=updates)
 

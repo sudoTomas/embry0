@@ -44,3 +44,6 @@ class ErrorCode(StrEnum):
 
     # Phase 5 — QA pipeline integration
     QA_FAILURES_UNRESOLVED = "ERR_QA_FAILURES_UNRESOLVED"  # QA failed and triage↔QA loop hit max_qa_failure_rounds (default 2) without a passing run; written when QAStateBlock.failure_rounds is exhausted
+
+    # Developer pipeline guard
+    DEV_BRANCH_NOT_PUSHED = "ERR_DEV_BRANCH_NOT_PUSHED"  # developer_node finished but its branch was never pushed to origin (LLM forgot the push step) — caught before init_qa hits a generic clone failure
