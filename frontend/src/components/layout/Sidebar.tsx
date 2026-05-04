@@ -47,7 +47,7 @@ function NavItemLink({ item, sidebarOpen }: { item: NavItem; sidebarOpen: boolea
         cn(
           "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
           "text-white/50 hover:text-white/80 hover:bg-cyan-500/[0.03] hover:translate-x-0.5",
-          isActive && "!text-orange-500 bg-orange-500/[0.08] border-l-2 border-orange-500 translate-x-0",
+          isActive && "!text-primary bg-primary/[0.08] border-l-2 border-primary translate-x-0",
           !isActive && accentColor && "hover:translate-x-0.5"
         )
       }
