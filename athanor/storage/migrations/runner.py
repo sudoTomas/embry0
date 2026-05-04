@@ -605,6 +605,40 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT FALSE;
         """,
     ),
+    (
+        25,
+        "qa_app_results — per-app QA outcomes for multi-app monorepo runs",
+        """
+        CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+        CREATE TABLE IF NOT EXISTS qa_app_results (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            job_id          TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+            app_name        TEXT NOT NULL,
+            status          TEXT NOT NULL CHECK (status IN (
+                'passed','qa_failure','e2e_failure','boot_failure',
+                'ready_check_failed','infra_failure','skipped'
+            )),
+            started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            duration_ms     INTEGER NOT NULL DEFAULT 0,
+            cache_hits      JSONB NOT NULL DEFAULT '{}'::jsonb,
+            trace_url       TEXT,
+            failure_summary TEXT,
+            raw_result      JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_qa_app_results_job_app
+            ON qa_app_results (job_id, app_name);
+
+        CREATE INDEX IF NOT EXISTS ix_qa_app_results_job
+            ON qa_app_results (job_id);
+
+        CREATE INDEX IF NOT EXISTS ix_qa_app_results_status
+            ON qa_app_results (status);
+        """,
+    ),
 ]
 
 
