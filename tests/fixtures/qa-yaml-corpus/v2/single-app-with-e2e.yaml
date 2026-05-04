@@ -1,0 +1,26 @@
+version: 2
+
+workspace_provider:
+  type: npm-workspaces-turbo
+  config: {}
+
+defaults:
+  mode: dind
+  sandbox_profile: qa-jvm
+  ready_checks:
+    - http: "http://localhost:8080/health"
+      expect_status: 200
+      expect_body_regex: "OK"
+  boot_timeout_seconds: 600
+  e2e:
+    command: "npm run e2e"
+    timeout_seconds: 1800
+  acceptance_criteria_template:
+    - "all endpoints reachable"
+
+qa_required: never
+
+apps:
+  app:
+    boot_command: "docker compose up"
+    frontend_url: "http://localhost:8080"

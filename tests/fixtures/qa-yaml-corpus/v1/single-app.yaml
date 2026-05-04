@@ -1,0 +1,13 @@
+version: 1
+mode: process
+sandbox_profile: slim
+startup:
+  command: "npm run dev"
+  ready_checks:
+    - http: "http://localhost:3000"
+      expect_status: 200
+  boot_timeout_seconds: 300
+frontend_url: "http://localhost:3000"
+acceptance_criteria_template:
+  - "page loads"
+qa_required: auto

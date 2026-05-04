@@ -1,0 +1,12 @@
+version: 2
+workspace_provider:
+  type: npm-workspaces-turbo
+defaults:
+  mode: process
+  sandbox_profile: slim
+  ready_checks:
+    - http: "http://localhost:3000
+apps:
+  hub:
+    boot_command: "x"
+    frontend_url: "http://x"

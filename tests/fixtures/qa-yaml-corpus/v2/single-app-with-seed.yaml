@@ -1,0 +1,25 @@
+version: 2
+
+workspace_provider:
+  type: npm-workspaces-turbo
+  config: {}
+
+defaults:
+  mode: process
+  sandbox_profile: slim
+  ready_checks:
+    - http: "http://localhost:3000"
+      expect_status: 200
+      expect_body_regex: null
+  boot_timeout_seconds: 300
+  seed_command: "npm run seed"
+  acceptance_criteria_template:
+    - "page loads"
+    - "data is seeded"
+
+qa_required: always
+
+apps:
+  app:
+    boot_command: "npm run dev"
+    frontend_url: "http://localhost:3000"

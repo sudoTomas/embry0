@@ -1,0 +1,16 @@
+version: 1
+mode: process
+sandbox_profile: slim
+startup:
+  command: "npm run dev"
+  ready_checks:
+    - http: "http://localhost:3000"
+  boot_timeout_seconds: 300
+seed:
+  command: "npm run seed"
+  timeout_seconds: 120
+frontend_url: "http://localhost:3000"
+acceptance_criteria_template:
+  - "page loads"
+  - "data is seeded"
+qa_required: always
