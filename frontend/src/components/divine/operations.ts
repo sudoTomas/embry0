@@ -119,3 +119,43 @@ export const OPERATION_FOR_ROUTE: Partial<Record<string, Operation>> = {
   "/environments": "separate",
   "/settings": "separate",
 };
+
+/**
+ * Maps an agent type to its primary alchemical operation. Captures the
+ * spirit of what each agent DOES in the magnum opus:
+ *
+ *   triage              → calcinate  (breaks down the matter)
+ *   developer / code-gen → ferment    (transforms code through decay+rebirth)
+ *   docs-writer         → ferment
+ *   explorer / fronted  → separate   (sorts pure from impure)
+ *   reviewer / security → distill    (refines the work)
+ *   review              → distill    (alias)
+ *   validator / lint    → conjoin    (joins claim + proof)
+ *   test-runner / type  → conjoin
+ *   visual-validator    → conjoin
+ *   qa                  → conjoin    (proves the union)
+ *   output / publish    → coagulate  (seals the gold)
+ *
+ * Anything outside the map (custom agents) returns undefined and the
+ * caller renders no glyph.
+ */
+export function agentTypeToOperation(agentType: string | undefined | null): Operation | undefined {
+  if (!agentType) return undefined;
+  const t = agentType.toLowerCase();
+  if (t === "triage") return "calcinate";
+  if (t === "developer" || t === "code-gen" || t === "docs-writer") return "ferment";
+  if (t === "explorer" || t === "frontend-explorer") return "separate";
+  if (t === "reviewer" || t === "security-reviewer" || t === "review") return "distill";
+  if (
+    t === "validator" ||
+    t === "lint-checker" ||
+    t === "type-checker" ||
+    t === "test-runner" ||
+    t === "visual-validator" ||
+    t === "qa"
+  ) {
+    return "conjoin";
+  }
+  if (t === "output" || t === "publish") return "coagulate";
+  return undefined;
+}

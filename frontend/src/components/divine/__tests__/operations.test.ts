@@ -3,6 +3,7 @@ import {
   OPERATIONS,
   OPERATION_ELEMENT,
   OPERATION_NUMERAL,
+  agentTypeToOperation,
   type Operation,
 } from "../operations";
 
@@ -39,5 +40,41 @@ describe("operations", () => {
     // Compile-time check: this reassignment must be assignable.
     const op: Operation = "calcinate";
     expect(OPERATIONS).toContain(op);
+  });
+});
+
+describe("agentTypeToOperation", () => {
+  it.each([
+    ["triage", "calcinate"],
+    ["developer", "ferment"],
+    ["code-gen", "ferment"],
+    ["docs-writer", "ferment"],
+    ["explorer", "separate"],
+    ["frontend-explorer", "separate"],
+    ["reviewer", "distill"],
+    ["security-reviewer", "distill"],
+    ["review", "distill"],
+    ["validator", "conjoin"],
+    ["lint-checker", "conjoin"],
+    ["type-checker", "conjoin"],
+    ["test-runner", "conjoin"],
+    ["visual-validator", "conjoin"],
+    ["qa", "conjoin"],
+    ["output", "coagulate"],
+    ["publish", "coagulate"],
+  ])("maps %s → %s", (agentType, expected) => {
+    expect(agentTypeToOperation(agentType)).toBe(expected);
+  });
+
+  it("returns undefined for unknown / custom agent types", () => {
+    expect(agentTypeToOperation("custom-agent")).toBeUndefined();
+    expect(agentTypeToOperation("")).toBeUndefined();
+    expect(agentTypeToOperation(undefined)).toBeUndefined();
+    expect(agentTypeToOperation(null)).toBeUndefined();
+  });
+
+  it("normalizes case (returns same operation regardless of input casing)", () => {
+    expect(agentTypeToOperation("DEVELOPER")).toBe("ferment");
+    expect(agentTypeToOperation("Triage")).toBe("calcinate");
   });
 });

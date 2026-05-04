@@ -2,6 +2,12 @@ import { useState, useEffect } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
+import { OperationGlyph } from "@/components/divine/OperationGlyph";
+import {
+  agentTypeToOperation,
+  OPERATION_ELEMENT,
+  OPERATION_NUMERAL,
+} from "@/components/divine/operations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -143,9 +149,28 @@ export function AgentFormPage() {
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold">
-            {isEdit ? `Edit Agent: ${typeParam}` : "New Agent"}
-          </h1>
+          {(() => {
+            const op = agentTypeToOperation(typeParam);
+            return op ? (
+              <span className="flex items-center justify-center w-9 h-9 shrink-0">
+                <OperationGlyph operation={op} size={36} titled />
+              </span>
+            ) : null;
+          })()}
+          <div className="flex flex-col">
+            <h1 className="text-2xl font-bold leading-tight">
+              {isEdit ? `Edit Agent: ${typeParam}` : "New Agent"}
+            </h1>
+            {(() => {
+              const op = agentTypeToOperation(typeParam);
+              if (!op) return null;
+              return (
+                <span className="text-[10px] uppercase tracking-[0.18em] text-primary/65 font-mono mt-0.5">
+                  Op {OPERATION_NUMERAL[op]} · {op} · {OPERATION_ELEMENT[op]}
+                </span>
+              );
+            })()}
+          </div>
         </div>
         <div className="flex gap-2">
           <Link to="/agents">

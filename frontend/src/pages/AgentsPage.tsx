@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/Button";
 import { IconBox } from "@/components/ui/IconBox";
 import { useAgents, useDeleteAgent, useResetAgent } from "@/hooks/useAgents";
 import type { AgentDefinition } from "@/lib/types/agents";
+import { OperationGlyph } from "@/components/divine/OperationGlyph";
+import { agentTypeToOperation } from "@/components/divine/operations";
 
 type Filter = "all" | "builtin" | "custom";
 
@@ -113,7 +115,16 @@ export function AgentsPage() {
                     {/* Type */}
                     <td className="px-6 py-3">
                       <div className="flex items-center gap-2.5">
-                        <IconBox icon={Bot} color="#d4af37" size="sm" />
+                        {(() => {
+                          const op = agentTypeToOperation(agent.type);
+                          return op ? (
+                            <span className="flex items-center justify-center w-8 h-8 shrink-0">
+                              <OperationGlyph operation={op} size={28} titled />
+                            </span>
+                          ) : (
+                            <IconBox icon={Bot} color="#d4af37" size="sm" />
+                          );
+                        })()}
                         <div>
                           <div className="text-sm font-medium text-white/90">{agent.type}</div>
                           {agent.is_builtin && (
