@@ -116,3 +116,117 @@ def test_validate_against_qa_config_separates_warnings_from_errors():
     errors, warnings = validate_against_qa_config(provider, cfg)
     assert len(errors) == 1
     assert len(warnings) == 1
+
+
+import asyncio
+
+from athanor.workflows.qa.orchestrator import fan_out_subtasks
+from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
+from athanor.workflows.qa.qa_yaml_v2 import QAReadyCheck
+from athanor.workflows.qa.subtask_result_schema import (
+    CacheHits,
+    SubTaskResult,
+    SubTaskStatus,
+)
+
+
+def _resolved(name: str) -> ResolvedAppConfig:
+    return ResolvedAppConfig(
+        app_name=name,
+        boot_command="x",
+        frontend_url="http://localhost:3000",
+        mode="process",
+        sandbox_profile="slim",
+        ready_checks=[QAReadyCheck(http="http://x")],
+        boot_timeout_seconds=10,
+        seed_command=None,
+        e2e=None,
+        acceptance_criteria=["loads"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_fan_out_respects_max_concurrent_apps(monkeypatch):
+    """At any moment no more than max_concurrent_apps sub-tasks should be
+    in-flight. Track in-flight count as sub-tasks acquire/release."""
+    in_flight = 0
+    peak = 0
+
+    async def fake_run_subtask(resolved, **kw):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.05)
+        in_flight -= 1
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=50,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", fake_run_subtask)
+
+    resolved_configs = [_resolved(f"app{i}") for i in range(8)]
+    results = await fan_out_subtasks(
+        resolved_configs,
+        parent_run_id="run-1",
+        repo="org/repo",
+        branch_name="main",
+        max_concurrent=3,
+        config={},
+    )
+    assert len(results) == 8
+    assert peak <= 3
+
+
+@pytest.mark.asyncio
+async def test_fan_out_collects_all_results_in_input_order(monkeypatch):
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", fake_run_subtask)
+
+    resolved_configs = [_resolved("hub"), _resolved("companion"), _resolved("lane")]
+    results = await fan_out_subtasks(
+        resolved_configs,
+        parent_run_id="run-1",
+        repo="org/repo",
+        branch_name="main",
+        max_concurrent=4,
+        config={},
+    )
+    assert [r.app_name for r in results] == ["hub", "companion", "lane"]
+
+
+@pytest.mark.asyncio
+async def test_fan_out_isolates_individual_subtask_crashes(monkeypatch):
+    """A single sub-task raising should not poison sibling sub-tasks."""
+    async def fake_run_subtask(resolved, **kw):
+        if resolved.app_name == "companion":
+            raise RuntimeError("simulated crash")
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=5,
+            cache_hits=CacheHits(),
+        )
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", fake_run_subtask)
+
+    results = await fan_out_subtasks(
+        [_resolved("hub"), _resolved("companion"), _resolved("lane")],
+        parent_run_id="run-1",
+        repo="org/repo",
+        branch_name="main",
+        max_concurrent=2,
+        config={},
+    )
+    by_app = {r.app_name: r for r in results}
+    assert by_app["hub"].status == SubTaskStatus.PASSED
+    assert by_app["lane"].status == SubTaskStatus.PASSED
+    assert by_app["companion"].status == SubTaskStatus.INFRA_FAILURE
+    assert "simulated crash" in (by_app["companion"].failure_summary or "")

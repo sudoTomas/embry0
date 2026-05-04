@@ -14,8 +14,10 @@ This task implements (1) + (2). Subsequent tasks layer on (3)–(6).
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from athanor.workflows.qa.qa_yaml_v2 import QAYamlConfigV2
 from athanor.workspace_providers.provider import WorkspaceProvider
@@ -92,3 +94,55 @@ def validate_against_qa_config(
     errors = [m for m in messages if m.lower().startswith("error:")]
     warnings = [m for m in messages if m.lower().startswith("warning:")]
     return errors, warnings
+
+
+from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig  # noqa: E402
+from athanor.workflows.qa.subtask_graph import run_subtask  # noqa: E402
+from athanor.workflows.qa.subtask_result_schema import (  # noqa: E402
+    CacheHits,
+    SubTaskResult,
+    SubTaskStatus,
+)
+
+
+async def fan_out_subtasks(
+    resolved_configs: list[ResolvedAppConfig],
+    *,
+    parent_run_id: str,
+    repo: str,
+    branch_name: str | None,
+    user_env_vars: Any = None,
+    max_concurrent: int,
+    config: dict[str, Any],
+) -> list[SubTaskResult]:
+    """Run sub-tasks in parallel under a concurrency cap.
+
+    Returns results in input order. Sub-task crashes are caught and
+    surfaced as INFRA_FAILURE rather than propagating — sibling sub-tasks
+    are isolated from each other.
+    """
+    sem = asyncio.Semaphore(max_concurrent)
+
+    async def _one(resolved: ResolvedAppConfig) -> SubTaskResult:
+        async with sem:
+            try:
+                return await run_subtask(
+                    resolved,
+                    parent_run_id=parent_run_id,
+                    repo=repo,
+                    branch_name=branch_name,
+                    user_env_vars=user_env_vars,
+                    config=config,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return SubTaskResult(
+                    app_name=resolved.app_name,
+                    status=SubTaskStatus.INFRA_FAILURE,
+                    duration_ms=0,
+                    cache_hits=CacheHits(),
+                    trace_url=None,
+                    failure_summary=f"sub-task crashed: {exc}",
+                )
+
+    tasks = [asyncio.create_task(_one(r)) for r in resolved_configs]
+    return await asyncio.gather(*tasks)
