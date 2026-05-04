@@ -18,6 +18,7 @@ const NotFoundPage = lazy(() => import("../pages/NotFoundPage").then(m => ({ def
 const IssuesPage = lazy(() => import("@/pages/IssuesPage").then((m) => ({ default: m.IssuesPage })));
 const IssueDetailPage = lazy(() => import("@/pages/IssueDetailPage").then((m) => ({ default: m.IssueDetailPage })));
 const EnvironmentsPage = lazy(() => import("@/pages/EnvironmentsPage").then((m) => ({ default: m.EnvironmentsPage })));
+const AboutOperationsPage = lazy(() => import("@/pages/AboutOperationsPage").then((m) => ({ default: m.AboutOperationsPage })));
 
 const fallback = <div className="p-6 text-muted-foreground">Loading...</div>;
 
@@ -43,6 +44,7 @@ export const router = createBrowserRouter([
       { path: "issues/:id", element: <ErrorBoundary inline><Suspense fallback={fallback}><IssueDetailPage /></Suspense></ErrorBoundary> },
       { path: "environments", element: <ErrorBoundary inline><Suspense fallback={fallback}><EnvironmentsPage /></Suspense></ErrorBoundary> },
       { path: "settings", element: <ErrorBoundary inline><Suspense fallback={fallback}><SettingsPage /></Suspense></ErrorBoundary> },
+      { path: "about/operations", element: <ErrorBoundary inline><Suspense fallback={fallback}><AboutOperationsPage /></Suspense></ErrorBoundary> },
       { path: "*", element: <ErrorBoundary inline><Suspense fallback={fallback}><NotFoundPage /></Suspense></ErrorBoundary> },
     ],
   },

@@ -50,6 +50,49 @@ export const OPERATION_NUMERAL: Record<Operation, string> = {
 };
 
 /**
+ * Stable, prefix-disambiguated identifiers for the seven operations.
+ * The slug (e.g. "calcinate") is the human-facing handle; the ID is the
+ * durable reference used in pipeline metadata, audit logs, PR templates,
+ * and any cross-document citation. Slugs may evolve (Latin vs anglicized
+ * naming has been debated); IDs do not.
+ *
+ * Format: OP## — two-digit zero-padded sequence number.
+ */
+export const OPERATION_ID: Record<Operation, string> = {
+  calcinate: "OP01",
+  dissolve: "OP02",
+  separate: "OP03",
+  conjoin: "OP04",
+  ferment: "OP05",
+  distill: "OP06",
+  coagulate: "OP07",
+};
+
+/**
+ * Reverse lookup — resolve a stable ID back to its operation slug.
+ * Use when reading audit logs or pipeline metadata that stores the ID.
+ */
+export const OPERATION_BY_ID: Record<string, Operation> = Object.fromEntries(
+  (Object.entries(OPERATION_ID) as [Operation, string][]).map(([op, id]) => [id, op]),
+);
+
+/**
+ * Last revision date per operation in ISO-8601 (YYYY-MM-DD).
+ * Bump when the operation's semantics change — not on cosmetic edits.
+ * The date pairs with the ID to give consumers a "what version of OP04
+ * was this pipeline built against?" check.
+ */
+export const OPERATION_REV: Record<Operation, string> = {
+  calcinate: "2026-05-04",
+  dissolve: "2026-05-04",
+  separate: "2026-05-04",
+  conjoin: "2026-05-04",
+  ferment: "2026-05-04",
+  distill: "2026-05-04",
+  coagulate: "2026-05-04",
+};
+
+/**
  * Canonical assignment of one alchemical operation per app surface.
  * Surfaces where no assignment makes mythic sense are simply absent —
  * callers fall back to undefined and render no operation glyph.
