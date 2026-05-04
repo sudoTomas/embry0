@@ -319,3 +319,89 @@ body[data-divine="off"] .divine-fallback {
     animation: divine-equator-scan 3s ease-in-out infinite;
   }
 }
+
+/* ===== Divine Operations — The Seven Alchemical Animations (spec 2026-05-04) ===== */
+
+/* I. Calcinate — fire. North-pole struts pulse intense. */
+@keyframes divine-op-calcinate {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 1; }
+}
+
+/* II. Dissolve — water. Outer ring expands and fades (dissipation). */
+@keyframes divine-op-dissolve {
+  0%   { r: 22; opacity: 1; }
+  100% { r: 30; opacity: 0; }
+}
+
+/* III. Separate — air. Hemispheres translate apart and back. */
+@keyframes divine-op-separate-top {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+@keyframes divine-op-separate-bottom {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(3px); }
+}
+
+/* IV. Conjoin — sacred marriage. Both hemispheres pulse together. */
+@keyframes divine-op-conjoin {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.85; }
+}
+
+/* V. Ferment — earth. Center scales + opacity wave (transformation in process). */
+@keyframes divine-op-ferment {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50%      { opacity: 0.9; transform: scale(1.15); }
+}
+
+/* VI. Distill — aether. Three staggered concentric rings rising (refinement). */
+@keyframes divine-op-distill {
+  0%   { r: 4;  opacity: 1; }
+  100% { r: 22; opacity: 0; }
+}
+
+/* VII. Coagulate — stone. Full sphere fill opacity pulse (the work sealed). */
+@keyframes divine-op-coagulate {
+  0%, 100% { opacity: 0.85; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-divine="off"]) .divine-op-calcinate-struts {
+    animation: divine-op-calcinate 2s ease-in-out infinite;
+  }
+  body:not([data-divine="off"]) .divine-op-dissolve-ring {
+    animation: divine-op-dissolve 3s ease-out infinite;
+  }
+  body:not([data-divine="off"]) .divine-op-separate-top {
+    animation: divine-op-separate-top 3s ease-in-out infinite;
+    transform-origin: center;
+  }
+  body:not([data-divine="off"]) .divine-op-separate-bottom {
+    animation: divine-op-separate-bottom 3s ease-in-out infinite;
+    transform-origin: center;
+  }
+  body:not([data-divine="off"]) .divine-op-conjoin-hemis {
+    animation: divine-op-conjoin 2.5s ease-in-out infinite;
+  }
+  body:not([data-divine="off"]) .divine-op-ferment-core {
+    animation: divine-op-ferment 3.5s ease-in-out infinite;
+    transform-origin: 32px 32px;
+  }
+  body:not([data-divine="off"]) .divine-op-distill-1 {
+    animation: divine-op-distill 2.5s ease-out infinite;
+  }
+  body:not([data-divine="off"]) .divine-op-distill-2 {
+    animation: divine-op-distill 2.5s ease-out infinite;
+    animation-delay: 0.8s;
+  }
+  body:not([data-divine="off"]) .divine-op-distill-3 {
+    animation: divine-op-distill 2.5s ease-out infinite;
+    animation-delay: 1.6s;
+  }
+  body:not([data-divine="off"]) .divine-op-coagulate-fill {
+    animation: divine-op-coagulate 4s ease-in-out infinite;
+  }
+}

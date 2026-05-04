@@ -18,10 +18,11 @@ Every sigil and every mark stroke uses `stroke="currentColor"` (or `fill="curren
 
 - All animations gated by `@media (prefers-reduced-motion: no-preference)`.
 - All animations gated by `body:not([data-divine="off"])`.
-- **One animated property per element** is the default. Compound-property animations are allowed only when explicitly justified in the spec, and only in two narrow shapes:
+- **One animated property per element** is the default. Compound-property animations are allowed only when explicitly justified in the spec, and only in three narrow shapes:
   1. **One-shot animations** (rule's spirit is "no constant restless motion"; one-shots are temporal events, not motion).
   2. **Narrow-range opacity composed with another property**, where the opacity range is narrow enough (≤0.7 span) that the visual reads as a single composed motion.
-- Two current explicit exceptions: `<DivineRipple>` (animates `r` + `opacity` — one-shot) and `divine-equator-scan` (animates `transform` + `opacity` — narrow opacity range). See `docs/superpowers/specs/2026-05-04-divine-animations-design.md` §3.6.
+  3. **Dissipation motion** — `r` (or equivalent size) + `opacity` together, where the visual reads as a single coherent expand-and-fade gesture (e.g. a ring dissolving outward). Justification: opacity is bound mechanically to the size — an expanding ring without fading would be visually wrong; the two properties are one motion, not two.
+- Current explicit exceptions: `<DivineRipple>` (one-shot `r` + `opacity`), `divine-equator-scan` (narrow opacity + transform), `divine-op-dissolve-ring` (dissipation), `divine-op-distill-*` (dissipation x3), `divine-op-ferment-core` (narrow opacity + transform-scale). See `docs/superpowers/specs/2026-05-04-divine-animations-design.md` §3.6 and `2026-05-04-divine-operations-design.md` §3.2.
 - No animation longer than 4 seconds; no animation that loops faster than 2 seconds. (One-shots are exempt from the loop-floor rule by definition.)
 
 ## 4. Escape hatch
