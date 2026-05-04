@@ -104,7 +104,7 @@ export function categoryToStage(category: string | undefined | null): Stage | nu
   const lower = category.toLowerCase();
   if (lower in STAGE_SIGILS) return lower as Stage;
   // Common aliases used in Athanor's existing taxonomy
-  if (lower === "reviewer" || lower === "validator") return "validate";
+  if (lower === "review" || lower === "reviewer" || lower === "validator") return "validate";
   if (lower === "developer") return "develop";
   if (lower === "explorer") return "explore";
   if (lower === "output") return "publish";

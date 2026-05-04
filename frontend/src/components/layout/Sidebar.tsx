@@ -1,5 +1,5 @@
 import { NavLink } from "react-router";
-import { Activity, LayoutDashboard, Play, Workflow, Settings, Bot, Box, CircleDot, KeyRound } from "lucide-react";
+import { LayoutDashboard, Play, Workflow, Settings, Bot, Box, CircleDot, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -120,7 +120,28 @@ export function Sidebar() {
       )}
     >
       <div className="flex h-14 items-center gap-2 border-b px-3">
-        <Activity className="h-6 w-6 shrink-0 text-primary" />
+        <svg
+          width="24"
+          height="24"
+          viewBox="0 0 64 64"
+          aria-hidden="true"
+          className="shrink-0 divine-element text-primary"
+        >
+          <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" strokeWidth="2.2" />
+          <circle cx="32" cy="10" r="2.4" fill="currentColor" />
+          <circle cx="54" cy="32" r="2.4" fill="currentColor" />
+          <circle cx="32" cy="54" r="2.4" fill="currentColor" />
+          <circle cx="10" cy="32" r="2.4" fill="currentColor" />
+          <line
+            x1="14"
+            y1="32"
+            x2="50"
+            y2="32"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            opacity="0.7"
+          />
+        </svg>
         {sidebarOpen && (
           <span className="text-lg font-bold tracking-tight">{APP_NAME}</span>
         )}

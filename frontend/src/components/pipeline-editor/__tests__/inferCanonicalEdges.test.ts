@@ -35,6 +35,19 @@ describe("inferCanonicalEdges", () => {
     }
   });
 
+  it("recognizes 'review' agentType as the validate stage (live API uses 'review' not 'reviewer')", () => {
+    const nodes = [
+      node("t", "triage"),
+      node("d", "developer"),
+      node("r", "review"), // ← live API agent type, not "reviewer"
+      node("q", "qa"),
+    ];
+    const result = inferCanonicalEdges(nodes, []);
+    expect(result).toHaveLength(4);
+    const pairs = result.map((e) => `${e.source}->${e.target}`).sort();
+    expect(pairs).toEqual(["d->r", "q->t", "r->q", "t->d"]);
+  });
+
   it("creates only the missing edges when some canonical edges already exist", () => {
     const nodes = [
       node("t", "triage"),
