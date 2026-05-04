@@ -18,8 +18,11 @@ Every sigil and every mark stroke uses `stroke="currentColor"` (or `fill="curren
 
 - All animations gated by `@media (prefers-reduced-motion: no-preference)`.
 - All animations gated by `body:not([data-divine="off"])`.
-- Maximum one animated property per element (opacity OR transform — never both).
-- No animation longer than 4 seconds; no animation that loops faster than 2 seconds.
+- **One animated property per element** is the default. Compound-property animations are allowed only when explicitly justified in the spec, and only in two narrow shapes:
+  1. **One-shot animations** (rule's spirit is "no constant restless motion"; one-shots are temporal events, not motion).
+  2. **Narrow-range opacity composed with another property**, where the opacity range is narrow enough (≤0.7 span) that the visual reads as a single composed motion.
+- Two current explicit exceptions: `<DivineRipple>` (animates `r` + `opacity` — one-shot) and `divine-equator-scan` (animates `transform` + `opacity` — narrow opacity range). See `docs/superpowers/specs/2026-05-04-divine-animations-design.md` §3.6.
+- No animation longer than 4 seconds; no animation that loops faster than 2 seconds. (One-shots are exempt from the loop-floor rule by definition.)
 
 ## 4. Escape hatch
 

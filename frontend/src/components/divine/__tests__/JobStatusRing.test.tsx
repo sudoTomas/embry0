@@ -48,3 +48,51 @@ describe("JobStatusRing", () => {
     expect(get("validate")).toBe("0.15");
   });
 });
+
+describe("JobStatusRing — cardinal pulse on idle", () => {
+  it("applies cardinal-pulse classes to dots when currentStage is null", () => {
+    const { container } = render(<JobStatusRing currentStage={null} />);
+    expect(container.querySelector('circle.divine-cardinal-pulse-n')).not.toBeNull();
+    expect(container.querySelector('circle.divine-cardinal-pulse-e')).not.toBeNull();
+    expect(container.querySelector('circle.divine-cardinal-pulse-s')).not.toBeNull();
+    expect(container.querySelector('circle.divine-cardinal-pulse-w')).not.toBeNull();
+  });
+
+  it("does NOT apply cardinal-pulse classes when currentStage is set", () => {
+    const { container } = render(<JobStatusRing currentStage="develop" />);
+    expect(container.querySelector('circle.divine-cardinal-pulse-n')).toBeNull();
+    expect(container.querySelector('circle.divine-cardinal-pulse-e')).toBeNull();
+  });
+});
+
+describe("JobStatusRing — scanning prop", () => {
+  it("applies divine-equator-scan class to the equator line when scanning is true", () => {
+    const { container } = render(<JobStatusRing currentStage="develop" scanning />);
+    expect(container.querySelector('line.divine-equator-scan')).not.toBeNull();
+  });
+
+  it("does NOT apply scan class when scanning is false or omitted", () => {
+    const { container: c1 } = render(<JobStatusRing currentStage="develop" />);
+    expect(c1.querySelector('line.divine-equator-scan')).toBeNull();
+    const { container: c2 } = render(<JobStatusRing currentStage="develop" scanning={false} />);
+    expect(c2.querySelector('line.divine-equator-scan')).toBeNull();
+  });
+
+  it("composes idle pulse with scanning when both apply", () => {
+    const { container } = render(<JobStatusRing currentStage={null} scanning />);
+    expect(container.querySelector('circle.divine-cardinal-pulse-n')).not.toBeNull();
+    expect(container.querySelector('line.divine-equator-scan')).not.toBeNull();
+  });
+});
+
+describe("JobStatusRing — stage shift transitions", () => {
+  it("each quarter-arc has the 600ms opacity transition style", () => {
+    const { container } = render(<JobStatusRing currentStage="develop" />);
+    const arcs = container.querySelectorAll('path[data-arc]');
+    expect(arcs.length).toBe(4);
+    arcs.forEach((arc) => {
+      const style = arc.getAttribute("style") ?? "";
+      expect(style).toMatch(/transition.*opacity.*600ms/);
+    });
+  });
+});

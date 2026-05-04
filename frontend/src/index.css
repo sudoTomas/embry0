@@ -265,3 +265,57 @@ body[data-divine="off"] .divine-fallback {
     animation: divine-radiate 3s ease-in-out infinite;
   }
 }
+
+/* ===== Divine Animations (spec 2026-05-04) ===== */
+
+@keyframes divine-cardinal-pulse-n {
+  0%, 100% { opacity: 1; }
+  25%, 75% { opacity: 0.4; }
+  50%      { opacity: 0.4; }
+}
+@keyframes divine-cardinal-pulse-e {
+  0%, 100% { opacity: 0.4; }
+  25%      { opacity: 1; }
+  50%, 75% { opacity: 0.4; }
+}
+@keyframes divine-cardinal-pulse-s {
+  0%, 25% { opacity: 0.4; }
+  50%     { opacity: 1; }
+  75%, 100% { opacity: 0.4; }
+}
+@keyframes divine-cardinal-pulse-w {
+  0%, 50% { opacity: 0.4; }
+  75%     { opacity: 1; }
+  100%    { opacity: 0.4; }
+}
+
+@keyframes divine-ripple {
+  0%   { r: 2.4; opacity: 1; }
+  100% { r: 22;  opacity: 0; }
+}
+
+@keyframes divine-equator-scan {
+  0%, 100% { transform: translateY(-14px); opacity: 0.3; }
+  50%      { transform: translateY(0);     opacity: 1; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-divine="off"]) .divine-cardinal-pulse-n {
+    animation: divine-cardinal-pulse-n 4s ease-in-out infinite;
+  }
+  body:not([data-divine="off"]) .divine-cardinal-pulse-e {
+    animation: divine-cardinal-pulse-e 4s ease-in-out infinite;
+  }
+  body:not([data-divine="off"]) .divine-cardinal-pulse-s {
+    animation: divine-cardinal-pulse-s 4s ease-in-out infinite;
+  }
+  body:not([data-divine="off"]) .divine-cardinal-pulse-w {
+    animation: divine-cardinal-pulse-w 4s ease-in-out infinite;
+  }
+  body:not([data-divine="off"]) .divine-ripple-circle {
+    animation: divine-ripple 2.5s ease-out forwards;
+  }
+  body:not([data-divine="off"]) .divine-equator-scan {
+    animation: divine-equator-scan 3s ease-in-out infinite;
+  }
+}

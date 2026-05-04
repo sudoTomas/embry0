@@ -21,6 +21,7 @@ import { TemplatePicker } from "./TemplatePicker";
 import { TemplateDrawer } from "./TemplateDrawer";
 import { useGraphState } from "./hooks/useGraphState";
 import { autoLayout } from "./autoLayout";
+import { DivineRipple } from "@/components/divine/DivineRipple";
 import { useRenameTemplate, useCreateTemplate } from "@/hooks/usePipelines";
 import type { PipelineGraph } from "@/lib/types";
 
@@ -109,6 +110,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
 
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showTemplateDrawer, setShowTemplateDrawer] = useState(false);
+  const [rippleKey, setRippleKey] = useState(0);
 
   // Page-mode state
   const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
@@ -146,6 +148,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
     const result = autoLayout(nodes, edges);
     setNodes(result.nodes);
     setEdges(result.edges);
+    setRippleKey((k) => k + 1);
   }, [nodes, edges, setNodes, setEdges]);
 
   const handleSaveAs = useCallback(() => {
@@ -179,16 +182,21 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
         <h2 className="text-base font-semibold text-white">Pipeline Editor</h2>
       </div>
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={handleAutoArrange}
-          disabled={nodes.length < 2}
-          className="flex items-center gap-1.5 text-xs text-white/50 hover:text-white/70 disabled:opacity-30 disabled:hover:text-white/50 px-3 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
-          title="Re-position all nodes into a clean left-to-right layout"
-        >
-          <LayoutGrid size={13} />
-          Auto Arrange
-        </button>
+        <span className="relative inline-flex">
+          <button
+            type="button"
+            onClick={handleAutoArrange}
+            disabled={nodes.length < 2}
+            className="flex items-center gap-1.5 text-xs text-white/50 hover:text-white/70 disabled:opacity-30 disabled:hover:text-white/50 px-3 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
+            title="Re-position all nodes into a clean left-to-right layout"
+          >
+            <LayoutGrid size={13} />
+            Auto Arrange
+          </button>
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <DivineRipple key={rippleKey} size={120} />
+          </span>
+        </span>
         <button
           type="button"
           onClick={() => setShowTemplatePicker(true)}
@@ -219,16 +227,21 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
         />
       </div>
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={handleAutoArrange}
-          disabled={nodes.length < 2}
-          className="flex items-center gap-1.5 text-xs text-white/50 hover:text-white/70 disabled:opacity-30 disabled:hover:text-white/50 px-3 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
-          title="Re-position all nodes into a clean left-to-right layout"
-        >
-          <LayoutGrid size={13} />
-          Auto Arrange
-        </button>
+        <span className="relative inline-flex">
+          <button
+            type="button"
+            onClick={handleAutoArrange}
+            disabled={nodes.length < 2}
+            className="flex items-center gap-1.5 text-xs text-white/50 hover:text-white/70 disabled:opacity-30 disabled:hover:text-white/50 px-3 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
+            title="Re-position all nodes into a clean left-to-right layout"
+          >
+            <LayoutGrid size={13} />
+            Auto Arrange
+          </button>
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <DivineRipple key={rippleKey} size={120} />
+          </span>
+        </span>
         <button
           type="button"
           onClick={() => setShowTemplateDrawer(true)}

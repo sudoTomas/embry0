@@ -2,6 +2,7 @@ import type { CardinalStage } from "@/lib/sigils";
 
 interface JobStatusRingProps {
   currentStage: CardinalStage | null;
+  scanning?: boolean;
   size?: number;
   className?: string;
 }
@@ -32,14 +33,23 @@ function arcOpacity(arc: CardinalStage, current: CardinalStage | null): string {
   return RECENCY_OPACITY[stepsBack];
 }
 
+const ARC_TRANSITION_STYLE = { transition: "opacity 600ms ease-out" } as const;
+
 /**
- * Dashboard primary status ring — four cardinal quarter-arcs whose opacity
- * encodes pipeline recency (active = 1.0, one back = 0.75, two = 0.4, three = 0.15).
- * Idle (currentStage === null) renders all four at 0.4 with a blank center.
+ * Dashboard primary status ring. Four cardinal quarter-arcs whose opacity
+ * encodes pipeline recency. Cardinal dots pulse N→E→S→W when idle; the
+ * equator scans top↔bottom when scanning. Arc opacity changes transition
+ * smoothly over 600ms (the Stage Shift effect).
  *
- * See `docs/superpowers/specs/2026-05-04-geodesic-identity-design.md` §3.3.
+ * See `docs/superpowers/specs/2026-05-04-divine-animations-design.md`.
  */
-export function JobStatusRing({ currentStage, size = 120, className }: JobStatusRingProps) {
+export function JobStatusRing({
+  currentStage,
+  scanning = false,
+  size = 120,
+  className,
+}: JobStatusRingProps) {
+  const idle = currentStage === null;
   return (
     <svg
       width={size}
@@ -57,6 +67,7 @@ export function JobStatusRing({ currentStage, size = 120, className }: JobStatus
         stroke="currentColor"
         strokeWidth="0.6"
         opacity="0.3"
+        className={scanning ? "divine-equator-scan" : undefined}
       />
       {PIPELINE_ORDER.map((stage) => (
         <path
@@ -68,12 +79,37 @@ export function JobStatusRing({ currentStage, size = 120, className }: JobStatus
           strokeWidth="2.4"
           opacity={arcOpacity(stage, currentStage)}
           strokeLinecap="round"
+          style={ARC_TRANSITION_STYLE}
         />
       ))}
-      <circle cx="32" cy="10" r="2.4" fill="currentColor" />
-      <circle cx="54" cy="32" r="2.4" fill="currentColor" />
-      <circle cx="32" cy="54" r="2.4" fill="currentColor" />
-      <circle cx="10" cy="32" r="2.4" fill="currentColor" />
+      <circle
+        cx="32"
+        cy="10"
+        r="2.4"
+        fill="currentColor"
+        className={idle ? "divine-cardinal-pulse-n" : undefined}
+      />
+      <circle
+        cx="54"
+        cy="32"
+        r="2.4"
+        fill="currentColor"
+        className={idle ? "divine-cardinal-pulse-e" : undefined}
+      />
+      <circle
+        cx="32"
+        cy="54"
+        r="2.4"
+        fill="currentColor"
+        className={idle ? "divine-cardinal-pulse-s" : undefined}
+      />
+      <circle
+        cx="10"
+        cy="32"
+        r="2.4"
+        fill="currentColor"
+        className={idle ? "divine-cardinal-pulse-w" : undefined}
+      />
       <text
         x="32"
         y="35"
