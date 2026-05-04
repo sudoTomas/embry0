@@ -75,7 +75,11 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         ),
         "model": "claude-sonnet-4-6",
         "tools": [
-            "Read", "Glob", "Grep", "Bash", "Edit",
+            "Read",
+            "Glob",
+            "Grep",
+            "Bash",
+            "Edit",
             "mcp__playwright__browser_navigate",
             "mcp__playwright__browser_navigate_back",
             "mcp__playwright__browser_click",

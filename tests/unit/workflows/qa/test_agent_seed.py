@@ -32,9 +32,7 @@ def test_qa_seed_in_sync_with_builtin_seed():
         "auth_mode",
         "mcp_servers",
     ):
-        assert builtin[key] == QA_AGENT_SEED[key], (
-            f"BUILTIN_SEED.qa.{key} drifted from QA_AGENT_SEED"
-        )
+        assert builtin[key] == QA_AGENT_SEED[key], f"BUILTIN_SEED.qa.{key} drifted from QA_AGENT_SEED"
 
 
 @pytest.mark.requires_postgres

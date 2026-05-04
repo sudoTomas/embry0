@@ -67,7 +67,8 @@ async def take_diagnostic_screenshot(
         return None
 
     try:
-        return await docker.copy_bytes_from(container_id, sandbox_path)
+        result: bytes | None = await docker.copy_bytes_from(container_id, sandbox_path)
+        return result
     except Exception as exc:
         logger.warning("diagnostic_screenshot_copy_failed", error=str(exc))
         return None

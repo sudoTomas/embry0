@@ -55,10 +55,7 @@ async def test_phase_3_artifact_endpoints(app, qa_minio_seeded):
         r = await app.get(f"/api/v1/jobs/{job_id}/qa/attempts")
         assert r.status_code == 200, r.text
         body = r.json()
-        assert any(
-            a["attempt_n"] == 1 and a["has_result_json"]
-            for a in body["attempts"]
-        ), body
+        assert any(a["attempt_n"] == 1 and a["has_result_json"] for a in body["attempts"]), body
 
         # 2. Per-attempt parsed result returns the JSON document.
         r = await app.get(f"/api/v1/jobs/{job_id}/qa/attempts/1/result")
@@ -74,9 +71,7 @@ async def test_phase_3_artifact_endpoints(app, qa_minio_seeded):
         assert r.status_code == 302, r.text
 
         # 4. No .png uploaded under <job_id>/, so latest-screenshot 404s.
-        r = await app.get(
-            f"/api/v1/jobs/{job_id}/artifacts/screenshots/latest"
-        )
+        r = await app.get(f"/api/v1/jobs/{job_id}/artifacts/screenshots/latest")
         assert r.status_code == 404, r.text
     finally:
         # Clean up every seeded object so reruns don't accumulate junk.

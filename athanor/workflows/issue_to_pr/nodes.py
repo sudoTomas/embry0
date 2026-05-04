@@ -25,9 +25,7 @@ from athanor.orchestration.nodes.agent import (
 logger = structlog.get_logger(__name__)
 
 
-def _filter_user_env_for_sandbox(
-    user_env: list[dict[str, str]] | dict[str, str], *, qa_active: bool
-) -> dict[str, str]:
+def _filter_user_env_for_sandbox(user_env: list[dict[str, str]] | dict[str, str], *, qa_active: bool) -> dict[str, str]:
     """Merge user env vars into the sandbox environment, filtering by scope.
 
     - scope='app' (or unspecified): always included.
@@ -42,9 +40,7 @@ def _filter_user_env_for_sandbox(
 
     # Normalize to list-of-dicts
     if isinstance(user_env, dict):
-        rows: list[dict[str, str]] = [
-            {"key": k, "value": v, "scope": "app"} for k, v in user_env.items()
-        ]
+        rows: list[dict[str, str]] = [{"key": k, "value": v, "scope": "app"} for k, v in user_env.items()]
     else:
         rows = list(user_env)
 
@@ -294,9 +290,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             new_session_id = last_output.get("session_id")
             new_session_blob = last_output.get("session_blob")
             if new_messages or new_session_id:
-                mode = last_output.get("mode") or (
-                    "claude_max" if credentials.get("oauth_token") else "anthropic_api"
-                )
+                mode = last_output.get("mode") or ("claude_max" if credentials.get("oauth_token") else "anthropic_api")
                 try:
                     await agent_sessions_repo.upsert(
                         job_id=state.get("job_id", ""),
@@ -598,9 +592,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # one if the model decides to, even though set_qa_decision isn't in the
     # tools allowlist). When neither path produced one, leave state["qa"]
     # alone — downstream callers treat absent needs_qa as False.
-    qa_update = _extract_qa_decision_from_triage_dict(triage_dict) or _extract_qa_decision_from_events(
-        collected_events
-    )
+    qa_update = _extract_qa_decision_from_triage_dict(triage_dict) or _extract_qa_decision_from_events(collected_events)
     if qa_update is not None:
         existing_qa = state.get("qa") or {}
         merged_qa: dict[str, Any] = {**existing_qa}
@@ -622,7 +614,9 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     if qa_state_in.get("final_status") == "failed":
         # Prefer the freshest parsed decision (resume path updates result["triage_decision"]);
         # fall back to the first-pass triage_dict so the lookup never NPEs.
-        decision_dict = result.get("triage_decision") if isinstance(result.get("triage_decision"), dict) else triage_dict
+        decision_dict = (
+            result.get("triage_decision") if isinstance(result.get("triage_decision"), dict) else triage_dict
+        )
         return _route_qa_failure_action(
             state=state,
             result=result,
@@ -947,10 +941,18 @@ async def _verify_branch_pushed(
         return True
     try:
         out = await docker.run_cmd(
-            docker.build_exec_cmd(container_id, [
-                "git", "-C", "/workspace",
-                "ls-remote", "--heads", "origin", branch,
-            ]),
+            docker.build_exec_cmd(
+                container_id,
+                [
+                    "git",
+                    "-C",
+                    "/workspace",
+                    "ls-remote",
+                    "--heads",
+                    "origin",
+                    branch,
+                ],
+            ),
             timeout=15,
         )
     except Exception as exc:
@@ -1100,9 +1102,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
             new_session_id = last_output.get("session_id")
             new_session_blob = last_output.get("session_blob")
             if new_messages or new_session_id:
-                mode = last_output.get("mode") or (
-                    "claude_max" if credentials.get("oauth_token") else "anthropic_api"
-                )
+                mode = last_output.get("mode") or ("claude_max" if credentials.get("oauth_token") else "anthropic_api")
                 try:
                     await agent_sessions_repo.upsert(
                         job_id=state.get("job_id", ""),
@@ -1168,14 +1168,8 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         # Brainstorming sessions can legitimately need many turns of design
         # back-and-forth. Bump the cap when triage attached the brainstorming
         # skill; everything else stays at the default of 5.
-        skills_for_dev = (
-            (state.get("pipeline_config", {}) or {}).get("agent_skills", {}).get("developer", [])
-        )
-        ask_cap = (
-            BRAINSTORMING_ASK_USER_CAP
-            if "superpowers:brainstorming" in skills_for_dev
-            else DEFAULT_ASK_USER_CAP
-        )
+        skills_for_dev = (state.get("pipeline_config", {}) or {}).get("agent_skills", {}).get("developer", [])
+        ask_cap = BRAINSTORMING_ASK_USER_CAP if "superpowers:brainstorming" in skills_for_dev else DEFAULT_ASK_USER_CAP
 
         exhausted, cap_updates = _enforce_ask_user_cap(
             state,
@@ -1394,9 +1388,7 @@ Return ONLY a JSON object:
             new_session_id = last_output.get("session_id")
             new_session_blob = last_output.get("session_blob")
             if new_messages or new_session_id:
-                mode = last_output.get("mode") or (
-                    "claude_max" if credentials.get("oauth_token") else "anthropic_api"
-                )
+                mode = last_output.get("mode") or ("claude_max" if credentials.get("oauth_token") else "anthropic_api")
                 try:
                     await agent_sessions_repo.upsert(
                         job_id=state.get("job_id", ""),

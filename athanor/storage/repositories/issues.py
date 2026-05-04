@@ -367,9 +367,7 @@ class IssuesRepository:
             return None
         return dict(row)
 
-    async def find_by_repo_and_github_number(
-        self, repo: str, github_number: int
-    ) -> dict[str, Any] | None:
+    async def find_by_repo_and_github_number(self, repo: str, github_number: int) -> dict[str, Any] | None:
         """Lookup helper for the inbound webhook dispatcher.
 
         Thin alias for ``get_by_github`` — kept under the name used by

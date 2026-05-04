@@ -24,18 +24,14 @@ class NotificationChannel(Protocol):
       questions: list of dicts, each with {question, input_id, options, asking_node}.
     """
 
-    async def dispatch(
-        self, issue: dict[str, Any], questions: list[dict[str, Any]]
-    ) -> None: ...
+    async def dispatch(self, issue: dict[str, Any], questions: list[dict[str, Any]]) -> None: ...
 
 
 class DashboardChannel:
     """No-op channel — dashboard reads from issue_inputs directly. Included
     for symmetry so dispatch_to_channels can iterate uniformly."""
 
-    async def dispatch(
-        self, issue: dict[str, Any], questions: list[dict[str, Any]]
-    ) -> None:
+    async def dispatch(self, issue: dict[str, Any], questions: list[dict[str, Any]]) -> None:
         logger.debug("dashboard_channel_noop", issue_id=issue.get("id"), n=len(questions))
 
 

@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from athanor.agents.claude_cli_session import (
     canonical_session_path_for,
     find_session_file,
@@ -81,9 +79,7 @@ def test_canonical_path_for_writes_to_projects_layout(tmp_path: Path):
     """canonical_session_path_for returns where we should WRITE a session blob
     on resume — the path the current CLI will look in."""
     home = tmp_path
-    path = canonical_session_path_for(
-        home_dir=home, session_id="sess-new", project_cwd="/workspace"
-    )
+    path = canonical_session_path_for(home_dir=home, session_id="sess-new", project_cwd="/workspace")
     assert path == home / ".claude" / "projects" / "-workspace" / "sess-new.jsonl"
 
 
@@ -114,7 +110,4 @@ def test_multiple_matches_picks_lexicographically_first_and_warns(tmp_path: Path
         found = find_session_file(home_dir=home, session_id="sess-dup")
 
     assert found == proj_a / "sess-dup.jsonl"  # -aaa sorts before -bbb
-    assert any(
-        entry.get("event") == "multiple_session_files_found_picking_first"
-        for entry in log_entries
-    )
+    assert any(entry.get("event") == "multiple_session_files_found_picking_first" for entry in log_entries)

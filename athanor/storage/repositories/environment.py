@@ -23,8 +23,7 @@ class EnvironmentRepository:
 
     async def get_global(self) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
-            "SELECT key, value, var_type, description, scope "
-            "FROM global_environment ORDER BY key"
+            "SELECT key, value, var_type, description, scope FROM global_environment ORDER BY key"
         )
         return [dict(r) for r in rows]
 

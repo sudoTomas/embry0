@@ -102,9 +102,7 @@ async def test_start_skips_credential_proxies_when_no_creds(docker_mock):
     launch — they don't carry credentials, only network plumbing."""
     pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
     await pm.start(github_token="", anthropic_api_key="")
-    launched_names = [
-        c.kwargs.get("name") for c in docker_mock.build_run_proxy_cmd.call_args_list
-    ]
+    launched_names = [c.kwargs.get("name") for c in docker_mock.build_run_proxy_cmd.call_args_list]
     assert "git-proxy" not in launched_names
     assert "github-proxy" not in launched_names
     assert "auth-proxy" not in launched_names

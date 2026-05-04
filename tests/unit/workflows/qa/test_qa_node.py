@@ -14,11 +14,13 @@ async def test_qa_node_invokes_run_agent_node():
         "job_id": "JOB1",
         "repo": "x/y",
         "qa": {
-            "attempts": [{
-                "attempt_n": 1,
-                "sandbox_id": "container-id-xyz",
-                "artifact_prefix": "JOB1/1/",
-            }],
+            "attempts": [
+                {
+                    "attempt_n": 1,
+                    "sandbox_id": "container-id-xyz",
+                    "artifact_prefix": "JOB1/1/",
+                }
+            ],
             "qa_yaml_parsed": {"mode": "dind"},
             "acceptance_criteria": ["home loads"],
             "sandbox_token": "tok",
@@ -29,21 +31,37 @@ async def test_qa_node_invokes_run_agent_node():
     db = MagicMock()
     config = {"configurable": {"agent_runner": agent_runner, "db": db}}
 
-    fake_run = AsyncMock(return_value={
-        "agent_outputs": [{
-            "agent_type": "qa",
-            "is_error": False,
-            "output": "ok",
-            "cost_usd": 0.1,
-            "duration_ms": 5000,
-        }],
-    })
+    fake_run = AsyncMock(
+        return_value={
+            "agent_outputs": [
+                {
+                    "agent_type": "qa",
+                    "is_error": False,
+                    "output": "ok",
+                    "cost_usd": 0.1,
+                    "duration_ms": 5000,
+                }
+            ],
+        }
+    )
 
     fake_repo = MagicMock()
-    fake_repo.get = AsyncMock(return_value={"model": "claude-sonnet-4-6", "tools": [], "skills": [], "system_prompt": "sp", "mcp_servers": {}, "execution_mode": None, "auth_mode": None})
+    fake_repo.get = AsyncMock(
+        return_value={
+            "model": "claude-sonnet-4-6",
+            "tools": [],
+            "skills": [],
+            "system_prompt": "sp",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        }
+    )
 
-    with patch("athanor.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=fake_repo), \
-         patch("athanor.orchestration.nodes.agent.run_agent_node", fake_run):
+    with (
+        patch("athanor.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=fake_repo),
+        patch("athanor.orchestration.nodes.agent.run_agent_node", fake_run),
+    ):
         new_state = await qa_node(state, config)
 
     fake_run.assert_awaited_once()
@@ -66,26 +84,44 @@ async def test_qa_node_records_agent_error():
         "job_id": "JOB",
         "qa": {
             "attempts": [{"attempt_n": 1, "sandbox_id": "C", "artifact_prefix": "JOB/1/"}],
-            "qa_yaml_parsed": {}, "acceptance_criteria": [], "sandbox_token": "t",
+            "qa_yaml_parsed": {},
+            "acceptance_criteria": [],
+            "sandbox_token": "t",
         },
     }
     agent_runner = MagicMock()
     db = MagicMock()
     config = {"configurable": {"agent_runner": agent_runner, "db": db}}
 
-    fake_run = AsyncMock(return_value={
-        "agent_outputs": [{
-            "agent_type": "qa",
-            "is_error": True,
-            "error_message": "executor crashed: connection refused",
-        }],
-    })
+    fake_run = AsyncMock(
+        return_value={
+            "agent_outputs": [
+                {
+                    "agent_type": "qa",
+                    "is_error": True,
+                    "error_message": "executor crashed: connection refused",
+                }
+            ],
+        }
+    )
 
     fake_repo = MagicMock()
-    fake_repo.get = AsyncMock(return_value={"model": "claude-sonnet-4-6", "tools": [], "skills": [], "system_prompt": "sp", "mcp_servers": {}, "execution_mode": None, "auth_mode": None})
+    fake_repo.get = AsyncMock(
+        return_value={
+            "model": "claude-sonnet-4-6",
+            "tools": [],
+            "skills": [],
+            "system_prompt": "sp",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        }
+    )
 
-    with patch("athanor.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=fake_repo), \
-         patch("athanor.orchestration.nodes.agent.run_agent_node", fake_run):
+    with (
+        patch("athanor.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=fake_repo),
+        patch("athanor.orchestration.nodes.agent.run_agent_node", fake_run),
+    ):
         new_state = await qa_node(state, config)
 
     last = new_state["qa"]["attempts"][-1]
@@ -101,8 +137,12 @@ async def test_qa_node_raises_without_agent_runner():
 
     state = {
         "job_id": "X",
-        "qa": {"attempts": [{"sandbox_id": "C", "artifact_prefix": "X/1/"}],
-               "qa_yaml_parsed": {}, "acceptance_criteria": [], "sandbox_token": "t"},
+        "qa": {
+            "attempts": [{"sandbox_id": "C", "artifact_prefix": "X/1/"}],
+            "qa_yaml_parsed": {},
+            "acceptance_criteria": [],
+            "sandbox_token": "t",
+        },
     }
     config = {"configurable": {}}
 

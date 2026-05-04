@@ -133,16 +133,12 @@ class IssueInputsRepository:
         Sequence numbers in /answer N: are 1-based indexes into this list.
         """
         rows = await self._db.fetch(
-            "SELECT * FROM issue_inputs "
-            "WHERE issue_id = $1 AND status = 'pending' "
-            "ORDER BY created_at ASC, id ASC",
+            "SELECT * FROM issue_inputs WHERE issue_id = $1 AND status = 'pending' ORDER BY created_at ASC, id ASC",
             issue_id,
         )
         return [dict(r) for r in rows]
 
-    async def find_by_issue_and_sequence(
-        self, issue_id: str, sequence: int
-    ) -> dict[str, Any] | None:
+    async def find_by_issue_and_sequence(self, issue_id: str, sequence: int) -> dict[str, Any] | None:
         """Lookup helper for the inbound parser. sequence is 1-based."""
         rows = await self.list_pending_for_issue(issue_id)
         if sequence < 1 or sequence > len(rows):

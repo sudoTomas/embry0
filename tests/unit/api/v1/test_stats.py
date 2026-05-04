@@ -13,7 +13,20 @@ def app():
     app = create_app(config)
     mock_db = MagicMock()
     mock_db.fetchval = AsyncMock(return_value=0)
-    mock_db.fetchrow = AsyncMock(return_value={"total_jobs": 0, "completed": 0, "failed": 0, "total_cost": 0.0})
+    mock_db.fetchrow = AsyncMock(
+        return_value={
+            "total_jobs": 0,
+            "completed": 0,
+            "failed": 0,
+            "running": 0,
+            "queued": 0,
+            "awaiting_input": 0,
+            "paused": 0,
+            "total_cost": 0.0,
+            "daily_cost": 0.0,
+            "monthly_cost": 0.0,
+        }
+    )
     mock_db.fetch = AsyncMock(return_value=[])
     app.state.db = mock_db
     mock_traces = MagicMock()

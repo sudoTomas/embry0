@@ -70,9 +70,7 @@ def _make_triage_stub_emitting_3_questions() -> Any:
         for i in range(1, 4)
     ]
 
-    async def _stub_triage(
-        state: dict[str, Any], config: RunnableConfig
-    ) -> Command[str]:
+    async def _stub_triage(state: dict[str, Any], config: RunnableConfig) -> Command[str]:
         return Command(
             goto="ask_user_interrupt",
             update={
@@ -85,9 +83,7 @@ def _make_triage_stub_emitting_3_questions() -> Any:
     return _stub_triage
 
 
-async def _stub_developer(
-    state: dict[str, Any], config: RunnableConfig
-) -> Command[str]:
+async def _stub_developer(state: dict[str, Any], config: RunnableConfig) -> Command[str]:
     """After resume, ask_user_interrupt → developer (per the static edge in
     graph.py line 162). Short-circuit to END so we don't need a real
     sandbox / agent_runner; the orchestrator's _handle_workflow_result

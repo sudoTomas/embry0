@@ -122,8 +122,8 @@ class IssueToprWorkflow:
         builder.add_node("qa", qa_node)  # type: ignore[type-var]
         builder.add_node("qa_report", report_node)  # type: ignore[type-var]
         # Phase 5 Task 6: bookkeeping + exhaustion sink for the QA failure loop.
-        builder.add_node("qa_failure_bookkeeping", _qa_failure_bookkeeping_node)  # type: ignore[type-var]
-        builder.add_node("qa_exhausted", _qa_exhausted_node)  # type: ignore[type-var]
+        builder.add_node("qa_failure_bookkeeping", _qa_failure_bookkeeping_node)
+        builder.add_node("qa_exhausted", _qa_exhausted_node)
 
         builder.add_edge(START, "init")
         builder.add_edge("init", "triage")

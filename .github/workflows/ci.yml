@@ -280,11 +280,21 @@ jobs:
           exit-code: "0"
           severity: CRITICAL,HIGH
 
-      - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
+      # gitleaks/gitleaks-action@v2 requires a paid license for org accounts.
+      # Run the open-source CLI directly instead — same scanner, no license.
+      - name: gitleaks (open-source CLI)
+        run: |
+          set -euo pipefail
+          GITLEAKS_VERSION=8.18.4
+          curl -sSL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          /tmp/gitleaks detect \
+            --config .gitleaks.toml \
+            --source . \
+            --redact \
+            --no-banner \
+            --verbose
 
   integration:
     name: Integration tests

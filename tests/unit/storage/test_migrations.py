@@ -169,8 +169,7 @@ async def test_migration_21_adds_notification_channels(db_with_migrations):
     # Existing rows get the default applied
     iid = "iss-test-21"
     await db_with_migrations.execute(
-        "INSERT INTO issues (id, repo, title, body, status) VALUES ($1, $2, $3, $4, $5) "
-        "ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO issues (id, repo, title, body, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING",
         iid,
         "test/test",
         "x",
@@ -178,9 +177,7 @@ async def test_migration_21_adds_notification_channels(db_with_migrations):
         "open",
     )
     try:
-        row = await db_with_migrations.fetchrow(
-            "SELECT notification_channels FROM issues WHERE id = $1", iid
-        )
+        row = await db_with_migrations.fetchrow("SELECT notification_channels FROM issues WHERE id = $1", iid)
         # asyncpg returns JSONB as a JSON string by default; decode if needed.
         value = row["notification_channels"]
         if isinstance(value, str):

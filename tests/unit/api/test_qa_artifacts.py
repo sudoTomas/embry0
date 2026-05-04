@@ -88,20 +88,25 @@ async def test_latest_screenshot_returns_most_recent(api_with_minio):
     # in the filename (first 19 chars of the basename, ISO 8601).
     def _meta(key: str) -> dict:
         return {
-            "key": key, "size": 1,
-            "last_modified": _dt.datetime.fromisoformat(
-                key.split("/")[-1][:19] + "+00:00"
-            ),
+            "key": key,
+            "size": 1,
+            "last_modified": _dt.datetime.fromisoformat(key.split("/")[-1][:19] + "+00:00"),
         }
-    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
-        _meta("JOB1/1/screenshots/boot/2026-04-30T12:00:00.png"),
-        _meta("JOB1/1/screenshots/exploratory/2026-04-30T12:05:30-login.png"),
-        _meta("JOB1/1/screenshots/exploratory/2026-04-30T12:08:11-portfolio.png"),
-        # result.json has no parseable timestamp; use a sentinel mtime so the
-        # filter (only .png in /screenshots/) is what excludes it, not a parse error.
-        {"key": "JOB1/1/result.json", "size": 1,
-         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
-    ])
+
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(
+        return_value=[
+            _meta("JOB1/1/screenshots/boot/2026-04-30T12:00:00.png"),
+            _meta("JOB1/1/screenshots/exploratory/2026-04-30T12:05:30-login.png"),
+            _meta("JOB1/1/screenshots/exploratory/2026-04-30T12:08:11-portfolio.png"),
+            # result.json has no parseable timestamp; use a sentinel mtime so the
+            # filter (only .png in /screenshots/) is what excludes it, not a parse error.
+            {
+                "key": "JOB1/1/result.json",
+                "size": 1,
+                "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00"),
+            },
+        ]
+    )
     api_with_minio.app.state.qa_minio.presign_get = AsyncMock(return_value="http://minio/latest")
 
     r = await api_with_minio.get(
@@ -114,10 +119,16 @@ async def test_latest_screenshot_returns_most_recent(api_with_minio):
 
 async def test_latest_screenshot_404_when_no_screenshots(api_with_minio):
     import datetime as _dt
-    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
-        {"key": "JOB1/1/result.json", "size": 1,
-         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
-    ])
+
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(
+        return_value=[
+            {
+                "key": "JOB1/1/result.json",
+                "size": 1,
+                "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00"),
+            },
+        ]
+    )
     r = await api_with_minio.get("/api/v1/jobs/JOB1/artifacts/screenshots/latest")
     assert r.status_code == 404
 
@@ -129,21 +140,36 @@ async def test_latest_screenshot_spans_multiple_attempts(api_with_minio):
     # attempt 2 with the latest mtime.
     import datetime as _dt
 
-    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
-        {"key": "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png", "size": 1,
-         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
-        {"key": "JOB1/1/screenshots/exploratory/2026-04-30T12:05:00-old.png", "size": 1,
-         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:05:00+00:00")},
-        {"key": "JOB1/2/screenshots/boot/2026-04-30T13:00:00.png", "size": 1,
-         "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:00:00+00:00")},
-        {"key": "JOB1/2/screenshots/exploratory/2026-04-30T13:10:00-newest.png", "size": 1,
-         "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:10:00+00:00")},
-        {"key": "JOB1/2/result.json", "size": 1,
-         "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:00:00+00:00")},
-    ])
-    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(
-        return_value="http://minio/latest-across-attempts"
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(
+        return_value=[
+            {
+                "key": "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png",
+                "size": 1,
+                "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00"),
+            },
+            {
+                "key": "JOB1/1/screenshots/exploratory/2026-04-30T12:05:00-old.png",
+                "size": 1,
+                "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:05:00+00:00"),
+            },
+            {
+                "key": "JOB1/2/screenshots/boot/2026-04-30T13:00:00.png",
+                "size": 1,
+                "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:00:00+00:00"),
+            },
+            {
+                "key": "JOB1/2/screenshots/exploratory/2026-04-30T13:10:00-newest.png",
+                "size": 1,
+                "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:10:00+00:00"),
+            },
+            {
+                "key": "JOB1/2/result.json",
+                "size": 1,
+                "last_modified": _dt.datetime.fromisoformat("2026-04-30T13:00:00+00:00"),
+            },
+        ]
     )
+    api_with_minio.app.state.qa_minio.presign_get = AsyncMock(return_value="http://minio/latest-across-attempts")
 
     r = await api_with_minio.get(
         "/api/v1/jobs/JOB1/artifacts/screenshots/latest",
@@ -191,10 +217,16 @@ async def test_latest_screenshot_route_not_swallowed_by_catchall(api_with_minio)
     # screenshot path. We assert the resolved key actually points at a .png
     # under `screenshots/`.
     import datetime as _dt
-    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(return_value=[
-        {"key": "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png", "size": 1,
-         "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00")},
-    ])
+
+    api_with_minio.app.state.qa_minio.list_objects_with_meta = AsyncMock(
+        return_value=[
+            {
+                "key": "JOB1/1/screenshots/boot/2026-04-30T12:00:00.png",
+                "size": 1,
+                "last_modified": _dt.datetime.fromisoformat("2026-04-30T12:00:00+00:00"),
+            },
+        ]
+    )
     # `_resolve_latest_attempt` (used by the catch-all) reads `list_objects`,
     # so wire that too in case the catch-all incorrectly handles the request.
     api_with_minio.app.state.qa_minio.list_objects = AsyncMock(
@@ -212,13 +244,9 @@ async def test_latest_screenshot_route_not_swallowed_by_catchall(api_with_minio)
     # The resolved key must be a real screenshot under JOB1/<attempt>/screenshots/,
     # NOT the literal `JOB1/<attempt>/screenshots/latest` that the catch-all
     # would have produced.
-    assert key.startswith("JOB1/1/screenshots/"), (
-        f"catch-all swallowed screenshots/latest -- got key={key!r}"
-    )
+    assert key.startswith("JOB1/1/screenshots/"), f"catch-all swallowed screenshots/latest -- got key={key!r}"
     assert key.endswith(".png"), f"resolved key is not a screenshot: {key!r}"
-    assert not key.endswith("/latest"), (
-        f"catch-all matched `screenshots/latest` literally: {key!r}"
-    )
+    assert not key.endswith("/latest"), f"catch-all matched `screenshots/latest` literally: {key!r}"
 
 
 async def test_log_stream_rejects_flag_like_service(api_with_minio):
@@ -239,9 +267,7 @@ async def test_log_stream_rejects_flag_like_service(api_with_minio):
     assert r.status_code == 404
 
 
-async def test_log_stream_streams_lines_and_terminates_on_disconnect(
-    api_with_minio, monkeypatch
-):
+async def test_log_stream_streams_lines_and_terminates_on_disconnect(api_with_minio, monkeypatch):
     """SSE framing emits `data: <line>\\n\\n` per stdout line, and closing the
     response triggers the generator's `finally` to terminate the subprocess.
     """
@@ -425,15 +451,11 @@ async def test_get_result_returns_parsed_json(api_with_minio, monkeypatch):
     }
     body_bytes = _json.dumps(expected_body).encode()
 
-    stream_resp = _make_stream_response(
-        status_code=200, chunks=[body_bytes], content_length=str(len(body_bytes))
-    )
+    stream_resp = _make_stream_response(status_code=200, chunks=[body_bytes], content_length=str(len(body_bytes)))
 
     import athanor.api.v1.qa_artifacts as mod
 
-    monkeypatch.setattr(
-        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
-    )
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
 
     r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
     assert r.status_code == 200
@@ -454,9 +476,7 @@ async def test_get_result_404_when_upstream_404(api_with_minio, monkeypatch):
 
     import athanor.api.v1.qa_artifacts as mod
 
-    monkeypatch.setattr(
-        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
-    )
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
 
     r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
     assert r.status_code == 404
@@ -475,15 +495,11 @@ async def test_get_result_502_on_invalid_json(api_with_minio, monkeypatch):
     )
 
     bad_body = b"<html>not json</html>"
-    stream_resp = _make_stream_response(
-        status_code=200, chunks=[bad_body], content_length=str(len(bad_body))
-    )
+    stream_resp = _make_stream_response(status_code=200, chunks=[bad_body], content_length=str(len(bad_body)))
 
     import athanor.api.v1.qa_artifacts as mod
 
-    monkeypatch.setattr(
-        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
-    )
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
 
     r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
     assert r.status_code == 502
@@ -545,15 +561,11 @@ async def test_get_result_413_on_oversized_body(api_with_minio, monkeypatch):
     )
 
     chunk = b"x" * (3 * 1024 * 1024)  # 3 MiB
-    stream_resp = _make_stream_response(
-        status_code=200, chunks=[chunk, chunk], content_length=None
-    )
+    stream_resp = _make_stream_response(status_code=200, chunks=[chunk, chunk], content_length=None)
 
     import athanor.api.v1.qa_artifacts as mod
 
-    monkeypatch.setattr(
-        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
-    )
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
 
     r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
     assert r.status_code == 413
@@ -585,18 +597,14 @@ async def test_get_result_413_on_oversized_content_length(api_with_minio, monkey
             return False
 
         async def aiter_bytes(self):
-            raise AssertionError(
-                "aiter_bytes() must not be called when Content-Length already exceeds the cap"
-            )
+            raise AssertionError("aiter_bytes() must not be called when Content-Length already exceeds the cap")
             yield b""  # pragma: no cover -- needed to make this an async generator
 
     stream_resp = _ExplodingStreamResponse()
 
     import athanor.api.v1.qa_artifacts as mod
 
-    monkeypatch.setattr(
-        mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp)
-    )
+    monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
 
     r = await api_with_minio.get("/api/v1/jobs/JOB1/qa/attempts/1/result")
     assert r.status_code == 413

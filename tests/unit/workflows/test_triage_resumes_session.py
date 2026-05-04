@@ -12,30 +12,34 @@ async def test_triage_loads_prior_session_and_persists_new_one():
 
     # Pre-existing session for this (job, agent)
     repo = AsyncMock()
-    repo.get = AsyncMock(return_value={
-        "job_id": "J",
-        "agent_type": "triage",
-        "mode": "anthropic_api",
-        "messages": [{"role": "user", "content": "earlier"}],
-        "session_id": None,
-        "session_blob": None,
-    })
+    repo.get = AsyncMock(
+        return_value={
+            "job_id": "J",
+            "agent_type": "triage",
+            "mode": "anthropic_api",
+            "messages": [{"role": "user", "content": "earlier"}],
+            "session_id": None,
+            "session_blob": None,
+        }
+    )
     repo.upsert = AsyncMock()
 
     fake_result = {
-        "agent_outputs": [{
-            "agent_type": "triage",
-            "is_error": False,
-            # Triage output must be parseable JSON for the action='proceed' path,
-            # otherwise the node short-circuits to a Command(goto=END) before
-            # the persist block runs.
-            "output": '{"action": "proceed", "reasoning": "ok", "confidence": 0.9}',
-            "messages": [
-                {"role": "user", "content": "earlier"},
-                {"role": "assistant", "content": "now"},
-            ],
-            "mode": "anthropic_api",
-        }],
+        "agent_outputs": [
+            {
+                "agent_type": "triage",
+                "is_error": False,
+                # Triage output must be parseable JSON for the action='proceed' path,
+                # otherwise the node short-circuits to a Command(goto=END) before
+                # the persist block runs.
+                "output": '{"action": "proceed", "reasoning": "ok", "confidence": 0.9}',
+                "messages": [
+                    {"role": "user", "content": "earlier"},
+                    {"role": "assistant", "content": "now"},
+                ],
+                "mode": "anthropic_api",
+            }
+        ],
         "events": [],
         "total_cost_usd": 0.05,
     }
@@ -73,11 +77,13 @@ async def test_triage_loads_prior_session_and_persists_new_one():
     ):
         await triage_node(
             state,
-            {"configurable": {
-                "agent_runner": object(),
-                "credentials": {},
-                "agent_sessions_repo": repo,
-            }},
+            {
+                "configurable": {
+                    "agent_runner": object(),
+                    "credentials": {},
+                    "agent_sessions_repo": repo,
+                }
+            },
         )
 
     # Should have persisted the new session with the assistant's reply

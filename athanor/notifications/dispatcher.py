@@ -55,9 +55,7 @@ async def dispatch_questions(
         registry["telegram"] = telegram_channel
     if github_comment_channel is not None:
         registry["github"] = github_comment_channel
-    await dispatch_to_channels(
-        channels=requested, registry=registry, issue=issue, questions=questions
-    )
+    await dispatch_to_channels(channels=requested, registry=registry, issue=issue, questions=questions)
 
 
 async def notify_answer_cross_channel(

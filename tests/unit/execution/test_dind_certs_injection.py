@@ -107,9 +107,7 @@ async def test_dind_enabled_mounts_certs_and_sets_env() -> None:
     # named volume ("dind-certs-client") — DinD would silently create an empty
     # volume of that name in its own namespace and the sandbox would fail TLS.
     volumes = kwargs.get("volumes", []) or []
-    assert "/certs/client:/certs/client:ro" in volumes, (
-        f"DinD certs not bind-mounted RO; got volumes={volumes}"
-    )
+    assert "/certs/client:/certs/client:ro" in volumes, f"DinD certs not bind-mounted RO; got volumes={volumes}"
     assert not any("dind-certs-client" in v for v in volumes), (
         f"DinD certs must be a bind-mount, not a named volume; got volumes={volumes}"
     )
@@ -145,9 +143,7 @@ async def test_dind_disabled_does_not_mount_certs() -> None:
     kwargs = docker.build_run_cmd.call_args.kwargs
 
     volumes = kwargs.get("volumes", []) or []
-    assert not any("/certs/client" in v for v in volumes), (
-        f"Certs volume unexpectedly mounted; got volumes={volumes}"
-    )
+    assert not any("/certs/client" in v for v in volumes), f"Certs volume unexpectedly mounted; got volumes={volumes}"
 
     env_passed = kwargs.get("env", {}) or {}
     assert "DOCKER_HOST" not in env_passed, env_passed
@@ -156,13 +152,9 @@ async def test_dind_disabled_does_not_mount_certs() -> None:
 
     # No extra_networks => build_network_cmd should not have been called for "connect".
     connect_calls = [
-        call
-        for call in docker.build_network_cmd.call_args_list
-        if call.args and call.args[0] == "connect"
+        call for call in docker.build_network_cmd.call_args_list if call.args and call.args[0] == "connect"
     ]
-    assert connect_calls == [], (
-        f"No extra networks should be connected for slim profile; got: {connect_calls}"
-    )
+    assert connect_calls == [], f"No extra networks should be connected for slim profile; got: {connect_calls}"
 
 
 @pytest.mark.asyncio
@@ -198,9 +190,7 @@ async def test_dind_enabled_multiple_extra_networks() -> None:
         await mgr.create(job_id="job-multi-net", profile=profile)
 
     connect_args = [
-        call.args
-        for call in docker.build_network_cmd.call_args_list
-        if call.args and call.args[0] == "connect"
+        call.args for call in docker.build_network_cmd.call_args_list if call.args and call.args[0] == "connect"
     ]
     assert ("connect", "backend", "container-id-xyz") in connect_args
     assert ("connect", "metrics", "container-id-xyz") in connect_args

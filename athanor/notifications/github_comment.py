@@ -27,9 +27,7 @@ class GitHubCommentChannel:
         self._client = http_client
         self._dashboard_base = dashboard_base_url.rstrip("/")
 
-    async def dispatch(
-        self, issue: dict[str, Any], questions: list[dict[str, Any]]
-    ) -> None:
+    async def dispatch(self, issue: dict[str, Any], questions: list[dict[str, Any]]) -> None:
         gh_number = issue.get("github_number")
         if not isinstance(gh_number, int):
             logger.debug(
@@ -65,8 +63,7 @@ class GitHubCommentChannel:
                 "",
                 f"Answer at: {self._dashboard_base}/issues/{issue.get('id')}",
                 "",
-                "_Inbound replies via comments are not yet supported — "
-                "answer via the dashboard link above._",
+                "_Inbound replies via comments are not yet supported — answer via the dashboard link above._",
             ]
         )
         body = "\n".join(lines)

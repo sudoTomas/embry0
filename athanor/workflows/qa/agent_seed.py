@@ -102,7 +102,11 @@ QA_AGENT_SEED: dict[str, Any] = {
     # listed explicitly — without them the SDK silently rejects browser_navigate
     # etc., which is the WHOLE POINT of the QA agent.
     "tools": [
-        "Read", "Glob", "Grep", "Bash", "Edit",
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash",
+        "Edit",
         "mcp__playwright__browser_navigate",
         "mcp__playwright__browser_navigate_back",
         "mcp__playwright__browser_click",

@@ -38,8 +38,8 @@ RESERVED_ENV_KEYS: Final[frozenset[str]] = frozenset(
 # Reserved prefixes — every key starting with these is server-controlled.
 # Used by EnvVarInput key validator and by the sandbox env injection filter.
 RESERVED_ENV_PREFIXES: Final[tuple[str, ...]] = (
-    "QA_ARTIFACT_",   # presigned URLs minted per-attempt by init_qa
-    "DOCKER_",        # broad — covers DOCKER_HOST etc. without enumerating
+    "QA_ARTIFACT_",  # presigned URLs minted per-attempt by init_qa
+    "DOCKER_",  # broad — covers DOCKER_HOST etc. without enumerating
 )
 
 

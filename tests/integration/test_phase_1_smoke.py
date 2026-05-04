@@ -30,10 +30,7 @@ async def test_qa_jvm_sandbox_can_presign_and_run_docker(app, qa_minio_seeded):
     # `app` fixture's lifespan does NOT populate. Skip cleanly when run from
     # pytest outside the live orchestrator container; Task 15's deployment runs
     # this test via `docker exec orchestrator pytest ...` where state IS set.
-    if not all(
-        hasattr(app.app.state, attr)
-        for attr in ("docker", "proxy_manager", "qa_token_registry")
-    ):
+    if not all(hasattr(app.app.state, attr) for attr in ("docker", "proxy_manager", "qa_token_registry")):
         pytest.skip(
             "test requires live orchestrator process state — run via "
             "'docker exec orchestrator pytest tests/integration/test_phase_1_smoke.py'"
@@ -72,10 +69,14 @@ async def test_qa_jvm_sandbox_can_presign_and_run_docker(app, qa_minio_seeded):
         # backend network, not in DinD's network namespace; presign-proxy
         # bridges the two.
         curl_cmd = [
-            "curl", "-sf",
-            "-X", "POST",
-            "-H", "Content-Type: application/json",
-            "-d", json.dumps({"sandbox_token": sandbox_token, "paths": ["smoke/result.json"]}),
+            "curl",
+            "-sf",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            json.dumps({"sandbox_token": sandbox_token, "paths": ["smoke/result.json"]}),
             "http://presign-proxy:9104/api/v1/internal/qa/presign",
         ]
         body = await docker.run_cmd(
@@ -89,7 +90,8 @@ async def test_qa_jvm_sandbox_can_presign_and_run_docker(app, qa_minio_seeded):
 
         # 5. Sandbox uploads via the presigned URL.
         upload_cmd = [
-            "bash", "-c",
+            "bash",
+            "-c",
             f"echo '{{\"ok\": true}}' | curl -sf -X PUT --data-binary @- '{body_json['urls'][0]['url']}'",
         ]
         await docker.run_cmd(
@@ -99,8 +101,7 @@ async def test_qa_jvm_sandbox_can_presign_and_run_docker(app, qa_minio_seeded):
 
         # 6. Verify the object landed in MinIO.
         objs = await qa_minio_seeded.list_objects("qa-artifacts", prefix=f"{job_id}/")
-        assert any(o.endswith("smoke/result.json") for o in objs), \
-            f"smoke/result.json not in {objs}"
+        assert any(o.endswith("smoke/result.json") for o in objs), f"smoke/result.json not in {objs}"
     finally:
         # 7. Cleanup
         app.app.state.qa_token_registry.unregister(sandbox_token)

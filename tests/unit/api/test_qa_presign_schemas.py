@@ -1,5 +1,6 @@
 import pytest
 from pydantic import ValidationError
+
 from athanor.api.schemas import QAPresignBatchRequest
 
 
@@ -35,26 +36,32 @@ def test_rejects_extra_fields():
 
 
 # Task 9: path safety
-@pytest.mark.parametrize("bad_path", [
-    "../other-job/result.json",
-    "screenshots/../../../escape.png",
-    "/absolute/path.png",
-    "",
-    "with space.png",
-    "double//slash.png",
-    "ends-with-slash/",
-])
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "../other-job/result.json",
+        "screenshots/../../../escape.png",
+        "/absolute/path.png",
+        "",
+        "with space.png",
+        "double//slash.png",
+        "ends-with-slash/",
+    ],
+)
 def test_rejects_unsafe_paths(bad_path):
     with pytest.raises(ValidationError):
         QAPresignBatchRequest(sandbox_token="x" * 16, paths=[bad_path])
 
 
-@pytest.mark.parametrize("good_path", [
-    "result.json",
-    "screenshots/login-2026-04-30T12:01:33.png",
-    "logs/full.log",
-    "traces/criterion-1.zip",
-    "har/criterion-1.har",
-])
+@pytest.mark.parametrize(
+    "good_path",
+    [
+        "result.json",
+        "screenshots/login-2026-04-30T12:01:33.png",
+        "logs/full.log",
+        "traces/criterion-1.zip",
+        "har/criterion-1.har",
+    ],
+)
 def test_accepts_safe_paths(good_path):
     QAPresignBatchRequest(sandbox_token="x" * 16, paths=[good_path])

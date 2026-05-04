@@ -43,24 +43,21 @@ class EnvVarInput(BaseModel):
         # variables. Reject at the API boundary.
         if v in RESERVED_ENV_KEYS:
             raise ValueError(
-                f"Key {v!r} is reserved for Athanor infrastructure. "
-                f"Reserved keys: {sorted(RESERVED_ENV_KEYS)}"
+                f"Key {v!r} is reserved for Athanor infrastructure. Reserved keys: {sorted(RESERVED_ENV_KEYS)}"
             )
         # Reserved prefixes — every key starting with these is server-controlled.
         for p in RESERVED_ENV_PREFIXES:
             if v.startswith(p):
                 raise ValueError(
-                    f"Key {v!r} starts with reserved prefix {p!r}; "
-                    f"these are orchestrator-injected at sandbox start."
+                    f"Key {v!r} starts with reserved prefix {p!r}; these are orchestrator-injected at sandbox start."
                 )
         return v
 
     @model_validator(mode="after")
-    def _qa_scope_requires_qa_prefix(self) -> "EnvVarInput":
+    def _qa_scope_requires_qa_prefix(self) -> EnvVarInput:
         if self.scope == "qa" and not self.key.startswith("QA_"):
             raise ValueError(
-                f"Keys with scope='qa' must start with 'QA_' "
-                f"(got {self.key!r}). Use scope='app' for app config."
+                f"Keys with scope='qa' must start with 'QA_' (got {self.key!r}). Use scope='app' for app config."
             )
         return self
 

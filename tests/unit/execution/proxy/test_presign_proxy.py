@@ -46,9 +46,7 @@ async def test_proxy_forwards_body_and_returns_response(aiohttp_client):
         seen["method"] = request.method
         seen["path"] = request.path
         seen["body"] = await request.json()
-        return web.json_response(
-            {"bucket": "qa-artifacts", "prefix": "j1/1/", "urls": []}, status=200
-        )
+        return web.json_response({"bucket": "qa-artifacts", "prefix": "j1/1/", "urls": []}, status=200)
 
     upstream_app = web.Application()
     upstream_app.router.add_post("/api/v1/internal/qa/presign", upstream_handler)

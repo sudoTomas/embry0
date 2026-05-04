@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+from collections.abc import Callable
 from datetime import timedelta
+from typing import Any, cast
 
 import structlog
 from minio import Minio
@@ -42,15 +44,18 @@ class QAMinioClient:
         # process must mint URLs for the sandbox-facing endpoint (minio-proxy)
         # which it cannot resolve itself; specifying region bypasses the lookup.
         self._client = Minio(
-            endpoint, access_key=access_key, secret_key=secret_key,
-            secure=secure, region=region,
+            endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            secure=secure,
+            region=region,
         )
 
-    async def _run(self, fn, *args, **kwargs):
+    async def _run(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         return await asyncio.get_running_loop().run_in_executor(None, lambda: fn(*args, **kwargs))
 
     async def bucket_exists(self, bucket: str) -> bool:
-        return await self._run(self._client.bucket_exists, bucket)
+        return cast(bool, await self._run(self._client.bucket_exists, bucket))
 
     async def ensure_bucket(self, bucket: str) -> None:
         """Create the bucket if it doesn't exist; no-op otherwise."""
@@ -61,14 +66,16 @@ class QAMinioClient:
 
     async def set_lifecycle_policy(self, bucket: str, *, expire_days: int) -> None:
         """Apply a single-rule lifecycle that expires every object after N days."""
-        config = LifecycleConfig([
-            Rule(
-                ENABLED,
-                rule_filter=Filter(prefix=""),
-                rule_id=_QA_LIFECYCLE_RULE_ID,
-                expiration=Expiration(days=expire_days),
-            )
-        ])
+        config = LifecycleConfig(
+            [
+                Rule(
+                    ENABLED,
+                    rule_filter=Filter(prefix=""),
+                    rule_id=_QA_LIFECYCLE_RULE_ID,
+                    expiration=Expiration(days=expire_days),
+                )
+            ]
+        )
         await self._run(self._client.set_bucket_lifecycle, bucket, config)
         logger.info("minio_lifecycle_set", bucket=bucket, expire_days=expire_days)
 
@@ -89,27 +96,34 @@ class QAMinioClient:
         return None
 
     async def presign_put(self, bucket: str, key: str, expires_seconds: int) -> str:
-        return await self._run(
-            self._client.presigned_put_object,
-            bucket,
-            key,
-            expires=timedelta(seconds=expires_seconds),
+        return cast(
+            str,
+            await self._run(
+                self._client.presigned_put_object,
+                bucket,
+                key,
+                expires=timedelta(seconds=expires_seconds),
+            ),
         )
 
     async def presign_get(self, bucket: str, key: str, expires_seconds: int) -> str:
-        return await self._run(
-            self._client.presigned_get_object,
-            bucket,
-            key,
-            expires=timedelta(seconds=expires_seconds),
+        return cast(
+            str,
+            await self._run(
+                self._client.presigned_get_object,
+                bucket,
+                key,
+                expires=timedelta(seconds=expires_seconds),
+            ),
         )
 
     async def list_objects(self, bucket: str, prefix: str = "") -> list[str]:
         def _list() -> list[str]:
             return [o.object_name for o in self._client.list_objects(bucket, prefix=prefix, recursive=True)]
-        return await self._run(_list)
 
-    async def list_objects_with_meta(self, bucket: str, prefix: str = "") -> list[dict]:
+        return cast(list[str], await self._run(_list))
+
+    async def list_objects_with_meta(self, bucket: str, prefix: str = "") -> list[dict[str, Any]]:
         """Like `list_objects` but also returns last_modified/size from the listing.
 
         The MinIO SDK already populates `.last_modified` and `.size` on each
@@ -117,27 +131,41 @@ class QAMinioClient:
         no longer need a follow-up `stat_object` per key (which would turn a
         single round trip into N+1).
         """
-        def _list() -> list[dict]:
+
+        def _list() -> list[dict[str, Any]]:
             return [
                 {"key": o.object_name, "last_modified": o.last_modified, "size": o.size}
                 for o in self._client.list_objects(bucket, prefix=prefix, recursive=True)
             ]
-        return await self._run(_list)
 
-    async def stat_object(self, bucket: str, key: str) -> dict:
-        def _stat():
+        return cast(list[dict[str, Any]], await self._run(_list))
+
+    async def stat_object(self, bucket: str, key: str) -> dict[str, Any]:
+        def _stat() -> dict[str, Any]:
             o = self._client.stat_object(bucket, key)
             return {"size": o.size, "etag": o.etag, "last_modified": o.last_modified}
-        return await self._run(_stat)
+
+        return cast(dict[str, Any], await self._run(_stat))
 
     async def put_object(
-        self, bucket: str, key: str, data: bytes, *, content_type: str = "application/octet-stream",
+        self,
+        bucket: str,
+        key: str,
+        data: bytes,
+        *,
+        content_type: str = "application/octet-stream",
     ) -> None:
         """Upload bytes to MinIO. Used by orchestrator-side report_node for log
         capture (no presign needed — orchestrator holds the root creds).
         """
+
         def _put() -> None:
             self._client.put_object(
-                bucket, key, io.BytesIO(data), length=len(data), content_type=content_type,
+                bucket,
+                key,
+                io.BytesIO(data),
+                length=len(data),
+                content_type=content_type,
             )
+
         await self._run(_put)

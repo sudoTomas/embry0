@@ -44,9 +44,7 @@ _VALID_TRIAGE_DECISION_JSON = _json.dumps(
 
 def _make_agent_output() -> dict[str, Any]:
     return {
-        "agent_outputs": [
-            {"agent_type": "triage", "is_error": False, "output": _VALID_TRIAGE_DECISION_JSON}
-        ],
+        "agent_outputs": [{"agent_type": "triage", "is_error": False, "output": _VALID_TRIAGE_DECISION_JSON}],
         "total_cost_usd": 0.02,
         "current_stage": "triage_complete",
     }

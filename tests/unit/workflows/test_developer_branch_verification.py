@@ -31,13 +31,15 @@ async def test_developer_routes_to_review_when_branch_pushed():
     docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
 
     fake_result = {
-        "agent_outputs": [{
-            "agent_type": "developer",
-            "is_error": False,
-            "output": '{"pr_url": "https://github.com/o/r/pull/9", "branch": "athanor/iss-abc12345-test-task"}',
-            "messages": [{"role": "assistant", "content": "ok"}],
-            "mode": "anthropic_api",
-        }],
+        "agent_outputs": [
+            {
+                "agent_type": "developer",
+                "is_error": False,
+                "output": '{"pr_url": "https://github.com/o/r/pull/9", "branch": "athanor/iss-abc12345-test-task"}',
+                "messages": [{"role": "assistant", "content": "ok"}],
+                "mode": "anthropic_api",
+            }
+        ],
         "events": [],
         "total_cost_usd": 0.05,
     }
@@ -71,13 +73,15 @@ async def test_developer_routes_to_max_retries_when_branch_not_pushed():
     docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
 
     fake_result = {
-        "agent_outputs": [{
-            "agent_type": "developer",
-            "is_error": False,
-            "output": "I made the changes locally",  # no PR URL — agent forgot to push
-            "messages": [{"role": "assistant", "content": "done"}],
-            "mode": "anthropic_api",
-        }],
+        "agent_outputs": [
+            {
+                "agent_type": "developer",
+                "is_error": False,
+                "output": "I made the changes locally",  # no PR URL — agent forgot to push
+                "messages": [{"role": "assistant", "content": "done"}],
+                "mode": "anthropic_api",
+            }
+        ],
         "events": [],
         "total_cost_usd": 0.05,
     }
@@ -103,13 +107,15 @@ async def test_developer_skips_verification_when_no_docker():
     from athanor.workflows.issue_to_pr.nodes import developer_node
 
     fake_result = {
-        "agent_outputs": [{
-            "agent_type": "developer",
-            "is_error": False,
-            "output": "{}",
-            "messages": [],
-            "mode": "anthropic_api",
-        }],
+        "agent_outputs": [
+            {
+                "agent_type": "developer",
+                "is_error": False,
+                "output": "{}",
+                "messages": [],
+                "mode": "anthropic_api",
+            }
+        ],
         "events": [],
         "total_cost_usd": 0.05,
     }
@@ -136,8 +142,11 @@ async def test_developer_skips_verification_when_docker_call_raises():
     docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
 
     fake_result = {
-        "agent_outputs": [{"agent_type": "developer", "is_error": False, "output": "{}", "messages": [], "mode": "anthropic_api"}],
-        "events": [], "total_cost_usd": 0.05,
+        "agent_outputs": [
+            {"agent_type": "developer", "is_error": False, "output": "{}", "messages": [], "mode": "anthropic_api"}
+        ],
+        "events": [],
+        "total_cost_usd": 0.05,
     }
 
     with (

@@ -12,29 +12,33 @@ async def test_qa_loads_prior_session_and_persists_new_one():
 
     # Pre-existing session for this (job, agent)
     sessions_repo = AsyncMock()
-    sessions_repo.get = AsyncMock(return_value={
-        "job_id": "JOB1",
-        "agent_type": "qa",
-        "mode": "anthropic_api",
-        "messages": [{"role": "user", "content": "earlier"}],
-        "session_id": None,
-        "session_blob": None,
-    })
+    sessions_repo.get = AsyncMock(
+        return_value={
+            "job_id": "JOB1",
+            "agent_type": "qa",
+            "mode": "anthropic_api",
+            "messages": [{"role": "user", "content": "earlier"}],
+            "session_id": None,
+            "session_blob": None,
+        }
+    )
     sessions_repo.upsert = AsyncMock()
 
     fake_result = {
-        "agent_outputs": [{
-            "agent_type": "qa",
-            "is_error": False,
-            "output": "ok",
-            "messages": [
-                {"role": "user", "content": "earlier"},
-                {"role": "assistant", "content": "now"},
-            ],
-            "mode": "anthropic_api",
-            "cost_usd": 0.1,
-            "duration_ms": 5000,
-        }],
+        "agent_outputs": [
+            {
+                "agent_type": "qa",
+                "is_error": False,
+                "output": "ok",
+                "messages": [
+                    {"role": "user", "content": "earlier"},
+                    {"role": "assistant", "content": "now"},
+                ],
+                "mode": "anthropic_api",
+                "cost_usd": 0.1,
+                "duration_ms": 5000,
+            }
+        ],
     }
 
     async def _run(*args, **kwargs):
@@ -48,11 +52,13 @@ async def test_qa_loads_prior_session_and_persists_new_one():
         "job_id": "JOB1",
         "repo": "x/y",
         "qa": {
-            "attempts": [{
-                "attempt_n": 1,
-                "sandbox_id": "container-id-xyz",
-                "artifact_prefix": "JOB1/1/",
-            }],
+            "attempts": [
+                {
+                    "attempt_n": 1,
+                    "sandbox_id": "container-id-xyz",
+                    "artifact_prefix": "JOB1/1/",
+                }
+            ],
             "qa_yaml_parsed": {"mode": "dind"},
             "acceptance_criteria": ["home loads"],
             "sandbox_token": "tok",
@@ -70,15 +76,17 @@ async def test_qa_loads_prior_session_and_persists_new_one():
     }
 
     fake_agent_def_repo = MagicMock()
-    fake_agent_def_repo.get = AsyncMock(return_value={
-        "model": "claude-sonnet-4-6",
-        "tools": [],
-        "skills": [],
-        "system_prompt": "sp",
-        "mcp_servers": {},
-        "execution_mode": None,
-        "auth_mode": None,
-    })
+    fake_agent_def_repo.get = AsyncMock(
+        return_value={
+            "model": "claude-sonnet-4-6",
+            "tools": [],
+            "skills": [],
+            "system_prompt": "sp",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        }
+    )
 
     with (
         patch(

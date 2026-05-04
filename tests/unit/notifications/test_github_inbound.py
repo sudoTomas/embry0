@@ -91,12 +91,8 @@ async def test_issue_comment_with_answer_directive_applies_to_issue():
     assert r.status_code == 200, r.text
     body_json = r.json()
     assert body_json.get("applied") == 1
-    issues_repo.find_by_repo_and_github_number.assert_awaited_once_with(
-        repo="owner/repo", github_number=42
-    )
-    inputs_repo.answer.assert_awaited_once_with(
-        "inp-gh1", answer="yes from github", answered_by="github:octocat"
-    )
+    issues_repo.find_by_repo_and_github_number.assert_awaited_once_with(repo="owner/repo", github_number=42)
+    inputs_repo.answer.assert_awaited_once_with("inp-gh1", answer="yes from github", answered_by="github:octocat")
     executor.resume_for_issue.assert_awaited_once_with("iss-test-gh-inbound")
 
 
@@ -153,8 +149,6 @@ async def test_issue_comment_for_unknown_repo_is_ignored():
         )
     assert r.status_code == 200
     assert r.json().get("applied", 0) == 0
-    issues_repo.find_by_repo_and_github_number.assert_awaited_once_with(
-        repo="totally/unknown", github_number=1
-    )
+    issues_repo.find_by_repo_and_github_number.assert_awaited_once_with(repo="totally/unknown", github_number=1)
     inputs_repo.answer.assert_not_awaited()
     executor.resume_for_issue.assert_not_awaited()

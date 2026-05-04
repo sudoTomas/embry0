@@ -103,9 +103,7 @@ async def test_reset_builtin_restores_seed(api_client: AsyncClient, builtin_prof
     await pool.connect()
     try:
         repo = SandboxProfilesRepository(pool)
-        await repo.upsert(
-            name="qa-jvm", dind_enabled=False, is_builtin=True, _allow_builtin_overwrite=True
-        )
+        await repo.upsert(name="qa-jvm", dind_enabled=False, is_builtin=True, _allow_builtin_overwrite=True)
         mutated = await repo.get("qa-jvm")
         assert mutated["dind_enabled"] is False
     finally:

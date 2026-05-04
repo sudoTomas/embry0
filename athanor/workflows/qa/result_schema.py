@@ -8,7 +8,7 @@ attempt with `result_json_invalid` in the exit reason.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -52,8 +52,8 @@ class QAAcceptanceResult(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     notes: str | None = None
     console_errors: list[str] = Field(default_factory=list)
-    network_failures: list[dict] = Field(default_factory=list)
-    log_excerpts: list[dict] = Field(default_factory=list)
+    network_failures: list[dict[str, Any]] = Field(default_factory=list)
+    log_excerpts: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class QAAnomaly(BaseModel):
@@ -82,7 +82,7 @@ class QAResult(BaseModel):
     anomalies: list[QAAnomaly]
 
     @model_validator(mode="after")
-    def _overall_consistent_with_findings(self) -> "QAResult":
+    def _overall_consistent_with_findings(self) -> QAResult:
         # Crash anomaly forces failed.
         if any(a.category == "crash" for a in self.anomalies) and self.overall != "failed":
             raise ValueError("overall must be 'failed' when an anomaly has category='crash'")

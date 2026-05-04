@@ -1,8 +1,6 @@
 """claude-max mode: capture session_id + session_blob; restore them as
 --resume <id> + bytes-on-disk for the CLI."""
 
-from pathlib import Path
-
 
 def test_capture_session_id_and_blob_from_oauth_result(tmp_path):
     from athanor.agents.session import capture_session_after_run
@@ -29,7 +27,9 @@ def test_restore_writes_blob_to_canonical_projects_path(tmp_path):
     from athanor.agents.session import AgentSession, restore_session_into_options
 
     sess = AgentSession(
-        job_id="J", agent_type="developer", mode="claude_max",
+        job_id="J",
+        agent_type="developer",
+        mode="claude_max",
         session_id="sess-abc",
         session_blob=b"line1\n",
     )
@@ -56,7 +56,9 @@ def test_restore_falls_back_to_legacy_sessions_path_when_no_project_cwd(tmp_path
     from athanor.agents.session import AgentSession, restore_session_into_options
 
     sess = AgentSession(
-        job_id="J", agent_type="developer", mode="claude_max",
+        job_id="J",
+        agent_type="developer",
+        mode="claude_max",
         session_id="sess-legacy",
         session_blob=b"data\n",
     )

@@ -16,7 +16,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Any
+from collections.abc import AsyncGenerator
+from typing import Any, cast
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -103,9 +104,7 @@ async def get_latest_screenshot(
     # itself — this endpoint is polled every ~5s by the dashboard, and the
     # previous "list + N stat_object" approach was N+1 round trips per poll.
     objs = await qa_minio.list_objects_with_meta("qa-artifacts", prefix=f"{job_id}/")
-    screenshots = [
-        o for o in objs if o["key"].endswith(".png") and "/screenshots/" in o["key"]
-    ]
+    screenshots = [o for o in objs if o["key"].endswith(".png") and "/screenshots/" in o["key"]]
     if not screenshots:
         raise HTTPException(status_code=404, detail="no screenshots yet")
 
@@ -122,7 +121,7 @@ async def get_latest_screenshot(
     # higher attempt number first, then by key as a final tiebreaker. Keys
     # whose `<attempt>` segment is missing or non-numeric are skipped
     # defensively rather than crashing the endpoint.
-    def _sort_key(item: dict) -> tuple:
+    def _sort_key(item: dict[str, Any]) -> tuple[Any, ...] | None:
         key = item["key"]
         parts = key.split("/")
         try:
@@ -131,8 +130,8 @@ async def get_latest_screenshot(
             return None
         return (item["last_modified"], attempt_int, key)
 
-    keyed = [(s, _sort_key(s)) for s in screenshots]
-    keyed = [(s, k) for s, k in keyed if k is not None]
+    keyed_with_none = [(s, _sort_key(s)) for s in screenshots]
+    keyed: list[tuple[dict[str, Any], tuple[Any, ...]]] = [(s, k) for s, k in keyed_with_none if k is not None]
     if not keyed:
         raise HTTPException(status_code=404, detail="no screenshots yet")
     keyed.sort(key=lambda pair: pair[1], reverse=True)
@@ -214,11 +213,9 @@ async def get_log(
     except (FileNotFoundError, OSError) as exc:
         async with _log_stream_lock:
             _active_log_streams -= 1
-        raise HTTPException(
-            status_code=500, detail=f"failed to spawn docker: {exc}"
-        ) from exc
+        raise HTTPException(status_code=500, detail=f"failed to spawn docker: {exc}") from exc
 
-    async def _stream():
+    async def _stream() -> AsyncGenerator[bytes, None]:
         global _active_log_streams
         try:
             assert proc.stdout is not None
@@ -272,7 +269,7 @@ async def get_log(
 async def list_attempts(
     job_id: str,
     qa_minio: Any = Depends(get_qa_minio),
-) -> dict:
+) -> dict[str, Any]:
     """Enumerate attempts present in MinIO with per-attempt metadata.
 
     Returns ``{"attempts": [{attempt_n, has_result_json, screenshots_count}, ...]}``
@@ -284,7 +281,7 @@ async def list_attempts(
     _check_safe_job_id(job_id)
 
     objs = await qa_minio.list_objects("qa-artifacts", prefix=f"{job_id}/")
-    attempts: dict[int, dict] = {}
+    attempts: dict[int, dict[str, Any]] = {}
     # No pagination — single-job listings are bounded by the per-job retention policy.
     # If a job ever accumulates >10k screenshots this should switch to chunked listing.
     for o in objs:
@@ -311,7 +308,7 @@ async def get_result(
     job_id: str,
     attempt_n: int,
     qa_minio: Any = Depends(get_qa_minio),
-) -> dict:
+) -> dict[str, Any]:
     """Server-side download of ``result.json`` for a specific attempt.
 
     Resolves a presigned GET URL via MinIO, fetches the body server-side, and
@@ -338,13 +335,9 @@ async def get_result(
         try:
             async with client.stream("GET", url) as r:
                 if r.status_code == 404:
-                    raise HTTPException(
-                        status_code=404, detail="result.json not found for this attempt"
-                    )
+                    raise HTTPException(status_code=404, detail="result.json not found for this attempt")
                 if r.status_code != 200:
-                    raise HTTPException(
-                        status_code=502, detail=f"upstream {r.status_code}"
-                    )
+                    raise HTTPException(status_code=502, detail=f"upstream {r.status_code}")
 
                 # Trust ``Content-Length`` when present and abort BEFORE
                 # touching the body. A malformed header (non-int) falls
@@ -363,28 +356,20 @@ async def get_result(
                 async for chunk in r.aiter_bytes():
                     buf.extend(chunk)
                     if len(buf) > _MAX_RESULT_BYTES:
-                        raise HTTPException(
-                            status_code=413, detail="result.json exceeded size cap"
-                        )
+                        raise HTTPException(status_code=413, detail="result.json exceeded size cap")
         except httpx.TimeoutException as exc:
-            raise HTTPException(
-                status_code=504, detail=f"upstream timeout: {exc}"
-            ) from exc
+            raise HTTPException(status_code=504, detail=f"upstream timeout: {exc}") from exc
         except httpx.HTTPError as exc:
-            raise HTTPException(
-                status_code=502, detail=f"upstream error: {exc}"
-            ) from exc
+            raise HTTPException(status_code=502, detail=f"upstream error: {exc}") from exc
 
     # MinIO can return a 200 with a non-JSON error body (rare, but possible
     # if a misconfigured bucket policy intercepts the GET, or an LB serves an
     # HTML error page). Catch JSONDecodeError and return a clear 502 instead
     # of letting it propagate as a 500 from FastAPI's response serializer.
     try:
-        return json.loads(bytes(buf))
+        return cast(dict[str, Any], json.loads(bytes(buf)))
     except (json.JSONDecodeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=502, detail=f"upstream returned non-JSON body: {exc}"
-        ) from exc
+        raise HTTPException(status_code=502, detail=f"upstream returned non-JSON body: {exc}") from exc
 
 
 @router.get("/jobs/{job_id}/artifacts/{path:path}")

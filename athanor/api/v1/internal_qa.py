@@ -29,9 +29,7 @@ async def presign_batch(req: QAPresignBatchRequest, request: Request) -> dict[st
     # eventual PUT/GET must match what the orchestrator signed here. Falling
     # back to the internal client would mint URLs the sandbox cannot use.
     # Phase 1.5.
-    minio = getattr(request.app.state, "qa_minio_sandbox", None) or getattr(
-        request.app.state, "qa_minio", None
-    )
+    minio = getattr(request.app.state, "qa_minio_sandbox", None) or getattr(request.app.state, "qa_minio", None)
     if minio is None:
         raise HTTPException(status_code=503, detail="QA artifact storage unavailable")
     tokens = request.app.state.qa_token_registry

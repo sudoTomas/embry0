@@ -29,9 +29,7 @@ async def test_developer_with_brainstorming_skill_uses_cap_15():
     }
 
     # Stub run_agent_node to return a result with one new ask_user event
-    fake_events = [
-        {"type": "agent_ask_user", "question": "Q15?", "category": "design", "options": []}
-    ]
+    fake_events = [{"type": "agent_ask_user", "question": "Q15?", "category": "design", "options": []}]
     fake_result = {
         "agent_outputs": [{"agent_type": "developer", "is_error": False, "output": "..."}],
         "events": fake_events,
@@ -80,9 +78,7 @@ async def test_developer_without_brainstorming_skill_uses_cap_5():
         },
     }
 
-    fake_events = [
-        {"type": "agent_ask_user", "question": "Q6?", "category": "general", "options": []}
-    ]
+    fake_events = [{"type": "agent_ask_user", "question": "Q6?", "category": "general", "options": []}]
     fake_result = {
         "agent_outputs": [{"agent_type": "developer", "is_error": False, "output": "..."}],
         "events": fake_events,

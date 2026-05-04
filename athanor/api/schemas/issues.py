@@ -47,9 +47,7 @@ class CreateIssueRequest(BaseModel):
 
     @field_validator("notification_channels")
     @classmethod
-    def _no_duplicate_channels(
-        cls, v: list[AskUserChannel] | None
-    ) -> list[AskUserChannel] | None:
+    def _no_duplicate_channels(cls, v: list[AskUserChannel] | None) -> list[AskUserChannel] | None:
         if v is None:
             return v
         if len(v) != len(set(v)):
@@ -105,9 +103,7 @@ class UpdateIssueRequest(BaseModel):
 
     @field_validator("notification_channels")
     @classmethod
-    def _no_duplicate_channels(
-        cls, v: list[AskUserChannel] | None
-    ) -> list[AskUserChannel] | None:
+    def _no_duplicate_channels(cls, v: list[AskUserChannel] | None) -> list[AskUserChannel] | None:
         if v is None:
             return v
         if len(v) != len(set(v)):

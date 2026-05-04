@@ -98,17 +98,13 @@ async def delete_profile(name: str, profiles: SandboxProfilesRepository = Depend
 
 
 @router.post("/sandbox-profiles/{name}/reset")
-async def reset_profile(
-    name: str, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)
-) -> dict[str, Any]:
+async def reset_profile(name: str, profiles: SandboxProfilesRepository = Depends(get_profiles_repo)) -> dict[str, Any]:
     """Reset a builtin profile to its seed values. Returns 404 for non-builtins."""
     seed = BUILTIN_SANDBOX_PROFILES.get(name)
     if seed is None:
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"'{name}' is not a builtin profile (only {sorted(BUILTIN_SANDBOX_PROFILES)} can be reset)"
-            ),
+            detail=(f"'{name}' is not a builtin profile (only {sorted(BUILTIN_SANDBOX_PROFILES)} can be reset)"),
         )
     await profiles.upsert(
         name=name,

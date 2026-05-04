@@ -40,6 +40,7 @@ dev = [
     "mypy>=1.14,<2",
     "testcontainers[postgres]>=4.0,<5",
     "pytest-aiohttp>=1.0,<2",
+    "types-PyYAML>=6,<7",
 ]
 
 [tool.hatch.build.targets.wheel]

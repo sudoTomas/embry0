@@ -4,20 +4,20 @@
 [extend]
 useDefault = true
 
-[[allowlists]]
-description = "Allow .env.example placeholder values"
+# Global allowlist: applies to all rules. Listing both `paths` and `regexes`
+# at the same level is OR-combined (any single match suppresses the finding).
+[allowlist]
+description = "Athanor allowlist — placeholder + test fixture exemptions"
 paths = [
     '''.env\.example''',
-]
-
-[[allowlists]]
-description = "Allow test fixtures with placeholder credentials"
-paths = [
     '''tests/.*''',
 ]
 regexes = [
-    # Placeholder GitHub token pattern in tests
+    # Placeholder GitHub token pattern in docs / fixtures
     '''ghp_your-github-personal-access-token''',
     # sk-ant prefix without a real key shape
     '''sk-ant-your-api-key-here''',
+    # Synthetic sandbox token (40-char a-z0-9 ramp) used by QA + sandbox unit tests
+    # to satisfy _SANDBOX_TOKEN_RE in athanor/sandbox/github/git_ops.py.
+    '''abcdefghijklmnopqrstuvwxyz0123456789ABCD''',
 ]

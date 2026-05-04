@@ -18,7 +18,7 @@ class TotalBudgetWatchdog:
     def __init__(self, *, budget_seconds: float, on_timeout: Callable[[], Awaitable[None]]) -> None:
         self._budget = budget_seconds
         self._on_timeout = on_timeout
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -48,7 +48,7 @@ class IdleWatchdog:
         self._grace = grace_seconds
         self._on_timeout = on_timeout
         self._last = time.monotonic()
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         self._stopped = False
 
     def heartbeat(self) -> None:

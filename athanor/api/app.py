@@ -464,9 +464,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         proxy_admin_token=config.proxy_admin_token,
         image_registry=config.image_registry,
     )
-    sandbox_mgr = SandboxManager(
-        docker, proxy_manager=proxy_mgr, image_registry=config.image_registry
-    )
+    sandbox_mgr = SandboxManager(docker, proxy_manager=proxy_mgr, image_registry=config.image_registry)
     agent_runner = AgentRunner(sandbox_mgr, docker)
 
     app.state.docker = docker
@@ -597,14 +595,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # link in the GitHub comment is unreachable from outside the host
     # otherwise.
     dashboard_url = config.dashboard_public_url or "http://localhost:8200"
-    if dashboard_url.startswith("http://localhost") and not (
-        config.auth_dev_mode or config.webhook_dev_mode
-    ):
+    if dashboard_url.startswith("http://localhost") and not (config.auth_dev_mode or config.webhook_dev_mode):
         logger.warning(
             "dashboard_public_url_localhost_in_prod",
             url=dashboard_url,
             msg="GitHub-comment deep-links will be unreachable from outside the host. "
-                "Set DASHBOARD_PUBLIC_URL to your dashboard's public URL.",
+            "Set DASHBOARD_PUBLIC_URL to your dashboard's public URL.",
         )
 
     github_comment_channel = GitHubCommentChannel(

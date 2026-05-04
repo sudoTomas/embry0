@@ -137,9 +137,7 @@ async def test_developer_session_persists_and_resumes_with_user_answer(
 
         # ---- 5. Verify call 1 saw resume_session=None ----
         assert len(captured_resume_sessions) == 1
-        assert captured_resume_sessions[0] is None, (
-            "first developer_node call must not have a prior session"
-        )
+        assert captured_resume_sessions[0] is None, "first developer_node call must not have a prior session"
 
         # ---- 6. Verify the first turn was persisted ----
         row = await repo.get(job_id, "developer")
@@ -169,8 +167,7 @@ async def test_developer_session_persists_and_resumes_with_user_answer(
         assert len(captured_resume_sessions) == 2
         resumed = captured_resume_sessions[1]
         assert resumed is not None, (
-            "second developer_node call MUST receive a non-None resume_session — "
-            "this is the core continuity assertion"
+            "second developer_node call MUST receive a non-None resume_session — this is the core continuity assertion"
         )
         assert isinstance(resumed, AgentSession)
         assert resumed.mode == "anthropic_api"
@@ -296,9 +293,7 @@ async def test_developer_session_persists_and_resumes_claude_max_mode(
             await developer_node(state, config)
 
         assert len(captured_resume_sessions) == 1
-        assert captured_resume_sessions[0] is None, (
-            "first developer_node call must not have a prior session"
-        )
+        assert captured_resume_sessions[0] is None, "first developer_node call must not have a prior session"
 
         row = await repo.get(job_id, "developer")
         assert row is not None, "developer_node must have persisted the agent session"
@@ -334,8 +329,7 @@ async def test_developer_session_persists_and_resumes_claude_max_mode(
         assert resumed.agent_type == "developer"
         assert resumed.session_id == first_session_id
         assert resumed.session_blob == first_blob, (
-            "resume_session must carry the EXACT prior session blob bytes — "
-            "not a stitched conversation"
+            "resume_session must carry the EXACT prior session blob bytes — not a stitched conversation"
         )
 
         row2 = await repo.get(job_id, "developer")

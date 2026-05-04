@@ -60,6 +60,7 @@ async def test_presign_put_returns_usable_url(minio_client, test_bucket):
     url = await minio_client.presign_put(test_bucket, "smoke/result.json", expires_seconds=300)
     assert url.startswith("http://")
     import httpx
+
     async with httpx.AsyncClient() as c:
         r = await c.put(url, content=b'{"ok": true}')
     assert r.status_code in (200, 204)
@@ -73,6 +74,7 @@ async def test_presign_get_returns_object_content(minio_client, test_bucket):
     await minio_client.ensure_bucket(test_bucket)
     put_url = await minio_client.presign_put(test_bucket, "smoke/g.json", 300)
     import httpx
+
     async with httpx.AsyncClient() as c:
         await c.put(put_url, content=b'{"hello": "world"}')
     get_url = await minio_client.presign_get(test_bucket, "smoke/g.json", 300)
@@ -134,7 +136,10 @@ async def test_list_objects_with_meta_returns_key_mtime_size(monkeypatch):
         return iter(fake_objs)
 
     client = QAMinioClient(
-        endpoint="localhost:9000", access_key="x", secret_key="y", secure=False,
+        endpoint="localhost:9000",
+        access_key="x",
+        secret_key="y",
+        secure=False,
     )
     monkeypatch.setattr(client._client, "list_objects", fake_list_objects)
 
@@ -158,6 +163,4 @@ async def test_list_objects_with_meta_returns_key_mtime_size(monkeypatch):
         "size": 1234,
     }
     assert result[1]["size"] == 5678
-    assert result[1]["last_modified"] == _dt.datetime.fromisoformat(
-        "2026-04-30T12:00:01+00:00"
-    )
+    assert result[1]["last_modified"] == _dt.datetime.fromisoformat("2026-04-30T12:00:01+00:00")

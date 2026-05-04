@@ -58,10 +58,7 @@ async def test_enroll_passes_admin_token_via_env(manager):
     await manager.enroll_sandbox("s1")
 
     # Inspect the env passed to build_exec_cmd for each call.
-    env_calls = [
-        call.kwargs.get("env") or {}
-        for call in manager._docker.build_exec_cmd.call_args_list
-    ]
+    env_calls = [call.kwargs.get("env") or {} for call in manager._docker.build_exec_cmd.call_args_list]
     assert env_calls, "build_exec_cmd was not called"
     for env in env_calls:
         assert env.get("ADMIN_TOK") == "admin-secret"

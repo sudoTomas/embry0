@@ -167,9 +167,7 @@ class ProxyManager:
             attach_internet=True,
         )
         self.presign_proxy_url = "http://presign-proxy:9104"
-        logger.info(
-            "presign_proxy_started", upstream=_resolve_backend_url("orchestrator", 8000)
-        )
+        logger.info("presign_proxy_started", upstream=_resolve_backend_url("orchestrator", 8000))
 
         if anthropic_api_key and enable_auth_proxy:
             await self._launch(
@@ -305,9 +303,7 @@ class ProxyManager:
                     accept_404=True,
                 )
             except RuntimeError as exc:
-                logger.warning(
-                    "sandbox_unenroll_failed", proxy=name, error=str(exc)
-                )
+                logger.warning("sandbox_unenroll_failed", proxy=name, error=str(exc))
 
     async def _exec_admin_request(
         self,
@@ -316,7 +312,7 @@ class ProxyManager:
         method: str,
         path: str,
         port: int,
-        body: dict | None,
+        body: dict[str, Any] | None,
         accept_404: bool = False,
     ) -> None:
         """Run a tiny urllib request via ``docker exec <container> python3 -c ...``.
@@ -364,9 +360,7 @@ class ProxyManager:
         try:
             output = await self._docker.run_cmd(cmd, timeout=15)
         except RuntimeError as exc:
-            raise RuntimeError(
-                f"docker exec {container} for {method} {path} failed: {exc}"
-            ) from exc
+            raise RuntimeError(f"docker exec {container} for {method} {path} failed: {exc}") from exc
 
         # The Python script prints HTTP_CODE=<status> on success, or stderr on
         # failure. run_cmd already raised on non-zero exit — so output here is
@@ -374,17 +368,13 @@ class ProxyManager:
         marker = "HTTP_CODE="
         idx = output.rfind(marker)
         if idx < 0:
-            raise RuntimeError(
-                f"enroll {container} {path}: missing HTTP_CODE marker in output: {output[:200]!r}"
-            )
+            raise RuntimeError(f"enroll {container} {path}: missing HTTP_CODE marker in output: {output[:200]!r}")
         status = int(output[idx + len(marker) :].strip())
         if 200 <= status < 300:
             return
         if accept_404 and status == 404:
             return
-        raise RuntimeError(
-            f"enroll {container} {path} returned HTTP {status}"
-        )
+        raise RuntimeError(f"enroll {container} {path} returned HTTP {status}")
 
     async def stop(self) -> None:
         """Force-remove all launched proxy containers."""

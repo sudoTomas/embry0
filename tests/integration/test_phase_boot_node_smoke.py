@@ -13,8 +13,9 @@ the real boot.py poll loop with sleep_seconds defaulted to 3s — the third
 attempt resolves before the budget elapses so total wall-clock is bounded.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 @pytest.mark.asyncio

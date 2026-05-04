@@ -97,9 +97,7 @@ async def test_telegram_reply_routes_developer_ask_user_input():
     }
     app, inputs_repo, executor = _make_app(input_row=input_row)
 
-    payload = _telegram_reply_payload(
-        replied_message_id=555, text="yes please", username="user42"
-    )
+    payload = _telegram_reply_payload(replied_message_id=555, text="yes please", username="user42")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.post(
@@ -116,9 +114,7 @@ async def test_telegram_reply_routes_developer_ask_user_input():
     assert body["status"] == "answered"
     assert body["input_id"] == "inp-dev-1"
     inputs_repo.get_by_telegram_message.assert_awaited_once_with(555)
-    inputs_repo.answer.assert_awaited_once_with(
-        "inp-dev-1", answer="yes please", answered_by="telegram:user42"
-    )
+    inputs_repo.answer.assert_awaited_once_with("inp-dev-1", answer="yes please", answered_by="telegram:user42")
     executor.resume_for_issue.assert_awaited_once_with("iss-1")
 
 
@@ -133,9 +129,7 @@ async def test_telegram_reply_routes_triage_needs_info_input():
     }
     app, inputs_repo, executor = _make_app(input_row=input_row)
 
-    payload = _telegram_reply_payload(
-        replied_message_id=777, text="bug in login", username="reporter"
-    )
+    payload = _telegram_reply_payload(replied_message_id=777, text="bug in login", username="reporter")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.post(
@@ -148,9 +142,7 @@ async def test_telegram_reply_routes_triage_needs_info_input():
         )
 
     assert r.status_code == 200, r.text
-    inputs_repo.answer.assert_awaited_once_with(
-        "inp-triage-1", answer="bug in login", answered_by="telegram:reporter"
-    )
+    inputs_repo.answer.assert_awaited_once_with("inp-triage-1", answer="bug in login", answered_by="telegram:reporter")
     executor.resume_for_issue.assert_awaited_once_with("iss-1")
 
 
@@ -166,9 +158,7 @@ async def test_telegram_reply_does_not_resume_when_blocking_inputs_remain():
     }
     app, inputs_repo, executor = _make_app(input_row=input_row, pending_blocking_after=1)
 
-    payload = _telegram_reply_payload(
-        replied_message_id=556, text="ok", username="alice"
-    )
+    payload = _telegram_reply_payload(replied_message_id=556, text="ok", username="alice")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.post(
@@ -197,9 +187,7 @@ async def test_telegram_reply_falls_back_to_chat_id_when_username_missing():
     }
     app, inputs_repo, _ = _make_app(input_row=input_row)
 
-    payload = _telegram_reply_payload(
-        replied_message_id=558, text="sure", username=None, chat_id=4242
-    )
+    payload = _telegram_reply_payload(replied_message_id=558, text="sure", username=None, chat_id=4242)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         r = await client.post(
@@ -212,6 +200,4 @@ async def test_telegram_reply_falls_back_to_chat_id_when_username_missing():
         )
 
     assert r.status_code == 200
-    inputs_repo.answer.assert_awaited_once_with(
-        "inp-dev-3", answer="sure", answered_by="telegram:4242"
-    )
+    inputs_repo.answer.assert_awaited_once_with("inp-dev-3", answer="sure", answered_by="telegram:4242")

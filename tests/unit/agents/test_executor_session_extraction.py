@@ -259,9 +259,7 @@ async def test_oauth_mode_picks_session_id_from_first_carrier(tmp_path: Any, mon
 
     assert out.session_id == first_sid
     assert out.session_blob_path is not None
-    assert out.session_blob_path.endswith(
-        f"/projects/{sanitize_cwd_for_session_dir(str(workspace))}/{first_sid}.jsonl"
-    )
+    assert out.session_blob_path.endswith(f"/projects/{sanitize_cwd_for_session_dir(str(workspace))}/{first_sid}.jsonl")
 
 
 @pytest.mark.asyncio

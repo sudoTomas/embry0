@@ -102,9 +102,7 @@ async def github_webhook(
             )
             return {"ok": True, "applied": 0, "reason": "state not initialised"}
 
-        issue = await issues_repo.find_by_repo_and_github_number(
-            repo=repo_name, github_number=gh_number
-        )
+        issue = await issues_repo.find_by_repo_and_github_number(repo=repo_name, github_number=gh_number)
         if issue is None:
             return {"ok": True, "applied": 0, "reason": "issue not tracked"}
 

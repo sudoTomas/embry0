@@ -29,7 +29,10 @@ async def test_phase_0_smoke_round_trip(app, builtin_profile_seeded, database_ur
     qa = r.json()
     assert qa["dind_enabled"] is True
     assert qa["is_builtin"] is True
-    assert "backend" in qa["extra_networks"]
+    # Phase 1.5: qa-jvm reaches dind via sandbox-restricted gateway (NAT-routed),
+    # not by attaching extra docker networks. SandboxManager injects --add-host
+    # for minio-proxy / presign-proxy at create time. See seeds/sandbox_profiles_builtin.py.
+    assert qa["extra_networks"] == []
     assert qa["base_image"] == "athanor-sandbox-qa:latest"
 
     # 3. Editing builtin via PUT is rejected with 403

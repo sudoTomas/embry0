@@ -91,11 +91,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
             timeout=aiohttp.ClientTimeout(total=60),
         ) as upstream_resp:
             response_body = await upstream_resp.read()
-            response_headers = {
-                k: v
-                for k, v in upstream_resp.headers.items()
-                if k.lower() not in _HOP_BY_HOP
-            }
+            response_headers = {k: v for k, v in upstream_resp.headers.items() if k.lower() not in _HOP_BY_HOP}
             return web.Response(
                 status=upstream_resp.status,
                 headers=response_headers,

@@ -66,9 +66,7 @@ async def test_github_channel_does_not_add_per_call_auth_header():
     from athanor.notifications.github_comment import GitHubCommentChannel
 
     fake_client = MagicMock()
-    fake_client.post = AsyncMock(
-        return_value=MagicMock(status_code=201, json=lambda: {"id": 1, "html_url": "x"})
-    )
+    fake_client.post = AsyncMock(return_value=MagicMock(status_code=201, json=lambda: {"id": 1, "html_url": "x"}))
     channel = GitHubCommentChannel(http_client=fake_client, dashboard_base_url="https://x")
     issue = {"id": "iss-1", "repo": "o/r", "github_number": 1, "title": "T"}
     await channel.dispatch(issue, [{"question": "Q", "input_id": "inp-1"}])

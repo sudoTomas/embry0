@@ -72,12 +72,15 @@ async def test_boot_timeout_uploads_screenshot_routes_to_qa_report():
     config = {"configurable": {"docker": docker, "qa_minio": minio}}
 
     fake_result = BootResult(
-        outcome="timeout", attempts=20, duration_ms=1100,
+        outcome="timeout",
+        attempts=20,
+        duration_ms=1100,
         failed_checks=["http://h/: got 503 expected 200"],
     )
-    with patch("athanor.workflows.qa.nodes.run_boot_phase", AsyncMock(return_value=fake_result)), \
-         patch("athanor.workflows.qa.nodes.take_diagnostic_screenshot",
-               AsyncMock(return_value=b"\x89PNGfake")):
+    with (
+        patch("athanor.workflows.qa.nodes.run_boot_phase", AsyncMock(return_value=fake_result)),
+        patch("athanor.workflows.qa.nodes.take_diagnostic_screenshot", AsyncMock(return_value=b"\x89PNGfake")),
+    ):
         cmd = await boot_qa_node(state, config)
 
     assert cmd.goto == "qa_report"
@@ -98,8 +101,10 @@ async def test_boot_startup_failed_routes_to_qa_report_no_screenshot():
     state = {
         "job_id": "J",
         "qa": {
-            "qa_yaml_parsed": {"startup": {"command": "x", "ready_checks": [], "boot_timeout_seconds": 30},
-                               "frontend_url": "http://h:3000"},
+            "qa_yaml_parsed": {
+                "startup": {"command": "x", "ready_checks": [], "boot_timeout_seconds": 30},
+                "frontend_url": "http://h:3000",
+            },
             "attempts": [{"attempt_n": 1, "sandbox_id": "C", "artifact_prefix": "J/1/"}],
         },
         "sandbox_container_id": "C",
@@ -109,11 +114,13 @@ async def test_boot_startup_failed_routes_to_qa_report_no_screenshot():
     minio.put_object = AsyncMock()
     config = {"configurable": {"docker": docker, "qa_minio": minio}}
 
-    fake_result = BootResult(outcome="startup_failed", attempts=0, duration_ms=200,
-                             error_message="docker compose up failed")
-    with patch("athanor.workflows.qa.nodes.run_boot_phase", AsyncMock(return_value=fake_result)), \
-         patch("athanor.workflows.qa.nodes.take_diagnostic_screenshot",
-               AsyncMock(return_value=None)) as ss:
+    fake_result = BootResult(
+        outcome="startup_failed", attempts=0, duration_ms=200, error_message="docker compose up failed"
+    )
+    with (
+        patch("athanor.workflows.qa.nodes.run_boot_phase", AsyncMock(return_value=fake_result)),
+        patch("athanor.workflows.qa.nodes.take_diagnostic_screenshot", AsyncMock(return_value=None)) as ss,
+    ):
         cmd = await boot_qa_node(state, config)
 
     assert cmd.goto == "qa_report"

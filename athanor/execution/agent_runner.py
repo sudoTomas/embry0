@@ -250,13 +250,9 @@ class AgentRunner:
                 project_cwd=SANDBOX_PROJECT_CWD,
             )
             # docker cp does not auto-mkdir parent — ensure it exists first.
-            mkdir_cmd = self._docker.build_exec_cmd(
-                container, ["mkdir", "-p", str(sandbox_target.parent)]
-            )
+            mkdir_cmd = self._docker.build_exec_cmd(container, ["mkdir", "-p", str(sandbox_target.parent)])
             await self._docker.run_cmd(mkdir_cmd, timeout=10)
-            await self._docker.copy_bytes_into(
-                container, resume_session.session_blob, str(sandbox_target)
-            )
+            await self._docker.copy_bytes_into(container, resume_session.session_blob, str(sandbox_target))
             return ["--session-id", resume_session.session_id]
 
         # Defensive: future modes should be wired explicitly.

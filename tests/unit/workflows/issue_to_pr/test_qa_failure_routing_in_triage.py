@@ -236,9 +236,7 @@ async def test_triage_qa_failure_malformed_payload_ends_with_error_code() -> Non
     from athanor.workflows.issue_to_pr.nodes import triage_node
 
     # retry_developer requires prompt with min_length=10; "hi" is too short.
-    output = _triage_decision_with_qa_failure_action(
-        {"kind": "retry_developer", "prompt": "hi"}
-    )
+    output = _triage_decision_with_qa_failure_action({"kind": "retry_developer", "prompt": "hi"})
     runner_mock = _runner_returning(output)
     with (
         patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
@@ -261,9 +259,7 @@ async def test_triage_qa_failure_unknown_kind_ends_with_error_code() -> None:
     from athanor.safety.error_codes import ErrorCode
     from athanor.workflows.issue_to_pr.nodes import triage_node
 
-    output = _triage_decision_with_qa_failure_action(
-        {"kind": "halt_universe", "reason": "no"}
-    )
+    output = _triage_decision_with_qa_failure_action({"kind": "halt_universe", "reason": "no"})
     runner_mock = _runner_returning(output)
     with (
         patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),

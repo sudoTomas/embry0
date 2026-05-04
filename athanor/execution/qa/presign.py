@@ -10,7 +10,7 @@ service refuses to mint URLs outside that prefix.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 
 class PresignAuthError(ValueError):
@@ -42,7 +42,7 @@ class QAPresignService:
         paths: list[str],
         expires_seconds: int,
         direction: Literal["put", "get"],
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Return {bucket, prefix, expires_at, urls: [{path, url}, ...]}."""
         job_id, attempt_n = await self._tokens.lookup(sandbox_token)
         prefix = f"{job_id}/{attempt_n}/"

@@ -17,7 +17,7 @@ import base64
 import json
 import shlex
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 import structlog
@@ -33,7 +33,7 @@ from athanor.workflows.qa.screenshot import take_diagnostic_screenshot
 logger = structlog.get_logger(__name__)
 
 
-async def init_qa_node(state: dict, config: RunnableConfig) -> dict:
+async def init_qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Initialize a QA attempt: resolve profile, start sandbox, clone repo,
     parse qa.yaml, register sandbox token, mint presigned URLs, write job.json.
 
@@ -54,7 +54,13 @@ async def init_qa_node(state: dict, config: RunnableConfig) -> dict:
     token_registry = configurable.get("qa_token_registry")
     proxy_mgr = configurable.get("proxy_manager")
 
-    if not all([docker, sandbox_mgr, profiles_repo, minio_sandbox, token_registry]):
+    if (
+        docker is None
+        or sandbox_mgr is None
+        or profiles_repo is None
+        or minio_sandbox is None
+        or token_registry is None
+    ):
         raise RuntimeError("init_qa_node missing required dependencies in config['configurable']")
 
     job_id = state["job_id"]
@@ -292,7 +298,7 @@ async def init_qa_node(state: dict, config: RunnableConfig) -> dict:
         raise
 
 
-async def boot_qa_node(state: dict, config: RunnableConfig) -> Command[Literal["qa", "qa_report"]]:
+async def boot_qa_node(state: dict[str, Any], config: RunnableConfig) -> Command[Literal["qa", "qa_report"]]:
     """Backend-owned QA boot phase.
 
     Runs qa.yaml startup.command in the sandbox, polls ready_checks until all
@@ -320,6 +326,8 @@ async def boot_qa_node(state: dict, config: RunnableConfig) -> Command[Literal["
     attempts = qa.get("attempts") or []
     last_attempt = attempts[-1] if attempts else {}
     container_id = state.get("sandbox_container_id") or last_attempt.get("sandbox_id")
+    if not container_id:
+        raise RuntimeError("boot_qa_node: no sandbox container id available in state")
     artifact_prefix = last_attempt.get("artifact_prefix", f"{state['job_id']}/1/")
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=3.0, read=8.0, write=8.0, pool=8.0)) as http:
@@ -362,16 +370,14 @@ async def boot_qa_node(state: dict, config: RunnableConfig) -> Command[Literal["
 
     # Stamp the exit_reason on the attempt so report_node + retry_node route correctly.
     if attempts:
-        attempts[-1]["exit_reason"] = (
-            "boot_timeout" if result.outcome == "timeout" else "startup_failed"
-        )
+        attempts[-1]["exit_reason"] = "boot_timeout" if result.outcome == "timeout" else "startup_failed"
         attempts[-1]["last_phase"] = "boot"
         qa["attempts"] = attempts
 
     return Command(goto="qa_report", update={"qa": qa})
 
 
-async def qa_node(state: dict, config: RunnableConfig) -> dict:
+async def qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Invoke the QA agent inside the sandbox started by init_qa_node.
 
     The agent reads /workspace/.qa/job.json on its own; we just dispatch
@@ -434,7 +440,7 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
         '  "seed": {"ran": false, "note": "no seed config"} | null,\n'
         '  "e2e":  {"ran": false} | null,\n'
         '  "acceptance_results": [\n'
-        '    {\n'
+        "    {\n"
         '      "criterion": "<verbatim from job.json acceptance_criteria>",\n'
         '      "status": "passed" | "failed" | "inconclusive",  // NOT warning/partial/etc.\n'
         '      "evidence": ["<artifact path uploaded to MinIO>", ...],\n'
@@ -442,15 +448,15 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
         '      "console_errors": ["<verbatim browser console message>", ...],\n'
         '      "network_failures": [{"url": "<...>", "status": <int>}, ...],  // dicts, NOT strings\n'
         '      "log_excerpts": [{"service": "<container_name>", "lines": "<excerpt>"}, ...]  // dicts, NOT strings\n'
-        '    }, ...\n'
-        '  ],\n'
+        "    }, ...\n"
+        "  ],\n"
         '  "anomalies": [\n'
-        '    {\n'
+        "    {\n"
         '      "category": "console_error" | "network_error" | "unexpected_state" | "crash",\n'
         '      "detail": "<short>",\n'
         '      "evidence_paths": ["..."]\n'
-        '    }, ...\n'
-        '  ]\n'
+        "    }, ...\n"
+        "  ]\n"
         "}\n"
         "\n"
         "Mapping rules:\n"
@@ -533,9 +539,7 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
             new_session_id = last_output.get("session_id")
             new_session_blob = last_output.get("session_blob")
             if new_messages or new_session_id:
-                mode = last_output.get("mode") or (
-                    "claude_max" if credentials.get("oauth_token") else "anthropic_api"
-                )
+                mode = last_output.get("mode") or ("claude_max" if credentials.get("oauth_token") else "anthropic_api")
                 try:
                     await agent_sessions_repo.upsert(
                         job_id=state.get("job_id", ""),
@@ -575,7 +579,7 @@ async def qa_node(state: dict, config: RunnableConfig) -> dict:
     return state
 
 
-async def report_node(state: dict, config: RunnableConfig) -> dict:
+async def report_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """End-of-attempt: capture logs, validate result.json, cleanup.
 
     Always best-effort: every cleanup step is wrapped in try/except so a
@@ -591,7 +595,7 @@ async def report_node(state: dict, config: RunnableConfig) -> dict:
     minio_internal = configurable.get("qa_minio")
     token_registry = configurable.get("qa_token_registry")
 
-    if not all([docker, sandbox_mgr, minio_internal, token_registry]):
+    if docker is None or sandbox_mgr is None or minio_internal is None or token_registry is None:
         raise RuntimeError("report_node missing required dependencies in config['configurable']")
 
     qa = state["qa"]
@@ -633,7 +637,7 @@ async def report_node(state: dict, config: RunnableConfig) -> dict:
         logger.warning("qa_log_upload_failed", error=str(exc), exc_info=True)
 
     # 3. Read + validate result.json.
-    result_summary: dict | None = None
+    result_summary: dict[str, Any] | None = None
     overall = "inconclusive"
     try:
         import json
@@ -708,15 +712,15 @@ async def report_node(state: dict, config: RunnableConfig) -> dict:
     return state
 
 
-async def retry_node(state: dict, config: RunnableConfig) -> Command:
+async def retry_node(state: dict[str, Any], config: RunnableConfig) -> Command[Any]:
     """Decide whether to retry the QA attempt or end (Section 6.2).
 
-      - boot_timeout / seed_timeout / infra_error -> auto-retry (bounded)
-      - idle_timeout                              -> hard-fail (ERR_QA_IDLE)
-      - validation_failed                         -> standalone: END (Phase 5 routes to triage)
-      - total_budget_exceeded                     -> END (Phase 5 routes to triage)
-      - result_json_missing                       -> END (treat as inconclusive)
-      - None (success)                            -> END
+    - boot_timeout / seed_timeout / infra_error -> auto-retry (bounded)
+    - idle_timeout                              -> hard-fail (ERR_QA_IDLE)
+    - validation_failed                         -> standalone: END (Phase 5 routes to triage)
+    - total_budget_exceeded                     -> END (Phase 5 routes to triage)
+    - result_json_missing                       -> END (treat as inconclusive)
+    - None (success)                            -> END
     """
     qa = state.get("qa") or {}
     attempts = qa.get("attempts", [])

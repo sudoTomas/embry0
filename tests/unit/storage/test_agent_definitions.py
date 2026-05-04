@@ -11,7 +11,14 @@ pytestmark = pytest.mark.requires_postgres
 
 @pytest.fixture
 async def agent_repo(db_with_migrations: DatabasePool) -> AgentDefinitionsRepository:
-    return AgentDefinitionsRepository(db_with_migrations)
+    # Migrations seed triage/developer/review; qa is seeded at app startup
+    # by seed_qa_agent (it has heavier deps that don't belong in a migration).
+    # Do the same here so BUILTIN_SEED ⊆ list_all() holds.
+    from athanor.workflows.qa.agent_seed import seed_qa_agent
+
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    await seed_qa_agent(repo)
+    return repo
 
 
 @pytest.mark.asyncio
@@ -190,7 +197,7 @@ def test_builtin_seed_skill_counts_match_design_2026_05_04():
     See: docs/superpowers/specs/2026-05-04-expand-superpowers-skills-design.md
     """
     expected = {
-        "triage":    {"writing-plans", "brainstorming"},
+        "triage": {"writing-plans", "brainstorming"},
         "developer": {
             "subagent-driven-development",
             "verification-before-completion",
@@ -199,13 +206,10 @@ def test_builtin_seed_skill_counts_match_design_2026_05_04():
             "executing-plans",
             "receiving-code-review",
         },
-        "review":    {"requesting-code-review"},
+        "review": {"requesting-code-review"},
     }
     for agent_type, want in expected.items():
-        got = {
-            s.split(":", 1)[1]
-            for s in BUILTIN_SEED[agent_type]["skills"]
-        }
+        got = {s.split(":", 1)[1] for s in BUILTIN_SEED[agent_type]["skills"]}
         assert got == want, (
             f"BUILTIN_SEED['{agent_type}']['skills'] drifted from the 2026-05-04 design.\n"
             f"  expected: {sorted(want)}\n"

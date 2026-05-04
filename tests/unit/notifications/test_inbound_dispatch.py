@@ -11,10 +11,12 @@ async def test_dispatch_two_answers_to_two_pending_inputs():
     from athanor.notifications.inbound_dispatch import apply_inbound_directives
 
     inputs_repo = MagicMock()
-    inputs_repo.list_pending_for_issue = AsyncMock(return_value=[
-        {"id": "inp-1", "question": "Q1?", "status": "pending"},
-        {"id": "inp-2", "question": "Q2?", "status": "pending"},
-    ])
+    inputs_repo.list_pending_for_issue = AsyncMock(
+        return_value=[
+            {"id": "inp-1", "question": "Q1?", "status": "pending"},
+            {"id": "inp-2", "question": "Q2?", "status": "pending"},
+        ]
+    )
     inputs_repo.answer = AsyncMock()
     inputs_repo.count_pending_blocking = AsyncMock(return_value=0)
 
@@ -44,9 +46,11 @@ async def test_dispatch_skip_marks_input_as_skipped():
     from athanor.notifications.inbound_dispatch import apply_inbound_directives
 
     inputs_repo = MagicMock()
-    inputs_repo.list_pending_for_issue = AsyncMock(return_value=[
-        {"id": "inp-1", "question": "Q1?", "status": "pending"},
-    ])
+    inputs_repo.list_pending_for_issue = AsyncMock(
+        return_value=[
+            {"id": "inp-1", "question": "Q1?", "status": "pending"},
+        ]
+    )
     inputs_repo.answer = AsyncMock()
     inputs_repo.skip = AsyncMock()
     inputs_repo.count_pending_blocking = AsyncMock(return_value=0)
@@ -70,9 +74,11 @@ async def test_dispatch_ignores_unknown_sequence():
     from athanor.notifications.inbound_dispatch import apply_inbound_directives
 
     inputs_repo = MagicMock()
-    inputs_repo.list_pending_for_issue = AsyncMock(return_value=[
-        {"id": "inp-1", "question": "Q1?", "status": "pending"},
-    ])
+    inputs_repo.list_pending_for_issue = AsyncMock(
+        return_value=[
+            {"id": "inp-1", "question": "Q1?", "status": "pending"},
+        ]
+    )
     inputs_repo.answer = AsyncMock()
     inputs_repo.count_pending_blocking = AsyncMock(return_value=1)
 
@@ -96,10 +102,12 @@ async def test_dispatch_does_not_resume_when_blocking_questions_remain():
     from athanor.notifications.inbound_dispatch import apply_inbound_directives
 
     inputs_repo = MagicMock()
-    inputs_repo.list_pending_for_issue = AsyncMock(return_value=[
-        {"id": "inp-1", "question": "Q1?", "status": "pending"},
-        {"id": "inp-2", "question": "Q2?", "status": "pending"},
-    ])
+    inputs_repo.list_pending_for_issue = AsyncMock(
+        return_value=[
+            {"id": "inp-1", "question": "Q1?", "status": "pending"},
+            {"id": "inp-2", "question": "Q2?", "status": "pending"},
+        ]
+    )
     inputs_repo.answer = AsyncMock()
     inputs_repo.count_pending_blocking = AsyncMock(return_value=1)  # one still pending
 

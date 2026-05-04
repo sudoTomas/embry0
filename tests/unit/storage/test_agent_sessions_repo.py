@@ -15,8 +15,7 @@ async def db(db_with_migrations: DatabasePool) -> DatabasePool:
 async def _seed_job(db: DatabasePool, job_id: str) -> None:
     """Insert a minimal jobs row so agent_sessions FK is satisfied."""
     await db.execute(
-        "INSERT INTO jobs (job_id, repo, task) VALUES ($1, $2, $3) "
-        "ON CONFLICT (job_id) DO NOTHING",
+        "INSERT INTO jobs (job_id, repo, task) VALUES ($1, $2, $3) ON CONFLICT (job_id) DO NOTHING",
         job_id,
         "test/repo",
         "test task",
