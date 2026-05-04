@@ -4,6 +4,7 @@ import {
   OPERATION_ELEMENT,
   OPERATION_NUMERAL,
   agentTypeToOperation,
+  jobToOperation,
   type Operation,
 } from "../operations";
 
@@ -76,5 +77,55 @@ describe("agentTypeToOperation", () => {
   it("normalizes case (returns same operation regardless of input casing)", () => {
     expect(agentTypeToOperation("DEVELOPER")).toBe("ferment");
     expect(agentTypeToOperation("Triage")).toBe("calcinate");
+  });
+});
+
+describe("jobToOperation", () => {
+  it("returns ferment for an empty pipeline (no agents observed yet)", () => {
+    expect(jobToOperation([])).toBe("ferment");
+  });
+
+  it("returns the active agent's operation when one is running", () => {
+    expect(
+      jobToOperation([
+        { agent: "triage", status: "completed" },
+        { agent: "developer", status: "running" },
+      ]),
+    ).toBe("ferment");
+  });
+
+  it("prefers the active agent over completed history", () => {
+    expect(
+      jobToOperation([
+        { agent: "triage", status: "completed" },
+        { agent: "developer", status: "completed" },
+        { agent: "reviewer", status: "running" },
+      ]),
+    ).toBe("distill");
+  });
+
+  it("falls back to the last completed agent when none are running", () => {
+    expect(
+      jobToOperation([
+        { agent: "triage", status: "completed" },
+        { agent: "developer", status: "completed" },
+        { agent: "qa", status: "completed" },
+      ]),
+    ).toBe("conjoin");
+  });
+
+  it("counts a failed agent as terminal history (not as in-progress)", () => {
+    expect(
+      jobToOperation([
+        { agent: "triage", status: "completed" },
+        { agent: "developer", status: "failed" },
+      ]),
+    ).toBe("ferment");
+  });
+
+  it("falls back to ferment when the active agent type is unmapped", () => {
+    expect(
+      jobToOperation([{ agent: "custom-agent", status: "running" }]),
+    ).toBe("ferment");
   });
 });

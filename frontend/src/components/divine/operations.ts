@@ -159,3 +159,34 @@ export function agentTypeToOperation(agentType: string | undefined | null): Oper
   if (t === "output" || t === "publish") return "coagulate";
   return undefined;
 }
+
+/**
+ * Pick the operation for a job header based on its current pipeline state.
+ *
+ * The glyph reflects WHERE in the magnum opus the job is right now:
+ * - Active agent → the operation of that agent (calcinate during triage,
+ *   ferment during developer, distill during review, conjoin during QA…).
+ * - No active agent but completed history → the LAST completed agent's op
+ *   (so a job whose final agent published reads as `coagulate`).
+ * - Empty pipeline (no agents observed yet) → `ferment` per
+ *   `OPERATION_FOR_ROUTE` (the route's static answer).
+ *
+ * Inputs are loose `{ agent: string; status: string }` so the helper does not
+ * leak hook-internal types into the divine layer.
+ */
+export function jobToOperation(
+  agents: ReadonlyArray<{ agent: string; status: string }>,
+): Operation {
+  const active = agents.find((a) => a.status === "running");
+  if (active) {
+    const op = agentTypeToOperation(active.agent);
+    if (op) return op;
+  }
+  const completed = agents.filter((a) => a.status === "completed" || a.status === "failed");
+  if (completed.length > 0) {
+    const last = completed[completed.length - 1];
+    const op = agentTypeToOperation(last.agent);
+    if (op) return op;
+  }
+  return "ferment";
+}

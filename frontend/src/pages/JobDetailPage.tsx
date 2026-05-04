@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import { ArrowLeft, ExternalLink, Clock, DollarSign, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
+import { jobToOperation } from "@/components/divine/operations";
 import { Button } from "@/components/ui/Button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { useJob } from "@/hooks/useJobs";
@@ -71,6 +72,8 @@ export function JobDetailPage() {
   const totalPhases = agents.length + pendingAgents.length;
   const completedPhases = completedAgents.length;
 
+  const currentOperation = jobToOperation(agents);
+
   if (isError) return <div className="p-8 text-center text-red-400">Failed to load job</div>;
   if (isLoading || !job) return <div className="p-8 text-center text-white/40">Loading...</div>;
 
@@ -105,7 +108,7 @@ export function JobDetailPage() {
           </Button>
         </Link>
         <span className="flex items-center justify-center w-8 h-8 shrink-0">
-          <OperationGlyph operation="ferment" size={28} titled />
+          <OperationGlyph operation={currentOperation} size={28} titled />
         </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
