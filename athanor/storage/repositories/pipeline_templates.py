@@ -21,7 +21,8 @@ class PipelineTemplatesRepository:
     async def list_all(self) -> list[dict[str, Any]]:
         """List all pipeline templates (summary only, no graph_definition)."""
         rows = await self._db.fetch(
-            "SELECT id, name, description, sandbox_profile, created_at, updated_at FROM pipeline_templates ORDER BY name"
+            "SELECT id, name, description, sandbox_profile, is_builtin, created_at, updated_at "
+            "FROM pipeline_templates ORDER BY is_builtin DESC, name"
         )
         return [dict(r) for r in rows]
 
@@ -82,6 +83,52 @@ class PipelineTemplatesRepository:
         """Delete a pipeline template by id."""
         await self._db.execute("DELETE FROM pipeline_templates WHERE id = $1", template_id)
         logger.info("pipeline_template_deleted", template_id=template_id)
+
+    async def upsert_builtin(
+        self,
+        name: str,
+        graph_definition: dict[str, Any],
+        description: str = "",
+        agent_models: dict[str, Any] | None = None,
+        sandbox_profile: str | None = None,
+    ) -> dict[str, Any]:
+        """Idempotent upsert for seed-time builtin pipeline templates.
+
+        Match key is ``name`` (the pipeline_templates.name column is UNIQUE).
+        Always wins over local edits — users who want a customized variant
+        should clone the builtin under a different name. ``is_builtin`` is
+        forced to TRUE.
+        """
+        existing = await self._db.fetchrow(
+            "SELECT id FROM pipeline_templates WHERE name = $1",
+            name,
+        )
+        template_id = str(existing["id"]) if existing else str(uuid.uuid4())
+        await self._db.execute(
+            """
+            INSERT INTO pipeline_templates (
+                id, name, description, graph_definition, agent_models,
+                sandbox_profile, is_builtin, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW())
+            ON CONFLICT (name) DO UPDATE SET
+                description = EXCLUDED.description,
+                graph_definition = EXCLUDED.graph_definition,
+                agent_models = EXCLUDED.agent_models,
+                sandbox_profile = EXCLUDED.sandbox_profile,
+                is_builtin = TRUE,
+                updated_at = NOW()
+            """,
+            template_id,
+            name,
+            description,
+            graph_definition,
+            agent_models or {},
+            sandbox_profile,
+        )
+        logger.info("pipeline_template_seeded", template_id=template_id, name=name)
+        row = await self.get(template_id)
+        return row  # type: ignore[return-value]
 
     async def duplicate(self, template_id: str, new_name: str) -> dict[str, Any]:
         """Create a copy of an existing template with a new name.

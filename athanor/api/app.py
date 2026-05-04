@@ -259,6 +259,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await seed_builtin_sandbox_profiles(SandboxProfilesRepository(db))
 
+    # Seed canonical builtin pipeline templates. Runs after migration 24
+    # (is_builtin column on pipeline_templates). Idempotent — see
+    # pipeline_templates_builtin.py.
+    from athanor.storage.seeds.pipeline_templates_builtin import seed_builtin_pipeline_templates
+
+    await seed_builtin_pipeline_templates(PipelineTemplatesRepository(db))
+
     # Seed the qa agent definition. Idempotent — upserts on every boot so the
     # canonical system prompt and MCP server config stay in sync with the code.
     from athanor.workflows.qa.agent_seed import seed_qa_agent

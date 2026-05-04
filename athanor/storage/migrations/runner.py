@@ -594,6 +594,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_agent_sessions_job ON agent_sessions(job_id);
         """,
     ),
+    (
+        24,
+        "pipeline_templates — is_builtin flag for canonical seed pipelines",
+        # Mirrors the sandbox_profiles pattern: builtin templates are upserted
+        # at orchestrator startup and identified by is_builtin=true so the UI
+        # can badge them and the API can refuse non-seed deletes/edits to them.
+        """
+        ALTER TABLE pipeline_templates
+            ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT FALSE;
+        """,
+    ),
 ]
 
 

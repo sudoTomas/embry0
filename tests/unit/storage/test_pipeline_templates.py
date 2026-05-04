@@ -86,5 +86,79 @@ async def test_duplicate_nonexistent_raises(templates_repo: PipelineTemplatesRep
 
 
 @pytest.mark.asyncio
+async def test_upsert_builtin_inserts_with_is_builtin_true(
+    templates_repo: PipelineTemplatesRepository,
+):
+    seed = await templates_repo.upsert_builtin(
+        name="seed-quick-fix",
+        description="Triage then developer.",
+        graph_definition=SAMPLE_GRAPH,
+        sandbox_profile="slim",
+    )
+    assert seed["name"] == "seed-quick-fix"
+    assert seed["is_builtin"] is True
+    assert seed["graph_definition"] == SAMPLE_GRAPH
+    assert seed["sandbox_profile"] == "slim"
+
+
+@pytest.mark.asyncio
+async def test_upsert_builtin_is_idempotent_on_repeated_calls(
+    templates_repo: PipelineTemplatesRepository,
+):
+    first = await templates_repo.upsert_builtin(
+        name="seed-repeat",
+        graph_definition=SAMPLE_GRAPH,
+    )
+    updated_graph = {**SAMPLE_GRAPH, "description": "second pass"}
+    second = await templates_repo.upsert_builtin(
+        name="seed-repeat",
+        graph_definition=updated_graph,
+    )
+    assert first["id"] == second["id"]
+    assert second["graph_definition"] == updated_graph
+    assert second["is_builtin"] is True
+
+
+@pytest.mark.asyncio
+async def test_upsert_builtin_overwrites_user_template_under_same_name(
+    templates_repo: PipelineTemplatesRepository,
+):
+    user_template = await templates_repo.create(
+        name="seed-collision",
+        graph_definition=SAMPLE_GRAPH,
+        description="user version",
+    )
+    assert user_template["is_builtin"] is False
+
+    after_seed = await templates_repo.upsert_builtin(
+        name="seed-collision",
+        graph_definition=SAMPLE_GRAPH,
+        description="seed version",
+    )
+    assert after_seed["id"] == user_template["id"]
+    assert after_seed["description"] == "seed version"
+    assert after_seed["is_builtin"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_all_includes_is_builtin_and_orders_seeds_first(
+    templates_repo: PipelineTemplatesRepository,
+):
+    await templates_repo.create(name="zzzz-user", graph_definition=SAMPLE_GRAPH)
+    await templates_repo.upsert_builtin(name="aaaa-seed", graph_definition=SAMPLE_GRAPH)
+
+    rows = await templates_repo.list_all()
+    is_builtin_seen_user = False
+    for row in rows:
+        assert "is_builtin" in row
+        if not row["is_builtin"]:
+            is_builtin_seen_user = True
+        elif is_builtin_seen_user:
+            pytest.fail(
+                f"Builtin {row['name']!r} appeared after a non-builtin row — list_all should sort builtins first."
+            )
+
+
+@pytest.mark.asyncio
 async def test_get_nonexistent_returns_none(templates_repo: PipelineTemplatesRepository):
     assert await templates_repo.get("no-such-id") is None
