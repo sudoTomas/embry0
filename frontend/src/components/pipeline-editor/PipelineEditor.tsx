@@ -9,7 +9,7 @@ import {
   type Node,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { X, Save, FolderOpen } from "lucide-react";
+import { X, Save, FolderOpen, LayoutGrid } from "lucide-react";
 import { AgentNode } from "./AgentNode";
 import { StartEndNode } from "./StartEndNode";
 import { FeedbackEdge } from "./FeedbackEdge";
@@ -20,6 +20,7 @@ import { EdgeDetailPopup } from "./EdgeDetailPopup";
 import { TemplatePicker } from "./TemplatePicker";
 import { TemplateDrawer } from "./TemplateDrawer";
 import { useGraphState } from "./hooks/useGraphState";
+import { autoLayout } from "./autoLayout";
 import { useRenameTemplate, useCreateTemplate } from "@/hooks/usePipelines";
 import type { PipelineGraph } from "@/lib/types";
 
@@ -98,6 +99,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
     selectedEdge,
     setSelectedNode,
     setSelectedEdge,
+    setNodes,
     serialize,
     loadGraph,
     updateNodeData,
@@ -139,6 +141,10 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
     });
   }, [currentTemplateId, pipelineName, serialize, renameMutation]);
 
+  const handleAutoArrange = useCallback(() => {
+    setNodes((current) => autoLayout(current, edges));
+  }, [edges, setNodes]);
+
   const handleSaveAs = useCallback(() => {
     const name = window.prompt("Template name:", pipelineName);
     if (!name?.trim()) return;
@@ -172,6 +178,16 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
       <div className="flex items-center gap-2">
         <button
           type="button"
+          onClick={handleAutoArrange}
+          disabled={nodes.length < 2}
+          className="flex items-center gap-1.5 text-xs text-white/50 hover:text-white/70 disabled:opacity-30 disabled:hover:text-white/50 px-3 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
+          title="Re-position all nodes into a clean left-to-right layout"
+        >
+          <LayoutGrid size={13} />
+          Auto Arrange
+        </button>
+        <button
+          type="button"
           onClick={() => setShowTemplatePicker(true)}
           className="text-xs text-white/50 hover:text-white/70 px-3 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
         >
@@ -200,6 +216,16 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
         />
       </div>
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleAutoArrange}
+          disabled={nodes.length < 2}
+          className="flex items-center gap-1.5 text-xs text-white/50 hover:text-white/70 disabled:opacity-30 disabled:hover:text-white/50 px-3 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
+          title="Re-position all nodes into a clean left-to-right layout"
+        >
+          <LayoutGrid size={13} />
+          Auto Arrange
+        </button>
         <button
           type="button"
           onClick={() => setShowTemplateDrawer(true)}
