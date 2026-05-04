@@ -130,6 +130,16 @@ body[data-divine="off"] .athanor-vessel {
   animation: none;
 }
 
+/* Lucide fallback: shows ONLY when the divine layer is off (e.g. for sidebar
+   icons that have a sigil sibling). Hidden by default so the sigil takes the
+   slot when the divine layer is on. */
+.divine-fallback {
+  display: none !important;
+}
+body[data-divine="off"] .divine-fallback {
+  display: inline-flex !important;
+}
+
 /* Glow / pulse effects for active agents */
 @keyframes pulse-glow {
   0%, 100% { opacity: 1; }

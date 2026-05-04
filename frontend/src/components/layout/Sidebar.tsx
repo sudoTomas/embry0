@@ -4,31 +4,39 @@ import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { APP_NAME } from "@/lib/branding";
+import { AlchemicalSigil } from "@/components/divine/AlchemicalSigil";
 import type { LucideIcon } from "lucide-react";
+import type { Stage } from "@/lib/sigils";
 
 interface NavItem {
   path: string;
   label: string;
   icon: LucideIcon;
   accentColor?: string;
+  /**
+   * Optional alchemical-stage sigil. When set AND the divine layer is
+   * enabled (no body[data-divine="off"]), the sigil renders instead of
+   * the lucide icon. Lucide remains the fallback for utility routes.
+   */
+  stage?: Stage;
 }
 
 const MONITORING_ITEMS: NavItem[] = [
-  { path: "/", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/issues", label: "Issues", icon: CircleDot },
-  { path: "/jobs", label: "Jobs", icon: Play },
+  { path: "/", label: "Dashboard", icon: LayoutDashboard, stage: "publish" },
+  { path: "/issues", label: "Issues", icon: CircleDot, stage: "triage" },
+  { path: "/jobs", label: "Jobs", icon: Play, stage: "develop" },
 ];
 
 const CONFIGURATION_ITEMS: NavItem[] = [
-  { path: "/agents", label: "Agents", icon: Bot },
-  { path: "/sandboxes", label: "Sandboxes", icon: Box },
-  { path: "/pipelines", label: "Pipelines", icon: Workflow },
+  { path: "/agents", label: "Agents", icon: Bot, stage: "validate" },
+  { path: "/sandboxes", label: "Sandboxes", icon: Box, stage: "qa" },
+  { path: "/pipelines", label: "Pipelines", icon: Workflow, stage: "explore" },
   { path: "/environments", label: "Environments", icon: KeyRound },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 
 function NavItemLink({ item, sidebarOpen }: { item: NavItem; sidebarOpen: boolean }) {
-  const { path, label, icon: Icon, accentColor } = item;
+  const { path, label, icon: Icon, accentColor, stage } = item;
 
   const link = (
     <NavLink
@@ -46,14 +54,35 @@ function NavItemLink({ item, sidebarOpen }: { item: NavItem; sidebarOpen: boolea
     >
       {({ isActive }) => (
         <>
-          <Icon
-            className="h-4 w-4 shrink-0"
-            style={
-              accentColor && !isActive
-                ? { color: accentColor }
-                : undefined
-            }
-          />
+          {stage ? (
+            <>
+              {/* Sigil takes the slot when divine layer is on. */}
+              <span
+                className="divine-element h-4 w-4 shrink-0 flex items-center justify-center"
+                style={accentColor && !isActive ? { color: accentColor } : undefined}
+              >
+                <AlchemicalSigil stage={stage} size={16} />
+              </span>
+              {/* Lucide fallback: hidden by default, shown when body[data-divine="off"]. */}
+              <Icon
+                className="divine-fallback h-4 w-4 shrink-0"
+                style={
+                  accentColor && !isActive
+                    ? { color: accentColor }
+                    : undefined
+                }
+              />
+            </>
+          ) : (
+            <Icon
+              className="h-4 w-4 shrink-0"
+              style={
+                accentColor && !isActive
+                  ? { color: accentColor }
+                  : undefined
+              }
+            />
+          )}
           {sidebarOpen && (
             <span
               style={

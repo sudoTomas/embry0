@@ -1,19 +1,24 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { AlchemicalSigil } from "@/components/divine/AlchemicalSigil";
+import type { Stage } from "@/lib/sigils";
 
-const ROLE_CONFIG = {
-  start: { color: "#06b6d4", label: "START", handle: "source" as const },
-  end: { color: "#f43f5e", label: "END", handle: "target" as const },
+const ROLE_CONFIG: Record<
+  "start" | "end",
+  { color: string; label: string; handle: "source" | "target"; stage: Stage }
+> = {
+  start: { color: "#06b6d4", label: "START", handle: "source", stage: "triage" },
+  end: { color: "#f43f5e", label: "END", handle: "target", stage: "publish" },
 } as const;
 
 export function StartEndNode({ data, selected }: NodeProps) {
   const role = (data.nodeRole as "start" | "end") ?? "start";
-  const { color, label, handle } = ROLE_CONFIG[role];
+  const { color, label, handle, stage } = ROLE_CONFIG[role];
 
   return (
     <div
-      className="flex items-center justify-center rounded-full transition-all duration-200"
+      className="flex items-center justify-center gap-1.5 rounded-full transition-all duration-200"
       style={{
-        width: 100,
+        width: 110,
         height: 36,
         background: `${color}18`,
         border: `1.5px solid ${selected ? `${color}CC` : `${color}55`}`,
@@ -31,6 +36,9 @@ export function StartEndNode({ data, selected }: NodeProps) {
         />
       )}
 
+      <span style={{ color }}>
+        <AlchemicalSigil stage={stage} size={12} />
+      </span>
       <span
         className="text-[11px] font-bold tracking-wider select-none"
         style={{ color }}

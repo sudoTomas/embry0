@@ -180,7 +180,10 @@ export function DashboardPage() {
                         {issue.repo}
                       </td>
                       <td className="py-2">
-                        <Badge tone={statusTone(issue.status, issue.passed)}>
+                        <Badge
+                          tone={statusTone(issue.status, issue.passed)}
+                          sigil={statusSigil(issue.status, issue.passed)}
+                        >
                           {statusLabel(issue.status, issue.passed)}
                         </Badge>
                       </td>
@@ -221,4 +224,16 @@ function statusLabel(status: string | undefined, passed: boolean): string {
   if (status === "failed") return "Failed";
   if (status === "completed" || passed) return "Passed";
   return status ?? "—";
+}
+
+function statusSigil(
+  status: string | undefined,
+  passed: boolean,
+): import("@/lib/sigils").Stage | undefined {
+  // Operator-critical states (failed) skip divine flourishes per divine/CLAUDE.md.
+  if (status === "running") return "develop"; // Sulphur — active fire
+  if (status === "awaiting_input") return "triage"; // Mercury — the messenger
+  if (status === "paused") return "validate"; // Salt — fixed/stable
+  if (status === "completed" || passed) return "publish"; // Sol — the gold
+  return undefined;
 }

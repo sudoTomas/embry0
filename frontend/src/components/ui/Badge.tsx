@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { clsx } from "clsx";
+import { AlchemicalSigil } from "@/components/divine/AlchemicalSigil";
+import type { Stage } from "@/lib/sigils";
 
 export type BadgeTone =
   | "success"
@@ -14,6 +16,12 @@ interface BadgeProps {
   children: ReactNode;
   className?: string;
   title?: string;
+  /**
+   * Optional alchemical sigil rendered inline before the children.
+   * Honors the divine-layer escape hatch (`body[data-divine="off"]`).
+   * Skipped on operator-critical tones (error) per divine/CLAUDE.md.
+   */
+  sigil?: Stage;
 }
 
 const TONE_CLASSES: Record<BadgeTone, string> = {
@@ -27,9 +35,11 @@ const TONE_CLASSES: Record<BadgeTone, string> = {
 
 /**
  * Status pill primitive. Six tones backed by Athanor's @theme tokens.
- * Use for any "X PASSED / FAILED / PENDING" state badge.
+ * Optional sigil renders inline before children — skipped on `error`
+ * (operator-critical paths skip divine flourishes per divine/CLAUDE.md).
  */
-export function Badge({ tone = "neutral", children, className, title }: BadgeProps) {
+export function Badge({ tone = "neutral", children, className, title, sigil }: BadgeProps) {
+  const showSigil = sigil && tone !== "error";
   return (
     <span
       title={title}
@@ -39,6 +49,7 @@ export function Badge({ tone = "neutral", children, className, title }: BadgePro
         className,
       )}
     >
+      {showSigil && <AlchemicalSigil stage={sigil} size={10} />}
       {children}
     </span>
   );
