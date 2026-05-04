@@ -19,8 +19,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import structlog
+from langchain_core.runnables import RunnableConfig
+
 from athanor.workflows.qa.qa_yaml_v2 import QAYamlConfigV2
 from athanor.workspace_providers.provider import WorkspaceProvider
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +108,7 @@ from athanor.workflows.qa.subtask_result_schema import (  # noqa: E402
     SubTaskResult,
     SubTaskStatus,
 )
+from athanor.workspace_providers.registry import load_provider  # noqa: E402
 
 
 async def fan_out_subtasks(
@@ -146,3 +152,277 @@ async def fan_out_subtasks(
 
     tasks = [asyncio.create_task(_one(r)) for r in resolved_configs]
     return await asyncio.gather(*tasks)
+
+
+def _outcome_to_dict(outcome: OrchestratorOutcome) -> dict[str, Any]:
+    return {
+        "overall_status": outcome.overall_status,
+        "apps_to_qa": list(outcome.apps_to_qa),
+        "failure_summary": outcome.failure_summary,
+        "validation_errors": list(outcome.validation_errors),
+        "validation_warnings": list(outcome.validation_warnings),
+    }
+
+
+async def init_orchestrator_node(
+    state: dict[str, Any],
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """Bootstrap-sandbox load of `.athanor/qa.yaml` (v2).
+
+    Allocates a short-lived sandbox using the `slim` profile, clones the
+    target repo, reads `.athanor/qa.yaml`, destroys the sandbox. Writes
+    the raw text and parsed dict into state["qa"] so qa_orchestrator_node
+    can run without doing its own clone.
+
+    Phase 2's prebaked image will eliminate this overhead by having qa.yaml
+    available in the image. Phase 1 pays ~10s per QA run.
+    """
+    from athanor.workflows.qa._subtask_prep import prep_qa_sandbox_clone
+    from athanor.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
+
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    docker = configurable.get("docker")
+    sandbox_mgr = configurable.get("sandbox_manager")
+    profiles_repo = configurable.get("profiles_repo")
+    proxy_mgr = configurable.get("proxy_manager")
+
+    job_id = state.get("job_id")
+    repo = state.get("repo")
+    branch = state.get("branch_name") or "main"
+
+    if not all([docker, sandbox_mgr, profiles_repo, job_id, repo]):
+        outcome = OrchestratorOutcome(
+            overall_status="infra_error",
+            apps_to_qa=[],
+            failure_summary="init_orchestrator missing required deps or state",
+        )
+        qa = dict(state.get("qa") or {})
+        qa["outcome"] = _outcome_to_dict(outcome)
+        return {"qa": qa}
+
+    profile = await profiles_repo.get("slim")
+    if profile is None:
+        outcome = OrchestratorOutcome(
+            overall_status="infra_error",
+            apps_to_qa=[],
+            failure_summary="bootstrap profile 'slim' not found",
+        )
+        qa = dict(state.get("qa") or {})
+        qa["outcome"] = _outcome_to_dict(outcome)
+        return {"qa": qa}
+
+    bootstrap_job_id = f"{job_id}::bootstrap"
+    base: list[str] = (
+        docker._build_base_cmd() if hasattr(docker, "_build_base_cmd") else []
+    )
+
+    container_id: str | None = None
+    try:
+        container_id, sandbox_token = await sandbox_mgr.create(
+            bootstrap_job_id, profile=profile, env={}
+        )
+        await prep_qa_sandbox_clone(
+            docker=docker,
+            proxy_mgr=proxy_mgr,
+            container_id=container_id,
+            sandbox_token=sandbox_token,
+            job_id=bootstrap_job_id,
+            repo=repo,
+            branch=branch,
+            is_dind=False,
+            qa_net="",
+            base=base,
+        )
+        yaml_text = await docker.run_cmd(
+            docker.build_exec_cmd(
+                container_id, ["cat", "/workspace/.athanor/qa.yaml"]
+            ),
+            timeout=10,
+        )
+    except Exception as exc:  # noqa: BLE001
+        outcome = OrchestratorOutcome(
+            overall_status="infra_error",
+            apps_to_qa=[],
+            failure_summary=f"bootstrap qa.yaml load failed: {exc}",
+        )
+        qa = dict(state.get("qa") or {})
+        qa["outcome"] = _outcome_to_dict(outcome)
+        if container_id is not None:
+            try:
+                await sandbox_mgr.destroy(container_id)
+            except Exception:
+                pass
+        return {"qa": qa}
+    finally:
+        if container_id is not None:
+            try:
+                await sandbox_mgr.destroy(container_id)
+            except Exception:
+                pass
+
+    try:
+        cfg = parse_qa_yaml_v2(yaml_text)
+    except Exception as exc:  # noqa: BLE001
+        outcome = OrchestratorOutcome(
+            overall_status="infra_error",
+            apps_to_qa=[],
+            failure_summary=f"qa.yaml v2 parse failed: {exc}",
+        )
+        qa = dict(state.get("qa") or {})
+        qa["outcome"] = _outcome_to_dict(outcome)
+        return {"qa": qa}
+
+    qa = dict(state.get("qa") or {})
+    qa["qa_yaml_v2_raw"] = yaml_text
+    qa["qa_yaml_v2_parsed"] = cfg.model_dump()
+    return {"qa": qa}
+
+
+async def qa_orchestrator_node(
+    state: dict[str, Any],
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """LangGraph node: fan-out QA across all apps_to_qa.
+
+    Reads from state['qa']: qa_yaml_v2_raw (set by init_orchestrator_node),
+    changed_files. Reads from state: job_id, repo, branch_name, user_env_vars.
+    Reads from config['configurable']: workspace provider deps + docker/sandbox/etc.
+
+    Writes to state['qa']: outcome (dict), per_app_results (list[dict]),
+    apps_to_qa, validation_errors, validation_warnings, final_status.
+    """
+    from athanor.workflows.qa.qa_yaml_resolve import resolve_app_config
+    from athanor.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
+    from athanor.workflows.qa.subtask_result_schema import overall_status as compute_overall
+
+    qa_state = dict(state.get("qa") or {})
+
+    # If init_orchestrator_node already failed (no raw yaml stashed OR
+    # outcome already set to infra_error), short-circuit through.
+    existing_outcome = qa_state.get("outcome")
+    if existing_outcome and existing_outcome.get("overall_status") == "infra_error":
+        return {"qa": qa_state}
+
+    yaml_text = qa_state.get("qa_yaml_v2_raw")
+    if not yaml_text:
+        outcome = OrchestratorOutcome(
+            overall_status="infra_error",
+            apps_to_qa=[],
+            failure_summary="qa.yaml not loaded — init_orchestrator skipped or failed?",
+        )
+        qa_state["outcome"] = _outcome_to_dict(outcome)
+        qa_state["final_status"] = "failed"
+        return {"qa": qa_state}
+
+    cfg = parse_qa_yaml_v2(yaml_text)
+
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    qa_app_results_repo = configurable.get("qa_app_results_repo")
+
+    # 1. Load workspace provider.
+    repo_root = Path(state.get("repo_root") or "/workspace")
+    try:
+        provider = load_provider(
+            cfg.workspace_provider.type,
+            repo_root,
+            cfg.workspace_provider.config,
+        )
+    except Exception as exc:  # noqa: BLE001
+        outcome = OrchestratorOutcome(
+            overall_status="infra_error",
+            apps_to_qa=[],
+            failure_summary=f"workspace_provider load failed: {exc}",
+        )
+        qa_state["outcome"] = _outcome_to_dict(outcome)
+        qa_state["final_status"] = "failed"
+        return {"qa": qa_state}
+
+    # 2. Validate qa.yaml apps: vs workspace.
+    errors, warnings = validate_against_qa_config(provider, cfg)
+    if errors:
+        outcome = OrchestratorOutcome(
+            overall_status="infra_error",
+            apps_to_qa=[],
+            failure_summary="qa.yaml validation errors blocked QA fan-out",
+            validation_errors=errors,
+            validation_warnings=warnings,
+        )
+        qa_state["outcome"] = _outcome_to_dict(outcome)
+        qa_state["validation_errors"] = errors
+        qa_state["validation_warnings"] = warnings
+        qa_state["final_status"] = "failed"
+        return {"qa": qa_state}
+
+    # 3. Resolve apps to QA.
+    changed_files_str = qa_state.get("changed_files") or []
+    changed_files = [Path(p) for p in changed_files_str]
+    apps = resolve_apps_to_qa(provider, cfg, changed_files=changed_files)
+    qa_state["apps_to_qa"] = list(apps)
+    qa_state["validation_warnings"] = warnings
+
+    if not apps:
+        outcome = OrchestratorOutcome(
+            overall_status="passed",
+            apps_to_qa=[],
+            validation_warnings=warnings,
+        )
+        qa_state["outcome"] = _outcome_to_dict(outcome)
+        qa_state["per_app_results"] = []
+        qa_state["final_status"] = "passed"
+        return {"qa": qa_state}
+
+    # 4. Resolve per-app configs. Phase 1: app-local files default to None.
+    resolved_configs = [
+        resolve_app_config(name, cfg, app_local=None) for name in apps
+    ]
+
+    # 5. Fan out.
+    per_app_results = await fan_out_subtasks(
+        resolved_configs,
+        parent_run_id=state["job_id"],
+        repo=state.get("repo") or "",
+        branch_name=state.get("branch_name"),
+        user_env_vars=state.get("user_env_vars"),
+        max_concurrent=cfg.parallelism.max_concurrent_apps,
+        config=config or {},
+    )
+
+    # 6. Persist (idempotent upsert).
+    if qa_app_results_repo is not None:
+        for r in per_app_results:
+            try:
+                await qa_app_results_repo.upsert(state["job_id"], r)
+            except Exception as exc:  # noqa: BLE001
+                # Log but don't fail the run on persistence error.
+                logger.warning(
+                    "qa_app_results_upsert_failed",
+                    job_id=state["job_id"],
+                    app_name=r.app_name,
+                    error=str(exc),
+                )
+
+    # 7. Compute overall_status.
+    overall = compute_overall(per_app_results)
+    outcome = OrchestratorOutcome(
+        overall_status=overall,
+        apps_to_qa=list(apps),
+        validation_warnings=warnings,
+    )
+
+    qa_state["outcome"] = _outcome_to_dict(outcome)
+    qa_state["per_app_results"] = [r.to_dict() for r in per_app_results]
+    qa_state["final_status"] = (
+        "passed" if overall == "passed"
+        else "failed" if overall in ("failed", "infra_error")
+        else "pending"
+    )
+
+    logger.info(
+        "qa_run_complete",
+        parent_run_id=state["job_id"],
+        overall_status=overall,
+        apps=apps,
+    )
+
+    return {"qa": qa_state}

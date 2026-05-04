@@ -230,3 +230,245 @@ async def test_fan_out_isolates_individual_subtask_crashes(monkeypatch):
     assert by_app["lane"].status == SubTaskStatus.PASSED
     assert by_app["companion"].status == SubTaskStatus.INFRA_FAILURE
     assert "simulated crash" in (by_app["companion"].failure_summary or "")
+
+
+# ── Task 22: init_orchestrator_node + qa_orchestrator_node ──────────────────
+
+from unittest.mock import AsyncMock  # noqa: E402
+
+from athanor.workflows.qa.orchestrator import (  # noqa: E402
+    init_orchestrator_node,
+    qa_orchestrator_node,
+)
+
+
+_QA_YAML_V2 = """
+version: 2
+workspace_provider:
+  type: fake
+defaults:
+  mode: process
+  sandbox_profile: slim
+  ready_checks:
+    - http: "http://localhost:3000"
+apps:
+  hub:
+    boot_command: "x"
+    frontend_url: "http://localhost:3000"
+  companion:
+    boot_command: "y"
+    frontend_url: "http://localhost:3001"
+packages:
+  "@x/types":
+    no_cascade: true
+"""
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
+    from pathlib import Path
+    from athanor.workspace_providers import (
+        AffectedSet,
+        WorkspaceApp,
+        WorkspacePackage,
+    )
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from athanor.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[
+            WorkspaceApp("hub", Path("apps/hub"), "@x/hub"),
+            WorkspaceApp("companion", Path("apps/companion"), "@x/companion"),
+        ],
+        packages=[],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub", "@x/companion"}),
+            cascade_closure=frozenset({"@x/hub", "@x/companion"}),
+            apps_to_qa=frozenset({"@x/hub", "@x/companion"}),
+        ),
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", fake_run_subtask)
+
+    repo_mock = AsyncMock()
+    repo_mock.upsert = AsyncMock()
+
+    state = {
+        "job_id": "11111111-1111-1111-1111-111111111111",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": repo_mock}}
+
+    out = await qa_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["outcome"]["overall_status"] == "passed"
+    assert sorted(qa["apps_to_qa"]) == ["hub", "companion"]
+    assert repo_mock.upsert.await_count == 2
+    assert qa["final_status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatch):
+    from pathlib import Path
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        packages=[],
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    repo_mock = AsyncMock()
+    state = {
+        "job_id": "run-2",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": [],
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": repo_mock}}
+    out = await qa_orchestrator_node(state, config)
+    assert out["qa"]["outcome"]["overall_status"] == "passed"
+    assert out["qa"]["apps_to_qa"] == []
+    assert repo_mock.upsert.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_node_validation_errors_block_fan_out(monkeypatch):
+    from athanor.workspace_providers import AffectedSet
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[],
+        packages=[],
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+        validate_warnings=[
+            "error: app 'hub' declared in qa.yaml apps: but not found in workspace",
+            "error: app 'companion' declared in qa.yaml apps: but not found in workspace",
+        ],
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    async def crash_subtask(*a, **kw):
+        raise AssertionError("fan-out should not have happened")
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", crash_subtask)
+
+    state = {
+        "job_id": "run-3",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": [],
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": AsyncMock()}}
+    out = await qa_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["outcome"]["overall_status"] == "infra_error"
+    assert len(qa["outcome"]["validation_errors"]) == 2
+    assert qa["final_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_init_orchestrator_node_writes_yaml_to_state(monkeypatch):
+    """init_orchestrator_node bootstrap-loads qa.yaml v2."""
+
+    class _Sb:
+        async def create(self, job_id, profile, env):
+            return f"sb-{job_id}", "tok-" + "A" * 40
+
+        async def destroy(self, container_id):
+            return None
+
+    class _Profiles:
+        async def get(self, name):
+            return {"name": "slim", "extra_networks": []}
+
+    class _ProxyMgr:
+        git_proxy_url = "http://git-proxy:9101"
+
+    class _Docker:
+        def __init__(self):
+            self.calls = []
+
+        def _build_base_cmd(self):
+            return ["docker"]
+
+        def build_exec_cmd(self, cid, cmd):
+            return ["docker", "exec", cid, *cmd]
+
+        async def run_cmd(self, cmd, timeout=None):
+            self.calls.append(cmd)
+            joined = " ".join(cmd)
+            if "rev-parse HEAD" in joined:
+                return "abc123\n"
+            if "/workspace/.athanor/qa.yaml" in joined:
+                return _QA_YAML_V2
+            return ""
+
+    state = {"job_id": "run-4", "repo": "org/repo", "branch_name": "main", "qa": {}}
+    config = {
+        "configurable": {
+            "docker": _Docker(),
+            "sandbox_manager": _Sb(),
+            "profiles_repo": _Profiles(),
+            "proxy_manager": _ProxyMgr(),
+        }
+    }
+    out = await init_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["qa_yaml_v2_raw"] == _QA_YAML_V2
+    assert qa["qa_yaml_v2_parsed"]["version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_qa_orchestrator_short_circuits_on_init_failure(monkeypatch):
+    """If init_orchestrator_node already wrote outcome=infra_error, the
+    orchestrator passes it through unchanged."""
+    state = {
+        "job_id": "run-5",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "outcome": {
+                "overall_status": "infra_error",
+                "apps_to_qa": [],
+                "failure_summary": "bootstrap failed",
+                "validation_errors": [],
+                "validation_warnings": [],
+            },
+        },
+    }
+    out = await qa_orchestrator_node(state, {})
+    assert out["qa"]["outcome"]["overall_status"] == "infra_error"
