@@ -222,7 +222,7 @@ async def init_orchestrator_node(
         container_id, sandbox_token = await sandbox_mgr.create(
             bootstrap_job_id, profile=profile, env={}
         )
-        await prep_qa_sandbox_clone(
+        cloned = await prep_qa_sandbox_clone(
             docker=docker,
             proxy_mgr=proxy_mgr,
             container_id=container_id,
@@ -276,6 +276,7 @@ async def init_orchestrator_node(
     qa = dict(state.get("qa") or {})
     qa["qa_yaml_v2_raw"] = yaml_text
     qa["qa_yaml_v2_parsed"] = cfg.model_dump()
+    qa["head_sha"] = cloned.head_sha
     return {"qa": qa}
 
 
