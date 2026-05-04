@@ -164,3 +164,50 @@ async def test_reset_developer_returns_current_model(agent_repo: AgentDefinition
     """reset('developer') must return claude-opus-4-7 after migration 14."""
     result = await agent_repo.reset("developer")
     assert result["model"] == "claude-opus-4-7"
+
+
+def test_builtin_seed_skills_are_namespaced_superpowers():
+    """All seeded skills must be namespaced (`<plugin>:<skill>` form).
+
+    The agent runtime resolves bare skill names against the operator's local
+    skills directory, which is brittle. Namespaced names load deterministically
+    from the corresponding plugin (e.g. `superpowers:test-driven-development`).
+    """
+    for agent_type, cfg in BUILTIN_SEED.items():
+        for skill in cfg.get("skills", []):
+            assert ":" in skill, (
+                f"BUILTIN_SEED['{agent_type}']['skills'] contains bare skill name "
+                f"'{skill}' — must be namespaced as '<plugin>:<skill>'."
+            )
+
+
+def test_builtin_seed_skill_counts_match_design_2026_05_04():
+    """Skill counts seeded into the four agents match the agreed design.
+
+    Updates to skill counts ship as their own PR with this test updated. This
+    catches accidental drift when the seed is re-keyed for unrelated reasons.
+
+    See: docs/superpowers/specs/2026-05-04-expand-superpowers-skills-design.md
+    """
+    expected = {
+        "triage":    {"writing-plans", "brainstorming"},
+        "developer": {
+            "subagent-driven-development",
+            "verification-before-completion",
+            "test-driven-development",
+            "systematic-debugging",
+            "executing-plans",
+            "receiving-code-review",
+        },
+        "review":    {"requesting-code-review"},
+    }
+    for agent_type, want in expected.items():
+        got = {
+            s.split(":", 1)[1]
+            for s in BUILTIN_SEED[agent_type]["skills"]
+        }
+        assert got == want, (
+            f"BUILTIN_SEED['{agent_type}']['skills'] drifted from the 2026-05-04 design.\n"
+            f"  expected: {sorted(want)}\n"
+            f"  got:      {sorted(got)}"
+        )

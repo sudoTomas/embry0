@@ -14,7 +14,13 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "description": "Analyzes the issue and configures the optimal pipeline. Assesses complexity, determines confidence, and can request more information or split oversized tasks.",
         "model": "claude-sonnet-4-6",
         "tools": [],
-        "skills": [],
+        "skills": [
+            # Triage authors a structured plan for the developer to execute.
+            "superpowers:writing-plans",
+            # Brainstorming raises alternative implementations before triage
+            # asks the user (lowers low-confidence ask-user round trips).
+            "superpowers:brainstorming",
+        ],
         "system_prompt": "",
         "execution_mode": None,
         "auth_mode": None,
@@ -24,7 +30,19 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "description": "Implements code changes, creates branches, commits, pushes, and opens PRs. Runs inside a sandbox container via Claude Code.",
         "model": "claude-opus-4-7",
         "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-        "skills": ["superpowers:subagent-driven-development", "superpowers:verification-before-completion"],
+        "skills": [
+            "superpowers:subagent-driven-development",
+            "superpowers:verification-before-completion",
+            # TDD: write failing tests before fixes, reduce revision loops.
+            "superpowers:test-driven-development",
+            # Hypothesis-driven diagnosis on test failures, not trial-and-error.
+            "superpowers:systematic-debugging",
+            # Pairs with triage's writing-plans output: execute task-by-task.
+            "superpowers:executing-plans",
+            # On review's `changes_requested` verdict, interpret feedback before
+            # re-implementing instead of patching blindly.
+            "superpowers:receiving-code-review",
+        ],
         "system_prompt": "",
         "execution_mode": None,
         "auth_mode": None,
@@ -34,7 +52,11 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "description": "Reviews code changes by running tests, linting, type checking, and code review. Returns structured JSON with decision, validation results, and documentation review.",
         "model": "claude-sonnet-4-6",
         "tools": ["Read", "Bash", "Glob", "Grep"],
-        "skills": [],
+        "skills": [
+            # Teaches the review agent the lens of a high-quality reviewer
+            # (what to look at, what evidence to demand, what to skip).
+            "superpowers:requesting-code-review",
+        ],
         "system_prompt": "",
         "execution_mode": None,
         "auth_mode": None,
