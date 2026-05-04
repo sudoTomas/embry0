@@ -3,6 +3,8 @@ import { useNavigate, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Send, RefreshCw, X, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+import { OperationGlyph } from "@/components/divine/OperationGlyph";
+import { OPERATION_NUMERAL, OPERATION_ELEMENT } from "@/components/divine/operations";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Select } from "@/components/ui/Select";
@@ -110,12 +112,22 @@ export function IssueDetailPage(): JSX.Element {
           <ArrowLeft className="h-4 w-4" />
         </Button>
 
+        <span className="flex items-center justify-center w-9 h-9 shrink-0 mt-0.5">
+          <OperationGlyph operation="calcinate" size={36} titled />
+        </span>
+
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold truncate">{issue.title}</h1>
+            <h1 className="text-2xl font-bold truncate leading-tight">{issue.title}</h1>
             {issue.active_agent && <AgentIndicator agentType={issue.active_agent} size="md" />}
           </div>
-          <p className="text-xs text-muted-foreground font-mono mt-0.5">{issue.id}</p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-primary/65 font-mono">
+              Op {OPERATION_NUMERAL.calcinate} · calcinate · {OPERATION_ELEMENT.calcinate}
+            </span>
+            <span className="text-[10px] text-muted-foreground/40">·</span>
+            <p className="text-xs text-muted-foreground font-mono">{issue.id}</p>
+          </div>
         </div>
 
         {/* Action buttons */}
