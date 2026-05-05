@@ -310,7 +310,7 @@ def _make_result_json(*, overall: str, criterion: str = "App loads", status: str
     ]
     data = {
         "schema_version": 1,
-        "job_id": "JOB-1::hub",
+        "job_id": "JOB-1__hub",
         "attempt_n": 1,
         "phase_reached": "report",
         "overall": overall,
@@ -388,7 +388,7 @@ async def test_collect_artifacts_node_inconclusive_maps_inconclusive():
     # overall=inconclusive with all acceptance_results=inconclusive (no failed)
     data = {
         "schema_version": 1,
-        "job_id": "JOB-1::hub",
+        "job_id": "JOB-1__hub",
         "attempt_n": 1,
         "phase_reached": "exploratory",
         "overall": "inconclusive",

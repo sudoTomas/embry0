@@ -90,7 +90,7 @@ async def warm_shared_volume(
 
     # --- Bootstrap sandbox ---
     profile = await profiles_repo.get("slim")
-    warmer_job_id = f"warmer::{scope_key}"
+    warmer_job_id = f"warmer__{scope_key}"
 
     # Mount the shared volume at /workspace/node_modules so that npm ci writes
     # directly into the volume.  The SandboxManager.create() Phase-2 extension

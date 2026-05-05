@@ -36,7 +36,7 @@ def _resolved(name: str = "hub") -> ResolvedAppConfig:
     )
 
 
-def _passed_result_json(sub_job_id: str = "run-1::hub") -> str:
+def _passed_result_json(sub_job_id: str = "run-1__hub") -> str:
     return json.dumps({
         "schema_version": 1,
         "job_id": sub_job_id,
@@ -61,7 +61,7 @@ def _passed_result_json(sub_job_id: str = "run-1::hub") -> str:
     })
 
 
-def _failed_result_json(sub_job_id: str = "run-1::hub") -> str:
+def _failed_result_json(sub_job_id: str = "run-1__hub") -> str:
     return json.dumps({
         "schema_version": 1,
         "job_id": sub_job_id,

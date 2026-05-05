@@ -37,8 +37,8 @@ async def _compute_remote_lockfile_sha(
 
     profile = await profiles_repo.get("slim")
     job_id = (
-        f"image-builder-probe::{repo.replace('/', '_')}"
-        f"::{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+        f"image-builder-probe__{repo.replace('/', '_')}"
+        f"__{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
     )
     container_id, sandbox_token = await sandbox_mgr.create(
         job_id,

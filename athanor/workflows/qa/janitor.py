@@ -50,9 +50,9 @@ async def reap_orphan_sandboxes(
         sub_job_id = (c.get("labels") or {}).get("athanor.qa_job_id")
         if sub_job_id is None:
             continue
-        # Derive parent: "parent_job_id::app_name" → "parent_job_id"
-        # Legacy single-app sandboxes have no "::" and are their own parent.
-        parent = sub_job_id.split("::", 1)[0]
+        # Derive parent: "parent_job_id__app_name" → "parent_job_id"
+        # Legacy single-app sandboxes have no "__" and are their own parent.
+        parent = sub_job_id.split("__", 1)[0]
         try:
             active = await runs_repo.is_run_active(parent)
         except Exception as exc:  # noqa: BLE001

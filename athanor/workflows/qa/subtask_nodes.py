@@ -77,7 +77,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
 
     resolved: ResolvedAppConfig = state["resolved"]
     parent_job_id = state["parent_run_id"]
-    sub_job_id = f"{parent_job_id}::{resolved.app_name}"
+    sub_job_id = f"{parent_job_id}__{resolved.app_name}"
     artifact_prefix = f"{parent_job_id}/{resolved.app_name}/"
     attempt_n = 1
     is_dind = resolved.mode == "dind"
@@ -413,7 +413,7 @@ async def exploratory_qa_node(state: SubTaskState, config: RunnableConfig) -> di
     from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
 
     resolved: ResolvedAppConfig = state["resolved"]
-    sub_job_id = f"{state['parent_run_id']}::{resolved.app_name}"
+    sub_job_id = f"{state['parent_run_id']}__{resolved.app_name}"
     sandbox_id = state.get("sandbox_id")
     if sandbox_id is None:
         return {
@@ -572,7 +572,7 @@ async def release_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
     sandbox_id = state.get("sandbox_id")
     sandbox_token = state.get("sandbox_token")
     resolved: ResolvedAppConfig = state["resolved"]
-    sub_job_id = f"{state['parent_run_id']}::{resolved.app_name}"
+    sub_job_id = f"{state['parent_run_id']}__{resolved.app_name}"
 
     if sandbox_mgr is not None and sandbox_id is not None:
         try:

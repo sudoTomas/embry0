@@ -1,8 +1,9 @@
+import re
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.execution.sandbox_manager import SandboxManager
+from athanor.execution.sandbox_manager import SandboxManager, _sanitize_docker_name_component
 
 
 def _make_proxy_manager(token: str = "tok-abc123") -> MagicMock:
@@ -157,3 +158,33 @@ async def test_create_rolls_back_partial_enrollment_on_enroll_failure():
     # unenroll_sandbox must have been called exactly once with the container_id
     assert proxy_mgr.unenroll_sandbox.call_count == 1
     assert proxy_mgr.unenroll_sandbox.call_args_list[0].args[0] == "container-partial"
+
+
+# ---------------------------------------------------------------------------
+# _sanitize_docker_name_component — defense-in-depth helper (bug_014)
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_docker_name_component_replaces_colons_and_slashes():
+    """Colons and slashes in job_ids must be replaced with '-' so Docker
+    container/network names satisfy [a-zA-Z0-9][a-zA-Z0-9_.-]+."""
+    assert _sanitize_docker_name_component("a:b/c::d") == "a-b-c--d"
+
+
+def test_sanitize_docker_name_component_noop_on_clean_input():
+    """Already-valid names must be returned unchanged."""
+    assert _sanitize_docker_name_component("job-1__hub") == "job-1__hub"
+
+
+@pytest.mark.asyncio
+async def test_create_container_name_is_docker_safe_for_colon_job_id(manager: SandboxManager):
+    """SandboxManager.create() must produce a container name that matches the
+    Docker naming regex even when the job_id contains colons."""
+    docker_name_re = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.\\-]+")
+
+    await manager.create(job_id="job-1__hub")
+    call_kwargs = manager._docker.build_run_cmd.call_args
+    name = call_kwargs.kwargs["name"]
+    assert docker_name_re.fullmatch(name), (
+        f"Container name {name!r} does not satisfy Docker naming regex"
+    )

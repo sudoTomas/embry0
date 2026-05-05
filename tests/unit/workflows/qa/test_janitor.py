@@ -49,12 +49,12 @@ async def test_reap_continues_when_one_container_kill_fails():
 
 @pytest.mark.asyncio
 async def test_reap_subtask_sandbox_strips_app_suffix_to_find_parent():
-    """Sub-task sandboxes labeled '{parent_job_id}::{app_name}' are reaped when
-    the parent run is inactive — the '::hub' suffix is stripped before calling
+    """Sub-task sandboxes labeled '{parent_job_id}__{app_name}' are reaped when
+    the parent run is inactive — the '__hub' suffix is stripped before calling
     is_run_active."""
     docker = AsyncMock()
     docker.list_containers_with_label = AsyncMock(return_value=[
-        {"id": "c-sub", "labels": {"athanor.qa_job_id": "run-A::hub"}},
+        {"id": "c-sub", "labels": {"athanor.qa_job_id": "run-A__hub"}},
     ])
     docker.kill = AsyncMock()
     docker.remove = AsyncMock()
@@ -66,7 +66,7 @@ async def test_reap_subtask_sandbox_strips_app_suffix_to_find_parent():
 
     # Container should be reaped.
     assert "c-sub" in report.reaped_container_ids
-    # is_run_active must have been called with the parent id (stripped of ::hub).
+    # is_run_active must have been called with the parent id (stripped of __hub).
     runs_repo.is_run_active.assert_awaited_once_with("run-A")
 
 

@@ -98,7 +98,7 @@ async def init_orchestrator_node(
         qa["outcome"] = _outcome_to_dict(outcome)
         return {"qa": qa}
 
-    bootstrap_job_id = f"{job_id}::bootstrap"
+    bootstrap_job_id = f"{job_id}__bootstrap"
     base: list[str] = (
         docker._build_base_cmd() if hasattr(docker, "_build_base_cmd") else []
     )

@@ -33,6 +33,16 @@ class SandboxInitError(RuntimeError):
         self.error_code = error_code
 
 
+def _sanitize_docker_name_component(s: str) -> str:
+    """Replace characters invalid in Docker container/network names with '-'.
+
+    Docker requires container/network names to match `[a-zA-Z0-9][a-zA-Z0-9_.-]+`.
+    Colons and slashes (legal in athanor job_ids) are replaced with hyphens.
+    Mirrors VolumeManager._sanitize() in athanor/cache/volume_manager.py.
+    """
+    return s.replace(":", "-").replace("/", "-")
+
+
 _DEFAULT_PROFILE: dict[str, Any] = {
     "base_image": "athanor-sandbox:latest",
     "memory": "8g",
@@ -88,7 +98,7 @@ class SandboxManager:
         the sandbox starts.
         """
         p = {**_DEFAULT_PROFILE, **(profile or {})}
-        name = f"sandbox-{job_id}"
+        name = f"sandbox-{_sanitize_docker_name_component(job_id)}"
 
         # Inject credentials into sandbox env
         env = dict(env) if env else {}

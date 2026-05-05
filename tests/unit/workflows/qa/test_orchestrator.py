@@ -456,7 +456,7 @@ async def test_init_orchestrator_node_writes_yaml_to_state(monkeypatch):
     assert qa["qa_yaml_v2_parsed"]["version"] == 2
     # I3: bootstrap sandbox must receive ATHANOR_GIT_PROXY_URL + QA_JOB_ID.
     assert sb.last_env.get("ATHANOR_GIT_PROXY_URL") == "http://git-proxy:9101"
-    assert sb.last_env.get("QA_JOB_ID") == "run-4::bootstrap"
+    assert sb.last_env.get("QA_JOB_ID") == "run-4__bootstrap"
     assert sb.last_env.get("QA_ATTEMPT_N") == "1"
 
 

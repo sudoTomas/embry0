@@ -86,8 +86,8 @@ async def build_qa_image(
         raise ImageBuildError("builder profile 'slim' not found")
 
     builder_job_id = (
-        f"image-builder::{repo.replace('/', '_')}"
-        f"::{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
+        f"image-builder__{repo.replace('/', '_')}"
+        f"__{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
     )
 
     container_id, sandbox_token = await sandbox_mgr.create(
