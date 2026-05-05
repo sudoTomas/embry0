@@ -93,7 +93,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
 
     prebaked_tag = state.get("prebaked_image_tag")
     if prebaked_tag:
-        profile = {**profile, "image": prebaked_tag}
+        profile = {**profile, "base_image": prebaked_tag}
 
     # Phase-2 C3: shared-volume cache layer.
     # If a pre-warmed volume name is stashed in state, we'll mount it at

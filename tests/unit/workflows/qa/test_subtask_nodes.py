@@ -749,7 +749,7 @@ async def test_acquire_sandbox_uses_image_tag_when_provided(monkeypatch):
     ):
         out = await acquire_sandbox_node(state, config)
 
-    assert captured_profile["image"] == prebaked_tag
+    assert captured_profile["base_image"] == prebaked_tag
     assert out.get("status") is None, f"unexpected failure: {out.get('failure_summary')}"
     assert out["sandbox_id"] == "cid-prebaked"
     assert out["cache_hits_partial"]["prebaked_image"] is True
