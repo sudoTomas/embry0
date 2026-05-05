@@ -1,0 +1,30 @@
+# Self-hosted Turbo remote cache server (ducktors/turborepo-remote-cache).
+# Deploy alongside athanor's main stack with:
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.cache.yml up -d
+#
+# Configure athanor to use it by setting these env vars in athanor's
+# secret store under qa-cache config:
+#   TURBO_API   = http://turbo-cache:3000
+#   TURBO_TEAM  = athanor (or your team name)
+#   TURBO_TOKEN = <strong-random-token>  # must match TURBO_TOKEN below
+
+services:
+  turbo-cache:
+    image: ducktors/turborepo-remote-cache:latest
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      TURBO_TOKEN: "${TURBO_REMOTE_CACHE_TOKEN:-}"
+      STORAGE_PROVIDER: "local"
+      STORAGE_PATH: "/data"
+    volumes:
+      - turbo_cache_data:/data
+    networks:
+      - athanor
+
+volumes:
+  turbo_cache_data:
+
+networks:
+  athanor:
+    external: true
