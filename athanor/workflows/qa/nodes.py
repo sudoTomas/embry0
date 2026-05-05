@@ -23,6 +23,7 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END
 from langgraph.types import Command
 
+from athanor.workflows.qa._subtask_env import build_qa_sandbox_env
 from athanor.workflows.qa.boot import run_boot_phase
 from athanor.workflows.qa.qa_yaml import parse_qa_yaml
 from athanor.workflows.qa.screenshot import take_diagnostic_screenshot
@@ -101,24 +102,13 @@ async def init_qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
             logger.info("qa_net_created", job_id=job_id, network=qa_net)
 
         # 3. Build sandbox env (filtered user env + infra vars) and start sandbox.
-        # _filter_user_env_for_sandbox provides defense-in-depth vs the API-layer
-        # validators, dropping reserved keys/prefixes. qa_active=True includes
-        # scope='qa' rows.
-        from athanor.workflows.issue_to_pr.nodes import _filter_user_env_for_sandbox
-
         git_proxy_url = getattr(proxy_mgr, "git_proxy_url", "") if proxy_mgr else ""
-        env = _filter_user_env_for_sandbox(
-            state.get("user_env_vars") or [],
-            qa_active=True,
-        )
-        if git_proxy_url:
-            env["ATHANOR_GIT_PROXY_URL"] = git_proxy_url
-        env.update(
-            {
-                "QA_JOB_ID": job_id,
-                "QA_ATTEMPT_N": str(attempt_n),
-                "QA_NETWORK_NAME": qa_net,
-            }
+        env = build_qa_sandbox_env(
+            user_env_vars=state.get("user_env_vars"),
+            git_proxy_url=git_proxy_url,
+            qa_job_id=job_id,
+            attempt_n=attempt_n,
+            qa_network_name=qa_net,
         )
 
         # PR-flow handoff: when this QA run was reached via the issue→PR

@@ -22,6 +22,7 @@ from typing import Any
 import structlog
 from langchain_core.runnables import RunnableConfig
 
+from athanor.workflows.qa._subtask_env import build_qa_sandbox_env
 from athanor.workflows.qa.qa_yaml_v2 import QAYamlConfigV2
 from athanor.workspace_providers.provider import WorkspaceProvider
 
@@ -217,14 +218,16 @@ async def init_orchestrator_node(
         docker._build_base_cmd() if hasattr(docker, "_build_base_cmd") else []
     )
 
-    env: dict[str, str] = {}
     git_proxy_url = ""
     if proxy_mgr is not None:
         git_proxy_url = getattr(proxy_mgr, "git_proxy_url", "") or ""
-    if git_proxy_url:
-        env["ATHANOR_GIT_PROXY_URL"] = git_proxy_url
-    env["QA_JOB_ID"] = bootstrap_job_id
-    env["QA_ATTEMPT_N"] = "1"
+    env = build_qa_sandbox_env(
+        user_env_vars=None,
+        git_proxy_url=git_proxy_url,
+        qa_job_id=bootstrap_job_id,
+        attempt_n=1,
+        qa_network_name="",
+    )
 
     container_id: str | None = None
     try:

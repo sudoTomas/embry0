@@ -23,6 +23,7 @@ from typing import Any, TypedDict
 import structlog
 from langchain_core.runnables import RunnableConfig
 
+from athanor.workflows.qa._subtask_env import build_qa_sandbox_env
 from athanor.workflows.qa.boot import run_boot_phase
 from athanor.workflows.qa.cleanup import cleanup_qa_resources
 from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
@@ -238,17 +239,18 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
             )
             # Continue: network may already exist; clone will surface real errors
 
-    # Build env from user_env_vars + sandbox-internal essentials. Mirror the
-    # env-construction shape used by init_qa_node — read that function for
-    # the real key set if anything is unclear.
-    env: dict[str, str] = {}
-    user_env = state.get("user_env_vars") or {}
-    if isinstance(user_env, list):
-        for item in user_env:
-            if isinstance(item, dict) and "name" in item and "value" in item:
-                env[item["name"]] = item["value"]
-    elif isinstance(user_env, dict):
-        env.update({k: str(v) for k, v in user_env.items()})
+    # Build env from user_env_vars + sandbox-internal essentials.
+    git_proxy_url = ""
+    if proxy_mgr is not None:
+        git_proxy_url = getattr(proxy_mgr, "git_proxy_url", "") or ""
+
+    env = build_qa_sandbox_env(
+        user_env_vars=state.get("user_env_vars"),
+        git_proxy_url=git_proxy_url,
+        qa_job_id=sub_job_id,
+        attempt_n=1,
+        qa_network_name=qa_net,
+    )
 
     # Allocate sandbox
     try:
