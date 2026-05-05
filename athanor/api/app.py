@@ -791,3 +791,7 @@ def _register_routers(app: FastAPI) -> None:
     # are also exempted from CSRF middleware.
     app.include_router(internal_qa.router, prefix="/api/v1", tags=["internal-qa"])
     app.include_router(streaming.router)
+
+    # ── Phase 4: v2 dashboard surface ──
+    from athanor.api.v2 import auth as v2_auth
+    app.include_router(v2_auth.router, prefix="/v2", tags=["v2-auth"])
