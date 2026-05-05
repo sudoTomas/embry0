@@ -801,11 +801,19 @@ class IssueExecutor:
             }
             if qa_overrides.get("qa_timeout_seconds"):
                 qa_block["budget_seconds"] = qa_overrides["qa_timeout_seconds"]
+            # Phase-C: force_all_apps from QAJobOverrides — when True,
+            # qa_orchestrator_node skips affected-set computation entirely
+            # and runs every declared app.
+            if qa_overrides.get("force_all_apps"):
+                qa_block["force_all_apps"] = True
 
             initial_state: dict[str, Any] = {
                 "job_id": job_id,
                 "repo": repo,
                 "branch_name": branch,
+                # Phase-C: base_branch from QAJobOverrides. None means the
+                # orchestrator's init_orchestrator_node falls back to "main".
+                "base_branch": qa_overrides.get("base_branch"),
                 "task": f"QA run on {repo}@{branch}",
                 "current_stage": "init",
                 "agent_outputs": [],

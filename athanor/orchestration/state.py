@@ -171,6 +171,11 @@ class JobState(TypedDict, total=False):
     total_cost_usd: float
     budget_overrun_usd: float
     branch_name: str | None
+    # Phase-C: base_branch is the ref the orchestrator's git-diff uses for
+    # affected-set computation. None = fall back to "main" (existing
+    # behavior). Set via QAJobOverrides.base_branch on the POST /api/v1/jobs
+    # request body for repos whose default branch is master or develop.
+    base_branch: str | None
     # Phase 3 (post-deploy fix): repo_root is the local-disk path the
     # workspace_provider reads from. init_orchestrator_node stages workspace
     # metadata from the bootstrap sandbox into /tmp/athanor-workspace-<job_id>
@@ -272,3 +277,9 @@ class QAStateBlock(TypedDict, total=False):
     validation_errors: list[str] | None
     validation_warnings: list[str] | None
     head_sha: str | None
+    # Phase-C: when True, qa_orchestrator_node skips affected-set computation
+    # and QAs every app declared under cfg.apps. Set via
+    # QAJobOverrides.force_all_apps on the POST /api/v1/jobs request body.
+    # cfg.qa_required == "always" produces the same effect (per-repo vs
+    # per-job knob). Defaults to False.
+    force_all_apps: bool
