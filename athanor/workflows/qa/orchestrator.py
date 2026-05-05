@@ -16,6 +16,7 @@ Helper functions and data types live in orchestrator_helpers.py.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import structlog
@@ -99,6 +100,7 @@ async def init_orchestrator_node(
     )
 
     container_id: str | None = None
+    lockfile_text: str = ""
     try:
         container_id, sandbox_token = await sandbox_mgr.create(
             bootstrap_job_id, profile=profile, env=env
@@ -121,6 +123,27 @@ async def init_orchestrator_node(
             ),
             timeout=10,
         )
+        # Phase-2 C3: read lockfile while bootstrap container is still alive.
+        # We compute the sha here so the warmer can use it without a second
+        # clone.  Failures are non-fatal — lockfile_text stays "" and the
+        # warmer will just re-warm (it won't skip on matching sha).
+        try:
+            lockfile_text = await docker.run_cmd(
+                docker.build_exec_cmd(
+                    container_id,
+                    [
+                        "bash",
+                        "-c",
+                        "cat /workspace/package-lock.json 2>/dev/null"
+                        " || cat /workspace/pnpm-lock.yaml 2>/dev/null"
+                        " || cat /workspace/yarn.lock 2>/dev/null"
+                        " || echo ''",
+                    ],
+                ),
+                timeout=10,
+            )
+        except Exception as lock_exc:  # noqa: BLE001
+            logger.warning("bootstrap_lockfile_read_failed", error=str(lock_exc))
     except Exception as exc:  # noqa: BLE001
         outcome = OrchestratorOutcome(
             overall_status="infra_error",
@@ -158,6 +181,69 @@ async def init_orchestrator_node(
     qa["qa_yaml_v2_raw"] = yaml_text
     qa["qa_yaml_v2_parsed"] = cfg.model_dump()
     qa["head_sha"] = cloned.head_sha
+
+    # Phase-2 C3: shared-volume warming.
+    # Only attempted when the cache layer is enabled AND the scope is per-job
+    # or per-repo (per-org is not implemented in Phase 2).
+    sv_cfg = cfg.cache.shared_volume
+    if sv_cfg.enabled and sv_cfg.scope in ("per-job", "per-repo"):
+        volume_mgr = configurable.get("qa_shared_volume_manager")
+        volume_state_repo = configurable.get("qa_volume_state_repo")
+        if volume_mgr is not None and volume_state_repo is not None:
+            try:
+                from athanor.cache.volume_manager import VolumeScope
+                from athanor.cache.volume_warmer import warm_shared_volume
+
+                scope = sv_cfg.scope
+                scope_key = job_id if scope == "per-job" else (repo or "")
+                vol_scope = VolumeScope(scope)
+                volume_name = await volume_mgr.ensure(
+                    scope=vol_scope, scope_key=scope_key
+                )
+
+                lockfile_sha = (
+                    hashlib.sha256(lockfile_text.encode()).hexdigest()
+                    if lockfile_text
+                    else ""
+                )
+
+                if lockfile_sha:
+                    warm_result = await warm_shared_volume(
+                        repo=repo,
+                        branch=branch,
+                        volume_name=volume_name,
+                        current_lockfile_sha=lockfile_sha,
+                        scope=scope,
+                        scope_key=scope_key,
+                        docker=docker,
+                        sandbox_mgr=sandbox_mgr,
+                        profiles_repo=profiles_repo,
+                        proxy_mgr=proxy_mgr,
+                        state_repo=volume_state_repo,
+                    )
+                    logger.info(
+                        "qa_shared_volume_warm_result",
+                        result=warm_result,
+                        volume_name=volume_name,
+                        scope=scope,
+                        scope_key=scope_key,
+                    )
+                    qa["shared_volume_name"] = volume_name
+                else:
+                    logger.warning(
+                        "qa_shared_volume_skipped_no_lockfile",
+                        job_id=job_id,
+                        msg="No lockfile found in bootstrap sandbox — skipping volume warm",
+                    )
+            except Exception as vol_exc:  # noqa: BLE001
+                # Volume warming is non-fatal: sub-tasks fall back to
+                # individual npm ci without the shared volume.
+                logger.warning(
+                    "qa_shared_volume_warm_failed",
+                    job_id=job_id,
+                    error=str(vol_exc),
+                )
+
     return {"qa": qa}
 
 
@@ -292,6 +378,8 @@ async def qa_orchestrator_node(
         )
 
     # 5. Fan out.
+    # Pass shared_volume_name from init_orchestrator_node (C3 wiring).
+    shared_volume_name: str | None = qa_state.get("shared_volume_name")
     per_app_results = await fan_out_subtasks(
         resolved_configs,
         parent_run_id=state["job_id"],
@@ -299,6 +387,7 @@ async def qa_orchestrator_node(
         branch_name=state.get("branch_name"),
         user_env_vars=state.get("user_env_vars"),
         image_tag=image_tag,
+        shared_volume_name=shared_volume_name,
         max_concurrent=cfg.parallelism.max_concurrent_apps,
         config=config or {},
     )

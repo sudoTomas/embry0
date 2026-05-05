@@ -74,8 +74,19 @@ class SandboxManager:
         job_id: str,
         profile: dict[str, Any] | None = None,
         env: dict[str, str] | None = None,
+        volumes: list[tuple[str, str]] | None = None,
     ) -> tuple[str, str]:
-        """Create a persistent sandbox container. Returns (container_id, sandbox_token)."""
+        """Create a persistent sandbox container. Returns (container_id, sandbox_token).
+
+        ``volumes`` is an optional list of ``(volume_name, mount_point)`` pairs.
+        Each pair is translated to a ``--mount type=volume,source=<vol>,target=<mp>``
+        flag on the underlying ``docker run`` command.  Pass ``None`` (the default)
+        to skip volume mounts entirely, preserving backward-compatible behaviour.
+
+        Phase-2 usage: the shared-volume cache layer passes the pre-warmed
+        ``node_modules`` volume here so it is available at ``/workspace`` when
+        the sandbox starts.
+        """
         p = {**_DEFAULT_PROFILE, **(profile or {})}
         name = f"sandbox-{job_id}"
 
@@ -115,6 +126,14 @@ class SandboxManager:
             # extra_networks attachment to a network that doesn't exist
             # (dind's own backend membership is host-side only). Phase 1.5.
             extra_hosts["dind"] = self._resolve_dind_gateway_ip()
+
+        # Phase-2 named-volume mounts (shared-volume cache layer C2/C3).
+        # Each (volume_name, mount_point) pair is appended as a
+        # "volume_name:mount_point" string so build_run_cmd emits -v flags.
+        # This is standard Docker syntax for named volumes (no leading "/" on
+        # the source side, which distinguishes them from bind-mounts).
+        for vol_name, mount_point in (volumes or []):
+            extra_volumes.append(f"{vol_name}:{mount_point}")
 
         base_image = p.get("base_image", _DEFAULT_PROFILE["base_image"])
         cmd = self._docker.build_run_cmd(
@@ -180,6 +199,7 @@ class SandboxManager:
             image=p.get("base_image"),
             dind_enabled=dind_enabled,
             extra_networks=extra_networks,
+            named_volumes=[(v, m) for v, m in (volumes or [])],
         )
         return container_id, sandbox_token
 

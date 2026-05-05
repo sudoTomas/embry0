@@ -82,12 +82,16 @@ async def run_subtask(
     branch_name: str | None = None,
     user_env_vars: Any = None,
     prebaked_image_tag: str | None = None,
+    shared_volume_name: str | None = None,
     config: dict[str, Any],
 ) -> SubTaskResult:
     """Helper: run one sub-task and return its SubTaskResult.
 
     Used by the QA orchestrator (Task 22) inside fan_out_subtasks. Each call
     receives a fresh per-app state dict; the compiled subgraph is cached.
+
+    ``shared_volume_name`` — Phase-2 C3.  When provided, the sub-task mounts
+    this pre-warmed Docker volume at ``/workspace`` and skips git clone.
     """
     graph = _get_subgraph()
     initial = initial_state_for_app(
@@ -97,6 +101,7 @@ async def run_subtask(
         branch_name=branch_name,
         user_env_vars=user_env_vars,
         prebaked_image_tag=prebaked_image_tag,
+        shared_volume_name=shared_volume_name,
     )
     final_state = await graph.ainvoke(initial, config=config)
     return final_state["subtask_result"]

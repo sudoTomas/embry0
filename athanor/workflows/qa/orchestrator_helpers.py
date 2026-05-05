@@ -100,6 +100,7 @@ async def fan_out_subtasks(
     branch_name: str | None,
     user_env_vars: Any = None,
     image_tag: str | None = None,
+    shared_volume_name: str | None = None,
     max_concurrent: int,
     config: dict[str, Any],
 ) -> list[SubTaskResult]:
@@ -108,6 +109,9 @@ async def fan_out_subtasks(
     Returns results in input order. Sub-task crashes are caught and
     surfaced as INFRA_FAILURE rather than propagating — sibling sub-tasks
     are isolated from each other.
+
+    ``shared_volume_name`` — when set (Phase-2 C3), each sub-task mounts
+    this pre-warmed volume at ``/workspace`` and skips git clone.
     """
     sem = asyncio.Semaphore(max_concurrent)
 
@@ -121,6 +125,7 @@ async def fan_out_subtasks(
                     branch_name=branch_name,
                     user_env_vars=user_env_vars,
                     prebaked_image_tag=image_tag,
+                    shared_volume_name=shared_volume_name,
                     config=config,
                 )
             except Exception as exc:  # noqa: BLE001

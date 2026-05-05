@@ -95,6 +95,12 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
     if prebaked_tag:
         profile = {**profile, "image": prebaked_tag}
 
+    # Phase-2 C3: shared-volume cache layer.
+    # If a pre-warmed volume name is stashed in state, we'll mount it at
+    # /workspace when creating the sandbox (so npm ci is already done) and
+    # skip git clone inside prep_qa_sandbox_clone.
+    shared_volume_name: str | None = state.get("shared_volume_name")
+
     # Create network for DinD mode (mirrors init_qa_node behavior)
     base: list[str] = (
         docker._build_base_cmd() if hasattr(docker, "_build_base_cmd") else []
@@ -126,10 +132,14 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
         qa_network_name=qa_net,
     )
 
-    # Allocate sandbox
+    # Allocate sandbox.  When the shared-volume cache layer is active, mount
+    # the pre-warmed volume at /workspace so npm ci is already done.
+    sandbox_volumes = (
+        [(shared_volume_name, "/workspace")] if shared_volume_name else None
+    )
     try:
         container_id, sandbox_token = await sandbox_mgr.create(
-            sub_job_id, profile=profile, env=env
+            sub_job_id, profile=profile, env=env, volumes=sandbox_volumes
         )
     except Exception as exc:  # noqa: BLE001
         return {
@@ -140,7 +150,9 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
 
     branch = state.get("branch_name") or "main"
 
-    # Phase 1: clone + head_sha
+    # Phase 1: clone + head_sha.
+    # When shared_volume_name is set, the volume is already mounted at
+    # /workspace — pass cached_volume so prep skips the git clone.
     try:
         cloned = await prep_qa_sandbox_clone(
             docker=docker,
@@ -153,6 +165,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
             is_dind=is_dind,
             qa_net=qa_net,
             base=base,
+            cached_volume=shared_volume_name,
         )
     except Exception as exc:  # noqa: BLE001
         try:
@@ -207,7 +220,10 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
         "sandbox_token": sandbox_token,
         "artifact_prefix": artifact_prefix,
         "head_sha": cloned.head_sha,
-        "cache_hits_partial": {"prebaked_image": bool(prebaked_tag)},
+        "cache_hits_partial": {
+            "prebaked_image": bool(prebaked_tag),
+            "shared_volume": bool(shared_volume_name),
+        },
     }
 
 

@@ -37,6 +37,10 @@ class SubTaskState(TypedDict, total=False):
     branch_name: str | None
     user_env_vars: list[dict[str, str]] | dict[str, str] | None
     prebaked_image_tag: str | None
+    # Phase-2 C3: shared-volume cache layer.  Set by qa_orchestrator_node when
+    # cfg.cache.shared_volume.enabled and the volume has been warmed.  When set,
+    # acquire_sandbox_node mounts the volume at /workspace and skips git clone.
+    shared_volume_name: str | None
 
     # Set by acquire_sandbox_node
     sandbox_id: str | None
@@ -74,6 +78,7 @@ def initial_state_for_app(
     branch_name: str | None = None,
     user_env_vars: Any = None,
     prebaked_image_tag: str | None = None,
+    shared_volume_name: str | None = None,
 ) -> SubTaskState:
     return {
         "app_name": resolved.app_name,
@@ -83,6 +88,7 @@ def initial_state_for_app(
         "branch_name": branch_name,
         "user_env_vars": user_env_vars,
         "prebaked_image_tag": prebaked_image_tag,
+        "shared_volume_name": shared_volume_name,
         "status": None,
         "started_at": time.monotonic(),
         "completed_at": None,

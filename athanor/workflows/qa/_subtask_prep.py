@@ -48,18 +48,29 @@ async def prep_qa_sandbox_clone(
     is_dind: bool,
     qa_net: str,
     base: list[str],
+    cached_volume: str | None = None,
 ) -> ClonedSandbox:
     """Phase 1 of sandbox prep.
 
     1. (DinD only) Connect container to ``qa_net`` so it can reach the app stack.
     2. Configure git credential helper (proxy-aware) inside the sandbox.
-    3. Clone {repo} @ {branch} into /workspace; create .qa/{logs,pids}.
+    3a. If ``cached_volume`` is set: skip ``git clone`` (the volume already
+        contains a cloned workspace from the warmer); run ``mkdir -p`` for
+        ``.qa/{logs,pids}`` idempotently; capture HEAD sha from the volume.
+    3b. Otherwise: clone {repo} @ {branch} into /workspace; create
+        ``.qa/{logs,pids}``.
     4. Capture HEAD sha via ``git rev-parse HEAD``.
 
     Parameters match what ``init_qa_node`` has in hand after sandbox creation.
     ``base`` is ``docker._build_base_cmd()`` — the docker CLI prefix for raw
     docker commands (distinct from ``docker.build_exec_cmd`` which builds
     ``docker exec`` invocations).
+
+    ``cached_volume``: when set to a Docker volume name, signals that the
+    shared-volume cache layer mounted a pre-warmed workspace at ``/workspace``.
+    The git clone step is skipped; HEAD sha is read directly from the volume.
+    Git credential setup still runs so any in-sandbox git operations (e.g.
+    differential-checkout) can authenticate.
 
     Raises whatever ``docker.run_cmd`` raises on failure; caller is responsible
     for cleanup via ``sandbox_mgr.destroy(container_id)``.
@@ -95,19 +106,35 @@ async def prep_qa_sandbox_clone(
             msg="No git proxy URL — clone may fail for private repos",
         )
 
-    # 3. Clone
-    clone_cmd = [
-        "bash",
-        "-c",
-        (
-            f"set -e && git clone --depth=50 --branch {shlex.quote(branch)} "
-            f"https://github.com/{shlex.quote(repo)}.git /workspace && "
-            "cd /workspace && mkdir -p .qa/logs .qa/pids"
-        ),
-    ]
-    await docker.run_cmd(docker.build_exec_cmd(container_id, clone_cmd), timeout=120)
+    if cached_volume:
+        # 3a. Volume path: workspace already present from warmer.  Skip clone;
+        # ensure .qa dirs exist (idempotent mkdir -p is safe if already there).
+        logger.info(
+            "qa_sandbox_using_cached_volume",
+            job_id=job_id,
+            volume=cached_volume,
+        )
+        await docker.run_cmd(
+            docker.build_exec_cmd(
+                container_id,
+                ["bash", "-c", "cd /workspace && mkdir -p .qa/logs .qa/pids"],
+            ),
+            timeout=10,
+        )
+    else:
+        # 3b. Standard path: clone repo into /workspace.
+        clone_cmd = [
+            "bash",
+            "-c",
+            (
+                f"set -e && git clone --depth=50 --branch {shlex.quote(branch)} "
+                f"https://github.com/{shlex.quote(repo)}.git /workspace && "
+                "cd /workspace && mkdir -p .qa/logs .qa/pids"
+            ),
+        ]
+        await docker.run_cmd(docker.build_exec_cmd(container_id, clone_cmd), timeout=120)
 
-    # 4. Capture head sha
+    # 4. Capture head sha (works for both paths — volume has a real git repo)
     head_sha_raw = await docker.run_cmd(
         docker.build_exec_cmd(
             container_id,

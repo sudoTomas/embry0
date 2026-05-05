@@ -725,7 +725,7 @@ async def test_acquire_sandbox_uses_image_tag_when_provided(monkeypatch):
 
     captured_profile: dict = {}
 
-    async def fake_create(job_id, *, profile, env):
+    async def fake_create(job_id, *, profile, env, volumes=None):
         captured_profile.update(profile)
         return ("cid-prebaked", "tok-prebaked")
 
@@ -752,7 +752,8 @@ async def test_acquire_sandbox_uses_image_tag_when_provided(monkeypatch):
     assert captured_profile["image"] == prebaked_tag
     assert out.get("status") is None, f"unexpected failure: {out.get('failure_summary')}"
     assert out["sandbox_id"] == "cid-prebaked"
-    assert out["cache_hits_partial"] == {"prebaked_image": True}
+    assert out["cache_hits_partial"]["prebaked_image"] is True
+    assert out["cache_hits_partial"]["shared_volume"] is False  # no shared_volume_name in state
 
 
 @pytest.mark.asyncio
@@ -764,7 +765,7 @@ async def test_acquire_sandbox_falls_back_to_base_when_no_tag(monkeypatch):
 
     captured_profile: dict = {}
 
-    async def fake_create(job_id, *, profile, env):
+    async def fake_create(job_id, *, profile, env, volumes=None):
         captured_profile.update(profile)
         return ("cid-base", "tok-base")
 
@@ -790,4 +791,120 @@ async def test_acquire_sandbox_falls_back_to_base_when_no_tag(monkeypatch):
     assert captured_profile["image"] == "raven/base:latest"
     assert out.get("status") is None, f"unexpected failure: {out.get('failure_summary')}"
     assert out["sandbox_id"] == "cid-base"
-    assert out["cache_hits_partial"] == {"prebaked_image": False}
+    assert out["cache_hits_partial"]["prebaked_image"] is False
+    assert out["cache_hits_partial"]["shared_volume"] is False
+
+
+# ---------------------------------------------------------------------------
+# C3: shared-volume mount tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_acquire_sandbox_uses_shared_volume_when_provided(monkeypatch):
+    """When state['shared_volume_name'] is set, acquire_sandbox_node should:
+    - Call sandbox_mgr.create with volumes=[(volume_name, "/workspace")]
+    - Call prep_qa_sandbox_clone with cached_volume=volume_name (not None)
+    - Set cache_hits_partial["shared_volume"] = True in the return dict
+    """
+    from athanor.workflows.qa._subtask_prep import ClonedSandbox
+    from athanor.workflows.qa.subtask_nodes import acquire_sandbox_node
+
+    captured_create_kwargs: dict = {}
+    captured_clone_kwargs: dict = {}
+    volume_name = "athanor-qa-vol-job-42"
+
+    async def fake_create(job_id, *, profile, env, volumes=None):
+        captured_create_kwargs["volumes"] = volumes
+        return ("cid-shared-vol", "tok-sv")
+
+    async def fake_clone(**kw):
+        captured_clone_kwargs.update(kw)
+        return ClonedSandbox(head_sha="sv-head-sha")
+
+    config = _make_acquire_config()
+    config["configurable"]["sandbox_manager"].create = fake_create
+
+    # Build state with shared_volume_name set
+    resolved = _resolved_app("hub")
+    state = {
+        "resolved": resolved,
+        "parent_run_id": "JOB-42",
+        "repo": "acme/monorepo",
+        "branch_name": "main",
+        "user_env_vars": None,
+        "prebaked_image_tag": None,
+        "shared_volume_name": volume_name,
+    }
+
+    with (
+        patch(
+            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
+            AsyncMock(side_effect=fake_clone),
+        ),
+        patch(
+            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        out = await acquire_sandbox_node(state, config)
+
+    # Verify no failure
+    assert out.get("status") is None, f"unexpected failure: {out.get('failure_summary')}"
+    assert out["sandbox_id"] == "cid-shared-vol"
+    assert out["head_sha"] == "sv-head-sha"
+
+    # Volume should have been passed to sandbox_mgr.create
+    assert captured_create_kwargs["volumes"] == [(volume_name, "/workspace")]
+
+    # prep_qa_sandbox_clone should have received cached_volume
+    assert captured_clone_kwargs.get("cached_volume") == volume_name
+
+    # cache_hits_partial should record shared_volume = True
+    assert out["cache_hits_partial"]["shared_volume"] is True
+    assert out["cache_hits_partial"]["prebaked_image"] is False
+
+
+@pytest.mark.asyncio
+async def test_acquire_sandbox_no_shared_volume_when_name_absent(monkeypatch):
+    """When state['shared_volume_name'] is absent/None, the node should:
+    - Call sandbox_mgr.create with volumes=None
+    - Call prep_qa_sandbox_clone with cached_volume=None
+    - Set cache_hits_partial["shared_volume"] = False
+    """
+    from athanor.workflows.qa._subtask_prep import ClonedSandbox
+    from athanor.workflows.qa.subtask_nodes import acquire_sandbox_node
+
+    captured_create_kwargs: dict = {}
+    captured_clone_kwargs: dict = {}
+
+    async def fake_create(job_id, *, profile, env, volumes=None):
+        captured_create_kwargs["volumes"] = volumes
+        return ("cid-no-vol", "tok-nv")
+
+    async def fake_clone(**kw):
+        captured_clone_kwargs.update(kw)
+        return ClonedSandbox(head_sha="nv-head-sha")
+
+    config = _make_acquire_config()
+    config["configurable"]["sandbox_manager"].create = fake_create
+
+    state = _make_acquire_state(prebaked_image_tag=None)
+    # shared_volume_name intentionally absent from state
+
+    with (
+        patch(
+            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
+            AsyncMock(side_effect=fake_clone),
+        ),
+        patch(
+            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        out = await acquire_sandbox_node(state, config)
+
+    assert out.get("status") is None, f"unexpected failure: {out.get('failure_summary')}"
+    assert captured_create_kwargs["volumes"] is None
+    assert captured_clone_kwargs.get("cached_volume") is None
+    assert out["cache_hits_partial"]["shared_volume"] is False
