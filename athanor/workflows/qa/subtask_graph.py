@@ -61,6 +61,10 @@ def build_subtask_graph() -> Any:
     return builder.compile()
 
 
+# Process-wide cache: build_subtask_graph() is expensive (LangGraph compile),
+# and the resulting graph is structurally invariant — same nodes/edges every
+# time. We compile once per process and reuse. Tests that need a fresh graph
+# instance call build_subtask_graph() directly rather than via _get_subgraph().
 _SUBGRAPH_CACHE: Any | None = None
 
 

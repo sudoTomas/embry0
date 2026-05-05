@@ -23,8 +23,16 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 
 from athanor.workflows.qa._subtask_env import build_qa_sandbox_env
+from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
 from athanor.workflows.qa.qa_yaml_v2 import QAYamlConfigV2
+from athanor.workflows.qa.subtask_graph import run_subtask
+from athanor.workflows.qa.subtask_result_schema import (
+    CacheHits,
+    SubTaskResult,
+    SubTaskStatus,
+)
 from athanor.workspace_providers.provider import WorkspaceProvider
+from athanor.workspace_providers.registry import load_provider
 
 logger = structlog.get_logger(__name__)
 
@@ -91,15 +99,6 @@ def validate_against_qa_config(
     warnings = [m for m in messages if m.lower().startswith("warning:")]
     return errors, warnings
 
-
-from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig  # noqa: E402
-from athanor.workflows.qa.subtask_graph import run_subtask  # noqa: E402
-from athanor.workflows.qa.subtask_result_schema import (  # noqa: E402
-    CacheHits,
-    SubTaskResult,
-    SubTaskStatus,
-)
-from athanor.workspace_providers.registry import load_provider  # noqa: E402
 
 
 async def fan_out_subtasks(

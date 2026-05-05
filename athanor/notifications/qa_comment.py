@@ -41,6 +41,14 @@ def _human_status(s: SubTaskStatus) -> str:
 
 
 def _human_duration(ms: int) -> str:
+    """Format a millisecond duration as a human-readable string.
+
+    Defensive: clamps negative values to 0 (sub-task duration_ms can theoretically
+    be 0 from a fast no-op result, never < 0; but if it somehow goes negative
+    we don't want to render '-0.0s' to a user).
+    """
+    if ms < 0:
+        ms = 0
     if ms >= 60_000:
         m, s = divmod(ms // 1000, 60)
         return f"{m}m {s:>2}s"

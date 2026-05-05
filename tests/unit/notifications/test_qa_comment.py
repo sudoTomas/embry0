@@ -116,6 +116,15 @@ def test_comment_infra_error_distinguishable():
     assert "qa.yaml not found" in out
 
 
+def test_human_duration_clamps_negative():
+    from athanor.notifications.qa_comment import _human_duration
+    assert _human_duration(-100) == "0.0s"
+    assert _human_duration(0) == "0.0s"
+    assert _human_duration(500) == "0.5s"
+    assert _human_duration(60_000) == "1m  0s"
+    assert _human_duration(125_000) == "2m  5s"
+
+
 def test_comment_workspace_warnings_section_when_present():
     out = render_qa_comment(
         run_number=48,
