@@ -6,8 +6,20 @@ import pytest
 from athanor.cache.image_builder import (
     ImageBuildError,
     ImageBuildResult,
+    _make_image_tag,
     build_qa_image,
 )
+
+
+def test_make_image_tag_lowercases_uppercase_repo_names():
+    """Regression for ultrareview bug_017. Docker requires repository
+    name components to be lowercase; mixed-case GitHub repos like
+    'Vercel/Next.js' would otherwise fail at commit time."""
+    tag = _make_image_tag("Vercel/Next.js")
+    # Everything before the ':' (the timestamp tag separator) must be lowercase
+    name_part, _, _ = tag.partition(":")
+    assert name_part == name_part.lower(), tag
+    assert name_part == "athanor-qa-vercel_next.js"
 
 
 @pytest.fixture

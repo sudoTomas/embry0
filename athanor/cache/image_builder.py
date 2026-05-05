@@ -53,7 +53,7 @@ def _make_image_tag(repo: str) -> str:
     images are looked up by `(repo, lockfile_sha)` UNIQUE in the DB; the
     image tag itself is just a human-readable handle.
     """
-    sanitized = repo.replace("/", "_").replace(":", "_")
+    sanitized = repo.lower().replace("/", "_").replace(":", "_")
     ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M")
     return f"athanor-qa-{sanitized}:{ts}"
 
