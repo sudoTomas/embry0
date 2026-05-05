@@ -11,3 +11,4 @@ export type { AgentTypeInfo, AgentFieldInfo } from "./agents";
 export type { IntegrationConfig, IntegrationConfigUpdate } from "./integrations";
 export type { ProviderConfig, ProviderConfigUpdate, ProviderMode, ConnectionTestResult } from "./provider";
 export type { AgentDefinition, AgentCreateRequest, AgentUpdateRequest } from "./agents";
+export * from "./qaDashboard";
