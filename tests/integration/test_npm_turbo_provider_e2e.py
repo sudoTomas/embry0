@@ -28,7 +28,8 @@ def test_full_flow(toy_repo: Path):
 
     assert {a.name for a in apps} == {"hub", "companion", "lane"}
     assert {p.name for p in packages} >= {"@toy/hub", "@toy/auth", "@toy/types"}
-    assert affected.apps_to_qa == frozenset(a.package_name for a in apps)
+    # Phase 3: diff-aware. apps/hub diff → @toy/hub only.
+    assert affected.apps_to_qa == frozenset({"@toy/hub"})
     assert warnings == []
 
 
