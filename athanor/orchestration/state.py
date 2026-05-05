@@ -171,6 +171,15 @@ class JobState(TypedDict, total=False):
     total_cost_usd: float
     budget_overrun_usd: float
     branch_name: str | None
+    # Phase 3 (post-deploy fix): repo_root is the local-disk path the
+    # workspace_provider reads from. init_orchestrator_node stages workspace
+    # metadata from the bootstrap sandbox into /tmp/athanor-workspace-<job_id>
+    # and writes that path here so qa_orchestrator_node can hand it to
+    # NpmWorkspacesTurboProvider. Must be declared on JobState — LangGraph's
+    # state-merge reducer silently drops keys not present in the schema, so
+    # the C2 patch's `out["repo_root"] = staging_path_str` was a no-op until
+    # this declaration was added.
+    repo_root: str | None
     pr_url: str | None
     result_summary: str | None
     pending_agent_questions: list[dict[str, Any]]
