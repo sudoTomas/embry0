@@ -43,7 +43,13 @@ class DependencyGraph:
 
 
 def _read_package_json(path: Path) -> dict | None:
-    """Read a package.json. Returns None if missing or unparseable; never raises."""
+    """Read a package.json. Returns None if missing or unparseable; never raises.
+
+    Note: contract differs from _discover._read_package_json (which raises).
+    Per-member failures degrade gracefully here so a single broken member
+    does not block the whole graph; only root failure is fatal (raised
+    by build_dep_graph itself).
+    """
     if not path.is_file():
         return None
     try:
@@ -114,8 +120,8 @@ def build_dep_graph(
 
     for name, pkg in name_to_pkg.items():
         deps: set[str] = set()
-        for field_name in _EDGE_FIELDS:
-            block = pkg.get(field_name)
+        for dep_field in _EDGE_FIELDS:
+            block = pkg.get(dep_field)
             if not isinstance(block, dict):
                 continue
             for dep_name in block.keys():

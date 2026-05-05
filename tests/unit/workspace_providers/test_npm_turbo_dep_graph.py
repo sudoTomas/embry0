@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from athanor.workspace_providers.npm_workspaces_turbo._dep_graph import (
     DependencyGraph,
     build_dep_graph,
@@ -95,7 +97,7 @@ def test_external_deps_are_filtered_out(tmp_path: Path):
     assert graph.edges_out("@x/a") == frozenset({"@x/lib"})  # react/next filtered
 
 
-def test_missing_workspace_member_raises(tmp_path: Path):
+def test_missing_workspace_member_is_skipped(tmp_path: Path):
     """A `workspaces:` entry whose dir has no package.json must NOT crash —
     discover() already silently skips these. dep-graph follows the same rule."""
     (tmp_path / "package.json").write_text(
@@ -118,3 +120,21 @@ def test_unknown_node_lookup_returns_empty():
     )
     assert graph.edges_out("@nonexistent/x") == frozenset()
     assert graph.consumers_of("@nonexistent/x") == frozenset()
+
+
+def test_missing_root_package_json_raises(tmp_path: Path):
+    """Root package.json absent → WorkspaceProviderError (not silent)."""
+    from athanor.workspace_providers.provider import WorkspaceProviderError
+
+    # tmp_path has no package.json at the root
+    with pytest.raises(WorkspaceProviderError, match="missing or unparseable"):
+        build_dep_graph(repo_root=tmp_path, apps_glob="apps/*", packages_glob="packages/*")
+
+
+def test_unparseable_root_package_json_raises(tmp_path: Path):
+    """Root package.json present but invalid JSON → WorkspaceProviderError."""
+    from athanor.workspace_providers.provider import WorkspaceProviderError
+
+    (tmp_path / "package.json").write_text("{not valid json")
+    with pytest.raises(WorkspaceProviderError, match="missing or unparseable"):
+        build_dep_graph(repo_root=tmp_path, apps_glob="apps/*", packages_glob="packages/*")
