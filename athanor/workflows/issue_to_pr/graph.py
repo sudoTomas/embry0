@@ -1,6 +1,6 @@
 """Issue-to-PR workflow — LangGraph StateGraph definition.
 
-Graph (Phase 5 Task 6):
+Graph (Phase 5 Task 6 / Phase 1 C1 fix):
 
     init → triage → developer → [ask_user? | budget check] → review →
                   ↑     ↑           │                        │
@@ -10,16 +10,15 @@ Graph (Phase 5 Task 6):
                   │      ┌─── (review_passed AND needs_qa) ───┤
                   │      │                                    │
                   │      ↓                                    │
-                  │   init_qa → qa → qa_report                │
-                  │                       │                   │
-                  │                       ↓                   │
-                  │              qa_failure_bookkeeping       │
-                  │                       │                   │
-                  │            ┌──────────┼──────────┐        │
-                  │  (failed   │   (passed/         │ (failed │
-                  │  AND under │   exhausted)       │  AT cap)│
-                  │   cap)     │                    │         │
-                  └───────── triage          END ←──┴── qa_exhausted → END
+                  │   init_orchestrator → orchestrate_qa → qa_report
+                  │                                           │
+                  │                                           ↓
+                  │                              qa_failure_bookkeeping
+                  │                                           │
+                  │                           ┌──────────────┼──────────┐
+                  │  (failed AND under cap)   │  (passed/    │  (failed │
+                  │                           │  exhausted)  │  AT cap) │
+                  └───────── triage          END ←───────────┴── qa_exhausted → END
                                                                        │
                           (review_passed AND not needs_qa) → END ──────┘
 
@@ -30,11 +29,12 @@ exit. `review_node` keeps `Command(goto=...)` for the control-flow exits
 happy path so the ``route_after_review`` conditional edge can dispatch
 to the QA subpath when triage flagged ``needs_qa``.
 
-The QA subpath reuses Phase 2's QA workflow nodes verbatim
-(``init_qa_node``, ``qa_node``, ``report_node``). They are added as
-inline nodes here (rather than invoking ``QAWorkflow().compile()`` as a
-subgraph) so Task 6's ``route_after_qa_report`` can live in this graph
-alongside the other issue→PR routing.
+The QA subpath uses the multi-app orchestrator nodes:
+``init_orchestrator_node`` loads qa.yaml v2 from a bootstrap sandbox,
+``qa_orchestrator_node`` fans out one parallel sub-task per affected app,
+and ``qa_report_node`` writes the aggregate GitHub check + sticky PR
+comment. Sub-tasks handle boot/QA failures internally and emit
+``SubTaskResult`` with the right status; ``final_status`` is the gate.
 
 After ``qa_report``, ``_qa_failure_bookkeeping_node`` increments
 ``state["qa"]["failure_rounds"]`` on ``failed`` outcomes (no-op for
@@ -64,7 +64,11 @@ from athanor.workflows.issue_to_pr.routing import (
     route_after_review,
     route_after_triage,
 )
-from athanor.workflows.qa.nodes import boot_qa_node, init_qa_node, qa_node, report_node
+from athanor.workflows.qa.orchestrator import (
+    init_orchestrator_node,
+    qa_orchestrator_node,
+)
+from athanor.workflows.qa.orchestrator_report import qa_report_node
 
 
 async def _qa_failure_bookkeeping_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -115,12 +119,10 @@ class IssueToprWorkflow:
         builder.add_node("max_retries", max_retries_node)  # type: ignore[type-var]
         builder.add_node("ask_user_interrupt", ask_user_interrupt)  # type: ignore[type-var]
 
-        # Phase 5 Task 5: QA subpath nodes, reused verbatim from Phase 2.
-        builder.add_node("init_qa", init_qa_node)  # type: ignore[type-var]
-        # Backend-owned boot phase between init_qa and qa (qa-boot-as-backend-node plan).
-        builder.add_node("boot_qa", boot_qa_node)  # type: ignore[type-var]
-        builder.add_node("qa", qa_node)  # type: ignore[type-var]
-        builder.add_node("qa_report", report_node)  # type: ignore[type-var]
+        # Multi-app QA subpath nodes (Phase 1 C1 fix).
+        builder.add_node("init_orchestrator", init_orchestrator_node)  # type: ignore[type-var]
+        builder.add_node("orchestrate_qa", qa_orchestrator_node)  # type: ignore[type-var]
+        builder.add_node("qa_report", qa_report_node)  # type: ignore[type-var]
         # Phase 5 Task 6: bookkeeping + exhaustion sink for the QA failure loop.
         builder.add_node("qa_failure_bookkeeping", _qa_failure_bookkeeping_node)
         builder.add_node("qa_exhausted", _qa_exhausted_node)
@@ -141,18 +143,17 @@ class IssueToprWorkflow:
         builder.add_conditional_edges(
             "review",
             route_after_review,
-            {"developer": "retry", "qa": "init_qa", "end": END},
+            {"developer": "retry", "qa": "init_orchestrator", "end": END},
         )
 
-        # QA subpath wiring. init_qa → boot_qa → qa → qa_report mirrors the
-        # standalone QAWorkflow (athanor/workflows/qa/graph.py). boot_qa
-        # Command-routes to qa (success) or qa_report (timeout/startup_failed).
-        # Phase 5 Task 6 adds a bookkeeping node + conditional edge AFTER
-        # qa_report that bounces back to triage on QA failure (capped) or
+        # Multi-app QA subpath wiring: init_orchestrator loads qa.yaml v2 from a
+        # bootstrap sandbox, orchestrate_qa fans out one parallel sub-task per
+        # affected app, qa_report writes the aggregate GitHub check + sticky PR
+        # comment. After qa_report, qa_failure_bookkeeping increments
+        # failure_rounds + routes back to triage on failure (capped) or
         # terminates with ERR_QA_FAILURES_UNRESOLVED on exhaustion.
-        builder.add_edge("init_qa", "boot_qa")
-        # boot_qa → {qa, qa_report} via Command(goto=...) — no static edge.
-        builder.add_edge("qa", "qa_report")
+        builder.add_edge("init_orchestrator", "orchestrate_qa")
+        builder.add_edge("orchestrate_qa", "qa_report")
         builder.add_edge("qa_report", "qa_failure_bookkeeping")
         builder.add_conditional_edges(
             "qa_failure_bookkeeping",
