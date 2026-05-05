@@ -109,7 +109,7 @@ async def test_e2e_three_apps_two_pass_one_fails(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.run_subtask",
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 
@@ -248,7 +248,7 @@ async def test_e2e_no_affected_apps_short_circuits_pass(monkeypatch):
         raise AssertionError("no fan-out should happen for empty apps_to_qa")
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.run_subtask",
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 
@@ -297,7 +297,7 @@ async def test_e2e_validation_error_blocks_fan_out(monkeypatch):
         raise AssertionError("fan-out should not happen on validation error")
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.run_subtask",
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 
@@ -349,7 +349,7 @@ async def test_e2e_single_app_passes(monkeypatch):
             cache_hits=CacheHits(),
         )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.run_subtask",
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 

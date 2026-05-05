@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from athanor.workflows.qa.orchestrator import (
+from athanor.workflows.qa.orchestrator_helpers import (
     OrchestratorOutcome,
     resolve_apps_to_qa,
     validate_against_qa_config,
@@ -119,7 +119,7 @@ def test_validate_against_qa_config_separates_warnings_from_errors():
 
 import asyncio
 
-from athanor.workflows.qa.orchestrator import fan_out_subtasks
+from athanor.workflows.qa.orchestrator_helpers import fan_out_subtasks
 from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
 from athanor.workflows.qa.qa_yaml_v2 import QAReadyCheck
 from athanor.workflows.qa.subtask_result_schema import (
@@ -164,7 +164,7 @@ async def test_fan_out_respects_max_concurrent_apps(monkeypatch):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     resolved_configs = [_resolved(f"app{i}") for i in range(8)]
     results = await fan_out_subtasks(
@@ -188,7 +188,7 @@ async def test_fan_out_collects_all_results_in_input_order(monkeypatch):
             duration_ms=10,
             cache_hits=CacheHits(),
         )
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     resolved_configs = [_resolved("hub"), _resolved("companion"), _resolved("lane")]
     results = await fan_out_subtasks(
@@ -214,7 +214,7 @@ async def test_fan_out_isolates_individual_subtask_crashes(monkeypatch):
             duration_ms=5,
             cache_hits=CacheHits(),
         )
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     results = await fan_out_subtasks(
         [_resolved("hub"), _resolved("companion"), _resolved("lane")],
@@ -302,7 +302,7 @@ async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
             duration_ms=10,
             cache_hits=CacheHits(),
         )
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     repo_mock = AsyncMock()
     repo_mock.upsert = AsyncMock()
@@ -380,7 +380,7 @@ async def test_orchestrator_node_validation_errors_block_fan_out(monkeypatch):
 
     async def crash_subtask(*a, **kw):
         raise AssertionError("fan-out should not have happened")
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", crash_subtask)
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", crash_subtask)
 
     state = {
         "job_id": "run-3",
@@ -507,7 +507,7 @@ async def test_orchestrator_node_qa_required_never_short_circuits(monkeypatch):
     async def crash_subtask(*a, **kw):
         raise AssertionError("fan-out should not have happened when qa_required=never")
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", crash_subtask)
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", crash_subtask)
 
     # load_provider should also never be called
     def crash_load_provider(*a, **kw):

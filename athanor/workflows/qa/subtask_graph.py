@@ -17,18 +17,17 @@ from langgraph.graph import END, START, StateGraph
 
 from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
 from athanor.workflows.qa.subtask_nodes import (
-    SubTaskState,
     acquire_sandbox_node,
     boot_app_node,
     collect_artifacts_node,
     e2e_node,
     emit_result_node,
     exploratory_qa_node,
-    initial_state_for_app,
     release_sandbox_node,
     seed_node,
 )
 from athanor.workflows.qa.subtask_result_schema import SubTaskResult
+from athanor.workflows.qa.subtask_state import SubTaskState, initial_state_for_app
 
 
 def build_subtask_graph() -> Any:

@@ -84,7 +84,7 @@ def _minimal_config(**extras):
 
 
 def test_initial_state_for_app_populates_fields():
-    from athanor.workflows.qa.subtask_nodes import initial_state_for_app
+    from athanor.workflows.qa.subtask_state import initial_state_for_app
 
     resolved = _resolved_app("hub")
     state = initial_state_for_app(
@@ -113,7 +113,7 @@ def test_initial_state_for_app_populates_fields():
 
 
 def test_synth_v1_qa_yaml_required_keys():
-    from athanor.workflows.qa.subtask_nodes import _synth_v1_qa_yaml
+    from athanor.workflows.qa.subtask_state import _synth_v1_qa_yaml
 
     resolved = _resolved_app(
         "hub",
@@ -141,7 +141,7 @@ def test_synth_v1_qa_yaml_required_keys():
 
 
 def test_synth_v1_qa_yaml_no_seed_no_e2e():
-    from athanor.workflows.qa.subtask_nodes import _synth_v1_qa_yaml
+    from athanor.workflows.qa.subtask_state import _synth_v1_qa_yaml
 
     resolved = _resolved_app("hub")
     result = _synth_v1_qa_yaml(resolved)
