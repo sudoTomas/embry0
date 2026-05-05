@@ -24,6 +24,7 @@ dependencies = [
     "cryptography>=42,<47",
     "prometheus-fastapi-instrumentator>=6.0,<8",
     "minio>=7.2,<8",
+    "python-jose[cryptography]>=3.3.0",
     "pyyaml>=6.0,<7",
 ]
 
