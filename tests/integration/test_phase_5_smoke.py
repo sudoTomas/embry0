@@ -4,8 +4,8 @@ End-to-end (with mocked agents) verification that the conditional edge added
 in Phase 5 Task 5 dispatches correctly based on the ``qa.needs_qa`` flag set
 by triage:
 
-  needs_qa=True  → init → triage → developer → review → init_qa → qa →
-                   qa_report → qa_failure_bookkeeping → END
+  needs_qa=True  → init → triage → developer → review → init_orchestrator →
+                   orchestrate_qa → qa_report → qa_failure_bookkeeping → END
   needs_qa=False → init → triage → developer → review → END
 
 The plan's Task 8 Steps 1-4 (real ``gh issue create``, real Athanor job, manual
@@ -16,14 +16,15 @@ What's missing — and what these tests cover — is an INTEGRATION-level check
 that the real compiled ``IssueToprWorkflow`` graph honours the conditional
 edge end to end with mocked agent outputs.
 
-The agent-bearing nodes (init, triage, developer, review, init_qa, qa,
-qa_report) are patched on the ``graph`` module's local namespace BEFORE
-``IssueToprWorkflow().compile()`` so the StateGraph builder captures the
-stubs rather than the real implementations (which require sandbox managers,
-docker clients, agent runners, MinIO, etc.). The bookkeeping/exhaustion
-nodes (``_qa_failure_bookkeeping_node``, ``_qa_exhausted_node``) and the
-routing functions (``route_after_review``, ``route_after_qa_report``,
-``route_after_triage``) are NOT patched — they're the units under test.
+The agent-bearing nodes (init, triage, developer, review, init_orchestrator,
+orchestrate_qa, qa_report) are patched on the ``graph`` module's local
+namespace BEFORE ``IssueToprWorkflow().compile()`` so the StateGraph builder
+captures the stubs rather than the real implementations (which require sandbox
+managers, docker clients, agent runners, MinIO, etc.). The
+bookkeeping/exhaustion nodes (``_qa_failure_bookkeeping_node``,
+``_qa_exhausted_node``) and the routing functions (``route_after_review``,
+``route_after_qa_report``, ``route_after_triage``) are NOT patched — they're
+the units under test.
 """
 
 from __future__ import annotations
@@ -77,33 +78,27 @@ async def _stub_review(state: dict[str, Any], config: RunnableConfig) -> dict[st
     return {"current_stage": "review_passed"}
 
 
-async def _stub_init_qa(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-    """Skip real QA init (DinD network, profile resolve, presign, qa.yaml)."""
+async def _stub_init_orchestrator(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
+    """Skip real QA orchestrator init (DinD network, profile resolve, presign, qa.yaml v2)."""
     qa = dict(state.get("qa") or {})
     qa["sandbox_token"] = "stub-token"
+    qa["qa_yaml_v2_raw"] = ""
+    qa["qa_yaml_v2_parsed"] = {}
+    qa["head_sha"] = "abc1234"
     return {"qa": qa}
 
 
-async def _stub_boot_qa(state: dict[str, Any], config: RunnableConfig):
-    """Skip backend-owned boot phase (docker exec + httpx polling); route straight to qa."""
-    from langgraph.types import Command
-
+async def _stub_qa_orchestrator(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
+    """Skip the real multi-app QA orchestration; mark passed so qa_report routes to END."""
     qa = dict(state.get("qa") or {})
-    qa["boot_outcome"] = "passed"
-    qa["boot_attempts"] = 1
-    qa["boot_duration_ms"] = 0
-    return Command(goto="qa", update={"qa": qa})
-
-
-async def _stub_qa(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-    """Skip the real QA agent run; mark passed so qa_report routes to END."""
-    qa = dict(state.get("qa") or {})
+    qa["per_app_results"] = {}
+    qa["outcome"] = "passed"
     qa["final_status"] = "passed"
     return {"qa": qa}
 
 
 async def _stub_qa_report(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-    """Skip artifact upload; pass state through unchanged."""
+    """Skip artifact upload / GitHub check write; pass state through unchanged."""
     return {}
 
 
@@ -121,8 +116,9 @@ def _forbidden_qa_node(name: str):
 @pytest.mark.asyncio
 async def test_qa_gate_routes_to_qa_when_needs_qa_true() -> None:
     """needs_qa=True path: triage sets qa.needs_qa=True; route_after_review
-    dispatches to ``init_qa``; the QA subpath runs; qa_report → bookkeeping →
-    END (because final_status=passed routes to "end" via route_after_qa_report).
+    dispatches to ``init_orchestrator``; the QA subpath runs; qa_report →
+    bookkeeping → END (because final_status=passed routes to "end" via
+    route_after_qa_report).
     """
     import athanor.workflows.issue_to_pr.graph as g_mod
 
@@ -137,10 +133,9 @@ async def test_qa_gate_routes_to_qa_when_needs_qa_true() -> None:
         patch.object(g_mod, "triage_node", triage_stub),
         patch.object(g_mod, "developer_node", _stub_developer),
         patch.object(g_mod, "review_node", _stub_review),
-        patch.object(g_mod, "init_qa_node", _stub_init_qa),
-        patch.object(g_mod, "boot_qa_node", _stub_boot_qa),
-        patch.object(g_mod, "qa_node", _stub_qa),
-        patch.object(g_mod, "report_node", _stub_qa_report),
+        patch.object(g_mod, "init_orchestrator_node", _stub_init_orchestrator),
+        patch.object(g_mod, "qa_orchestrator_node", _stub_qa_orchestrator),
+        patch.object(g_mod, "qa_report_node", _stub_qa_report),
     ):
         compiled = g_mod.IssueToprWorkflow().compile()
         initial: dict[str, Any] = {
@@ -158,7 +153,7 @@ async def test_qa_gate_routes_to_qa_when_needs_qa_true() -> None:
         final = await compiled.ainvoke(initial, config)
 
     # Assert the QA subpath was traversed.
-    for required in ("init", "triage", "developer", "review", "init_qa", "boot_qa", "qa", "qa_report"):
+    for required in ("init", "triage", "developer", "review", "init_orchestrator", "orchestrate_qa", "qa_report"):
         assert required in executed, f"missing {required!r} from {executed}"
 
     # Bookkeeping always runs after qa_report; it then routes to END
@@ -189,10 +184,9 @@ async def test_qa_gate_skips_qa_when_needs_qa_false() -> None:
         patch.object(g_mod, "triage_node", triage_stub),
         patch.object(g_mod, "developer_node", _stub_developer),
         patch.object(g_mod, "review_node", _stub_review),
-        patch.object(g_mod, "init_qa_node", _forbidden_qa_node("init_qa_node")),
-        patch.object(g_mod, "boot_qa_node", _forbidden_qa_node("boot_qa_node")),
-        patch.object(g_mod, "qa_node", _forbidden_qa_node("qa_node")),
-        patch.object(g_mod, "report_node", _forbidden_qa_node("report_node")),
+        patch.object(g_mod, "init_orchestrator_node", _forbidden_qa_node("init_orchestrator_node")),
+        patch.object(g_mod, "qa_orchestrator_node", _forbidden_qa_node("qa_orchestrator_node")),
+        patch.object(g_mod, "qa_report_node", _forbidden_qa_node("qa_report_node")),
     ):
         compiled = g_mod.IssueToprWorkflow().compile()
         initial: dict[str, Any] = {
@@ -211,7 +205,7 @@ async def test_qa_gate_skips_qa_when_needs_qa_false() -> None:
 
     # Happy path only: init → triage → developer → review → END.
     assert executed == ["init", "triage", "developer", "review"], executed
-    for forbidden in ("init_qa", "boot_qa", "qa", "qa_report", "qa_failure_bookkeeping", "qa_exhausted"):
+    for forbidden in ("init_orchestrator", "orchestrate_qa", "qa_report", "qa_failure_bookkeeping", "qa_exhausted"):
         assert forbidden not in executed, f"unexpected {forbidden!r} in {executed}"
 
     # Final state confirms triage flagged no QA needed.
