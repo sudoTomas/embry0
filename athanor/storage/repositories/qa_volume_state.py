@@ -36,7 +36,7 @@ class QAVolumeStateRepository:
         VALUES ($1, $2, $3, $4, NOW())
         ON CONFLICT (scope, scope_key) DO UPDATE SET
             volume_name      = EXCLUDED.volume_name,
-            last_warmed_sha  = EXCLUDED.last_warmed_sha,
+            last_warmed_sha  = COALESCE(EXCLUDED.last_warmed_sha, qa_volume_state.last_warmed_sha),
             last_warmed_at   = NOW()
         """
         await self.db.execute(sql, scope, scope_key, volume_name, last_warmed_sha)
