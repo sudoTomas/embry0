@@ -275,6 +275,17 @@ class DockerClient:
         )
         return proc
 
+    async def commit_container(self, container_id: str, image_tag: str) -> str:
+        """Commit a running container as a new image; returns the tag.
+
+        Wraps ``docker commit <container_id> <image_tag>``. Used by the
+        image builder (athanor/cache/image_builder.py) to bake a
+        pre-installed sandbox into a reusable image layer.
+        """
+        cmd = self._build_base_cmd() + ["commit", container_id, image_tag]
+        await self.run_cmd(cmd, timeout=120)
+        return image_tag
+
     async def copy_into(self, container: str, src_path: str, dst_path: str) -> None:
         """Copy a host-side file into ``container`` at ``dst_path``.
 
