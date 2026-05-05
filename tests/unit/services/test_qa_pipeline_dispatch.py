@@ -64,6 +64,11 @@ def test_build_graph_config_includes_qa_deps() -> None:
     executor._qa_token_registry = MagicMock(name="qa_token_registry")
     executor._profiles_repo = MagicMock(name="profiles_repo")
     executor._agent_sessions_repo = MagicMock(name="agent_sessions_repo")
+    executor._qa_app_results_repo = MagicMock(name="qa_app_results_repo")
+    executor._qa_image_tags_repo = MagicMock(name="qa_image_tags_repo")
+    executor._qa_volume_state_repo = MagicMock(name="qa_volume_state_repo")
+    executor._qa_shared_volume_manager = MagicMock(name="qa_shared_volume_manager")
+    executor._github_token = "test-github-token"
 
     cfg = executor._build_graph_config("job-123")
     configurable = cfg["configurable"]
@@ -72,3 +77,8 @@ def test_build_graph_config_includes_qa_deps() -> None:
     assert configurable["qa_token_registry"] is executor._qa_token_registry
     assert configurable["profiles_repo"] is executor._profiles_repo
     assert configurable["agent_sessions_repo"] is executor._agent_sessions_repo
+    assert configurable["qa_app_results_repo"] is executor._qa_app_results_repo
+    assert configurable["qa_image_tags_repo"] is executor._qa_image_tags_repo
+    assert configurable["qa_volume_state_repo"] is executor._qa_volume_state_repo
+    assert configurable["qa_shared_volume_manager"] is executor._qa_shared_volume_manager
+    assert configurable["github_token"] == "test-github-token"

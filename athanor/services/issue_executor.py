@@ -168,6 +168,18 @@ class IssueExecutor:
                 "qa_token_registry": self._qa_token_registry,
                 "profiles_repo": profiles_repo,
                 "agent_sessions_repo": self._agent_sessions_repo,
+                # Phase-A wiring: cache layers + dashboard reporting.
+                # Read by:
+                #   init_orchestrator_node (qa_shared_volume_manager,
+                #     qa_volume_state_repo)
+                #   qa_orchestrator_node (qa_image_tags_repo,
+                #     qa_app_results_repo)
+                #   qa_report_node (github_token)
+                "qa_app_results_repo": self._qa_app_results_repo,
+                "qa_image_tags_repo": self._qa_image_tags_repo,
+                "qa_volume_state_repo": self._qa_volume_state_repo,
+                "qa_shared_volume_manager": self._qa_shared_volume_manager,
+                "github_token": self._github_token,
             }
         }
 
