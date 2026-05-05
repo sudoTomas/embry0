@@ -19,7 +19,9 @@ class QAJobOverrides(BaseModel):
     All fields are optional. ``acceptance_criteria`` defaults to empty (the
     QA agent then exercises the app freely); ``sandbox_profile`` defaults to
     the qa.yaml-resolved value; ``qa_timeout_seconds`` overrides the default
-    QA budget when present.
+    QA budget when present. ``base_branch`` is passed through to JobState if
+    set. ``force_all_apps`` short-circuits the affected-set computation in
+    qa_orchestrator_node so every declared app is QA'd.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -27,6 +29,15 @@ class QAJobOverrides(BaseModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
     sandbox_profile: str | None = None  # overrides qa.yaml's value when set
     qa_timeout_seconds: int | None = Field(default=None, gt=0, le=86400)
+    # Phase-C: base_branch override. Used by init_orchestrator_node's
+    # `git diff origin/<base_branch>..HEAD` for affected-set computation.
+    # Defaults to "main" when None (existing behavior); set to "master" or
+    # "develop" for repos with a different default branch.
+    base_branch: str | None = Field(default=None, max_length=255)
+    # Phase-C: bypass diff-aware affected-set selection and QA every app
+    # declared under apps: in qa.yaml. Equivalent to setting
+    # `qa_required: always` in qa.yaml — but per-job rather than per-repo.
+    force_all_apps: bool = False
 
 
 class JobCreateRequest(BaseModel):
