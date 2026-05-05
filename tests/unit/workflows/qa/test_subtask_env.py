@@ -55,3 +55,19 @@ def test_build_qa_sandbox_env_empty_qa_network_name_still_sets_var():
         qa_network_name="",
     )
     assert env["QA_NETWORK_NAME"] == ""
+
+
+def test_build_qa_sandbox_env_includes_turbo_when_configured():
+    from athanor.cache.turbo_remote import TurboRemoteConfig
+
+    cfg = TurboRemoteConfig(api_url="https://t", team="x", token="y")
+    env = build_qa_sandbox_env(
+        user_env_vars=None,
+        git_proxy_url=None,
+        qa_job_id="run-1",
+        attempt_n=1,
+        qa_network_name="",
+        turbo_remote_config=cfg,
+    )
+    assert env["TURBO_API"] == "https://t"
+    assert env["TURBO_TOKEN"] == "y"

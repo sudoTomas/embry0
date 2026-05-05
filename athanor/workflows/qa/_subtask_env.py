@@ -21,6 +21,7 @@ def build_qa_sandbox_env(
     qa_job_id: str,
     attempt_n: int,
     qa_network_name: str,
+    turbo_remote_config: Any = None,
 ) -> dict[str, str]:
     """Build the env dict passed to SandboxManager.create() for QA sandboxes.
 
@@ -33,7 +34,11 @@ def build_qa_sandbox_env(
     `qa_network_name` is "" for process-mode sandboxes (the env var is set
     anyway since callers may rely on its presence; downstream code branches
     on `mode`, not on this var being non-empty).
+
+    `turbo_remote_config` (TurboRemoteConfig | None) — if provided, adds
+    TURBO_API/TURBO_TEAM/TURBO_TOKEN env vars for Turbo remote cache.
     """
+    from athanor.cache.turbo_remote import turbo_env_vars
     from athanor.workflows.issue_to_pr.nodes import _filter_user_env_for_sandbox
 
     env = _filter_user_env_for_sandbox(
@@ -49,4 +54,5 @@ def build_qa_sandbox_env(
             "QA_NETWORK_NAME": qa_network_name,
         }
     )
+    env.update(turbo_env_vars(turbo_remote_config))
     return env
