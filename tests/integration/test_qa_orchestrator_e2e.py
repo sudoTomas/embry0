@@ -391,3 +391,141 @@ apps:
     assert qa["apps_to_qa"] == ["app"]
     assert qa["final_status"] == "passed"
     assert results_repo.upsert.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_phase_3_acceptance_real_provider_one_app_affected(monkeypatch):
+    """Phase-3 acceptance gate.
+
+    Wires the REAL NpmWorkspacesTurboProvider against the committed
+    toy-monorepo fixture. The orchestrator skips its bootstrap-sandbox
+    code path (init_orchestrator_node) by jumping straight into
+    qa_orchestrator_node with state['repo_root'] pointing at the fixture
+    on disk and state['qa']['changed_files'] preset to the toy diff.
+
+    Asserts:
+      - apps_to_qa = ['hub']  (only @toy/hub is affected by an apps/hub diff)
+      - per_app_results contains exactly one entry, for hub
+      - overall_status = 'passed' (mocked sub-task always passes)
+    """
+    fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "toy-monorepo"
+
+    # Real provider is loaded via the registry — DO NOT monkeypatch load_provider.
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=900,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        fake_run_subtask,
+    )
+
+    qa_yaml = (fixture / ".athanor" / "qa.yaml").read_text()
+
+    results_repo = AsyncMock()
+    state = {
+        "job_id": "phase-3-acceptance",
+        "repo": "org/toy-monorepo",
+        "branch_name": "feature/touch-hub",
+        "base_branch": "main",
+        "issue_number": 1,
+        "repo_root": str(fixture),     # Point provider at the on-disk fixture
+        "qa": {
+            "qa_yaml_v2_raw": qa_yaml,
+            "head_sha": "abc",
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": results_repo}}
+
+    out = await qa_orchestrator_node(state, config)
+    qa = out["qa"]
+
+    assert qa["outcome"]["overall_status"] == "passed"
+    assert qa["apps_to_qa"] == ["hub"]
+    assert len(qa["per_app_results"]) == 1
+    assert qa["per_app_results"][0]["app_name"] == "hub"
+
+
+@pytest.mark.asyncio
+async def test_phase_3_acceptance_no_cascade_blocks_all_apps(monkeypatch):
+    """Phase-3 acceptance: changed file is in a no_cascade package → 0 apps QA'd.
+
+    Tests against the real provider + real toy-monorepo fixture. With the
+    diff confined to packages/types/ and qa.yaml declaring @toy/types as
+    no_cascade, the orchestrator must short-circuit through "no affected
+    apps" → overall_status=passed, apps_to_qa=[], no fan-out."""
+    fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "toy-monorepo"
+    qa_yaml = (fixture / ".athanor" / "qa.yaml").read_text()
+
+    async def fake_run_subtask(resolved, **kw):
+        raise AssertionError("no fan-out should happen with @toy/types-only diff")
+
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        fake_run_subtask,
+    )
+
+    state = {
+        "job_id": "phase-3-no-cascade",
+        "repo": "org/toy-monorepo",
+        "branch_name": "feature/types-tweak",
+        "base_branch": "main",
+        "repo_root": str(fixture),
+        "qa": {
+            "qa_yaml_v2_raw": qa_yaml,
+            "head_sha": "abc",
+            "changed_files": ["packages/types/src/index.ts"],
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": AsyncMock()}}
+
+    out = await qa_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["outcome"]["overall_status"] == "passed"
+    assert qa["apps_to_qa"] == []
+
+
+@pytest.mark.asyncio
+async def test_phase_3_acceptance_package_change_cascades_to_two_apps(monkeypatch):
+    """Phase-3 acceptance: @toy/auth diff → @toy/hub + @toy/companion QA'd."""
+    fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "toy-monorepo"
+    qa_yaml = (fixture / ".athanor" / "qa.yaml").read_text()
+
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=900,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        fake_run_subtask,
+    )
+
+    results_repo = AsyncMock()
+    state = {
+        "job_id": "phase-3-cascade",
+        "repo": "org/toy-monorepo",
+        "branch_name": "feature/auth-tweak",
+        "base_branch": "main",
+        "repo_root": str(fixture),
+        "qa": {
+            "qa_yaml_v2_raw": qa_yaml,
+            "head_sha": "abc",
+            "changed_files": ["packages/auth/src/index.ts"],
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": results_repo}}
+
+    out = await qa_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["outcome"]["overall_status"] == "passed"
+    assert sorted(qa["apps_to_qa"]) == ["hub", "companion"]
+    assert results_repo.upsert.await_count == 2
