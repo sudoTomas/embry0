@@ -387,6 +387,13 @@ async def qa_orchestrator_node(
         )
         return {"qa": qa_state}
 
+    # Phase-C: force-all-apps short-circuit. Either the per-repo qa_required
+    # set to "always" in qa.yaml, OR the per-job state['qa']['force_all_apps']
+    # set via QAJobOverrides.force_all_apps on the API request, makes us run
+    # every declared app regardless of the diff. Skip the affected-set work
+    # entirely so a wrong base_branch (or a stale main) doesn't poison the run.
+    force_all_apps = bool(qa_state.get("force_all_apps")) or cfg.qa_required == "always"
+
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     qa_app_results_repo = configurable.get("qa_app_results_repo")
 
@@ -427,7 +434,19 @@ async def qa_orchestrator_node(
     # 3. Resolve apps to QA.
     changed_files_str = qa_state.get("changed_files") or []
     changed_files = [Path(p) for p in changed_files_str]
-    apps = resolve_apps_to_qa(provider, cfg, changed_files=changed_files)
+    if force_all_apps:
+        # Bypass affected-set; QA every declared app. validate_against_qa_config
+        # already errored out on apps that don't exist in the workspace, so
+        # every cfg.apps key is known to be a real workspace app.
+        apps = sorted(cfg.apps.keys())
+        logger.info(
+            "qa_force_all_apps",
+            parent_run_id=state.get("job_id"),
+            n_apps=len(apps),
+            reason="qa_required=always" if cfg.qa_required == "always" else "force_all_apps=true",
+        )
+    else:
+        apps = resolve_apps_to_qa(provider, cfg, changed_files=changed_files)
     qa_state["apps_to_qa"] = list(apps)
     qa_state["validation_warnings"] = warnings
 

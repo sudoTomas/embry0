@@ -1,0 +1,188 @@
+"""Phase-C3: force-all-apps short-circuits affected-set computation."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import AsyncMock
+
+import pytest
+
+from athanor.workflows.qa.orchestrator import qa_orchestrator_node
+from athanor.workflows.qa.subtask_result_schema import (
+    CacheHits,
+    SubTaskResult,
+    SubTaskStatus,
+)
+from athanor.workspace_providers import (
+    AffectedSet,
+    WorkspaceApp,
+    WorkspacePackage,
+)
+from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+
+_QA_YAML_ALWAYS = """
+version: 2
+workspace_provider:
+  type: fake
+defaults:
+  mode: process
+  sandbox_profile: slim
+  ready_checks:
+    - http: "http://localhost:3000"
+parallelism:
+  max_concurrent_apps: 4
+qa_required: always
+apps:
+  hub:
+    boot_command: "echo started"
+    frontend_url: "http://localhost:3000"
+  companion:
+    boot_command: "echo started"
+    frontend_url: "http://localhost:3001"
+  lane:
+    boot_command: "echo started"
+    frontend_url: "http://localhost:3002"
+"""
+
+_QA_YAML_AUTO = _QA_YAML_ALWAYS.replace("qa_required: always", "qa_required: auto")
+
+
+@pytest.fixture
+def fake_provider():
+    """3 declared apps; affected set is EMPTY (so a 'normal' run with
+    qa_required: auto would short-circuit to apps_to_qa=[])."""
+    return FakeWorkspaceProvider(
+        apps=[
+            WorkspaceApp("hub", Path("apps/hub"), "@x/hub"),
+            WorkspaceApp("companion", Path("apps/companion"), "@x/companion"),
+            WorkspaceApp("lane", Path("apps/lane"), "@x/lane"),
+        ],
+        packages=[
+            WorkspacePackage("@x/hub", Path("apps/hub"), is_app=True),
+            WorkspacePackage("@x/companion", Path("apps/companion"), is_app=True),
+            WorkspacePackage("@x/lane", Path("apps/lane"), is_app=True),
+        ],
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+    )
+
+
+@pytest.mark.asyncio
+async def test_qa_required_always_runs_all_apps(monkeypatch, fake_provider):
+    """qa_required: always in qa.yaml => fan-out runs every declared app
+    even when the affected-set is empty."""
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    captured = []
+
+    async def fake_run_subtask(resolved, **kw):
+        captured.append(resolved.app_name)
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        fake_run_subtask,
+    )
+
+    state = {
+        "job_id": "force-always-job",
+        "repo": "org/r",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_ALWAYS,
+            "head_sha": "abc",
+            "changed_files": [],
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": AsyncMock()}}
+    out = await qa_orchestrator_node(state, config)
+
+    qa = out["qa"]
+    assert qa["outcome"]["overall_status"] == "passed"
+    assert sorted(qa["apps_to_qa"]) == ["hub", "lane", "companion"]
+    assert sorted(captured) == ["hub", "lane", "companion"]
+
+
+@pytest.mark.asyncio
+async def test_force_all_apps_state_flag_runs_all_apps(monkeypatch, fake_provider):
+    """state['qa']['force_all_apps'] = True overrides qa_required: auto and
+    forces every declared app to run."""
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    captured = []
+
+    async def fake_run_subtask(resolved, **kw):
+        captured.append(resolved.app_name)
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        fake_run_subtask,
+    )
+
+    state = {
+        "job_id": "force-flag-job",
+        "repo": "org/r",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_AUTO,  # NOT 'always'
+            "head_sha": "abc",
+            "changed_files": [],
+            "force_all_apps": True,
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": AsyncMock()}}
+    out = await qa_orchestrator_node(state, config)
+
+    qa = out["qa"]
+    assert qa["outcome"]["overall_status"] == "passed"
+    assert sorted(qa["apps_to_qa"]) == ["hub", "lane", "companion"]
+
+
+@pytest.mark.asyncio
+async def test_qa_required_auto_with_no_diff_still_short_circuits(monkeypatch, fake_provider):
+    """Regression: qa_required: auto + empty affected set still short-circuits
+    to 'no apps to QA'. Force-all paths are opt-in, not the default."""
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    async def fake_run_subtask(resolved, **kw):
+        raise AssertionError("force-all should not have triggered")
+
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        fake_run_subtask,
+    )
+
+    state = {
+        "job_id": "auto-empty-job",
+        "repo": "org/r",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_AUTO,
+            "head_sha": "abc",
+            "changed_files": [],
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": AsyncMock()}}
+    out = await qa_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["apps_to_qa"] == []
+    assert qa["outcome"]["overall_status"] == "passed"
