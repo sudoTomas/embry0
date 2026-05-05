@@ -4,8 +4,9 @@ Phase 1 (multi-app): init_orchestrator -> orchestrate_qa -> qa_report -> END.
 
 orchestrate_qa fans out one parallel sub-task per affected app via the
 sub-task subgraph (see subtask_graph.py). qa_report writes the aggregate
-GitHub check and sticky PR comment. Retry semantics are now PER-SUB-TASK
-(handled inside the sub-task subgraph), not at the pipeline level.
+GitHub check and sticky PR comment. Phase 1 has no QA retries — sub-task
+failures are recorded and reported. A boot timeout in one app records
+SubTaskStatus.BOOT_FAILURE for that app and sibling apps proceed.
 
 Single-app callers get multi-app QA via a qa.yaml v2 with one apps: entry
 (use `athanor migrate-qa-config --write` to convert legacy v1 files).

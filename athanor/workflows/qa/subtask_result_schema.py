@@ -23,7 +23,7 @@ class SubTaskStatus(StrEnum):
     SKIPPED = "skipped"
 
 
-_FAILED_STATUSES = frozenset(
+FAILED_STATUSES: frozenset[SubTaskStatus] = frozenset(
     {
         SubTaskStatus.QA_FAILURE,
         SubTaskStatus.E2E_FAILURE,
@@ -32,6 +32,9 @@ _FAILED_STATUSES = frozenset(
         SubTaskStatus.INCONCLUSIVE,
     }
 )
+"""Statuses that count as 'this app did not pass QA' for the run-level
+reducer + reporting layers. Excludes SKIPPED (skipped is a pass) and
+INFRA_FAILURE (athanor's fault, escalates to overall_status='infra_error')."""
 
 
 def is_terminal_status(s: SubTaskStatus) -> bool:
@@ -81,7 +84,7 @@ def overall_status(results: list[SubTaskResult]) -> str:
     has_infra = any(r.status == SubTaskStatus.INFRA_FAILURE for r in results)
     if has_infra:
         return "infra_error"
-    has_failed = any(r.status in _FAILED_STATUSES for r in results)
+    has_failed = any(r.status in FAILED_STATUSES for r in results)
     if has_failed:
         return "failed"
     return "passed"

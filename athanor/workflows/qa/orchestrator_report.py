@@ -22,6 +22,12 @@ State reads:
 
 Failures here log warnings but DO NOT fail the run — final_status was set by
 the orchestrator already, and a missing GitHub-side surface is not a QA verdict.
+
+Security boundary: the `github_token` is orchestrator-side only and MUST
+NOT be propagated into sub-task config['configurable']. Sub-tasks read
+their own credentials via the per-sandbox proxy + sandbox_token. Reviewers
+of future cache-layer work in Phase 2: do not forward github_token through
+to sub-task subgraph invocations.
 """
 
 from __future__ import annotations

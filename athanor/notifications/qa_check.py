@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 import structlog
 
-from athanor.workflows.qa.subtask_result_schema import SubTaskResult, SubTaskStatus
+from athanor.workflows.qa.subtask_result_schema import FAILED_STATUSES, SubTaskResult, SubTaskStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -33,19 +33,8 @@ class QACheckPayload:
     summary: str
 
 
-_FAILED_STATUSES = frozenset(
-    {
-        SubTaskStatus.QA_FAILURE,
-        SubTaskStatus.E2E_FAILURE,
-        SubTaskStatus.BOOT_FAILURE,
-        SubTaskStatus.READY_CHECK_FAILED,
-        SubTaskStatus.INFRA_FAILURE,
-    }
-)
-
-
 def _failing_apps(results: list[SubTaskResult]) -> list[str]:
-    return [r.app_name for r in results if r.status in _FAILED_STATUSES]
+    return [r.app_name for r in results if r.status in FAILED_STATUSES]
 
 
 def build_check_payload(

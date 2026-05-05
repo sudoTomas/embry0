@@ -318,3 +318,74 @@ async def test_e2e_validation_error_blocks_fan_out(monkeypatch):
     assert qa["outcome"]["overall_status"] == "infra_error"
     assert len(qa["outcome"]["validation_errors"]) == 3
     assert qa["final_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_e2e_single_app_passes(monkeypatch):
+    """Migrated-from-v1 N=1 case: one app declared in qa.yaml v2, passes.
+    This proves the multi-app graph correctly handles the legacy single-app
+    contract that `athanor migrate-qa-config` produces."""
+    fake_provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("app", Path("apps/app"), "@x/app")],
+        packages=[
+            WorkspacePackage("@x/app", Path("apps/app"), is_app=True),
+        ],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/app"}),
+            cascade_closure=frozenset({"@x/app"}),
+            apps_to_qa=frozenset({"@x/app"}),
+        ),
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=1100,
+            cache_hits=CacheHits(),
+        )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.run_subtask",
+        fake_run_subtask,
+    )
+
+    qa_yaml = """
+version: 2
+workspace_provider:
+  type: fake
+defaults:
+  mode: process
+  sandbox_profile: slim
+  ready_checks:
+    - http: "http://localhost:3000"
+apps:
+  app:
+    boot_command: "npm run dev"
+    frontend_url: "http://localhost:3000"
+"""
+
+    results_repo = AsyncMock()
+    state = {
+        "job_id": "single-app-run",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "issue_number": 7,
+        "attempt_number": 1,
+        "qa": {
+            "qa_yaml_v2_raw": qa_yaml,
+            "head_sha": "abc",
+            "changed_files": ["apps/app/page.tsx"],
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": results_repo}}
+
+    out = await qa_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["outcome"]["overall_status"] == "passed"
+    assert qa["apps_to_qa"] == ["app"]
+    assert qa["final_status"] == "passed"
+    assert results_repo.upsert.await_count == 1

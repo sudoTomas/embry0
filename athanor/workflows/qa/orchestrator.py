@@ -29,16 +29,6 @@ from athanor.workspace_providers.provider import WorkspaceProvider
 logger = structlog.get_logger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class OrchestratorContext:
-    """Per-run context the orchestrator threads through its nodes."""
-
-    parent_run_id: str
-    repo_root: Path
-    base_branch: str
-    changed_files: list[Path]
-
-
 @dataclass
 class OrchestratorOutcome:
     """Final outcome the orchestrator emits to the parent pipeline."""
@@ -306,7 +296,7 @@ async def qa_orchestrator_node(
     apps_to_qa, validation_errors, validation_warnings, final_status.
     """
     from athanor.workflows.qa.qa_yaml_resolve import resolve_app_config
-    from athanor.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
+    from athanor.workflows.qa.qa_yaml_v2 import QAYamlConfigV2, parse_qa_yaml_v2
     from athanor.workflows.qa.subtask_result_schema import overall_status as compute_overall
 
     qa_state = dict(state.get("qa") or {})
@@ -318,7 +308,9 @@ async def qa_orchestrator_node(
         return {"qa": qa_state}
 
     yaml_text = qa_state.get("qa_yaml_v2_raw")
-    if not yaml_text:
+    parsed_dict = qa_state.get("qa_yaml_v2_parsed")
+
+    if not yaml_text and not parsed_dict:
         outcome = OrchestratorOutcome(
             overall_status="infra_error",
             apps_to_qa=[],
@@ -328,7 +320,10 @@ async def qa_orchestrator_node(
         qa_state["final_status"] = "failed"
         return {"qa": qa_state}
 
-    cfg = parse_qa_yaml_v2(yaml_text)
+    if parsed_dict is not None:
+        cfg = QAYamlConfigV2.model_validate(parsed_dict)
+    else:
+        cfg = parse_qa_yaml_v2(yaml_text)
 
     if cfg.qa_required == "never":
         outcome = OrchestratorOutcome(

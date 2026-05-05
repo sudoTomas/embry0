@@ -17,6 +17,7 @@ import httpx
 import structlog
 
 from athanor.workflows.qa.subtask_result_schema import (
+    FAILED_STATUSES,
     SubTaskResult,
     SubTaskStatus,
 )
@@ -25,17 +26,6 @@ _logger = structlog.get_logger(__name__)
 _GITHUB_API = "https://api.github.com"
 
 COMMENT_MARKER = "<!-- athanor:qa-sticky-comment -->"
-
-
-_FAILED_STATUSES = frozenset(
-    {
-        SubTaskStatus.QA_FAILURE,
-        SubTaskStatus.E2E_FAILURE,
-        SubTaskStatus.BOOT_FAILURE,
-        SubTaskStatus.READY_CHECK_FAILED,
-        SubTaskStatus.INFRA_FAILURE,
-    }
-)
 
 
 def _human_status(s: SubTaskStatus) -> str:
@@ -114,7 +104,7 @@ def render_qa_comment(
             f"**Status: Passed** — {len(apps_to_qa)} apps validated"
         )
     else:
-        failing_count = sum(1 for r in results if r.status in _FAILED_STATUSES)
+        failing_count = sum(1 for r in results if r.status in FAILED_STATUSES)
         lines.append(
             f"**Status: Failed** — {failing_count} of {len(results)} apps did not pass QA"
         )
@@ -130,12 +120,12 @@ def render_qa_comment(
 
     # Failed apps expanded
     for r in sorted_results:
-        if r.status in _FAILED_STATUSES:
+        if r.status in FAILED_STATUSES:
             lines.append(_detail_block(r, expanded=True))
             lines.append("")
 
     # Passed/skipped collapsed under one summary
-    passed_or_skipped = [r for r in sorted_results if r.status not in _FAILED_STATUSES]
+    passed_or_skipped = [r for r in sorted_results if r.status not in FAILED_STATUSES]
     if passed_or_skipped:
         lines.append("<details>")
         lines.append("<summary>passed / skipped (collapsed)</summary>")
