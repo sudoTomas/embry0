@@ -796,21 +796,3 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(internal_qa.router, prefix="/api/v1", tags=["internal-qa"])
     app.include_router(streaming.router)
 
-    # ── Phase 4: v2 dashboard surface ──
-    from athanor.api.deps import require_dashboard_auth
-    from athanor.api.v2 import auth as v2_auth
-    from athanor.api.v2 import repos as v2_repos
-    from athanor.api.v2 import runs as v2_runs
-    app.include_router(v2_auth.router, prefix="/v2", tags=["v2-auth"])
-    app.include_router(
-        v2_repos.router,
-        prefix="/v2",
-        tags=["v2-repos"],
-        dependencies=[require_dashboard_auth],
-    )
-    app.include_router(
-        v2_runs.router,
-        prefix="/v2",
-        tags=["v2-runs"],
-        dependencies=[require_dashboard_auth],
-    )

@@ -2,9 +2,9 @@
 
 from typing import Any
 
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Depends, Header, Request
 
-from athanor.api.auth import verify_api_key, verify_dashboard_jwt
+from athanor.api.auth import verify_api_key
 
 
 def _auth_dependency(
@@ -123,46 +123,3 @@ def get_docker(request: Request) -> Any:
         raise HTTPException(status_code=503, detail="docker client unavailable")
     return docker
 
-
-# ── Phase 4: dashboard auth dependency ──
-
-def _dashboard_auth_dependency(
-    request: Request,
-    authorization: str = Header(default=""),
-) -> None:
-    """Require either a Bearer API key OR a dashboard_session cookie.
-
-    Use cases:
-      - curl: `Authorization: Bearer <ATHANOR_API_KEY>` — same as v1.
-      - browser: HttpOnly cookie `dashboard_session=<jwt>` — set by /v2/auth/dashboard/login.
-
-    Skips both checks when auth_dev_mode is True (matches the existing v1 behavior).
-    """
-    config = request.app.state.config
-    if getattr(config, "auth_dev_mode", False):
-        return
-
-    api_key = config.api_key or ""
-
-    # Try Bearer first (programmatic clients).
-    if authorization.startswith("Bearer "):
-        try:
-            verify_api_key(api_key=api_key, authorization=authorization, auth_dev_mode=False)
-            return
-        except HTTPException:
-            pass  # fall through to cookie check
-
-    # Try cookie next (browser clients).
-    cookie_token = request.cookies.get("dashboard_session", "")
-    if cookie_token:
-        # Reuse the API key as the JWT secret. Single-tenant, single-secret design.
-        if verify_dashboard_jwt(cookie_token, secret=api_key) is not None:
-            return
-
-    raise HTTPException(
-        status_code=401,
-        detail="Authentication required: provide Bearer <api_key> or log in via /v2/auth/dashboard/login",
-    )
-
-
-require_dashboard_auth = Depends(_dashboard_auth_dependency)
