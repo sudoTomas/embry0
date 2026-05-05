@@ -871,3 +871,102 @@ async def test_orchestrator_skips_turbo_when_disabled(monkeypatch):
     assert out["qa"]["outcome"]["overall_status"] == "passed"
     # turbo_remote_enabled=False must be forwarded to run_subtask
     assert captured_kwargs.get("turbo_remote_enabled") is False
+
+
+# ── C2: init_orchestrator_node populates changed_files + repo_root ──────────
+
+
+_MIN_QA_YAML_V2 = """
+version: 2
+workspace_provider:
+  type: npm-workspaces-turbo
+  config:
+    affected_filter: "[origin/${base_branch}]"
+defaults:
+  mode: process
+  sandbox_profile: slim
+  ready_checks:
+    - http: "http://localhost:3000"
+parallelism:
+  max_concurrent_apps: 2
+apps:
+  hub:
+    boot_command: "echo started"
+    frontend_url: "http://localhost:3000"
+"""
+
+
+@pytest.mark.asyncio
+async def test_init_orchestrator_populates_changed_files_and_repo_root(
+    tmp_path, monkeypatch
+):
+    """The bootstrap sandbox runs git diff + finds + cats package.jsons; the
+    orchestrator stashes the staging dir on state['repo_root'] and the diff
+    on state['qa']['changed_files']."""
+    from athanor.workflows.qa.orchestrator import init_orchestrator_node
+
+    # Stub docker.run_cmd to dispatch by command shape.
+    async def fake_run(cmd, timeout=60):
+        s = " ".join(cmd)
+        if "git fetch" in s:
+            return ""
+        if "git diff --name-only" in s:
+            return "apps/hub/app/page.tsx\npackages/auth/src/index.ts\n"
+        if "find /workspace" in s:
+            return "/workspace/package.json\n/workspace/apps/hub/package.json\n"
+        if "cat /workspace/package.json" in s and "lock" not in s:
+            return '{"name": "root", "workspaces": ["apps/*"]}'
+        if "cat /workspace/apps/hub/package.json" in s:
+            return '{"name": "@toy/hub"}'
+        if "cat /workspace/.athanor/qa.yaml" in s:
+            return _MIN_QA_YAML_V2
+        if "cat /workspace/package-lock.json" in s:
+            return '{"lockfileVersion": 3}'
+        if "git rev-parse HEAD" in s:
+            return "abc123\n"
+        return ""
+
+    docker = AsyncMock()
+    docker.run_cmd = fake_run
+    docker.build_exec_cmd = lambda c, cmd, workdir=None, env=None: ["docker", "exec", c, *cmd]
+    docker._build_base_cmd = lambda: ["docker"]
+
+    # Stub sandbox manager.
+    sandbox_mgr = AsyncMock()
+    sandbox_mgr.create = AsyncMock(return_value=("bootstrap-c", "tok"))
+    sandbox_mgr.destroy = AsyncMock(return_value=None)
+
+    # Stub profiles repo.
+    profiles_repo = AsyncMock()
+    profiles_repo.get = AsyncMock(return_value={"name": "slim"})
+
+    # Force staging into tmp_path so the test doesn't write to /tmp.
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator._staging_dir_for",
+        lambda job_id: tmp_path / f"athanor-workspace-{job_id}",
+    )
+
+    state = {
+        "job_id": "job-1",
+        "repo": "org/repo",
+        "branch_name": "feature/x",
+        "base_branch": "main",
+    }
+    config = {
+        "configurable": {
+            "docker": docker,
+            "sandbox_manager": sandbox_mgr,
+            "profiles_repo": profiles_repo,
+        }
+    }
+
+    out = await init_orchestrator_node(state, config)
+    qa = out["qa"]
+
+    # changed_files populated.
+    assert qa["changed_files"] == ["apps/hub/app/page.tsx", "packages/auth/src/index.ts"]
+    # repo_root set to the local staging dir (so provider.affected can read).
+    assert out["repo_root"] == str(tmp_path / "athanor-workspace-job-1")
+    # Staged files exist.
+    assert (tmp_path / "athanor-workspace-job-1" / "package.json").is_file()
+    assert (tmp_path / "athanor-workspace-job-1" / "apps" / "hub" / "package.json").is_file()

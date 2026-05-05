@@ -17,11 +17,16 @@ Helper functions and data types live in orchestrator_helpers.py.
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 from typing import Any
 
 import structlog
 from langchain_core.runnables import RunnableConfig
 
+from athanor.workflows.qa._orchestrator_workspace import (
+    compute_changed_files_via_diff,
+    stage_workspace_for_provider,
+)
 from athanor.workflows.qa._subtask_env import build_qa_sandbox_env
 from athanor.workflows.qa.orchestrator_helpers import (
     OrchestratorOutcome,
@@ -30,9 +35,19 @@ from athanor.workflows.qa.orchestrator_helpers import (
     resolve_apps_to_qa,
     validate_against_qa_config,
 )
+from athanor.workspace_providers.npm_workspaces_turbo._filter_parse import (
+    parse_affected_filter,
+)
 from athanor.workspace_providers.registry import load_provider
 
 logger = structlog.get_logger(__name__)
+
+
+def _staging_dir_for(job_id: str) -> Path:
+    """Local /tmp dir into which the orchestrator stages workspace package.json
+    files for the workspace_provider to read. Replaceable in tests via
+    monkeypatch."""
+    return Path(f"/tmp/athanor-workspace-{job_id}")
 
 
 async def init_orchestrator_node(
@@ -101,6 +116,8 @@ async def init_orchestrator_node(
 
     container_id: str | None = None
     lockfile_text: str = ""
+    changed_files: list[str] = []
+    staging_path_str: str | None = None
     try:
         container_id, sandbox_token = await sandbox_mgr.create(
             bootstrap_job_id, profile=profile, env=env
@@ -144,6 +161,63 @@ async def init_orchestrator_node(
             )
         except Exception as lock_exc:  # noqa: BLE001
             logger.warning("bootstrap_lockfile_read_failed", error=str(lock_exc))
+
+        # Phase 3: compute changed_files inside the bootstrap sandbox.
+        # The bootstrap sandbox already has /workspace cloned; using the
+        # local git tree is faster + free vs the GitHub PR API.
+        try:
+            cfg_for_filter = parse_qa_yaml_v2(yaml_text)
+            affected_filter_text = (
+                cfg_for_filter.workspace_provider.config.get("affected_filter")
+                if isinstance(cfg_for_filter.workspace_provider.config, dict)
+                else None
+            )
+        except Exception:
+            affected_filter_text = None
+
+        default_base_branch = state.get("base_branch") or "main"
+        filter_parsed = parse_affected_filter(
+            affected_filter_text,
+            default_base_branch=default_base_branch,
+        )
+        if filter_parsed.warning:
+            logger.warning(
+                "qa_orchestrator_affected_filter_warning",
+                job_id=job_id,
+                warning=filter_parsed.warning,
+            )
+
+        try:
+            changed_files = await compute_changed_files_via_diff(
+                docker=docker,
+                container_id=container_id,
+                base_branch=filter_parsed.base_branch,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "qa_orchestrator_changed_files_compute_failed",
+                job_id=job_id,
+                error=str(exc),
+            )
+            changed_files = []
+
+        staging_dir = _staging_dir_for(job_id)
+        try:
+            await stage_workspace_for_provider(
+                docker=docker,
+                container_id=container_id,
+                job_id=job_id,
+                target_root=staging_dir,
+            )
+            staging_path_str = str(staging_dir)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "qa_orchestrator_workspace_stage_failed",
+                job_id=job_id,
+                error=str(exc),
+            )
+            staging_path_str = None
+
     except Exception as exc:  # noqa: BLE001
         outcome = OrchestratorOutcome(
             overall_status="infra_error",
@@ -244,7 +318,12 @@ async def init_orchestrator_node(
                     error=str(vol_exc),
                 )
 
-    return {"qa": qa}
+    out: dict[str, Any] = {"qa": qa}
+    # Phase 3 additions
+    qa["changed_files"] = list(changed_files)
+    if staging_path_str:
+        out["repo_root"] = staging_path_str
+    return out
 
 
 async def qa_orchestrator_node(
