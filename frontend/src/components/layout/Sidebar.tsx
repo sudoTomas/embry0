@@ -1,5 +1,5 @@
 import { NavLink } from "react-router";
-import { LayoutDashboard, Play, Workflow, Settings, Bot, Box, CircleDot, KeyRound } from "lucide-react";
+import { LayoutDashboard, Play, Workflow, Settings, Bot, Box, CircleDot, KeyRound, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -25,6 +25,7 @@ const MONITORING_ITEMS: NavItem[] = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard, stage: "publish" },
   { path: "/issues", label: "Issues", icon: CircleDot, stage: "triage" },
   { path: "/jobs", label: "Jobs", icon: Play, stage: "develop" },
+  { path: "/qa/repos", label: "QA", icon: Layers, stage: "qa" },
 ];
 
 const CONFIGURATION_ITEMS: NavItem[] = [

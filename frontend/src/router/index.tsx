@@ -19,6 +19,10 @@ const IssuesPage = lazy(() => import("@/pages/IssuesPage").then((m) => ({ defaul
 const IssueDetailPage = lazy(() => import("@/pages/IssueDetailPage").then((m) => ({ default: m.IssueDetailPage })));
 const EnvironmentsPage = lazy(() => import("@/pages/EnvironmentsPage").then((m) => ({ default: m.EnvironmentsPage })));
 const AboutOperationsPage = lazy(() => import("@/pages/AboutOperationsPage").then((m) => ({ default: m.AboutOperationsPage })));
+const QaAppHistoryPage = lazy(() => import("../pages/QaAppHistoryPage").then(m => ({ default: m.QaAppHistoryPage })));
+const QaRepoDetailPage = lazy(() => import("../pages/QaRepoDetailPage").then(m => ({ default: m.QaRepoDetailPage })));
+const QaReposPage = lazy(() => import("../pages/QaReposPage").then(m => ({ default: m.QaReposPage })));
+const QaRunDetailPage = lazy(() => import("../pages/QaRunDetailPage").then(m => ({ default: m.QaRunDetailPage })));
 
 const fallback = <div className="p-6 text-muted-foreground">Loading...</div>;
 
@@ -43,6 +47,10 @@ export const router = createBrowserRouter([
       { path: "issues", element: <ErrorBoundary inline><Suspense fallback={fallback}><IssuesPage /></Suspense></ErrorBoundary> },
       { path: "issues/:id", element: <ErrorBoundary inline><Suspense fallback={fallback}><IssueDetailPage /></Suspense></ErrorBoundary> },
       { path: "environments", element: <ErrorBoundary inline><Suspense fallback={fallback}><EnvironmentsPage /></Suspense></ErrorBoundary> },
+      { path: "qa/repos", element: <ErrorBoundary inline><Suspense fallback={fallback}><QaReposPage /></Suspense></ErrorBoundary> },
+      { path: "qa/repos/:repo/apps/:app", element: <ErrorBoundary inline><Suspense fallback={fallback}><QaAppHistoryPage /></Suspense></ErrorBoundary> },
+      { path: "qa/repos/:repo", element: <ErrorBoundary inline><Suspense fallback={fallback}><QaRepoDetailPage /></Suspense></ErrorBoundary> },
+      { path: "qa/runs/:runId", element: <ErrorBoundary inline><Suspense fallback={fallback}><QaRunDetailPage /></Suspense></ErrorBoundary> },
       { path: "settings", element: <ErrorBoundary inline><Suspense fallback={fallback}><SettingsPage /></Suspense></ErrorBoundary> },
       { path: "about/operations", element: <ErrorBoundary inline><Suspense fallback={fallback}><AboutOperationsPage /></Suspense></ErrorBoundary> },
       { path: "*", element: <ErrorBoundary inline><Suspense fallback={fallback}><NotFoundPage /></Suspense></ErrorBoundary> },
