@@ -12,6 +12,7 @@ to a warning + skip, so a flaky monorepo doesn't block the whole QA run.
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,7 @@ async def compute_changed_files_via_diff(
     fetch_cmd = [
         "bash",
         "-c",
-        f"cd /workspace && git fetch origin {base_branch}:refs/remotes/origin/{base_branch} --depth=50",
+        f"cd /workspace && git fetch origin {shlex.quote(base_branch)}:refs/remotes/origin/{shlex.quote(base_branch)} --depth=50",
     ]
     try:
         await docker.run_cmd(
@@ -59,7 +60,7 @@ async def compute_changed_files_via_diff(
     diff_cmd = [
         "bash",
         "-c",
-        f"cd /workspace && git diff --name-only origin/{base_branch}..HEAD || true",
+        f"cd /workspace && git diff --name-only origin/{shlex.quote(base_branch)}..HEAD || true",
     ]
     try:
         raw = await docker.run_cmd(
