@@ -105,7 +105,7 @@ def verify_dashboard_jwt(token: str, *, secret: str) -> dict | None:
     if not token:
         return None
     try:
-        payload = _jwt.decode(token, secret, algorithms=[_JWT_ALG], options={"leeway": -1})
+        payload = _jwt.decode(token, secret, algorithms=[_JWT_ALG])
     except JWTError:
         return None
     return payload

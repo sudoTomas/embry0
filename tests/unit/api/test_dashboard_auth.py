@@ -40,7 +40,7 @@ def test_verify_returns_none_on_malformed_token():
 def test_expired_token_fails_verification():
     secret = "test-secret-32-characters-minimum-here"
     token, _ = issue_dashboard_jwt(api_key="x", secret=secret, ttl_seconds=1)
-    time.sleep(1.2)
+    time.sleep(2)
     assert verify_dashboard_jwt(token, secret=secret) is None
 
 

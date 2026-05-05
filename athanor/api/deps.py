@@ -2,9 +2,9 @@
 
 from typing import Any
 
-from fastapi import Depends, Header, Request
+from fastapi import Depends, Header, HTTPException, Request
 
-from athanor.api.auth import verify_api_key
+from athanor.api.auth import verify_api_key, verify_dashboard_jwt
 
 
 def _auth_dependency(
@@ -138,10 +138,6 @@ def _dashboard_auth_dependency(
 
     Skips both checks when auth_dev_mode is True (matches the existing v1 behavior).
     """
-    from fastapi import HTTPException
-
-    from athanor.api.auth import verify_api_key, verify_dashboard_jwt
-
     config = request.app.state.config
     if getattr(config, "auth_dev_mode", False):
         return
