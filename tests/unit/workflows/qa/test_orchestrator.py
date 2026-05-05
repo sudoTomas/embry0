@@ -405,7 +405,11 @@ async def test_init_orchestrator_node_writes_yaml_to_state(monkeypatch):
     """init_orchestrator_node bootstrap-loads qa.yaml v2."""
 
     class _Sb:
+        def __init__(self):
+            self.last_env: dict = {}
+
         async def create(self, job_id, profile, env):
+            self.last_env = dict(env)
             return f"sb-{job_id}", "tok-" + "A" * 40
 
         async def destroy(self, container_id):
@@ -437,11 +441,12 @@ async def test_init_orchestrator_node_writes_yaml_to_state(monkeypatch):
                 return _QA_YAML_V2
             return ""
 
+    sb = _Sb()
     state = {"job_id": "run-4", "repo": "org/repo", "branch_name": "main", "qa": {}}
     config = {
         "configurable": {
             "docker": _Docker(),
-            "sandbox_manager": _Sb(),
+            "sandbox_manager": sb,
             "profiles_repo": _Profiles(),
             "proxy_manager": _ProxyMgr(),
         }
@@ -450,6 +455,10 @@ async def test_init_orchestrator_node_writes_yaml_to_state(monkeypatch):
     qa = out["qa"]
     assert qa["qa_yaml_v2_raw"] == _QA_YAML_V2
     assert qa["qa_yaml_v2_parsed"]["version"] == 2
+    # I3: bootstrap sandbox must receive ATHANOR_GIT_PROXY_URL + QA_JOB_ID.
+    assert sb.last_env.get("ATHANOR_GIT_PROXY_URL") == "http://git-proxy:9101"
+    assert sb.last_env.get("QA_JOB_ID") == "run-4::bootstrap"
+    assert sb.last_env.get("QA_ATTEMPT_N") == "1"
 
 
 @pytest.mark.asyncio

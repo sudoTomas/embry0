@@ -22,7 +22,7 @@ class JanitorReport:
 
 
 class _DockerLike(Protocol):
-    async def list_containers_with_label(self, label_prefix: str = ...) -> list[dict[str, Any]]: ...
+    async def list_containers_with_label(self, label_prefix: str = "athanor.qa_job_id") -> list[dict[str, Any]]: ...
     async def kill(self, container_id: str) -> None: ...
     async def remove(self, container_id: str) -> None: ...
 
@@ -44,14 +44,17 @@ async def reap_orphan_sandboxes(
     primitive — the scheduling is wired in Task 27.
     """
     report = JanitorReport()
-    containers = await docker.list_containers_with_label("athanor.qa_parent_run_id")
+    containers = await docker.list_containers_with_label("athanor.qa_job_id")
 
     for c in containers:
-        run_id = (c.get("labels") or {}).get("athanor.qa_parent_run_id")
-        if run_id is None:
+        sub_job_id = (c.get("labels") or {}).get("athanor.qa_job_id")
+        if sub_job_id is None:
             continue
+        # Derive parent: "parent_job_id::app_name" → "parent_job_id"
+        # Legacy single-app sandboxes have no "::" and are their own parent.
+        parent = sub_job_id.split("::", 1)[0]
         try:
-            active = await runs_repo.is_run_active(run_id)
+            active = await runs_repo.is_run_active(parent)
         except Exception as exc:  # noqa: BLE001
             report.failures[c["id"]] = f"is_run_active error: {exc}"
             continue

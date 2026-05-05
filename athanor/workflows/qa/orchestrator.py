@@ -217,10 +217,19 @@ async def init_orchestrator_node(
         docker._build_base_cmd() if hasattr(docker, "_build_base_cmd") else []
     )
 
+    env: dict[str, str] = {}
+    git_proxy_url = ""
+    if proxy_mgr is not None:
+        git_proxy_url = getattr(proxy_mgr, "git_proxy_url", "") or ""
+    if git_proxy_url:
+        env["ATHANOR_GIT_PROXY_URL"] = git_proxy_url
+    env["QA_JOB_ID"] = bootstrap_job_id
+    env["QA_ATTEMPT_N"] = "1"
+
     container_id: str | None = None
     try:
         container_id, sandbox_token = await sandbox_mgr.create(
-            bootstrap_job_id, profile=profile, env={}
+            bootstrap_job_id, profile=profile, env=env
         )
         cloned = await prep_qa_sandbox_clone(
             docker=docker,
