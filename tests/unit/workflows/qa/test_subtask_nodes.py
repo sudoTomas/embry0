@@ -10,7 +10,7 @@ Coverage map (spec §16.8):
   7.  boot_app_node — boot_outcome="passed", no status on BootResult(outcome="passed")
   8.  collect_artifacts_node — overall="passed" → SubTaskStatus.PASSED
   9.  collect_artifacts_node — overall="failed" → SubTaskStatus.QA_FAILURE + first failed criterion
-  10. collect_artifacts_node — overall="inconclusive" → INFRA_FAILURE
+  10. collect_artifacts_node — overall="inconclusive" → INCONCLUSIVE (not INFRA_FAILURE)
   11. collect_artifacts_node — malformed JSON → INFRA_FAILURE
   12. release_sandbox_node — calls sandbox_mgr.destroy, token unregister, cleanup_qa_resources
   13. acquire_sandbox_node — sanity: returns INFRA_FAILURE when required configurable missing
@@ -19,6 +19,7 @@ Coverage map (spec §16.8):
   16. exploratory_qa_node — sanity: short-circuits when status already set
   17. boot_app_node — short-circuits when status already set
   18. collect_artifacts_node — short-circuits when status already set
+  19. collect_artifacts_node — boot passed, no ready_checks → sentinel injected
 """
 
 from __future__ import annotations
@@ -375,7 +376,13 @@ async def test_collect_artifacts_node_failed_maps_first_criterion():
 
 
 @pytest.mark.asyncio
-async def test_collect_artifacts_node_inconclusive_maps_infra_failure():
+async def test_collect_artifacts_node_inconclusive_maps_inconclusive():
+    """overall=inconclusive → INCONCLUSIVE (not INFRA_FAILURE).
+
+    This is the agent's honest "I couldn't decide" verdict, not an
+    infrastructure failure — it should reduce to 'failed' at the run level,
+    not 'infra_error'.
+    """
     from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
 
     # overall=inconclusive with all acceptance_results=inconclusive (no failed)
@@ -416,8 +423,51 @@ async def test_collect_artifacts_node_inconclusive_maps_infra_failure():
     config = {"configurable": {"docker": docker}}
     out = await collect_artifacts_node(state, config)
 
-    assert out["status"] == SubTaskStatus.INFRA_FAILURE
+    assert out["status"] == SubTaskStatus.INCONCLUSIVE
     assert "inconclusive" in out["failure_summary"]
+
+
+@pytest.mark.asyncio
+async def test_collect_artifacts_node_boot_passed_no_ready_checks_injects_sentinel():
+    """When boot passed but no ready_checks are configured, a sentinel
+    ready_check is injected so QABootResult schema validation succeeds."""
+    from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
+    from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
+
+    docker = MagicMock()
+    docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
+    docker.run_cmd = AsyncMock(return_value=_make_result_json(overall="passed"))
+
+    # Build a resolved config with NO ready_checks (must avoid _resolved_app's
+    # `or [default]` fallback by constructing directly).
+    resolved = ResolvedAppConfig(
+        app_name="hub",
+        boot_command="npm run start",
+        frontend_url="http://localhost:3000",
+        mode="process",
+        sandbox_profile="slim",
+        ready_checks=[],
+        boot_timeout_seconds=120,
+        seed_command=None,
+        e2e=None,
+        acceptance_criteria=["App loads without errors"],
+    )
+    state = {
+        "status": None,
+        "resolved": resolved,
+        "sandbox_id": "cid",
+        "boot_outcome": "passed",
+        "boot_duration_ms": 1200,
+    }
+    config = {"configurable": {"docker": docker}}
+    out = await collect_artifacts_node(state, config)
+
+    assert out["status"] == SubTaskStatus.PASSED
+    # The raw_result should have a boot section with the sentinel URL
+    boot = out["raw_result"].get("boot") or {}
+    ready_checks = boot.get("ready_checks", [])
+    assert len(ready_checks) == 1
+    assert ready_checks[0]["url"] == "<no-ready-checks-configured>"
 
 
 @pytest.mark.asyncio

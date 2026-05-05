@@ -472,3 +472,55 @@ async def test_qa_orchestrator_short_circuits_on_init_failure(monkeypatch):
     }
     out = await qa_orchestrator_node(state, {})
     assert out["qa"]["outcome"]["overall_status"] == "infra_error"
+
+
+_QA_YAML_NEVER = """
+version: 2
+qa_required: never
+workspace_provider:
+  type: fake
+defaults:
+  mode: process
+  sandbox_profile: slim
+  ready_checks:
+    - http: "http://localhost:3000"
+apps:
+  hub:
+    boot_command: "x"
+    frontend_url: "http://localhost:3000"
+"""
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_node_qa_required_never_short_circuits(monkeypatch):
+    """qa_required: never short-circuits before workspace_provider load,
+    returning overall_status=passed with no apps fanned out."""
+
+    async def crash_subtask(*a, **kw):
+        raise AssertionError("fan-out should not have happened when qa_required=never")
+
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator.run_subtask", crash_subtask)
+
+    # load_provider should also never be called
+    def crash_load_provider(*a, **kw):
+        raise AssertionError("load_provider should not be called when qa_required=never")
+
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator.load_provider", crash_load_provider)
+
+    state = {
+        "job_id": "run-never",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_NEVER,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": AsyncMock()}}
+    out = await qa_orchestrator_node(state, config)
+
+    qa = out["qa"]
+    assert qa["outcome"]["overall_status"] == "passed"
+    assert qa["apps_to_qa"] == []
+    assert qa["per_app_results"] == []
+    assert qa["final_status"] == "passed"

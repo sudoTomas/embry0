@@ -639,6 +639,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON qa_app_results (status);
         """,
     ),
+    (
+        25,
+        "qa_app_results — extend status CHECK to include 'inconclusive'",
+        """
+        ALTER TABLE qa_app_results
+            DROP CONSTRAINT IF EXISTS qa_app_results_status_check;
+        ALTER TABLE qa_app_results
+            ADD CONSTRAINT qa_app_results_status_check CHECK (status IN (
+                'passed','qa_failure','e2e_failure','boot_failure',
+                'ready_check_failed','infra_failure','inconclusive','skipped'
+            ));
+        """,
+    ),
 ]
 
 

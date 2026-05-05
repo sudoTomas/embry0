@@ -16,7 +16,24 @@ def test_status_enum_values():
     assert SubTaskStatus.BOOT_FAILURE.value == "boot_failure"
     assert SubTaskStatus.READY_CHECK_FAILED.value == "ready_check_failed"
     assert SubTaskStatus.INFRA_FAILURE.value == "infra_failure"
+    assert SubTaskStatus.INCONCLUSIVE.value == "inconclusive"
     assert SubTaskStatus.SKIPPED.value == "skipped"
+
+
+def test_overall_status_failed_when_only_inconclusive():
+    """INCONCLUSIVE is a 'did not pass' verdict, not an infra failure.
+    overall_status should return 'failed', never 'infra_error'."""
+    results = [_r("hub", SubTaskStatus.INCONCLUSIVE)]
+    assert overall_status(results) == "failed"
+
+
+def test_overall_status_inconclusive_does_not_shadow_infra_error():
+    """INFRA_FAILURE still takes precedence over INCONCLUSIVE."""
+    results = [
+        _r("hub", SubTaskStatus.INCONCLUSIVE),
+        _r("companion", SubTaskStatus.INFRA_FAILURE),
+    ]
+    assert overall_status(results) == "infra_error"
 
 
 def test_is_terminal_status_true_for_known():

@@ -19,6 +19,7 @@ class SubTaskStatus(StrEnum):
     BOOT_FAILURE = "boot_failure"
     READY_CHECK_FAILED = "ready_check_failed"
     INFRA_FAILURE = "infra_failure"
+    INCONCLUSIVE = "inconclusive"
     SKIPPED = "skipped"
 
 
@@ -28,6 +29,7 @@ _FAILED_STATUSES = frozenset(
         SubTaskStatus.E2E_FAILURE,
         SubTaskStatus.BOOT_FAILURE,
         SubTaskStatus.READY_CHECK_FAILED,
+        SubTaskStatus.INCONCLUSIVE,
     }
 )
 

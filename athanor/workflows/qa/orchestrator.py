@@ -318,6 +318,22 @@ async def qa_orchestrator_node(
 
     cfg = parse_qa_yaml_v2(yaml_text)
 
+    if cfg.qa_required == "never":
+        outcome = OrchestratorOutcome(
+            overall_status="passed",
+            apps_to_qa=[],
+            failure_summary=None,
+        )
+        qa_state["outcome"] = _outcome_to_dict(outcome)
+        qa_state["per_app_results"] = []
+        qa_state["apps_to_qa"] = []
+        qa_state["final_status"] = "passed"
+        logger.info(
+            "qa_skipped_qa_required_never",
+            parent_run_id=state.get("job_id"),
+        )
+        return {"qa": qa_state}
+
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     qa_app_results_repo = configurable.get("qa_app_results_repo")
 

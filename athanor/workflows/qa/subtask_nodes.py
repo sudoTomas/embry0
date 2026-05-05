@@ -574,16 +574,25 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
         }
 
     # Synthesize the boot section from sub-task state — agent never writes it.
-    # QABootResult requires min_length=1 for ready_checks; only inject when
-    # there is at least one ready check configured.
-    if state.get("boot_outcome") == "passed" and resolved.ready_checks:
+    if state.get("boot_outcome") == "passed":
+        if resolved.ready_checks:
+            ready_check_results = [
+                QAReadyCheckResult(url=rc.http, status=rc.expect_status, duration_ms=0)
+                for rc in resolved.ready_checks
+            ]
+        else:
+            # No ready_checks configured — inject a sentinel so the schema accepts.
+            ready_check_results = [
+                QAReadyCheckResult(
+                    url="<no-ready-checks-configured>",
+                    status=200,
+                    duration_ms=0,
+                )
+            ]
         agent_dump["boot"] = QABootResult(
             command=resolved.boot_command,
             duration_ms=int(state.get("boot_duration_ms") or 0),
-            ready_checks=[
-                QAReadyCheckResult(url=rc.http, status=rc.expect_status, duration_ms=0)
-                for rc in resolved.ready_checks
-            ],
+            ready_checks=ready_check_results,
         ).model_dump()
 
     try:
@@ -607,7 +616,7 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
             else "agent reported overall=failed with no failed acceptance_results"
         )
     else:
-        sub_status = SubTaskStatus.INFRA_FAILURE
+        sub_status = SubTaskStatus.INCONCLUSIVE
         failure_summary = "agent reported overall=inconclusive"
 
     return {
