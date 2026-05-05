@@ -60,29 +60,33 @@ def resolve_app_config(
         or defaults.sandbox_profile
     )
 
-    ready_checks = (
-        (app_local.ready_checks if app_local else None)
-        or app_entry.ready_checks
-        or defaults.ready_checks
-    )
+    if app_local is not None and app_local.ready_checks is not None:
+        ready_checks = app_local.ready_checks
+    elif app_entry.ready_checks is not None:
+        ready_checks = app_entry.ready_checks
+    else:
+        ready_checks = defaults.ready_checks
 
-    boot_timeout_seconds = (
-        (app_local.boot_timeout_seconds if app_local else None)
-        or app_entry.boot_timeout_seconds
-        or defaults.boot_timeout_seconds
-    )
+    if app_local is not None and app_local.boot_timeout_seconds is not None:
+        boot_timeout_seconds = app_local.boot_timeout_seconds
+    elif app_entry.boot_timeout_seconds is not None:
+        boot_timeout_seconds = app_entry.boot_timeout_seconds
+    else:
+        boot_timeout_seconds = defaults.boot_timeout_seconds
 
-    seed_command = (
-        (app_local.seed_command if app_local else None)
-        or app_entry.seed_command
-        or defaults.seed_command
-    )
+    if app_local is not None and app_local.seed_command is not None:
+        seed_command = app_local.seed_command
+    elif app_entry.seed_command is not None:
+        seed_command = app_entry.seed_command
+    else:
+        seed_command = defaults.seed_command
 
-    e2e = (
-        (app_local.e2e if app_local else None)
-        or app_entry.e2e
-        or defaults.e2e
-    )
+    if app_local is not None and app_local.e2e is not None:
+        e2e = app_local.e2e
+    elif app_entry.e2e is not None:
+        e2e = app_entry.e2e
+    else:
+        e2e = defaults.e2e
 
     if app_local is not None and app_local.acceptance_criteria is not None:
         acceptance_criteria = list(app_local.acceptance_criteria)

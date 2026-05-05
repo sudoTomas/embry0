@@ -116,3 +116,33 @@ def test_resolved_is_immutable():
     resolved = resolve_app_config("hub", cfg, app_local=None)
     with pytest.raises(Exception):
         resolved.sandbox_profile = "other"  # type: ignore[misc]
+
+
+def test_app_can_disable_ready_checks_with_explicit_empty_list():
+    """Regression for ultrareview bug_015. An explicit `ready_checks: []`
+    at the app level must opt out of inherited defaults, not collapse
+    to defaults via the truthy `or` chain."""
+    from athanor.workflows.qa.qa_yaml_v2 import (
+        WorkspaceProviderRef,
+    )
+
+    cfg = QAYamlConfigV2(
+        version=2,
+        workspace_provider=WorkspaceProviderRef(type="fake"),
+        defaults=DefaultsBlock(
+            mode="process",
+            sandbox_profile="slim",
+            ready_checks=[QAReadyCheck(http="http://localhost:3000")],
+            boot_timeout_seconds=600,
+        ),
+        apps={
+            "worker": AppEntry(
+                boot_command="python worker.py",
+                frontend_url="http://localhost:0",
+                ready_checks=[],  # explicit opt-out
+            )
+        },
+    )
+
+    resolved = resolve_app_config("worker", cfg, app_local=None)
+    assert resolved.ready_checks == []
