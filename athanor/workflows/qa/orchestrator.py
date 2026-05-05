@@ -388,6 +388,7 @@ async def qa_orchestrator_node(
         user_env_vars=state.get("user_env_vars"),
         image_tag=image_tag,
         shared_volume_name=shared_volume_name,
+        turbo_remote_enabled=cfg.cache.turbo_remote.enabled,
         max_concurrent=cfg.parallelism.max_concurrent_apps,
         config=config or {},
     )

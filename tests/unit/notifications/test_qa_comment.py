@@ -139,6 +139,42 @@ def test_comment_workspace_warnings_section_when_present():
     assert "lane" in out
 
 
+def test_comment_shows_cache_hit_indicators_per_app():
+    """A SubTaskResult with all 3 cache layers hit should show 🔥 glyphs."""
+    result = SubTaskResult(
+        app_name="hub",
+        status=SubTaskStatus.PASSED,
+        duration_ms=1500,
+        cache_hits=CacheHits(
+            prebaked_image=True,
+            shared_volume=True,
+            turbo_remote_hits=["apps/hub#build", "apps/hub#lint"],
+            turbo_remote_misses=[],
+        ),
+        trace_url=None,
+        failure_summary=None,
+    )
+    out = render_qa_comment(
+        run_number=50,
+        overall_status="passed",
+        apps_to_qa=["hub"],
+        results=[result],
+    )
+    # All three layers hit → three fire glyphs
+    assert "\U0001f525\U0001f525\U0001f525" in out
+
+
+def test_comment_summary_table_includes_cache_column():
+    """The summary table header must contain a Cache column."""
+    out = render_qa_comment(
+        run_number=51,
+        overall_status="passed",
+        apps_to_qa=["hub"],
+        results=[_r("hub", SubTaskStatus.PASSED)],
+    )
+    assert "| Cache |" in out
+
+
 import httpx
 import pytest
 from unittest.mock import MagicMock

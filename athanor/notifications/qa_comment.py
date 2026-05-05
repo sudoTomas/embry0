@@ -18,6 +18,7 @@ import structlog
 
 from athanor.workflows.qa.subtask_result_schema import (
     FAILED_STATUSES,
+    CacheHits,
     SubTaskResult,
     SubTaskStatus,
 )
@@ -55,11 +56,25 @@ def _human_duration(ms: int) -> str:
     return f"{ms / 1000:.1f}s"
 
 
+def _cache_glyphs(hits: CacheHits) -> str:
+    """Three glyph slots for [image, volume, turbo]: 🔥 = hit, · = miss/none."""
+    image_g = "\U0001f525" if hits.prebaked_image else "\xb7"
+    volume_g = "\U0001f525" if hits.shared_volume else "\xb7"
+    turbo_total = len(hits.turbo_remote_hits) + len(hits.turbo_remote_misses)
+    if turbo_total == 0:
+        turbo_g = "\xb7"
+    else:
+        hit_ratio = len(hits.turbo_remote_hits) / turbo_total
+        turbo_g = "\U0001f525" if hit_ratio >= 0.5 else "\xb7"
+    return f"{image_g}{volume_g}{turbo_g}"
+
+
 def _summary_row(r: SubTaskResult) -> str:
     trace = f"[trace]({r.trace_url})" if r.trace_url else "—"
+    cache = _cache_glyphs(r.cache_hits)
     return (
         f"| apps/{r.app_name} | {_human_status(r.status)} | "
-        f"{_human_duration(r.duration_ms)} | {trace} |"
+        f"{_human_duration(r.duration_ms)} | {cache} | {trace} |"
     )
 
 
@@ -120,8 +135,8 @@ def render_qa_comment(
 
     sorted_results = sorted(results, key=lambda r: r.app_name)
 
-    lines.append("| App | Result | Duration | Trace |")
-    lines.append("|---|---|---:|:---:|")
+    lines.append("| App | Result | Duration | Cache | Trace |")
+    lines.append("|---|---|---:|:---:|:---:|")
     for r in sorted_results:
         lines.append(_summary_row(r))
     lines.append("")

@@ -101,6 +101,7 @@ async def fan_out_subtasks(
     user_env_vars: Any = None,
     image_tag: str | None = None,
     shared_volume_name: str | None = None,
+    turbo_remote_enabled: bool = False,
     max_concurrent: int,
     config: dict[str, Any],
 ) -> list[SubTaskResult]:
@@ -112,6 +113,9 @@ async def fan_out_subtasks(
 
     ``shared_volume_name`` — when set (Phase-2 C3), each sub-task mounts
     this pre-warmed volume at ``/workspace`` and skips git clone.
+
+    ``turbo_remote_enabled`` — Phase-2 E1.  When True, TURBO_* env vars are
+    injected into each sub-task's sandbox env (sourced from os.environ).
     """
     sem = asyncio.Semaphore(max_concurrent)
 
@@ -126,6 +130,7 @@ async def fan_out_subtasks(
                     user_env_vars=user_env_vars,
                     prebaked_image_tag=image_tag,
                     shared_volume_name=shared_volume_name,
+                    turbo_remote_enabled=turbo_remote_enabled,
                     config=config,
                 )
             except Exception as exc:  # noqa: BLE001

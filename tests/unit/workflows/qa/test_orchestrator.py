@@ -631,3 +631,243 @@ async def test_orchestrator_passes_image_tag_to_run_subtask_when_repo_configured
     assert out["qa"]["outcome"]["overall_status"] == "passed"
     assert captured_kwargs.get("prebaked_image_tag") == "raven/hub:sha-deadbeef"
     fake_image_repo.get_active.assert_awaited_once_with("org/monorepo")
+
+
+# ── E1: cache flag gating ────────────────────────────────────────────────────
+
+_QA_YAML_CACHE_DISABLED = """
+version: 2
+workspace_provider:
+  type: fake
+defaults:
+  mode: process
+  sandbox_profile: slim
+  ready_checks:
+    - http: "http://localhost:3000"
+cache:
+  prebaked_image:
+    enabled: false
+  shared_volume:
+    enabled: false
+  turbo_remote:
+    enabled: false
+apps:
+  hub:
+    boot_command: "x"
+    frontend_url: "http://localhost:3000"
+packages: {}
+"""
+
+_QA_YAML_CACHE_ENABLED = """
+version: 2
+workspace_provider:
+  type: fake
+defaults:
+  mode: process
+  sandbox_profile: slim
+  ready_checks:
+    - http: "http://localhost:3000"
+cache:
+  prebaked_image:
+    enabled: true
+  shared_volume:
+    enabled: true
+    scope: per-job
+  turbo_remote:
+    enabled: true
+apps:
+  hub:
+    boot_command: "x"
+    frontend_url: "http://localhost:3000"
+packages: {}
+"""
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_skips_image_lookup_when_disabled(monkeypatch):
+    """image_repo.get_active must NOT be called when cache.prebaked_image.enabled=False."""
+    from pathlib import Path
+
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from athanor.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        packages=[],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        ),
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    fake_image_repo = AsyncMock()
+    fake_image_repo.get_active = AsyncMock(return_value=None)
+
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+
+    state = {
+        "job_id": "run-e1-image",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_CACHE_DISABLED,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    config = {
+        "configurable": {
+            "qa_app_results_repo": AsyncMock(),
+            "qa_image_tags_repo": fake_image_repo,
+        }
+    }
+
+    out = await qa_orchestrator_node(state, config)
+    assert out["qa"]["outcome"]["overall_status"] == "passed"
+    # get_active must never be called when prebaked_image.enabled=False
+    fake_image_repo.get_active.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch):
+    """warm_shared_volume must NOT be called when cache.shared_volume.enabled=False."""
+    from pathlib import Path
+
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from athanor.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    warmer_called = []
+
+    async def fake_warm(*a, **kw):
+        warmer_called.append(True)
+
+    monkeypatch.setattr(
+        "athanor.cache.volume_warmer.warm_shared_volume",
+        fake_warm,
+    )
+
+    class _Sb:
+        async def create(self, job_id, profile, env):
+            return f"sb-{job_id}", "tok-" + "A" * 40
+
+        async def destroy(self, cid):
+            return None
+
+    class _Profiles:
+        async def get(self, name):
+            return {"name": "slim"}
+
+    class _Docker:
+        def _build_base_cmd(self):
+            return ["docker"]
+
+        def build_exec_cmd(self, cid, cmd):
+            return ["docker", "exec", cid, *cmd]
+
+        async def run_cmd(self, cmd, timeout=None):
+            joined = " ".join(cmd)
+            if "rev-parse HEAD" in joined:
+                return "abc123\n"
+            if "/workspace/.athanor/qa.yaml" in joined:
+                return _QA_YAML_CACHE_DISABLED
+            return ""
+
+    state = {
+        "job_id": "run-e1-volume",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {},
+    }
+    config = {
+        "configurable": {
+            "docker": _Docker(),
+            "sandbox_manager": _Sb(),
+            "profiles_repo": _Profiles(),
+            "qa_shared_volume_manager": AsyncMock(),
+            "qa_volume_state_repo": AsyncMock(),
+        }
+    }
+
+    out = await init_orchestrator_node(state, config)
+    # shared_volume_name must NOT be set when enabled=False
+    assert out["qa"].get("shared_volume_name") is None
+    assert warmer_called == [], "warm_shared_volume should not have been called"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_skips_turbo_when_disabled(monkeypatch):
+    """turbo_remote_enabled=False must reach run_subtask when cache.turbo_remote.enabled=False."""
+    from pathlib import Path
+
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from athanor.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        packages=[],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        ),
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    captured_kwargs: dict = {}
+
+    async def spy_run_subtask(resolved, **kw):
+        captured_kwargs.update(kw)
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", spy_run_subtask)
+
+    state = {
+        "job_id": "run-e1-turbo",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_CACHE_DISABLED,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    config = {"configurable": {"qa_app_results_repo": AsyncMock()}}
+
+    out = await qa_orchestrator_node(state, config)
+    assert out["qa"]["outcome"]["overall_status"] == "passed"
+    # turbo_remote_enabled=False must be forwarded to run_subtask
+    assert captured_kwargs.get("turbo_remote_enabled") is False

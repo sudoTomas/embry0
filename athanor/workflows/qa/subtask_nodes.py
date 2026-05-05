@@ -124,12 +124,31 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
     if proxy_mgr is not None:
         git_proxy_url = getattr(proxy_mgr, "git_proxy_url", "") or ""
 
+    # Phase-2 E1: honor cache.turbo_remote.enabled.  When True, build a
+    # TurboRemoteConfig from os.environ (TURBO_API/TURBO_TEAM/TURBO_TOKEN).
+    # Actual secret plumbing via athanor secret store is deferred to Phase 3;
+    # for Phase 2 the boolean flag is the gate and env-var sourcing is the shim.
+    turbo_remote_config = None
+    if state.get("turbo_remote_enabled"):
+        import os  # noqa: PLC0415
+
+        from athanor.cache.turbo_remote import TurboRemoteConfig  # noqa: PLC0415
+
+        api_url = os.environ.get("TURBO_API", "")
+        team = os.environ.get("TURBO_TEAM", "")
+        token = os.environ.get("TURBO_TOKEN", "")
+        if api_url and token:
+            turbo_remote_config = TurboRemoteConfig(
+                api_url=api_url, team=team, token=token
+            )
+
     env = build_qa_sandbox_env(
         user_env_vars=state.get("user_env_vars"),
         git_proxy_url=git_proxy_url,
         qa_job_id=sub_job_id,
         attempt_n=1,
         qa_network_name=qa_net,
+        turbo_remote_config=turbo_remote_config,
     )
 
     # Allocate sandbox.  When the shared-volume cache layer is active, mount

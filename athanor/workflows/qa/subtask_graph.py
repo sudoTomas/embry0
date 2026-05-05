@@ -83,6 +83,7 @@ async def run_subtask(
     user_env_vars: Any = None,
     prebaked_image_tag: str | None = None,
     shared_volume_name: str | None = None,
+    turbo_remote_enabled: bool = False,
     config: dict[str, Any],
 ) -> SubTaskResult:
     """Helper: run one sub-task and return its SubTaskResult.
@@ -92,6 +93,9 @@ async def run_subtask(
 
     ``shared_volume_name`` — Phase-2 C3.  When provided, the sub-task mounts
     this pre-warmed Docker volume at ``/workspace`` and skips git clone.
+
+    ``turbo_remote_enabled`` — Phase-2 E1.  When True, TURBO_* env vars are
+    injected into the sandbox env (sourced from os.environ).
     """
     graph = _get_subgraph()
     initial = initial_state_for_app(
@@ -102,6 +106,7 @@ async def run_subtask(
         user_env_vars=user_env_vars,
         prebaked_image_tag=prebaked_image_tag,
         shared_volume_name=shared_volume_name,
+        turbo_remote_enabled=turbo_remote_enabled,
     )
     final_state = await graph.ainvoke(initial, config=config)
     return final_state["subtask_result"]
