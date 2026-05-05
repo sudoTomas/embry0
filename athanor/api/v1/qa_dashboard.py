@@ -1,0 +1,141 @@
+"""QA dashboard routes — GET /api/v1/qa/... endpoints."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException, Query, Request
+
+from athanor.api.schemas.qa_dashboard import (
+    AppHistoryItem,
+    AppResult,
+    CacheHitsModel,
+    RepoEntry,
+    RunDetail,
+    RunListItem,
+)
+
+router = APIRouter()
+
+
+def _to_app_result(row) -> AppResult:
+    return AppResult(
+        app_name=row.app_name,
+        status=str(row.status),
+        duration_ms=row.duration_ms,
+        cache_hits=CacheHitsModel(
+            prebaked_image=row.cache_hits.prebaked_image,
+            shared_volume=row.cache_hits.shared_volume,
+            turbo_remote_hits=list(row.cache_hits.turbo_remote_hits),
+            turbo_remote_misses=list(row.cache_hits.turbo_remote_misses),
+        ),
+        trace_url=row.trace_url,
+        failure_summary=row.failure_summary,
+    )
+
+
+def _overall_status(rows) -> str:
+    return "failed" if any(str(r.status) != "passed" for r in rows) else "passed"
+
+
+@router.get("/qa/repos", response_model=list[RepoEntry])
+async def list_repos(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+) -> list[RepoEntry]:
+    """List repos that have at least one QA run, latest first."""
+    repo = request.app.state.qa_app_results_repo
+    rows = await repo.list_repos_with_runs(limit=limit)
+    return [
+        RepoEntry(
+            repo=r.repo,
+            latest_run_id=r.latest_run_id,
+            latest_status=r.latest_status,
+            latest_started_at=r.latest_started_at,
+            latest_app_count=r.latest_app_count,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/qa/repos/{repo:path}/runs", response_model=list[RunListItem])
+async def list_runs_for_repo(
+    repo: str,
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> list[RunListItem]:
+    """Paginated run list for one repo, newest first."""
+    qa_repo = request.app.state.qa_app_results_repo
+    rows = await qa_repo.list_runs_for_repo(repo, limit=limit, offset=offset)
+    return [
+        RunListItem(
+            job_id=r.job_id,
+            repo=r.repo,
+            started_at=r.started_at,
+            overall_status=r.overall_status,
+            app_count=r.app_count,
+        )
+        for r in rows
+    ]
+
+
+@router.get(
+    "/qa/repos/{repo:path}/apps/{app}/history",
+    response_model=list[AppHistoryItem],
+)
+async def list_app_history(
+    repo: str,
+    app: str,
+    request: Request,
+    limit: int = Query(20, ge=1, le=100),
+) -> list[AppHistoryItem]:
+    """Last-N runs that included this (repo, app) pair, newest first."""
+    qa_repo = request.app.state.qa_app_results_repo
+    rows = await qa_repo.list_history_for_app(repo, app, limit=limit)
+    return [
+        AppHistoryItem(
+            job_id=r.job_id,
+            app_name=r.app_name,
+            status=r.status,
+            duration_ms=r.duration_ms,
+            started_at=r.started_at,
+            failure_summary=r.failure_summary,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/qa/runs/{run_id}", response_model=RunDetail)
+async def get_run(run_id: str, request: Request) -> RunDetail:
+    """Full run detail with per-app results inlined."""
+    qa_repo = request.app.state.qa_app_results_repo
+    jobs_repo = request.app.state.jobs_repo
+
+    job = await jobs_repo.get(run_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+
+    rows = await qa_repo.list_for_job(run_id)
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"run {run_id!r} has no QA app results")
+
+    return RunDetail(
+        job_id=run_id,
+        repo=job["repo"],
+        started_at=job["started_at"],
+        overall_status=_overall_status(rows),
+        apps=[_to_app_result(r) for r in rows],
+    )
+
+
+@router.get("/qa/runs/{run_id}/apps/{app}", response_model=AppResult)
+async def get_run_app(run_id: str, app: str, request: Request) -> AppResult:
+    """One per-app result inside a run."""
+    qa_repo = request.app.state.qa_app_results_repo
+    rows = await qa_repo.list_for_job(run_id)
+    for r in rows:
+        if r.app_name == app:
+            return _to_app_result(r)
+    raise HTTPException(
+        status_code=404,
+        detail=f"run {run_id!r} has no result for app {app!r}",
+    )
