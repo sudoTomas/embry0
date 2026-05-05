@@ -25,6 +25,7 @@ from athanor.storage.repositories.integration_config import IntegrationConfigRep
 from athanor.storage.repositories.jobs import JobsRepository
 from athanor.storage.repositories.pipeline_templates import PipelineTemplatesRepository
 from athanor.storage.repositories.provider_config import ProviderConfigRepository
+from athanor.storage.repositories.qa_app_results import QAAppResultsRepository
 from athanor.storage.repositories.repo_preferences import RepoPreferencesRepository
 from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
 from athanor.storage.repositories.traces import TracesRepository
@@ -197,6 +198,7 @@ async def _init_app_state(
     app.state.provider_repo = ProviderConfigRepository(db)
     app.state.env_repo = EnvironmentRepository(db)
     app.state.repo_preferences_repo = RepoPreferencesRepository(db)
+    app.state.qa_app_results_repo = QAAppResultsRepository(db)
 
     app.state.issues_repo = IssuesRepository(db)
     app.state.inputs_repo = IssueInputsRepository(db)
@@ -793,5 +795,13 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(streaming.router)
 
     # ── Phase 4: v2 dashboard surface ──
+    from athanor.api.deps import require_dashboard_auth
     from athanor.api.v2 import auth as v2_auth
+    from athanor.api.v2 import repos as v2_repos
     app.include_router(v2_auth.router, prefix="/v2", tags=["v2-auth"])
+    app.include_router(
+        v2_repos.router,
+        prefix="/v2",
+        tags=["v2-repos"],
+        dependencies=[require_dashboard_auth],
+    )
