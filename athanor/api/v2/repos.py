@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
 
-from athanor.api.v2.schemas import RepoEntry, RunListItem
+from athanor.api.v2.schemas import AppHistoryItem, RepoEntry, RunListItem
 
 router = APIRouter()
 
@@ -46,6 +46,32 @@ async def list_runs_for_repo(
             started_at=r.started_at,
             overall_status=r.overall_status,
             app_count=r.app_count,
+        )
+        for r in rows
+    ]
+
+
+@router.get(
+    "/repos/{repo:path}/apps/{app}/history",
+    response_model=list[AppHistoryItem],
+)
+async def list_app_history(
+    repo: str,
+    app: str,
+    request: Request,
+    limit: int = Query(20, ge=1, le=100),
+) -> list[AppHistoryItem]:
+    """Last-N runs that included this (repo, app) pair, newest first."""
+    qa_repo = request.app.state.qa_app_results_repo
+    rows = await qa_repo.list_history_for_app(repo, app, limit=limit)
+    return [
+        AppHistoryItem(
+            job_id=r.job_id,
+            app_name=r.app_name,
+            status=r.status,
+            duration_ms=r.duration_ms,
+            started_at=r.started_at,
+            failure_summary=r.failure_summary,
         )
         for r in rows
     ]

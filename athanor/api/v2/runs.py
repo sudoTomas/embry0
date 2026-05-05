@@ -54,3 +54,17 @@ async def get_run(run_id: str, request: Request) -> RunDetail:
         overall_status=_overall_status(rows),
         apps=[_to_app_result(r) for r in rows],
     )
+
+
+@router.get("/runs/{run_id}/apps/{app}", response_model=AppResult)
+async def get_run_app(run_id: str, app: str, request: Request) -> AppResult:
+    """One per-app result inside a run."""
+    qa_repo = request.app.state.qa_app_results_repo
+    rows = await qa_repo.list_for_job(run_id)
+    for r in rows:
+        if r.app_name == app:
+            return _to_app_result(r)
+    raise HTTPException(
+        status_code=404,
+        detail=f"run {run_id!r} has no result for app {app!r}",
+    )
