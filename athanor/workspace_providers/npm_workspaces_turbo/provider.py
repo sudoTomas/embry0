@@ -4,8 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from athanor.workspace_providers.npm_workspaces_turbo._affected import (
+    compute_affected,
+)
+from athanor.workspace_providers.npm_workspaces_turbo._dep_graph import (
+    build_dep_graph,
+)
 from athanor.workspace_providers.npm_workspaces_turbo._discover import (
     discover_workspaces,
+)
+from athanor.workspace_providers.npm_workspaces_turbo._path_index import (
+    build_path_index,
 )
 from athanor.workspace_providers.npm_workspaces_turbo.config import NpmTurboConfig
 from athanor.workspace_providers.provider import (
@@ -16,10 +25,12 @@ from athanor.workspace_providers.provider import (
 
 
 class NpmWorkspacesTurboProvider:
-    """Reads npm `workspaces` from root package.json; uses turbo for affected().
+    """Reads npm `workspaces` from root package.json; computes affected set
+    from the dep graph in pure Python.
 
-    Phase 1: `affected()` returns ALL apps regardless of diff (Phase 3 wires
-    in real diff filtering via `turbo run --filter`).
+    Phase 3: real diff-aware affected() (replaces the Phase-1 stub).
+    No `npx turbo` invocation — see plans/2026-05-05-...-phase-3 §"Open spec
+    questions resolved" for rationale.
     """
 
     name = "npm-workspaces-turbo"
@@ -40,14 +51,36 @@ class NpmWorkspacesTurboProvider:
         changed_files: list[Path],
         no_cascade_packages: frozenset[str],
     ) -> AffectedSet:
-        # Phase-1 stub: every app is "affected". Phase 3 replaces this with
-        # `turbo run build --dry=json --filter=...` and proper closure.
+        """Compute the affected set from a diff using the workspace dep graph.
+
+        Phase 3 implementation — pure-Python closure with no_cascade
+        subtraction. Reads every package.json under apps_glob/packages_glob
+        from `self.repo_root` to build the graph; walks reverse edges from
+        the diff-touched packages.
+        """
+        graph = build_dep_graph(
+            repo_root=self.repo_root,
+            apps_glob=self.config.apps_glob,
+            packages_glob=self.config.packages_glob,
+        )
+        path_index = build_path_index(
+            repo_root=self.repo_root,
+            apps_glob=self.config.apps_glob,
+            packages_glob=self.config.packages_glob,
+        )
+
+        # Translate file paths → owning package names. Files at the root
+        # (or in unmatched directories) contribute nothing to the diff.
+        directly_changed = path_index.owners_of_paths(list(changed_files))
+
         apps, _ = self.discover()
         all_app_packages = frozenset(a.package_name for a in apps)
-        return AffectedSet(
-            directly_changed=all_app_packages,
-            cascade_closure=all_app_packages,
-            apps_to_qa=all_app_packages,
+
+        return compute_affected(
+            directly_changed=directly_changed,
+            graph=graph,
+            apps=all_app_packages,
+            no_cascade_packages=no_cascade_packages,
         )
 
     def validate(self, apps_declared_in_qa_config: list[str]) -> list[str]:
@@ -65,14 +98,12 @@ class NpmWorkspacesTurboProvider:
 
         messages: list[str] = []
 
-        # Errors: declared but not present.
         for missing in sorted(declared - workspace_app_names):
             messages.append(
                 f"error: app {missing!r} declared in qa.yaml apps: but not found "
                 f"in workspace (apps_glob={self.config.apps_glob!r})"
             )
 
-        # Warnings: present but not declared. Athanor will not QA these.
         for orphan in sorted(workspace_app_names - declared):
             messages.append(
                 f"warning: app {orphan!r} present in workspace but missing from "
