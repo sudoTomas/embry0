@@ -239,6 +239,12 @@ async def _init_app_state(
         qa_token_registry=getattr(app.state, "qa_token_registry", None),
         profiles_repo=app.state.profiles_repo,
         agent_sessions_repo=app.state.agent_sessions_repo,
+        # Phase-A wiring: cache layers + dashboard reporting
+        qa_app_results_repo=app.state.qa_app_results_repo,
+        qa_image_tags_repo=app.state.qa_image_tags_repo,
+        qa_volume_state_repo=app.state.qa_volume_state_repo,
+        qa_shared_volume_manager=app.state.qa_shared_volume_manager,
+        github_token=github_token,
         github_comment_channel=github_comment_channel,
         telegram_channel=telegram_channel,
         **executor_kwargs,
@@ -641,11 +647,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     # Now that _init_app_state has populated the repos and docker is ready,
-    # construct SharedVolumeManager and update the placeholder.
-    app.state.qa_shared_volume_manager = SharedVolumeManager(
+    # construct SharedVolumeManager and update both the placeholder on app.state
+    # and the reference stored in the executor (which was initialized with None
+    # earlier when docker was not yet ready).
+    real_manager = SharedVolumeManager(
         docker=app.state.docker,
         state_repo=app.state.qa_volume_state_repo,
     )
+    app.state.qa_shared_volume_manager = real_manager
+    app.state.issue_executor._qa_shared_volume_manager = real_manager
 
     app.state.issue_executor._background_tasks = app.state.background_tasks
 

@@ -28,14 +28,18 @@ def _make_state_with_db():
     ))
 
     # Simulate the lifespan's docker initialization and manager construction
-    # (the real lifespan does this at line ~481 and ~635, but the test
+    # (the real lifespan does this at line ~481 and ~645, but the test
     # short-circuits by calling _init_app_state directly).
     app.state.docker = MagicMock()
     from athanor.cache.volume_manager import SharedVolumeManager
-    app.state.qa_shared_volume_manager = SharedVolumeManager(
+    real_manager = SharedVolumeManager(
         docker=app.state.docker,
         state_repo=app.state.qa_volume_state_repo,
     )
+    app.state.qa_shared_volume_manager = real_manager
+    # Also update the executor's reference, matching the lifespan behavior
+    # where the manager is set after the executor is constructed with None.
+    app.state.issue_executor._qa_shared_volume_manager = real_manager
 
     return app
 
@@ -66,3 +70,25 @@ def test_github_token_threaded_to_issue_executor():
     app = _make_state_with_db()
     executor = app.state.issue_executor
     assert getattr(executor, "_github_token", None) == "test-token-32-characters-or-longer-x"
+
+
+def test_executor_carries_qa_image_tags_repo():
+    app = _make_state_with_db()
+    assert app.state.issue_executor._qa_image_tags_repo is not None
+
+
+def test_executor_carries_qa_volume_state_repo():
+    app = _make_state_with_db()
+    assert app.state.issue_executor._qa_volume_state_repo is not None
+
+
+def test_executor_carries_qa_shared_volume_manager():
+    app = _make_state_with_db()
+    assert app.state.issue_executor._qa_shared_volume_manager is not None
+
+
+def test_executor_carries_qa_app_results_repo():
+    """Phase-4 B2 instantiated this on app.state but did NOT pass it into
+    the executor. Fix here so _build_graph_config can include it."""
+    app = _make_state_with_db()
+    assert app.state.issue_executor._qa_app_results_repo is not None

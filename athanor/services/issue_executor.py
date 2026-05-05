@@ -75,6 +75,12 @@ class IssueExecutor:
         qa_token_registry: Any = None,  # SandboxTokenRegistry — used by init_qa + report
         profiles_repo: SandboxProfilesRepository | None = None,  # SandboxProfilesRepository — init_qa
         agent_sessions_repo: Any = None,  # AgentSessionsRepository — Plan C resume
+        # Phase-A wiring: cache layers + dashboard reporting
+        qa_app_results_repo: Any = None,
+        qa_image_tags_repo: Any = None,
+        qa_volume_state_repo: Any = None,
+        qa_shared_volume_manager: Any = None,
+        github_token: str | None = None,
         telegram_channel: Any = None,
         github_comment_channel: Any = None,
     ) -> None:
@@ -99,6 +105,12 @@ class IssueExecutor:
         self._qa_token_registry = qa_token_registry
         self._profiles_repo = profiles_repo
         self._agent_sessions_repo = agent_sessions_repo
+        # Phase-A wiring: cache layers + dashboard reporting
+        self._qa_app_results_repo = qa_app_results_repo
+        self._qa_image_tags_repo = qa_image_tags_repo
+        self._qa_volume_state_repo = qa_volume_state_repo
+        self._qa_shared_volume_manager = qa_shared_volume_manager
+        self._github_token = github_token
         self._telegram_channel = telegram_channel
         self._github_comment_channel = github_comment_channel
         self._background_tasks: set[asyncio.Task[Any]] = set()
