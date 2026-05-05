@@ -53,7 +53,8 @@ class CacheHits:
 
     prebaked_image: bool = False
     shared_volume: bool = False
-    turbo_remote: bool = False
+    turbo_remote_hits: list[str] = field(default_factory=list)
+    turbo_remote_misses: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

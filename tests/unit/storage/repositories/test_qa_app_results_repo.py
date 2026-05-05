@@ -96,7 +96,12 @@ async def test_upsert_preserves_cache_hits_roundtrip(repo, db):
         app_name="hub",
         status=SubTaskStatus.PASSED,
         duration_ms=50,
-        cache_hits=CacheHits(prebaked_image=True, shared_volume=False, turbo_remote=True),
+        cache_hits=CacheHits(
+            prebaked_image=True,
+            shared_volume=False,
+            turbo_remote_hits=["apps/hub#build"],
+            turbo_remote_misses=["apps/companion#build"],
+        ),
         trace_url="https://x/trace.zip",
     )
     await repo.upsert(job_id, result)
@@ -105,5 +110,6 @@ async def test_upsert_preserves_cache_hits_roundtrip(repo, db):
     assert len(rows) == 1
     assert rows[0].cache_hits.prebaked_image is True
     assert rows[0].cache_hits.shared_volume is False
-    assert rows[0].cache_hits.turbo_remote is True
+    assert rows[0].cache_hits.turbo_remote_hits == ["apps/hub#build"]
+    assert rows[0].cache_hits.turbo_remote_misses == ["apps/companion#build"]
     assert rows[0].trace_url == "https://x/trace.zip"

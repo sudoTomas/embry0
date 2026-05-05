@@ -26,6 +26,7 @@ class BootResult:
     duration_ms: int
     failed_checks: list[str] = field(default_factory=list)
     error_message: str = ""
+    stdout: str = ""
 
 
 async def run_boot_phase(
@@ -61,9 +62,11 @@ async def run_boot_phase(
 
     started_at = time.monotonic()
 
+    boot_stdout = ""
     try:
         cmd = ["bash", "-c", command]
-        await docker.run_cmd(docker.build_exec_cmd(container_id, cmd), timeout=120)
+        raw = await docker.run_cmd(docker.build_exec_cmd(container_id, cmd), timeout=120)
+        boot_stdout = raw if isinstance(raw, str) else (raw or "")
     except Exception as exc:
         logger.error("boot_startup_command_failed", error=str(exc))
         return BootResult(
@@ -100,6 +103,7 @@ async def run_boot_phase(
                 outcome="passed",
                 attempts=attempts,
                 duration_ms=int((time.monotonic() - started_at) * 1000),
+                stdout=boot_stdout,
             )
 
         elapsed = time.monotonic() - started_at
@@ -115,6 +119,7 @@ async def run_boot_phase(
                 attempts=attempts,
                 duration_ms=int(elapsed * 1000),
                 failed_checks=failed_checks,
+                stdout=boot_stdout,
             )
 
         await asyncio.sleep(sleep_seconds)

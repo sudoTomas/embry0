@@ -62,7 +62,8 @@ def _hydrate_results(per_app_dicts: list[dict[str, Any]]) -> list[SubTaskResult]
                 cache_hits=CacheHits(
                     prebaked_image=bool(ch.get("prebaked_image", False)),
                     shared_volume=bool(ch.get("shared_volume", False)),
-                    turbo_remote=bool(ch.get("turbo_remote", False)),
+                    turbo_remote_hits=list(ch.get("turbo_remote_hits") or []),
+                    turbo_remote_misses=list(ch.get("turbo_remote_misses") or []),
                 ),
                 trace_url=d.get("trace_url"),
                 failure_summary=d.get("failure_summary"),

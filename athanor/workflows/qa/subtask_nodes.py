@@ -264,10 +264,20 @@ async def boot_app_node(state: SubTaskState, config: RunnableConfig) -> dict[str
                 "completed_at": time.monotonic(),
             }
 
+    from athanor.cache.turbo_remote import parse_turbo_stdout_for_hits  # noqa: PLC0415
+
+    boot_stdout = getattr(result, "stdout", "") or ""
+    turbo_hits, turbo_misses = parse_turbo_stdout_for_hits(boot_stdout)
+
     if result.outcome == "passed":
         return {
             "boot_outcome": "passed",
             "boot_duration_ms": result.duration_ms,
+            "cache_hits_partial": {
+                **(state.get("cache_hits_partial") or {}),
+                "turbo_remote_hits": turbo_hits,
+                "turbo_remote_misses": turbo_misses,
+            },
         }
 
     if result.outcome == "timeout":
@@ -280,6 +290,11 @@ async def boot_app_node(state: SubTaskState, config: RunnableConfig) -> dict[str
                 f"{resolved.boot_timeout_seconds}s"
             ),
             "completed_at": time.monotonic(),
+            "cache_hits_partial": {
+                **(state.get("cache_hits_partial") or {}),
+                "turbo_remote_hits": turbo_hits,
+                "turbo_remote_misses": turbo_misses,
+            },
         }
 
     # startup_failed
@@ -582,7 +597,8 @@ async def emit_result_node(state: SubTaskState, config: RunnableConfig) -> dict[
     cache_hits = CacheHits(
         prebaked_image=bool(partial.get("prebaked_image", False)),
         shared_volume=bool(partial.get("shared_volume", False)),
-        turbo_remote=bool(partial.get("turbo_remote", False)),
+        turbo_remote_hits=list(partial.get("turbo_remote_hits", [])),
+        turbo_remote_misses=list(partial.get("turbo_remote_misses", [])),
     )
     result = SubTaskResult(
         app_name=state["app_name"],

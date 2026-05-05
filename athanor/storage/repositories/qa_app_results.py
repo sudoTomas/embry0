@@ -46,7 +46,8 @@ class QAAppResultsRepository:
         cache_hits_json = json.dumps({
             "prebaked_image": result.cache_hits.prebaked_image,
             "shared_volume": result.cache_hits.shared_volume,
-            "turbo_remote": result.cache_hits.turbo_remote,
+            "turbo_remote_hits": list(result.cache_hits.turbo_remote_hits),
+            "turbo_remote_misses": list(result.cache_hits.turbo_remote_misses),
         })
         sql = """
         INSERT INTO qa_app_results (
@@ -111,7 +112,9 @@ class QAAppResultsRepository:
                     cache_hits=CacheHits(
                         prebaked_image=bool((cache_hits_data or {}).get("prebaked_image", False)),
                         shared_volume=bool((cache_hits_data or {}).get("shared_volume", False)),
-                        turbo_remote=bool((cache_hits_data or {}).get("turbo_remote", False)),
+                        # Backward-compat: old rows had turbo_remote: bool — ignore that field.
+                        turbo_remote_hits=list((cache_hits_data or {}).get("turbo_remote_hits") or []),
+                        turbo_remote_misses=list((cache_hits_data or {}).get("turbo_remote_misses") or []),
                     ),
                     trace_url=row["trace_url"],
                     failure_summary=row["failure_summary"],

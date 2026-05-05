@@ -186,7 +186,8 @@ async def test_e2e_qa_report_writes_check_and_comment(monkeypatch):
                     "cache_hits": {
                         "prebaked_image": False,
                         "shared_volume": False,
-                        "turbo_remote": False,
+                        "turbo_remote_hits": [],
+                        "turbo_remote_misses": [],
                     },
                     "trace_url": None,
                     "failure_summary": None,
@@ -199,7 +200,8 @@ async def test_e2e_qa_report_writes_check_and_comment(monkeypatch):
                     "cache_hits": {
                         "prebaked_image": False,
                         "shared_volume": False,
-                        "turbo_remote": False,
+                        "turbo_remote_hits": [],
+                        "turbo_remote_misses": [],
                     },
                     "trace_url": "https://x/trace.zip",
                     "failure_summary": "loads page did not render",

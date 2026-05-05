@@ -89,7 +89,17 @@ def test_cache_hits_default_all_false():
     h = CacheHits()
     assert h.prebaked_image is False
     assert h.shared_volume is False
-    assert h.turbo_remote is False
+    assert h.turbo_remote_hits == []
+    assert h.turbo_remote_misses == []
+
+
+def test_cache_hits_turbo_remote_lists():
+    h = CacheHits(
+        turbo_remote_hits=["apps/hub#build", "apps/companion#build"],
+        turbo_remote_misses=["apps/sales#build"],
+    )
+    assert h.turbo_remote_hits == ["apps/hub#build", "apps/companion#build"]
+    assert h.turbo_remote_misses == ["apps/sales#build"]
 
 
 def _r(app_name: str, status: SubTaskStatus, duration_ms: int = 0) -> SubTaskResult:

@@ -908,3 +908,69 @@ async def test_acquire_sandbox_no_shared_volume_when_name_absent(monkeypatch):
     assert captured_create_kwargs["volumes"] is None
     assert captured_clone_kwargs.get("cached_volume") is None
     assert out["cache_hits_partial"]["shared_volume"] is False
+
+
+# ---------------------------------------------------------------------------
+# D2: boot_app_node parses turbo stdout into cache_hits_partial
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_boot_app_node_parses_turbo_stdout_into_partial():
+    """When BootResult.stdout contains turbo cache lines, boot_app_node should
+    extract hits/misses and merge them into cache_hits_partial."""
+    from athanor.workflows.qa.subtask_nodes import boot_app_node
+
+    turbo_stdout = (
+        "  apps/hub#build: cache hit, replaying logs abc123\n"
+        "  apps/companion#build: cache miss, executing 4a5b6c\n"
+        "  apps/sales#build: cache hit, replaying logs def456\n"
+    )
+    resolved = _resolved_app("hub")
+    state = {
+        "status": None,
+        "resolved": resolved,
+        "sandbox_id": "cid-turbo",
+        "cache_hits_partial": {
+            "prebaked_image": True,
+            "shared_volume": False,
+        },
+    }
+    config = _minimal_config()
+    fake_result = BootResult(outcome="passed", attempts=1, duration_ms=800, stdout=turbo_stdout)
+
+    with patch("athanor.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
+        out = await boot_app_node(state, config)
+
+    assert out.get("status") is None
+    assert out["boot_outcome"] == "passed"
+    partial = out["cache_hits_partial"]
+    # Prior partial fields preserved
+    assert partial["prebaked_image"] is True
+    assert partial["shared_volume"] is False
+    # Turbo hits/misses parsed from stdout
+    assert sorted(partial["turbo_remote_hits"]) == ["apps/hub#build", "apps/sales#build"]
+    assert partial["turbo_remote_misses"] == ["apps/companion#build"]
+
+
+@pytest.mark.asyncio
+async def test_boot_app_node_empty_stdout_yields_empty_turbo_lists():
+    """When BootResult.stdout is empty, turbo_remote_hits/misses should be []."""
+    from athanor.workflows.qa.subtask_nodes import boot_app_node
+
+    resolved = _resolved_app("hub")
+    state = {
+        "status": None,
+        "resolved": resolved,
+        "sandbox_id": "cid-no-turbo",
+    }
+    config = _minimal_config()
+    fake_result = BootResult(outcome="passed", attempts=1, duration_ms=500, stdout="")
+
+    with patch("athanor.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
+        out = await boot_app_node(state, config)
+
+    assert out["boot_outcome"] == "passed"
+    partial = out["cache_hits_partial"]
+    assert partial["turbo_remote_hits"] == []
+    assert partial["turbo_remote_misses"] == []
