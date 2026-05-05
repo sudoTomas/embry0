@@ -652,6 +652,46 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ));
         """,
     ),
+    (
+        26,
+        "qa_image_tags — pre-baked sandbox image registry per repo",
+        """
+        CREATE TABLE IF NOT EXISTS qa_image_tags (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            repo            TEXT NOT NULL,
+            image_tag       TEXT NOT NULL,
+            lockfile_sha    TEXT NOT NULL,
+            built_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            built_by        TEXT NOT NULL DEFAULT 'manual',
+            is_active       BOOLEAN NOT NULL DEFAULT true,
+            metadata        JSONB NOT NULL DEFAULT '{}'::jsonb
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_qa_image_tags_repo_active
+            ON qa_image_tags (repo, is_active, built_at DESC);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_qa_image_tags_repo_lockfile
+            ON qa_image_tags (repo, lockfile_sha);
+        """,
+    ),
+    (
+        27,
+        "qa_volume_state — shared-volume warmth tracking per (repo, scope)",
+        """
+        CREATE TABLE IF NOT EXISTS qa_volume_state (
+            id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            scope               TEXT NOT NULL CHECK (scope IN ('per-job','per-repo','per-org')),
+            scope_key           TEXT NOT NULL,
+            volume_name         TEXT NOT NULL,
+            last_warmed_sha     TEXT,
+            last_warmed_at      TIMESTAMPTZ,
+            created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_qa_volume_state_scope
+            ON qa_volume_state (scope, scope_key);
+        """,
+    ),
 ]
 
 
