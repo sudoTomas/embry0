@@ -179,7 +179,11 @@ class QAAppResultsRepository:
             l.job_id AS latest_run_id,
             l.started_at AS latest_started_at,
             COUNT(q.id) AS latest_app_count,
-            CASE WHEN COUNT(*) FILTER (WHERE q.status != 'passed') > 0 THEN 'failed' ELSE 'passed' END AS latest_status
+            CASE
+              WHEN COUNT(*) FILTER (WHERE q.status = 'infra_failure') > 0 THEN 'infra_error'
+              WHEN COUNT(*) FILTER (WHERE q.status IN ('qa_failure','e2e_failure','boot_failure','ready_check_failed','inconclusive')) > 0 THEN 'failed'
+              ELSE 'passed'
+            END AS latest_status
         FROM latest_per_repo l
         JOIN qa_app_results q ON q.job_id = l.job_id
         WHERE l.rn = 1
@@ -214,7 +218,11 @@ class QAAppResultsRepository:
             j.repo,
             j.started_at,
             COUNT(q.id) AS app_count,
-            CASE WHEN COUNT(*) FILTER (WHERE q.status != 'passed') > 0 THEN 'failed' ELSE 'passed' END AS overall_status
+            CASE
+              WHEN COUNT(*) FILTER (WHERE q.status = 'infra_failure') > 0 THEN 'infra_error'
+              WHEN COUNT(*) FILTER (WHERE q.status IN ('qa_failure','e2e_failure','boot_failure','ready_check_failed','inconclusive')) > 0 THEN 'failed'
+              ELSE 'passed'
+            END AS overall_status
         FROM jobs j
         JOIN qa_app_results q ON q.job_id = j.job_id
         WHERE j.repo = $1

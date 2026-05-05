@@ -31,6 +31,15 @@ describe("RunStatusBadge", () => {
     render(<RunStatusBadge status="qa_failure" />);
     expect(screen.getByText("qa failure")).toBeInTheDocument();
   });
+
+  it("renders infra_error with neutral tone (bug_004)", () => {
+    render(<RunStatusBadge status="infra_error" />);
+    // The badge text has underscores replaced with spaces
+    expect(screen.getByText("infra error")).toBeInTheDocument();
+    // The badge element should have the neutral tone data attribute
+    const badge = screen.getByTitle("infra_error");
+    expect(badge).toBeInTheDocument();
+  });
 });
 
 describe("CacheHitsRow", () => {

@@ -4,6 +4,7 @@ import type { AppStatus, RunOverallStatus } from "@/lib/types";
 const TONE_BY_STATUS: Record<AppStatus | RunOverallStatus, "success" | "warning" | "error" | "neutral"> = {
   passed: "success",
   failed: "error",
+  infra_error: "neutral",
   qa_failure: "error",
   e2e_failure: "error",
   boot_failure: "warning",

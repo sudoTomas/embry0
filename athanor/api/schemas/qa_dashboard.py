@@ -25,7 +25,7 @@ _STATUS = Literal[
 """SubTaskStatus values — mirrored as Literal so OpenAPI surfaces them as enum."""
 
 
-_OVERALL = Literal["passed", "failed"]
+_OVERALL = Literal["passed", "failed", "infra_error"]
 """Run-level rollup."""
 
 

@@ -293,6 +293,80 @@ def test_get_run_detail_overall_status_passed_when_all_pass():
     assert resp.json()["overall_status"] == "passed"
 
 
+def test_get_run_detail_overall_status_infra_error_when_any_infra_failure():
+    """INFRA_FAILURE on any app short-circuits to 'infra_error' (bug_004)."""
+    qa_repo = AsyncMock()
+    qa_repo.list_for_job = AsyncMock(
+        return_value=[
+            QAAppResultRow(
+                job_id="j",
+                app_name="hub",
+                status=SubTaskStatus.PASSED,
+                duration_ms=1,
+                cache_hits=CacheHits(),
+                trace_url=None,
+                failure_summary=None,
+                raw_result={},
+            ),
+            QAAppResultRow(
+                job_id="j",
+                app_name="infra-broken",
+                status=SubTaskStatus.INFRA_FAILURE,
+                duration_ms=500,
+                cache_hits=CacheHits(),
+                trace_url=None,
+                failure_summary="docker pull failed",
+                raw_result={},
+            ),
+        ]
+    )
+    jobs_repo = AsyncMock()
+    jobs_repo.get = AsyncMock(
+        return_value={"job_id": "j", "repo": "org/r1", "started_at": datetime.now(UTC)}
+    )
+    _, client = _make_app(qa_repo=qa_repo, jobs_repo=jobs_repo)
+    resp = client.get("/api/v1/qa/runs/j", headers=_AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["overall_status"] == "infra_error"
+
+
+def test_get_run_detail_overall_status_skipped_is_pass():
+    """SKIPPED rows do not cause a 'failed' rollup (bug_004 — SKIPPED is a pass)."""
+    qa_repo = AsyncMock()
+    qa_repo.list_for_job = AsyncMock(
+        return_value=[
+            QAAppResultRow(
+                job_id="j",
+                app_name="hub",
+                status=SubTaskStatus.PASSED,
+                duration_ms=1,
+                cache_hits=CacheHits(),
+                trace_url=None,
+                failure_summary=None,
+                raw_result={},
+            ),
+            QAAppResultRow(
+                job_id="j",
+                app_name="skipped-app",
+                status=SubTaskStatus.SKIPPED,
+                duration_ms=0,
+                cache_hits=CacheHits(),
+                trace_url=None,
+                failure_summary=None,
+                raw_result={},
+            ),
+        ]
+    )
+    jobs_repo = AsyncMock()
+    jobs_repo.get = AsyncMock(
+        return_value={"job_id": "j", "repo": "org/r1", "started_at": datetime.now(UTC)}
+    )
+    _, client = _make_app(qa_repo=qa_repo, jobs_repo=jobs_repo)
+    resp = client.get("/api/v1/qa/runs/j", headers=_AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["overall_status"] == "passed"
+
+
 # ─── GET /api/v1/qa/runs/{run_id}/apps/{app} ─────────────────────────────────
 
 

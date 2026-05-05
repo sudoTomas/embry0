@@ -12,8 +12,23 @@ from athanor.api.schemas.qa_dashboard import (
     RunDetail,
     RunListItem,
 )
+from athanor.workflows.qa.subtask_result_schema import SubTaskStatus
 
 router = APIRouter()
+
+# Mirrors athanor/workflows/qa/subtask_result_schema.py:77 overall_status().
+# Kept here as a free function (not importing the orchestrator's overall_status())
+# because that helper consumes SubTaskResult objects whereas the dashboard works
+# with QAAppResultRow rows.
+_FAILED_DASHBOARD_STATUSES = frozenset(
+    {
+        SubTaskStatus.QA_FAILURE,
+        SubTaskStatus.E2E_FAILURE,
+        SubTaskStatus.BOOT_FAILURE,
+        SubTaskStatus.READY_CHECK_FAILED,
+        SubTaskStatus.INCONCLUSIVE,
+    }
+)
 
 
 def _to_app_result(row) -> AppResult:
@@ -33,7 +48,17 @@ def _to_app_result(row) -> AppResult:
 
 
 def _overall_status(rows) -> str:
-    return "failed" if any(str(r.status) != "passed" for r in rows) else "passed"
+    """Three-way rollup mirroring orchestrator's overall_status().
+
+    INFRA_FAILURE short-circuits to 'infra_error' (athanor's fault, not the
+    user's). SKIPPED is treated as a pass. Anything else in the failure
+    enum returns 'failed'. Default 'passed'.
+    """
+    if any(r.status == SubTaskStatus.INFRA_FAILURE for r in rows):
+        return "infra_error"
+    if any(r.status in _FAILED_DASHBOARD_STATUSES for r in rows):
+        return "failed"
+    return "passed"
 
 
 @router.get("/qa/repos", response_model=list[RepoEntry])

@@ -130,3 +130,71 @@ async def test_list_runs_for_repo_pagination(pg_pool):
     page2 = await repo.list_runs_for_repo("org/r5", limit=2, offset=2)
     assert [r.job_id for r in page1] == ["page-0", "page-1"]
     assert [r.job_id for r in page2] == ["page-2", "page-3"]
+
+
+# ─── Three-way rollup tests (bug_004) ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_three_way_rollup_infra_failure_yields_infra_error(pg_pool):
+    """2 passed apps + 1 infra_failure → latest_status / overall_status == 'infra_error'."""
+    repo = QAAppResultsRepository(db=pg_pool)
+    now = datetime.now(UTC)
+    await _seed_job(pg_pool, job_id="rollup-infra", repo="org/rollup1", started_at=now)
+
+    await repo.upsert("rollup-infra", SubTaskResult("app-a", SubTaskStatus.PASSED, 1000, CacheHits()))
+    await repo.upsert("rollup-infra", SubTaskResult("app-b", SubTaskStatus.PASSED, 1200, CacheHits()))
+    await repo.upsert(
+        "rollup-infra",
+        SubTaskResult("app-c", SubTaskStatus.INFRA_FAILURE, 300, CacheHits()),
+    )
+
+    runs = await repo.list_runs_for_repo("org/rollup1", limit=10, offset=0)
+    assert len(runs) == 1
+    assert runs[0].overall_status == "infra_error"
+
+    repos = await repo.list_repos_with_runs(limit=10)
+    by_repo = {r.repo: r for r in repos}
+    assert by_repo["org/rollup1"].latest_status == "infra_error"
+
+
+@pytest.mark.asyncio
+async def test_three_way_rollup_qa_failure_yields_failed(pg_pool):
+    """2 passed apps + 1 qa_failure → overall_status == 'failed'."""
+    repo = QAAppResultsRepository(db=pg_pool)
+    now = datetime.now(UTC)
+    await _seed_job(pg_pool, job_id="rollup-qa", repo="org/rollup2", started_at=now)
+
+    await repo.upsert("rollup-qa", SubTaskResult("app-a", SubTaskStatus.PASSED, 1000, CacheHits()))
+    await repo.upsert("rollup-qa", SubTaskResult("app-b", SubTaskStatus.PASSED, 1200, CacheHits()))
+    await repo.upsert(
+        "rollup-qa",
+        SubTaskResult("app-c", SubTaskStatus.QA_FAILURE, 2000, CacheHits()),
+    )
+
+    runs = await repo.list_runs_for_repo("org/rollup2", limit=10, offset=0)
+    assert len(runs) == 1
+    assert runs[0].overall_status == "failed"
+
+    repos = await repo.list_repos_with_runs(limit=10)
+    by_repo = {r.repo: r for r in repos}
+    assert by_repo["org/rollup2"].latest_status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_three_way_rollup_all_passed_yields_passed(pg_pool):
+    """2 passed apps → overall_status == 'passed'."""
+    repo = QAAppResultsRepository(db=pg_pool)
+    now = datetime.now(UTC)
+    await _seed_job(pg_pool, job_id="rollup-pass", repo="org/rollup3", started_at=now)
+
+    await repo.upsert("rollup-pass", SubTaskResult("app-a", SubTaskStatus.PASSED, 1000, CacheHits()))
+    await repo.upsert("rollup-pass", SubTaskResult("app-b", SubTaskStatus.PASSED, 1200, CacheHits()))
+
+    runs = await repo.list_runs_for_repo("org/rollup3", limit=10, offset=0)
+    assert len(runs) == 1
+    assert runs[0].overall_status == "passed"
+
+    repos = await repo.list_repos_with_runs(limit=10)
+    by_repo = {r.repo: r for r in repos}
+    assert by_repo["org/rollup3"].latest_status == "passed"

@@ -13,7 +13,7 @@ export type AppStatus =
   | "skipped"
   | "inconclusive";
 
-export type RunOverallStatus = "passed" | "failed";
+export type RunOverallStatus = "passed" | "failed" | "infra_error";
 
 export interface CacheHits {
   prebaked_image: boolean;
