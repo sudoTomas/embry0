@@ -32,6 +32,40 @@ class QAAppResultRow:
     raw_result: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class RepoSummary:
+    """One row from list_repos_with_runs — repo + its latest run."""
+
+    repo: str
+    latest_run_id: str
+    latest_status: str  # 'passed' | 'failed' | 'mixed' (computed)
+    latest_started_at: Any  # datetime; Any avoids importing datetime in __all__
+    latest_app_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class RunSummary:
+    """One row from list_runs_for_repo — a run's high-level metadata."""
+
+    job_id: str
+    repo: str
+    started_at: Any  # datetime
+    overall_status: str  # 'passed' | 'failed'
+    app_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class AppHistoryRow:
+    """One row from list_history_for_app — a per-(job, app) historical entry."""
+
+    job_id: str
+    app_name: str
+    status: str  # SubTaskStatus value
+    duration_ms: int
+    started_at: Any  # datetime
+    failure_summary: str | None
+
+
 class QAAppResultsRepository:
     def __init__(self, db: DatabasePool) -> None:
         self.db = db
@@ -122,3 +156,115 @@ class QAAppResultsRepository:
                 )
             )
         return out
+
+    async def list_repos_with_runs(self, limit: int = 50) -> list[RepoSummary]:
+        """Distinct repos that have at least one qa_app_results row.
+
+        For each repo, returns the latest job_id (by started_at), its overall
+        status (passed if every per-app row passed; failed otherwise), and
+        the number of apps in that latest run.
+        """
+        sql = """
+        WITH latest_per_repo AS (
+            SELECT
+                j.repo,
+                j.job_id,
+                j.started_at,
+                ROW_NUMBER() OVER (PARTITION BY j.repo ORDER BY j.started_at DESC) AS rn
+            FROM jobs j
+            WHERE EXISTS (SELECT 1 FROM qa_app_results q WHERE q.job_id = j.job_id)
+        )
+        SELECT
+            l.repo,
+            l.job_id AS latest_run_id,
+            l.started_at AS latest_started_at,
+            COUNT(q.id) AS latest_app_count,
+            CASE WHEN COUNT(*) FILTER (WHERE q.status != 'passed') > 0 THEN 'failed' ELSE 'passed' END AS latest_status
+        FROM latest_per_repo l
+        JOIN qa_app_results q ON q.job_id = l.job_id
+        WHERE l.rn = 1
+        GROUP BY l.repo, l.job_id, l.started_at
+        ORDER BY l.started_at DESC NULLS LAST
+        LIMIT $1
+        """
+        rows = await self.db.fetch(sql, limit)
+        return [
+            RepoSummary(
+                repo=r["repo"],
+                latest_run_id=r["latest_run_id"],
+                latest_status=r["latest_status"],
+                latest_started_at=r["latest_started_at"],
+                latest_app_count=int(r["latest_app_count"]),
+            )
+            for r in rows
+        ]
+
+    async def list_runs_for_repo(
+        self,
+        repo: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[RunSummary]:
+        """Recent runs for a repo, newest first. Each row aggregates per-app
+        results into an overall status."""
+        sql = """
+        SELECT
+            j.job_id,
+            j.repo,
+            j.started_at,
+            COUNT(q.id) AS app_count,
+            CASE WHEN COUNT(*) FILTER (WHERE q.status != 'passed') > 0 THEN 'failed' ELSE 'passed' END AS overall_status
+        FROM jobs j
+        JOIN qa_app_results q ON q.job_id = j.job_id
+        WHERE j.repo = $1
+        GROUP BY j.job_id, j.repo, j.started_at
+        ORDER BY j.started_at DESC NULLS LAST
+        LIMIT $2 OFFSET $3
+        """
+        rows = await self.db.fetch(sql, repo, limit, offset)
+        return [
+            RunSummary(
+                job_id=r["job_id"],
+                repo=r["repo"],
+                started_at=r["started_at"],
+                overall_status=r["overall_status"],
+                app_count=int(r["app_count"]),
+            )
+            for r in rows
+        ]
+
+    async def list_history_for_app(
+        self,
+        repo: str,
+        app_name: str,
+        *,
+        limit: int = 20,
+    ) -> list[AppHistoryRow]:
+        """Last-N qa_app_results rows for one (repo, app_name) pair, newest first."""
+        sql = """
+        SELECT
+            q.job_id,
+            q.app_name,
+            q.status,
+            q.duration_ms,
+            j.started_at,
+            q.failure_summary
+        FROM qa_app_results q
+        JOIN jobs j ON j.job_id = q.job_id
+        WHERE j.repo = $1 AND q.app_name = $2
+        ORDER BY j.started_at DESC NULLS LAST
+        LIMIT $3
+        """
+        rows = await self.db.fetch(sql, repo, app_name, limit)
+        return [
+            AppHistoryRow(
+                job_id=r["job_id"],
+                app_name=r["app_name"],
+                status=r["status"],
+                duration_ms=int(r["duration_ms"]),
+                started_at=r["started_at"],
+                failure_summary=r["failure_summary"],
+            )
+            for r in rows
+        ]
