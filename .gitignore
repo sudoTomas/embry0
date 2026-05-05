@@ -20,6 +20,9 @@ build/
 
 # Node
 node_modules/
+# Stray npm artifacts at repo root (the real package.json lives in frontend/)
+/package.json
+/package-lock.json
 
 # IDE
 .vscode/
