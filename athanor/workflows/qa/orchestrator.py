@@ -282,6 +282,15 @@ async def qa_orchestrator_node(
         resolve_app_config(name, cfg, app_local=None) for name in apps
     ]
 
+    # 4a. Look up prebaked image tag if cache layer is enabled.
+    image_repo = configurable.get("qa_image_tags_repo")
+    image_tag: str | None = None
+    if image_repo is not None and cfg.cache.prebaked_image.enabled:
+        from athanor.cache.prebaked_image import PrebakedImageLookup
+        image_tag = await PrebakedImageLookup(image_repo=image_repo).get_tag_for_repo(
+            state.get("repo") or ""
+        )
+
     # 5. Fan out.
     per_app_results = await fan_out_subtasks(
         resolved_configs,
@@ -289,6 +298,7 @@ async def qa_orchestrator_node(
         repo=state.get("repo") or "",
         branch_name=state.get("branch_name"),
         user_env_vars=state.get("user_env_vars"),
+        image_tag=image_tag,
         max_concurrent=cfg.parallelism.max_concurrent_apps,
         config=config or {},
     )

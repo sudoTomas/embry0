@@ -660,3 +660,134 @@ async def test_exploratory_qa_node_short_circuits_on_prior_status():
     }
     out = await exploratory_qa_node(state, {})
     assert out == {}
+
+
+# ---------------------------------------------------------------------------
+# Tests 20–21: acquire_sandbox_node — prebaked image tag override
+# ---------------------------------------------------------------------------
+
+
+def _make_acquire_config(*, profiles_repo_get_return=None):
+    """Build a full RunnableConfig for acquire_sandbox_node tests.
+
+    Stubs out all external I/O so the node runs to completion:
+      - sandbox_manager.create → ("cid-test", "tok-test")
+      - profiles_repo.get → profile dict (or custom return value)
+      - prep helpers patched via `patch` in the test body
+    """
+    docker = MagicMock()
+    docker._build_base_cmd = MagicMock(return_value=["docker"])
+    docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd: ["docker", "exec", cid, *cmd])
+    docker.run_cmd = AsyncMock(return_value="")
+
+    sandbox_mgr = MagicMock()
+    sandbox_mgr.create = AsyncMock(return_value=("cid-test", "tok-test"))
+    sandbox_mgr.destroy = AsyncMock()
+
+    base_profile = {"name": "slim", "image": "raven/base:latest", "extra_networks": []}
+    profiles_repo = MagicMock()
+    profiles_repo.get = AsyncMock(return_value=profiles_repo_get_return or base_profile)
+
+    minio_sandbox = MagicMock()
+    token_registry = MagicMock()
+    token_registry.unregister = AsyncMock()
+
+    return {
+        "configurable": {
+            "docker": docker,
+            "sandbox_manager": sandbox_mgr,
+            "profiles_repo": profiles_repo,
+            "qa_minio_sandbox": minio_sandbox,
+            "qa_token_registry": token_registry,
+        }
+    }
+
+
+def _make_acquire_state(*, prebaked_image_tag: str | None = None):
+    resolved = _resolved_app("hub")
+    return {
+        "resolved": resolved,
+        "parent_run_id": "JOB-42",
+        "repo": "acme/monorepo",
+        "branch_name": "main",
+        "user_env_vars": None,
+        "prebaked_image_tag": prebaked_image_tag,
+    }
+
+
+@pytest.mark.asyncio
+async def test_acquire_sandbox_uses_image_tag_when_provided(monkeypatch):
+    """When prebaked_image_tag is set, sandbox_mgr.create receives a profile
+    with image overridden to that tag and cache_hits_partial["prebaked_image"]
+    is True in the result patch."""
+    from athanor.workflows.qa._subtask_prep import ClonedSandbox
+    from athanor.workflows.qa.subtask_nodes import acquire_sandbox_node
+
+    captured_profile: dict = {}
+
+    async def fake_create(job_id, *, profile, env):
+        captured_profile.update(profile)
+        return ("cid-prebaked", "tok-prebaked")
+
+    config = _make_acquire_config()
+    config["configurable"]["sandbox_manager"].create = fake_create
+
+    prebaked_tag = "raven/hub:sha-abc123"
+    state = _make_acquire_state(prebaked_image_tag=prebaked_tag)
+
+    fake_cloned = ClonedSandbox(head_sha="deadbeef")
+
+    with (
+        patch(
+            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
+            AsyncMock(return_value=fake_cloned),
+        ),
+        patch(
+            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        out = await acquire_sandbox_node(state, config)
+
+    assert captured_profile["image"] == prebaked_tag
+    assert out.get("status") is None, f"unexpected failure: {out.get('failure_summary')}"
+    assert out["sandbox_id"] == "cid-prebaked"
+    assert out["cache_hits_partial"] == {"prebaked_image": True}
+
+
+@pytest.mark.asyncio
+async def test_acquire_sandbox_falls_back_to_base_when_no_tag(monkeypatch):
+    """When prebaked_image_tag is None, the profile is used unchanged and
+    cache_hits_partial["prebaked_image"] is False in the result patch."""
+    from athanor.workflows.qa._subtask_prep import ClonedSandbox
+    from athanor.workflows.qa.subtask_nodes import acquire_sandbox_node
+
+    captured_profile: dict = {}
+
+    async def fake_create(job_id, *, profile, env):
+        captured_profile.update(profile)
+        return ("cid-base", "tok-base")
+
+    config = _make_acquire_config()
+    config["configurable"]["sandbox_manager"].create = fake_create
+
+    state = _make_acquire_state(prebaked_image_tag=None)
+
+    fake_cloned = ClonedSandbox(head_sha="cafebabe")
+
+    with (
+        patch(
+            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
+            AsyncMock(return_value=fake_cloned),
+        ),
+        patch(
+            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        out = await acquire_sandbox_node(state, config)
+
+    assert captured_profile["image"] == "raven/base:latest"
+    assert out.get("status") is None, f"unexpected failure: {out.get('failure_summary')}"
+    assert out["sandbox_id"] == "cid-base"
+    assert out["cache_hits_partial"] == {"prebaked_image": False}

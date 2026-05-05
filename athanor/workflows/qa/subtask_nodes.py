@@ -91,6 +91,10 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
             "completed_at": time.monotonic(),
         }
 
+    prebaked_tag = state.get("prebaked_image_tag")
+    if prebaked_tag:
+        profile = {**profile, "image": prebaked_tag}
+
     # Create network for DinD mode (mirrors init_qa_node behavior)
     base: list[str] = (
         docker._build_base_cmd() if hasattr(docker, "_build_base_cmd") else []
@@ -203,6 +207,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
         "sandbox_token": sandbox_token,
         "artifact_prefix": artifact_prefix,
         "head_sha": cloned.head_sha,
+        "cache_hits_partial": {"prebaked_image": bool(prebaked_tag)},
     }
 
 
@@ -557,11 +562,17 @@ async def emit_result_node(state: SubTaskState, config: RunnableConfig) -> dict[
         status = SubTaskStatus.INFRA_FAILURE
         failure_summary = "sub-task graph terminated with no status emitted"
 
+    partial = state.get("cache_hits_partial") or {}
+    cache_hits = CacheHits(
+        prebaked_image=bool(partial.get("prebaked_image", False)),
+        shared_volume=bool(partial.get("shared_volume", False)),
+        turbo_remote=bool(partial.get("turbo_remote", False)),
+    )
     result = SubTaskResult(
         app_name=state["app_name"],
         status=status,
         duration_ms=duration_ms,
-        cache_hits=CacheHits(),  # Phase 1 always all-False
+        cache_hits=cache_hits,
         trace_url=state.get("trace_url"),
         failure_summary=failure_summary,
         raw_result=state.get("raw_result", {}) or {},

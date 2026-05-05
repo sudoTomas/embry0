@@ -99,6 +99,7 @@ async def fan_out_subtasks(
     repo: str,
     branch_name: str | None,
     user_env_vars: Any = None,
+    image_tag: str | None = None,
     max_concurrent: int,
     config: dict[str, Any],
 ) -> list[SubTaskResult]:
@@ -119,6 +120,7 @@ async def fan_out_subtasks(
                     repo=repo,
                     branch_name=branch_name,
                     user_env_vars=user_env_vars,
+                    prebaked_image_tag=image_tag,
                     config=config,
                 )
             except Exception as exc:  # noqa: BLE001

@@ -532,3 +532,102 @@ async def test_orchestrator_node_qa_required_never_short_circuits(monkeypatch):
     assert qa["apps_to_qa"] == []
     assert qa["per_app_results"] == []
     assert qa["final_status"] == "passed"
+
+
+# ── B5: prebaked image tag flows through orchestrator → fan_out → run_subtask ─
+
+
+_QA_YAML_WITH_CACHE = """
+version: 2
+workspace_provider:
+  type: fake
+defaults:
+  mode: process
+  sandbox_profile: slim
+  ready_checks:
+    - http: "http://localhost:3000"
+cache:
+  prebaked_image:
+    enabled: true
+apps:
+  hub:
+    boot_command: "x"
+    frontend_url: "http://localhost:3000"
+packages: {}
+"""
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_passes_image_tag_to_run_subtask_when_repo_configured(monkeypatch):
+    """When qa_image_tags_repo is in configurable and cache.prebaked_image.enabled=True,
+    the looked-up image_tag is forwarded to run_subtask via fan_out_subtasks."""
+    from pathlib import Path
+
+    from athanor.workspace_providers import (
+        AffectedSet,
+        WorkspaceApp,
+    )
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from athanor.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        packages=[],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        ),
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    # Fake image tags repo that returns a known tag.
+    fake_image_repo = AsyncMock()
+
+    class _FakeRow:
+        image_tag = "raven/hub:sha-deadbeef"
+
+    fake_image_repo.get_active = AsyncMock(return_value=_FakeRow())
+
+    # Capture kwargs passed to run_subtask.
+    captured_kwargs: dict = {}
+
+    async def spy_run_subtask(resolved, **kw):
+        captured_kwargs.update(kw)
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", spy_run_subtask)
+
+    state = {
+        "job_id": "run-b5",
+        "repo": "org/monorepo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_WITH_CACHE,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    config = {
+        "configurable": {
+            "qa_app_results_repo": AsyncMock(),
+            "qa_image_tags_repo": fake_image_repo,
+        }
+    }
+
+    out = await qa_orchestrator_node(state, config)
+
+    assert out["qa"]["outcome"]["overall_status"] == "passed"
+    assert captured_kwargs.get("prebaked_image_tag") == "raven/hub:sha-deadbeef"
+    fake_image_repo.get_active.assert_awaited_once_with("org/monorepo")

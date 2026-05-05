@@ -36,12 +36,14 @@ class SubTaskState(TypedDict, total=False):
     repo: str
     branch_name: str | None
     user_env_vars: list[dict[str, str]] | dict[str, str] | None
+    prebaked_image_tag: str | None
 
     # Set by acquire_sandbox_node
     sandbox_id: str | None
     sandbox_token: str | None
     artifact_prefix: str | None
     head_sha: str | None
+    cache_hits_partial: dict[str, bool] | None
 
     # Set by boot_app_node on success
     boot_outcome: str | None        # "passed" | "timeout" | "startup_failed"
@@ -71,6 +73,7 @@ def initial_state_for_app(
     repo: str,
     branch_name: str | None = None,
     user_env_vars: Any = None,
+    prebaked_image_tag: str | None = None,
 ) -> SubTaskState:
     return {
         "app_name": resolved.app_name,
@@ -79,6 +82,7 @@ def initial_state_for_app(
         "repo": repo,
         "branch_name": branch_name,
         "user_env_vars": user_env_vars,
+        "prebaked_image_tag": prebaked_image_tag,
         "status": None,
         "started_at": time.monotonic(),
         "completed_at": None,
@@ -89,6 +93,7 @@ def initial_state_for_app(
         "sandbox_token": None,
         "artifact_prefix": None,
         "head_sha": None,
+        "cache_hits_partial": None,
         "boot_outcome": None,
         "boot_duration_ms": None,
         "agent_outputs": [],

@@ -81,6 +81,7 @@ async def run_subtask(
     repo: str,
     branch_name: str | None = None,
     user_env_vars: Any = None,
+    prebaked_image_tag: str | None = None,
     config: dict[str, Any],
 ) -> SubTaskResult:
     """Helper: run one sub-task and return its SubTaskResult.
@@ -95,6 +96,7 @@ async def run_subtask(
         repo=repo,
         branch_name=branch_name,
         user_env_vars=user_env_vars,
+        prebaked_image_tag=prebaked_image_tag,
     )
     final_state = await graph.ainvoke(initial, config=config)
     return final_state["subtask_result"]
