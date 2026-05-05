@@ -396,6 +396,63 @@ def cmd_migrate_qa_config(args) -> None:
     _info(f"migrated {args.qa_path} (v1 backed up to qa.v1.yaml.bak)")
 
 
+def cmd_build_qa_image(args: argparse.Namespace) -> None:
+    """Handle ``athanor build-qa-image``.
+
+    Builds a pre-baked QA sandbox image for *repo* at *branch* (idempotent:
+    skips when the active tag's ``lockfile_sha`` already matches the current
+    lockfile on the target branch, unless ``--force`` is given).
+
+    Dependency wiring
+    -----------------
+    This is the first CLI command that requires a live database connection.
+    Other ``cmd_*`` handlers shell out to docker-compose and therefore need no
+    DB access.  Here we follow the canonical pattern from
+    ``tests/integration/conftest.py`` (``setup_database`` fixture):
+
+    1. Load ``DATABASE_URL`` from the environment (or the project ``.env``).
+    2. Construct a ``DatabasePool``, call ``connect()``, run ``run_migrations``.
+    3. Build repository objects (``QAImageTagsRepository``,
+       ``SandboxProfilesRepository``).
+    4. Construct a ``DockerClient`` and ``SandboxManager`` (requires Docker
+       daemon access — run inside the running Athanor stack or on a host with
+       Docker access).
+    5. Construct a lightweight proxy-manager shim (or pass ``proxy_mgr=None``
+       if git-proxy URL injection is not needed for this build).
+
+    For Phase-2 the full sandbox / proxy-manager wiring is highly coupled to
+    the running compose stack (``athanor-dind``, ``athanor-orchestrator``).
+    Rather than re-implement that bootstrap outside the app server this handler
+    raises ``NotImplementedError`` with a clear ops-side message, while keeping
+    the testable core (``run_build_qa_image``) fully implemented and unit-tested.
+
+    Operators needing this functionality before a full CLI wiring pass can
+    trigger the equivalent API endpoint::
+
+        POST /api/v1/qa/images/build  {"repo": "...", "branch": "...", "force": false}
+    """
+    import asyncio
+
+    from athanor.cache.image_builder_cli import run_build_qa_image  # noqa: F401
+
+    async def _run() -> None:
+        # Full wiring requires: DatabasePool, run_migrations, DockerClient,
+        # SandboxManager, SandboxProfilesRepository, QAImageTagsRepository,
+        # and a proxy_mgr — all of which are tightly coupled to the running
+        # compose stack.  Wire them here once the compose-bootstrap helpers
+        # are extracted into a shared module (Phase-3 candidate).
+        raise NotImplementedError(
+            "CLI dependency wiring for build-qa-image is not yet implemented.\n"
+            "Use the API endpoint instead:\n"
+            "  POST /api/v1/qa/images/build\n"
+            '  Body: {"repo": "<owner/name>", "branch": "<branch>", "force": false}\n'
+            "Or call run_build_qa_image() directly from application code after\n"
+            "constructing the deps dict (see cmd_build_qa_image docstring)."
+        )
+
+    asyncio.run(_run())
+
+
 # ── Argparse ─────────────────────────────────────────────────────────────────
 
 
@@ -462,6 +519,19 @@ def main() -> None:
     mode.add_argument("--dry-run", action="store_true", help="Print v2 to stdout; do not write")
     mode.add_argument("--write", action="store_true", help="Replace qa.yaml; back up v1 to qa.v1.yaml.bak")
 
+    # build-qa-image
+    bqi = subparsers.add_parser(
+        "build-qa-image",
+        help="Build a pre-baked QA sandbox image for a repo (Phase 2 cache).",
+    )
+    bqi.add_argument("--repo", required=True, help="GitHub repo in owner/name form")
+    bqi.add_argument("--branch", default="main", help="Branch to build (default: main)")
+    bqi.add_argument(
+        "--force",
+        action="store_true",
+        help="Rebuild even if active tag's lockfile_sha matches current",
+    )
+
     args = parser.parse_args()
 
     commands = {
@@ -473,6 +543,7 @@ def main() -> None:
         "config": cmd_config,
         "purge": cmd_purge,
         "migrate-qa-config": cmd_migrate_qa_config,
+        "build-qa-image": cmd_build_qa_image,
     }
     commands[args.command](args)
 
