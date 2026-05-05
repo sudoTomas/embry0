@@ -14,6 +14,7 @@ from athanor.api.middleware.body_size import BodySizeMiddleware
 from athanor.api.middleware.csrf import CSRFMiddleware
 from athanor.api.middleware.rate_limit import RateLimitMiddleware
 from athanor.branding import API_TITLE
+from athanor.cache.volume_manager import SharedVolumeManager
 from athanor.config import AthanorConfig
 from athanor.storage.database import DatabasePool
 from athanor.storage.migrations.runner import run_migrations
@@ -26,6 +27,8 @@ from athanor.storage.repositories.jobs import JobsRepository
 from athanor.storage.repositories.pipeline_templates import PipelineTemplatesRepository
 from athanor.storage.repositories.provider_config import ProviderConfigRepository
 from athanor.storage.repositories.qa_app_results import QAAppResultsRepository
+from athanor.storage.repositories.qa_image_tags import QAImageTagsRepository
+from athanor.storage.repositories.qa_volume_state import QAVolumeStateRepository
 from athanor.storage.repositories.repo_preferences import RepoPreferencesRepository
 from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
 from athanor.storage.repositories.traces import TracesRepository
@@ -199,6 +202,12 @@ async def _init_app_state(
     app.state.env_repo = EnvironmentRepository(db)
     app.state.repo_preferences_repo = RepoPreferencesRepository(db)
     app.state.qa_app_results_repo = QAAppResultsRepository(db)
+    app.state.qa_image_tags_repo = QAImageTagsRepository(db)
+    app.state.qa_volume_state_repo = QAVolumeStateRepository(db)
+    # SharedVolumeManager requires app.state.docker, which is set in the lifespan
+    # after docker is initialized. Set to None here; lifespan will construct
+    # and set the real manager after docker is ready.
+    app.state.qa_shared_volume_manager = None
 
     app.state.issues_repo = IssuesRepository(db)
     app.state.inputs_repo = IssueInputsRepository(db)
@@ -630,6 +639,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         agent_runner=agent_runner,
         proxy_manager=proxy_mgr,
     )
+
+    # Now that _init_app_state has populated the repos and docker is ready,
+    # construct SharedVolumeManager and update the placeholder.
+    app.state.qa_shared_volume_manager = SharedVolumeManager(
+        docker=app.state.docker,
+        state_repo=app.state.qa_volume_state_repo,
+    )
+
     app.state.issue_executor._background_tasks = app.state.background_tasks
 
     # Daily orphan checkpoint sweep — purges checkpoint rows for job_ids
