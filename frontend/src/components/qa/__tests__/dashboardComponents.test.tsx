@@ -1,6 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+
+// QaAppResultCard now embeds the artifact panels — those panels call
+// `useAppArtifacts`, which is just a react-query hook over `listAppArtifacts`.
+// Stub the hook globally so the dashboard-level tests don't need a
+// QueryClientProvider just to render a card.
+vi.mock("@/hooks/useQaDashboard", () => ({
+  useAppArtifacts: vi.fn(() => ({
+    data: [],
+    isLoading: false,
+    isError: false,
+  })),
+}));
 
 import { CacheHitsRow } from "../CacheHitsRow";
 import { QaAppResultCard } from "../QaAppResultCard";
@@ -167,5 +179,42 @@ describe("QaAppResultCard", () => {
     const link = screen.getByText("trace") as HTMLAnchorElement;
     expect(link.href).toBe("https://x/trace.zip");
     expect(link.target).toBe("_blank");
+  });
+
+  it("hides the artifacts section when no runId is supplied (back-compat)", () => {
+    render(
+      <MemoryRouter>
+        <QaAppResultCard app={passingApp} repo="org/r1" />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId("qa-app-card-artifacts")).toBeNull();
+  });
+
+  it("shows the artifacts <details> when runId is supplied (closed for passing apps)", () => {
+    render(
+      <MemoryRouter>
+        <QaAppResultCard app={passingApp} repo="org/r1" runId="job-1" />
+      </MemoryRouter>,
+    );
+    const det = screen.getByTestId("qa-app-card-artifacts") as HTMLDetailsElement;
+    expect(det).toBeInTheDocument();
+    expect(det.open).toBe(false);
+    expect(det.getAttribute("data-default-open")).toBe("false");
+  });
+
+  it("opens the artifacts <details> by default for failing apps", () => {
+    const failed: AppResult = {
+      ...passingApp,
+      status: "qa_failure",
+      failure_summary: "boom",
+    };
+    render(
+      <MemoryRouter>
+        <QaAppResultCard app={failed} repo="org/r1" runId="job-1" />
+      </MemoryRouter>,
+    );
+    const det = screen.getByTestId("qa-app-card-artifacts") as HTMLDetailsElement;
+    expect(det.open).toBe(true);
+    expect(det.getAttribute("data-default-open")).toBe("true");
   });
 });

@@ -29,7 +29,12 @@ export function QaRunDetailPage() {
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {data.apps.map((a) => (
-          <QaAppResultCard key={a.app_name} app={a} repo={data.repo} />
+          <QaAppResultCard
+            key={a.app_name}
+            app={a}
+            repo={data.repo}
+            runId={data.job_id}
+          />
         ))}
       </div>
     </div>
