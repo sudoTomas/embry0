@@ -98,6 +98,7 @@ class DockerClient:
         read_only: bool = True,
         env: dict[str, str] | None = None,
         volumes: list[str] | None = None,
+        tmpfs_mounts: list[str] | None = None,
         extra_hosts: dict[str, str] | None = None,
     ) -> list[str]:
         """Build `docker run -d` command for sandbox container.
@@ -106,6 +107,14 @@ class DockerClient:
         used by SandboxManager to publish the backend IPs of host-side proxies
         (minio-proxy, presign-proxy) into a DinD-spawned sandbox's /etc/hosts
         so the sandbox can reach those proxies by name.
+
+        ``tmpfs_mounts`` is a list of in-container paths to mount as
+        ephemeral tmpfs (rw, nosuid). Each becomes a ``--tmpfs <path>:rw,nosuid``
+        flag. Used by sub-task launches to overlay an empty tmpfs on top of
+        a shared cache volume (e.g. ``/workspace/.qa``) so the per-sub-task
+        directory isn't shared across containers — without it, all 14 fan-out
+        sub-tasks would write the SAME ``/workspace/.qa/result.json`` and
+        the last writer wins (silent test poisoning).
         """
         cmd = self._build_base_cmd()
         cmd.extend(["run", "-d", "--init"])
@@ -142,6 +151,9 @@ class DockerClient:
             cmd.append("--read-only")
             cmd.extend(["--tmpfs", "/tmp:rw,nosuid"])
             cmd.extend(["--tmpfs", "/home/agent/.claude:rw,nosuid"])
+
+        for path in tmpfs_mounts or []:
+            cmd.extend(["--tmpfs", f"{path}:rw,nosuid"])
 
         for host, ip in (extra_hosts or {}).items():
             cmd.append(f"--add-host={host}:{ip}")

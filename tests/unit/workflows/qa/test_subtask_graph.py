@@ -154,7 +154,7 @@ def _build_config(*, docker, result_json: str | None = None):
     _VALID_TOKEN = "A" * 40
 
     class _Sb:
-        async def create(self, job_id, profile, env, volumes=None):
+        async def create(self, job_id, profile, env, volumes=None, tmpfs_mounts=None):
             return f"sb-container-{job_id[:8]}", _VALID_TOKEN
 
         async def destroy(self, container_id):

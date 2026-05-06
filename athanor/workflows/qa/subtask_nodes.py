@@ -156,9 +156,23 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
     sandbox_volumes = (
         [(shared_volume_name, "/workspace")] if shared_volume_name else None
     )
+    # When sub-tasks fan out across the SAME shared volume, the per-sub-task
+    # `.qa/` directory (job.json, result.json, screenshots, playwright-tests)
+    # would otherwise be a single physical directory shared by every container —
+    # the last writer wins on `result.json` and every sub-task reads back the
+    # same poisoned content (observed 2026-05-06 on job-f42d46553080: 11 of 14
+    # sub-tasks reported byte-identical failure summaries copied from one
+    # neighbouring sub-task's result.json). Overlay an empty tmpfs at
+    # `/workspace/.qa` so each sub-task has its own ephemeral state without
+    # losing the shared read-cache for `node_modules` and the cloned repo.
+    sandbox_tmpfs = ["/workspace/.qa"] if shared_volume_name else None
     try:
         container_id, sandbox_token = await sandbox_mgr.create(
-            sub_job_id, profile=profile, env=env, volumes=sandbox_volumes
+            sub_job_id,
+            profile=profile,
+            env=env,
+            volumes=sandbox_volumes,
+            tmpfs_mounts=sandbox_tmpfs,
         )
     except Exception as exc:  # noqa: BLE001
         return {

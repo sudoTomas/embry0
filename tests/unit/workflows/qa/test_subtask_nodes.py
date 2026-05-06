@@ -725,7 +725,7 @@ async def test_acquire_sandbox_uses_image_tag_when_provided(monkeypatch):
 
     captured_profile: dict = {}
 
-    async def fake_create(job_id, *, profile, env, volumes=None):
+    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None):
         captured_profile.update(profile)
         return ("cid-prebaked", "tok-prebaked")
 
@@ -765,7 +765,7 @@ async def test_acquire_sandbox_falls_back_to_base_when_no_tag(monkeypatch):
 
     captured_profile: dict = {}
 
-    async def fake_create(job_id, *, profile, env, volumes=None):
+    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None):
         captured_profile.update(profile)
         return ("cid-base", "tok-base")
 
@@ -814,8 +814,9 @@ async def test_acquire_sandbox_uses_shared_volume_when_provided(monkeypatch):
     captured_clone_kwargs: dict = {}
     volume_name = "athanor-qa-vol-job-42"
 
-    async def fake_create(job_id, *, profile, env, volumes=None):
+    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None):
         captured_create_kwargs["volumes"] = volumes
+        captured_create_kwargs["tmpfs_mounts"] = tmpfs_mounts
         return ("cid-shared-vol", "tok-sv")
 
     async def fake_clone(**kw):
@@ -857,6 +858,13 @@ async def test_acquire_sandbox_uses_shared_volume_when_provided(monkeypatch):
     # Volume should have been passed to sandbox_mgr.create
     assert captured_create_kwargs["volumes"] == [(volume_name, "/workspace")]
 
+    # /workspace/.qa MUST be overlaid as a per-sub-task tmpfs so the 14
+    # parallel fan-out sub-tasks don't all share /workspace/.qa/result.json
+    # (the 2026-05-06 regression: the same shared volume mounted in 14
+    # sibling containers means the last writer's result.json is what every
+    # sub-task reads back — silent fan-out poisoning).
+    assert captured_create_kwargs.get("tmpfs_mounts") == ["/workspace/.qa"]
+
     # prep_qa_sandbox_clone should have received cached_volume
     assert captured_clone_kwargs.get("cached_volume") == volume_name
 
@@ -878,8 +886,9 @@ async def test_acquire_sandbox_no_shared_volume_when_name_absent(monkeypatch):
     captured_create_kwargs: dict = {}
     captured_clone_kwargs: dict = {}
 
-    async def fake_create(job_id, *, profile, env, volumes=None):
+    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None):
         captured_create_kwargs["volumes"] = volumes
+        captured_create_kwargs["tmpfs_mounts"] = tmpfs_mounts
         return ("cid-no-vol", "tok-nv")
 
     async def fake_clone(**kw):
@@ -906,6 +915,8 @@ async def test_acquire_sandbox_no_shared_volume_when_name_absent(monkeypatch):
 
     assert out.get("status") is None, f"unexpected failure: {out.get('failure_summary')}"
     assert captured_create_kwargs["volumes"] is None
+    # No shared volume → no need for the per-sub-task .qa tmpfs overlay either.
+    assert captured_create_kwargs.get("tmpfs_mounts") is None
     assert captured_clone_kwargs.get("cached_volume") is None
     assert out["cache_hits_partial"]["shared_volume"] is False
 

@@ -85,6 +85,7 @@ class SandboxManager:
         profile: dict[str, Any] | None = None,
         env: dict[str, str] | None = None,
         volumes: list[tuple[str, str]] | None = None,
+        tmpfs_mounts: list[str] | None = None,
     ) -> tuple[str, str]:
         """Create a persistent sandbox container. Returns (container_id, sandbox_token).
 
@@ -96,6 +97,16 @@ class SandboxManager:
         Phase-2 usage: the shared-volume cache layer passes the pre-warmed
         ``node_modules`` volume here so it is available at ``/workspace`` when
         the sandbox starts.
+
+        ``tmpfs_mounts`` overlays an in-memory tmpfs at each listed in-container
+        path. Used by the multi-app QA fan-out: when the same shared volume is
+        mounted into 14 sibling sub-task sandboxes, ``/workspace/.qa/`` would
+        otherwise be the SAME physical directory across all of them and the
+        last sub-task to write ``result.json`` would clobber every other
+        sub-task's result. Mounting ``/workspace/.qa`` as a per-container
+        tmpfs isolates the per-sub-task ephemeral state (job.json, result.json,
+        screenshots) without sacrificing the shared read-cache for ``node_modules``
+        and the cloned repo tree.
         """
         p = {**_DEFAULT_PROFILE, **(profile or {})}
         name = f"sandbox-{_sanitize_docker_name_component(job_id)}"
@@ -159,6 +170,7 @@ class SandboxManager:
             read_only=p.get("read_only_root", _DEFAULT_PROFILE["read_only_root"]),
             env=env,
             volumes=extra_volumes or None,
+            tmpfs_mounts=tmpfs_mounts or None,
             extra_hosts=extra_hosts or None,
         )
         container_id = await self._docker.run_cmd(cmd)

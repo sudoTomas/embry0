@@ -97,6 +97,30 @@ async def test_sandbox_manager_passes_through_caller_env(manager: SandboxManager
 
 
 @pytest.mark.asyncio
+async def test_create_passes_tmpfs_mounts_through_to_docker_run(manager: SandboxManager):
+    """tmpfs_mounts must be threaded into build_run_cmd so callers (the QA
+    fan-out) can overlay an empty per-container .qa/ on top of the shared
+    cache volume — without it, sub-tasks share a single /workspace/.qa/
+    directory and clobber each other's result.json (regression seen on
+    job-f42d46553080: 11 of 14 sub-tasks reported byte-identical failure
+    summaries copied from one neighbouring sub-task)."""
+    await manager.create(
+        job_id="job-fanout",
+        volumes=[("athanor-qa-vol-job-1", "/workspace")],
+        tmpfs_mounts=["/workspace/.qa"],
+    )
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    assert kwargs.get("tmpfs_mounts") == ["/workspace/.qa"]
+
+
+@pytest.mark.asyncio
+async def test_create_omits_tmpfs_mounts_when_caller_does_not_set_them(manager: SandboxManager):
+    await manager.create(job_id="job-no-tmpfs")
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    assert kwargs.get("tmpfs_mounts") is None
+
+
+@pytest.mark.asyncio
 async def test_create_with_custom_profile(manager: SandboxManager):
     profile = {
         "base_image": "athanor-sandbox-java:17",

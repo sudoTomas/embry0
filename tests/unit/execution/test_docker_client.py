@@ -133,6 +133,31 @@ def test_build_run_cmd_localhost_registry_forces_pull(docker: DockerClient):
     assert "--pull=always" in cmd
 
 
+def test_build_run_cmd_tmpfs_mounts_emit_tmpfs_flags(docker: DockerClient):
+    """tmpfs_mounts list must turn into per-path --tmpfs flags so callers
+    can overlay an in-memory dir on top of a shared volume mount."""
+    cmd = docker.build_run_cmd(
+        image="img:latest",
+        name="sb-1",
+        tmpfs_mounts=["/workspace/.qa", "/var/run/agent"],
+    )
+    assert "--tmpfs" in cmd
+    assert "/workspace/.qa:rw,nosuid" in cmd
+    assert "/var/run/agent:rw,nosuid" in cmd
+    # Each tmpfs is preceded by --tmpfs.
+    idxs = [i for i, t in enumerate(cmd) if t == "--tmpfs"]
+    assert all(cmd[i + 1].endswith(":rw,nosuid") for i in idxs)
+
+
+def test_build_run_cmd_no_tmpfs_when_omitted(docker: DockerClient):
+    """When neither read_only nor tmpfs_mounts trigger a tmpfs, none appear."""
+    cmd = docker.build_run_cmd(image="img:latest", name="sb-1", read_only=False)
+    assert not any(t.startswith("--tmpfs") for t in cmd)
+    # And explicit None is the same as omitted.
+    cmd2 = docker.build_run_cmd(image="img:latest", name="sb-1", read_only=False, tmpfs_mounts=None)
+    assert cmd == cmd2
+
+
 # ---------------------------------------------------------------------------
 # _scrub_cmd_for_log: redact secret -e KEY=VAL pairs before logging argv.
 # ---------------------------------------------------------------------------
