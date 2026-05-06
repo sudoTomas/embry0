@@ -9,6 +9,7 @@ from athanor.api.schemas.qa_dashboard import (
     AppHistoryItem,
     AppResult,
     BootPhaseDetail,
+    CacheAnalyticsResponse,
     CacheHitsModel,
     DepEdge,
     RepoEntry,
@@ -212,3 +213,24 @@ async def get_run_affected_set(
         base_branch=md.base_branch,
         dep_graph=[DepEdge(**e) for e in md.dep_graph],
     )
+
+
+@router.get(
+    "/qa/repos/{repo:path}/cache/analytics",
+    response_model=CacheAnalyticsResponse,
+)
+async def get_repo_cache_analytics(
+    repo: str,
+    request: Request,
+    window_days: int = Query(default=30, gt=0, le=365),
+) -> CacheAnalyticsResponse:
+    """Phase 5E: aggregated cache hit/miss stats for the last `window_days` days.
+
+    Joins ``qa_app_results`` to ``jobs`` on the (parent) job_id and rolls up
+    per-layer hits/misses across every sub-task that ran against ``repo``
+    in the window. Cold-cache offenders (apps with hit_ratio < 0.25 over
+    >= 3 sub-tasks) are surfaced separately.
+    """
+    qa_repo = request.app.state.qa_app_results_repo
+    payload = await qa_repo.cache_analytics_window(repo=repo, days=window_days)
+    return CacheAnalyticsResponse(**payload)

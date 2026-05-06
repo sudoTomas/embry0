@@ -470,6 +470,103 @@ def test_get_affected_set_requires_auth():
     assert resp.status_code == 401
 
 
+# ─── GET /api/v1/qa/repos/{repo}/cache/analytics (Phase 5E) ─────────────────
+
+
+def _empty_layers():
+    return [
+        {"layer": "prebaked_image", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+        {"layer": "shared_volume", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+        {"layer": "turbo_remote", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+    ]
+
+
+def test_cache_analytics_route_default_window():
+    qa_repo = AsyncMock()
+    qa_repo.cache_analytics_window = AsyncMock(
+        return_value={
+            "repo": "org/r1",
+            "window_days": 30,
+            "total_runs": 12,
+            "total_subtasks": 36,
+            "layers": [
+                {"layer": "prebaked_image", "hits": 30, "misses": 6, "hit_ratio": 0.8333},
+                {"layer": "shared_volume", "hits": 20, "misses": 16, "hit_ratio": 0.5556},
+                {"layer": "turbo_remote", "hits": 80, "misses": 40, "hit_ratio": 0.6667},
+            ],
+            "cold_cache_apps": ["legacy-app"],
+        }
+    )
+    _, client = _make_app(qa_repo=qa_repo)
+
+    resp = client.get("/api/v1/qa/repos/org%2Fr1/cache/analytics", headers=_AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["repo"] == "org/r1"
+    assert body["window_days"] == 30
+    assert body["total_runs"] == 12
+    assert body["total_subtasks"] == 36
+    assert len(body["layers"]) == 3
+    by_layer = {layer["layer"]: layer for layer in body["layers"]}
+    assert by_layer["prebaked_image"]["hits"] == 30
+    assert by_layer["shared_volume"]["hits"] == 20
+    assert by_layer["turbo_remote"]["hits"] == 80
+    assert body["cold_cache_apps"] == ["legacy-app"]
+    qa_repo.cache_analytics_window.assert_called_once_with(repo="org/r1", days=30)
+
+
+def test_cache_analytics_route_custom_window():
+    qa_repo = AsyncMock()
+    qa_repo.cache_analytics_window = AsyncMock(
+        return_value={
+            "repo": "org/r1",
+            "window_days": 7,
+            "total_runs": 0,
+            "total_subtasks": 0,
+            "layers": _empty_layers(),
+            "cold_cache_apps": [],
+        }
+    )
+    _, client = _make_app(qa_repo=qa_repo)
+
+    resp = client.get(
+        "/api/v1/qa/repos/org%2Fr1/cache/analytics?window_days=7",
+        headers=_AUTH,
+    )
+    assert resp.status_code == 200
+    qa_repo.cache_analytics_window.assert_called_once_with(repo="org/r1", days=7)
+
+
+def test_cache_analytics_route_window_validation():
+    qa_repo = AsyncMock()
+    qa_repo.cache_analytics_window = AsyncMock()
+    _, client = _make_app(qa_repo=qa_repo)
+
+    resp = client.get(
+        "/api/v1/qa/repos/org%2Fr1/cache/analytics?window_days=400",
+        headers=_AUTH,
+    )
+    assert resp.status_code == 422
+    qa_repo.cache_analytics_window.assert_not_called()
+
+    # Also reject 0 / negatives.
+    resp = client.get(
+        "/api/v1/qa/repos/org%2Fr1/cache/analytics?window_days=0",
+        headers=_AUTH,
+    )
+    assert resp.status_code == 422
+
+
+def test_cache_analytics_route_auth_required():
+    qa_repo = AsyncMock()
+    qa_repo.cache_analytics_window = AsyncMock()
+    _, client = _make_app(qa_repo=qa_repo)
+
+    resp = client.get("/api/v1/qa/repos/org%2Fr1/cache/analytics")
+    assert resp.status_code == 401
+    qa_repo.cache_analytics_window.assert_not_called()
+
+
 def test_get_affected_set_with_empty_dep_graph_and_force_all():
     """Phase-5D normal case: dep_graph empty (provider does not yet expose
     edges) and force_all_apps=True (qa_required=always)."""
