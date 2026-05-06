@@ -10,11 +10,17 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shlex
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import structlog
+
+
+def _shell_quote(s: str) -> str:
+    """Single-quote an arbitrary string for safe inclusion in `bash -c '...'`."""
+    return shlex.quote(s)
 
 logger = structlog.get_logger(__name__)
 
@@ -64,8 +70,27 @@ async def run_boot_phase(
 
     boot_stdout = ""
     try:
-        cmd = ["bash", "-c", command]
-        raw = await docker.run_cmd(docker.build_exec_cmd(container_id, cmd), timeout=120)
+        # Boot command is typically a long-running dev server (e.g. `next dev`,
+        # `vite --port`). We can NOT wait for it to exit — it never will. So
+        # we background the process inside the sandbox, redirect stdout/stderr
+        # to a log file, and return as soon as bash detaches. The actual
+        # readiness verification is handled by the ready_checks polling loop
+        # below.
+        #
+        # If the boot command is genuinely synchronous (e.g. a build script
+        # that exits 0 once done), it still completes before bash returns
+        # because the `&` puts the wait into the background — but the
+        # subsequent ready_checks would still need to find a listening port.
+        backgrounded = (
+            "set -e && "
+            "mkdir -p /workspace/.qa/logs && "
+            f"nohup bash -c {_shell_quote(command)} "
+            "> /workspace/.qa/logs/boot.log 2>&1 & "
+            "disown && "
+            "echo 'boot_command_backgrounded'"
+        )
+        cmd = ["bash", "-c", backgrounded]
+        raw = await docker.run_cmd(docker.build_exec_cmd(container_id, cmd), timeout=30)
         boot_stdout = raw if isinstance(raw, str) else (raw or "")
     except Exception as exc:
         logger.error("boot_startup_command_failed", error=str(exc))
@@ -73,7 +98,7 @@ async def run_boot_phase(
             outcome="startup_failed",
             attempts=0,
             duration_ms=int((time.monotonic() - started_at) * 1000),
-            error_message=str(exc),
+            error_message=str(exc) or "boot command background-launch failed",
         )
 
     attempts = 0
