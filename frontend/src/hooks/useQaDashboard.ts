@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   fetchAffectedSet,
   fetchCacheAnalytics,
+  fetchFlake,
   fetchQaAppHistory,
   fetchQaRepos,
   fetchQaRun,
@@ -92,6 +93,28 @@ export function useCacheAnalytics(
   return useQuery({
     queryKey: ["qa-dashboard", "cache-analytics", repo, windowDays],
     queryFn: () => fetchCacheAnalytics(repo!, windowDays),
+    enabled: !!repo,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * Phase 5F: subscribe to a repo's flake-heatmap aggregate.
+ *
+ * Like the cache-analytics hook, the rollup is a slow-moving historical
+ * query — `staleTime` of 5 minutes keeps the panel responsive without
+ * burning needless API traffic, and we deliberately do NOT poll on an
+ * interval (a manual refetch or repo switch is enough). The hook
+ * disables itself until `repo` is defined so route params can resolve
+ * first.
+ */
+export function useFlake(
+  repo: string | undefined,
+  windowDays = 7,
+) {
+  return useQuery({
+    queryKey: ["qa-dashboard", "flake", repo, windowDays],
+    queryFn: () => fetchFlake(repo!, windowDays),
     enabled: !!repo,
     staleTime: 5 * 60_000,
   });

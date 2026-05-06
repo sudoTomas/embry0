@@ -4,6 +4,7 @@ import type {
   AppHistoryItem,
   AppResult,
   CacheAnalyticsResponse,
+  FlakeResponse,
   RepoEntry,
   RunDetail,
   RunListItem,
@@ -86,6 +87,23 @@ export async function fetchCacheAnalytics(
 ): Promise<CacheAnalyticsResponse> {
   const { data } = await api.get<CacheAnalyticsResponse>(
     `/qa/repos/${encodeURIComponent(repo)}/cache/analytics`,
+    { params: { window_days: windowDays } },
+  );
+  return data;
+}
+
+/**
+ * Phase 5F: per-repo flake aggregate over the last N days.
+ *
+ * Default `windowDays=7` matches the backend default. Backend caps the
+ * window at 90 days — picker UI must stay in lockstep.
+ */
+export async function fetchFlake(
+  repo: string,
+  windowDays = 7,
+): Promise<FlakeResponse> {
+  const { data } = await api.get<FlakeResponse>(
+    `/qa/repos/${encodeURIComponent(repo)}/flake`,
     { params: { window_days: windowDays } },
   );
   return data;

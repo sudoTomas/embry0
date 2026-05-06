@@ -160,3 +160,40 @@ export interface WorkspaceProviderOverrideUpsert {
   provider_type: string;
   config: Record<string, unknown>;
 }
+
+/**
+ * Phase 5F: one day in a flake-heatmap row's daily grid.
+ *
+ * The grid spans the full window so even days with zero flakes appear,
+ * keeping the dashboard heatmap CSS grid stable across apps.
+ */
+export interface FlakeDailyEntry {
+  date: string; // 'YYYY-MM-DD' (UTC calendar day)
+  flakes: number;
+}
+
+/**
+ * Phase 5F: one app's row in the flake heatmap.
+ *
+ * `flake_score` is normalised hits/runs in [0, 1]; the dashboard sorts
+ * rows by this value desc so worst offenders surface first.
+ */
+export interface FlakeRow {
+  app_name: string;
+  total_runs: number;
+  flake_count: number;
+  flake_score: number;
+  daily: FlakeDailyEntry[];
+}
+
+/**
+ * Phase 5F: GET /api/v1/qa/repos/{repo}/flake payload.
+ *
+ * Backend caps `window_days` at 90 — keep the dashboard picker in
+ * lockstep so users can't exceed it from the URL bar.
+ */
+export interface FlakeResponse {
+  repo: string;
+  window_days: number;
+  apps: FlakeRow[];
+}
