@@ -1,5 +1,5 @@
 import { NavLink } from "react-router";
-import { LayoutDashboard, Play, Workflow, Settings, Bot, Box, CircleDot, KeyRound, Layers } from "lucide-react";
+import { LayoutDashboard, Play, Workflow, Settings, Bot, Box, CircleDot, KeyRound, Layers, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -33,6 +33,8 @@ const CONFIGURATION_ITEMS: NavItem[] = [
   { path: "/sandboxes", label: "Sandboxes", icon: Box, stage: "qa" },
   { path: "/pipelines", label: "Pipelines", icon: Workflow, stage: "explore" },
   { path: "/environments", label: "Environments", icon: KeyRound },
+  // Phase 5G: per-repo workspace_provider overrides admin surface.
+  { path: "/qa/admin/providers", label: "Provider overrides", icon: SlidersHorizontal },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 
