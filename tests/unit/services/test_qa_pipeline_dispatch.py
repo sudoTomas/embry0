@@ -72,6 +72,10 @@ def test_build_graph_config_includes_qa_deps() -> None:
     executor._qa_event_bus = MagicMock(name="qa_event_bus")
     # Phase 5D: affected-set persistence repo.
     executor._qa_run_metadata_repo = MagicMock(name="qa_run_metadata_repo")
+    # Phase 5G: dashboard-set workspace_provider overrides repo.
+    executor._qa_workspace_provider_overrides_repo = MagicMock(
+        name="qa_workspace_provider_overrides_repo"
+    )
     executor._github_token = "test-github-token"
 
     cfg = executor._build_graph_config("job-123")
@@ -87,4 +91,8 @@ def test_build_graph_config_includes_qa_deps() -> None:
     assert configurable["qa_shared_volume_manager"] is executor._qa_shared_volume_manager
     assert configurable["qa_event_bus"] is executor._qa_event_bus
     assert configurable["qa_run_metadata_repo"] is executor._qa_run_metadata_repo
+    assert (
+        configurable["qa_workspace_provider_overrides_repo"]
+        is executor._qa_workspace_provider_overrides_repo
+    )
     assert configurable["github_token"] == "test-github-token"
