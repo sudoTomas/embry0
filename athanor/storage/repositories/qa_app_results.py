@@ -9,6 +9,7 @@ per sub-task at orchestrator-aggregation time.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from athanor.storage.database import DatabasePool
@@ -446,6 +447,145 @@ class QAAppResultsRepository:
             ],
             "cold_cache_apps": cold_cache_apps,
         }
+
+    async def flake_window(
+        self,
+        *,
+        repo: str,
+        days: int = 7,
+    ) -> list[dict[str, Any]]:
+        """Phase 5F: per-app flake counts over the last ``days`` days for ``repo``.
+
+        A "flake" is an app whose status differed between consecutive runs on
+        the SAME ``head_sha`` within the window. Total flake_count for an app
+        is the number of times its status changed back-to-back across runs of
+        the same head_sha. Higher values indicate flakier apps.
+
+        SQL approach:
+          1. CTE joins ``qa_app_results`` to ``qa_run_metadata`` (for head_sha)
+             and ``jobs`` (for repo + created_at) inside the window.
+          2. Rows with ``head_sha = ''`` (legacy rows pre-migration 32) are
+             excluded — without a SHA we cannot establish "same workspace head".
+          3. ``LAG(status) OVER (PARTITION BY app_name, head_sha
+                                  ORDER BY j.created_at, r.id)`` gives the
+             previous status on the same head_sha. The secondary sort on
+             ``r.id`` (UUID PK) is a deterministic tie-breaker when two runs
+             share a created_at timestamp — without it, ``LAG`` could pick
+             either neighbor and the flake count would be non-deterministic.
+          4. A row is a "flake event" when ``prev_status IS NOT NULL AND
+             prev_status != status``.
+          5. Aggregate per ``app_name``: total runs in window + flake count;
+             also collect per-day flake counts.
+
+        ``flake_score`` = ``flake_count / max(total_runs, 1)`` clamped to
+        [0, 1].
+
+        ``daily`` is filled in Python for every day in the window
+        ``[NOW - days, NOW]`` (UTC, calendar-day boundary). Days with zero
+        flakes still appear so the heatmap renders a stable grid.
+
+        Returns:
+          List of dicts, one per app, sorted by ``flake_score DESC, app_name
+          ASC`` so the dashboard's "rows = apps" axis surfaces the worst
+          offenders first.
+        """
+        sql = """
+        WITH joined AS (
+            SELECT
+                r.app_name,
+                r.status,
+                m.head_sha,
+                j.created_at,
+                r.id
+            FROM qa_app_results r
+            JOIN qa_run_metadata m ON m.job_id = r.job_id
+            JOIN jobs j ON j.job_id = r.job_id
+            WHERE j.repo = $1
+              AND j.created_at >= NOW() - ($2::int * INTERVAL '1 day')
+              AND m.head_sha <> ''
+        ),
+        with_prev AS (
+            SELECT
+                app_name,
+                status,
+                head_sha,
+                created_at,
+                LAG(status) OVER (
+                    PARTITION BY app_name, head_sha
+                    ORDER BY created_at ASC, id ASC
+                ) AS prev_status
+            FROM joined
+        ),
+        flake_events AS (
+            SELECT
+                app_name,
+                created_at,
+                CASE WHEN prev_status IS NOT NULL AND prev_status <> status
+                     THEN 1 ELSE 0 END AS is_flake
+            FROM with_prev
+        )
+        SELECT
+            app_name,
+            COUNT(*)::int AS total_runs,
+            COALESCE(SUM(is_flake), 0)::int AS flake_count,
+            COALESCE(
+                ARRAY_AGG(created_at ORDER BY created_at)
+                    FILTER (WHERE is_flake = 1),
+                ARRAY[]::timestamptz[]
+            ) AS flake_timestamps
+        FROM flake_events
+        GROUP BY app_name
+        ORDER BY app_name
+        """
+        rows = await self.db.fetch(sql, repo, int(days))
+
+        # Build the canonical day grid for the window so every app's `daily`
+        # array has identical keys — keeps the heatmap CSS grid stable
+        # regardless of which days produced flakes.
+        today = datetime.now(UTC).date()
+        # Window is INCLUSIVE of today and goes back ``days`` calendar days
+        # so day count = ``days``. With days=7, the grid spans the past week
+        # (today, today-1, …, today-6).
+        day_keys: list[str] = [
+            (today - timedelta(days=offset)).isoformat()
+            for offset in range(int(days) - 1, -1, -1)
+        ] if int(days) > 0 else []
+
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            total_runs = int(r["total_runs"])
+            flake_count = int(r["flake_count"])
+            flake_score = (flake_count / total_runs) if total_runs > 0 else 0.0
+            # Defensive clamp — flake_count <= total_runs by construction
+            # (LAG produces at most total_runs - 1 events) but the float
+            # division can produce 0.999... so we clamp to be explicit.
+            flake_score = max(0.0, min(1.0, flake_score))
+
+            # Bucket flake timestamps into UTC day keys.
+            per_day: dict[str, int] = {key: 0 for key in day_keys}
+            for ts in (r["flake_timestamps"] or []):
+                key = ts.astimezone(UTC).date().isoformat()
+                if key in per_day:
+                    per_day[key] += 1
+                # Outside-window timestamps shouldn't happen (the CTE filters
+                # by created_at) but if they slip in (clock skew / DST edge),
+                # silently drop them rather than crash the heatmap.
+
+            daily = [{"date": key, "flakes": per_day[key]} for key in day_keys]
+
+            out.append(
+                {
+                    "app_name": r["app_name"],
+                    "total_runs": total_runs,
+                    "flake_count": flake_count,
+                    "flake_score": flake_score,
+                    "daily": daily,
+                }
+            )
+
+        # Sort: flakier apps first, then alpha for stability.
+        out.sort(key=lambda d: (-d["flake_score"], d["app_name"]))
+        return out
 
     async def list_history_for_app(
         self,

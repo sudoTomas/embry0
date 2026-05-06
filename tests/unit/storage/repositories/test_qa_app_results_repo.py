@@ -512,3 +512,236 @@ async def test_upsert_preserves_cache_hits_roundtrip(repo, db):
     assert rows[0].cache_hits.turbo_remote_hits == ["apps/hub#build"]
     assert rows[0].cache_hits.turbo_remote_misses == ["apps/companion#build"]
     assert rows[0].trace_url == "https://x/trace.zip"
+
+
+# ─── Phase 5F: flake_window ──────────────────────────────────────────────
+
+
+async def _seed_run_metadata(
+    db: DatabasePool,
+    job_id: str,
+    *,
+    head_sha: str,
+) -> None:
+    """Insert a qa_run_metadata row pinning the run to ``head_sha``.
+
+    Mirrors what qa_orchestrator_node persists at fan-out time. Tests use
+    this so the flake_window query can find a head_sha to LAG over.
+    """
+    await db.execute(
+        """
+        INSERT INTO qa_run_metadata
+            (job_id, apps_to_qa, apps_skipped, force_all_apps,
+             changed_files, base_branch, dep_graph, head_sha)
+        VALUES ($1, $2::text[], $3::text[], $4, $5::text[], $6, $7::jsonb, $8)
+        ON CONFLICT (job_id) DO UPDATE
+            SET head_sha = EXCLUDED.head_sha
+        """,
+        job_id,
+        ["hub"],  # apps_to_qa — content irrelevant to flake aggregation
+        [],
+        False,
+        [],
+        "main",
+        [],
+        head_sha,
+    )
+
+
+async def _seed_app_result(
+    repo_obj: QAAppResultsRepository,
+    *,
+    job_id: str,
+    app_name: str,
+    status: str,
+) -> None:
+    """Thin wrapper around upsert_with_boot_phase for flake test brevity."""
+    await repo_obj.upsert_with_boot_phase(
+        job_id=job_id,
+        app_name=app_name,
+        status=status,
+        duration_ms=100,
+        cache_hits=CacheHits(),
+        raw_result={},
+        boot_phase=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_flake_window_no_runs_returns_empty(repo, db):
+    """A repo with zero rows returns an empty apps list."""
+    result = await repo.flake_window(repo="org/empty", days=7)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_flake_window_no_status_changes_zero_flakes(repo, db):
+    """Two runs on the same head_sha both passed → flake_count = 0."""
+    repo_name = "org/stable"
+    head = "sha-stable-1"
+    for i, job_id in enumerate(("job-stab-1", "job-stab-2")):
+        await _seed_job_with_repo(db, job_id, repo_name, created_days_ago=i)
+        await _seed_run_metadata(db, job_id, head_sha=head)
+        await _seed_app_result(repo, job_id=job_id, app_name="hub", status="passed")
+
+    rows = await repo.flake_window(repo=repo_name, days=7)
+    assert len(rows) == 1
+    assert rows[0]["app_name"] == "hub"
+    assert rows[0]["total_runs"] == 2
+    assert rows[0]["flake_count"] == 0
+    assert rows[0]["flake_score"] == 0.0
+    # Daily grid spans the window (7 entries) with all zeros.
+    assert len(rows[0]["daily"]) == 7
+    assert all(d["flakes"] == 0 for d in rows[0]["daily"])
+
+
+@pytest.mark.asyncio
+async def test_flake_window_status_change_on_same_sha_one_flake(repo, db):
+    """Two runs on the same head_sha that flip status → flake_count = 1."""
+    repo_name = "org/flaky"
+    head = "sha-flaky-1"
+    # Older run: passed. Newer run: qa_failure. LAG over ORDER BY created_at
+    # asc puts the older row first, so the newer row's prev_status is "passed"
+    # and its current status is "qa_failure" — one flake event.
+    await _seed_job_with_repo(db, "job-fl-old", repo_name, created_days_ago=2)
+    await _seed_run_metadata(db, "job-fl-old", head_sha=head)
+    await _seed_app_result(repo, job_id="job-fl-old", app_name="hub", status="passed")
+
+    await _seed_job_with_repo(db, "job-fl-new", repo_name, created_days_ago=0)
+    await _seed_run_metadata(db, "job-fl-new", head_sha=head)
+    await _seed_app_result(
+        repo, job_id="job-fl-new", app_name="hub", status="qa_failure"
+    )
+
+    rows = await repo.flake_window(repo=repo_name, days=7)
+    assert len(rows) == 1
+    assert rows[0]["app_name"] == "hub"
+    assert rows[0]["total_runs"] == 2
+    assert rows[0]["flake_count"] == 1
+    assert rows[0]["flake_score"] == 0.5
+
+    # The flake event is bucketed on the day of the NEW run (offset 0 = today).
+    today_key = rows[0]["daily"][-1]["date"]  # last entry is today (asc order)
+    # Verify daily total adds up to flake_count.
+    assert sum(d["flakes"] for d in rows[0]["daily"]) == 1
+    # And the flake landed on the last day in the grid.
+    assert rows[0]["daily"][-1]["flakes"] == 1
+    # Sanity: the date string is YYYY-MM-DD.
+    assert len(today_key) == 10 and today_key[4] == "-" and today_key[7] == "-"
+
+
+@pytest.mark.asyncio
+async def test_flake_window_different_sha_no_flake(repo, db):
+    """Status flip on different head_shas does NOT count as a flake."""
+    repo_name = "org/diff-sha"
+    # Two runs on DIFFERENT head_shas — the partition isolates them, so
+    # each is the first row in its own partition and prev_status is NULL.
+    await _seed_job_with_repo(db, "job-ds-1", repo_name, created_days_ago=2)
+    await _seed_run_metadata(db, "job-ds-1", head_sha="sha-A")
+    await _seed_app_result(repo, job_id="job-ds-1", app_name="hub", status="passed")
+
+    await _seed_job_with_repo(db, "job-ds-2", repo_name, created_days_ago=0)
+    await _seed_run_metadata(db, "job-ds-2", head_sha="sha-B")
+    await _seed_app_result(
+        repo, job_id="job-ds-2", app_name="hub", status="qa_failure"
+    )
+
+    rows = await repo.flake_window(repo=repo_name, days=7)
+    assert len(rows) == 1
+    assert rows[0]["total_runs"] == 2
+    assert rows[0]["flake_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_flake_window_filters_by_window(repo, db):
+    """A run outside the window does NOT contribute to flake aggregation."""
+    repo_name = "org/window-flake"
+    head = "sha-w"
+    # Inside the 7-day window
+    await _seed_job_with_repo(db, "job-w-fresh", repo_name, created_days_ago=1)
+    await _seed_run_metadata(db, "job-w-fresh", head_sha=head)
+    await _seed_app_result(
+        repo, job_id="job-w-fresh", app_name="hub", status="qa_failure"
+    )
+    # Outside the 7-day window — even though it has a different status on the
+    # same head_sha, it should NOT pair with the fresh row.
+    await _seed_job_with_repo(db, "job-w-stale", repo_name, created_days_ago=20)
+    await _seed_run_metadata(db, "job-w-stale", head_sha=head)
+    await _seed_app_result(
+        repo, job_id="job-w-stale", app_name="hub", status="passed"
+    )
+
+    rows = await repo.flake_window(repo=repo_name, days=7)
+    assert len(rows) == 1
+    # Only the fresh row makes it into the CTE — total_runs = 1, no LAG pair,
+    # so flake_count = 0 (prev_status IS NULL).
+    assert rows[0]["total_runs"] == 1
+    assert rows[0]["flake_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_flake_window_legacy_empty_head_sha_skipped(repo, db):
+    """Rows whose qa_run_metadata.head_sha is '' (legacy) are excluded."""
+    repo_name = "org/legacy"
+    # Two runs with the legacy empty head_sha — even with a status flip,
+    # they must not appear in the flake aggregation.
+    await _seed_job_with_repo(db, "job-leg-1", repo_name, created_days_ago=2)
+    await _seed_run_metadata(db, "job-leg-1", head_sha="")
+    await _seed_app_result(repo, job_id="job-leg-1", app_name="hub", status="passed")
+
+    await _seed_job_with_repo(db, "job-leg-2", repo_name, created_days_ago=0)
+    await _seed_run_metadata(db, "job-leg-2", head_sha="")
+    await _seed_app_result(
+        repo, job_id="job-leg-2", app_name="hub", status="qa_failure"
+    )
+
+    rows = await repo.flake_window(repo=repo_name, days=7)
+    # No rows at all — both were filtered out by the head_sha <> '' clause.
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_flake_window_daily_grid_includes_zero_days(repo, db):
+    """The daily array has one entry per day in the window, even with zero flakes."""
+    repo_name = "org/grid"
+    head = "sha-grid"
+    # One row inside the window — produces no flake but ensures the app
+    # appears in the result so we can inspect its `daily` shape.
+    await _seed_job_with_repo(db, "job-g-1", repo_name, created_days_ago=0)
+    await _seed_run_metadata(db, "job-g-1", head_sha=head)
+    await _seed_app_result(repo, job_id="job-g-1", app_name="hub", status="passed")
+
+    rows = await repo.flake_window(repo=repo_name, days=7)
+    assert len(rows) == 1
+    daily = rows[0]["daily"]
+    # Exactly 7 entries, ascending by date, all 0.
+    assert len(daily) == 7
+    assert all(d["flakes"] == 0 for d in daily)
+    # Strictly ascending date keys.
+    keys = [d["date"] for d in daily]
+    assert keys == sorted(keys)
+
+
+@pytest.mark.asyncio
+async def test_flake_window_filters_other_repos(repo, db):
+    """Rows from a different repo never leak into the flake aggregation."""
+    head = "sha-shared"
+    await _seed_job_with_repo(db, "job-mine-1", "org/mine", created_days_ago=2)
+    await _seed_run_metadata(db, "job-mine-1", head_sha=head)
+    await _seed_app_result(repo, job_id="job-mine-1", app_name="hub", status="passed")
+
+    # Another repo with the same head_sha + same app + flipping status.
+    # Must NOT produce a flake event in org/mine.
+    await _seed_job_with_repo(db, "job-other-1", "org/other", created_days_ago=2)
+    await _seed_run_metadata(db, "job-other-1", head_sha=head)
+    await _seed_app_result(
+        repo, job_id="job-other-1", app_name="hub", status="qa_failure"
+    )
+    await _seed_job_with_repo(db, "job-other-2", "org/other", created_days_ago=0)
+    await _seed_run_metadata(db, "job-other-2", head_sha=head)
+    await _seed_app_result(repo, job_id="job-other-2", app_name="hub", status="passed")
+
+    mine = await repo.flake_window(repo="org/mine", days=7)
+    assert len(mine) == 1
+    assert mine[0]["total_runs"] == 1
+    assert mine[0]["flake_count"] == 0
