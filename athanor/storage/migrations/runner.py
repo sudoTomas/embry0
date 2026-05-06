@@ -767,6 +767,24 @@ MIGRATIONS: list[tuple[int, str, str]] = [
          WHERE jsonb_typeof(dep_graph) = 'string';
         """,
     ),
+    (
+        31,
+        "qa_workspace_provider_overrides — per-repo dashboard-set provider config",
+        # Phase 5G: operators can override .athanor/qa.yaml's workspace_provider
+        # section per-repo from the dashboard admin UI. When a row exists for a
+        # repo, the orchestrator prefers it over the file-based config; when it
+        # doesn't, the file-based config flows through unchanged.
+        """
+        CREATE TABLE IF NOT EXISTS qa_workspace_provider_overrides (
+            repo            TEXT PRIMARY KEY,
+            provider_type   TEXT NOT NULL,
+            config          JSONB NOT NULL,
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        COMMENT ON TABLE qa_workspace_provider_overrides IS
+            'Per-repo workspace_provider overrides set via the dashboard admin UI. When a row exists, the orchestrator prefers it over the .athanor/qa.yaml workspace_provider section.';
+        """,
+    ),
 ]
 
 
