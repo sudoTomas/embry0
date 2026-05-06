@@ -818,6 +818,7 @@ def _register_routers(app: FastAPI) -> None:
         issues,
         jobs,
         pipeline_templates,
+        qa_admin,
         qa_artifacts,
         qa_dashboard,
         qa_events,
@@ -839,6 +840,9 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"], dependencies=auth_deps)
     app.include_router(qa_artifacts.router, prefix="/api/v1", tags=["qa-artifacts"], dependencies=auth_deps)
     app.include_router(qa_dashboard.router, prefix="/api/v1", tags=["qa-dashboard"], dependencies=auth_deps)
+    # Phase 5G: dashboard admin surface for per-repo workspace_provider
+    # overrides. Same Bearer auth as the rest of /qa/...
+    app.include_router(qa_admin.router, prefix="/api/v1", tags=["qa-admin"], dependencies=auth_deps)
     # Phase 5C: SSE liveness for /qa/runs/{run_id}/events. Same auth posture
     # as qa_dashboard — the EventSource browser API can carry cookies but not
     # custom Authorization headers, so production-Bearer deploys 401 here and

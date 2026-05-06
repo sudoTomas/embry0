@@ -8,7 +8,7 @@ typescript client is generated from this same source.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -186,3 +186,32 @@ class CacheAnalyticsResponse(BaseModel):
     total_subtasks: int = Field(ge=0)
     layers: list[CacheLayerStats]
     cold_cache_apps: list[str] = Field(default_factory=list)
+
+
+# ── Phase 5G: workspace_provider admin overrides ────────────────────────────
+
+
+class WorkspaceProviderOverride(BaseModel):
+    """One row from qa_workspace_provider_overrides — what the admin UI lists."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    repo: str
+    provider_type: str = Field(min_length=1)
+    config: dict[str, Any] = Field(default_factory=dict)
+    updated_at: datetime
+
+
+class WorkspaceProviderOverrideUpsert(BaseModel):
+    """Request body for POST /qa/admin/providers/{repo}.
+
+    The admin form edits an existing provider's (type, config) — adding new
+    provider TYPES is out of scope for Phase 5G. The orchestrator's
+    ``load_provider(type, ...)`` does the type validation when the next QA
+    run picks up the override.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_type: str = Field(min_length=1)
+    config: dict[str, Any] = Field(default_factory=dict)
