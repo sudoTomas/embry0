@@ -314,29 +314,24 @@ class QAAppResultsRepository:
         sub-task count is at least 3 (so a single bad run doesn't poison
         the list). Returned alphabetically.
         """
-        # NOTE on the (cache_hits #>> '{}')::jsonb dance: the database codec
-        # in DatabasePool.connect() registers a jsonb encoder that calls
-        # json.dumps() on every Python value. Combined with the
-        # ``$5::jsonb`` cast and ``json.dumps(...)`` in upsert_with_boot_phase,
-        # cache_hits ends up wrapped as a JSON-string-scalar inside the JSONB
-        # column (i.e. the cell holds ``"\"{...}\""`` rather than ``{...}``).
-        # Reads via list_for_job paper over this with json.loads on the
-        # Python side, but server-side ``->>`` and ``->`` operators see a
-        # string scalar and return NULL. ``#>> '{}'`` extracts the JSON value
-        # as text; re-casting to ::jsonb gives us the inner object so the
-        # JSONB operators work.
+        # cache_hits is a JSONB object — read fields directly with ->> and
+        # array entries with jsonb_array_length(... -> ...). Earlier versions
+        # of this query went through ``(cache_hits #>> '{}')::jsonb`` to undo
+        # an upsert-side double-encode bug; that bug is now fixed (codec
+        # encodes once, repo passes Python objects) and a migration recasts
+        # legacy rows, so the workaround is gone.
         sql = """
         WITH window_results AS (
             SELECT
                 r.app_name,
-                (((r.cache_hits #>> '{}')::jsonb)->>'prebaked_image')::bool AS pi,
-                (((r.cache_hits #>> '{}')::jsonb)->>'shared_volume')::bool AS sv,
+                (r.cache_hits->>'prebaked_image')::bool AS pi,
+                (r.cache_hits->>'shared_volume')::bool AS sv,
                 COALESCE(
-                    jsonb_array_length(((r.cache_hits #>> '{}')::jsonb)->'turbo_remote_hits'),
+                    jsonb_array_length(r.cache_hits->'turbo_remote_hits'),
                     0
                 ) AS tr_hits,
                 COALESCE(
-                    jsonb_array_length(((r.cache_hits #>> '{}')::jsonb)->'turbo_remote_misses'),
+                    jsonb_array_length(r.cache_hits->'turbo_remote_misses'),
                     0
                 ) AS tr_misses,
                 r.job_id AS parent_job_id
