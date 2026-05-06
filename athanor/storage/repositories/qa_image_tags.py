@@ -67,9 +67,8 @@ class QAImageTagsRepository:
         row = await self.db.fetchrow(sql, repo)
         if row is None:
             return None
-        import json
-        meta_raw = row["metadata"]
-        meta = json.loads(meta_raw) if isinstance(meta_raw, str) else (meta_raw or {})
+        # metadata is JSONB — the asyncpg codec returns a Python dict.
+        meta = row["metadata"] or {}
         return QAImageTagRow(
             repo=row["repo"],
             image_tag=row["image_tag"],
@@ -89,10 +88,9 @@ class QAImageTagsRepository:
         """
         rows = await self.db.fetch(sql, repo)
         out: list[QAImageTagRow] = []
-        import json
         for r in rows:
-            meta_raw = r["metadata"]
-            meta = json.loads(meta_raw) if isinstance(meta_raw, str) else (meta_raw or {})
+            # metadata is JSONB — the asyncpg codec returns a Python dict.
+            meta = r["metadata"] or {}
             out.append(
                 QAImageTagRow(
                     repo=r["repo"],

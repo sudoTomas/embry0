@@ -8,7 +8,6 @@ per sub-task at orchestrator-aggregation time.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -176,22 +175,11 @@ class QAAppResultsRepository:
 
         out: list[QAAppResultRow] = []
         for row in rows:
-            cache_hits_raw = row["cache_hits"]
-            cache_hits_data = (
-                json.loads(cache_hits_raw) if isinstance(cache_hits_raw, str) else cache_hits_raw
-            )
-            raw_result_raw = row["raw_result"]
-            raw_result_data = (
-                json.loads(raw_result_raw) if isinstance(raw_result_raw, str) else raw_result_raw
-            )
-            boot_phase_raw = row["boot_phase"] if "boot_phase" in row.keys() else None
-            boot_phase_data: dict[str, Any] | None
-            if boot_phase_raw is None:
-                boot_phase_data = None
-            elif isinstance(boot_phase_raw, str):
-                boot_phase_data = json.loads(boot_phase_raw)
-            else:
-                boot_phase_data = boot_phase_raw
+            # JSONB columns come back as Python objects via the asyncpg codec
+            # (see athanor/storage/database.py). No json.loads here.
+            cache_hits_data = row["cache_hits"] or {}
+            raw_result_data = row["raw_result"] or {}
+            boot_phase_data = row["boot_phase"] if "boot_phase" in row.keys() else None
 
             out.append(
                 QAAppResultRow(
@@ -200,15 +188,15 @@ class QAAppResultsRepository:
                     status=SubTaskStatus(row["status"]),
                     duration_ms=row["duration_ms"],
                     cache_hits=CacheHits(
-                        prebaked_image=bool((cache_hits_data or {}).get("prebaked_image", False)),
-                        shared_volume=bool((cache_hits_data or {}).get("shared_volume", False)),
+                        prebaked_image=bool(cache_hits_data.get("prebaked_image", False)),
+                        shared_volume=bool(cache_hits_data.get("shared_volume", False)),
                         # Backward-compat: old rows had turbo_remote: bool — ignore that field.
-                        turbo_remote_hits=list((cache_hits_data or {}).get("turbo_remote_hits") or []),
-                        turbo_remote_misses=list((cache_hits_data or {}).get("turbo_remote_misses") or []),
+                        turbo_remote_hits=list(cache_hits_data.get("turbo_remote_hits") or []),
+                        turbo_remote_misses=list(cache_hits_data.get("turbo_remote_misses") or []),
                     ),
                     trace_url=row["trace_url"],
                     failure_summary=row["failure_summary"],
-                    raw_result=raw_result_data or {},
+                    raw_result=raw_result_data,
                     boot_phase=boot_phase_data,
                 )
             )

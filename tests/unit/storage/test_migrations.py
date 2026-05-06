@@ -178,12 +178,7 @@ async def test_migration_21_adds_notification_channels(db_with_migrations):
     )
     try:
         row = await db_with_migrations.fetchrow("SELECT notification_channels FROM issues WHERE id = $1", iid)
-        # asyncpg returns JSONB as a JSON string by default; decode if needed.
-        value = row["notification_channels"]
-        if isinstance(value, str):
-            import json
-
-            value = json.loads(value)
-        assert value == ["dashboard"]
+        # JSONB is decoded to a Python list by the asyncpg codec.
+        assert row["notification_channels"] == ["dashboard"]
     finally:
         await db_with_migrations.execute("DELETE FROM issues WHERE id = $1", iid)

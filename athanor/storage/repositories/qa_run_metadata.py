@@ -16,7 +16,6 @@ resolves. Surfaces the run-level diff decision to the dashboard's
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 
 from athanor.storage.database import DatabasePool
@@ -101,15 +100,10 @@ class QARunMetadataRepository:
         if row is None:
             return None
 
-        # dep_graph is JSONB — asyncpg returns it as a Python str OR (with the
-        # default codec) a dict/list. Normalise to list[dict[str, str]].
+        # dep_graph is JSONB — asyncpg returns it as a Python list via the
+        # codec (see athanor/storage/database.py).
         raw = row["dep_graph"]
-        if raw is None:
-            dep_graph: list[dict[str, str]] = []
-        elif isinstance(raw, str):
-            dep_graph = json.loads(raw) or []
-        else:
-            dep_graph = list(raw)
+        dep_graph: list[dict[str, str]] = list(raw) if raw else []
 
         return QARunMetadata(
             job_id=row["job_id"],

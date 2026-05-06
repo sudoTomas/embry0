@@ -1,6 +1,5 @@
 """Migrations #13 (drop untouched config seed rows) and #14 (bump dev agent model)."""
 
-import json
 import os
 
 import pytest
@@ -102,17 +101,17 @@ async def test_migration_13_deletes_untouched_integration_seed(fresh_db: Databas
 @pytest.mark.asyncio
 async def test_migration_13_keeps_touched_integration_row(fresh_db: DatabasePool):
     await _apply_migrations_up_to(fresh_db, 12)
+    # Pass the Python list directly — the asyncpg JSONB codec encodes it.
     await fresh_db.execute(
         "UPDATE integration_config SET trigger_labels = $1::jsonb WHERE id = 'default'",
-        json.dumps(["Custom"]),
+        ["Custom"],
     )
 
     await _apply_migrations_up_to(fresh_db, 13)
     row = await fresh_db.fetchrow("SELECT trigger_labels FROM integration_config WHERE id = 'default'")
     assert row is not None
-    # asyncpg returns jsonb as a string; the in-DB value is the JSON array.
-    labels = row["trigger_labels"] if isinstance(row["trigger_labels"], list) else json.loads(row["trigger_labels"])
-    assert labels == ["Custom"]
+    # asyncpg's JSONB decoder returns the Python list directly.
+    assert row["trigger_labels"] == ["Custom"]
 
 
 # --- Migration #14 ---
