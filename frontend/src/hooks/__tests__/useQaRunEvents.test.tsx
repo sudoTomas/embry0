@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import { useQaRunEvents } from "../useQaRunEvents";
 
@@ -47,7 +47,7 @@ class MockEventSource implements MockEventSourceInstance {
 }
 
 function makeWrapper(): {
-  Wrapper: ({ children }: { children: ReactNode }) => JSX.Element;
+  Wrapper: ({ children }: { children: ReactNode }) => ReactElement;
   qc: QueryClient;
 } {
   const qc = new QueryClient({
