@@ -705,6 +705,28 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             '{outcome, attempts, duration_ms, failed_checks: [str], boot_stdout_tail: str} populated by collect_artifacts_node when boot_outcome != "passed". NULL otherwise.';
         """,
     ),
+    (
+        29,
+        "qa_run_metadata — affected-set + diff snapshot per QA run",
+        # Phase 5D: persist the run-level affected-set decision so the dashboard
+        # can show which apps ran vs were skipped, what files drove the decision,
+        # and (eventually) the dep graph that produced it. One row per QA run,
+        # written by qa_orchestrator_node after fan-out resolves.
+        """
+        CREATE TABLE IF NOT EXISTS qa_run_metadata (
+            job_id          TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE,
+            apps_to_qa      TEXT[] NOT NULL,
+            apps_skipped    TEXT[] NOT NULL,
+            force_all_apps  BOOLEAN NOT NULL,
+            changed_files   TEXT[] NOT NULL DEFAULT '{}',
+            base_branch     TEXT NOT NULL DEFAULT '',
+            dep_graph       JSONB NOT NULL DEFAULT '[]',
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        COMMENT ON TABLE qa_run_metadata IS
+            'Run-level affected-set + diff metadata captured by qa_orchestrator_node. One row per QA run.';
+        """,
+    ),
 ]
 
 
