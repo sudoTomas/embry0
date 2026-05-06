@@ -1,4 +1,26 @@
-"""PostgreSQL connection pool management via asyncpg."""
+"""PostgreSQL connection pool management via asyncpg.
+
+JSONB encoding policy
+---------------------
+The connection pool registers a single JSONB type codec (``_jsonb_encoder`` /
+``_jsonb_decoder``) so JSONB values cross the wire as Python objects in BOTH
+directions. Concretely:
+
+* **Write path**: repository code passes the *Python value* (dict, list, bool,
+  int, str, None) as a query parameter. The codec calls ``json.dumps()`` on it
+  exactly once. Repos must NOT pre-encode with ``json.dumps()`` — doing so
+  causes a JSON-string-scalar to land inside the JSONB column (the value
+  becomes ``"{\\"foo\\": 1}"`` rather than ``{"foo": 1}``), which silently
+  breaks server-side ``->>`` and ``->`` operators.
+
+* **Read path**: asyncpg returns JSONB as a Python object. Repos must NOT
+  call ``json.loads()`` on the result. The decoder runs once.
+
+The ``::jsonb`` cast in SQL is fine to keep — it gives Postgres an
+unambiguous target type when the parameter inference would otherwise be
+ambiguous. The cast does NOT cause double-encoding; only manual
+``json.dumps()`` in the parameter list does.
+"""
 
 import json
 from collections.abc import AsyncIterator
@@ -12,10 +34,17 @@ logger = structlog.get_logger(__name__)
 
 
 def _jsonb_encoder(value: Any) -> str:
+    """Encode a Python value as a JSON string for JSONB columns.
+
+    Called by asyncpg once per JSONB parameter. Repository code MUST pass a
+    Python value (dict/list/scalar/None), not a pre-encoded JSON string —
+    pre-encoding double-wraps the value inside a JSON string scalar.
+    """
     return json.dumps(value)
 
 
 def _jsonb_decoder(value: str) -> Any:
+    """Decode a JSONB value from PostgreSQL into a Python object."""
     return json.loads(value)
 
 

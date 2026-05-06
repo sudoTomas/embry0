@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 import asyncpg
 import pytest
 
-from athanor.storage.database import DatabasePool
+from athanor.storage.database import DatabasePool, _jsonb_decoder, _jsonb_encoder
 from athanor.storage.migrations.runner import run_migrations
 
 
@@ -97,7 +97,21 @@ async def pg_pool() -> AsyncIterator[asyncpg.Pool]:
             pass
         await sys_conn.close()
 
-        pool = await asyncpg.create_pool(url, min_size=1, max_size=5)
+        async def _init_connection(conn: asyncpg.Connection) -> None:
+            # Mirror DatabasePool's JSONB codec so JSONB columns round-trip
+            # as Python objects (dict/list/scalar). Without this, asyncpg
+            # returns JSONB as a raw string and writes accept anything,
+            # which masks repository-side encoding bugs.
+            await conn.set_type_codec(
+                "jsonb",
+                encoder=_jsonb_encoder,
+                decoder=_jsonb_decoder,
+                schema="pg_catalog",
+            )
+
+        pool = await asyncpg.create_pool(
+            url, min_size=1, max_size=5, init=_init_connection,
+        )
         assert pool is not None
 
         yield pool

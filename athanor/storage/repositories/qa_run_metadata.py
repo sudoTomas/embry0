@@ -75,6 +75,9 @@ class QARunMetadataRepository:
             base_branch = EXCLUDED.base_branch,
             dep_graph = EXCLUDED.dep_graph
         """
+        # dep_graph is JSONB — pass the Python list directly; the asyncpg
+        # JSONB codec encodes once. Pre-encoding with json.dumps would
+        # double-wrap as a JSON-string-scalar.
         await self._db.execute(
             sql,
             job_id,
@@ -83,7 +86,7 @@ class QARunMetadataRepository:
             bool(force_all_apps),
             list(changed_files),
             base_branch,
-            json.dumps(dep_graph),
+            list(dep_graph),
         )
 
     async def get(self, job_id: str) -> QARunMetadata | None:

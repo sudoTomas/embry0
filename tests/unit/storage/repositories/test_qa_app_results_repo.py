@@ -428,6 +428,65 @@ async def test_cache_analytics_window_filters_other_repos(repo, db):
 
 
 @pytest.mark.asyncio
+async def test_upsert_writes_jsonb_objects_not_string_scalars(repo, db):
+    """Regression: pre-fix the codec + manual ``json.dumps`` in the upsert
+    site double-encoded JSONB values as JSON-string-scalars
+    (``jsonb_typeof = 'string'``), which made server-side ``->>`` and
+    ``->`` operators return NULL. Verify the post-fix shape with
+    ``jsonb_typeof = 'object'`` and the inner field readable via ``->>``.
+    """
+    job_id = "test-jsonb-shape"
+    await _seed_job(db, job_id)
+
+    await repo.upsert_with_boot_phase(
+        job_id=job_id,
+        app_name="hub",
+        status="passed",
+        duration_ms=42,
+        cache_hits=CacheHits(
+            prebaked_image=True,
+            shared_volume=False,
+            turbo_remote_hits=["a"],
+            turbo_remote_misses=["b"],
+        ),
+        raw_result={"trace": {"id": "trc-1"}},
+        boot_phase={"outcome": "passed", "attempts": 1},
+    )
+
+    row = await db.fetchrow(
+        """
+        SELECT
+            jsonb_typeof(cache_hits)              AS ch_type,
+            jsonb_typeof(raw_result)              AS rr_type,
+            jsonb_typeof(boot_phase)              AS bp_type,
+            cache_hits ->> 'prebaked_image'       AS prebaked,
+            cache_hits ->> 'shared_volume'        AS shared,
+            jsonb_array_length(
+                cache_hits -> 'turbo_remote_hits'
+            )                                      AS hit_count,
+            jsonb_array_length(
+                cache_hits -> 'turbo_remote_misses'
+            )                                      AS miss_count,
+            raw_result -> 'trace' ->> 'id'        AS trace_id,
+            boot_phase ->> 'outcome'              AS boot_outcome
+        FROM qa_app_results
+        WHERE job_id = $1 AND app_name = 'hub'
+        """,
+        job_id,
+    )
+    assert row is not None
+    assert row["ch_type"] == "object"
+    assert row["rr_type"] == "object"
+    assert row["bp_type"] == "object"
+    assert row["prebaked"] == "true"
+    assert row["shared"] == "false"
+    assert row["hit_count"] == 1
+    assert row["miss_count"] == 1
+    assert row["trace_id"] == "trc-1"
+    assert row["boot_outcome"] == "passed"
+
+
+@pytest.mark.asyncio
 async def test_upsert_preserves_cache_hits_roundtrip(repo, db):
     job_id = "test-cache-hits"
     await _seed_job(db, job_id)

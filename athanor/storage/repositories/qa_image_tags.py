@@ -35,8 +35,10 @@ class QAImageTagsRepository:
     ) -> None:
         """Record a freshly-built image tag. Idempotent on (repo, lockfile_sha):
         re-recording the same lockfile bumps built_at without duplicating.
+
+        ``metadata`` is JSONB — pass the Python dict directly; the asyncpg
+        JSONB codec handles encoding (see ``athanor/storage/database.py``).
         """
-        import json
         sql = """
         INSERT INTO qa_image_tags (
             repo, image_tag, lockfile_sha, built_by, metadata, is_active
@@ -50,7 +52,7 @@ class QAImageTagsRepository:
             is_active  = true
         """
         await self.db.execute(
-            sql, repo, image_tag, lockfile_sha, built_by, json.dumps(metadata or {})
+            sql, repo, image_tag, lockfile_sha, built_by, metadata or {}
         )
 
     async def get_active(self, repo: str) -> QAImageTagRow | None:

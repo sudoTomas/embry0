@@ -116,14 +116,19 @@ class QAAppResultsRepository:
         — the column is intentionally nullable so legacy rows and the
         passed-boot path are distinguishable from a captured boot_phase
         with all-empty fields.
+
+        JSONB params (cache_hits, raw_result, boot_phase) are passed as Python
+        objects — the asyncpg JSONB codec handles encoding (see
+        ``athanor/storage/database.py``). Pre-encoding with ``json.dumps`` here
+        would double-wrap the values as JSON-string-scalars inside the JSONB
+        column.
         """
-        cache_hits_json = json.dumps({
+        cache_hits_payload = {
             "prebaked_image": cache_hits.prebaked_image,
             "shared_volume": cache_hits.shared_volume,
             "turbo_remote_hits": list(cache_hits.turbo_remote_hits),
             "turbo_remote_misses": list(cache_hits.turbo_remote_misses),
-        })
-        boot_phase_json = json.dumps(boot_phase) if boot_phase is not None else None
+        }
         sql = """
         INSERT INTO qa_app_results (
             job_id, app_name, status, duration_ms, cache_hits,
@@ -146,11 +151,11 @@ class QAAppResultsRepository:
             app_name,
             status,
             int(duration_ms),
-            cache_hits_json,
+            cache_hits_payload,
             trace_url,
             failure_summary,
-            json.dumps(raw_result or {}),
-            boot_phase_json,
+            raw_result or {},
+            boot_phase,
         )
 
     async def list_for_job(self, job_id: str) -> list[QAAppResultRow]:
