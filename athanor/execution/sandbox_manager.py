@@ -240,9 +240,27 @@ class SandboxManager:
 
     @staticmethod
     def _read_oauth_token() -> str | None:
-        """Read Claude OAuth token from host credentials file."""
+        """Resolve the Claude OAuth token used by sandbox-side claude CLI.
+
+        Resolution order (first non-empty wins):
+          1. The CLAUDE_CODE_OAUTH_TOKEN env var on the orchestrator. This
+             is the documented direct override and works when the host's
+             ~/.claude credentials file isn't readable from inside the
+             container (e.g. UID-mismatched bind mount).
+          2. /home/orchestrator/.claude/.credentials.json — read the
+             ``claudeAiOauth.accessToken`` field. This is the path the
+             host's claude CLI persists to.
+
+        Returns None if neither source produces a token. Callers (the QA
+        agent config layer) raise ERR_MISSING_OAUTH_TOKEN on None.
+        """
         import json
         import os
+
+        env_token = (os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or "").strip()
+        if env_token:
+            logger.info("claude_oauth_token_loaded", source="env")
+            return env_token
 
         creds_path = "/home/orchestrator/.claude/.credentials.json"
         if not os.path.isfile(creds_path):
@@ -254,7 +272,7 @@ class SandboxManager:
             raw_token = creds.get("claudeAiOauth", {}).get("accessToken")
             token: str | None = str(raw_token) if raw_token else None
             if token:
-                logger.info("claude_oauth_token_loaded")
+                logger.info("claude_oauth_token_loaded", source="credentials_file")
             return token
         except Exception as exc:
             logger.warning("claude_credentials_read_failed", error=str(exc))
