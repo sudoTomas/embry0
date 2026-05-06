@@ -1109,3 +1109,288 @@ async def test_qa_orchestrator_skips_publish_when_no_event_bus():
     out = await qa_orchestrator_node(state, {})
     # The function still returns the same shape — just no SSE publish.
     assert out["qa"]["outcome"]["overall_status"] == "infra_error"
+
+
+# ─── Phase 5D: qa_run_metadata persistence ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_persists_run_metadata_after_resolution(monkeypatch):
+    """qa_orchestrator_node upserts qa_run_metadata once `apps` is resolved.
+
+    The row captures the affected-set decision: which apps ran, which were
+    skipped, the changed_files that drove selection, the diff base, and
+    whether force_all_apps was active.
+    """
+    from pathlib import Path
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from athanor.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[
+            WorkspaceApp("hub", Path("apps/hub"), "@x/hub"),
+            WorkspaceApp("companion", Path("apps/companion"), "@x/companion"),
+        ],
+        packages=[],
+        # Only @x/hub is affected — companion should land in apps_skipped.
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        ),
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
+    )
+
+    qa_app_results_repo = AsyncMock()
+    qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
+    md_repo = AsyncMock()
+    md_repo.upsert = AsyncMock()
+
+    state = {
+        "job_id": "run-md-1",
+        "repo": "org/repo",
+        "branch_name": "feature/x",
+        "base_branch": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    config = {
+        "configurable": {
+            "qa_app_results_repo": qa_app_results_repo,
+            "qa_run_metadata_repo": md_repo,
+        }
+    }
+
+    out = await qa_orchestrator_node(state, config)
+    assert out["qa"]["apps_to_qa"] == ["hub"]
+
+    # Exactly one upsert, with the expected affected-set shape.
+    md_repo.upsert.assert_awaited_once()
+    kwargs = md_repo.upsert.await_args.kwargs
+    assert kwargs["job_id"] == "run-md-1"
+    assert kwargs["apps_to_qa"] == ["hub"]
+    assert kwargs["apps_skipped"] == ["companion"]
+    assert kwargs["force_all_apps"] is False
+    assert kwargs["changed_files"] == ["apps/hub/app/page.tsx"]
+    assert kwargs["base_branch"] == "main"
+    assert kwargs["dep_graph"] == []
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_persists_run_metadata_with_force_all_apps(monkeypatch):
+    """When force_all_apps is set, every declared app runs and apps_skipped
+    is empty. The diff path is bypassed, so changed_files may be empty.
+    """
+    from pathlib import Path
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from athanor.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[
+            WorkspaceApp("hub", Path("apps/hub"), "@x/hub"),
+            WorkspaceApp("companion", Path("apps/companion"), "@x/companion"),
+        ],
+        packages=[],
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=1,
+            cache_hits=CacheHits(),
+        )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
+    )
+
+    qa_app_results_repo = AsyncMock()
+    qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
+    md_repo = AsyncMock()
+    md_repo.upsert = AsyncMock()
+
+    state = {
+        "job_id": "run-md-force",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "base_branch": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": [],
+            "force_all_apps": True,
+        },
+    }
+    config = {
+        "configurable": {
+            "qa_app_results_repo": qa_app_results_repo,
+            "qa_run_metadata_repo": md_repo,
+        }
+    }
+
+    out = await qa_orchestrator_node(state, config)
+    assert sorted(out["qa"]["apps_to_qa"]) == ["hub", "companion"]
+
+    md_repo.upsert.assert_awaited_once()
+    kwargs = md_repo.upsert.await_args.kwargs
+    assert kwargs["force_all_apps"] is True
+    assert sorted(kwargs["apps_to_qa"]) == ["hub", "companion"]
+    assert kwargs["apps_skipped"] == []
+    assert kwargs["changed_files"] == []
+    assert kwargs["base_branch"] == "main"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_metadata_persist_failure_does_not_break_run(monkeypatch):
+    """Persistence is best-effort. If qa_run_metadata.upsert raises, the run
+    still finishes through fan-out and produces an outcome.
+    """
+    from pathlib import Path
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from athanor.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        packages=[],
+        affected_result=AffectedSet(
+            frozenset({"@x/hub"}),
+            frozenset({"@x/hub"}),
+            frozenset({"@x/hub"}),
+        ),
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=1,
+            cache_hits=CacheHits(),
+        )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
+    )
+
+    qa_app_results_repo = AsyncMock()
+    qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
+    md_repo = AsyncMock()
+    md_repo.upsert = AsyncMock(side_effect=RuntimeError("db down"))
+
+    state = {
+        "job_id": "run-md-fail",
+        "repo": "org/repo",
+        "branch_name": "feature/x",
+        "base_branch": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    config = {
+        "configurable": {
+            "qa_app_results_repo": qa_app_results_repo,
+            "qa_run_metadata_repo": md_repo,
+        }
+    }
+
+    out = await qa_orchestrator_node(state, config)
+    # Run completed despite the persist failure.
+    assert out["qa"]["outcome"]["overall_status"] == "passed"
+    md_repo.upsert.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_no_metadata_repo_does_nothing(monkeypatch):
+    """Absent qa_run_metadata_repo (older callers / unit tests) is a no-op.
+    The run still proceeds normally.
+    """
+    from pathlib import Path
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from athanor.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        packages=[],
+        affected_result=AffectedSet(
+            frozenset({"@x/hub"}),
+            frozenset({"@x/hub"}),
+            frozenset({"@x/hub"}),
+        ),
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=1,
+            cache_hits=CacheHits(),
+        )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
+    )
+
+    qa_app_results_repo = AsyncMock()
+    qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
+
+    state = {
+        "job_id": "run-md-none",
+        "repo": "org/repo",
+        "branch_name": "feature/x",
+        "base_branch": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    # No qa_run_metadata_repo in configurable — must not raise.
+    config = {"configurable": {"qa_app_results_repo": qa_app_results_repo}}
+
+    out = await qa_orchestrator_node(state, config)
+    assert out["qa"]["outcome"]["overall_status"] == "passed"

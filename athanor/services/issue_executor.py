@@ -84,6 +84,9 @@ class IssueExecutor:
         # / legacy callers; emit_result_node + qa_orchestrator_node no-op
         # when absent.
         qa_event_bus: Any = None,
+        # Phase 5D: affected-set / dep-graph snapshot persistence. None in
+        # tests / legacy callers; qa_orchestrator_node no-ops when absent.
+        qa_run_metadata_repo: Any = None,
         github_token: str | None = None,
         telegram_channel: Any = None,
         github_comment_channel: Any = None,
@@ -118,6 +121,9 @@ class IssueExecutor:
         # FastAPI lifespan didn't run (e.g. unit tests that build IssueExecutor
         # directly). The QA workflow nodes treat absence as no-op.
         self._qa_event_bus = qa_event_bus
+        # Phase 5D: affected-set persistence repo. May be None in tests; the
+        # QA orchestrator node treats absence as no-op.
+        self._qa_run_metadata_repo = qa_run_metadata_repo
         self._github_token = github_token
         self._telegram_channel = telegram_channel
         self._github_comment_channel = github_comment_channel
@@ -190,6 +196,9 @@ class IssueExecutor:
                 # Phase 5C: SSE liveness — read by emit_result_node and
                 # qa_orchestrator_node. Absent in unit tests and legacy paths.
                 "qa_event_bus": self._qa_event_bus,
+                # Phase 5D: affected-set persistence — read by qa_orchestrator_node
+                # to upsert qa_run_metadata after the apps decision is final.
+                "qa_run_metadata_repo": self._qa_run_metadata_repo,
                 "github_token": self._github_token,
             }
         }

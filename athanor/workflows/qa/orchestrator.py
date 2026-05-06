@@ -497,6 +497,36 @@ async def _qa_orchestrator_node_impl(
     qa_state["apps_to_qa"] = list(apps)
     qa_state["validation_warnings"] = warnings
 
+    # Phase 5D: persist the affected-set decision so the dashboard can show
+    # which apps ran vs were skipped, what diff drove selection, and the
+    # dep graph. Best-effort — failure is logged but never blocks the run.
+    # Upsert *after* `apps` is decided but *before* fan-out so the row exists
+    # even if fan-out throws. Repo is read off configurable; absent in tests.
+    qa_run_metadata_repo = configurable.get("qa_run_metadata_repo")
+    if qa_run_metadata_repo is not None:
+        try:
+            all_apps = sorted(cfg.apps.keys())
+            apps_set = set(apps)
+            skipped = [a for a in all_apps if a not in apps_set]
+            await qa_run_metadata_repo.upsert(
+                job_id=state.get("job_id") or "",
+                apps_to_qa=list(apps),
+                apps_skipped=skipped,
+                force_all_apps=bool(force_all_apps),
+                changed_files=list(changed_files_str or []),
+                base_branch=str(state.get("base_branch") or ""),
+                # dep_graph: empty for Phase 5D — extracting npm-workspaces-turbo
+                # edges out of the provider is a follow-up. The list view works
+                # without it; the schema reserves the field for the future.
+                dep_graph=[],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "qa_run_metadata_persist_failed",
+                job_id=state.get("job_id"),
+                error=str(exc),
+            )
+
     if not apps:
         outcome = OrchestratorOutcome(
             overall_status="passed",

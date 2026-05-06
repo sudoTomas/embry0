@@ -28,6 +28,7 @@ from athanor.storage.repositories.pipeline_templates import PipelineTemplatesRep
 from athanor.storage.repositories.provider_config import ProviderConfigRepository
 from athanor.storage.repositories.qa_app_results import QAAppResultsRepository
 from athanor.storage.repositories.qa_image_tags import QAImageTagsRepository
+from athanor.storage.repositories.qa_run_metadata import QARunMetadataRepository
 from athanor.storage.repositories.qa_volume_state import QAVolumeStateRepository
 from athanor.storage.repositories.repo_preferences import RepoPreferencesRepository
 from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
@@ -204,6 +205,7 @@ async def _init_app_state(
     app.state.qa_app_results_repo = QAAppResultsRepository(db)
     app.state.qa_image_tags_repo = QAImageTagsRepository(db)
     app.state.qa_volume_state_repo = QAVolumeStateRepository(db)
+    app.state.qa_run_metadata_repo = QARunMetadataRepository(db)
     # SharedVolumeManager requires app.state.docker, which is set in the lifespan
     # after docker is initialized. Set to None here; lifespan will construct
     # and set the real manager after docker is ready.
@@ -249,6 +251,9 @@ async def _init_app_state(
         # callers (older integration tests) the attribute may not be set; use
         # getattr to avoid breaking those.
         qa_event_bus=getattr(app.state, "qa_event_bus", None),
+        # Phase 5D: forward the qa_run_metadata repo so qa_orchestrator_node
+        # can persist the affected-set decision per run.
+        qa_run_metadata_repo=app.state.qa_run_metadata_repo,
         github_token=github_token,
         github_comment_channel=github_comment_channel,
         telegram_channel=telegram_channel,
