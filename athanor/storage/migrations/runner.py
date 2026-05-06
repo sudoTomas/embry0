@@ -727,6 +727,46 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'Run-level affected-set + diff metadata captured by qa_orchestrator_node. One row per QA run.';
         """,
     ),
+    (
+        30,
+        "recast legacy JSON-string-scalar JSONB rows to real JSONB objects",
+        # Pre-fix bug: the asyncpg JSONB codec calls json.dumps() once on every
+        # parameter; several QA repos ALSO called json.dumps() before passing
+        # the value to a $N::jsonb parameter. Postgres parsed the resulting
+        # double-encoded string and stored it as a JSONB string scalar
+        # (jsonb_typeof = 'string') — so server-side ->> / -> operators saw a
+        # string, not the inner object, and silently returned NULL.
+        #
+        # The codec + repo upserts have been fixed (codec encodes once; repos
+        # pass Python objects). This migration recasts any rows still in the
+        # broken shape to the correct shape via ``(col #>> '{}')::jsonb``,
+        # which extracts the JSON value as text and reparses as JSONB.
+        #
+        # Idempotent: ``WHERE jsonb_typeof(col) = 'string'`` makes re-runs a
+        # no-op once the data has been migrated.
+        """
+        UPDATE qa_app_results
+           SET cache_hits = (cache_hits #>> '{}')::jsonb
+         WHERE jsonb_typeof(cache_hits) = 'string';
+
+        UPDATE qa_app_results
+           SET raw_result = (raw_result #>> '{}')::jsonb
+         WHERE jsonb_typeof(raw_result) = 'string';
+
+        UPDATE qa_app_results
+           SET boot_phase = (boot_phase #>> '{}')::jsonb
+         WHERE boot_phase IS NOT NULL
+           AND jsonb_typeof(boot_phase) = 'string';
+
+        UPDATE qa_image_tags
+           SET metadata = (metadata #>> '{}')::jsonb
+         WHERE jsonb_typeof(metadata) = 'string';
+
+        UPDATE qa_run_metadata
+           SET dep_graph = (dep_graph #>> '{}')::jsonb
+         WHERE jsonb_typeof(dep_graph) = 'string';
+        """,
+    ),
 ]
 
 
