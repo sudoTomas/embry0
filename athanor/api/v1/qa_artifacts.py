@@ -71,6 +71,21 @@ _log_stream_lock = asyncio.Lock()
 # small enough that an attacker can't get anywhere with it.
 _MAX_RESULT_BYTES = 5 * 1024 * 1024  # 5 MiB
 
+# Hard cap on a single per-sub-task artifact's body served via the
+# passthrough endpoint. The orchestrator buffers the full body in memory
+# (the MinIO SDK is sync, so streaming through the executor would require
+# bouncing each chunk back to the loop — net change much larger than 30
+# lines and harder to reason about). Pre-check the object size with
+# ``stat_object`` and 413 before pulling any bytes.
+#
+# 50 MiB lands well above the realistic ceiling for inline-displayed
+# artifacts: a multi-page screenshot is ~1-3 MiB, a HAR file with many
+# requests but no response bodies tops out around 5 MiB, and a
+# Playwright trace zip is typically 10-30 MiB. Anything larger is almost
+# certainly a misconfiguration (e.g. response bodies inlined into a HAR)
+# that the orchestrator should refuse rather than OOM on.
+_MAX_ARTIFACT_BYTES = 50 * 1024 * 1024  # 50 MiB
+
 
 def _check_safe(path: str) -> None:
     # Reject empty segments and segments that are entirely dots (`.`, `..`,
@@ -560,6 +575,20 @@ async def get_app_artifact(
     if n is None:
         raise HTTPException(status_code=404, detail="artifact not found")
     key = f"{sub}/{n}/{kind}/{filename}"
+
+    # HEAD-equivalent: ask MinIO for the object size before pulling any
+    # bytes. A multi-GB artifact (misconfigured agent, malicious upload)
+    # would otherwise OOM the orchestrator the first time anyone clicks
+    # the panel. ``stat_object`` is a single S3 HEAD round-trip — cheap
+    # compared to ``get_object``.
+    stat = await qa_minio.stat_object("qa-artifacts", key)
+    size = stat.get("size")
+    if isinstance(size, int) and size > _MAX_ARTIFACT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"artifact too large ({size} bytes > {_MAX_ARTIFACT_BYTES} cap)",
+        )
+
     body = await qa_minio.get_object_bytes("qa-artifacts", key)
     return Response(
         content=body,

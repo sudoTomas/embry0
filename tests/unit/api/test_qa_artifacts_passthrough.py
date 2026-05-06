@@ -22,6 +22,10 @@ async def api_with_minio(api_client):
     minio = MagicMock()
     minio.list_objects = AsyncMock(return_value=[])
     minio.get_object_bytes = AsyncMock(return_value=b"")
+    # Default ``stat_object`` to a small size — the passthrough endpoint
+    # consults it before fetching bytes to enforce ``_MAX_ARTIFACT_BYTES``.
+    # Tests that need to assert oversized rejection override this.
+    minio.stat_object = AsyncMock(return_value={"size": 1024, "etag": "x", "last_modified": None})
     api_client.app.state.qa_minio = minio
     yield api_client
 
@@ -154,6 +158,36 @@ async def test_artifact_passthrough_picks_correct_media_type(api_with_minio):
         )
         assert r.status_code == 200, f"{kind}/{fn}: {r.text}"
         assert r.headers["content-type"] == expected, f"{kind}/{fn}"
+
+
+async def test_artifact_passthrough_rejects_oversized_payloads(api_with_minio):
+    """A ``stat_object`` size larger than the cap → 413 + bytes never fetched.
+
+    Defense-in-depth against a misconfigured agent uploading a multi-GB HAR
+    or trace zip, which would otherwise OOM the orchestrator the first time
+    anyone clicks the panel.
+    """
+    from athanor.api.v1.qa_artifacts import _MAX_ARTIFACT_BYTES
+
+    sub = "RUN1__hub"
+    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(
+        return_value=[f"{sub}/1/traces/giant.zip"]
+    )
+    api_with_minio.app.state.qa_minio.stat_object = AsyncMock(
+        return_value={"size": _MAX_ARTIFACT_BYTES + 1, "etag": "x", "last_modified": None}
+    )
+    # Tripwire: ``get_object_bytes`` must NOT be called when the size check
+    # rejects. Fail loudly if it ever is.
+    api_with_minio.app.state.qa_minio.get_object_bytes = AsyncMock(
+        side_effect=AssertionError("get_object_bytes called despite oversized payload"),
+    )
+
+    r = await api_with_minio.get(
+        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/traces/giant.zip"
+    )
+    assert r.status_code == 413
+    assert "too large" in r.json()["detail"]
+    api_with_minio.app.state.qa_minio.get_object_bytes.assert_not_awaited()
 
 
 async def test_artifact_passthrough_unknown_extension_falls_back(api_with_minio):
