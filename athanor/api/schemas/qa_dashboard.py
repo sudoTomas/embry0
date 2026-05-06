@@ -41,6 +41,20 @@ class CacheHitsModel(BaseModel):
     turbo_remote_misses: list[str] = Field(default_factory=list)
 
 
+class BootPhaseDetail(BaseModel):
+    """Detailed boot-phase outcome for a sub-task. None when boot_phase
+    state was not captured (legacy runs) or is irrelevant (status=passed
+    runs that booted normally — UIs decide whether to render anyway)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["passed", "timeout", "startup_failed"]
+    attempts: int = Field(ge=0)
+    duration_ms: int = Field(ge=0)
+    failed_checks: list[str] = Field(default_factory=list)
+    boot_stdout_tail: str = ""
+
+
 class RepoEntry(BaseModel):
     """One repo's row in GET /api/v1/qa/repos."""
 
@@ -80,6 +94,7 @@ class AppResult(BaseModel):
     cache_hits: CacheHitsModel = Field(default_factory=CacheHitsModel)
     trace_url: str | None = None
     failure_summary: str | None = None
+    boot_phase: BootPhaseDetail | None = None
 
 
 class RunDetail(BaseModel):

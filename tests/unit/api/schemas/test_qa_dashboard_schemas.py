@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from athanor.api.schemas.qa_dashboard import (
     AppHistoryItem,
     AppResult,
+    BootPhaseDetail,
     CacheHitsModel,
     RepoEntry,
     RunDetail,
@@ -109,6 +110,43 @@ def test_app_history_item_round_trip():
     )
     parsed = AppHistoryItem.model_validate_json(h.model_dump_json())
     assert parsed.status == "passed"
+
+
+def test_boot_phase_detail_minimal_construction():
+    bp = BootPhaseDetail(
+        outcome="timeout",
+        attempts=12,
+        duration_ms=600_000,
+        failed_checks=["http://localhost:3000/health: got 503 expected 200"],
+        boot_stdout_tail="ready - started server on http://localhost:3000",
+    )
+    parsed = BootPhaseDetail.model_validate_json(bp.model_dump_json())
+    assert parsed.outcome == "timeout"
+    assert parsed.attempts == 12
+    assert parsed.duration_ms == 600_000
+    assert parsed.failed_checks == [
+        "http://localhost:3000/health: got 503 expected 200",
+    ]
+    assert parsed.boot_stdout_tail.startswith("ready - started")
+
+
+def test_app_result_accepts_boot_phase_field_optional():
+    # Legacy AppResult dict (no boot_phase key) must still validate.
+    legacy_dict = {
+        "app_name": "hub",
+        "status": "passed",
+        "duration_ms": 1500,
+        "cache_hits": {
+            "prebaked_image": False,
+            "shared_volume": False,
+            "turbo_remote_hits": [],
+            "turbo_remote_misses": [],
+        },
+        "trace_url": None,
+        "failure_summary": None,
+    }
+    model = AppResult.model_validate(legacy_dict)
+    assert model.boot_phase is None
 
 
 def test_run_summary_item_used_in_listings():
