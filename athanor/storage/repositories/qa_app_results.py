@@ -213,6 +213,12 @@ class QAAppResultsRepository:
         status (passed if every per-app row passed; failed otherwise), and
         the number of apps in that latest run.
         """
+        # `started_at IS NOT NULL` filter excludes rows that never reached
+        # the IssueExecutor.start_job() call site (e.g. rows synthesized by
+        # postgres-gated unit tests, or jobs that errored before the
+        # workflow took over). The dashboard's RepoEntry schema declares
+        # latest_started_at as non-null datetime, so a NULL would raise
+        # Pydantic validation at serialization time and 500 the endpoint.
         sql = """
         WITH latest_per_repo AS (
             SELECT
@@ -221,7 +227,8 @@ class QAAppResultsRepository:
                 j.started_at,
                 ROW_NUMBER() OVER (PARTITION BY j.repo ORDER BY j.started_at DESC) AS rn
             FROM jobs j
-            WHERE EXISTS (SELECT 1 FROM qa_app_results q WHERE q.job_id = j.job_id)
+            WHERE j.started_at IS NOT NULL
+              AND EXISTS (SELECT 1 FROM qa_app_results q WHERE q.job_id = j.job_id)
         )
         SELECT
             l.repo,
@@ -237,7 +244,7 @@ class QAAppResultsRepository:
         JOIN qa_app_results q ON q.job_id = l.job_id
         WHERE l.rn = 1
         GROUP BY l.repo, l.job_id, l.started_at
-        ORDER BY l.started_at DESC NULLS LAST
+        ORDER BY l.started_at DESC
         LIMIT $1
         """
         rows = await self.db.fetch(sql, limit)
