@@ -58,6 +58,13 @@ class SubTaskState(TypedDict, total=False):
     # Set by boot_app_node on success
     boot_outcome: str | None        # "passed" | "timeout" | "startup_failed"
     boot_duration_ms: int | None
+    # Phase 5A: stash the full BootResult for collect_artifacts_node so the
+    # dashboard's boot drill-down can render attempts / failed_checks /
+    # stdout tail. Set on every boot_app_node return path.
+    boot_result: Any  # athanor.workflows.qa.boot.BootResult — Any here to
+    # avoid an import cycle in this lightweight state module.
+    boot_phase: dict[str, Any] | None  # populated by collect_artifacts_node
+    # on the boot-failure paths and threaded into emit_result_node.
 
     # Set by exploratory_qa_node (forwarded from legacy qa_node return)
     agent_outputs: list[dict[str, Any]]

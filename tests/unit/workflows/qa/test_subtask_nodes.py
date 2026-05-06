@@ -507,6 +507,84 @@ async def test_collect_artifacts_node_short_circuits_on_prior_status():
     assert out == {}
 
 
+@pytest.mark.asyncio
+async def test_collect_artifacts_node_records_boot_phase_on_timeout():
+    """Phase 5A: when boot timed out, collect_artifacts populates boot_phase
+    (the dashboard's drill-down) without touching status/failure_summary.
+
+    The stdout tail is sourced via docker exec on /workspace/.qa/logs/boot.log
+    because BootResult.stdout is just the ack line, not the actual log
+    content (see boot.py:138-160).
+    """
+    from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
+
+    fake_log_tail = (
+        "[next-server] info: ready - started server on http://localhost:3000\n"
+        "[next-server] error: failed to compile pages/health.tsx\n"
+    )
+    docker = MagicMock()
+    docker.build_exec_cmd = MagicMock(return_value=["docker", "exec", "cid", "tail"])
+    docker.run_cmd = AsyncMock(return_value=fake_log_tail)
+
+    resolved = _resolved_app("hub", boot_timeout_seconds=600)
+    boot_result = BootResult(
+        outcome="timeout",
+        attempts=12,
+        duration_ms=600_000,
+        failed_checks=[
+            "http://localhost:3000/health: got 503 expected 200",
+        ],
+        stdout="boot_command_backgrounded",  # the ack line, not the log
+    )
+    state = {
+        "status": SubTaskStatus.BOOT_FAILURE,
+        "boot_outcome": "timeout",
+        "boot_duration_ms": 600_000,
+        "boot_result": boot_result,
+        "resolved": resolved,
+        "sandbox_id": "cid",
+    }
+    config = {"configurable": {"docker": docker}}
+    out = await collect_artifacts_node(state, config)
+
+    assert "status" not in out  # legacy: status is owned by boot_app_node
+    assert out["boot_phase"]["outcome"] == "timeout"
+    assert out["boot_phase"]["attempts"] == 12
+    assert out["boot_phase"]["duration_ms"] == 600_000
+    assert out["boot_phase"]["failed_checks"]
+    assert "started server" in out["boot_phase"]["boot_stdout_tail"]
+    # Sanity: the tail is sourced from the docker exec, NOT from BootResult.stdout
+    assert "boot_command_backgrounded" not in out["boot_phase"]["boot_stdout_tail"]
+
+
+@pytest.mark.asyncio
+async def test_collect_artifacts_node_no_boot_phase_when_boot_passed():
+    """When boot passed and the agent runs to completion, no boot_phase key
+    leaks into the return — the dashboard hides the panel for passed runs."""
+    from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
+
+    docker = MagicMock()
+    docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
+    docker.run_cmd = AsyncMock(return_value=_make_result_json(overall="passed"))
+
+    resolved = _resolved_app("hub")
+    state = {
+        "status": None,
+        "boot_outcome": "passed",
+        "boot_duration_ms": 1500,
+        "boot_result": BootResult(outcome="passed", attempts=2, duration_ms=1500),
+        "resolved": resolved,
+        "sandbox_id": "cid",
+    }
+    config = {"configurable": {"docker": docker}}
+    out = await collect_artifacts_node(state, config)
+
+    assert out["status"] == SubTaskStatus.PASSED
+    assert "boot_phase" not in out
+
+
+
+
 # ---------------------------------------------------------------------------
 # Test 12: release_sandbox_node
 # ---------------------------------------------------------------------------

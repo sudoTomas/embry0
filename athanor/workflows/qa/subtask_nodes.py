@@ -306,6 +306,7 @@ async def boot_app_node(state: SubTaskState, config: RunnableConfig) -> dict[str
         return {
             "boot_outcome": "passed",
             "boot_duration_ms": result.duration_ms,
+            "boot_result": result,
             "cache_hits_partial": {
                 **(state.get("cache_hits_partial") or {}),
                 "turbo_remote_hits": turbo_hits,
@@ -318,6 +319,7 @@ async def boot_app_node(state: SubTaskState, config: RunnableConfig) -> dict[str
             "status": SubTaskStatus.BOOT_FAILURE,
             "boot_outcome": "timeout",
             "boot_duration_ms": result.duration_ms,
+            "boot_result": result,
             "failure_summary": (
                 f"boot_command did not become ready within "
                 f"{resolved.boot_timeout_seconds}s"
@@ -338,6 +340,7 @@ async def boot_app_node(state: SubTaskState, config: RunnableConfig) -> dict[str
         ),
         "boot_outcome": "startup_failed",
         "boot_duration_ms": result.duration_ms,
+        "boot_result": result,
         "failure_summary": result.error_message or "startup command failed",
         "completed_at": time.monotonic(),
     }
@@ -470,16 +473,65 @@ async def exploratory_qa_node(state: SubTaskState, config: RunnableConfig) -> di
     return {"agent_outputs": out.get("agent_outputs", []) or []}
 
 
+async def _read_boot_log_tail(
+    *, docker: Any, sandbox_id: str, max_bytes: int = 8192
+) -> str:
+    """Best-effort read of the dev-server stdout log captured by run_boot_phase.
+
+    boot.py backgrounds the user's startup command with stdout/stderr piped
+    to /workspace/.qa/logs/boot.log. ``BootResult.stdout`` only carries the
+    short ack line ('boot_command_backgrounded') — to surface what the dev
+    server actually printed before timing out we need to docker-exec a
+    `tail -c <max_bytes>` against that log. Returns the empty string on any
+    failure (the boot log is not always present, e.g. when the boot command
+    failed to even start) so collect_artifacts_node can degrade gracefully.
+    """
+    try:
+        cmd = docker.build_exec_cmd(
+            sandbox_id,
+            ["bash", "-c", f"tail -c {int(max_bytes)} /workspace/.qa/logs/boot.log 2>/dev/null || true"],
+        )
+        raw = await docker.run_cmd(cmd, timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("boot_log_tail_read_failed", error=str(exc), sandbox=sandbox_id)
+        return ""
+    return raw if isinstance(raw, str) else (raw or "")
+
+
+def _boot_phase_from_state(state: SubTaskState, *, stdout_tail: str = "") -> dict[str, Any] | None:
+    """Build the boot_phase dict for the dashboard from sub-task state.
+
+    Returns None when no BootResult was stashed (i.e. boot_app_node never
+    ran or the test stub omitted it). Truncates ``stdout_tail`` to the last
+    8192 bytes — caller is responsible for sourcing the log content (either
+    from BootResult.stdout, which is just the ack line, or via
+    _read_boot_log_tail above).
+    """
+    br = state.get("boot_result")
+    if br is None:
+        return None
+    return {
+        "outcome": getattr(br, "outcome", "startup_failed"),
+        "attempts": int(getattr(br, "attempts", 0) or 0),
+        "duration_ms": int(getattr(br, "duration_ms", 0) or 0),
+        "failed_checks": list(getattr(br, "failed_checks", []) or []),
+        "boot_stdout_tail": (stdout_tail or "")[-8192:],
+    }
+
+
 async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) -> dict[str, Any]:
     """Read /workspace/.qa/result.json from the sandbox; produce SubTaskStatus.
 
     Synthesizes the boot section from sub-task state (the agent never writes
     boot — that's the orchestrator's responsibility, mirroring the legacy
     report_node behavior).
-    """
-    if state.get("status") is not None:
-        return {}
 
+    Phase 5A: when boot did NOT pass we still run, just to populate
+    ``boot_phase`` for the dashboard drill-down — but we DO NOT touch
+    status/failure_summary (those are owned by boot_app_node on the
+    failure path). The legacy short-circuit (``return {}``) is preserved
+    on the boot-passed-but-status-set path (e.g. e2e/seed failures).
+    """
     from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
     from athanor.workflows.qa.result_schema import (
         QABootResult,
@@ -491,6 +543,20 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
     docker = configurable.get("docker")
     sandbox_id = state.get("sandbox_id")
     resolved: ResolvedAppConfig = state["resolved"]
+
+    # Phase 5A: when boot did not pass, this node's only remaining job is to
+    # capture boot_phase for the dashboard drill-down. Skip the result.json
+    # read (the agent never ran) and don't touch status/failure_summary.
+    if state.get("status") is not None:
+        if state.get("boot_outcome") not in (None, "passed"):
+            stdout_tail = ""
+            if docker is not None and sandbox_id is not None:
+                stdout_tail = await _read_boot_log_tail(
+                    docker=docker, sandbox_id=sandbox_id
+                )
+            boot_phase = _boot_phase_from_state(state, stdout_tail=stdout_tail)
+            return {"boot_phase": boot_phase} if boot_phase is not None else {}
+        return {}
 
     if docker is None or sandbox_id is None:
         return {
