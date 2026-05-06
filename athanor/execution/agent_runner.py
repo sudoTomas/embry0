@@ -120,6 +120,18 @@ class AgentRunner:
                 final_result: dict[str, Any] | None = None
                 event_callback = on_event or (lambda _: None)
                 line_count = 0
+                stderr_chunks: list[bytes] = []
+
+                async def _drain_stderr() -> None:
+                    if proc.stderr is None:
+                        return
+                    while True:
+                        chunk = await proc.stderr.read(4096)
+                        if not chunk:
+                            return
+                        stderr_chunks.append(chunk)
+
+                stderr_task = asyncio.create_task(_drain_stderr())
 
                 if proc.stdout is not None:
                     async for raw_line in proc.stdout:
@@ -136,6 +148,9 @@ class AgentRunner:
                             event_callback(event)
 
                 await proc.wait()
+                await stderr_task
+
+                stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace")
 
                 logger.info(
                     "agent_stdout_captured",
@@ -143,6 +158,14 @@ class AgentRunner:
                     line_count=line_count,
                     exit_code=proc.returncode,
                 )
+
+                if proc.returncode and proc.returncode != 0:
+                    logger.error(
+                        "agent_runner_subprocess_failed",
+                        agent_type=config.get("agent_type"),
+                        exit_code=proc.returncode,
+                        stderr=stderr_text[-4000:],
+                    )
 
                 if final_result:
                     output = AgentOutput(
@@ -180,10 +203,14 @@ class AgentRunner:
                             )
                     return output
 
+                trailing = stderr_text.strip()[-1500:]
+                msg = "No final result received from sandbox"
+                if trailing:
+                    msg = f"{msg}; runner stderr: {trailing}"
                 return AgentOutput(
                     agent_type=config.get("agent_type", "unknown"),
                     is_error=True,
-                    error_message="No final result received from sandbox",
+                    error_message=msg,
                 )
 
             try:

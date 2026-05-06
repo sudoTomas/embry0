@@ -38,16 +38,37 @@ class _FakeStdout:
         return self._lines.pop(0)
 
 
+class _FakeStderr:
+    """Async ``read(n)`` returning empty bytes (EOF) — no stderr produced."""
+
+    def __init__(self, chunks: list[bytes] | None = None) -> None:
+        self._chunks = list(chunks or [])
+
+    async def read(self, _n: int) -> bytes:
+        if self._chunks:
+            return self._chunks.pop(0)
+        return b""
+
+
 class _FakeProc:
-    def __init__(self, payload: dict[str, Any]) -> None:
-        self.stdout = _FakeStdout(payload)
-        self.returncode = 0
+    def __init__(self, payload: dict[str, Any], stderr_chunks: list[bytes] | None = None, returncode: int = 0) -> None:
+        self.stdout = _FakeStdout(payload) if payload else _EmptyStdout()
+        self.stderr = _FakeStderr(stderr_chunks)
+        self.returncode = returncode
 
     async def wait(self) -> int:
-        return 0
+        return self.returncode
 
     def kill(self) -> None:  # pragma: no cover — only used by timeout path
         pass
+
+
+class _EmptyStdout:
+    def __aiter__(self) -> _EmptyStdout:
+        return self
+
+    async def __anext__(self) -> bytes:
+        raise StopAsyncIteration
 
 
 def _make_runner(stream_payload: dict[str, Any]) -> tuple[AgentRunner, AsyncMock, list[list[str]]]:
