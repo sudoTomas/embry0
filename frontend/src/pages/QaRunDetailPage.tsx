@@ -32,6 +32,14 @@ export function QaRunDetailPage() {
       </div>
       <p className="text-sm text-white/60">
         {data.apps.length} apps · started {new Date(data.started_at).toLocaleString()}
+        {" · "}
+        <Link
+          to={`/qa/runs/${encodeURIComponent(data.job_id)}/affected`}
+          className="text-cyan-300 hover:underline"
+          data-testid="affected-set-link"
+        >
+          Affected set
+        </Link>
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {data.apps.map((a) => (
