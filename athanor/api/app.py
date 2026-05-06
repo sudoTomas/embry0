@@ -244,6 +244,11 @@ async def _init_app_state(
         qa_image_tags_repo=app.state.qa_image_tags_repo,
         qa_volume_state_repo=app.state.qa_volume_state_repo,
         qa_shared_volume_manager=app.state.qa_shared_volume_manager,
+        # Phase 5C: forward the SSE pub/sub to the executor when the lifespan
+        # already constructed it on app.state. In _init_app_state's bare-bones
+        # callers (older integration tests) the attribute may not be set; use
+        # getattr to avoid breaking those.
+        qa_event_bus=getattr(app.state, "qa_event_bus", None),
         github_token=github_token,
         github_comment_channel=github_comment_channel,
         telegram_channel=telegram_channel,
@@ -351,6 +356,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from athanor.execution.qa.token_registry import SandboxTokenRegistry
 
     app.state.qa_token_registry = SandboxTokenRegistry()
+
+    # Phase 5C: in-process pub/sub for QA run-state changes. The SSE route
+    # at GET /api/v1/qa/runs/{run_id}/events subscribes; the orchestrator's
+    # subtask_nodes.emit_result_node and qa_orchestrator_node publish.
+    # Single-process by design; the dashboard's 15s polling fallback covers
+    # any client that connects late or reconnects after a drop.
+    from athanor.qa.event_bus import QAEventBus
+
+    app.state.qa_event_bus = QAEventBus()
 
     # Recover orphaned jobs from previous orchestrator lifecycle
     try:
@@ -787,6 +801,7 @@ def _register_routers(app: FastAPI) -> None:
         pipeline_templates,
         qa_artifacts,
         qa_dashboard,
+        qa_events,
         queue,
         repo_preferences,
         sandbox_profiles,
@@ -805,6 +820,11 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"], dependencies=auth_deps)
     app.include_router(qa_artifacts.router, prefix="/api/v1", tags=["qa-artifacts"], dependencies=auth_deps)
     app.include_router(qa_dashboard.router, prefix="/api/v1", tags=["qa-dashboard"], dependencies=auth_deps)
+    # Phase 5C: SSE liveness for /qa/runs/{run_id}/events. Same auth posture
+    # as qa_dashboard — the EventSource browser API can carry cookies but not
+    # custom Authorization headers, so production-Bearer deploys 401 here and
+    # rely on the dashboard's 15s polling fallback.
+    app.include_router(qa_events.router, prefix="/api/v1", tags=["qa-events"], dependencies=auth_deps)
     app.include_router(sandbox_profiles.router, prefix="/api/v1", tags=["sandbox-profiles"], dependencies=auth_deps)
     app.include_router(sandboxes.router, prefix="/api/v1", tags=["sandboxes"], dependencies=auth_deps)
     app.include_router(config.router, prefix="/api/v1", tags=["config"], dependencies=auth_deps)

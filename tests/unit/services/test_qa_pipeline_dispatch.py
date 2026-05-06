@@ -68,6 +68,8 @@ def test_build_graph_config_includes_qa_deps() -> None:
     executor._qa_image_tags_repo = MagicMock(name="qa_image_tags_repo")
     executor._qa_volume_state_repo = MagicMock(name="qa_volume_state_repo")
     executor._qa_shared_volume_manager = MagicMock(name="qa_shared_volume_manager")
+    # Phase 5C: in-process SSE event bus.
+    executor._qa_event_bus = MagicMock(name="qa_event_bus")
     executor._github_token = "test-github-token"
 
     cfg = executor._build_graph_config("job-123")
@@ -81,4 +83,5 @@ def test_build_graph_config_includes_qa_deps() -> None:
     assert configurable["qa_image_tags_repo"] is executor._qa_image_tags_repo
     assert configurable["qa_volume_state_repo"] is executor._qa_volume_state_repo
     assert configurable["qa_shared_volume_manager"] is executor._qa_shared_volume_manager
+    assert configurable["qa_event_bus"] is executor._qa_event_bus
     assert configurable["github_token"] == "test-github-token"

@@ -80,6 +80,10 @@ class IssueExecutor:
         qa_image_tags_repo: Any = None,
         qa_volume_state_repo: Any = None,
         qa_shared_volume_manager: Any = None,
+        # Phase 5C: in-process QA event bus for SSE liveness. None in tests
+        # / legacy callers; emit_result_node + qa_orchestrator_node no-op
+        # when absent.
+        qa_event_bus: Any = None,
         github_token: str | None = None,
         telegram_channel: Any = None,
         github_comment_channel: Any = None,
@@ -110,6 +114,10 @@ class IssueExecutor:
         self._qa_image_tags_repo = qa_image_tags_repo
         self._qa_volume_state_repo = qa_volume_state_repo
         self._qa_shared_volume_manager = qa_shared_volume_manager
+        # Phase 5C: SSE liveness pub/sub. May be None in tests or when the
+        # FastAPI lifespan didn't run (e.g. unit tests that build IssueExecutor
+        # directly). The QA workflow nodes treat absence as no-op.
+        self._qa_event_bus = qa_event_bus
         self._github_token = github_token
         self._telegram_channel = telegram_channel
         self._github_comment_channel = github_comment_channel
@@ -179,6 +187,9 @@ class IssueExecutor:
                 "qa_image_tags_repo": self._qa_image_tags_repo,
                 "qa_volume_state_repo": self._qa_volume_state_repo,
                 "qa_shared_volume_manager": self._qa_shared_volume_manager,
+                # Phase 5C: SSE liveness — read by emit_result_node and
+                # qa_orchestrator_node. Absent in unit tests and legacy paths.
+                "qa_event_bus": self._qa_event_bus,
                 "github_token": self._github_token,
             }
         }
