@@ -58,15 +58,32 @@ function HeatmapRow({ row }: { row: FlakeRow }) {
           gridTemplateColumns: `repeat(${row.daily.length}, minmax(0, 1fr))`,
         }}
       >
-        {row.daily.map((d) => (
-          <div
-            key={d.date}
-            data-testid={`flake-cell-${row.app_name}-${d.date}`}
-            data-flakes={d.flakes}
-            className={`h-6 rounded-sm ${cellClass(d.flakes)}`}
-            title={`${row.app_name} on ${d.date}: ${d.flakes} flake${d.flakes === 1 ? "" : "s"}`}
-          />
-        ))}
+        {row.daily.map((d) => {
+          const label = `${row.app_name} on ${d.date}: ${d.flakes} flake${d.flakes === 1 ? "" : "s"}`;
+          return (
+            <div
+              key={d.date}
+              role="gridcell"
+              data-testid={`flake-cell-${row.app_name}-${d.date}`}
+              data-flakes={d.flakes}
+              // a11y: color (rose-500 alpha bucket) is paired with a numeric
+              // glyph for buckets >= 3 so color-blind users get a non-color
+              // intensity signal. aria-label echoes the title so screen
+              // readers announce the data point even when the title tooltip
+              // is unavailable (some readers ignore title on non-interactive
+              // elements).
+              className={`flex h-6 items-center justify-center rounded-sm ${cellClass(d.flakes)}`}
+              title={label}
+              aria-label={label}
+            >
+              {d.flakes >= 3 && (
+                <span className="text-[10px] font-mono leading-none text-white">
+                  {d.flakes}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
       <span
         className="text-right font-mono text-xs text-white/60"

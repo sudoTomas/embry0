@@ -187,4 +187,79 @@ describe("FlakeHeatmap", () => {
     render(<FlakeHeatmap repo="org/r1" windowDays={30} />);
     expect(mockUseFlake).toHaveBeenCalledWith("org/r1", 30);
   });
+
+  it("renders the numeric flake count INSIDE high-flake cells (a11y)", () => {
+    // Buckets >= 3 must show a non-color signal (the numeral) so color-
+    // blind users can read intensity without relying on opacity alone.
+    // Cells with 0/1/2 flakes stay glyph-free to keep the grid scannable.
+    const data: FlakeResponse = {
+      repo: "org/r1",
+      window_days: 7,
+      apps: [
+        {
+          app_name: "hub",
+          total_runs: 10,
+          flake_count: 8,
+          flake_score: 0.8,
+          daily: [
+            { date: "2026-04-30", flakes: 0 },
+            { date: "2026-05-01", flakes: 1 },
+            { date: "2026-05-02", flakes: 2 },
+            { date: "2026-05-03", flakes: 3 },
+            { date: "2026-05-04", flakes: 5 },
+            { date: "2026-05-05", flakes: 0 },
+            { date: "2026-05-06", flakes: 0 },
+          ],
+        },
+      ],
+    };
+    mockUseFlake.mockReturnValue({
+      data,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<FlakeHeatmap repo="org/r1" />);
+
+    // Cell with 5 flakes renders the numeral inside (non-color signal).
+    const heavyCell = screen.getByTestId("flake-cell-hub-2026-05-04");
+    expect(heavyCell.textContent).toBe("5");
+
+    // Cell with 3 flakes renders the numeral (boundary case >=3).
+    const threeCell = screen.getByTestId("flake-cell-hub-2026-05-03");
+    expect(threeCell.textContent).toBe("3");
+
+    // Cell with 2 flakes (below the threshold) does NOT render a numeral.
+    const lightCell = screen.getByTestId("flake-cell-hub-2026-05-02");
+    expect(lightCell.textContent).toBe("");
+
+    // Cell with 0 flakes does NOT render a numeral.
+    const zeroCell = screen.getByTestId("flake-cell-hub-2026-04-30");
+    expect(zeroCell.textContent).toBe("");
+  });
+
+  it("emits aria-label on every cell so screen readers can announce data", () => {
+    mockUseFlake.mockReturnValue({
+      data: FULL,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<FlakeHeatmap repo="org/r1" />);
+
+    // aria-label mirrors the title so screen readers (which often ignore
+    // title on non-interactive divs) still announce the data point.
+    const flakeCell = screen.getByTestId("flake-cell-hub-2026-05-02");
+    expect(flakeCell.getAttribute("aria-label")).toBe(
+      "hub on 2026-05-02: 1 flake",
+    );
+    const zeroCell = screen.getByTestId("flake-cell-hub-2026-04-30");
+    expect(zeroCell.getAttribute("aria-label")).toBe(
+      "hub on 2026-04-30: 0 flakes",
+    );
+    // Cells declare gridcell role so AT exposes the heatmap grid structure.
+    expect(flakeCell.getAttribute("role")).toBe("gridcell");
+  });
 });
