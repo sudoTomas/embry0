@@ -258,6 +258,9 @@ def test_summarize_tool_input_unknown_tool() -> None:
 
 @pytest.mark.asyncio
 async def test_evaluate_hook_allows_safe_command() -> None:
+    """Allow returns the SDK's PreToolUseHookSpecificOutput shape with
+    ``permissionDecision: "allow"`` (NOT the legacy top-level ``{"decision":
+    "allow"}`` form, which the CLI Zod validator rejects)."""
     from athanor.agents.executor import _evaluate_hook
     from athanor.safety.policy import SafetyPolicy
 
@@ -268,11 +271,17 @@ async def test_evaluate_hook_allows_safe_command() -> None:
         tools_called={},
         writer=lambda _e: None,
     )
-    assert result["decision"] == "allow"
+    # Top-level must NOT have decision="allow" — only "block" is valid there.
+    assert result.get("decision") != "allow"
+    spec = result["hookSpecificOutput"]
+    assert spec["hookEventName"] == "PreToolUse"
+    assert spec["permissionDecision"] == "allow"
 
 
 @pytest.mark.asyncio
 async def test_evaluate_hook_denies_dangerous_command() -> None:
+    """Deny returns ``hookSpecificOutput.permissionDecision: "deny"`` plus the
+    blocked reason in ``permissionDecisionReason``."""
     from athanor.agents.executor import _evaluate_hook
     from athanor.safety.policy import ContentRule, SafetyPolicy
 
@@ -289,8 +298,10 @@ async def test_evaluate_hook_denies_dangerous_command() -> None:
         tools_called={},
         writer=lambda e: events.append(e),
     )
-    assert result["decision"] == "deny"
-    assert "destructive-rm" in result["reason"]
+    spec = result["hookSpecificOutput"]
+    assert spec["hookEventName"] == "PreToolUse"
+    assert spec["permissionDecision"] == "deny"
+    assert "destructive-rm" in spec["permissionDecisionReason"]
     assert any(e.get("type") == "error" for e in events)
 
 
@@ -307,7 +318,48 @@ async def test_evaluate_hook_non_dict_input_coerced() -> None:
         tools_called={},
         writer=lambda _e: None,
     )
-    assert result["decision"] == "allow"
+    assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_hook_does_not_set_top_level_decision_allow_or_deny() -> None:
+    """Regression test for the 2026-05-06 CLI Zod-validation crash.
+
+    The Claude CLI's stdin protocol validator rejects PreToolUse hook
+    outputs whose top-level ``decision`` is anything other than
+    ``"block"``. The legacy ``{"decision": "allow" | "deny"}`` shape that
+    Athanor used to emit caused ``ZodError: Invalid input`` and crashed
+    the runner subprocess (1 of 14 sub-tasks errored on the prior QA
+    run because of this exact mismatch). The hook MUST express the
+    decision via ``hookSpecificOutput.permissionDecision`` instead.
+    """
+    from athanor.agents.executor import _evaluate_hook
+    from athanor.safety.policy import ContentRule, SafetyPolicy
+
+    # Allow path
+    allow = await _evaluate_hook(
+        policy=SafetyPolicy(),
+        tool_name="Read",
+        tool_input={"file_path": "/workspace/foo"},
+        tools_called={},
+        writer=lambda _e: None,
+    )
+    assert allow.get("decision") not in ("allow", "deny")
+
+    # Deny path
+    deny_policy = SafetyPolicy(
+        content_checks=[ContentRule(pattern=r"x", tools=["Bash"], reason="r")]
+    )
+    deny = await _evaluate_hook(
+        policy=deny_policy,
+        tool_name="Bash",
+        tool_input={"command": "x"},
+        tools_called={},
+        writer=lambda _e: None,
+    )
+    # If a top-level decision is present, it must only be "block" (the
+    # legacy form) — never "allow" / "deny".
+    assert deny.get("decision") in (None, "block")
 
 
 # ---------------------------------------------------------------------------

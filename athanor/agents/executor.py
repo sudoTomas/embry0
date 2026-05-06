@@ -77,6 +77,16 @@ async def _evaluate_hook(
 ) -> dict[str, Any]:
     """Ring-3 PreToolUse hook — delegates to evaluate_policy, fail-closed.
 
+    Returns the SDK's PreToolUseHookSpecificOutput shape:
+    ``{"hookSpecificOutput": {"hookEventName": "PreToolUse",
+    "permissionDecision": "allow"|"deny", "permissionDecisionReason": "..."}}``.
+
+    The legacy top-level ``{"decision": "allow"|"deny"}`` shape that earlier
+    code returned is REJECTED by the Claude CLI's stdin Zod validator
+    (the schema only accepts ``decision: "block"`` at top level — observed
+    on CLI 2.1.92 with claude-agent-sdk 0.1.5x). Using the newer
+    ``hookSpecificOutput.permissionDecision`` form is forward-compatible.
+
     Exposed at module level so unit tests can exercise the deny path directly
     (a fake query() mock doesn't invoke SDK hooks, so the only way to test this
     path is to call this function directly).
@@ -86,8 +96,19 @@ async def _evaluate_hook(
     verdict = evaluate_policy(policy, tool_name, tool_input)
     if not verdict.allowed:
         writer({"type": "error", "error": verdict.reason, "tool_name": tool_name})
-        return {"decision": "deny", "reason": verdict.reason}
-    return {"decision": "allow"}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": verdict.reason,
+            }
+        }
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+        }
+    }
 
 
 class SdkAgentExecutor:
