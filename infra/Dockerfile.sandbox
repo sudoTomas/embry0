@@ -21,9 +21,16 @@ RUN pip install --no-cache-dir \
     "langchain-core>=0.3,<1"
 
 # Sandbox code (runs inside container).
-# athanor/agents/ + the docker_client/sandbox_manager/auth_provider/agent_runner
-# subset are imported transitively from athanor.sandbox.runner -> executor_factory
-# -> SdkAgentExecutor; the sandbox runner cannot start without them.
+# athanor/agents/ + the docker_client/auth_provider/agent_runner subset are
+# imported transitively from athanor.sandbox.runner -> executor_factory ->
+# SdkAgentExecutor; the sandbox runner cannot start without them.
+#
+# sandbox_manager.py is intentionally NOT copied: the runner only needs
+# AgentOutput (a dataclass) from agent_runner.py and never instantiates
+# AgentRunner. agent_runner guards its SandboxManager import behind
+# TYPE_CHECKING so loading the module does not transitively pull in
+# image_registry / cache_manager / etc. — modules that don't belong inside
+# the sandbox.
 COPY athanor/sandbox/ /app/athanor/sandbox/
 COPY athanor/safety/ /app/athanor/safety/
 COPY athanor/agents/ /app/athanor/agents/
@@ -31,7 +38,6 @@ COPY athanor/execution/events.py /app/athanor/execution/events.py
 COPY athanor/execution/agent_runner.py /app/athanor/execution/agent_runner.py
 COPY athanor/execution/auth_provider.py /app/athanor/execution/auth_provider.py
 COPY athanor/execution/docker_client.py /app/athanor/execution/docker_client.py
-COPY athanor/execution/sandbox_manager.py /app/athanor/execution/sandbox_manager.py
 
 # Make athanor packages importable
 RUN mkdir -p /app/athanor/execution && \

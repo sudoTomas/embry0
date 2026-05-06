@@ -20,10 +20,14 @@ import structlog
 from athanor.agents.claude_cli_session import canonical_session_path_for
 from athanor.execution.docker_client import DockerClient
 from athanor.execution.events import parse_event
-from athanor.execution.sandbox_manager import SandboxManager
 
 if TYPE_CHECKING:
+    # SandboxManager is only used as an __init__ type annotation. Importing
+    # it eagerly would pull in athanor.execution.image_registry and the
+    # whole image-build chain, which is not needed inside the sandbox where
+    # this module is loaded only for the AgentOutput dataclass.
     from athanor.agents.session import AgentSession
+    from athanor.execution.sandbox_manager import SandboxManager
 
 logger = structlog.get_logger(__name__)
 
@@ -73,7 +77,7 @@ class AgentOutput:
 class AgentRunner:
     """Runs agents inside sandbox containers via docker exec."""
 
-    def __init__(self, sandbox_manager: SandboxManager, docker: DockerClient) -> None:
+    def __init__(self, sandbox_manager: "SandboxManager", docker: DockerClient) -> None:
         self._sandbox = sandbox_manager
         self._docker = docker
 
