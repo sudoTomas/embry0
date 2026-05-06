@@ -128,3 +128,43 @@ async def test_upsert_force_all_apps_true_with_empty_diff(repo, db):
     assert md.changed_files == []
     assert md.base_branch == ""
     assert md.dep_graph == []
+
+
+@pytest.mark.asyncio
+async def test_upsert_round_trips_head_sha(repo, db):
+    """Phase 5F: head_sha is persisted and read back round-trip.
+
+    Legacy callers (no kwarg) round-trip the empty-string default so the
+    flake-heatmap aggregator can filter them out.
+    """
+    job_with_sha = "test-md-headsha"
+    await _seed_job(db, job_with_sha)
+    await repo.upsert(
+        job_id=job_with_sha,
+        apps_to_qa=["hub"],
+        apps_skipped=[],
+        force_all_apps=False,
+        changed_files=["apps/hub/app/page.tsx"],
+        base_branch="main",
+        dep_graph=[],
+        head_sha="cafef00dba5e",
+    )
+    md = await repo.get(job_with_sha)
+    assert md is not None
+    assert md.head_sha == "cafef00dba5e"
+
+    # Default (no head_sha kwarg) — round-trips as empty string.
+    job_no_sha = "test-md-headsha-default"
+    await _seed_job(db, job_no_sha)
+    await repo.upsert(
+        job_id=job_no_sha,
+        apps_to_qa=["hub"],
+        apps_skipped=[],
+        force_all_apps=False,
+        changed_files=[],
+        base_branch="main",
+        dep_graph=[],
+    )
+    md = await repo.get(job_no_sha)
+    assert md is not None
+    assert md.head_sha == ""

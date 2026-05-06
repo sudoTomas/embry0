@@ -1173,6 +1173,10 @@ async def test_orchestrator_persists_run_metadata_after_resolution(monkeypatch):
         "qa": {
             "qa_yaml_v2_raw": _QA_YAML_V2,
             "changed_files": ["apps/hub/app/page.tsx"],
+            # Phase 5F: init_orchestrator_node stashes head_sha here when it
+            # clones the workspace; pre-seed it for tests that inject raw yaml
+            # without going through init.
+            "head_sha": "deadbeef00112233",
         },
     }
     config = {
@@ -1195,6 +1199,9 @@ async def test_orchestrator_persists_run_metadata_after_resolution(monkeypatch):
     assert kwargs["changed_files"] == ["apps/hub/app/page.tsx"]
     assert kwargs["base_branch"] == "main"
     assert kwargs["dep_graph"] == []
+    # Phase 5F: head_sha is forwarded to the upsert so flake-heatmap can
+    # group consecutive runs on the same workspace head.
+    assert kwargs["head_sha"] == "deadbeef00112233"
 
 
 @pytest.mark.asyncio

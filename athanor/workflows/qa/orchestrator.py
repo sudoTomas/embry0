@@ -564,6 +564,12 @@ async def _qa_orchestrator_node_impl(
                 # edges out of the provider is a follow-up. The list view works
                 # without it; the schema reserves the field for the future.
                 dep_graph=[],
+                # Phase 5F: head_sha was stashed by init_orchestrator_node at
+                # qa["head_sha"]; persist it so flake-heatmap can detect status
+                # changes between consecutive runs on the same workspace head.
+                # Empty string when init_orchestrator didn't run (older test
+                # paths inject qa_yaml_v2_raw directly without cloning).
+                head_sha=str(qa_state.get("head_sha") or ""),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(

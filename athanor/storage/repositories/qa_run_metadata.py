@@ -29,6 +29,9 @@ class QARunMetadata:
     Empty for runs persisted by Phase 5D (provider does not yet expose
     edges); reserved for a follow-up that wires the npm-workspaces-turbo
     dep graph through.
+
+    ``head_sha`` is the git SHA of the workspace head at run start
+    (Phase 5F). Empty string for legacy rows that predate the column.
     """
 
     job_id: str
@@ -38,6 +41,7 @@ class QARunMetadata:
     changed_files: list[str]
     base_branch: str
     dep_graph: list[dict[str, str]]
+    head_sha: str = ""
 
 
 class QARunMetadataRepository:
@@ -54,25 +58,31 @@ class QARunMetadataRepository:
         changed_files: list[str],
         base_branch: str,
         dep_graph: list[dict[str, str]],
+        head_sha: str = "",
     ) -> None:
         """Insert or replace the row for ``job_id``.
 
         Idempotent: re-running QA on the same job (e.g. a retry path that
         re-enters qa_orchestrator_node) replaces the metadata rather than
         duplicating. ``job_id`` is the PK + FK to jobs(job_id).
+
+        ``head_sha`` defaults to ``""`` for older callers (e.g. tests) so
+        existing call sites keep working; the orchestrator passes the real
+        SHA from the cloned workspace.
         """
         sql = """
         INSERT INTO qa_run_metadata
             (job_id, apps_to_qa, apps_skipped, force_all_apps,
-             changed_files, base_branch, dep_graph)
-        VALUES ($1, $2::text[], $3::text[], $4, $5::text[], $6, $7::jsonb)
+             changed_files, base_branch, dep_graph, head_sha)
+        VALUES ($1, $2::text[], $3::text[], $4, $5::text[], $6, $7::jsonb, $8)
         ON CONFLICT (job_id) DO UPDATE SET
             apps_to_qa = EXCLUDED.apps_to_qa,
             apps_skipped = EXCLUDED.apps_skipped,
             force_all_apps = EXCLUDED.force_all_apps,
             changed_files = EXCLUDED.changed_files,
             base_branch = EXCLUDED.base_branch,
-            dep_graph = EXCLUDED.dep_graph
+            dep_graph = EXCLUDED.dep_graph,
+            head_sha = EXCLUDED.head_sha
         """
         # dep_graph is JSONB — pass the Python list directly; the asyncpg
         # JSONB codec encodes once. Pre-encoding with json.dumps would
@@ -86,13 +96,14 @@ class QARunMetadataRepository:
             list(changed_files),
             base_branch,
             list(dep_graph),
+            str(head_sha or ""),
         )
 
     async def get(self, job_id: str) -> QARunMetadata | None:
         """Fetch the metadata row for ``job_id``, or ``None`` if missing."""
         sql = """
         SELECT job_id, apps_to_qa, apps_skipped, force_all_apps,
-               changed_files, base_branch, dep_graph
+               changed_files, base_branch, dep_graph, head_sha
         FROM qa_run_metadata
         WHERE job_id = $1
         """
@@ -113,4 +124,8 @@ class QARunMetadataRepository:
             changed_files=list(row["changed_files"]),
             base_branch=row["base_branch"],
             dep_graph=dep_graph,
+            # Defensive ``or ""``: a row from before migration 32 has the
+            # column populated by the DEFAULT '', but extra-defensive in
+            # case some test seeds the column to NULL via raw SQL.
+            head_sha=row["head_sha"] or "",
         )

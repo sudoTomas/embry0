@@ -785,6 +785,21 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'Per-repo workspace_provider overrides set via the dashboard admin UI. When a row exists, the orchestrator prefers it over the .athanor/qa.yaml workspace_provider section.';
         """,
     ),
+    (
+        32,
+        "qa_run_metadata — head_sha column for flake-heatmap aggregation",
+        # Phase 5F: persist the orchestrator's resolved head_sha so the
+        # flake-heatmap aggregator can detect status changes between
+        # consecutive runs on the SAME workspace head. Empty string default
+        # keeps legacy rows valid (they predate the column); the
+        # flake_window query filters them out via head_sha != ''.
+        """
+        ALTER TABLE qa_run_metadata
+            ADD COLUMN IF NOT EXISTS head_sha TEXT NOT NULL DEFAULT '';
+        COMMENT ON COLUMN qa_run_metadata.head_sha IS
+            'Git SHA of the workspace head when the QA run started. Empty string for legacy rows that predate this column. Used by flake-heatmap aggregation in Phase 5F.';
+        """,
+    ),
 ]
 
 
