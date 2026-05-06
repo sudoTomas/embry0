@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   fetchAffectedSet,
+  fetchCacheAnalytics,
   fetchQaAppHistory,
   fetchQaRepos,
   fetchQaRun,
@@ -71,6 +72,26 @@ export function useAffectedSet(runId: string | undefined) {
     queryFn: () => fetchAffectedSet(runId!),
     enabled: !!runId,
     staleTime: 60_000,
+  });
+}
+
+/**
+ * Phase 5E: subscribe to a repo's cache analytics aggregate.
+ *
+ * staleTime + refetchInterval at 60s — the rollup is computed across many
+ * sub-tasks, so sub-second freshness is unnecessary. The hook returns
+ * `disabled` until `repo` is defined so route params can resolve first.
+ */
+export function useCacheAnalytics(
+  repo: string | undefined,
+  windowDays = 30,
+) {
+  return useQuery({
+    queryKey: ["qa-dashboard", "cache-analytics", repo, windowDays],
+    queryFn: () => fetchCacheAnalytics(repo!, windowDays),
+    enabled: !!repo,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 }
 

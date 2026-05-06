@@ -3,6 +3,7 @@ import type {
   AffectedSetResponse,
   AppHistoryItem,
   AppResult,
+  CacheAnalyticsResponse,
   RepoEntry,
   RunDetail,
   RunListItem,
@@ -67,6 +68,23 @@ export async function fetchAffectedSet(
 ): Promise<AffectedSetResponse> {
   const { data } = await api.get<AffectedSetResponse>(
     `/qa/runs/${encodeURIComponent(runId)}/affected_set`,
+  );
+  return data;
+}
+
+/**
+ * Phase 5E: per-repo cache hit/miss aggregate over the last N days.
+ *
+ * Backend defaults `window_days` to 30 if absent; we forward the value
+ * explicitly so the request URL is self-descriptive in network tools.
+ */
+export async function fetchCacheAnalytics(
+  repo: string,
+  windowDays = 30,
+): Promise<CacheAnalyticsResponse> {
+  const { data } = await api.get<CacheAnalyticsResponse>(
+    `/qa/repos/${encodeURIComponent(repo)}/cache/analytics`,
+    { params: { window_days: windowDays } },
   );
   return data;
 }

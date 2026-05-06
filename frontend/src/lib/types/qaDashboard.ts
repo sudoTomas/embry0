@@ -103,3 +103,33 @@ export interface AffectedSetResponse {
   base_branch: string;
   dep_graph: DepEdge[];
 }
+
+/**
+ * Phase 5E: per-layer cache hit/miss aggregate over a window.
+ *
+ * Mirrors `athanor/api/schemas/qa_dashboard.py:CacheLayerStats`. The
+ * `layer` literal is repeated server-side so a contract drift surfaces
+ * as a TypeScript error, not silent data loss.
+ */
+export interface CacheLayerStats {
+  layer: "prebaked_image" | "shared_volume" | "turbo_remote";
+  hits: number;
+  misses: number;
+  hit_ratio: number;
+}
+
+/**
+ * Phase 5E: GET /api/v1/qa/repos/{repo}/cache/analytics payload.
+ *
+ * `layers` always holds exactly three entries (one per layer);
+ * `cold_cache_apps` is the alphabetised list of apps whose aggregate
+ * hit_ratio fell below 0.25 over >= 3 sub-tasks in the window.
+ */
+export interface CacheAnalyticsResponse {
+  repo: string;
+  window_days: number;
+  total_runs: number;
+  total_subtasks: number;
+  layers: CacheLayerStats[];
+  cold_cache_apps: string[];
+}
