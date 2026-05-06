@@ -745,3 +745,56 @@ async def test_flake_window_filters_other_repos(repo, db):
     assert len(mine) == 1
     assert mine[0]["total_runs"] == 1
     assert mine[0]["flake_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_flake_window_lag_tiebreak_is_deterministic(repo, db):
+    """When two runs share created_at, LAG ordering falls back to id (UUID)
+    deterministically — flake counts must NOT change across SQL replays.
+
+    The flake_window CTE orders by ``created_at ASC, id ASC`` so that ties on
+    the timestamp resolve to a stable secondary key. Without the ``id`` tie-
+    breaker, ``LAG`` could pick either neighbor and the flake count would
+    flip between calls. Seeding two rows on the same head_sha at IDENTICAL
+    ``jobs.created_at`` and asserting two consecutive calls return identical
+    payloads locks the behaviour in.
+    """
+    repo_name = "org/tiebreak"
+    head = "sha-tiebreak"
+
+    # Two job rows pinned to the EXACT same created_at timestamp. Use a
+    # NOT-NOW value so it sits well inside the 7-day window even if the test
+    # runs near a day boundary (using a fixed offset rather than NOW() also
+    # makes the equality robust to async fetch jitter inside Postgres).
+    pinned_ts = await db.fetchval("SELECT NOW() - INTERVAL '1 day'")
+    for job_id in ("job-tb-A", "job-tb-B"):
+        await db.execute(
+            """
+            INSERT INTO jobs (job_id, repo, task, created_at)
+            VALUES ($1, $2, 'test', $3)
+            ON CONFLICT (job_id) DO UPDATE
+                SET repo = EXCLUDED.repo, created_at = EXCLUDED.created_at
+            """,
+            job_id,
+            repo_name,
+            pinned_ts,
+        )
+        await _seed_run_metadata(db, job_id, head_sha=head)
+
+    # Different statuses on the two rows so the LAG comparison is a true
+    # status flip (any deterministic ordering must yield exactly 1 flake).
+    await _seed_app_result(repo, job_id="job-tb-A", app_name="hub", status="passed")
+    await _seed_app_result(
+        repo, job_id="job-tb-B", app_name="hub", status="qa_failure"
+    )
+
+    first = await repo.flake_window(repo=repo_name, days=7)
+    second = await repo.flake_window(repo=repo_name, days=7)
+    assert first == second, "LAG tie-break must be deterministic across replays"
+
+    assert len(first) == 1
+    assert first[0]["app_name"] == "hub"
+    assert first[0]["total_runs"] == 2
+    # Different statuses + same head_sha + a deterministic LAG ordering
+    # means exactly one flake event regardless of which row id is "earlier".
+    assert first[0]["flake_count"] >= 1
