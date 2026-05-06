@@ -49,8 +49,8 @@ async def test_upsert_then_get_round_trips_all_fields(repo, db):
         changed_files=["apps/hub/app/page.tsx", "packages/types/src/index.ts"],
         base_branch="main",
         dep_graph=[
-            {"from": "@x/hub", "to": "@x/types"},
-            {"from": "@x/companion", "to": "@x/types"},
+            {"source": "@x/hub", "target": "@x/types"},
+            {"source": "@x/companion", "target": "@x/types"},
         ],
     )
 
@@ -66,8 +66,8 @@ async def test_upsert_then_get_round_trips_all_fields(repo, db):
     ]
     assert md.base_branch == "main"
     assert md.dep_graph == [
-        {"from": "@x/hub", "to": "@x/types"},
-        {"from": "@x/companion", "to": "@x/types"},
+        {"source": "@x/hub", "target": "@x/types"},
+        {"source": "@x/companion", "target": "@x/types"},
     ]
 
 
@@ -93,7 +93,7 @@ async def test_upsert_is_idempotent_replaces_on_conflict(repo, db):
         force_all_apps=True,
         changed_files=[],
         base_branch="develop",
-        dep_graph=[{"from": "@x/a", "to": "@x/b"}],
+        dep_graph=[{"source": "@x/a", "target": "@x/b"}],
     )
 
     md = await repo.get(job_id)
@@ -103,7 +103,7 @@ async def test_upsert_is_idempotent_replaces_on_conflict(repo, db):
     assert md.force_all_apps is True
     assert md.changed_files == []
     assert md.base_branch == "develop"
-    assert md.dep_graph == [{"from": "@x/a", "to": "@x/b"}]
+    assert md.dep_graph == [{"source": "@x/a", "target": "@x/b"}]
 
 
 @pytest.mark.asyncio

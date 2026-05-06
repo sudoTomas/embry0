@@ -1,11 +1,12 @@
 """Route tests for the /api/v1/qa/... dashboard surface.
 
-Consolidates tests for all 5 routes:
+Consolidates tests for all 6 routes:
   GET /api/v1/qa/repos
   GET /api/v1/qa/repos/{repo}/runs
   GET /api/v1/qa/repos/{repo}/apps/{app}/history
   GET /api/v1/qa/runs/{run_id}
   GET /api/v1/qa/runs/{run_id}/apps/{app}
+  GET /api/v1/qa/runs/{run_id}/affected_set
 """
 
 from __future__ import annotations
@@ -21,13 +22,14 @@ from athanor.storage.repositories.qa_app_results import (
     RepoSummary,
     RunSummary,
 )
+from athanor.storage.repositories.qa_run_metadata import QARunMetadata
 from athanor.workflows.qa.subtask_result_schema import CacheHits, SubTaskStatus
 
 _KEY = "test-api-key-32-characters-minimum-x"
 _AUTH = {"Authorization": f"Bearer {_KEY}"}
 
 
-def _make_app(qa_repo=None, jobs_repo=None):
+def _make_app(qa_repo=None, jobs_repo=None, run_md_repo=None):
     from athanor.api.app import create_app
 
     app = create_app()
@@ -44,6 +46,8 @@ def _make_app(qa_repo=None, jobs_repo=None):
         app.state.qa_app_results_repo = qa_repo
     if jobs_repo is not None:
         app.state.jobs_repo = jobs_repo
+    if run_md_repo is not None:
+        app.state.qa_run_metadata_repo = run_md_repo
     return app, TestClient(app)
 
 
@@ -414,3 +418,80 @@ def test_get_run_app_404_on_unknown_app():
     _, client = _make_app(qa_repo=qa_repo)
     resp = client.get("/api/v1/qa/runs/j-1/apps/notfound", headers=_AUTH)
     assert resp.status_code == 404
+
+
+# ─── GET /api/v1/qa/runs/{run_id}/affected_set (Phase 5D) ────────────────────
+
+
+def test_get_affected_set_returns_full_metadata():
+    md_repo = AsyncMock()
+    md_repo.get = AsyncMock(
+        return_value=QARunMetadata(
+            job_id="run-md-1",
+            apps_to_qa=["hub"],
+            apps_skipped=["companion", "lane"],
+            force_all_apps=False,
+            changed_files=["apps/hub/app/page.tsx"],
+            base_branch="main",
+            dep_graph=[
+                {"source": "@x/hub", "target": "@x/types"},
+            ],
+        )
+    )
+    _, client = _make_app(run_md_repo=md_repo)
+
+    resp = client.get("/api/v1/qa/runs/run-md-1/affected_set", headers=_AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["job_id"] == "run-md-1"
+    assert body["apps_to_qa"] == ["hub"]
+    assert body["apps_skipped"] == ["companion", "lane"]
+    assert body["force_all_apps"] is False
+    assert body["changed_files"] == ["apps/hub/app/page.tsx"]
+    assert body["base_branch"] == "main"
+    assert body["dep_graph"] == [{"source": "@x/hub", "target": "@x/types"}]
+
+
+def test_get_affected_set_404_when_missing():
+    md_repo = AsyncMock()
+    md_repo.get = AsyncMock(return_value=None)
+    _, client = _make_app(run_md_repo=md_repo)
+
+    resp = client.get("/api/v1/qa/runs/no-such/affected_set", headers=_AUTH)
+    assert resp.status_code == 404
+
+
+def test_get_affected_set_requires_auth():
+    md_repo = AsyncMock()
+    md_repo.get = AsyncMock(return_value=None)
+    _, client = _make_app(run_md_repo=md_repo)
+
+    resp = client.get("/api/v1/qa/runs/run-md-1/affected_set")
+    assert resp.status_code == 401
+
+
+def test_get_affected_set_with_empty_dep_graph_and_force_all():
+    """Phase-5D normal case: dep_graph empty (provider does not yet expose
+    edges) and force_all_apps=True (qa_required=always)."""
+    md_repo = AsyncMock()
+    md_repo.get = AsyncMock(
+        return_value=QARunMetadata(
+            job_id="run-md-force",
+            apps_to_qa=["hub", "companion"],
+            apps_skipped=[],
+            force_all_apps=True,
+            changed_files=[],
+            base_branch="",
+            dep_graph=[],
+        )
+    )
+    _, client = _make_app(run_md_repo=md_repo)
+
+    resp = client.get("/api/v1/qa/runs/run-md-force/affected_set", headers=_AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["force_all_apps"] is True
+    assert body["apps_skipped"] == []
+    assert body["dep_graph"] == []
+    assert body["changed_files"] == []
+    assert body["base_branch"] == ""

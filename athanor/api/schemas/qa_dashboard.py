@@ -120,3 +120,38 @@ class AppHistoryItem(BaseModel):
     duration_ms: int
     started_at: datetime
     failure_summary: str | None = None
+
+
+class DepEdge(BaseModel):
+    """One workspace dependency edge — package_name keyed.
+
+    Field names: ``source``/``target`` rather than ``from``/``to`` so we
+    avoid pydantic2's reserved-keyword alias dance. The frontend mirrors
+    this naming. Empty list returned by Phase 5D until provider exposes
+    edges; reserved for the dep-graph view.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    target: str
+
+
+class AffectedSetResponse(BaseModel):
+    """GET /api/v1/qa/runs/{run_id}/affected_set payload.
+
+    One-to-one mirror of the qa_run_metadata table. ``apps_skipped`` is
+    every declared-app NOT in apps_to_qa; ``changed_files`` is the diff
+    that drove selection; ``dep_graph`` is the workspace edges (empty
+    until the workspace_provider exposes them).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    apps_to_qa: list[str]
+    apps_skipped: list[str]
+    force_all_apps: bool
+    changed_files: list[str]
+    base_branch: str
+    dep_graph: list[DepEdge] = Field(default_factory=list)

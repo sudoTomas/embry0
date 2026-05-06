@@ -5,10 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from athanor.api.schemas.qa_dashboard import (
+    AffectedSetResponse,
     AppHistoryItem,
     AppResult,
     BootPhaseDetail,
     CacheHitsModel,
+    DepEdge,
     RepoEntry,
     RunDetail,
     RunListItem,
@@ -171,4 +173,42 @@ async def get_run_app(run_id: str, app: str, request: Request) -> AppResult:
     raise HTTPException(
         status_code=404,
         detail=f"run {run_id!r} has no result for app {app!r}",
+    )
+
+
+@router.get(
+    "/qa/runs/{run_id}/affected_set",
+    response_model=AffectedSetResponse,
+)
+async def get_run_affected_set(
+    run_id: str,
+    request: Request,
+) -> AffectedSetResponse:
+    """Phase 5D: the run-level affected-set / dep-graph snapshot.
+
+    Returns the row qa_orchestrator_node persisted at fan-out time —
+    apps_to_qa, apps_skipped (computed: declared apps not in apps_to_qa),
+    force_all_apps, the diff (changed_files + base_branch), and the dep
+    graph edges (currently empty list per Phase 5D).
+
+    404 when:
+      - the run never wrote metadata (e.g. infra_error before fan-out
+        resolution; legacy runs from before Phase 5D)
+      - the run_id is unknown
+    """
+    repo = request.app.state.qa_run_metadata_repo
+    md = await repo.get(run_id)
+    if md is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"affected_set not found for run {run_id!r}",
+        )
+    return AffectedSetResponse(
+        job_id=md.job_id,
+        apps_to_qa=md.apps_to_qa,
+        apps_skipped=md.apps_skipped,
+        force_all_apps=md.force_all_apps,
+        changed_files=md.changed_files,
+        base_branch=md.base_branch,
+        dep_graph=[DepEdge(**e) for e in md.dep_graph],
     )

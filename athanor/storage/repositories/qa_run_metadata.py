@@ -9,9 +9,9 @@ resolves. Surfaces the run-level diff decision to the dashboard's
   - ``force_all_apps``: whether the diff path was bypassed
   - ``changed_files``: the diff that drove selection
   - ``base_branch``: the diff base (typically the PR target branch)
-  - ``dep_graph``: list of {from, to} package edges (currently empty —
-    extracting the workspace dep graph is a follow-up; the list view
-    works without it)
+  - ``dep_graph``: list of ``{"source": ..., "target": ...}`` package
+    edges (currently empty — extracting the workspace dep graph is a
+    follow-up; the list view works without it)
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from athanor.storage.database import DatabasePool
 class QARunMetadata:
     """One row from qa_run_metadata.
 
-    ``dep_graph`` is a list of ``{"from": <pkg>, "to": <pkg>}`` dicts.
+    ``dep_graph`` is a list of ``{"source": <pkg>, "target": <pkg>}`` dicts.
     Empty for runs persisted by Phase 5D (provider does not yet expose
     edges); reserved for a follow-up that wires the npm-workspaces-turbo
     dep graph through.
