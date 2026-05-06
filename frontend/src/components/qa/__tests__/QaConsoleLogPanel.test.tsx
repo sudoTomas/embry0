@@ -5,6 +5,19 @@ vi.mock("@/hooks/useQaDashboard", () => ({
   useAppArtifacts: vi.fn(),
 }));
 
+// Mock the axios client so the panel's authenticated fetches go through a
+// stub instead of hitting the network. Bearer auth is configured on the real
+// `api` module — mocking here lets us assert the panel calls the auth-routed
+// path (no `/api/v1` prefix; the real axios client adds it via baseURL).
+//
+// `vi.mock` factories are hoisted to the top of the file, so we can't
+// reference a module-level `const`. Use `vi.hoisted` to declare the spy in a
+// hoisted block and share it with the test body.
+const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
+vi.mock("@/api/client", () => ({
+  api: { get: apiGet },
+}));
+
 import { QaConsoleLogPanel } from "../QaConsoleLogPanel";
 import { useAppArtifacts } from "@/hooks/useQaDashboard";
 
@@ -26,7 +39,7 @@ function makeQueryResult<T>(over: Partial<{
 describe("QaConsoleLogPanel", () => {
   beforeEach(() => {
     mockedUseAppArtifacts.mockReset();
-    vi.unstubAllGlobals();
+    apiGet.mockReset();
   });
 
   it("renders the empty-state when no console logs are captured", () => {
@@ -49,19 +62,15 @@ describe("QaConsoleLogPanel", () => {
     expect(screen.getByText("browser.log")).toBeInTheDocument();
   });
 
-  it("fetches the body lazily when the user expands a details block", async () => {
+  it("fetches the body via axios lazily when the user expands a details block", async () => {
     mockedUseAppArtifacts.mockReturnValue(
       makeQueryResult({ data: ["browser.log"] }),
     );
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => "ERROR foo\nERROR bar\n",
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    apiGet.mockResolvedValue({ data: "ERROR foo\nERROR bar\n" });
 
     render(<QaConsoleLogPanel runId="RUN1" app="hub" />);
     // No fetch yet — the details block is still closed.
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(apiGet).not.toHaveBeenCalled();
 
     const entry = screen.getByTestId("qa-console-log-entry") as HTMLDetailsElement;
     // Open the details and dispatch the native toggle event. (`fireEvent.toggle`
@@ -71,8 +80,11 @@ describe("QaConsoleLogPanel", () => {
     entry.dispatchEvent(new Event("toggle", { bubbles: false }));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/console/browser.log",
+      // axios baseURL strips `/api/v1` — the panel passes the auth-routed path
+      // (no prefix), and axios handles the prefix + Bearer header for us.
+      expect(apiGet).toHaveBeenCalledWith(
+        "/qa/runs/RUN1/apps/hub/artifacts/console/browser.log",
+        expect.objectContaining({ responseType: "text" }),
       );
     });
     await waitFor(() => {

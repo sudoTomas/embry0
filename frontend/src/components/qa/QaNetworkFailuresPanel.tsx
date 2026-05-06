@@ -9,11 +9,16 @@
  *
  * If parsing fails, we fall back to a `<pre>` of the raw body so the user can
  * still triage rather than seeing a generic "couldn't parse" message.
+ *
+ * Fetches go through the authenticated axios client so the Bearer token is
+ * attached. A bare `fetch(url)` would NOT carry the auth header and would
+ * 401 against `AUTH_DEV_MODE=false` in production.
  */
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import { useAppArtifacts } from "@/hooks/useQaDashboard";
-import { artifactUrl } from "@/api/qaDashboard";
+import { api } from "@/api/client";
+import { artifactPath } from "@/api/qaDashboard";
 
 interface NetworkEntry {
   url: string;
@@ -68,23 +73,30 @@ function parseNetworkBody(raw: string): NetworkEntry[] | null {
 }
 
 interface NetworkEntryPanelProps {
-  url: string;
+  runId: string;
+  app: string;
   filename: string;
 }
 
-function NetworkEntryPanel({ url, filename }: NetworkEntryPanelProps): JSX.Element {
+function NetworkEntryPanel({
+  runId,
+  app,
+  filename,
+}: NetworkEntryPanelProps): JSX.Element {
   const [raw, setRaw] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetch(url)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
+    api
+      .get<string>(artifactPath(runId, app, "network", filename), {
+        responseType: "text",
+        // axios tries to JSON-parse text/* by default; force the raw string
+        // so we can run our own parsing and surface the raw body on failure.
+        transformResponse: [(data) => data],
       })
-      .then((text) => {
-        if (!cancelled) setRaw(text);
+      .then((r) => {
+        if (!cancelled) setRaw(typeof r.data === "string" ? r.data : String(r.data));
       })
       .catch((e: Error) => {
         if (!cancelled) setErr(e.message);
@@ -92,7 +104,7 @@ function NetworkEntryPanel({ url, filename }: NetworkEntryPanelProps): JSX.Eleme
     return () => {
       cancelled = true;
     };
-  }, [url]);
+  }, [runId, app, filename]);
 
   if (err) {
     return (
@@ -189,11 +201,7 @@ export function QaNetworkFailuresPanel({ runId, app }: Props): JSX.Element {
   return (
     <div className="space-y-2" data-testid="qa-network-panel">
       {filenames.map((fn) => (
-        <NetworkEntryPanel
-          key={fn}
-          filename={fn}
-          url={artifactUrl(runId, app, "network", fn)}
-        />
+        <NetworkEntryPanel key={fn} runId={runId} app={app} filename={fn} />
       ))}
     </div>
   );

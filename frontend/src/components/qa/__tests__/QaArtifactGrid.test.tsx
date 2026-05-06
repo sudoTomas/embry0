@@ -1,15 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-// Mock the hook BEFORE importing the component so the import sees the mock.
+// Mock both hooks BEFORE importing the component so the import sees the mocks.
 vi.mock("@/hooks/useQaDashboard", () => ({
   useAppArtifacts: vi.fn(),
+}));
+vi.mock("@/hooks/useArtifactBlobUrl", () => ({
+  useArtifactBlobUrl: vi.fn(),
 }));
 
 import { QaArtifactGrid } from "../QaArtifactGrid";
 import { useAppArtifacts } from "@/hooks/useQaDashboard";
+import { useArtifactBlobUrl } from "@/hooks/useArtifactBlobUrl";
 
 const mockedUseAppArtifacts = vi.mocked(useAppArtifacts);
+const mockedUseArtifactBlobUrl = vi.mocked(useArtifactBlobUrl);
 
 function makeQueryResult<T>(over: Partial<{
   data: T;
@@ -27,27 +32,82 @@ function makeQueryResult<T>(over: Partial<{
 describe("QaArtifactGrid", () => {
   beforeEach(() => {
     mockedUseAppArtifacts.mockReset();
+    mockedUseArtifactBlobUrl.mockReset();
   });
 
-  it("renders a thumbnail per filename with auth-passthrough URLs", () => {
+  it("renders one thumbnail per filename, with src wired to the hook's blob URL", () => {
     mockedUseAppArtifacts.mockReturnValue(
       makeQueryResult({ data: ["a.png", "b.png"] }),
+    );
+    // Return a deterministic blob URL keyed off the filename so we can assert
+    // the right hook output flows into the right `<img>`.
+    mockedUseArtifactBlobUrl.mockImplementation(
+      (_runId, _app, _kind, filename) => ({
+        url: `blob:fake/${filename}`,
+        loading: false,
+        error: null,
+      }),
     );
     render(<QaArtifactGrid runId="RUN1" app="hub" />);
 
     const grid = screen.getByTestId("qa-artifact-grid");
     expect(grid).toBeInTheDocument();
-    const links = grid.querySelectorAll("a");
-    expect(links).toHaveLength(2);
-    // Both <img> and the wrapping <a> use the artifact passthrough URL.
-    expect(links[0].getAttribute("href")).toBe(
-      "/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/a.png",
-    );
+    // Wrapper <a target="_blank"> was dropped — it would not carry the Bearer
+    // header on a top-level navigation, so the inline thumbnail is sufficient.
+    expect(grid.querySelectorAll("a")).toHaveLength(0);
+
     const imgs = grid.querySelectorAll("img");
-    expect(imgs[0].getAttribute("src")).toBe(
-      "/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/a.png",
-    );
+    expect(imgs).toHaveLength(2);
+    expect(imgs[0].getAttribute("src")).toBe("blob:fake/a.png");
     expect(imgs[0].getAttribute("alt")).toBe("a.png");
+    expect(imgs[1].getAttribute("src")).toBe("blob:fake/b.png");
+
+    // The hook was called with the auth-passthrough coordinates the panel
+    // resolved from the listing.
+    expect(mockedUseArtifactBlobUrl).toHaveBeenCalledWith(
+      "RUN1",
+      "hub",
+      "screenshots",
+      "a.png",
+    );
+    expect(mockedUseArtifactBlobUrl).toHaveBeenCalledWith(
+      "RUN1",
+      "hub",
+      "screenshots",
+      "b.png",
+    );
+  });
+
+  it("renders a per-thumb loading placeholder while the blob URL is being fetched", () => {
+    mockedUseAppArtifacts.mockReturnValue(
+      makeQueryResult({ data: ["pending.png"] }),
+    );
+    mockedUseArtifactBlobUrl.mockReturnValue({
+      url: null,
+      loading: true,
+      error: null,
+    });
+    render(<QaArtifactGrid runId="RUN1" app="hub" />);
+    expect(screen.getByTestId("qa-artifact-thumb-loading")).toHaveAttribute(
+      "data-filename",
+      "pending.png",
+    );
+  });
+
+  it("renders a per-thumb error placeholder when the blob fetch fails", () => {
+    mockedUseAppArtifacts.mockReturnValue(
+      makeQueryResult({ data: ["denied.png"] }),
+    );
+    mockedUseArtifactBlobUrl.mockReturnValue({
+      url: null,
+      loading: false,
+      error: "Request failed with status code 401",
+    });
+    render(<QaArtifactGrid runId="RUN1" app="hub" />);
+    expect(screen.getByTestId("qa-artifact-thumb-error")).toHaveAttribute(
+      "data-filename",
+      "denied.png",
+    );
   });
 
   it("renders the empty-state when no screenshots exist", () => {
@@ -58,7 +118,7 @@ describe("QaArtifactGrid", () => {
     );
   });
 
-  it("renders the loading state while the query is pending", () => {
+  it("renders the loading state while the listing query is pending", () => {
     mockedUseAppArtifacts.mockReturnValue(
       makeQueryResult({ isLoading: true, data: undefined }),
     );
@@ -68,7 +128,7 @@ describe("QaArtifactGrid", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the error state when the query fails", () => {
+  it("renders the error state when the listing query fails", () => {
     mockedUseAppArtifacts.mockReturnValue(
       makeQueryResult({ isError: true, data: undefined }),
     );

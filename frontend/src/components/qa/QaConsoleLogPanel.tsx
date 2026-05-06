@@ -4,11 +4,16 @@
  * as a `<details>` block — the first interaction expands and fetches the
  * text body via the artifact passthrough. Closed-by-default keeps the
  * card compact when most logs are uninteresting.
+ *
+ * Fetches go through the authenticated axios client so the configured
+ * Bearer token is attached. A bare `fetch(url)` would NOT carry the auth
+ * header and would 401 against `AUTH_DEV_MODE=false` in production.
  */
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import { useAppArtifacts } from "@/hooks/useQaDashboard";
-import { artifactUrl } from "@/api/qaDashboard";
+import { api } from "@/api/client";
+import { artifactPath } from "@/api/qaDashboard";
 
 interface Props {
   runId: string;
@@ -16,11 +21,16 @@ interface Props {
 }
 
 interface ConsoleLogEntryProps {
-  url: string;
+  runId: string;
+  app: string;
   filename: string;
 }
 
-function ConsoleLogEntry({ url, filename }: ConsoleLogEntryProps): JSX.Element {
+function ConsoleLogEntry({
+  runId,
+  app,
+  filename,
+}: ConsoleLogEntryProps): JSX.Element {
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -28,13 +38,14 @@ function ConsoleLogEntry({ url, filename }: ConsoleLogEntryProps): JSX.Element {
   useEffect(() => {
     if (!open || body !== null || err !== null) return;
     let cancelled = false;
-    fetch(url)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
+    api
+      .get<string>(artifactPath(runId, app, "console", filename), {
+        responseType: "text",
+        // axios tries to JSON-parse text/* by default; force the raw string.
+        transformResponse: [(data) => data],
       })
-      .then((text) => {
-        if (!cancelled) setBody(text);
+      .then((r) => {
+        if (!cancelled) setBody(typeof r.data === "string" ? r.data : String(r.data));
       })
       .catch((e: Error) => {
         if (!cancelled) setErr(e.message);
@@ -42,7 +53,7 @@ function ConsoleLogEntry({ url, filename }: ConsoleLogEntryProps): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [open, url, body, err]);
+  }, [open, runId, app, filename, body, err]);
 
   return (
     <details
@@ -96,11 +107,7 @@ export function QaConsoleLogPanel({ runId, app }: Props): JSX.Element {
   return (
     <div className="space-y-2" data-testid="qa-console-log-panel">
       {filenames.map((fn) => (
-        <ConsoleLogEntry
-          key={fn}
-          filename={fn}
-          url={artifactUrl(runId, app, "console", fn)}
-        />
+        <ConsoleLogEntry key={fn} runId={runId} app={app} filename={fn} />
       ))}
     </div>
   );

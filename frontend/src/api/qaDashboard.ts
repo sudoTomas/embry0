@@ -75,13 +75,14 @@ export async function listAppArtifacts(
 }
 
 /**
- * Build the URL the browser hits to fetch a single artifact's bytes.
+ * Absolute API URL for an artifact's bytes (includes the `/api/v1` prefix).
  *
- * Both endpoints sit under the dashboard auth — the browser will send the
- * configured Bearer token via the axios default header for XHR requests, and
- * sets `?_=<token>` is intentionally NOT used here (we rely on the same auth
- * surface as every other dashboard call). Components that pass this URL
- * directly to `<img src>` rely on the same-origin cookie / static auth.
+ * NOTE: this URL is NOT routed through axios, so the configured Bearer token
+ * is NOT attached. Inline-display consumers (e.g. `<img src>`, browser
+ * `fetch`) MUST instead go through axios — use `artifactPath(...)` together
+ * with `api.get(...)`, or the `useArtifactBlobUrl` hook for `<img>`. This
+ * helper remains useful for direct-download UI (e.g. a future cookie-auth or
+ * proxy-mode deploy where a top-level navigation does carry credentials).
  */
 export function artifactUrl(
   runId: string,
@@ -90,4 +91,20 @@ export function artifactUrl(
   filename: string,
 ): string {
   return `/api/v1/qa/runs/${encodeURIComponent(runId)}/apps/${encodeURIComponent(app)}/artifacts/${kind}/${encodeURIComponent(filename)}`;
+}
+
+/**
+ * Same artifact path WITHOUT the `/api/v1` prefix — for axios calls.
+ *
+ * The `api` axios client is created with `baseURL: "/api/v1"`, so paths
+ * passed to `api.get(...)` must be prefix-relative. Use this when fetching
+ * artifact bytes through axios so the Bearer auth header is attached.
+ */
+export function artifactPath(
+  runId: string,
+  app: string,
+  kind: ArtifactKind,
+  filename: string,
+): string {
+  return `/qa/runs/${encodeURIComponent(runId)}/apps/${encodeURIComponent(app)}/artifacts/${kind}/${encodeURIComponent(filename)}`;
 }

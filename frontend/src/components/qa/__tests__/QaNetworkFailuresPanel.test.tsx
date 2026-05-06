@@ -5,6 +5,15 @@ vi.mock("@/hooks/useQaDashboard", () => ({
   useAppArtifacts: vi.fn(),
 }));
 
+// Mock axios so the panel's authenticated fetches go through a stub. The
+// real `@/api/client` adds the `/api/v1` prefix and Bearer header — testing
+// the call shape here makes sure we wired through axios (not bare fetch).
+// `vi.mock` factories are hoisted, so use `vi.hoisted` to share the spy.
+const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
+vi.mock("@/api/client", () => ({
+  api: { get: apiGet },
+}));
+
 import { QaNetworkFailuresPanel } from "../QaNetworkFailuresPanel";
 import { useAppArtifacts } from "@/hooks/useQaDashboard";
 
@@ -26,7 +35,7 @@ function makeQueryResult<T>(over: Partial<{
 describe("QaNetworkFailuresPanel", () => {
   beforeEach(() => {
     mockedUseAppArtifacts.mockReset();
-    vi.unstubAllGlobals();
+    apiGet.mockReset();
   });
 
   it("renders the empty-state when no network failures are captured", () => {
@@ -55,16 +64,13 @@ describe("QaNetworkFailuresPanel", () => {
         ],
       },
     };
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => JSON.stringify(har),
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    apiGet.mockResolvedValue({ data: JSON.stringify(har) });
 
     render(<QaNetworkFailuresPanel runId="RUN1" app="hub" />);
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/network/fail.har",
+      expect(apiGet).toHaveBeenCalledWith(
+        "/qa/runs/RUN1/apps/hub/artifacts/network/fail.har",
+        expect.objectContaining({ responseType: "text" }),
       );
     });
     await waitFor(() => {
@@ -81,11 +87,9 @@ describe("QaNetworkFailuresPanel", () => {
     mockedUseAppArtifacts.mockReturnValue(
       makeQueryResult({ data: ["weird.json"] }),
     );
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => JSON.stringify({ unknown: "shape" }),
+    apiGet.mockResolvedValue({
+      data: JSON.stringify({ unknown: "shape" }),
     });
-    vi.stubGlobal("fetch", fetchMock);
 
     render(<QaNetworkFailuresPanel runId="RUN1" app="hub" />);
     await waitFor(() => {
@@ -98,14 +102,11 @@ describe("QaNetworkFailuresPanel", () => {
     mockedUseAppArtifacts.mockReturnValue(
       makeQueryResult({ data: ["failures.json"] }),
     );
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () =>
-        JSON.stringify([
-          { url: "https://y/a", method: "GET", status: 502 },
-        ]),
+    apiGet.mockResolvedValue({
+      data: JSON.stringify([
+        { url: "https://y/a", method: "GET", status: 502 },
+      ]),
     });
-    vi.stubGlobal("fetch", fetchMock);
 
     render(<QaNetworkFailuresPanel runId="RUN1" app="hub" />);
     await waitFor(() => {
