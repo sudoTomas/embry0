@@ -23,6 +23,14 @@ export function QaRepoDetailPage() {
       <h1 className="text-2xl font-bold">{repo}</h1>
       <p className="text-sm text-white/60">
         Last {data.length} runs · {passing} passed · {failing} failed
+        {" · "}
+        <Link
+          to={`/qa/repos/${encodeURIComponent(repo)}/cache`}
+          className="text-cyan-300 hover:underline"
+          data-testid="cache-analytics-link"
+        >
+          Cache analytics
+        </Link>
       </p>
       {data.length === 0 ? (
         <EmptyState
