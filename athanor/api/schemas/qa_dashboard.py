@@ -215,3 +215,50 @@ class WorkspaceProviderOverrideUpsert(BaseModel):
 
     provider_type: str = Field(min_length=1)
     config: dict[str, Any] = Field(default_factory=dict)
+
+
+# ── Phase 5F: flake heatmap ────────────────────────────────────────────────
+
+
+class FlakeDailyEntry(BaseModel):
+    """One day in a FlakeRow's daily grid.
+
+    The grid spans the full window so even days with zero flakes appear,
+    keeping the dashboard heatmap CSS grid stable across apps.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: str  # 'YYYY-MM-DD' (UTC calendar day)
+    flakes: int = Field(ge=0)
+
+
+class FlakeRow(BaseModel):
+    """One app's row in the flake heatmap.
+
+    ``flake_score`` is normalised hits/runs in [0, 1]; the dashboard sorts
+    rows by this value desc so worst offenders surface first.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    app_name: str
+    total_runs: int = Field(ge=0)
+    flake_count: int = Field(ge=0)
+    flake_score: float = Field(ge=0.0, le=1.0)
+    daily: list[FlakeDailyEntry]
+
+
+class FlakeResponse(BaseModel):
+    """GET /api/v1/qa/repos/{repo}/flake payload.
+
+    ``window_days`` is bounded ``[1, 90]`` — large windows would produce a
+    heatmap with too many columns to render usefully and tax the SQL
+    aggregator.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    repo: str
+    window_days: int = Field(gt=0, le=90)
+    apps: list[FlakeRow]

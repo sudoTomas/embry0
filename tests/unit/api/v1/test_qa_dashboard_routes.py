@@ -592,3 +592,95 @@ def test_get_affected_set_with_empty_dep_graph_and_force_all():
     assert body["dep_graph"] == []
     assert body["changed_files"] == []
     assert body["base_branch"] == ""
+
+
+# ─── GET /api/v1/qa/repos/{repo}/flake (Phase 5F) ────────────────────────
+
+
+def _flake_payload(*, apps=()):
+    return {"apps": list(apps)}
+
+
+def test_flake_route_default_window():
+    qa_repo = AsyncMock()
+    qa_repo.flake_window = AsyncMock(
+        return_value=[
+            {
+                "app_name": "hub",
+                "total_runs": 4,
+                "flake_count": 2,
+                "flake_score": 0.5,
+                "daily": [
+                    {"date": "2026-04-30", "flakes": 0},
+                    {"date": "2026-05-01", "flakes": 0},
+                    {"date": "2026-05-02", "flakes": 1},
+                    {"date": "2026-05-03", "flakes": 0},
+                    {"date": "2026-05-04", "flakes": 0},
+                    {"date": "2026-05-05", "flakes": 1},
+                    {"date": "2026-05-06", "flakes": 0},
+                ],
+            }
+        ]
+    )
+    _, client = _make_app(qa_repo=qa_repo)
+
+    resp = client.get("/api/v1/qa/repos/org%2Fr1/flake", headers=_AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["repo"] == "org/r1"
+    assert body["window_days"] == 7
+    assert len(body["apps"]) == 1
+    row = body["apps"][0]
+    assert row["app_name"] == "hub"
+    assert row["total_runs"] == 4
+    assert row["flake_count"] == 2
+    assert row["flake_score"] == 0.5
+    assert len(row["daily"]) == 7
+    qa_repo.flake_window.assert_called_once_with(repo="org/r1", days=7)
+
+
+def test_flake_route_custom_window():
+    qa_repo = AsyncMock()
+    qa_repo.flake_window = AsyncMock(return_value=[])
+    _, client = _make_app(qa_repo=qa_repo)
+
+    resp = client.get(
+        "/api/v1/qa/repos/org%2Fr1/flake?window_days=30",
+        headers=_AUTH,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["window_days"] == 30
+    assert body["apps"] == []
+    qa_repo.flake_window.assert_called_once_with(repo="org/r1", days=30)
+
+
+def test_flake_route_window_validation():
+    qa_repo = AsyncMock()
+    qa_repo.flake_window = AsyncMock()
+    _, client = _make_app(qa_repo=qa_repo)
+
+    # > 90 — heatmap would render too many columns to be useful.
+    resp = client.get(
+        "/api/v1/qa/repos/org%2Fr1/flake?window_days=120",
+        headers=_AUTH,
+    )
+    assert resp.status_code == 422
+    qa_repo.flake_window.assert_not_called()
+
+    # 0 — Query(gt=0) rejects.
+    resp = client.get(
+        "/api/v1/qa/repos/org%2Fr1/flake?window_days=0",
+        headers=_AUTH,
+    )
+    assert resp.status_code == 422
+
+
+def test_flake_route_auth_required():
+    qa_repo = AsyncMock()
+    qa_repo.flake_window = AsyncMock()
+    _, client = _make_app(qa_repo=qa_repo)
+
+    resp = client.get("/api/v1/qa/repos/org%2Fr1/flake")
+    assert resp.status_code == 401
+    qa_repo.flake_window.assert_not_called()

@@ -14,6 +14,9 @@ from athanor.api.schemas.qa_dashboard import (
     CacheAnalyticsResponse,
     CacheHitsModel,
     CacheLayerStats,
+    FlakeDailyEntry,
+    FlakeResponse,
+    FlakeRow,
     RepoEntry,
     RunDetail,
     RunListItem,
@@ -290,4 +293,93 @@ def test_cache_analytics_response_extra_forbid():
                 {"layer": "turbo_remote", "hits": 0, "misses": 0, "hit_ratio": 0.0},
             ],
             "extra_field": True,
+        })
+
+
+# ── Phase 5F: flake heatmap ────────────────────────────────────────────────
+
+
+def test_flake_response_round_trip():
+    daily = [
+        FlakeDailyEntry(date="2026-04-30", flakes=0),
+        FlakeDailyEntry(date="2026-05-01", flakes=2),
+    ]
+    row = FlakeRow(
+        app_name="hub",
+        total_runs=4,
+        flake_count=2,
+        flake_score=0.5,
+        daily=daily,
+    )
+    resp = FlakeResponse(repo="org/r1", window_days=7, apps=[row])
+    parsed = FlakeResponse.model_validate_json(resp.model_dump_json())
+    assert parsed.repo == "org/r1"
+    assert parsed.window_days == 7
+    assert len(parsed.apps) == 1
+    assert parsed.apps[0].app_name == "hub"
+    assert parsed.apps[0].flake_count == 2
+    assert parsed.apps[0].daily[1].flakes == 2
+
+
+def test_flake_response_rejects_window_days_above_90():
+    with pytest.raises(ValidationError):
+        FlakeResponse.model_validate({
+            "repo": "org/r1",
+            "window_days": 91,
+            "apps": [],
+        })
+
+
+def test_flake_response_rejects_window_days_zero_or_negative():
+    with pytest.raises(ValidationError):
+        FlakeResponse.model_validate({"repo": "org/r1", "window_days": 0, "apps": []})
+    with pytest.raises(ValidationError):
+        FlakeResponse.model_validate({"repo": "org/r1", "window_days": -1, "apps": []})
+
+
+def test_flake_row_rejects_negative_counts():
+    with pytest.raises(ValidationError):
+        FlakeRow(
+            app_name="hub",
+            total_runs=-1,
+            flake_count=0,
+            flake_score=0.0,
+            daily=[],
+        )
+    with pytest.raises(ValidationError):
+        FlakeRow(
+            app_name="hub",
+            total_runs=0,
+            flake_count=-1,
+            flake_score=0.0,
+            daily=[],
+        )
+
+
+def test_flake_row_rejects_out_of_range_score():
+    with pytest.raises(ValidationError):
+        FlakeRow(
+            app_name="hub",
+            total_runs=1,
+            flake_count=1,
+            flake_score=-0.01,
+            daily=[],
+        )
+    with pytest.raises(ValidationError):
+        FlakeRow(
+            app_name="hub",
+            total_runs=1,
+            flake_count=1,
+            flake_score=1.01,
+            daily=[],
+        )
+
+
+def test_flake_response_extra_forbid():
+    with pytest.raises(ValidationError):
+        FlakeResponse.model_validate({
+            "repo": "org/r1",
+            "window_days": 7,
+            "apps": [],
+            "unexpected": "x",
         })

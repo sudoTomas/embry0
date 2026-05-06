@@ -12,6 +12,8 @@ from athanor.api.schemas.qa_dashboard import (
     CacheAnalyticsResponse,
     CacheHitsModel,
     DepEdge,
+    FlakeResponse,
+    FlakeRow,
     RepoEntry,
     RunDetail,
     RunListItem,
@@ -234,3 +236,29 @@ async def get_repo_cache_analytics(
     qa_repo = request.app.state.qa_app_results_repo
     payload = await qa_repo.cache_analytics_window(repo=repo, days=window_days)
     return CacheAnalyticsResponse(**payload)
+
+
+@router.get(
+    "/qa/repos/{repo:path}/flake",
+    response_model=FlakeResponse,
+)
+async def get_repo_flake(
+    repo: str,
+    request: Request,
+    window_days: int = Query(default=7, gt=0, le=90),
+) -> FlakeResponse:
+    """Phase 5F: per-app flake counts over the last ``window_days`` days.
+
+    A "flake" is an app whose status flipped between consecutive runs on
+    the SAME workspace head_sha. The dashboard renders the response as a
+    heatmap (rows = apps, cols = days). Window is capped at 90 days
+    because larger grids stop being readable and the aggregation cost
+    grows linearly with the window.
+    """
+    qa_repo = request.app.state.qa_app_results_repo
+    rows = await qa_repo.flake_window(repo=repo, days=window_days)
+    return FlakeResponse(
+        repo=repo,
+        window_days=window_days,
+        apps=[FlakeRow(**r) for r in rows],
+    )
