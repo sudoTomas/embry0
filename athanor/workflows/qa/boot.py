@@ -56,8 +56,17 @@ class BootResult:
 _PROBE_SCRIPT = """
 import sys, urllib.request, urllib.error
 url = sys.argv[1]
+# Don't follow redirects. A 3xx response from the dev server IS a "server
+# is up and answering" signal — that's what the ready_check actually wants
+# to know. Following a redirect to e.g. /login or an auth endpoint can
+# yield a 400/500 from a downstream surface that isn't the dev server's
+# health, masking the bound-and-listening signal we care about.
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+opener = urllib.request.build_opener(_NoRedirect)
 try:
-    r = urllib.request.urlopen(url, timeout=5)
+    r = opener.open(url, timeout=5)
     body = r.read(8192).decode("utf-8", errors="replace")
     sys.stdout.write(f"STATUS={r.status}\\n---\\n{body}")
 except urllib.error.HTTPError as e:

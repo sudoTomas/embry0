@@ -83,14 +83,39 @@ class QAResult(BaseModel):
 
     @model_validator(mode="after")
     def _overall_consistent_with_findings(self) -> QAResult:
-        # Crash anomaly forces failed.
-        if any(a.category == "crash" for a in self.anomalies) and self.overall != "failed":
-            raise ValueError("overall must be 'failed' when an anomaly has category='crash'")
-        # Any failed acceptance result forces failed.
+        # Auto-coerce overall to "failed" when the agent's anomalies /
+        # acceptance_results are inconsistent with the reported overall.
+        # Earlier behavior raised ValueError, which rejected the agent's
+        # entire report and surfaced the run as `infra_failure` even though
+        # the agent succeeded — observed 2026-05-06 on the dashboard app
+        # (agent emitted a crash anomaly but set overall='inconclusive';
+        # Pydantic rejected, dashboard showed infra_failure instead of
+        # the agent's actual finding). Coerce + log so the dashboard
+        # reflects the QA finding while the inconsistency is visible.
+        import logging  # local import — schema module stays import-light
+        log = logging.getLogger(__name__)
+
+        crash_present = any(a.category == "crash" for a in self.anomalies)
         any_failed = any(r.status == "failed" for r in self.acceptance_results)
+
+        if crash_present and self.overall != "failed":
+            log.warning(
+                "qa_result_overall_coerced_to_failed",
+                extra={"reason": "crash_anomaly_present", "agent_overall": self.overall},
+            )
+            self.overall = "failed"
+
         if any_failed and self.overall != "failed":
-            raise ValueError("overall must be 'failed' when any acceptance_result.status == 'failed'")
-        # Inconclusive only when no failures.
+            log.warning(
+                "qa_result_overall_coerced_to_failed",
+                extra={"reason": "failed_acceptance_result", "agent_overall": self.overall},
+            )
+            self.overall = "failed"
+
+        # Belt-and-braces: this branch was unreachable above (caught by the
+        # any_failed coerce) — keep as a defensive no-op so future edits
+        # to the rules above don't silently regress the invariant.
         if self.overall == "inconclusive" and any_failed:
-            raise ValueError("overall='inconclusive' is incompatible with any failed acceptance result")
+            self.overall = "failed"
+
         return self
