@@ -147,6 +147,26 @@ class QAMinioClient:
 
         return cast(dict[str, Any], await self._run(_stat))
 
+    async def get_object_bytes(self, bucket: str, key: str) -> bytes:
+        """Fetch an object's full body as bytes.
+
+        Used by the dashboard's artifact passthrough endpoint to stream
+        screenshots / HARs / console logs back to the browser without exposing
+        a presigned URL (the dashboard auth gates access; the bytes themselves
+        flow through the orchestrator). The MinIO SDK returns an HTTPResponse
+        which we read in full and then release back to the connection pool.
+        """
+
+        def _get() -> bytes:
+            resp = self._client.get_object(bucket, key)
+            try:
+                return cast(bytes, resp.read())
+            finally:
+                resp.close()
+                resp.release_conn()
+
+        return cast(bytes, await self._run(_get))
+
     async def put_object(
         self,
         bucket: str,

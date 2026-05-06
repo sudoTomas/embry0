@@ -21,7 +21,7 @@ from typing import Any, cast
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 
 from athanor.api.deps import get_docker, get_qa_minio
 
@@ -33,6 +33,26 @@ _SAFE_JOB_ID = re.compile(r"^[A-Za-z0-9_\-]+$")
 # with an alnum character so the value can never look like a CLI flag (e.g.
 # `--no-color`) when expanded into the docker argv list.
 _SAFE_SERVICE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+# App names (monorepo apps): alnum + `_-.`. Keep the leading-alnum lock so a
+# hostile app name can never look like a CLI flag if it ever flows through
+# argv elsewhere.
+_SAFE_APP = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+# Artifact kinds the per-sub-task passthrough endpoint will serve. Anything
+# outside this allow-list is a 400 (not 404) so a typo is distinguishable
+# from "this kind happens to have no files yet".
+_ARTIFACT_KINDS: frozenset[str] = frozenset({"screenshots", "network", "console", "traces"})
+# Per-extension content types for the artifact passthrough. Default is
+# octet-stream so an unexpected extension still downloads safely.
+_ARTIFACT_MEDIA_TYPES: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".har": "application/json",
+    ".json": "application/json",
+    ".log": "text/plain; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".zip": "application/zip",
+}
 # Bound concurrent `docker compose logs -f` subprocesses. 8 is generous for a
 # single dashboard user (one live tail per visible service) but still small
 # enough that an unauthenticated client can't fork-bomb the orchestrator by
@@ -379,3 +399,170 @@ async def get_artifact(
     qa_minio: Any = Depends(get_qa_minio),
 ) -> RedirectResponse:
     return await _redirect_to_artifact(qa_minio, job_id, path)
+
+
+# ---------------------------------------------------------------------------
+# Per-sub-task artifact passthrough (Phase 5B)
+#
+# Sub-task ids are formed as `<parent_job_id>__<app_name>` (see
+# `subtask_nodes.py:84`). For each sub-task the agent uploads bucketed
+# artifacts into MinIO under:
+#
+#     <sub_job_id>/<attempt_n>/<kind>/<filename>
+#
+# where `<kind>` is one of `screenshots | network | console | traces`. The
+# dashboard wants to render those inline (screenshots as a grid, console as
+# expandable text, network failures parsed as JSON), so the orchestrator
+# proxies the bytes through with the existing dashboard auth — no presigned
+# URLs leaked to the browser.
+# ---------------------------------------------------------------------------
+
+
+def _check_safe_app(app: str) -> None:
+    """Reject app names that aren't a single safe segment.
+
+    The app name is concatenated into the MinIO prefix as
+    `<run_id>__<app>/...`. Disallow anything that could break out of that
+    segment (slashes, leading dots) or look like a CLI flag (leading `-`).
+    """
+    if not app or "/" in app or not _SAFE_APP.match(app):
+        raise HTTPException(status_code=400, detail="bad app name")
+
+
+def _check_safe_filename(filename: str) -> None:
+    """Reject filenames that try to break out of the artifact directory.
+
+    The brief: any `..`, `/`, or leading `.` is rejected. We also enforce
+    `_SAFE_ARTIFACT_PATH`'s single-segment shape so the route can never see
+    an embedded slash even if FastAPI's path-param decoding lets one through.
+    """
+    if not filename or "/" in filename or filename.startswith(".") or ".." in filename:
+        raise HTTPException(status_code=400, detail="bad artifact filename")
+    # Defense-in-depth: reject anything outside the artifact charset.
+    if not re.match(r"^[A-Za-z0-9._:\-]+$", filename):
+        raise HTTPException(status_code=400, detail="bad artifact filename")
+
+
+def _check_artifact_kind(kind: str) -> None:
+    if kind not in _ARTIFACT_KINDS:
+        raise HTTPException(status_code=400, detail="bad artifact kind")
+
+
+def _media_type_for(filename: str) -> str:
+    """Pick a media type by extension, falling back to octet-stream."""
+    lowered = filename.lower()
+    for ext, mt in _ARTIFACT_MEDIA_TYPES.items():
+        if lowered.endswith(ext):
+            return mt
+    return "application/octet-stream"
+
+
+async def _find_latest_attempt_with_artifact(
+    minio: Any, sub_job_id: str, kind: str, filename: str
+) -> int | None:
+    """Return the highest attempt under <sub_job_id>/ whose <kind>/<filename> exists.
+
+    Mirrors `_resolve_latest_attempt` but additionally requires that the
+    specific `<kind>/<filename>` object is present in that attempt's tree —
+    a newer attempt that hasn't uploaded this kind yet shouldn't shadow an
+    older attempt that did.
+    """
+    objs = await minio.list_objects("qa-artifacts", prefix=f"{sub_job_id}/")
+    attempts: set[int] = set()
+    suffix = f"/{kind}/{filename}"
+    for o in objs:
+        # o = "<sub>/<n>/<kind>/<filename>" — accept only exact matches.
+        parts = o.split("/")
+        if len(parts) < 2 or not parts[1].isdigit():
+            continue
+        if o == f"{sub_job_id}/{parts[1]}{suffix}":
+            attempts.add(int(parts[1]))
+    return max(attempts) if attempts else None
+
+
+async def _find_latest_attempt_for_kind(
+    minio: Any, sub_job_id: str, kind: str
+) -> int | None:
+    """Return the highest attempt that has any object under <sub>/<n>/<kind>/.
+
+    Used by the listing endpoint, which doesn't know a specific filename.
+    Returns None when the sub-task has no <kind> uploads yet on any attempt.
+    """
+    objs = await minio.list_objects("qa-artifacts", prefix=f"{sub_job_id}/")
+    attempts: set[int] = set()
+    for o in objs:
+        parts = o.split("/")
+        # Require <sub>/<n>/<kind>/<filename> shape; the basename slot must
+        # be non-empty so we don't count "directory marker" keys.
+        if len(parts) < 4 or not parts[1].isdigit():
+            continue
+        if parts[2] == kind and parts[3]:
+            attempts.add(int(parts[1]))
+    return max(attempts) if attempts else None
+
+
+@router.get("/qa/runs/{run_id}/apps/{app}/artifacts/{kind}")
+async def list_app_artifacts(
+    run_id: str,
+    app: str,
+    kind: str,
+    qa_minio: Any = Depends(get_qa_minio),
+) -> dict[str, list[str]]:
+    """List basenames available for `kind` on the latest attempt of this sub-task.
+
+    Returns ``{"filenames": []}`` (200, not 404) when the sub-task has no
+    uploads of this kind — the dashboard treats the empty list as "no
+    artifacts captured" and renders an empty-state message rather than an
+    error.
+    """
+    _check_safe_job_id(run_id)
+    _check_safe_app(app)
+    _check_artifact_kind(kind)
+
+    sub = f"{run_id}__{app}"
+    n = await _find_latest_attempt_for_kind(qa_minio, sub, kind)
+    if n is None:
+        return {"filenames": []}
+
+    objs = await qa_minio.list_objects("qa-artifacts", prefix=f"{sub}/{n}/{kind}/")
+    # Strip the prefix so the client sees just the basenames it needs to pass
+    # back to the GET endpoint. Defensive: drop empty / nested entries (the
+    # agent shouldn't be writing nested dirs under <kind>/, but if it ever
+    # does we don't want to surface those as filenames).
+    prefix = f"{sub}/{n}/{kind}/"
+    filenames = sorted(
+        o[len(prefix):] for o in objs if o.startswith(prefix) and "/" not in o[len(prefix):] and len(o) > len(prefix)
+    )
+    return {"filenames": filenames}
+
+
+@router.get("/qa/runs/{run_id}/apps/{app}/artifacts/{kind}/{filename}")
+async def get_app_artifact(
+    run_id: str,
+    app: str,
+    kind: str,
+    filename: str,
+    qa_minio: Any = Depends(get_qa_minio),
+) -> Response:
+    """Stream a per-sub-task artifact (screenshot / HAR / console log) from MinIO.
+
+    Path layout in MinIO: ``<run_id>__<app>/<attempt_n>/<kind>/<filename>``.
+    `kind` is one of: screenshots, network, console, traces. Path-traversal
+    hardened: any '..', '/', leading '.', or non-allowlisted kind → 400.
+    """
+    _check_safe_job_id(run_id)
+    _check_safe_app(app)
+    _check_artifact_kind(kind)
+    _check_safe_filename(filename)
+
+    sub = f"{run_id}__{app}"
+    n = await _find_latest_attempt_with_artifact(qa_minio, sub, kind, filename)
+    if n is None:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    key = f"{sub}/{n}/{kind}/{filename}"
+    body = await qa_minio.get_object_bytes("qa-artifacts", key)
+    return Response(
+        content=body,
+        media_type=_media_type_for(filename),
+        headers={"Cache-Control": "private, max-age=300"},
+    )
