@@ -338,6 +338,53 @@ async def qa_orchestrator_node(
 
     Writes to state['qa']: outcome (dict), per_app_results (list[dict]),
     apps_to_qa, validation_errors, validation_warnings, final_status.
+
+    Phase 5C: after the inner implementation returns, publishes a single
+    ``done`` event to the QA event bus (when wired). The dashboard's SSE
+    route uses that event to close the stream and let polling take over.
+    """
+    out = await _qa_orchestrator_node_impl(state, config)
+
+    # Phase 5C: publish run-level "done" so SSE clients can close cleanly.
+    # No-op when no bus is wired (tests / legacy callers).
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    bus = configurable.get("qa_event_bus")
+    if bus is not None:
+        run_id = state.get("job_id")
+        # Pull the final status from whichever path the impl returned through:
+        # success path writes outcome.overall_status, every infra-error path
+        # also fills it in (see early-return blocks above).
+        out_qa = out.get("qa") if isinstance(out, dict) else None
+        outcome = out_qa.get("outcome") if isinstance(out_qa, dict) else None
+        overall_status = outcome.get("overall_status") if isinstance(outcome, dict) else None
+        if run_id and overall_status:
+            try:
+                await bus.publish(
+                    run_id,
+                    {
+                        "type": "done",
+                        "run_id": run_id,
+                        "overall_status": overall_status,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "qa_event_bus_publish_done_failed",
+                    parent_run_id=run_id,
+                    error=str(exc),
+                )
+
+    return out
+
+
+async def _qa_orchestrator_node_impl(
+    state: dict[str, Any],
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """Pure run-orchestration logic. ``qa_orchestrator_node`` wraps this to
+    layer the SSE ``done`` publish on top — separating the two keeps every
+    existing early-return short-circuit working without per-branch publish
+    plumbing.
     """
     from pathlib import Path
 

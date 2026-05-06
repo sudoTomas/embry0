@@ -976,3 +976,136 @@ async def test_init_orchestrator_populates_changed_files_and_repo_root(
     # Staged files exist.
     assert (tmp_path / "athanor-workspace-job-1" / "package.json").is_file()
     assert (tmp_path / "athanor-workspace-job-1" / "apps" / "hub" / "package.json").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Phase 5C: qa_orchestrator_node publishes "done" to QAEventBus when wired.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_qa_orchestrator_publishes_done_event_on_success(monkeypatch):
+    """After a happy-path run, the orchestrator publishes a single ``done``
+    event with type/run_id/overall_status to the QA event bus so the SSE
+    route can close the stream."""
+    from unittest.mock import MagicMock
+
+    from athanor.qa.event_bus import QAEventBus
+    from athanor.workflows.qa.orchestrator import qa_orchestrator_node
+    from athanor.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        packages=[],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        ),
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
+    )
+
+    bus = MagicMock(spec=QAEventBus)
+    bus.publish = AsyncMock()
+
+    state = {
+        "job_id": "RUN-DONE-1",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    config = {"configurable": {"qa_event_bus": bus}}
+
+    await qa_orchestrator_node(state, config)
+
+    bus.publish.assert_awaited_once()
+    args, _kwargs = bus.publish.await_args
+    assert args[0] == "RUN-DONE-1"
+    event = args[1]
+    assert event["type"] == "done"
+    assert event["run_id"] == "RUN-DONE-1"
+    assert event["overall_status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_qa_orchestrator_publishes_done_on_init_failure_pass_through():
+    """Even on the early-return ``existing_outcome=infra_error`` path, the
+    orchestrator still publishes ``done`` so the SSE route closes the stream."""
+    from unittest.mock import MagicMock
+
+    from athanor.qa.event_bus import QAEventBus
+    from athanor.workflows.qa.orchestrator import qa_orchestrator_node
+
+    bus = MagicMock(spec=QAEventBus)
+    bus.publish = AsyncMock()
+
+    state = {
+        "job_id": "RUN-INFRA-1",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "outcome": {
+                "overall_status": "infra_error",
+                "apps_to_qa": [],
+                "failure_summary": "bootstrap failed",
+                "validation_errors": [],
+                "validation_warnings": [],
+            },
+        },
+    }
+    config = {"configurable": {"qa_event_bus": bus}}
+
+    await qa_orchestrator_node(state, config)
+
+    bus.publish.assert_awaited_once()
+    args, _kwargs = bus.publish.await_args
+    event = args[1]
+    assert event["type"] == "done"
+    assert event["run_id"] == "RUN-INFRA-1"
+    assert event["overall_status"] == "infra_error"
+
+
+@pytest.mark.asyncio
+async def test_qa_orchestrator_skips_publish_when_no_event_bus():
+    """No bus wired → no publish; existing tests continue to pass."""
+    from athanor.workflows.qa.orchestrator import qa_orchestrator_node
+
+    state = {
+        "job_id": "RUN-NO-BUS",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "outcome": {
+                "overall_status": "infra_error",
+                "apps_to_qa": [],
+                "failure_summary": "bootstrap failed",
+                "validation_errors": [],
+                "validation_warnings": [],
+            },
+        },
+    }
+    out = await qa_orchestrator_node(state, {})
+    # The function still returns the same shape — just no SSE publish.
+    assert out["qa"]["outcome"]["overall_status"] == "infra_error"

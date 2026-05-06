@@ -644,7 +644,15 @@ async def release_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
 
 
 async def emit_result_node(state: SubTaskState, config: RunnableConfig) -> dict[str, Any]:
-    """Final node: build the SubTaskResult the orchestrator collects."""
+    """Final node: build the SubTaskResult the orchestrator collects.
+
+    Phase 5C: also publishes a ``subtask_status`` event to the QA event bus
+    (when one is wired into ``config['configurable']['qa_event_bus']``) so
+    the SSE route at ``/api/v1/qa/runs/{run_id}/events`` can stream
+    per-app state changes to the dashboard. The publish is best-effort —
+    bus errors are logged and swallowed so the orchestrator never
+    fails because of a flaky subscriber.
+    """
     started = state.get("started_at") or 0.0
     completed = state.get("completed_at") or time.monotonic()
     duration_ms = max(0, int((completed - started) * 1000))
@@ -675,4 +683,31 @@ async def emit_result_node(state: SubTaskState, config: RunnableConfig) -> dict[
         # when boot passed (legacy behavior preserved) or never ran.
         boot_phase=state.get("boot_phase"),
     )
+
+    # Phase 5C: publish to the QA event bus for SSE liveness. Absent when
+    # tests / legacy callers don't wire one in — that's intentional.
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    bus = configurable.get("qa_event_bus")
+    if bus is not None:
+        try:
+            await bus.publish(
+                state["parent_run_id"],
+                {
+                    "type": "subtask_status",
+                    "run_id": state["parent_run_id"],
+                    "app": state["app_name"],
+                    "status": str(status),
+                    "duration_ms": duration_ms,
+                    "failure_summary": failure_summary,
+                    "boot_phase": state.get("boot_phase"),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "qa_event_bus_publish_subtask_status_failed",
+                parent_run_id=state["parent_run_id"],
+                app=state["app_name"],
+                error=str(exc),
+            )
+
     return {"subtask_result": result}

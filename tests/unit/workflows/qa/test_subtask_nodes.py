@@ -636,6 +636,99 @@ async def test_emit_result_node_boot_phase_defaults_to_none():
 
 
 # ---------------------------------------------------------------------------
+# Phase 5C: emit_result_node publishes to QAEventBus when wired
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_emit_result_node_publishes_subtask_status_to_event_bus():
+    """When config['configurable']['qa_event_bus'] is present, emit_result_node
+    publishes a subtask_status event with the run_id, app, status, duration,
+    failure_summary, and boot_phase fields the SSE route forwards verbatim."""
+    from athanor.qa.event_bus import QAEventBus
+    from athanor.workflows.qa.subtask_nodes import emit_result_node
+
+    bus = MagicMock(spec=QAEventBus)
+    bus.publish = AsyncMock()
+
+    boot_phase = {"outcome": "timeout", "attempts": 12, "duration_ms": 600_000}
+    now = time.monotonic()
+    state = {
+        "app_name": "hub",
+        "parent_run_id": "JOB-42",
+        "status": SubTaskStatus.BOOT_FAILURE,
+        "failure_summary": "boot timeout",
+        "started_at": now - 3.0,
+        "completed_at": now,
+        "trace_url": None,
+        "raw_result": {},
+        "boot_phase": boot_phase,
+    }
+    config = {"configurable": {"qa_event_bus": bus}}
+
+    await emit_result_node(state, config)
+
+    bus.publish.assert_awaited_once()
+    args, _kwargs = bus.publish.await_args
+    assert args[0] == "JOB-42"  # publish(run_id, event)
+    event = args[1]
+    assert event["type"] == "subtask_status"
+    assert event["run_id"] == "JOB-42"
+    assert event["app"] == "hub"
+    assert event["status"] == "boot_failure"
+    assert event["duration_ms"] >= 2900
+    assert event["failure_summary"] == "boot timeout"
+    assert event["boot_phase"] == boot_phase
+
+
+@pytest.mark.asyncio
+async def test_emit_result_node_skips_publish_when_no_event_bus():
+    """No-op when config['configurable']['qa_event_bus'] is absent."""
+    from athanor.workflows.qa.subtask_nodes import emit_result_node
+
+    state = {
+        "app_name": "hub",
+        "parent_run_id": "JOB-99",
+        "status": SubTaskStatus.PASSED,
+        "failure_summary": None,
+        "started_at": time.monotonic() - 1.0,
+        "completed_at": time.monotonic(),
+        "trace_url": None,
+        "raw_result": {"overall": "passed"},
+    }
+    # Test passes if no exception is raised when config has no qa_event_bus.
+    out = await emit_result_node(state, {"configurable": {}})
+    assert out["subtask_result"].status == SubTaskStatus.PASSED
+
+
+@pytest.mark.asyncio
+async def test_emit_result_node_swallows_publish_errors():
+    """A flaky bus must not break the orchestrator — exceptions are logged
+    and swallowed so SubTaskResult is still emitted."""
+    from athanor.qa.event_bus import QAEventBus
+    from athanor.workflows.qa.subtask_nodes import emit_result_node
+
+    bus = MagicMock(spec=QAEventBus)
+    bus.publish = AsyncMock(side_effect=RuntimeError("bus exploded"))
+
+    state = {
+        "app_name": "hub",
+        "parent_run_id": "JOB-5",
+        "status": SubTaskStatus.PASSED,
+        "failure_summary": None,
+        "started_at": time.monotonic() - 1.0,
+        "completed_at": time.monotonic(),
+        "trace_url": None,
+        "raw_result": {"overall": "passed"},
+    }
+    config = {"configurable": {"qa_event_bus": bus}}
+
+    out = await emit_result_node(state, config)
+    # SubTaskResult must still be returned even though publish raised.
+    assert out["subtask_result"].status == SubTaskStatus.PASSED
+
+
+# ---------------------------------------------------------------------------
 # Test 12: release_sandbox_node
 # ---------------------------------------------------------------------------
 
