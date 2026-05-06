@@ -69,5 +69,9 @@ export function useAppArtifacts(
     queryFn: () => listAppArtifacts(runId!, app!, kind),
     enabled: !!runId && !!app,
     staleTime: 30_000,
+    // Poll at 15s for parity with `useQaRun` — while a job is still running,
+    // screenshots / HARs / console logs arrive incrementally and the panel
+    // should pick them up without a full page reload.
+    refetchInterval: 15_000,
   });
 }
