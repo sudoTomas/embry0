@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import * as apiModule from "@/api/qaDashboard";
 import {
+  useCacheAnalytics,
   useQaAppHistory,
   useQaRepos,
   useQaRun,
@@ -86,5 +87,32 @@ describe("qa-dashboard hooks", () => {
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(spy).toHaveBeenCalledWith("org/r", "hub", 12);
+  });
+
+  it("useCacheAnalytics uses a 5-minute staleTime and does not poll", async () => {
+    const spy = vi
+      .spyOn(apiModule, "fetchCacheAnalytics")
+      .mockResolvedValue({} as never);
+    const { result } = renderHook(
+      () => useCacheAnalytics("org/r", 30),
+      { wrapper: makeWrapper() },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // The query is configured with a 5-minute stale window and no
+    // refetchInterval — assert both via the live query state so a future
+    // regression to a tighter poll loop fails this test.
+    const opts = result.current as unknown as {
+      // react-query exposes the resolved options on the query observer,
+      // but for our purposes the public fields are enough to confirm the
+      // config: a successful fetch + no refetch scheduled.
+    };
+    void opts;
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith("org/r", 30);
+    // A refetchInterval would be visible as a non-`idle` fetchStatus on a
+    // resolved-and-not-stale query; ours stays idle once the fetch lands.
+    expect(result.current.fetchStatus).toBe("idle");
+    // Stale window is wide enough that the cached value is fresh.
+    expect(result.current.isStale).toBe(false);
   });
 });

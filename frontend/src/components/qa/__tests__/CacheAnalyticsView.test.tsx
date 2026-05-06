@@ -64,6 +64,15 @@ describe("CacheAnalyticsView", () => {
     const cold = screen.getByTestId("cold-cache-section");
     expect(cold).toHaveTextContent(/Apps with low hit rates \(1\)/i);
     expect(cold).toHaveTextContent("legacy-app");
+
+    // The header carries a tooltip disclosing the cold-app threshold so
+    // viewers can inspect the rule without reading source.
+    const heading = cold.querySelector("h2");
+    expect(heading).not.toBeNull();
+    expect(heading).toHaveAttribute(
+      "title",
+      "hit ratio below 25% over 3+ sub-tasks",
+    );
   });
 
   it("renders the empty-cold-cache state when cold_cache_apps is empty", () => {

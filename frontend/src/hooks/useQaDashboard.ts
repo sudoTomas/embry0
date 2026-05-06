@@ -78,8 +78,10 @@ export function useAffectedSet(runId: string | undefined) {
 /**
  * Phase 5E: subscribe to a repo's cache analytics aggregate.
  *
- * staleTime + refetchInterval at 60s — the rollup is computed across many
- * sub-tasks, so sub-second freshness is unnecessary. The hook returns
+ * The rollup is a 30-day aggregate that changes slowly — `staleTime` of
+ * 5 minutes keeps the panel responsive without burning needless API
+ * traffic, and we deliberately do NOT poll on an interval (a manual
+ * refetch or repo switch is enough to refresh). The hook returns
  * `disabled` until `repo` is defined so route params can resolve first.
  */
 export function useCacheAnalytics(
@@ -90,8 +92,7 @@ export function useCacheAnalytics(
     queryKey: ["qa-dashboard", "cache-analytics", repo, windowDays],
     queryFn: () => fetchCacheAnalytics(repo!, windowDays),
     enabled: !!repo,
-    staleTime: 60_000,
-    refetchInterval: 60_000,
+    staleTime: 5 * 60_000,
   });
 }
 

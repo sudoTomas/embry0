@@ -103,7 +103,10 @@ export function CacheAnalyticsView({ repo, windowDays = 30 }: Props) {
         className="rounded-md border bg-card p-4"
         data-testid="cold-cache-section"
       >
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
+        <h2
+          className="text-sm font-semibold uppercase tracking-wide text-white/70"
+          title="hit ratio below 25% over 3+ sub-tasks"
+        >
           Apps with low hit rates ({data.cold_cache_apps.length})
         </h2>
         {data.cold_cache_apps.length === 0 ? (
