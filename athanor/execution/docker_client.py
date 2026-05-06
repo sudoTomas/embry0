@@ -13,6 +13,52 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+# Env-var keys whose values must never reach logs. The docker run command
+# passes credentials/tokens via `-e KEY=VAL` argv pairs (sandbox launch
+# threads CLAUDE_CODE_OAUTH_TOKEN, the per-sandbox ATHANOR_SANDBOX_TOKEN,
+# etc.) and the same argv shows up at debug level on docker_cmd, at
+# warning level on docker_cmd_timeout, and at error level on
+# docker_cmd_failed. Scrub before logging.
+_SECRET_ENV_KEYS = frozenset(
+    {
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "GITHUB_TOKEN",
+        "ATHANOR_SANDBOX_TOKEN",
+        "POSTGRES_PASSWORD",
+        "ENVIRONMENT_SECRET_KEY",
+        "PROXY_ADMIN_TOKEN",
+    }
+)
+
+
+def _scrub_cmd_for_log(cmd: list[str]) -> list[str]:
+    """Return a copy of ``cmd`` with secret ``-e KEY=VAL`` values redacted.
+
+    Walks the argv looking for the docker `-e` flag followed by a
+    ``KEY=VAL`` argument. If ``KEY`` is in ``_SECRET_ENV_KEYS``, the value
+    is replaced with ``***REDACTED***``. Any other argv token is preserved
+    verbatim. Order and length are preserved so structured log consumers
+    that index into the array see the same shape.
+    """
+    scrubbed: list[str] = []
+    i = 0
+    while i < len(cmd):
+        token = cmd[i]
+        if token == "-e" and i + 1 < len(cmd):
+            kv = cmd[i + 1]
+            key, sep, _ = kv.partition("=")
+            if sep and key in _SECRET_ENV_KEYS:
+                scrubbed.append(token)
+                scrubbed.append(f"{key}=***REDACTED***")
+                i += 2
+                continue
+        scrubbed.append(token)
+        i += 1
+    return scrubbed
+
+
 class DockerClient:
     """Wraps Docker CLI commands for DinD environments."""
 
@@ -245,7 +291,8 @@ class DockerClient:
         (and kills the subprocess to prevent zombie Docker commands that would
         otherwise block the Docker daemon).
         """
-        logger.debug("docker_cmd", cmd=cmd)
+        scrubbed = _scrub_cmd_for_log(cmd)
+        logger.debug("docker_cmd", cmd=scrubbed)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -256,17 +303,17 @@ class DockerClient:
         except TimeoutError:
             # The subprocess would otherwise keep running and hold a Docker slot.
             # Kill → wait briefly for exit → re-raise so callers can fail cleanly.
-            logger.warning("docker_cmd_timeout", cmd=cmd, timeout=timeout)
+            logger.warning("docker_cmd_timeout", cmd=scrubbed, timeout=timeout)
             proc.kill()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except TimeoutError:
-                logger.error("docker_cmd_kill_stuck", cmd=cmd, pid=proc.pid)
+                logger.error("docker_cmd_kill_stuck", cmd=scrubbed, pid=proc.pid)
             raise
 
         if proc.returncode != 0:
             err = stderr.decode().strip()
-            logger.error("docker_cmd_failed", cmd=cmd, stderr=err, returncode=proc.returncode)
+            logger.error("docker_cmd_failed", cmd=scrubbed, stderr=err, returncode=proc.returncode)
             raise RuntimeError(f"Docker command failed: {err}")
 
         return stdout.decode().strip()
@@ -281,7 +328,7 @@ class DockerClient:
     ) -> asyncio.subprocess.Process:
         """Start a `docker exec` and return the process for streaming stdout."""
         cmd = self.build_exec_cmd(container, command, workdir=workdir, env=env)
-        logger.debug("docker_stream_exec", cmd=cmd)
+        logger.debug("docker_stream_exec", cmd=_scrub_cmd_for_log(cmd))
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,

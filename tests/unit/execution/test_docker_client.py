@@ -133,6 +133,74 @@ def test_build_run_cmd_localhost_registry_forces_pull(docker: DockerClient):
     assert "--pull=always" in cmd
 
 
+# ---------------------------------------------------------------------------
+# _scrub_cmd_for_log: redact secret -e KEY=VAL pairs before logging argv.
+# ---------------------------------------------------------------------------
+
+
+def test_scrub_cmd_redacts_oauth_token():
+    """The OAuth token passed to sandbox launches must not reach logs."""
+    from athanor.execution.docker_client import _scrub_cmd_for_log
+
+    cmd = [
+        "docker", "run", "-d",
+        "-e", "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-secret-value",
+        "-e", "QA_JOB_ID=job-1",
+        "registry:5000/athanor-sandbox:latest",
+    ]
+    scrubbed = _scrub_cmd_for_log(cmd)
+    assert "CLAUDE_CODE_OAUTH_TOKEN=***REDACTED***" in scrubbed
+    assert "sk-ant-oat01-secret-value" not in " ".join(scrubbed)
+    # Non-secret env stays intact.
+    assert "QA_JOB_ID=job-1" in scrubbed
+    # Length and order preserved (consumers may index into the array).
+    assert len(scrubbed) == len(cmd)
+    assert scrubbed[4] == "CLAUDE_CODE_OAUTH_TOKEN=***REDACTED***"
+
+
+def test_scrub_cmd_redacts_known_secret_keys():
+    from athanor.execution.docker_client import _scrub_cmd_for_log
+
+    cmd = [
+        "docker", "run",
+        "-e", "ANTHROPIC_API_KEY=sk-ant-api...",
+        "-e", "GITHUB_TOKEN=ghp_...",
+        "-e", "ATHANOR_SANDBOX_TOKEN=tok-...",
+        "-e", "POSTGRES_PASSWORD=p4ss",
+        "-e", "ENVIRONMENT_SECRET_KEY=k",
+        "-e", "PROXY_ADMIN_TOKEN=admin",
+        "img",
+    ]
+    scrubbed = " ".join(_scrub_cmd_for_log(cmd))
+    for needle in ("sk-ant-api...", "ghp_", "tok-...", "p4ss", "ENVIRONMENT_SECRET_KEY=k", "PROXY_ADMIN_TOKEN=admin"):
+        assert needle not in scrubbed, f"leaked: {needle!r}"
+
+
+def test_scrub_cmd_leaves_unrelated_kv_alone():
+    from athanor.execution.docker_client import _scrub_cmd_for_log
+
+    cmd = ["docker", "exec", "-e", "FOO=bar", "-e", "DEBUG=true", "container", "true"]
+    assert _scrub_cmd_for_log(cmd) == cmd
+
+
+def test_scrub_cmd_handles_dangling_e_flag():
+    """`-e` at the end with nothing after it: don't crash, don't redact spuriously."""
+    from athanor.execution.docker_client import _scrub_cmd_for_log
+
+    cmd = ["docker", "run", "img", "-e"]
+    assert _scrub_cmd_for_log(cmd) == cmd
+
+
+def test_scrub_cmd_handles_e_without_equals():
+    """`-e KEY` (no value) — docker reads it from the host env. Pass through."""
+    from athanor.execution.docker_client import _scrub_cmd_for_log
+
+    cmd = ["docker", "run", "-e", "GITHUB_TOKEN", "img"]
+    # No `=` in the value, so the partition fallback kicks in and we just
+    # leave the token alone (docker would resolve it from env at run time).
+    assert _scrub_cmd_for_log(cmd) == cmd
+
+
 def test_build_exec_cmd(docker: DockerClient):
     """Exec command targets container by name."""
     cmd = docker.build_exec_cmd(
