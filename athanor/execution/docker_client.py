@@ -63,6 +63,20 @@ class DockerClient:
         """
         cmd = self._build_base_cmd()
         cmd.extend(["run", "-d", "--init"])
+        # When the image is qualified against a registry (registry:5000/...,
+        # 1.2.3.4:5000/..., or any host with a `.`/`:`/literal `localhost`
+        # in its first segment), force a pull on every launch. This keeps
+        # DinD from serving stale `latest` after the host has rebuilt and
+        # init-push-images has refreshed the registry — a previous silent
+        # failure mode where the inner docker daemon's cached layers won an
+        # implicit race against the registry's newer digest.
+        first_segment = image.split("/", 1)[0] if "/" in image else ""
+        if first_segment and (
+            "." in first_segment
+            or ":" in first_segment
+            or first_segment == "localhost"
+        ):
+            cmd.append("--pull=always")
         cmd.extend(["--name", name])
         cmd.append(f"--network={network}")
         cmd.append(f"--memory={memory}")

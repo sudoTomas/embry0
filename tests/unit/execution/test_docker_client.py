@@ -101,6 +101,38 @@ def test_build_run_cmd_no_extra_hosts(docker: DockerClient):
     assert not any(t.startswith("--add-host") for t in cmd)
 
 
+def test_build_run_cmd_unqualified_image_omits_pull(docker: DockerClient):
+    """A bare image name (no registry segment) must NOT add --pull=always —
+    the image only exists locally and a pull would fail."""
+    cmd = docker.build_run_cmd(image="athanor-sandbox:latest", name="sandbox-1")
+    assert "--pull=always" not in cmd
+
+
+def test_build_run_cmd_registry_qualified_image_forces_pull(docker: DockerClient):
+    """When the image is qualified against the in-stack registry (host
+    contains `:` for the port), every launch must force a fresh pull. This
+    prevents DinD from serving a stale `latest` after the host rebuilds
+    and init-push-images refreshes the registry — the silent failure
+    mode that masked the QA pipeline's runner-import crash on 2026-05-06."""
+    cmd = docker.build_run_cmd(image="registry:5000/athanor-sandbox:latest", name="sandbox-1")
+    assert "--pull=always" in cmd
+    # And it must precede the image arg / "run -d" must still be there.
+    assert "run" in cmd
+    assert cmd.index("--pull=always") < cmd.index("registry:5000/athanor-sandbox:latest")
+
+
+def test_build_run_cmd_dotted_registry_host_forces_pull(docker: DockerClient):
+    """A registry hostname with a `.` (e.g. ghcr.io/...) is also qualified."""
+    cmd = docker.build_run_cmd(image="ghcr.io/client-project/athanor-sandbox:latest", name="sandbox-1")
+    assert "--pull=always" in cmd
+
+
+def test_build_run_cmd_localhost_registry_forces_pull(docker: DockerClient):
+    """A `localhost/...` qualified image (Docker's special form) also pulls."""
+    cmd = docker.build_run_cmd(image="localhost/athanor-sandbox:latest", name="sandbox-1")
+    assert "--pull=always" in cmd
+
+
 def test_build_exec_cmd(docker: DockerClient):
     """Exec command targets container by name."""
     cmd = docker.build_exec_cmd(
