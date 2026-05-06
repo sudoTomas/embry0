@@ -1,5 +1,6 @@
 import { api } from "./client";
 import type {
+  AffectedSetResponse,
   AppHistoryItem,
   AppResult,
   RepoEntry,
@@ -50,6 +51,22 @@ export async function fetchQaRunApp(
 ): Promise<AppResult> {
   const { data } = await api.get<AppResult>(
     `/qa/runs/${encodeURIComponent(runId)}/apps/${encodeURIComponent(app)}`,
+  );
+  return data;
+}
+
+/**
+ * Phase 5D: fetch the affected-set / dep-graph snapshot for a run.
+ *
+ * 404 from the backend bubbles up as an axios error — the caller should
+ * surface "no affected-set recorded" for legacy runs or runs that
+ * infra_error'd before fan-out resolution.
+ */
+export async function fetchAffectedSet(
+  runId: string,
+): Promise<AffectedSetResponse> {
+  const { data } = await api.get<AffectedSetResponse>(
+    `/qa/runs/${encodeURIComponent(runId)}/affected_set`,
   );
   return data;
 }

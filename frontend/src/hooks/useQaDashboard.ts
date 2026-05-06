@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  fetchAffectedSet,
   fetchQaAppHistory,
   fetchQaRepos,
   fetchQaRun,
@@ -56,6 +57,20 @@ export function useQaAppHistory(
     queryFn: () => fetchQaAppHistory(repo!, app!, limit),
     enabled: !!repo && !!app,
     refetchInterval: 30_000,
+  });
+}
+
+/**
+ * Phase 5D: subscribe to a run's affected-set snapshot. Stale-time of 60s
+ * because the row is written once at fan-out time and never updated for
+ * the life of the run — no need to poll.
+ */
+export function useAffectedSet(runId: string | undefined) {
+  return useQuery({
+    queryKey: ["qa-dashboard", "affected-set", runId],
+    queryFn: () => fetchAffectedSet(runId!),
+    enabled: !!runId,
+    staleTime: 60_000,
   });
 }
 

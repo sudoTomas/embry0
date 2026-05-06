@@ -72,3 +72,34 @@ export interface AppHistoryItem {
   started_at: string;
   failure_summary: string | null;
 }
+
+/**
+ * Phase 5D: a single workspace dependency edge.
+ *
+ * Field names match the backend (`source`/`target` rather than `from`/`to`)
+ * to sidestep `from`-as-reserved-keyword issues in both Python and JS.
+ * Currently always empty — extracting workspace edges from the
+ * npm-workspaces-turbo provider is a follow-up.
+ */
+export interface DepEdge {
+  source: string;
+  target: string;
+}
+
+/**
+ * Phase 5D: GET /api/v1/qa/runs/{run_id}/affected_set payload.
+ *
+ * Mirrors the qa_run_metadata row qa_orchestrator_node persisted at fan-out
+ * time. `apps_skipped` is every declared app NOT in apps_to_qa; the diff
+ * (`changed_files` + `base_branch`) shows what drove selection;
+ * `force_all_apps` flags qa_required=always / explicit override paths.
+ */
+export interface AffectedSetResponse {
+  job_id: string;
+  apps_to_qa: string[];
+  apps_skipped: string[];
+  force_all_apps: boolean;
+  changed_files: string[];
+  base_branch: string;
+  dep_graph: DepEdge[];
+}
