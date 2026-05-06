@@ -142,11 +142,19 @@ def test_build_run_cmd_tmpfs_mounts_emit_tmpfs_flags(docker: DockerClient):
         tmpfs_mounts=["/workspace/.qa", "/var/run/agent"],
     )
     assert "--tmpfs" in cmd
-    assert "/workspace/.qa:rw,nosuid" in cmd
-    assert "/var/run/agent:rw,nosuid" in cmd
-    # Each tmpfs is preceded by --tmpfs.
+    # Tmpfs MUST include mode=1777 so the non-root sandbox user can create
+    # files in it (default Docker tmpfs is mode 0755 owned by root, which
+    # makes mkdir/touch fail with Permission denied for the `agent` user).
+    assert "/workspace/.qa:rw,nosuid,mode=1777" in cmd
+    assert "/var/run/agent:rw,nosuid,mode=1777" in cmd
+    # Each tmpfs is preceded by --tmpfs. The /tmp + /home/agent/.claude
+    # built-ins still use ":rw,nosuid"; the explicit tmpfs_mounts entries
+    # use ":rw,nosuid,mode=1777". So every value ends with one of these.
     idxs = [i for i, t in enumerate(cmd) if t == "--tmpfs"]
-    assert all(cmd[i + 1].endswith(":rw,nosuid") for i in idxs)
+    assert all(
+        cmd[i + 1].endswith(":rw,nosuid") or cmd[i + 1].endswith(":rw,nosuid,mode=1777")
+        for i in idxs
+    )
 
 
 def test_build_run_cmd_no_tmpfs_when_omitted(docker: DockerClient):

@@ -153,7 +153,13 @@ class DockerClient:
             cmd.extend(["--tmpfs", "/home/agent/.claude:rw,nosuid"])
 
         for path in tmpfs_mounts or []:
-            cmd.extend(["--tmpfs", f"{path}:rw,nosuid"])
+            # mode=1777 makes the tmpfs root world-writable + sticky (same
+            # default as /tmp). Without it Docker mounts the tmpfs at mode
+            # 0755 owned by root, and a non-root sandbox user (the `agent`
+            # account in the sandbox image) cannot create files in it —
+            # `mkdir /workspace/.qa/logs` errors with `Permission denied`
+            # and the QA fan-out aborts every sub-task with infra_failure.
+            cmd.extend(["--tmpfs", f"{path}:rw,nosuid,mode=1777"])
 
         for host, ip in (extra_hosts or {}).items():
             cmd.append(f"--add-host={host}:{ip}")
