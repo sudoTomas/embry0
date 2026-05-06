@@ -92,14 +92,26 @@ async def warm_shared_volume(
     profile = await profiles_repo.get("slim")
     warmer_job_id = f"warmer__{scope_key}"
 
-    # Mount the shared volume at /workspace/node_modules so that npm ci writes
-    # directly into the volume.  The SandboxManager.create() Phase-2 extension
-    # translates (volume_name, mount_point) pairs to -v flags on docker run.
+    # Mount the shared volume at /workspace (the WHOLE workspace tree, not
+    # just node_modules) so that:
+    #   1. The warmer's `git clone` populates the volume with the repo source.
+    #   2. The warmer's `npm ci` populates /workspace/node_modules INSIDE the
+    #      same volume.
+    #   3. Sub-tasks then mount this same volume at /workspace and skip their
+    #      own clone (subtask_nodes.py passes shared_volume_name -> cached_volume
+    #      to prep_qa_sandbox_clone, which mkdir's .qa/logs and head_sha-reads
+    #      without re-cloning).
+    #
+    # The previous mount point was /workspace/node_modules, which (a) created
+    # /workspace/node_modules/ before clone ran, causing `git clone /workspace`
+    # to fail with "destination path '/workspace' already exists and is not an
+    # empty directory", AND (b) was inconsistent with sub-tasks expecting the
+    # whole tree at /workspace.
     container_id, sandbox_token = await sandbox_mgr.create(
         warmer_job_id,
         profile=profile,
         env={"ATHANOR_GIT_PROXY_URL": getattr(proxy_mgr, "git_proxy_url", "") if proxy_mgr else ""},
-        volumes=[(volume_name, "/workspace/node_modules")],
+        volumes=[(volume_name, "/workspace")],
     )
     base: list[str] = docker._build_base_cmd() if hasattr(docker, "_build_base_cmd") else []
 

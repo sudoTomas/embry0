@@ -84,10 +84,13 @@ async def test_warm_runs_npm_ci_when_state_has_no_prior_sha(monkeypatch):
     # Sandbox should have been destroyed in the finally block
     sandbox_mgr.destroy.assert_awaited_once_with("sb-warmer")
 
-    # Sandbox should have been created with the volume mounted at /workspace/node_modules
+    # Sandbox should have been created with the volume mounted at /workspace
+    # (the WHOLE workspace tree, not just node_modules — sub-tasks mount the
+    # same volume at /workspace and need the cloned repo + node_modules to
+    # both be present).
     sandbox_mgr.create.assert_awaited_once()
     create_kwargs = sandbox_mgr.create.call_args.kwargs
-    assert create_kwargs.get("volumes") == [("athanor-qa-vol-job-1", "/workspace/node_modules")]
+    assert create_kwargs.get("volumes") == [("athanor-qa-vol-job-1", "/workspace")]
 
 
 @pytest.mark.asyncio
