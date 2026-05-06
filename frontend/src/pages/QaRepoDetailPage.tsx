@@ -31,6 +31,14 @@ export function QaRepoDetailPage() {
         >
           Cache analytics
         </Link>
+        {" · "}
+        <Link
+          to={`/qa/repos/${encodeURIComponent(repo)}/flake`}
+          className="text-cyan-300 hover:underline"
+          data-testid="flake-heatmap-link"
+        >
+          Flake heatmap
+        </Link>
       </p>
       {data.length === 0 ? (
         <EmptyState
