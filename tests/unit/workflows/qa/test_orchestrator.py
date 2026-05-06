@@ -1394,3 +1394,207 @@ async def test_orchestrator_no_metadata_repo_does_nothing(monkeypatch):
 
     out = await qa_orchestrator_node(state, config)
     assert out["qa"]["outcome"]["overall_status"] == "passed"
+
+
+# ── Phase 5G: workspace_provider override from qa_workspace_provider_overrides_repo ──
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_applies_workspace_provider_override(monkeypatch):
+    """When the override repo returns a row for the current repo, the
+    orchestrator MUST call load_provider with the override's type+config,
+    not the qa.yaml's workspace_provider."""
+    from pathlib import Path
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from athanor.storage.repositories.qa_workspace_provider_overrides import (
+        WorkspaceProviderOverride,
+    )
+    from datetime import UTC, datetime
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[
+            WorkspaceApp("hub", Path("apps/hub"), "@x/hub"),
+            WorkspaceApp("companion", Path("apps/companion"), "@x/companion"),
+        ],
+        packages=[],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        ),
+    )
+
+    captured: dict = {}
+
+    def fake_load_provider(name, root, config):
+        captured["name"] = name
+        captured["config"] = dict(config)
+        return fake_provider
+
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider", fake_load_provider
+    )
+
+    async def fake_run_subtask(resolved, **kw):
+        from athanor.workflows.qa.subtask_result_schema import (
+            CacheHits,
+            SubTaskResult,
+            SubTaskStatus,
+        )
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=1,
+            cache_hits=CacheHits(),
+        )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
+    )
+
+    override_repo = AsyncMock()
+    override_repo.get = AsyncMock(
+        return_value=WorkspaceProviderOverride(
+            repo="org/repo",
+            provider_type="overridden-provider",
+            config={"affected_filter": "[HEAD^1]", "apps_glob": "apps/*"},
+            updated_at=datetime.now(UTC),
+        )
+    )
+
+    qa_app_results_repo = AsyncMock()
+    qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
+
+    state = {
+        "job_id": "run-override-applied",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    config = {
+        "configurable": {
+            "qa_app_results_repo": qa_app_results_repo,
+            "qa_workspace_provider_overrides_repo": override_repo,
+        }
+    }
+
+    out = await qa_orchestrator_node(state, config)
+    assert out["qa"]["outcome"]["overall_status"] == "passed"
+    # The override's type + config must have been passed to load_provider —
+    # not the qa.yaml's "fake".
+    assert captured["name"] == "overridden-provider"
+    assert captured["config"] == {
+        "affected_filter": "[HEAD^1]",
+        "apps_glob": "apps/*",
+    }
+    override_repo.get.assert_awaited_once_with("org/repo")
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_falls_back_to_qa_yaml_when_no_override(monkeypatch):
+    """When the override repo returns None, the qa.yaml workspace_provider
+    is used unchanged."""
+    from pathlib import Path
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        packages=[],
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+    )
+
+    captured: dict = {}
+
+    def fake_load_provider(name, root, config):
+        captured["name"] = name
+        captured["config"] = dict(config)
+        return fake_provider
+
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider", fake_load_provider
+    )
+
+    override_repo = AsyncMock()
+    override_repo.get = AsyncMock(return_value=None)
+
+    qa_app_results_repo = AsyncMock()
+    qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
+
+    state = {
+        "job_id": "run-override-absent",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": [],
+        },
+    }
+    config = {
+        "configurable": {
+            "qa_app_results_repo": qa_app_results_repo,
+            "qa_workspace_provider_overrides_repo": override_repo,
+        }
+    }
+
+    out = await qa_orchestrator_node(state, config)
+    assert out["qa"]["outcome"]["overall_status"] == "passed"
+    # qa.yaml's workspace_provider.type is "fake" — no override applied.
+    assert captured["name"] == "fake"
+    override_repo.get.assert_awaited_once_with("org/repo")
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_handles_override_lookup_failure(monkeypatch):
+    """If the override repo raises during get(), the run continues with the
+    qa.yaml-based config — admin-side hiccup must not block QA."""
+    from pathlib import Path
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        packages=[],
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+    )
+
+    captured: dict = {}
+
+    def fake_load_provider(name, root, config):
+        captured["name"] = name
+        return fake_provider
+
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator.load_provider", fake_load_provider
+    )
+
+    override_repo = AsyncMock()
+    override_repo.get = AsyncMock(side_effect=RuntimeError("db blew up"))
+
+    qa_app_results_repo = AsyncMock()
+    qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
+
+    state = {
+        "job_id": "run-override-broken",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": [],
+        },
+    }
+    config = {
+        "configurable": {
+            "qa_app_results_repo": qa_app_results_repo,
+            "qa_workspace_provider_overrides_repo": override_repo,
+        }
+    }
+
+    out = await qa_orchestrator_node(state, config)
+    # The run continues and finishes with overall_status=passed (no apps).
+    assert out["qa"]["outcome"]["overall_status"] == "passed"
+    # Fell through to qa.yaml's fake provider.
+    assert captured["name"] == "fake"

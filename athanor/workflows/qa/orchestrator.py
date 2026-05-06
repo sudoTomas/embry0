@@ -444,6 +444,41 @@ async def _qa_orchestrator_node_impl(
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     qa_app_results_repo = configurable.get("qa_app_results_repo")
 
+    # Phase 5G: dashboard-set workspace_provider override.
+    # When the admin UI has stored a row for this repo, prefer it over the
+    # qa.yaml file-based config so operators can tweak affected_filter /
+    # apps_glob without committing. Best-effort: if the lookup fails, log
+    # and fall back to the qa.yaml — never block the run on an admin-side
+    # storage hiccup.
+    override_repo = configurable.get("qa_workspace_provider_overrides_repo")
+    repo_name = state.get("repo")
+    if override_repo is not None and repo_name:
+        try:
+            override = await override_repo.get(repo_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "qa_workspace_provider_override_lookup_failed",
+                repo=repo_name,
+                error=str(exc),
+            )
+        else:
+            if override is not None:
+                from athanor.workflows.qa.qa_yaml_v2 import WorkspaceProviderRef
+
+                cfg = cfg.model_copy(
+                    update={
+                        "workspace_provider": WorkspaceProviderRef(
+                            type=override.provider_type,
+                            config=dict(override.config),
+                        )
+                    }
+                )
+                logger.info(
+                    "qa_workspace_provider_override_applied",
+                    repo=repo_name,
+                    provider_type=override.provider_type,
+                )
+
     # 1. Load workspace provider.
     repo_root = Path(state.get("repo_root") or "/workspace")
     try:

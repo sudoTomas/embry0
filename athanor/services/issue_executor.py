@@ -87,6 +87,10 @@ class IssueExecutor:
         # Phase 5D: affected-set / dep-graph snapshot persistence. None in
         # tests / legacy callers; qa_orchestrator_node no-ops when absent.
         qa_run_metadata_repo: Any = None,
+        # Phase 5G: per-repo workspace_provider overrides set via the admin
+        # UI. When None, the orchestrator uses the .athanor/qa.yaml config
+        # unmodified. None in tests / legacy callers.
+        qa_workspace_provider_overrides_repo: Any = None,
         github_token: str | None = None,
         telegram_channel: Any = None,
         github_comment_channel: Any = None,
@@ -124,6 +128,9 @@ class IssueExecutor:
         # Phase 5D: affected-set persistence repo. May be None in tests; the
         # QA orchestrator node treats absence as no-op.
         self._qa_run_metadata_repo = qa_run_metadata_repo
+        # Phase 5G: workspace_provider overrides repo. May be None in tests;
+        # the QA orchestrator node treats absence as no-op (uses qa.yaml).
+        self._qa_workspace_provider_overrides_repo = qa_workspace_provider_overrides_repo
         self._github_token = github_token
         self._telegram_channel = telegram_channel
         self._github_comment_channel = github_comment_channel
@@ -199,6 +206,12 @@ class IssueExecutor:
                 # Phase 5D: affected-set persistence — read by qa_orchestrator_node
                 # to upsert qa_run_metadata after the apps decision is final.
                 "qa_run_metadata_repo": self._qa_run_metadata_repo,
+                # Phase 5G: workspace_provider overrides — read by
+                # qa_orchestrator_node to layer DB-set provider config on top
+                # of the .athanor/qa.yaml workspace_provider section.
+                "qa_workspace_provider_overrides_repo": (
+                    self._qa_workspace_provider_overrides_repo
+                ),
                 "github_token": self._github_token,
             }
         }
