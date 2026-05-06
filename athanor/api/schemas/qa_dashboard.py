@@ -155,3 +155,34 @@ class AffectedSetResponse(BaseModel):
     changed_files: list[str]
     base_branch: str
     dep_graph: list[DepEdge] = Field(default_factory=list)
+
+
+class CacheLayerStats(BaseModel):
+    """Phase 5E: aggregate hit/miss for a single cache layer over a window."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    layer: Literal["prebaked_image", "shared_volume", "turbo_remote"]
+    hits: int = Field(ge=0)
+    misses: int = Field(ge=0)
+    hit_ratio: float = Field(ge=0.0, le=1.0)
+
+
+class CacheAnalyticsResponse(BaseModel):
+    """Phase 5E: GET /api/v1/qa/repos/{repo}/cache/analytics payload.
+
+    Aggregates per-layer cache hit/miss across every QA sub-task that ran
+    against ``repo`` in the last ``window_days`` days. ``layers`` always
+    holds exactly three entries (one per layer). ``cold_cache_apps`` is
+    the alphabetised list of apps whose aggregate hit ratio fell below
+    0.25 — surfaced as 'top offenders' in the UI.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    repo: str
+    window_days: int = Field(gt=0, le=365)
+    total_runs: int = Field(ge=0)
+    total_subtasks: int = Field(ge=0)
+    layers: list[CacheLayerStats]
+    cold_cache_apps: list[str] = Field(default_factory=list)

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+from pydantic import ValidationError
+
 from athanor.api.schemas.qa_dashboard import (
     AppHistoryItem,
     AppResult,
     BootPhaseDetail,
+    CacheAnalyticsResponse,
     CacheHitsModel,
+    CacheLayerStats,
     RepoEntry,
     RunDetail,
     RunListItem,
@@ -159,3 +164,130 @@ def test_run_summary_item_used_in_listings():
         app_count=1,
     )
     assert s.app_count == 1
+
+
+# ─── Phase 5E: cache analytics schemas ──────────────────────────────────────
+
+
+def test_cache_layer_stats_round_trip():
+    s = CacheLayerStats(layer="prebaked_image", hits=47, misses=5, hit_ratio=0.9038)
+    parsed = CacheLayerStats.model_validate_json(s.model_dump_json())
+    assert parsed.layer == "prebaked_image"
+    assert parsed.hits == 47
+    assert parsed.misses == 5
+    assert abs(parsed.hit_ratio - 0.9038) < 1e-6
+
+
+def test_cache_layer_stats_rejects_unknown_layer():
+    with pytest.raises(ValidationError):
+        CacheLayerStats(layer="bogus", hits=0, misses=0, hit_ratio=0.0)  # type: ignore[arg-type]
+
+
+def test_cache_layer_stats_rejects_negative_counts():
+    with pytest.raises(ValidationError):
+        CacheLayerStats(layer="shared_volume", hits=-1, misses=0, hit_ratio=0.0)
+    with pytest.raises(ValidationError):
+        CacheLayerStats(layer="shared_volume", hits=0, misses=-1, hit_ratio=0.0)
+
+
+def test_cache_layer_stats_rejects_out_of_range_hit_ratio():
+    with pytest.raises(ValidationError):
+        CacheLayerStats(layer="turbo_remote", hits=0, misses=0, hit_ratio=-0.01)
+    with pytest.raises(ValidationError):
+        CacheLayerStats(layer="turbo_remote", hits=0, misses=0, hit_ratio=1.01)
+
+
+def test_cache_layer_stats_extra_forbid():
+    with pytest.raises(ValidationError):
+        CacheLayerStats.model_validate({
+            "layer": "prebaked_image",
+            "hits": 1,
+            "misses": 1,
+            "hit_ratio": 0.5,
+            "unexpected": "x",
+        })
+
+
+def test_cache_analytics_response_round_trip():
+    resp = CacheAnalyticsResponse(
+        repo="org/r1",
+        window_days=30,
+        total_runs=12,
+        total_subtasks=36,
+        layers=[
+            CacheLayerStats(layer="prebaked_image", hits=30, misses=6, hit_ratio=0.8333),
+            CacheLayerStats(layer="shared_volume", hits=20, misses=16, hit_ratio=0.5556),
+            CacheLayerStats(layer="turbo_remote", hits=80, misses=40, hit_ratio=0.6667),
+        ],
+        cold_cache_apps=["legacy-app"],
+    )
+    parsed = CacheAnalyticsResponse.model_validate_json(resp.model_dump_json())
+    assert parsed.repo == "org/r1"
+    assert parsed.window_days == 30
+    assert parsed.total_runs == 12
+    assert parsed.total_subtasks == 36
+    assert len(parsed.layers) == 3
+    assert parsed.cold_cache_apps == ["legacy-app"]
+
+
+def test_cache_analytics_response_default_cold_cache_apps_empty():
+    resp = CacheAnalyticsResponse(
+        repo="org/r1",
+        window_days=7,
+        total_runs=0,
+        total_subtasks=0,
+        layers=[
+            CacheLayerStats(layer="prebaked_image", hits=0, misses=0, hit_ratio=0.0),
+            CacheLayerStats(layer="shared_volume", hits=0, misses=0, hit_ratio=0.0),
+            CacheLayerStats(layer="turbo_remote", hits=0, misses=0, hit_ratio=0.0),
+        ],
+    )
+    assert resp.cold_cache_apps == []
+
+
+def test_cache_analytics_response_rejects_window_days_zero_or_negative():
+    base = {
+        "repo": "org/r1",
+        "total_runs": 0,
+        "total_subtasks": 0,
+        "layers": [
+            {"layer": "prebaked_image", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+            {"layer": "shared_volume", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+            {"layer": "turbo_remote", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+        ],
+    }
+    with pytest.raises(ValidationError):
+        CacheAnalyticsResponse.model_validate({**base, "window_days": 0})
+    with pytest.raises(ValidationError):
+        CacheAnalyticsResponse.model_validate({**base, "window_days": -1})
+
+
+def test_cache_analytics_response_rejects_window_days_above_max():
+    with pytest.raises(ValidationError):
+        CacheAnalyticsResponse.model_validate({
+            "repo": "org/r1",
+            "window_days": 366,
+            "total_runs": 0,
+            "total_subtasks": 0,
+            "layers": [
+                {"layer": "prebaked_image", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                {"layer": "shared_volume", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                {"layer": "turbo_remote", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+            ],
+        })
+
+
+def test_cache_analytics_response_extra_forbid():
+    with pytest.raises(ValidationError):
+        CacheAnalyticsResponse.model_validate({
+            "repo": "org/r1",
+            "window_days": 30,
+            "total_runs": 0,
+            "total_subtasks": 0,
+            "layers": [
+                {"layer": "prebaked_image", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                {"layer": "shared_volume", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                {"layer": "turbo_remote", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+            ],
+            "extra_field": True,
+        })

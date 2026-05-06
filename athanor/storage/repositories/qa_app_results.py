@@ -294,6 +294,171 @@ class QAAppResultsRepository:
             for r in rows
         ]
 
+    async def cache_analytics_window(
+        self,
+        *,
+        repo: str,
+        days: int = 30,
+    ) -> dict[str, Any]:
+        """Phase 5E: aggregate per-layer cache hit/miss for a repo over a window.
+
+        Returns the payload for the
+        ``GET /api/v1/qa/repos/{repo}/cache/analytics`` endpoint. Joins
+        ``qa_app_results`` to ``jobs`` on ``job_id`` (no SUBSTRING needed —
+        ``qa_app_results.job_id`` is the parent job_id, mirroring how
+        ``list_runs_for_repo`` joins). Filtered by ``j.created_at`` so
+        queued-but-never-started jobs still count toward the window.
+
+        Per layer:
+          - prebaked_image / shared_volume: ``cache_hits.<layer>`` is a bool;
+            it becomes 1 hit OR 1 miss per row.
+          - turbo_remote: ``cache_hits.turbo_remote_hits`` and
+            ``turbo_remote_misses`` are list[str] — every list element is one
+            hit / miss event (turbo runs many tasks per sub-task).
+
+        ``cold_cache_apps`` are apps whose aggregate hit_ratio (across all
+        three layers, weighted by event count) falls below 0.25 AND whose
+        sub-task count is at least 3 (so a single bad run doesn't poison
+        the list). Returned alphabetically.
+        """
+        # NOTE on the (cache_hits #>> '{}')::jsonb dance: the database codec
+        # in DatabasePool.connect() registers a jsonb encoder that calls
+        # json.dumps() on every Python value. Combined with the
+        # ``$5::jsonb`` cast and ``json.dumps(...)`` in upsert_with_boot_phase,
+        # cache_hits ends up wrapped as a JSON-string-scalar inside the JSONB
+        # column (i.e. the cell holds ``"\"{...}\""`` rather than ``{...}``).
+        # Reads via list_for_job paper over this with json.loads on the
+        # Python side, but server-side ``->>`` and ``->`` operators see a
+        # string scalar and return NULL. ``#>> '{}'`` extracts the JSON value
+        # as text; re-casting to ::jsonb gives us the inner object so the
+        # JSONB operators work.
+        sql = """
+        WITH window_results AS (
+            SELECT
+                r.app_name,
+                (((r.cache_hits #>> '{}')::jsonb)->>'prebaked_image')::bool AS pi,
+                (((r.cache_hits #>> '{}')::jsonb)->>'shared_volume')::bool AS sv,
+                COALESCE(
+                    jsonb_array_length(((r.cache_hits #>> '{}')::jsonb)->'turbo_remote_hits'),
+                    0
+                ) AS tr_hits,
+                COALESCE(
+                    jsonb_array_length(((r.cache_hits #>> '{}')::jsonb)->'turbo_remote_misses'),
+                    0
+                ) AS tr_misses,
+                r.job_id AS parent_job_id
+            FROM qa_app_results r
+            JOIN jobs j ON j.job_id = r.job_id
+            WHERE j.repo = $1
+              AND j.created_at >= NOW() - ($2::int * INTERVAL '1 day')
+        )
+        SELECT
+            app_name,
+            COUNT(*)::int AS subtasks,
+            (COUNT(*) FILTER (WHERE pi))::int AS pi_hits,
+            (COUNT(*) FILTER (WHERE NOT pi))::int AS pi_misses,
+            (COUNT(*) FILTER (WHERE sv))::int AS sv_hits,
+            (COUNT(*) FILTER (WHERE NOT sv))::int AS sv_misses,
+            COALESCE(SUM(tr_hits), 0)::int AS tr_hits,
+            COALESCE(SUM(tr_misses), 0)::int AS tr_misses,
+            (SELECT COUNT(DISTINCT parent_job_id) FROM window_results)::int AS total_runs
+        FROM window_results
+        GROUP BY app_name
+        """
+        rows = await self.db.fetch(sql, repo, int(days))
+
+        # Empty window: short-circuit with the canonical zero payload so
+        # the API response shape is always predictable.
+        if not rows:
+            return {
+                "repo": repo,
+                "window_days": int(days),
+                "total_runs": 0,
+                "total_subtasks": 0,
+                "layers": [
+                    {"layer": "prebaked_image", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                    {"layer": "shared_volume", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                    {"layer": "turbo_remote", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                ],
+                "cold_cache_apps": [],
+            }
+
+        # Roll up per-layer totals across all apps, and compute per-app cold
+        # ratios for the offenders list.
+        total_subtasks = 0
+        total_runs = int(rows[0]["total_runs"])  # same value on every row
+        pi_hits_sum = sv_hits_sum = tr_hits_sum = 0
+        pi_misses_sum = sv_misses_sum = tr_misses_sum = 0
+
+        cold_cache_apps: list[str] = []
+        for r in rows:
+            subtasks = int(r["subtasks"])
+            total_subtasks += subtasks
+
+            pi_hits = int(r["pi_hits"])
+            pi_misses = int(r["pi_misses"])
+            sv_hits = int(r["sv_hits"])
+            sv_misses = int(r["sv_misses"])
+            tr_hits = int(r["tr_hits"])
+            tr_misses = int(r["tr_misses"])
+
+            pi_hits_sum += pi_hits
+            pi_misses_sum += pi_misses
+            sv_hits_sum += sv_hits
+            sv_misses_sum += sv_misses
+            tr_hits_sum += tr_hits
+            tr_misses_sum += tr_misses
+
+            # Per-app aggregate hit_ratio across all three layers, weighted by
+            # event count (so a layer with 100 turbo events outweighs a single
+            # prebaked bool). Apps with zero events are not "cold" — they
+            # simply produced no cache data — so we exclude ratio=0 with no
+            # events from the offenders list by guarding on total_events > 0.
+            app_hits = pi_hits + sv_hits + tr_hits
+            app_events = (
+                pi_hits + pi_misses
+                + sv_hits + sv_misses
+                + tr_hits + tr_misses
+            )
+            if subtasks >= 3 and app_events > 0:
+                ratio = app_hits / app_events
+                if ratio < 0.25:
+                    cold_cache_apps.append(r["app_name"])
+
+        cold_cache_apps.sort()
+
+        def _ratio(hits: int, misses: int) -> float:
+            denom = hits + misses
+            return hits / denom if denom > 0 else 0.0
+
+        return {
+            "repo": repo,
+            "window_days": int(days),
+            "total_runs": total_runs,
+            "total_subtasks": total_subtasks,
+            "layers": [
+                {
+                    "layer": "prebaked_image",
+                    "hits": pi_hits_sum,
+                    "misses": pi_misses_sum,
+                    "hit_ratio": _ratio(pi_hits_sum, pi_misses_sum),
+                },
+                {
+                    "layer": "shared_volume",
+                    "hits": sv_hits_sum,
+                    "misses": sv_misses_sum,
+                    "hit_ratio": _ratio(sv_hits_sum, sv_misses_sum),
+                },
+                {
+                    "layer": "turbo_remote",
+                    "hits": tr_hits_sum,
+                    "misses": tr_misses_sum,
+                    "hit_ratio": _ratio(tr_hits_sum, tr_misses_sum),
+                },
+            ],
+            "cold_cache_apps": cold_cache_apps,
+        }
+
     async def list_history_for_app(
         self,
         repo: str,
