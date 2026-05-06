@@ -30,6 +30,10 @@ class QAAppResultRow:
     trace_url: str | None
     failure_summary: str | None
     raw_result: dict[str, Any]
+    # Phase 5A: per-sub-task boot drill-down. None on legacy rows and on the
+    # passed path. JSONB column on qa_app_results, parsed back into a dict
+    # here. Shape mirrors athanor.api.schemas.qa_dashboard.BootPhaseDetail.
+    boot_phase: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,19 +80,56 @@ class QAAppResultsRepository:
         Idempotent: invariant 2 from spec §9.5 — sub-task retries REPLACE
         rows, never duplicate. The unique index uq_qa_app_results_job_app
         gives the ON CONFLICT target.
+
+        Forwards to ``upsert_with_boot_phase`` so both paths share one SQL
+        statement and the boot_phase column is always written deterministically
+        (NULL for SubTaskResult.boot_phase=None).
+        """
+        await self.upsert_with_boot_phase(
+            job_id=job_id,
+            app_name=result.app_name,
+            status=str(result.status),
+            duration_ms=int(result.duration_ms),
+            cache_hits=result.cache_hits,
+            trace_url=result.trace_url,
+            failure_summary=result.failure_summary,
+            raw_result=result.raw_result,
+            boot_phase=result.boot_phase,
+        )
+
+    async def upsert_with_boot_phase(
+        self,
+        *,
+        job_id: str,
+        app_name: str,
+        status: str,
+        duration_ms: int,
+        cache_hits: CacheHits,
+        trace_url: str | None = None,
+        failure_summary: str | None = None,
+        raw_result: dict[str, Any] | None = None,
+        boot_phase: dict[str, Any] | None = None,
+    ) -> None:
+        """Idempotent upsert that also writes the boot_phase JSONB column.
+
+        ``boot_phase=None`` writes SQL NULL (not the JSON string ``"null"``)
+        — the column is intentionally nullable so legacy rows and the
+        passed-boot path are distinguishable from a captured boot_phase
+        with all-empty fields.
         """
         cache_hits_json = json.dumps({
-            "prebaked_image": result.cache_hits.prebaked_image,
-            "shared_volume": result.cache_hits.shared_volume,
-            "turbo_remote_hits": list(result.cache_hits.turbo_remote_hits),
-            "turbo_remote_misses": list(result.cache_hits.turbo_remote_misses),
+            "prebaked_image": cache_hits.prebaked_image,
+            "shared_volume": cache_hits.shared_volume,
+            "turbo_remote_hits": list(cache_hits.turbo_remote_hits),
+            "turbo_remote_misses": list(cache_hits.turbo_remote_misses),
         })
+        boot_phase_json = json.dumps(boot_phase) if boot_phase is not None else None
         sql = """
         INSERT INTO qa_app_results (
             job_id, app_name, status, duration_ms, cache_hits,
-            trace_url, failure_summary, raw_result, updated_at
+            trace_url, failure_summary, raw_result, boot_phase, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, NOW())
+        VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $9::jsonb, NOW())
         ON CONFLICT (job_id, app_name) DO UPDATE SET
             status          = EXCLUDED.status,
             duration_ms     = EXCLUDED.duration_ms,
@@ -96,18 +137,20 @@ class QAAppResultsRepository:
             trace_url       = EXCLUDED.trace_url,
             failure_summary = EXCLUDED.failure_summary,
             raw_result      = EXCLUDED.raw_result,
+            boot_phase      = EXCLUDED.boot_phase,
             updated_at      = NOW()
         """
         await self.db.execute(
             sql,
             job_id,
-            result.app_name,
-            str(result.status),
-            int(result.duration_ms),
+            app_name,
+            status,
+            int(duration_ms),
             cache_hits_json,
-            result.trace_url,
-            result.failure_summary,
-            json.dumps(result.raw_result),
+            trace_url,
+            failure_summary,
+            json.dumps(raw_result or {}),
+            boot_phase_json,
         )
 
     async def list_for_job(self, job_id: str) -> list[QAAppResultRow]:
@@ -119,7 +162,7 @@ class QAAppResultsRepository:
         """
         sql = """
         SELECT job_id, app_name, status, duration_ms, cache_hits,
-               trace_url, failure_summary, raw_result
+               trace_url, failure_summary, raw_result, boot_phase
         FROM qa_app_results
         WHERE job_id = $1
         ORDER BY app_name
@@ -136,6 +179,14 @@ class QAAppResultsRepository:
             raw_result_data = (
                 json.loads(raw_result_raw) if isinstance(raw_result_raw, str) else raw_result_raw
             )
+            boot_phase_raw = row["boot_phase"] if "boot_phase" in row.keys() else None
+            boot_phase_data: dict[str, Any] | None
+            if boot_phase_raw is None:
+                boot_phase_data = None
+            elif isinstance(boot_phase_raw, str):
+                boot_phase_data = json.loads(boot_phase_raw)
+            else:
+                boot_phase_data = boot_phase_raw
 
             out.append(
                 QAAppResultRow(
@@ -153,6 +204,7 @@ class QAAppResultsRepository:
                     trace_url=row["trace_url"],
                     failure_summary=row["failure_summary"],
                     raw_result=raw_result_data or {},
+                    boot_phase=boot_phase_data,
                 )
             )
         return out

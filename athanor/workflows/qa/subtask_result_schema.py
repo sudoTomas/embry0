@@ -66,6 +66,10 @@ class SubTaskResult:
     trace_url: str | None = None
     failure_summary: str | None = None
     raw_result: dict[str, Any] = field(default_factory=dict)
+    # Phase 5A: per-sub-task boot drill-down. None when boot passed (UI hides
+    # the panel) or when the sub-task ran on legacy code that didn't capture
+    # boot_phase. Shape mirrors athanor.api.schemas.qa_dashboard.BootPhaseDetail.
+    boot_phase: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

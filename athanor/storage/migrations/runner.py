@@ -692,6 +692,19 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON qa_volume_state (scope, scope_key);
         """,
     ),
+    (
+        28,
+        "qa_app_results — boot_phase JSONB for per-sub-task boot drilldown",
+        # Phase 5A: surface ready_check failed_checks + dev-server stdout tail
+        # in the dashboard. Populated by collect_artifacts_node when the boot
+        # phase did not pass; NULL on legacy rows and on the passed path.
+        """
+        ALTER TABLE qa_app_results
+            ADD COLUMN IF NOT EXISTS boot_phase JSONB NULL;
+        COMMENT ON COLUMN qa_app_results.boot_phase IS
+            '{outcome, attempts, duration_ms, failed_checks: [str], boot_stdout_tail: str} populated by collect_artifacts_node when boot_outcome != "passed". NULL otherwise.';
+        """,
+    ),
 ]
 
 

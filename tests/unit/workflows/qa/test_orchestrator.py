@@ -305,7 +305,7 @@ async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
     monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     repo_mock = AsyncMock()
-    repo_mock.upsert = AsyncMock()
+    repo_mock.upsert_with_boot_phase = AsyncMock()
 
     state = {
         "job_id": "11111111-1111-1111-1111-111111111111",
@@ -322,7 +322,12 @@ async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
     qa = out["qa"]
     assert qa["outcome"]["overall_status"] == "passed"
     assert sorted(qa["apps_to_qa"]) == ["hub", "companion"]
-    assert repo_mock.upsert.await_count == 2
+    # Phase 5A: orchestrator routes through upsert_with_boot_phase so the
+    # boot_phase JSONB column is populated. Each call carries boot_phase=None
+    # for the passed-boot path here (sub-tasks above are mocked PASSED).
+    assert repo_mock.upsert_with_boot_phase.await_count == 2
+    for call in repo_mock.upsert_with_boot_phase.await_args_list:
+        assert call.kwargs["boot_phase"] is None
     assert qa["final_status"] == "passed"
 
 
@@ -343,6 +348,7 @@ async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatc
     )
 
     repo_mock = AsyncMock()
+    repo_mock.upsert_with_boot_phase = AsyncMock()
     state = {
         "job_id": "run-2",
         "repo": "org/repo",
@@ -356,7 +362,7 @@ async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatc
     out = await qa_orchestrator_node(state, config)
     assert out["qa"]["outcome"]["overall_status"] == "passed"
     assert out["qa"]["apps_to_qa"] == []
-    assert repo_mock.upsert.await_count == 0
+    assert repo_mock.upsert_with_boot_phase.await_count == 0
 
 
 @pytest.mark.asyncio

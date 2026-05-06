@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from athanor.api.schemas.qa_dashboard import (
     AppHistoryItem,
     AppResult,
+    BootPhaseDetail,
     CacheHitsModel,
     RepoEntry,
     RunDetail,
@@ -32,6 +33,12 @@ _FAILED_DASHBOARD_STATUSES = frozenset(
 
 
 def _to_app_result(row) -> AppResult:
+    boot_phase_obj: BootPhaseDetail | None = None
+    bp = getattr(row, "boot_phase", None)
+    if isinstance(bp, dict):
+        # Defensive: validate via the pydantic model so unexpected fields are
+        # rejected with extra="forbid". Older rows pre-Phase-5A have NULL.
+        boot_phase_obj = BootPhaseDetail.model_validate(bp)
     return AppResult(
         app_name=row.app_name,
         status=str(row.status),
@@ -44,6 +51,7 @@ def _to_app_result(row) -> AppResult:
         ),
         trace_url=row.trace_url,
         failure_summary=row.failure_summary,
+        boot_phase=boot_phase_obj,
     )
 
 

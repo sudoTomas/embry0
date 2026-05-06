@@ -491,11 +491,22 @@ async def qa_orchestrator_node(
         config=config or {},
     )
 
-    # 6. Persist (idempotent upsert).
+    # 6. Persist (idempotent upsert).  Phase 5A: route through
+    # upsert_with_boot_phase so the new boot_phase JSONB column is populated.
     if qa_app_results_repo is not None:
         for r in per_app_results:
             try:
-                await qa_app_results_repo.upsert(state["job_id"], r)
+                await qa_app_results_repo.upsert_with_boot_phase(
+                    job_id=state["job_id"],
+                    app_name=r.app_name,
+                    status=str(r.status),
+                    duration_ms=int(r.duration_ms),
+                    cache_hits=r.cache_hits,
+                    trace_url=r.trace_url,
+                    failure_summary=r.failure_summary,
+                    raw_result=r.raw_result,
+                    boot_phase=r.boot_phase,
+                )
             except Exception as exc:  # noqa: BLE001
                 # Log but don't fail the run on persistence error.
                 logger.warning(

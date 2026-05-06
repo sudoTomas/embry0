@@ -88,6 +88,70 @@ async def test_upsert_two_apps_different_rows(repo, db):
 
 
 @pytest.mark.asyncio
+async def test_upsert_persists_boot_phase_payload(repo, db):
+    """Phase 5A: boot_phase JSONB round-trips through the upsert path."""
+    job_id = "test-boot-phase-roundtrip"
+    await _seed_job(db, job_id)
+
+    boot_phase = {
+        "outcome": "timeout",
+        "attempts": 12,
+        "duration_ms": 600_000,
+        "failed_checks": [
+            "http://localhost:3000/health: got 503 expected 200",
+        ],
+        "boot_stdout_tail": "ready - started server on http://localhost:3000\n",
+    }
+    await repo.upsert_with_boot_phase(
+        job_id=job_id,
+        app_name="hub",
+        status="boot_failure",
+        duration_ms=600_000,
+        cache_hits=CacheHits(),
+        trace_url=None,
+        failure_summary="boot_command did not become ready within 600s",
+        raw_result={},
+        boot_phase=boot_phase,
+    )
+
+    rows = await repo.list_for_job(job_id)
+    assert len(rows) == 1
+    assert rows[0].boot_phase == boot_phase
+
+
+@pytest.mark.asyncio
+async def test_upsert_with_boot_phase_none_stores_null(repo, db):
+    """boot_phase=None must write SQL NULL — not the JSON string 'null'."""
+    job_id = "test-boot-phase-null"
+    await _seed_job(db, job_id)
+
+    await repo.upsert_with_boot_phase(
+        job_id=job_id,
+        app_name="hub",
+        status="passed",
+        duration_ms=1500,
+        cache_hits=CacheHits(),
+        trace_url=None,
+        failure_summary=None,
+        raw_result={},
+        boot_phase=None,
+    )
+
+    # Check the raw column value is SQL NULL, not the string 'null'.
+    row = await db.fetchrow(
+        "SELECT boot_phase FROM qa_app_results WHERE job_id=$1 AND app_name=$2",
+        job_id,
+        "hub",
+    )
+    assert row is not None
+    assert row["boot_phase"] is None
+
+    rows = await repo.list_for_job(job_id)
+    assert len(rows) == 1
+    assert rows[0].boot_phase is None
+
+
+@pytest.mark.asyncio
 async def test_upsert_preserves_cache_hits_roundtrip(repo, db):
     job_id = "test-cache-hits"
     await _seed_job(db, job_id)

@@ -68,6 +68,7 @@ def _hydrate_results(per_app_dicts: list[dict[str, Any]]) -> list[SubTaskResult]
                 trace_url=d.get("trace_url"),
                 failure_summary=d.get("failure_summary"),
                 raw_result=d.get("raw_result", {}) or {},
+                boot_phase=d.get("boot_phase"),
             )
         )
     return out
