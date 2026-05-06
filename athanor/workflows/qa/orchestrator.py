@@ -465,6 +465,13 @@ async def _qa_orchestrator_node_impl(
             if override is not None:
                 from athanor.workflows.qa.qa_yaml_v2 import WorkspaceProviderRef
 
+                # Snapshot the qa.yaml provider before the model_copy so the
+                # log line carries the full pre/post diff — operators can
+                # reconstruct exactly what changed without cross-referencing
+                # the committed qa.yaml at run time.
+                qa_yaml_provider_type = cfg.workspace_provider.type
+                qa_yaml_provider_config = dict(cfg.workspace_provider.config)
+
                 cfg = cfg.model_copy(
                     update={
                         "workspace_provider": WorkspaceProviderRef(
@@ -476,7 +483,10 @@ async def _qa_orchestrator_node_impl(
                 logger.info(
                     "qa_workspace_provider_override_applied",
                     repo=repo_name,
-                    provider_type=override.provider_type,
+                    qa_yaml_provider_type=qa_yaml_provider_type,
+                    qa_yaml_provider_config=qa_yaml_provider_config,
+                    override_provider_type=override.provider_type,
+                    override_provider_config=dict(override.config),
                 )
 
     # 1. Load workspace provider.

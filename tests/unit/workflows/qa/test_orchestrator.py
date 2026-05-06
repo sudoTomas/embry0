@@ -1412,6 +1412,8 @@ async def test_orchestrator_applies_workspace_provider_override(monkeypatch):
     )
     from datetime import UTC, datetime
 
+    import structlog.testing
+
     fake_provider = FakeWorkspaceProvider(
         apps=[
             WorkspaceApp("hub", Path("apps/hub"), "@x/hub"),
@@ -1481,7 +1483,8 @@ async def test_orchestrator_applies_workspace_provider_override(monkeypatch):
         }
     }
 
-    out = await qa_orchestrator_node(state, config)
+    with structlog.testing.capture_logs() as log_entries:
+        out = await qa_orchestrator_node(state, config)
     assert out["qa"]["outcome"]["overall_status"] == "passed"
     # The override's type + config must have been passed to load_provider —
     # not the qa.yaml's "fake".
@@ -1491,6 +1494,25 @@ async def test_orchestrator_applies_workspace_provider_override(monkeypatch):
         "apps_glob": "apps/*",
     }
     override_repo.get.assert_awaited_once_with("org/repo")
+
+    # The override-applied log line must carry both the pre-override qa.yaml
+    # snapshot AND the override values so the diff is reconstructable from
+    # one line — not just provider_type.
+    applied = [
+        e
+        for e in log_entries
+        if e.get("event") == "qa_workspace_provider_override_applied"
+    ]
+    assert len(applied) == 1, f"expected one override-applied log, got: {applied}"
+    entry = applied[0]
+    assert entry["repo"] == "org/repo"
+    assert entry["qa_yaml_provider_type"] == "fake"
+    assert entry["qa_yaml_provider_config"] == {}
+    assert entry["override_provider_type"] == "overridden-provider"
+    assert entry["override_provider_config"] == {
+        "affected_filter": "[HEAD^1]",
+        "apps_glob": "apps/*",
+    }
 
 
 @pytest.mark.asyncio
