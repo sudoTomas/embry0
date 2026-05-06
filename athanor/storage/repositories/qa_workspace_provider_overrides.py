@@ -90,9 +90,12 @@ class QAWorkspaceProviderOverridesRepository:
         Returns True iff a row was actually removed; False when no override
         existed (lets the API translate to a 404).
         """
-        result = await self.db.execute(
-            "DELETE FROM qa_workspace_provider_overrides WHERE repo = $1",
+        # ``RETURNING repo`` is the codebase convention for confirming a
+        # mutation row-by-row (see e.g. agent_definitions.delete_by_id);
+        # avoids parsing asyncpg's "DELETE N" command-tag string.
+        row = await self.db.fetchrow(
+            "DELETE FROM qa_workspace_provider_overrides WHERE repo = $1 "
+            "RETURNING repo",
             repo,
         )
-        # asyncpg's execute() returns a status string like "DELETE N".
-        return result.endswith(" 1")
+        return row is not None
