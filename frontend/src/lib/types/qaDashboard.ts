@@ -22,6 +22,14 @@ export interface CacheHits {
   turbo_remote_misses: string[];
 }
 
+export interface BootPhaseDetail {
+  outcome: "passed" | "timeout" | "startup_failed";
+  attempts: number;
+  duration_ms: number;
+  failed_checks: string[];
+  boot_stdout_tail: string;
+}
+
 export interface RepoEntry {
   repo: string;
   latest_run_id: string;
@@ -45,6 +53,7 @@ export interface AppResult {
   cache_hits: CacheHits;
   trace_url: string | null;
   failure_summary: string | null;
+  boot_phase?: BootPhaseDetail | null;
 }
 
 export interface RunDetail {

@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { Card, CardContent } from "@/components/ui/Card";
+import { BootPhasePanel } from "./BootPhasePanel";
 import { CacheHitsRow } from "./CacheHitsRow";
 import { RunStatusBadge } from "./RunStatusBadge";
 import type { AppResult } from "@/lib/types";
@@ -52,6 +53,9 @@ export function QaAppResultCard({ app, repo }: Props) {
           >
             {app.failure_summary}
           </p>
+        )}
+        {(app.status === "boot_failure" || app.status === "ready_check_failed") && (
+          <BootPhasePanel boot_phase={app.boot_phase} />
         )}
       </CardContent>
     </Card>
