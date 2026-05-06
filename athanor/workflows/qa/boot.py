@@ -176,7 +176,14 @@ async def run_boot_phase(
         failed_checks = []
         for check in ready_checks:
             url = check.get("http", "")
-            expected_status = int(check.get("expect_status", 200))
+            raw_status = check.get("expect_status", 200)
+            # Accept the legacy single-int form OR the list form
+            # (introduced 2026-05-06 for apps whose root path is auth-gated
+            # and returns 401/403 as a "dev server up" signal).
+            if isinstance(raw_status, list):
+                expected_codes = [int(s) for s in raw_status]
+            else:
+                expected_codes = [int(raw_status)]
             expected_body_regex = check.get("expect_body_regex")
             try:
                 status_code, body = await _probe_ready_check(
@@ -191,8 +198,9 @@ async def run_boot_phase(
                 # Connect failed; body has ERR:<type>:<message>.
                 failed_checks.append(f"{url}: connect-failed: {body[:120]}")
                 continue
-            if status_code != expected_status:
-                failed_checks.append(f"{url}: got {status_code} expected {expected_status}")
+            if status_code not in expected_codes:
+                expected_repr = expected_codes[0] if len(expected_codes) == 1 else expected_codes
+                failed_checks.append(f"{url}: got {status_code} expected {expected_repr}")
                 continue
             if expected_body_regex and not re.search(expected_body_regex, body or ""):
                 failed_checks.append(f"{url}: body did not match {expected_body_regex!r}")

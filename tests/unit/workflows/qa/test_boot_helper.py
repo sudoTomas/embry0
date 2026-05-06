@@ -255,3 +255,48 @@ async def test_connect_failed_treated_as_failure_not_crash():
     )
     assert result.outcome == "passed"
     assert result.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_expect_status_list_accepts_any_listed_code():
+    """expect_status as a list — any matching code passes the check
+    (introduced 2026-05-06 for auth-gated apps that 403 on the dev server's
+    root path until the user logs in)."""
+    docker = _make_docker([_probe_response(403, "Forbidden")])
+
+    qa_yaml = _make_qa_yaml(
+        boot_timeout=10,
+        ready_checks=[
+            {"http": "http://app:3000/", "expect_status": [200, 401, 403]},
+        ],
+    )
+    result = await run_boot_phase(
+        qa_yaml=qa_yaml,
+        container_id="C",
+        docker=docker,
+        sleep_seconds=0,
+    )
+    assert result.outcome == "passed"
+    assert result.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_expect_status_list_rejects_unlisted_code():
+    """A 500 must NOT pass when the list is [200, 401, 403]."""
+    docker = _make_docker(_probe_response(500, "boom"))
+
+    qa_yaml = _make_qa_yaml(
+        boot_timeout=0.3,
+        ready_checks=[
+            {"http": "http://app:3000/", "expect_status": [200, 401, 403]},
+        ],
+    )
+    result = await run_boot_phase(
+        qa_yaml=qa_yaml,
+        container_id="C",
+        docker=docker,
+        sleep_seconds=0.05,
+    )
+    assert result.outcome == "timeout"
+    assert "got 500" in result.failed_checks[0]
+    assert "[200, 401, 403]" in result.failed_checks[0]

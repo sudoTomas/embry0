@@ -509,8 +509,13 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
     # Synthesize the boot section from sub-task state — agent never writes it.
     if state.get("boot_outcome") == "passed":
         if resolved.ready_checks:
+            # ``expect_status`` may be int or list[int] (the latter introduced
+            # 2026-05-06 for auth-gated apps). On a passed boot we record the
+            # *first* acceptable code as a representative success status —
+            # boot.py only logs the actual code on failure, and the schema
+            # field here is a single int.
             ready_check_results = [
-                QAReadyCheckResult(url=rc.http, status=rc.expect_status, duration_ms=0)
+                QAReadyCheckResult(url=rc.http, status=rc.status_codes()[0], duration_ms=0)
                 for rc in resolved.ready_checks
             ]
         else:

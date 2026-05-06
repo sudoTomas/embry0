@@ -19,8 +19,29 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class QAReadyCheck(BaseModel):
     model_config = ConfigDict(extra="forbid")
     http: str
-    expect_status: int = Field(default=200, ge=100, le=599)
+    # ``expect_status`` may be a single int (legacy form, default 200) or a
+    # list of ints. The list form is required for apps whose root path is
+    # auth-gated and returns a non-200 success indicator (e.g. a Next.js
+    # app that 403s on `/` until the user logs in — the dev server is
+    # still "up"). To express "boot is up if I get any of these", supply
+    # ``expect_status: [200, 401, 403]``.
+    expect_status: int | list[int] = Field(default=200)
     expect_body_regex: str | None = None
+
+    @field_validator("expect_status")
+    @classmethod
+    def _expect_status_in_range(cls, v: int | list[int]) -> int | list[int]:
+        codes = v if isinstance(v, list) else [v]
+        if not codes:
+            raise ValueError("expect_status list must not be empty")
+        for code in codes:
+            if not (100 <= code <= 599):
+                raise ValueError(f"expect_status entry {code} out of range 100..599")
+        return v
+
+    def status_codes(self) -> list[int]:
+        """Return ``expect_status`` normalized to a list of int codes."""
+        return [self.expect_status] if isinstance(self.expect_status, int) else list(self.expect_status)
 
     @field_validator("http")
     @classmethod

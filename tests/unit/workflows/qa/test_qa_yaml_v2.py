@@ -120,3 +120,56 @@ def test_app_local_file_extra_field_rejected():
 def test_yaml_root_must_be_mapping():
     with pytest.raises(ValueError):
         parse_qa_yaml_v2("- 1\n- 2\n")
+
+
+# ---------------------------------------------------------------------------
+# QAReadyCheck.expect_status: int | list[int] (2026-05-06)
+# ---------------------------------------------------------------------------
+
+
+def _yaml_with_ready_check(rc_yaml: str) -> str:
+    return f"""
+version: 2
+workspace_provider:
+  type: npm-workspaces-turbo
+defaults:
+  mode: process
+  ready_checks:
+    - http: "http://localhost:3000/"
+{rc_yaml}
+apps:
+  hub:
+    boot_command: "x"
+    frontend_url: "http://localhost:3000/"
+"""
+
+
+def test_ready_check_expect_status_legacy_int_form():
+    """Single-int form must still parse and produce a list with one entry."""
+    cfg = parse_qa_yaml_v2(_yaml_with_ready_check("      expect_status: 200"))
+    rc = cfg.defaults.ready_checks[0]
+    assert rc.expect_status == 200
+    assert rc.status_codes() == [200]
+
+
+def test_ready_check_expect_status_list_form_for_auth_gated_apps():
+    """List form lets auth-gated apps mark 401/403 as 'dev server is up'."""
+    cfg = parse_qa_yaml_v2(_yaml_with_ready_check("      expect_status: [200, 401, 403]"))
+    rc = cfg.defaults.ready_checks[0]
+    assert rc.expect_status == [200, 401, 403]
+    assert rc.status_codes() == [200, 401, 403]
+
+
+def test_ready_check_expect_status_list_must_be_non_empty():
+    with pytest.raises(ValidationError):
+        parse_qa_yaml_v2(_yaml_with_ready_check("      expect_status: []"))
+
+
+def test_ready_check_expect_status_out_of_range_rejected():
+    with pytest.raises(ValidationError):
+        parse_qa_yaml_v2(_yaml_with_ready_check("      expect_status: [200, 700]"))
+
+
+def test_ready_check_expect_status_default_is_200():
+    cfg = parse_qa_yaml_v2(_yaml_with_ready_check(""))  # no expect_status
+    assert cfg.defaults.ready_checks[0].expect_status == 200
