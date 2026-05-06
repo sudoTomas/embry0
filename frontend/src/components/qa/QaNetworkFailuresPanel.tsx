@@ -11,8 +11,11 @@
  * still triage rather than seeing a generic "couldn't parse" message.
  *
  * Fetches go through the authenticated axios client so the Bearer token is
- * attached. A bare `fetch(url)` would NOT carry the auth header and would
- * 401 against `AUTH_DEV_MODE=false` in production.
+ * attached, and each file is wrapped in a `<details>` block: the body is only
+ * fetched after the user expands it. A failing sub-task with five HARs would
+ * otherwise fire five concurrent fetches on first card render — wasteful
+ * given that most users only inspect one or two files at a time and HARs
+ * can be multi-megabyte.
  */
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
@@ -83,10 +86,12 @@ function NetworkEntryPanel({
   app,
   filename,
 }: NetworkEntryPanelProps): JSX.Element {
+  const [open, setOpen] = useState(false);
   const [raw, setRaw] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!open || raw !== null || err !== null) return;
     let cancelled = false;
     api
       .get<string>(artifactPath(runId, app, "network", filename), {
@@ -104,70 +109,79 @@ function NetworkEntryPanel({
     return () => {
       cancelled = true;
     };
-  }, [runId, app, filename]);
+  }, [open, runId, app, filename, raw, err]);
 
-  if (err) {
-    return (
-      <div className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs text-destructive">
-        {filename}: failed to load — {err}
-      </div>
-    );
-  }
-  if (raw === null) {
-    return (
-      <div className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/40">
-        {filename}: loading…
-      </div>
-    );
-  }
-  const parsed = parseNetworkBody(raw);
   return (
-    <div
+    <details
       data-testid="qa-network-entry"
       data-filename={filename}
       className="rounded border border-white/10 bg-white/5 px-3 py-2"
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
-      <div className="mb-1 font-mono text-xs text-white/80">{filename}</div>
-      {parsed === null ? (
-        <>
-          <div className="mb-1 text-xs text-yellow-300">
-            Unrecognised JSON shape — showing raw body.
-          </div>
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-sm bg-black/40 px-2 py-1 text-xs text-white/70">
-            {raw}
-          </pre>
-        </>
-      ) : parsed.length === 0 ? (
-        <div className="text-xs text-white/40">No entries.</div>
-      ) : (
-        <table className="w-full table-fixed text-xs">
-          <thead>
-            <tr className="text-left text-white/50">
-              <th className="w-16">Method</th>
-              <th>URL</th>
-              <th className="w-16">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {parsed.map((row, idx) => (
-              <tr key={idx} className="border-t border-white/10">
-                <td className="font-mono text-white/80">{row.method}</td>
-                <td className="truncate font-mono text-white/70" title={row.url}>
-                  {row.url}
-                </td>
-                <td
-                  className={
-                    row.status >= 400 ? "text-destructive" : "text-white/70"
-                  }
-                >
-                  {row.status}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <summary className="cursor-pointer font-mono text-xs text-white/80">
+        {filename}
+      </summary>
+      {open && (
+        <div className="mt-2">
+          {err && (
+            <div className="text-xs text-destructive">
+              {filename}: failed to load — {err}
+            </div>
+          )}
+          {!err && raw === null && (
+            <div className="text-xs text-white/40">{filename}: loading…</div>
+          )}
+          {!err && raw !== null && <NetworkEntryBody raw={raw} />}
+        </div>
       )}
-    </div>
+    </details>
+  );
+}
+
+function NetworkEntryBody({ raw }: { raw: string }): JSX.Element {
+  const parsed = parseNetworkBody(raw);
+  if (parsed === null) {
+    return (
+      <>
+        <div className="mb-1 text-xs text-yellow-300">
+          Unrecognised JSON shape — showing raw body.
+        </div>
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-sm bg-black/40 px-2 py-1 text-xs text-white/70">
+          {raw}
+        </pre>
+      </>
+    );
+  }
+  if (parsed.length === 0) {
+    return <div className="text-xs text-white/40">No entries.</div>;
+  }
+  return (
+    <table className="w-full table-fixed text-xs">
+      <thead>
+        <tr className="text-left text-white/50">
+          <th className="w-16">Method</th>
+          <th>URL</th>
+          <th className="w-16">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {parsed.map((row, idx) => (
+          <tr key={idx} className="border-t border-white/10">
+            <td className="font-mono text-white/80">{row.method}</td>
+            <td className="truncate font-mono text-white/70" title={row.url}>
+              {row.url}
+            </td>
+            <td
+              className={
+                row.status >= 400 ? "text-destructive" : "text-white/70"
+              }
+            >
+              {row.status}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

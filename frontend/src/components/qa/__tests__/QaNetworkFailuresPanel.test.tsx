@@ -32,6 +32,15 @@ function makeQueryResult<T>(over: Partial<{
   } as ReturnType<typeof useAppArtifacts>;
 }
 
+function expandFirstEntry() {
+  const entry = screen.getByTestId("qa-network-entry") as HTMLDetailsElement;
+  entry.open = true;
+  // The onToggle handler listens for the bubble-phase 'toggle' event the
+  // browser dispatches when <details> opens.
+  entry.dispatchEvent(new Event("toggle", { bubbles: false }));
+  return entry;
+}
+
 describe("QaNetworkFailuresPanel", () => {
   beforeEach(() => {
     mockedUseAppArtifacts.mockReset();
@@ -46,7 +55,20 @@ describe("QaNetworkFailuresPanel", () => {
     );
   });
 
-  it("parses HAR-shaped JSON and renders a method/url/status table", async () => {
+  it("does NOT fetch any HAR until the user expands a details block", () => {
+    mockedUseAppArtifacts.mockReturnValue(
+      makeQueryResult({ data: ["fail.har", "other.har", "third.har"] }),
+    );
+    apiGet.mockResolvedValue({ data: "{}" });
+    render(<QaNetworkFailuresPanel runId="RUN1" app="hub" />);
+    // 3 HARs would have triggered 3 concurrent fetches under the eager
+    // pattern — lazy mode means zero until the user expands a block.
+    expect(apiGet).not.toHaveBeenCalled();
+    // All three are listed as collapsed details so the user can pick.
+    expect(screen.getAllByTestId("qa-network-entry")).toHaveLength(3);
+  });
+
+  it("fetches lazily on expand and parses HAR-shaped JSON into a table", async () => {
     mockedUseAppArtifacts.mockReturnValue(
       makeQueryResult({ data: ["fail.har"] }),
     );
@@ -67,6 +89,10 @@ describe("QaNetworkFailuresPanel", () => {
     apiGet.mockResolvedValue({ data: JSON.stringify(har) });
 
     render(<QaNetworkFailuresPanel runId="RUN1" app="hub" />);
+    expect(apiGet).not.toHaveBeenCalled();
+
+    expandFirstEntry();
+
     await waitFor(() => {
       expect(apiGet).toHaveBeenCalledWith(
         "/qa/runs/RUN1/apps/hub/artifacts/network/fail.har",
@@ -92,6 +118,7 @@ describe("QaNetworkFailuresPanel", () => {
     });
 
     render(<QaNetworkFailuresPanel runId="RUN1" app="hub" />);
+    expandFirstEntry();
     await waitFor(() => {
       expect(screen.getByText(/Unrecognised JSON shape/)).toBeInTheDocument();
     });
@@ -109,6 +136,7 @@ describe("QaNetworkFailuresPanel", () => {
     });
 
     render(<QaNetworkFailuresPanel runId="RUN1" app="hub" />);
+    expandFirstEntry();
     await waitFor(() => {
       expect(screen.getByText("https://y/a")).toBeInTheDocument();
     });
