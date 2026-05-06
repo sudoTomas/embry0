@@ -38,9 +38,9 @@ export function BootPhasePanel({ boot_phase }: Props) {
     <section
       data-testid="qa-boot-phase-panel"
       data-outcome={outcome}
-      className="rounded-sm border border-zinc-700 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-200"
+      className="rounded-sm border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80"
     >
-      <header className="font-medium text-zinc-100">
+      <header className="font-medium text-white/90">
         Boot phase: {outcome}
         {" · "}
         {attempts} attempts
@@ -49,10 +49,10 @@ export function BootPhasePanel({ boot_phase }: Props) {
       </header>
       {failed_checks.length > 0 && (
         <div className="mt-2">
-          <div className="text-xs uppercase tracking-wide text-zinc-400">
+          <div className="text-xs uppercase tracking-wide text-white/50">
             Failed checks
           </div>
-          <ul className="mt-1 list-disc pl-5 text-zinc-300">
+          <ul className="mt-1 list-disc pl-5 text-white/70">
             {failed_checks.map((check, idx) => (
               <li key={idx} className="break-words">
                 {check}
@@ -63,10 +63,10 @@ export function BootPhasePanel({ boot_phase }: Props) {
       )}
       {boot_stdout_tail && boot_stdout_tail.trim().length > 0 && (
         <details className="mt-2">
-          <summary className="cursor-pointer text-xs uppercase tracking-wide text-zinc-400">
+          <summary className="cursor-pointer text-xs uppercase tracking-wide text-white/50">
             Boot stdout (last {boot_stdout_tail.length} bytes)
           </summary>
-          <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded-sm bg-zinc-950 px-2 py-1 text-xs text-zinc-300">
+          <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded-sm bg-black/40 px-2 py-1 text-xs text-white/70">
             {boot_stdout_tail}
           </pre>
         </details>
