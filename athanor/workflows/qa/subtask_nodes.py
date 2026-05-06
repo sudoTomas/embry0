@@ -712,5 +712,9 @@ async def emit_result_node(state: SubTaskState, config: RunnableConfig) -> dict[
         trace_url=state.get("trace_url"),
         failure_summary=failure_summary,
         raw_result=state.get("raw_result", {}) or {},
+        # Phase 5A: thread boot_phase through to the orchestrator so it gets
+        # persisted via QAAppResultsRepository.upsert_with_boot_phase. None
+        # when boot passed (legacy behavior preserved) or never ran.
+        boot_phase=state.get("boot_phase"),
     )
     return {"subtask_result": result}

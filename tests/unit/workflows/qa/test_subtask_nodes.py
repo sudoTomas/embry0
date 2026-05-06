@@ -583,6 +583,56 @@ async def test_collect_artifacts_node_no_boot_phase_when_boot_passed():
     assert "boot_phase" not in out
 
 
+@pytest.mark.asyncio
+async def test_emit_result_node_passes_boot_phase_to_subtask_result():
+    """Phase 5A: emit_result_node threads state['boot_phase'] onto SubTaskResult
+    so the orchestrator's upsert_with_boot_phase persists it to JSONB."""
+    from athanor.workflows.qa.subtask_nodes import emit_result_node
+
+    boot_phase = {
+        "outcome": "timeout",
+        "attempts": 12,
+        "duration_ms": 600_000,
+        "failed_checks": [
+            "http://localhost:3000/health: got 503 expected 200",
+        ],
+        "boot_stdout_tail": "ready - started server on http://localhost:3000",
+    }
+    now = time.monotonic()
+    state = {
+        "app_name": "hub",
+        "status": SubTaskStatus.BOOT_FAILURE,
+        "failure_summary": "boot_command did not become ready within 600s",
+        "started_at": now - 600.0,
+        "completed_at": now,
+        "trace_url": None,
+        "raw_result": {},
+        "boot_phase": boot_phase,
+    }
+    out = await emit_result_node(state, {})
+    result = out["subtask_result"]
+    assert result.status == SubTaskStatus.BOOT_FAILURE
+    assert result.boot_phase == boot_phase
+
+
+@pytest.mark.asyncio
+async def test_emit_result_node_boot_phase_defaults_to_none():
+    """When state has no boot_phase key (e.g. boot passed, infra failure),
+    SubTaskResult.boot_phase is None — preserves the legacy passed-run
+    contract for the dashboard."""
+    from athanor.workflows.qa.subtask_nodes import emit_result_node
+
+    state = {
+        "app_name": "hub",
+        "status": SubTaskStatus.PASSED,
+        "failure_summary": None,
+        "started_at": time.monotonic() - 1.0,
+        "completed_at": time.monotonic(),
+        "trace_url": None,
+        "raw_result": {"overall": "passed"},
+    }
+    out = await emit_result_node(state, {})
+    assert out["subtask_result"].boot_phase is None
 
 
 # ---------------------------------------------------------------------------
