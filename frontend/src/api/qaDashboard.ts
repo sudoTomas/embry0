@@ -53,3 +53,41 @@ export async function fetchQaRunApp(
   );
   return data;
 }
+
+// ─── Per-sub-task artifact passthrough (Phase 5B) ─────────────────────────
+//
+// The orchestrator proxies bytes from MinIO under the dashboard auth, so the
+// browser never sees a presigned URL. The `kind` is allow-listed server-side;
+// duplicate it here as a string-literal union so callers get a compile-time
+// check too.
+
+export type ArtifactKind = "screenshots" | "network" | "console" | "traces";
+
+export async function listAppArtifacts(
+  runId: string,
+  app: string,
+  kind: ArtifactKind,
+): Promise<string[]> {
+  const { data } = await api.get<{ filenames: string[] }>(
+    `/qa/runs/${encodeURIComponent(runId)}/apps/${encodeURIComponent(app)}/artifacts/${kind}`,
+  );
+  return data.filenames;
+}
+
+/**
+ * Build the URL the browser hits to fetch a single artifact's bytes.
+ *
+ * Both endpoints sit under the dashboard auth — the browser will send the
+ * configured Bearer token via the axios default header for XHR requests, and
+ * sets `?_=<token>` is intentionally NOT used here (we rely on the same auth
+ * surface as every other dashboard call). Components that pass this URL
+ * directly to `<img src>` rely on the same-origin cookie / static auth.
+ */
+export function artifactUrl(
+  runId: string,
+  app: string,
+  kind: ArtifactKind,
+  filename: string,
+): string {
+  return `/api/v1/qa/runs/${encodeURIComponent(runId)}/apps/${encodeURIComponent(app)}/artifacts/${kind}/${encodeURIComponent(filename)}`;
+}

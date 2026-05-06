@@ -5,6 +5,8 @@ import {
   fetchQaRun,
   fetchQaRunApp,
   fetchQaRunsForRepo,
+  listAppArtifacts,
+  type ArtifactKind,
 } from "@/api/qaDashboard";
 
 export function useQaRepos(limit = 50) {
@@ -54,5 +56,18 @@ export function useQaAppHistory(
     queryFn: () => fetchQaAppHistory(repo!, app!, limit),
     enabled: !!repo && !!app,
     refetchInterval: 30_000,
+  });
+}
+
+export function useAppArtifacts(
+  runId: string | undefined,
+  app: string | undefined,
+  kind: ArtifactKind,
+) {
+  return useQuery({
+    queryKey: ["qa-artifacts", runId, app, kind],
+    queryFn: () => listAppArtifacts(runId!, app!, kind),
+    enabled: !!runId && !!app,
+    staleTime: 30_000,
   });
 }
