@@ -4,6 +4,15 @@ Replaces the agent's boot-phase responsibility with a deterministic poll
 loop that runs the qa.yaml startup command, then probes ready_checks
 until all pass or boot_timeout_seconds elapses. The agent (qa_node) starts
 at exploratory and trusts that boot is done.
+
+**Architecture note (post-Phase-4 fix):** both the boot command AND the
+ready_check probes execute INSIDE the sandbox container via `docker exec`.
+Earlier versions polled ready_checks via `httpx.AsyncClient` from the
+orchestrator container — that was wrong: `http://localhost:3000` from the
+orchestrator is the orchestrator's own localhost, not the sandbox's.
+Sub-task dev servers (`next dev`, `vite`) bind on the sandbox's localhost,
+so the only correct way to verify them is to run the HTTP probe from
+inside the sandbox.
 """
 
 from __future__ import annotations
@@ -16,11 +25,6 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import structlog
-
-
-def _shell_quote(s: str) -> str:
-    """Single-quote an arbitrary string for safe inclusion in `bash -c '...'`."""
-    return shlex.quote(s)
 
 logger = structlog.get_logger(__name__)
 
@@ -35,12 +39,70 @@ class BootResult:
     stdout: str = ""
 
 
+# Inline Python script that performs an HTTP GET inside the sandbox and
+# emits a parseable response on stdout. Output format:
+#
+#     STATUS=<int>
+#     ---
+#     <body, up to 8 KiB, utf-8-replaced>
+#
+# `STATUS=0` means "couldn't even connect" (the body then carries
+# "ERR:<ExceptionType>:<message>"). Otherwise STATUS is the HTTP status
+# code (including 4xx/5xx — those are not treated as connect failures).
+#
+# We use python3 (not curl) because the sandbox image always has python3
+# (it's used by other parts of athanor like proxy enrollment) but does
+# not necessarily have curl on every profile.
+_PROBE_SCRIPT = """
+import sys, urllib.request, urllib.error
+url = sys.argv[1]
+try:
+    r = urllib.request.urlopen(url, timeout=5)
+    body = r.read(8192).decode("utf-8", errors="replace")
+    sys.stdout.write(f"STATUS={r.status}\\n---\\n{body}")
+except urllib.error.HTTPError as e:
+    body = e.read(8192).decode("utf-8", errors="replace")
+    sys.stdout.write(f"STATUS={e.code}\\n---\\n{body}")
+except Exception as e:
+    sys.stdout.write(f"STATUS=0\\n---\\nERR:{type(e).__name__}:{e}")
+"""
+
+
+async def _probe_ready_check(
+    *,
+    docker: Any,
+    container_id: str,
+    url: str,
+) -> tuple[int, str]:
+    """Probe a single ready-check URL from inside the sandbox.
+
+    Returns ``(status_code, body)``. ``status_code == 0`` means the connect
+    failed (e.g. dev server not yet bound to the port). Body in that case
+    contains a short error description like "ERR:URLError:Connection
+    refused".
+    """
+    raw = await docker.run_cmd(
+        docker.build_exec_cmd(container_id, ["python3", "-c", _PROBE_SCRIPT, url]),
+        timeout=10,
+    )
+    text = raw if isinstance(raw, str) else (raw or "")
+    parts = text.split("\n---\n", 1)
+    header = parts[0].strip()
+    body = parts[1] if len(parts) > 1 else ""
+    status_str = header.removeprefix("STATUS=").strip()
+    try:
+        status = int(status_str)
+    except ValueError:
+        status = 0
+    return status, body
+
+
 async def run_boot_phase(
     *,
     qa_yaml: dict[str, Any],
     container_id: str,
     docker: Any,
-    http: Any,
+    http: Any = None,  # deprecated; kept for backwards-compat call-site signature
     sleep_seconds: float = 3.0,
 ) -> BootResult:
     """Run startup.command, then poll ready_checks until all pass or budget elapses.
@@ -48,12 +110,17 @@ async def run_boot_phase(
     Args:
       qa_yaml: parsed .athanor/qa.yaml contents (the dict, not the model).
       container_id: sandbox container to run the startup command in.
-      docker: DockerClient (only run_cmd + build_exec_cmd are used).
-      http: httpx.AsyncClient-compatible (.get(url) returning .status_code, .text).
+      docker: DockerClient — used for both starting the boot command AND
+        running the in-sandbox HTTP probe for ready_checks.
+      http: deprecated; ignored. Kept in the signature so existing call
+        sites (which still pass an httpx.AsyncClient) don't have to change
+        in lock-step. Will be removed in a future cleanup.
       sleep_seconds: between-poll sleep. 3s in production; 0 in tests.
 
     Returns BootResult; never raises for the boot-fail cases (caller routes via Command).
     """
+    del http  # unused — see docstring
+
     startup = qa_yaml.get("startup") or {}
     command = startup.get("command", "")
     ready_checks = startup.get("ready_checks") or []
@@ -84,7 +151,7 @@ async def run_boot_phase(
         backgrounded = (
             "set -e && "
             "mkdir -p /workspace/.qa/logs && "
-            f"nohup bash -c {_shell_quote(command)} "
+            f"nohup bash -c {shlex.quote(command)} "
             "> /workspace/.qa/logs/boot.log 2>&1 & "
             "disown && "
             "echo 'boot_command_backgrounded'"
@@ -112,14 +179,22 @@ async def run_boot_phase(
             expected_status = int(check.get("expect_status", 200))
             expected_body_regex = check.get("expect_body_regex")
             try:
-                resp = await http.get(url)
+                status_code, body = await _probe_ready_check(
+                    docker=docker,
+                    container_id=container_id,
+                    url=url,
+                )
             except Exception as exc:
-                failed_checks.append(f"{url}: connect-failed: {exc}")
+                failed_checks.append(f"{url}: probe-crashed: {exc}")
                 continue
-            if resp.status_code != expected_status:
-                failed_checks.append(f"{url}: got {resp.status_code} expected {expected_status}")
+            if status_code == 0:
+                # Connect failed; body has ERR:<type>:<message>.
+                failed_checks.append(f"{url}: connect-failed: {body[:120]}")
                 continue
-            if expected_body_regex and not re.search(expected_body_regex, resp.text or ""):
+            if status_code != expected_status:
+                failed_checks.append(f"{url}: got {status_code} expected {expected_status}")
+                continue
+            if expected_body_regex and not re.search(expected_body_regex, body or ""):
                 failed_checks.append(f"{url}: body did not match {expected_body_regex!r}")
                 continue
 

@@ -1,4 +1,12 @@
-"""run_boot_phase: deterministic boot orchestration with hard timeout."""
+"""run_boot_phase: deterministic boot orchestration with hard timeout.
+
+Post-Phase-4 fix: ready_check probes execute INSIDE the sandbox via
+`docker exec python3 -c '...probe...'`. The probe emits stdout in the
+shape `STATUS=<int>\\n---\\n<body>`. Tests mock `docker.run_cmd` with
+side_effects so the boot command call (first call, returns
+"boot_command_backgrounded") is distinguished from probe calls (return
+the STATUS=...---...body shape).
+"""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,86 +29,98 @@ def _make_qa_yaml(boot_timeout: int = 30, ready_checks: list | None = None) -> d
     }
 
 
+def _probe_response(status: int, body: str = "") -> str:
+    """Build a probe-protocol response string (STATUS=<n>\\n---\\n<body>)."""
+    return f"STATUS={status}\n---\n{body}"
+
+
+def _make_docker(probe_returns):
+    """Construct a docker mock whose run_cmd:
+      - returns 'boot_command_backgrounded' for the first call (boot command)
+      - then walks ``probe_returns`` for each subsequent call (ready checks)
+
+    ``probe_returns`` is either a list of strings (one per probe call) OR a
+    single string (returned for every probe call).
+    """
+    docker = MagicMock()
+    if isinstance(probe_returns, list):
+        side_effects = ["boot_command_backgrounded"] + probe_returns
+        docker.run_cmd = AsyncMock(side_effect=side_effects)
+    else:
+        # Single value: return the boot ack on first call, then the same
+        # probe response forever.
+        call_count = {"n": 0}
+
+        async def _run_cmd(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return "boot_command_backgrounded"
+            return probe_returns
+
+        docker.run_cmd = AsyncMock(side_effect=_run_cmd)
+    return docker
+
+
 @pytest.mark.asyncio
 async def test_all_checks_pass_immediately():
-    docker = MagicMock()
-    docker.run_cmd = AsyncMock(return_value="started")
-    http = MagicMock()
-    response = MagicMock()
-    response.status_code = 200
-    response.text = "OK"
-    http.get = AsyncMock(return_value=response)
+    docker = _make_docker([_probe_response(200, "OK")])
 
     result = await run_boot_phase(
         qa_yaml=_make_qa_yaml(),
         container_id="C",
         docker=docker,
-        http=http,
         sleep_seconds=0,
     )
     assert result.outcome == "passed"
     assert result.attempts == 1
-    docker.run_cmd.assert_awaited_once()
-    assert http.get.await_count == 1
+    # 1 boot launch + 1 probe = 2 docker.run_cmd calls
+    assert docker.run_cmd.await_count == 2
 
 
 @pytest.mark.asyncio
 async def test_startup_command_fails_returns_startup_failed():
     docker = MagicMock()
     docker.run_cmd = AsyncMock(side_effect=RuntimeError("compose error"))
-    http = MagicMock()
-    http.get = AsyncMock()  # never called
 
     result = await run_boot_phase(
         qa_yaml=_make_qa_yaml(),
         container_id="C",
         docker=docker,
-        http=http,
         sleep_seconds=0,
     )
     assert result.outcome == "startup_failed"
     assert "compose error" in result.error_message
-    http.get.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_polls_until_pass():
-    docker = MagicMock()
-    docker.run_cmd = AsyncMock(return_value="started")
-    http = MagicMock()
-
-    responses = [
-        MagicMock(status_code=503, text="boot in progress"),
-        MagicMock(status_code=503, text="boot in progress"),
-        MagicMock(status_code=200, text="OK"),
-    ]
-    http.get = AsyncMock(side_effect=responses)
+    docker = _make_docker([
+        _probe_response(503, "boot in progress"),
+        _probe_response(503, "boot in progress"),
+        _probe_response(200, "OK"),
+    ])
 
     result = await run_boot_phase(
         qa_yaml=_make_qa_yaml(boot_timeout=10),
         container_id="C",
         docker=docker,
-        http=http,
         sleep_seconds=0,
     )
     assert result.outcome == "passed"
     assert result.attempts == 3
-    assert http.get.await_count == 3
+    # 1 boot + 3 probes = 4 calls
+    assert docker.run_cmd.await_count == 4
 
 
 @pytest.mark.asyncio
 async def test_hits_hard_timeout():
     """Permanent 503 → outcome=timeout after boot_timeout_seconds elapsed."""
-    docker = MagicMock()
-    docker.run_cmd = AsyncMock(return_value="started")
-    http = MagicMock()
-    http.get = AsyncMock(return_value=MagicMock(status_code=503, text="never ready"))
+    docker = _make_docker(_probe_response(503, "never ready"))
 
     result = await run_boot_phase(
         qa_yaml=_make_qa_yaml(boot_timeout=1),
         container_id="C",
         docker=docker,
-        http=http,
         sleep_seconds=0.05,
     )
     assert result.outcome == "timeout"
@@ -112,20 +132,14 @@ async def test_hits_hard_timeout():
 @pytest.mark.asyncio
 async def test_multiple_ready_checks_all_must_pass():
     """If qa.yaml has 2 ready_checks, both must return 200 in the same attempt."""
-    docker = MagicMock()
-    docker.run_cmd = AsyncMock(return_value="started")
-    http = MagicMock()
-
-    response_200 = MagicMock(status_code=200, text="OK")
-    response_503 = MagicMock(status_code=503, text="boot")
-    http.get = AsyncMock(
-        side_effect=[
-            response_200,
-            response_503,
-            response_200,
-            response_200,
-        ]
-    )
+    docker = _make_docker([
+        # Attempt 1: gateway 200, frontend 503 → fails
+        _probe_response(200, "OK"),
+        _probe_response(503, "boot"),
+        # Attempt 2: both 200 → passes
+        _probe_response(200, "OK"),
+        _probe_response(200, "OK"),
+    ])
 
     qa_yaml = _make_qa_yaml(
         boot_timeout=10,
@@ -138,27 +152,21 @@ async def test_multiple_ready_checks_all_must_pass():
         qa_yaml=qa_yaml,
         container_id="C",
         docker=docker,
-        http=http,
         sleep_seconds=0,
     )
     assert result.outcome == "passed"
     assert result.attempts == 2
-    assert http.get.await_count == 4
+    # 1 boot + 4 probes
+    assert docker.run_cmd.await_count == 5
 
 
 @pytest.mark.asyncio
 async def test_expect_body_regex_must_match():
     """ready_check supports expect_body_regex; mismatch counts as fail."""
-    docker = MagicMock()
-    docker.run_cmd = AsyncMock(return_value="started")
-    http = MagicMock()
-
-    http.get = AsyncMock(
-        side_effect=[
-            MagicMock(status_code=200, text='{"status":"DOWN"}'),
-            MagicMock(status_code=200, text='{"status":"UP"}'),
-        ]
-    )
+    docker = _make_docker([
+        _probe_response(200, '{"status":"DOWN"}'),
+        _probe_response(200, '{"status":"UP"}'),
+    ])
 
     qa_yaml = _make_qa_yaml(
         boot_timeout=10,
@@ -170,7 +178,6 @@ async def test_expect_body_regex_must_match():
         qa_yaml=qa_yaml,
         container_id="C",
         docker=docker,
-        http=http,
         sleep_seconds=0,
     )
     assert result.outcome == "passed"
@@ -180,10 +187,7 @@ async def test_expect_body_regex_must_match():
 @pytest.mark.asyncio
 async def test_records_per_check_diagnostics_on_timeout():
     """Even on timeout, the result carries a list of which checks failed."""
-    docker = MagicMock()
-    docker.run_cmd = AsyncMock(return_value="started")
-    http = MagicMock()
-    http.get = AsyncMock(return_value=MagicMock(status_code=502, text="bad gateway"))
+    docker = _make_docker(_probe_response(502, "bad gateway"))
 
     qa_yaml = _make_qa_yaml(
         boot_timeout=0.3,
@@ -196,7 +200,6 @@ async def test_records_per_check_diagnostics_on_timeout():
         qa_yaml=qa_yaml,
         container_id="C",
         docker=docker,
-        http=http,
         sleep_seconds=0.05,
     )
     assert result.outcome == "timeout"
@@ -210,10 +213,7 @@ async def test_empty_ready_checks_warns_then_passes():
     """No ready_checks defined → boot passes after startup command but logs a warning."""
     import structlog.testing
 
-    docker = MagicMock()
-    docker.run_cmd = AsyncMock(return_value="started")
-    http = MagicMock()
-    http.get = AsyncMock()  # never called
+    docker = _make_docker([])  # no probes expected
 
     qa_yaml = _make_qa_yaml(boot_timeout=10, ready_checks=[])
 
@@ -222,13 +222,36 @@ async def test_empty_ready_checks_warns_then_passes():
             qa_yaml=qa_yaml,
             container_id="C",
             docker=docker,
-            http=http,
             sleep_seconds=0,
         )
 
     assert result.outcome == "passed"
     assert result.attempts == 1
-    http.get.assert_not_awaited()
+    # only the boot launch — no probes
+    assert docker.run_cmd.await_count == 1
     assert any(entry.get("event") == "boot_no_ready_checks" for entry in captured), (
         f"Expected boot_no_ready_checks warning, got: {captured}"
     )
+
+
+@pytest.mark.asyncio
+async def test_connect_failed_treated_as_failure_not_crash():
+    """When the dev server isn't bound yet, the in-sandbox probe returns
+    STATUS=0 with a body containing ERR:<type>:<msg>. That's a normal
+    failure (count it as failed_check, keep polling), NOT outcome=timeout
+    on first attempt or outcome=startup_failed."""
+    docker = _make_docker([
+        # Attempt 1: connect-failed (server not yet up)
+        _probe_response(0, "ERR:URLError:[Errno 111] Connection refused"),
+        # Attempt 2: server up
+        _probe_response(200, "OK"),
+    ])
+
+    result = await run_boot_phase(
+        qa_yaml=_make_qa_yaml(boot_timeout=10),
+        container_id="C",
+        docker=docker,
+        sleep_seconds=0,
+    )
+    assert result.outcome == "passed"
+    assert result.attempts == 2
