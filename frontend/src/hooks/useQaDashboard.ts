@@ -8,6 +8,7 @@ import {
   fetchQaRunApp,
   fetchQaRunsForRepo,
   listAppArtifacts,
+  listProviderOverrides,
   type ArtifactKind,
 } from "@/api/qaDashboard";
 
@@ -93,6 +94,21 @@ export function useCacheAnalytics(
     queryFn: () => fetchCacheAnalytics(repo!, windowDays),
     enabled: !!repo,
     staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * Phase 5G: subscribe to the per-repo workspace_provider override list.
+ *
+ * 30s stale time keeps the admin page responsive without burning API
+ * traffic — overrides change only when an operator submits the form,
+ * and the mutation paths invalidate this query themselves.
+ */
+export function useProviderOverrides() {
+  return useQuery({
+    queryKey: ["qa-dashboard", "provider-overrides"],
+    queryFn: listProviderOverrides,
+    staleTime: 30_000,
   });
 }
 

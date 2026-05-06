@@ -133,3 +133,30 @@ export interface CacheAnalyticsResponse {
   layers: CacheLayerStats[];
   cold_cache_apps: string[];
 }
+
+/**
+ * Phase 5G: per-repo workspace_provider override returned from
+ * GET /api/v1/qa/admin/providers and POST /api/v1/qa/admin/providers/{repo}.
+ *
+ * Mirrors `athanor.api.schemas.qa_dashboard.WorkspaceProviderOverride`.
+ * When a row exists for a repo, the orchestrator uses it instead of the
+ * .athanor/qa.yaml workspace_provider section.
+ */
+export interface WorkspaceProviderOverride {
+  repo: string;
+  provider_type: string;
+  config: Record<string, unknown>;
+  updated_at: string; // ISO timestamp
+}
+
+/**
+ * Phase 5G: request body for POST /api/v1/qa/admin/providers/{repo}.
+ *
+ * The form edits an existing provider's (type, config). Adding new
+ * provider types is out of scope; the orchestrator's load_provider()
+ * does the type validation when the next QA run picks up the override.
+ */
+export interface WorkspaceProviderOverrideUpsert {
+  provider_type: string;
+  config: Record<string, unknown>;
+}

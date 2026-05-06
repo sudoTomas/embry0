@@ -7,6 +7,8 @@ import type {
   RepoEntry,
   RunDetail,
   RunListItem,
+  WorkspaceProviderOverride,
+  WorkspaceProviderOverrideUpsert,
 } from "@/lib/types";
 
 export async function fetchQaRepos(limit = 50): Promise<RepoEntry[]> {
@@ -142,4 +144,30 @@ export function artifactPath(
   filename: string,
 ): string {
   return `/qa/runs/${encodeURIComponent(runId)}/apps/${encodeURIComponent(app)}/artifacts/${kind}/${encodeURIComponent(filename)}`;
+}
+
+// ─── Phase 5G: workspace_provider admin overrides ────────────────────────
+
+export async function listProviderOverrides(): Promise<
+  WorkspaceProviderOverride[]
+> {
+  const { data } = await api.get<WorkspaceProviderOverride[]>(
+    "/qa/admin/providers",
+  );
+  return data;
+}
+
+export async function upsertProviderOverride(
+  repo: string,
+  body: WorkspaceProviderOverrideUpsert,
+): Promise<WorkspaceProviderOverride> {
+  const { data } = await api.post<WorkspaceProviderOverride>(
+    `/qa/admin/providers/${encodeURIComponent(repo)}`,
+    body,
+  );
+  return data;
+}
+
+export async function deleteProviderOverride(repo: string): Promise<void> {
+  await api.delete(`/qa/admin/providers/${encodeURIComponent(repo)}`);
 }
