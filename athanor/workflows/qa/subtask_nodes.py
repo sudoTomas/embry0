@@ -217,12 +217,22 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
 
     # Phase 2: token register + presign + write job.json
     qa_yaml_for_app = _synth_v1_qa_yaml(resolved)
+    # presign_refresh_url lets the QA agent mint additional presigned PUT
+    # URLs at runtime for evidence files (screenshots, network HARs,
+    # console logs) beyond the canonical result.json + logs/full.log
+    # pair pre-minted in prep_qa_sandbox_jobjson. Without it, the agent
+    # references screenshots in result.json's `evidence` array but the
+    # files never make it to MinIO — observed on job-35ee75bd3e3e where
+    # every sub-task reported real browser console errors but uploaded
+    # zero screenshot/network/console artifacts. The presign-proxy is
+    # already running on the sandbox-restricted network at port 9104.
     job_json_payload = _build_job_json_payload(
         sub_job_id=sub_job_id,
         attempt_n=attempt_n,
         qa_yaml=qa_yaml_for_app,
         resolved=resolved,
         sandbox_token=sandbox_token,
+        presign_refresh_url="http://presign-proxy:9104/api/v1/internal/qa/presign",
     )
 
     try:
