@@ -56,17 +56,15 @@ class BootResult:
 _PROBE_SCRIPT = """
 import sys, urllib.request, urllib.error
 url = sys.argv[1]
-# Don't follow redirects. A 3xx response from the dev server IS a "server
-# is up and answering" signal — that's what the ready_check actually wants
-# to know. Following a redirect to e.g. /login or an auth endpoint can
-# yield a 400/500 from a downstream surface that isn't the dev server's
-# health, masking the bound-and-listening signal we care about.
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-opener = urllib.request.build_opener(_NoRedirect)
+# urllib follows 3xx redirects by default. Most Next.js apps redirect /
+# to a public landing page that returns 200, so following redirects is
+# the right thing for the common case. (Earlier 2026-05-06 attempt to
+# disable redirects broke 7 of 14 apps that depend on the redirect
+# resolving to a 200 page; reverted.) Apps whose redirect chain ends
+# at a non-200 status (e.g. companion → /login → 400) should list that
+# terminal status in qa.yaml expect_status: [200, 400, 401, 403].
 try:
-    r = opener.open(url, timeout=5)
+    r = urllib.request.urlopen(url, timeout=5)
     body = r.read(8192).decode("utf-8", errors="replace")
     sys.stdout.write(f"STATUS={r.status}\\n---\\n{body}")
 except urllib.error.HTTPError as e:
