@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 // Mock both hooks BEFORE importing the component so the import sees the mocks.
 vi.mock("@/hooks/useQaDashboard", () => ({
@@ -134,5 +134,75 @@ describe("QaArtifactGrid", () => {
     );
     render(<QaArtifactGrid runId="RUN1" app="hub" />);
     expect(screen.getByTestId("qa-artifact-grid-error")).toBeInTheDocument();
+  });
+
+  describe("lightbox", () => {
+    function setupSingleScreenshot(filename = "page.png") {
+      mockedUseAppArtifacts.mockReturnValue(
+        makeQueryResult({ data: [filename] }),
+      );
+      mockedUseArtifactBlobUrl.mockReturnValue({
+        url: `blob:fake/${filename}`,
+        loading: false,
+        error: null,
+      });
+    }
+
+    it("opens the lightbox when the thumbnail button is clicked", () => {
+      setupSingleScreenshot();
+      render(<QaArtifactGrid runId="RUN1" app="hub" />);
+      // Lightbox is not in the DOM until the thumb is clicked.
+      expect(screen.queryByTestId("qa-artifact-lightbox")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("qa-artifact-thumb-button"));
+
+      const dialog = screen.getByTestId("qa-artifact-lightbox");
+      expect(dialog).toBeInTheDocument();
+      expect(dialog).toHaveAttribute("role", "dialog");
+      expect(dialog).toHaveAttribute("aria-modal", "true");
+      // Full-size image reuses the same blob URL the thumbnail already fetched —
+      // no extra request, no auth issue.
+      const fullImg = screen.getByTestId("qa-artifact-lightbox-image");
+      expect(fullImg).toHaveAttribute("src", "blob:fake/page.png");
+    });
+
+    it("closes the lightbox when Close is clicked", () => {
+      setupSingleScreenshot();
+      render(<QaArtifactGrid runId="RUN1" app="hub" />);
+      fireEvent.click(screen.getByTestId("qa-artifact-thumb-button"));
+      expect(screen.getByTestId("qa-artifact-lightbox")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("qa-artifact-lightbox-close"));
+      expect(screen.queryByTestId("qa-artifact-lightbox")).not.toBeInTheDocument();
+    });
+
+    it("closes the lightbox when the backdrop is clicked", () => {
+      setupSingleScreenshot();
+      render(<QaArtifactGrid runId="RUN1" app="hub" />);
+      fireEvent.click(screen.getByTestId("qa-artifact-thumb-button"));
+      const dialog = screen.getByTestId("qa-artifact-lightbox");
+      // Click the dialog's outer backdrop element directly.
+      fireEvent.click(dialog);
+      expect(screen.queryByTestId("qa-artifact-lightbox")).not.toBeInTheDocument();
+    });
+
+    it("does NOT close when the lightbox image itself is clicked (stopPropagation)", () => {
+      setupSingleScreenshot();
+      render(<QaArtifactGrid runId="RUN1" app="hub" />);
+      fireEvent.click(screen.getByTestId("qa-artifact-thumb-button"));
+      fireEvent.click(screen.getByTestId("qa-artifact-lightbox-image"));
+      // Lightbox stays open — only the backdrop / close button dismiss.
+      expect(screen.getByTestId("qa-artifact-lightbox")).toBeInTheDocument();
+    });
+
+    it("closes the lightbox when Escape is pressed", () => {
+      setupSingleScreenshot();
+      render(<QaArtifactGrid runId="RUN1" app="hub" />);
+      fireEvent.click(screen.getByTestId("qa-artifact-thumb-button"));
+      expect(screen.getByTestId("qa-artifact-lightbox")).toBeInTheDocument();
+
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByTestId("qa-artifact-lightbox")).not.toBeInTheDocument();
+    });
   });
 });

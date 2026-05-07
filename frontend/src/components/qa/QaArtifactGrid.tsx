@@ -8,12 +8,11 @@
  * each thumbnail uses `useArtifactBlobUrl` to fetch the bytes via the
  * authenticated axios client and assigns the resulting blob URL to `<img>`.
  *
- * The wrapping `<a target="_blank">` was dropped: a top-level navigation
- * would not carry the Bearer header, so it would 401 in production. The
- * inline thumbnail is sufficient for MVP triage; a future lightbox can show
- * full-size by reusing the already-fetched blob.
+ * Clicking a thumbnail opens an in-app lightbox at full size, reusing the
+ * blob URL the thumbnail already fetched (no extra request, no auth issue).
+ * Escape, click-outside, or the Close button dismisses.
  */
-import type { JSX } from "react";
+import { type JSX, useEffect, useState } from "react";
 import { useAppArtifacts } from "@/hooks/useQaDashboard";
 import { useArtifactBlobUrl } from "@/hooks/useArtifactBlobUrl";
 
@@ -28,6 +27,61 @@ interface ScreenshotThumbProps {
   filename: string;
 }
 
+function ScreenshotLightbox({
+  url,
+  filename,
+  onClose,
+}: {
+  url: string;
+  filename: string;
+  onClose: () => void;
+}): JSX.Element {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Screenshot ${filename}`}
+      data-testid="qa-artifact-lightbox"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative flex max-h-full max-w-full flex-col items-center gap-2"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <img
+          data-testid="qa-artifact-lightbox-image"
+          src={url}
+          alt={filename}
+          className="block max-h-[85vh] max-w-full rounded border border-white/10 object-contain"
+        />
+        <div className="flex w-full items-center justify-between gap-4 text-sm text-white/70">
+          <div className="truncate font-mono" title={filename}>
+            {filename}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            data-testid="qa-artifact-lightbox-close"
+            className="shrink-0 rounded border border-white/20 px-3 py-1 text-white/80 hover:bg-white/10"
+            aria-label="Close screenshot"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ScreenshotThumb({ runId, app, filename }: ScreenshotThumbProps): JSX.Element {
   const { url, loading, error } = useArtifactBlobUrl(
     runId,
@@ -35,6 +89,8 @@ function ScreenshotThumb({ runId, app, filename }: ScreenshotThumbProps): JSX.El
     "screenshots",
     filename,
   );
+  const [expanded, setExpanded] = useState(false);
+
   if (error) {
     return (
       <div
@@ -58,15 +114,33 @@ function ScreenshotThumb({ runId, app, filename }: ScreenshotThumbProps): JSX.El
     );
   }
   return (
-    <img
-      data-testid="qa-artifact-thumb"
-      data-filename={filename}
-      src={url}
-      alt={filename}
-      loading="lazy"
-      title={filename}
-      className="h-32 w-full rounded border border-white/10 bg-black/40 object-cover"
-    />
+    <>
+      <button
+        type="button"
+        onClick={() => setExpanded(true)}
+        aria-label={`Open ${filename} at full size`}
+        data-testid="qa-artifact-thumb-button"
+        data-filename={filename}
+        className="block h-32 w-full cursor-zoom-in overflow-hidden rounded border border-white/10 bg-black/40 p-0 transition-colors hover:border-white/30"
+      >
+        <img
+          data-testid="qa-artifact-thumb"
+          data-filename={filename}
+          src={url}
+          alt={filename}
+          loading="lazy"
+          title={filename}
+          className="h-full w-full object-cover"
+        />
+      </button>
+      {expanded && (
+        <ScreenshotLightbox
+          url={url}
+          filename={filename}
+          onClose={() => setExpanded(false)}
+        />
+      )}
+    </>
   );
 }
 
