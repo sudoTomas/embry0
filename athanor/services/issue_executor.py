@@ -547,6 +547,64 @@ class IssueExecutor:
             except Exception:
                 logger.warning("sandbox_destroy_failed", job_id=job_id, exc_info=True)
 
+    async def _load_merged_env_vars(
+        self, repo_name: str, job_id: str
+    ) -> list[dict[str, Any]] | None:
+        """Return decrypted, merged (global + repo) env vars for sandbox
+        injection, or None when there's nothing to inject / no env repo.
+
+        Repo vars override globals of the same key. Rows that fail to
+        decrypt (e.g. encrypted under a rotated ENVIRONMENT_SECRET_KEY)
+        are dropped and logged. The shape is the list-of-dicts
+        (key/value/scope) that init_node's _filter_user_env_for_sandbox
+        expects.
+
+        Called by BOTH the issue→PR path (_run_workflow) and the
+        standalone QA path (_run_qa_workflow) — keep it that way so the
+        two paths can't drift (the QA path silently lacked env injection
+        until 2026-05-17, which is why this is a shared helper).
+        """
+        if not repo_name or self._env_repo is None:
+            return None
+        try:
+            from athanor.api.v1.environment import _decrypt_vars
+
+            provider = getattr(self, "_secrets_provider", None)
+            if provider is None:
+                # Fallback for test environments that construct IssueExecutor
+                # without a secrets_provider. Mirrors the legacy behaviour.
+                from athanor.api.v1.environment import _get_secrets_provider
+
+                provider = _get_secrets_provider(
+                    self._config.environment_secret_key if self._config else ""
+                )
+            global_rows = await self._env_repo.get_global()
+            repo_rows = await self._env_repo.get_repo(repo_name)
+            merged: dict[str, dict[str, Any]] = {}
+            for row in global_rows:
+                merged[row["key"]] = row
+            for row in repo_rows:
+                merged[row["key"]] = row
+            decrypted = await _decrypt_vars(list(merged.values()), provider)
+            failed_keys = [v["key"] for v in decrypted if v["value"] == "[DECRYPTION_FAILED]"]
+            if failed_keys:
+                logger.warning(
+                    "env_vars_decrypt_failed_skipped",
+                    repo=repo_name,
+                    job_id=job_id,
+                    keys=failed_keys,
+                    msg="Encrypted values couldn't be decrypted with the current secret key. Those vars will NOT be injected into the sandbox.",
+                )
+            env_vars = [
+                {"key": v["key"], "value": v["value"], "scope": v.get("scope", "app")}
+                for v in decrypted
+                if v["value"] != "[DECRYPTION_FAILED]"
+            ]
+            return env_vars or None
+        except Exception:
+            logger.warning("env_merge_failed", repo=repo_name, exc_info=True)
+            return None
+
     async def _execute_workflow_stream(
         self,
         input_value: Any,
@@ -663,49 +721,9 @@ class IssueExecutor:
             # Fetch merged env (global + repo) decrypted — to be injected into
             # the sandbox. Repo vars override globals of the same key.
             repo_name = issue.get("repo") or ""
-            if repo_name and self._env_repo is not None:
-                try:
-                    from athanor.api.v1.environment import _decrypt_vars
-
-                    provider = getattr(self, "_secrets_provider", None)
-                    if provider is None:
-                        # Fallback for test environments that construct IssueExecutor
-                        # without a secrets_provider. Mirrors the legacy behaviour.
-                        from athanor.api.v1.environment import _get_secrets_provider
-
-                        provider = _get_secrets_provider(self._config.environment_secret_key if self._config else "")
-                    global_rows = await self._env_repo.get_global()
-                    repo_rows = await self._env_repo.get_repo(repo_name)
-                    merged: dict[str, dict[str, Any]] = {}
-                    for row in global_rows:
-                        merged[row["key"]] = row
-                    for row in repo_rows:
-                        merged[row["key"]] = row
-                    decrypted = await _decrypt_vars(list(merged.values()), provider)
-                    # Drop rows that failed to decrypt and log them individually so
-                    # ops can diagnose which key is stuck (e.g. encrypted with an
-                    # older ENVIRONMENT_SECRET_KEY that's since been rotated).
-                    failed_keys = [v["key"] for v in decrypted if v["value"] == "[DECRYPTION_FAILED]"]
-                    if failed_keys:
-                        logger.warning(
-                            "env_vars_decrypt_failed_skipped",
-                            repo=repo_name,
-                            job_id=job_id,
-                            keys=failed_keys,
-                            msg="Encrypted values couldn't be decrypted with the current secret key. Those vars will NOT be injected into the sandbox.",
-                        )
-                    # List-of-dicts shape (key/value/scope) — init_node's
-                    # _filter_user_env_for_sandbox uses scope to drop scope='qa'
-                    # rows unless qa_active is True.
-                    env_vars = [
-                        {"key": v["key"], "value": v["value"], "scope": v.get("scope", "app")}
-                        for v in decrypted
-                        if v["value"] != "[DECRYPTION_FAILED]"
-                    ]
-                    if env_vars:
-                        initial_state["user_env_vars"] = env_vars
-                except Exception:
-                    logger.warning("env_merge_failed", repo=repo_name, exc_info=True)
+            env_vars = await self._load_merged_env_vars(repo_name, job_id)
+            if env_vars:
+                initial_state["user_env_vars"] = env_vars
 
             final_state, interrupted, interrupt_value = await self._execute_workflow_stream(
                 initial_state,
@@ -857,6 +875,16 @@ class IssueExecutor:
                 "qa_active": True,
                 "qa": qa_block,
             }
+
+            # Inject per-repo env vars into the QA sandboxes. The standalone
+            # QA path historically skipped this (only the issue→PR path did
+            # the merge), so credentials seeded for command-center never
+            # reached the sub-task sandboxes — directory reported "Missing
+            # AZURE_*", credit kept hitting Auth0 despite RC_QA_BYPASS being
+            # in the store, etc. Shared helper keeps both paths in lockstep.
+            env_vars = await self._load_merged_env_vars(repo, job_id)
+            if env_vars:
+                initial_state["user_env_vars"] = env_vars
 
             final_state, interrupted, _ = await self._execute_workflow_stream(
                 initial_state,

@@ -89,3 +89,67 @@ async def test_base_branch_absent_when_not_set():
 
     # Either absent or None — both acceptable
     assert captured.get("base_branch") is None
+
+
+@pytest.mark.asyncio
+async def test_qa_workflow_injects_merged_env_vars_into_state():
+    """Regression for 2026-05-17: the standalone QA path must inject
+    per-repo env vars into state['user_env_vars']. It historically only
+    happened on the issue→PR path, so credentials seeded for a repo never
+    reached the QA sandboxes (directory: 'Missing AZURE_*', credit kept
+    hitting Auth0 despite RC_QA_BYPASS being in the store)."""
+    captured: dict = {}
+
+    async def fake_execute(initial_state, *args, **kwargs):
+        captured.update(initial_state)
+        return None, False, None
+
+    executor = _make_executor()
+
+    seeded = [
+        {"key": "RC_QA_BYPASS", "value": "1", "scope": "app"},
+        {"key": "AZURE_TENANT_ID", "value": "tid", "scope": "app"},
+    ]
+
+    with (
+        patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute),
+        patch.object(
+            executor, "_load_merged_env_vars", AsyncMock(return_value=seeded)
+        ) as mock_load,
+    ):
+        await executor._run_qa_workflow(
+            job_id="job-env",
+            repo="client-project/command-center",
+            branch="feat/athanor-qa-config",
+            qa_overrides={"force_all_apps": True},
+        )
+
+    mock_load.assert_awaited_once_with("client-project/command-center", "job-env")
+    assert captured.get("user_env_vars") == seeded
+
+
+@pytest.mark.asyncio
+async def test_qa_workflow_omits_user_env_vars_when_none_seeded():
+    """No seeded env → no user_env_vars key (don't inject an empty list)."""
+    captured: dict = {}
+
+    async def fake_execute(initial_state, *args, **kwargs):
+        captured.update(initial_state)
+        return None, False, None
+
+    executor = _make_executor()
+
+    with (
+        patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute),
+        patch.object(
+            executor, "_load_merged_env_vars", AsyncMock(return_value=None)
+        ),
+    ):
+        await executor._run_qa_workflow(
+            job_id="job-noenv",
+            repo="org/r",
+            branch="b",
+            qa_overrides={},
+        )
+
+    assert "user_env_vars" not in captured
