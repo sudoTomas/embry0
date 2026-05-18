@@ -640,7 +640,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        25,
+        26,
         "qa_app_results — extend status CHECK to include 'inconclusive'",
         """
         ALTER TABLE qa_app_results
@@ -653,7 +653,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        26,
+        27,
         "qa_image_tags — pre-baked sandbox image registry per repo",
         """
         CREATE TABLE IF NOT EXISTS qa_image_tags (
@@ -675,7 +675,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        27,
+        28,
         "qa_volume_state — shared-volume warmth tracking per (repo, scope)",
         """
         CREATE TABLE IF NOT EXISTS qa_volume_state (
@@ -693,7 +693,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        28,
+        29,
         "qa_app_results — boot_phase JSONB for per-sub-task boot drilldown",
         # Phase 5A: surface ready_check failed_checks + dev-server stdout tail
         # in the dashboard. Populated by collect_artifacts_node when the boot
@@ -706,7 +706,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        29,
+        30,
         "qa_run_metadata — affected-set + diff snapshot per QA run",
         # Phase 5D: persist the run-level affected-set decision so the dashboard
         # can show which apps ran vs were skipped, what files drove the decision,
@@ -728,7 +728,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        30,
+        31,
         "recast legacy JSON-string-scalar JSONB rows to real JSONB objects",
         # Pre-fix bug: the asyncpg JSONB codec calls json.dumps() once on every
         # parameter; several QA repos ALSO called json.dumps() before passing
@@ -768,7 +768,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        31,
+        32,
         "qa_workspace_provider_overrides — per-repo dashboard-set provider config",
         # Phase 5G: operators can override .athanor/qa.yaml's workspace_provider
         # section per-repo from the dashboard admin UI. When a row exists for a
@@ -786,7 +786,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        32,
+        33,
         "qa_run_metadata — head_sha column for flake-heatmap aggregation",
         # Phase 5F: persist the orchestrator's resolved head_sha so the
         # flake-heatmap aggregator can detect status changes between
