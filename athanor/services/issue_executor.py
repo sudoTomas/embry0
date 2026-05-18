@@ -917,12 +917,25 @@ class IssueExecutor:
                 # Prefer the structured QA reason; fall back to a generic note.
                 error_message = qa_state.get("error_message") or f"QA final_status={qa_final}"
 
+            # The QA fan-out subgraph never propagates per-agent
+            # total_cost_usd up to the parent state (only the issue→PR path
+            # accumulates it via run_agent_node), so the state value is
+            # always 0.0 for QA — every QA job row showed $0.00. Trace rows
+            # are written per agent under this job_id regardless of path and
+            # are the same source GET /jobs cost_breakdown derives from;
+            # take the total from there so the row and the breakdown agree.
+            # Fall back to the state value if there are no trace rows, so a
+            # future path that does accumulate isn't zeroed out.
+            traces_cost = await self._traces.total_cost_for_job(job_id)
+            state_cost = float((final_state or {}).get("total_cost_usd", 0.0) or 0.0)
+            total_cost_usd = traces_cost if traces_cost > 0.0 else state_cost
+
             await self._jobs.update(
                 job_id,
                 status=job_status,
                 error_message=error_message,
                 error_code=error_code,
-                total_cost_usd=(final_state or {}).get("total_cost_usd", 0.0),
+                total_cost_usd=total_cost_usd,
                 finished_at=datetime.now(UTC),
             )
 

@@ -129,6 +129,51 @@ async def test_qa_workflow_injects_merged_env_vars_into_state():
 
 
 @pytest.mark.asyncio
+async def test_qa_workflow_total_cost_from_traces():
+    """Regression 2026-05-18: the QA fan-out subgraph never propagates
+    per-agent total_cost_usd up to the parent workflow state (only the
+    issue→PR path accumulates it via run_agent_node), so the state value
+    is always 0.0 for QA and every QA job row showed $0.00. Trace rows
+    are written per agent under the parent job_id regardless of path and
+    are the same source GET /jobs cost_breakdown derives from — the job
+    row must take its total from there so the two stay consistent."""
+    executor = _make_executor()
+    executor._traces.total_cost_for_job = AsyncMock(return_value=8.16)
+
+    async def fake_execute(initial_state, *args, **kwargs):
+        # QA finished; state carries 0.0 — the exact bug condition.
+        return ({"qa": {"final_status": "failed"}, "total_cost_usd": 0.0}, False, None)
+
+    with patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute):
+        await executor._run_qa_workflow(
+            job_id="job-cost", repo="org/r", branch="b", qa_overrides={},
+        )
+
+    executor._traces.total_cost_for_job.assert_awaited_once_with("job-cost")
+    _, kwargs = executor._jobs.update.call_args
+    assert kwargs["total_cost_usd"] == 8.16
+
+
+@pytest.mark.asyncio
+async def test_qa_workflow_cost_falls_back_to_state_when_no_traces():
+    """If there are no trace rows (traces total 0.0) fall back to the
+    state value so a future path that does accumulate isn't zeroed out."""
+    executor = _make_executor()
+    executor._traces.total_cost_for_job = AsyncMock(return_value=0.0)
+
+    async def fake_execute(initial_state, *args, **kwargs):
+        return ({"qa": {"final_status": "passed"}, "total_cost_usd": 2.5}, False, None)
+
+    with patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute):
+        await executor._run_qa_workflow(
+            job_id="job-cost2", repo="org/r", branch="b", qa_overrides={},
+        )
+
+    _, kwargs = executor._jobs.update.call_args
+    assert kwargs["total_cost_usd"] == 2.5
+
+
+@pytest.mark.asyncio
 async def test_qa_workflow_omits_user_env_vars_when_none_seeded():
     """No seeded env → no user_env_vars key (don't inject an empty list)."""
     captured: dict = {}

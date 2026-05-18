@@ -96,6 +96,24 @@ class TracesRepository:
         )
         return [dict(r) for r in rows], int(total or 0)
 
+    async def total_cost_for_job(self, job_id: str) -> float:
+        """Sum cost_usd across every trace row for a job.
+
+        The standalone QA fan-out subgraph does not propagate per-agent
+        total_cost_usd up to the parent workflow state (only the issue→PR
+        path accumulates it via run_agent_node), so the QA path's state
+        value is always 0.0. Trace rows, however, are written per agent
+        under the parent job_id regardless of path — and they are the same
+        source GET /jobs cost_breakdown is derived from, so using them as
+        the authoritative job total keeps the row and the breakdown
+        consistent.
+        """
+        val = await self._db.fetchval(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM traces WHERE job_id = $1",
+            job_id,
+        )
+        return float(val or 0.0)
+
     async def sum_by_agent_for_job(self, job_id: str) -> list[dict[str, Any]]:
         """Aggregate traces by (agent_type, model) with cost + duration totals.
 
