@@ -17,6 +17,7 @@ async def get_stats(db: DatabasePool = Depends(get_db)) -> dict[str, object]:
             COUNT(*) AS total_jobs,
             COUNT(*) FILTER (WHERE status = 'completed') AS completed,
             COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+            COUNT(*) FILTER (WHERE status = 'partial') AS partial,
             COUNT(*) FILTER (WHERE status = 'running') AS running,
             COUNT(*) FILTER (WHERE status IN ('pending', 'queued')) AS queued,
             COUNT(*) FILTER (WHERE status = 'awaiting_input') AS awaiting_input,
@@ -34,6 +35,7 @@ async def get_stats(db: DatabasePool = Depends(get_db)) -> dict[str, object]:
     total_jobs = row["total_jobs"] if row else 0
     completed = row["completed"] if row else 0
     failed = row["failed"] if row else 0
+    partial = row["partial"] if row else 0
     running = row["running"] if row else 0
     queued = row["queued"] if row else 0
     awaiting_input = row["awaiting_input"] if row else 0
@@ -140,6 +142,7 @@ async def get_stats(db: DatabasePool = Depends(get_db)) -> dict[str, object]:
         "total_jobs": total_jobs,
         "completed": completed,
         "failed": failed,
+        "partial": partial,
         "running": running,
         "queued": queued,
         "awaiting_input": awaiting_input,

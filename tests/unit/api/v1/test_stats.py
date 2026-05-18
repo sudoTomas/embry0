@@ -18,6 +18,7 @@ def app():
             "total_jobs": 0,
             "completed": 0,
             "failed": 0,
+            "partial": 0,
             "running": 0,
             "queued": 0,
             "awaiting_input": 0,

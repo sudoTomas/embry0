@@ -909,13 +909,46 @@ class IssueExecutor:
 
             qa_state = (final_state or {}).get("qa") or {}
             qa_final = qa_state.get("final_status", "pending")
-            # passed → completed; everything else → failed.
-            job_status = "completed" if qa_final == "passed" else "failed"
+            per_app = qa_state.get("per_app_results") or []
+
+            # Bucket per-app outcomes. SKIPPED counts as a pass (nothing to
+            # run); INCONCLUSIVE and the hard failures count as "did not
+            # pass"; INFRA_FAILURE is Athanor's own fault and forces FAILED.
+            _hard_fail = {
+                "qa_failure", "e2e_failure", "boot_failure", "ready_check_failed",
+            }
+            passed_apps = [a["app_name"] for a in per_app if a.get("status") in ("passed", "skipped")]
+            failed_apps = [a["app_name"] for a in per_app if a.get("status") in _hard_fail]
+            inconclusive_apps = [a["app_name"] for a in per_app if a.get("status") == "inconclusive"]
+            infra_apps = [a["app_name"] for a in per_app if a.get("status") == "infra_failure"]
+
+            # passed → completed. ≥1 pass and no infra → partial (a
+            # mostly-passing multi-app run isn't a flat failure). Zero
+            # passes or any infra_failure → failed.
+            if qa_final == "passed":
+                job_status = "completed"
+            elif infra_apps or not passed_apps:
+                job_status = "failed"
+            else:
+                job_status = "partial"
+
             error_code = qa_state.get("error_code") if job_status == "failed" else None
             error_message = None
-            if job_status == "failed":
-                # Prefer the structured QA reason; fall back to a generic note.
-                error_message = qa_state.get("error_message") or f"QA final_status={qa_final}"
+            if job_status in ("failed", "partial"):
+                if per_app:
+                    summary = f"QA: {len(passed_apps)}/{len(per_app)} apps passed"
+                    detail = []
+                    if failed_apps:
+                        detail.append("failed: " + ",".join(sorted(failed_apps)))
+                    if inconclusive_apps:
+                        detail.append("inconclusive: " + ",".join(sorted(inconclusive_apps)))
+                    if infra_apps:
+                        detail.append("infra: " + ",".join(sorted(infra_apps)))
+                    error_message = summary + (" — " + "; ".join(detail) if detail else "")
+                else:
+                    # No per-app breakdown (e.g. early QA failure) — fall
+                    # back to the structured reason or a generic note.
+                    error_message = qa_state.get("error_message") or f"QA final_status={qa_final}"
 
             # The QA fan-out subgraph never propagates per-agent
             # total_cost_usd up to the parent state (only the issue→PR path

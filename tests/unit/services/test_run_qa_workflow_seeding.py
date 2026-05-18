@@ -173,6 +173,95 @@ async def test_qa_workflow_cost_falls_back_to_state_when_no_traces():
     assert kwargs["total_cost_usd"] == 2.5
 
 
+def _qa_executor():
+    """Executor with traces cost mocked (cost path is covered separately)."""
+    e = _make_executor()
+    e._traces.total_cost_for_job = AsyncMock(return_value=0.0)
+    return e
+
+
+def _qa_state(final_status, apps):
+    return {"qa": {"final_status": final_status,
+                    "per_app_results": [{"app_name": a, "status": s} for a, s in apps]}}
+
+
+@pytest.mark.asyncio
+async def test_qa_job_all_pass_maps_to_completed():
+    executor = _qa_executor()
+
+    async def fake_execute(initial_state, *a, **k):
+        return _qa_state("passed", [("hub", "passed"), ("lane", "passed")]), False, None
+
+    with patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute):
+        await executor._run_qa_workflow(job_id="j1", repo="o/r", branch="b", qa_overrides={})
+
+    _, kw = executor._jobs.update.call_args
+    assert kw["status"] == "completed"
+    assert kw["error_message"] is None
+
+
+@pytest.mark.asyncio
+async def test_qa_job_partial_pass_maps_to_partial_with_breakdown():
+    """≥1 pass and no infra → PARTIAL, with an informative breakdown so a
+    mostly-passing multi-app run isn't dismissed as a flat failure."""
+    executor = _qa_executor()
+    apps = [("hub", "passed"), ("lane", "passed"), ("credit", "boot_failure"),
+            ("reps", "inconclusive"), ("siemens", "skipped")]
+
+    async def fake_execute(initial_state, *a, **k):
+        return _qa_state("failed", apps), False, None
+
+    with patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute):
+        await executor._run_qa_workflow(job_id="j2", repo="o/r", branch="b", qa_overrides={})
+
+    _, kw = executor._jobs.update.call_args
+    assert kw["status"] == "partial"
+    # hub, lane, + skipped siemens count as passed → 3/5
+    assert kw["error_message"] == "QA: 3/5 apps passed — failed: credit; inconclusive: reps"
+    assert kw["error_code"] is None
+
+
+@pytest.mark.asyncio
+async def test_qa_job_zero_pass_maps_to_failed():
+    executor = _qa_executor()
+
+    async def fake_execute(initial_state, *a, **k):
+        return _qa_state("failed", [("credit", "boot_failure"), ("hub", "qa_failure")]), False, None
+
+    with patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute):
+        await executor._run_qa_workflow(job_id="j3", repo="o/r", branch="b", qa_overrides={})
+
+    _, kw = executor._jobs.update.call_args
+    assert kw["status"] == "failed"
+    assert kw["error_message"] == "QA: 0/2 apps passed — failed: credit,hub"
+
+
+@pytest.mark.asyncio
+async def test_qa_job_infra_failure_forces_failed_even_with_passes():
+    """INFRA_FAILURE is Athanor's own fault — never PARTIAL even if some
+    apps passed."""
+    executor = _qa_executor()
+    apps = [("hub", "passed"), ("lane", "passed"), ("credit", "infra_failure")]
+
+    async def fake_execute(initial_state, *a, **k):
+        return _qa_state("failed", apps), False, None
+
+    with patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute):
+        await executor._run_qa_workflow(job_id="j4", repo="o/r", branch="b", qa_overrides={})
+
+    _, kw = executor._jobs.update.call_args
+    assert kw["status"] == "failed"
+    assert "infra: credit" in kw["error_message"]
+
+
+def test_valid_job_transitions_include_partial():
+    from athanor.storage.repositories.jobs import VALID_JOB_TRANSITIONS
+    from athanor.storage.schemas import JobStatus
+
+    assert JobStatus.PARTIAL in VALID_JOB_TRANSITIONS[JobStatus.RUNNING]
+    assert VALID_JOB_TRANSITIONS[JobStatus.PARTIAL] == set()  # terminal
+
+
 @pytest.mark.asyncio
 async def test_qa_workflow_omits_user_env_vars_when_none_seeded():
     """No seeded env → no user_env_vars key (don't inject an empty list)."""

@@ -27,6 +27,7 @@ VALID_JOB_TRANSITIONS: dict[str, set[str]] = {
     JobStatus.RUNNING: {
         JobStatus.COMPLETED,
         JobStatus.FAILED,
+        JobStatus.PARTIAL,
         JobStatus.CANCELLED,
         JobStatus.AWAITING_INPUT,
         JobStatus.PAUSED,
@@ -46,6 +47,7 @@ VALID_JOB_TRANSITIONS: dict[str, set[str]] = {
         JobStatus.PR_MERGED,
         JobStatus.PR_CLOSED,
     },
+    JobStatus.PARTIAL: set(),  # Terminal
     JobStatus.FAILED: set(),  # Terminal
     JobStatus.CANCELLED: set(),  # Terminal
     JobStatus.EXPIRED: set(),  # Terminal

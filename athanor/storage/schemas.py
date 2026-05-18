@@ -10,6 +10,10 @@ class JobStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    # Multi-app QA run where ≥1 app passed and some did not, with no
+    # INFRA_FAILURE. Distinct from FAILED so a mostly-passing run isn't
+    # dismissed as a flat failure. Terminal.
+    PARTIAL = "partial"
     CANCELLED = "cancelled"
     AWAITING_INPUT = "awaiting_input"
     PAUSED = "paused"
