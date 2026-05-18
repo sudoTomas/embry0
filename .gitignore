@@ -42,3 +42,4 @@ Thumbs.db
 *.png
 snapshot.md
 snap*.md
+.env.qa-seed
