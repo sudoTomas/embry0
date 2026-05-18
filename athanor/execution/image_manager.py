@@ -35,6 +35,23 @@ class SandboxImageManager:
     def _qualify(self, image: str) -> str:
         return qualify_image(image, self._image_registry)
 
+    def _build_context_available(self) -> bool:
+        """True iff the sandbox Dockerfile is shipped in this container.
+
+        In the compose / K8s deployment the sandbox image is built and
+        pushed to the in-stack ``registry:5000`` by the
+        ``init-push-images`` / ``sandbox-image-builder`` service, and the
+        orchestrator image deliberately does NOT ship
+        ``infra/Dockerfile.sandbox`` or the build context. Only the
+        standalone / dev layout has it. When it's absent the orchestrator
+        must defer to the registry-provided image instead of attempting an
+        impossible ``docker build`` (which fails with
+        ``lstat /app/infra: no such file or directory``).
+        """
+        return (self._app_root / "infra" / "Dockerfile.sandbox").exists() or Path(
+            "/app/infra/Dockerfile.sandbox"
+        ).exists()
+
     def _compute_build_hash(self) -> str:
         """Compute SHA256 hash of Dockerfile.sandbox + sandbox source files."""
         hasher = hashlib.sha256()
@@ -100,6 +117,24 @@ class SandboxImageManager:
     async def ensure_image(self, image: str = "athanor-sandbox:latest", force: bool = False) -> bool:
         """Ensure the sandbox image is built and up-to-date. Returns True if build occurred."""
         async with self._build_lock:
+            # Registry-sidecar deployment: no Dockerfile shipped → never
+            # self-build. Defer to the image init-push-images pushed to the
+            # registry; only error if it's genuinely absent everywhere.
+            if not self._build_context_available():
+                if await self._image_exists(image):
+                    logger.info(
+                        "sandbox_image_provided_by_registry",
+                        image=self._qualify(image),
+                    )
+                    return False
+                logger.error(
+                    "sandbox_image_unavailable_no_build_context",
+                    image=self._qualify(image),
+                    hint="run the init-push-images bootstrap to push "
+                    "athanor-sandbox to the in-stack registry",
+                )
+                return False
+
             current_hash = self._compute_build_hash()
 
             if not force:

@@ -212,3 +212,51 @@ async def test_expire_paused_jobs_fallback_without_jobs_repo():
     assert any("expired" in c for c in executed_calls), (
         f"Expected a raw execute with 'expired' when jobs_repo is None. Calls: {executed_calls}"
     )
+
+
+@pytest.mark.asyncio
+async def test_ensure_image_defers_to_registry_when_no_build_context(tmp_path):
+    """Regression 2026-05-18: in the compose/K8s deploy the orchestrator
+    image does NOT ship infra/Dockerfile.sandbox (the sandbox image is
+    built+pushed by init-push-images). ensure_image must NOT attempt a
+    doomed self-build (`docker build -f /app/infra/Dockerfile.sandbox`,
+    which fails with 'lstat /app/infra: no such file or directory'); it
+    defers to the registry-provided image and returns False."""
+    docker = MagicMock()
+    docker._build_base_cmd = MagicMock(return_value=["docker"])
+    docker.run_cmd = AsyncMock(return_value=b"ok")  # image inspect succeeds
+    mgr = SandboxImageManager(docker, app_root=str(tmp_path))  # no infra/ here
+    built = await mgr.ensure_image("athanor-sandbox:latest")
+    assert built is False
+    for call in docker.run_cmd.call_args_list:
+        assert "build" not in call[0][0], "must not attempt a self-build"
+
+
+@pytest.mark.asyncio
+async def test_ensure_image_no_context_and_image_missing_returns_false(tmp_path):
+    """No build context AND image absent everywhere → return False with a
+    clear operator error, still no doomed build attempt."""
+    docker = MagicMock()
+    docker._build_base_cmd = MagicMock(return_value=["docker"])
+    docker.run_cmd = AsyncMock(side_effect=RuntimeError("No such image"))
+    mgr = SandboxImageManager(docker, app_root=str(tmp_path))
+    built = await mgr.ensure_image("athanor-sandbox:latest")
+    assert built is False
+    for call in docker.run_cmd.call_args_list:
+        assert "build" not in call[0][0]
+
+
+@pytest.mark.asyncio
+async def test_ensure_image_self_builds_when_context_present(tmp_path):
+    """When infra/Dockerfile.sandbox IS shipped (standalone/dev layout),
+    the existing self-build path is preserved unchanged."""
+    (tmp_path / "infra").mkdir()
+    (tmp_path / "infra" / "Dockerfile.sandbox").write_text("FROM scratch\n")
+    docker = MagicMock()
+    docker._build_base_cmd = MagicMock(return_value=["docker"])
+    docker.run_cmd = AsyncMock(return_value="deadbeef")
+    mgr = SandboxImageManager(docker, app_root=str(tmp_path))
+    built = await mgr.ensure_image("athanor-sandbox:latest", force=True)
+    assert built is True
+    issued = [c[0][0] for c in docker.run_cmd.call_args_list]
+    assert any("build" in cmd for cmd in issued), "self-build must still occur"
