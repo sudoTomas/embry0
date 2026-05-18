@@ -249,7 +249,9 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
         )
     except Exception as exc:  # noqa: BLE001
         try:
-            await token_registry.unregister(sandbox_token)
+            # SandboxTokenRegistry.unregister is synchronous — awaiting it
+            # raises "object NoneType can't be used in 'await' expression".
+            token_registry.unregister(sandbox_token)
         except Exception:
             pass
         try:
@@ -640,7 +642,10 @@ async def release_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
 
     if qa_token_registry is not None and sandbox_token is not None:
         try:
-            await qa_token_registry.unregister(sandbox_token)
+            # SandboxTokenRegistry.unregister is synchronous — awaiting it
+            # raises "object NoneType can't be used in 'await' expression",
+            # silently leaking the token entry (caught + warned below).
+            qa_token_registry.unregister(sandbox_token)
         except Exception as exc:  # noqa: BLE001
             logger.warning("subtask_token_unregister_failed", error=str(exc))
 

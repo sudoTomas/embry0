@@ -740,7 +740,7 @@ async def test_release_sandbox_node_calls_all_cleanup():
     sandbox_mgr = MagicMock()
     sandbox_mgr.destroy = AsyncMock()
     token_registry = MagicMock()
-    token_registry.unregister = AsyncMock()
+    token_registry.unregister = MagicMock()  # sync — must NOT be awaited
     docker = MagicMock()
     docker._build_base_cmd = MagicMock(return_value=["docker"])
     docker.run_cmd = AsyncMock(return_value="")
@@ -769,7 +769,7 @@ async def test_release_sandbox_node_calls_all_cleanup():
         out = await release_sandbox_node(state, config)
 
     sandbox_mgr.destroy.assert_awaited_once_with("cid-99")
-    token_registry.unregister.assert_awaited_once_with("tok-abc")
+    token_registry.unregister.assert_called_once_with("tok-abc")  # sync, not awaited
     mock_cleanup.assert_awaited_once()
     assert out == {}
 
