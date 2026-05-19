@@ -137,7 +137,7 @@ async def test_e2e_three_apps_two_pass_one_fails(monkeypatch):
     assert qa["final_status"] == "failed"
 
     # Persistence: one upsert per app.
-    assert results_repo.upsert.await_count == 3
+    assert results_repo.upsert_with_boot_phase.await_count == 3
 
     # Per-app results contain the right verdicts.
     by_app = {r["app_name"]: r for r in qa["per_app_results"]}
@@ -273,7 +273,7 @@ async def test_e2e_no_affected_apps_short_circuits_pass(monkeypatch):
     assert qa["outcome"]["overall_status"] == "passed"
     assert qa["apps_to_qa"] == []
     assert qa["final_status"] == "passed"
-    assert results_repo.upsert.await_count == 0
+    assert results_repo.upsert_with_boot_phase.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -391,7 +391,7 @@ apps:
     assert qa["outcome"]["overall_status"] == "passed"
     assert qa["apps_to_qa"] == ["app"]
     assert qa["final_status"] == "passed"
-    assert results_repo.upsert.await_count == 1
+    assert results_repo.upsert_with_boot_phase.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -529,4 +529,4 @@ async def test_phase_3_acceptance_package_change_cascades_to_two_apps(monkeypatc
     qa = out["qa"]
     assert qa["outcome"]["overall_status"] == "passed"
     assert sorted(qa["apps_to_qa"]) == ["hub", "companion"]
-    assert results_repo.upsert.await_count == 2
+    assert results_repo.upsert_with_boot_phase.await_count == 2

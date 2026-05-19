@@ -136,7 +136,7 @@ async def test_phase_2_warm_cache_three_apps_under_30s(monkeypatch):
     qa = out["qa"]
     assert qa["outcome"]["overall_status"] == "passed"
     assert sorted(qa["apps_to_qa"]) == ["hub", "lane", "companion"]
-    assert results_repo.upsert.await_count == 3
+    assert results_repo.upsert_with_boot_phase.await_count == 3
 
     # Cache hits per app — all 3 layers warm.
     for r in qa["per_app_results"]:

@@ -1,16 +1,17 @@
-"""boot_qa_node integration smoke against a fake httpx test server.
+"""boot_qa_node integration smoke against the in-container ready-check probe.
 
 Plan 1 (qa-boot-as-backend-node) Task 7. Verifies the wired-up node:
-  - Runs run_boot_phase against a fake httpx client that returns 503 twice
-    then 200 (simulating real boot lag).
+  - Runs run_boot_phase, whose ready-checks are probed *inside the sandbox*
+    via boot._probe_ready_check (docker exec) — NOT an orchestrator-side
+    httpx client. The probe returns connect-failed twice then 200
+    (simulating real boot lag).
   - Routes to "qa" via Command(goto=...) once all checks pass.
   - Records boot_outcome / boot_attempts / boot_duration_ms on state.qa.
 
 Mocks docker (not under test here — see tests/unit/workflows/qa/test_boot_helper.py
-for the docker-side coverage) and the screenshot helper (only fires on
-non-success paths). The httpx mock substitutes for the real client but uses
-the real boot.py poll loop with sleep_seconds defaulted to 3s — the third
-attempt resolves before the budget elapses so total wall-clock is bounded.
+for the docker-side coverage) and patches _probe_ready_check directly so
+the real boot.py poll loop drives, with sleep patched to 0 so total
+wall-clock is bounded.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,21 +29,13 @@ async def test_boot_node_polls_real_http_until_pass():
 
     call_count = {"n": 0}
 
-    class FakeResp:
-        def __init__(self, n: int) -> None:
-            self.status_code = 200 if n >= 3 else 503
-            self.text = "OK" if n >= 3 else "boot in progress"
-
-    class FakeHttp:
-        async def get(self, url: str) -> FakeResp:
-            call_count["n"] += 1
-            return FakeResp(call_count["n"])
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_a):
-            return False
+    async def fake_probe(*, docker, container_id, url):
+        # boot._probe_ready_check contract: (status_code, body);
+        # status_code == 0 means connect failed. Fail twice, then 200.
+        call_count["n"] += 1
+        if call_count["n"] >= 3:
+            return (200, "OK")
+        return (0, "ERR:URLError:Connection refused")
 
     state = {
         "job_id": "J",
@@ -61,12 +54,12 @@ async def test_boot_node_polls_real_http_until_pass():
     }
     config = {"configurable": {"docker": docker, "qa_minio": MagicMock()}}
 
-    # Patch httpx.AsyncClient so the with block in boot_qa_node yields our fake.
-    # Also force run_boot_phase's sleep to 0 so the test doesn't actually wait
-    # 3s between attempts — we monkey-patch via the real module, which boot.py
-    # imports at the top.
+    # Ready-checks are probed in-container via boot._probe_ready_check now;
+    # patch it directly (the orchestrator no longer uses httpx for this).
+    # Also force run_boot_phase's sleep to 0 so the test doesn't actually
+    # wait between attempts.
     with (
-        patch("athanor.workflows.qa.nodes.httpx.AsyncClient", return_value=FakeHttp()),
+        patch("athanor.workflows.qa.boot._probe_ready_check", side_effect=fake_probe),
         patch("athanor.workflows.qa.boot.asyncio.sleep", AsyncMock()),
     ):
         cmd = await boot_qa_node(state, config)
