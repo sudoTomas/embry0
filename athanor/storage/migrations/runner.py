@@ -596,17 +596,6 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     ),
     (
         24,
-        "pipeline_templates — is_builtin flag for canonical seed pipelines",
-        # Mirrors the sandbox_profiles pattern: builtin templates are upserted
-        # at orchestrator startup and identified by is_builtin=true so the UI
-        # can badge them and the API can refuse non-seed deletes/edits to them.
-        """
-        ALTER TABLE pipeline_templates
-            ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT FALSE;
-        """,
-    ),
-    (
-        25,
         "qa_app_results — per-app QA outcomes for multi-app monorepo runs",
         """
         CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -640,7 +629,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        26,
+        25,
         "qa_app_results — extend status CHECK to include 'inconclusive'",
         """
         ALTER TABLE qa_app_results
@@ -653,7 +642,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        27,
+        26,
         "qa_image_tags — pre-baked sandbox image registry per repo",
         """
         CREATE TABLE IF NOT EXISTS qa_image_tags (
@@ -675,7 +664,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        28,
+        27,
         "qa_volume_state — shared-volume warmth tracking per (repo, scope)",
         """
         CREATE TABLE IF NOT EXISTS qa_volume_state (
@@ -693,7 +682,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        29,
+        28,
         "qa_app_results — boot_phase JSONB for per-sub-task boot drilldown",
         # Phase 5A: surface ready_check failed_checks + dev-server stdout tail
         # in the dashboard. Populated by collect_artifacts_node when the boot
@@ -706,7 +695,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        30,
+        29,
         "qa_run_metadata — affected-set + diff snapshot per QA run",
         # Phase 5D: persist the run-level affected-set decision so the dashboard
         # can show which apps ran vs were skipped, what files drove the decision,
@@ -728,7 +717,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        31,
+        30,
         "recast legacy JSON-string-scalar JSONB rows to real JSONB objects",
         # Pre-fix bug: the asyncpg JSONB codec calls json.dumps() once on every
         # parameter; several QA repos ALSO called json.dumps() before passing
@@ -768,7 +757,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        32,
+        31,
         "qa_workspace_provider_overrides — per-repo dashboard-set provider config",
         # Phase 5G: operators can override .athanor/qa.yaml's workspace_provider
         # section per-repo from the dashboard admin UI. When a row exists for a
@@ -786,7 +775,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     (
-        33,
+        32,
         "qa_run_metadata — head_sha column for flake-heatmap aggregation",
         # Phase 5F: persist the orchestrator's resolved head_sha so the
         # flake-heatmap aggregator can detect status changes between
@@ -798,6 +787,23 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ADD COLUMN IF NOT EXISTS head_sha TEXT NOT NULL DEFAULT '';
         COMMENT ON COLUMN qa_run_metadata.head_sha IS
             'Git SHA of the workspace head when the QA run started. Empty string for legacy rows that predate this column. Used by flake-heatmap aggregation in Phase 5F.';
+        """,
+    ),
+    (
+        33,
+        "pipeline_templates — is_builtin flag for canonical seed pipelines",
+        # Mirrors the sandbox_profiles pattern: builtin templates are upserted
+        # at orchestrator startup and identified by is_builtin=true so the UI
+        # can badge them and the API can refuse non-seed deletes/edits to them.
+        #
+        # Numbered last (33) intentionally: this migration came from `main`
+        # and collided with the branch's v24 (qa_app_results). Appending it
+        # as the highest version keeps every branch migration at its
+        # original number, so the version-pinned migration tests (e.g.
+        # test_migration_30 = the legacy-JSONB recast) stay valid.
+        """
+        ALTER TABLE pipeline_templates
+            ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT FALSE;
         """,
     ),
 ]
