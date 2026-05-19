@@ -25,8 +25,8 @@ pytestmark = pytest.mark.requires_postgres
 async def _seed_job(db_with_migrations, *, job_id: str, repo: str, started_at: datetime) -> None:
     await db_with_migrations.execute(
         """
-        INSERT INTO jobs (job_id, repo, status, created_at, updated_at, started_at)
-        VALUES ($1, $2, 'completed', $3, $3, $3)
+        INSERT INTO jobs (job_id, repo, task, status, created_at, updated_at, started_at)
+        VALUES ($1, $2, 'qa', 'completed', $3, $3, $3)
         ON CONFLICT (job_id) DO NOTHING
         """,
         job_id,
