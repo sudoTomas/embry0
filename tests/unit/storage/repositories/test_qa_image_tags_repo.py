@@ -1,10 +1,10 @@
 import pytest
-pytestmark = pytest.mark.requires_postgres
 
 from athanor.storage.repositories.qa_image_tags import (
-    QAImageTagRow,
     QAImageTagsRepository,
 )
+
+pytestmark = pytest.mark.requires_postgres
 
 
 @pytest.fixture

@@ -1,21 +1,17 @@
-from pathlib import Path
 
 import pytest
 
 from athanor.workflows.qa.qa_yaml_resolve import (
-    ResolvedAppConfig,
     resolve_app_config,
 )
 from athanor.workflows.qa.qa_yaml_v2 import (
     AppEntry,
-    AppLocalConfig,
     DefaultsBlock,
     QAReadyCheck,
     QAYamlConfigV2,
     parse_app_local_yaml,
     parse_qa_yaml_v2,
 )
-
 
 _ROOT_YAML = """
 version: 2

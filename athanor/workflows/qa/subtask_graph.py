@@ -11,7 +11,7 @@ runs unconditionally before emit_result so cleanup always happens.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from langgraph.graph import END, START, StateGraph
 
@@ -67,7 +67,7 @@ def build_subtask_graph() -> Any:
 _SUBGRAPH_CACHE: Any | None = None
 
 
-def _get_subgraph():
+def _get_subgraph() -> Any:
     global _SUBGRAPH_CACHE
     if _SUBGRAPH_CACHE is None:
         _SUBGRAPH_CACHE = build_subtask_graph()
@@ -109,4 +109,6 @@ async def run_subtask(
         turbo_remote_enabled=turbo_remote_enabled,
     )
     final_state = await graph.ainvoke(initial, config=config)
-    return final_state["subtask_result"]
+    # SubTaskState.subtask_result is typed SubTaskResult; graph.ainvoke is
+    # untyped (Any) so narrow here. Always a SubTaskResult at runtime.
+    return cast(SubTaskResult, final_state["subtask_result"])

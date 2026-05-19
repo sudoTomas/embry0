@@ -77,7 +77,7 @@ class AgentOutput:
 class AgentRunner:
     """Runs agents inside sandbox containers via docker exec."""
 
-    def __init__(self, sandbox_manager: "SandboxManager", docker: DockerClient) -> None:
+    def __init__(self, sandbox_manager: SandboxManager, docker: DockerClient) -> None:
         self._sandbox = sandbox_manager
         self._docker = docker
 

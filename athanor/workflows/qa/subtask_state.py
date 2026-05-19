@@ -53,7 +53,9 @@ class SubTaskState(TypedDict, total=False):
     sandbox_token: str | None
     artifact_prefix: str | None
     head_sha: str | None
-    cache_hits_partial: dict[str, bool] | None
+    # Mixed-value: bool for prebaked_image/shared_volume, list[str] for
+    # turbo_remote_hits/turbo_remote_misses (populated by run_qa_node).
+    cache_hits_partial: dict[str, Any] | None
 
     # Set by boot_app_node on success
     boot_outcome: str | None        # "passed" | "timeout" | "startup_failed"

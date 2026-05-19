@@ -14,6 +14,8 @@ from typing import Any
 from athanor.storage.database import DatabasePool
 from athanor.storage.repositories.qa_app_results_analytics import (
     cache_analytics_window as _cache_analytics_window,
+)
+from athanor.storage.repositories.qa_app_results_analytics import (
     flake_window as _flake_window,
 )
 from athanor.workflows.qa.subtask_result_schema import (

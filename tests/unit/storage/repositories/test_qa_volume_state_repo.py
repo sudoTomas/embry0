@@ -1,10 +1,10 @@
 import pytest
-pytestmark = pytest.mark.requires_postgres
 
 from athanor.storage.repositories.qa_volume_state import (
     QAVolumeStateRepository,
-    VolumeState,
 )
+
+pytestmark = pytest.mark.requires_postgres
 
 
 @pytest.fixture

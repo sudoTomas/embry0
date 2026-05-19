@@ -12,7 +12,6 @@ from athanor.cli.migrate_qa_config import (
 )
 from athanor.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
 
-
 CORPUS = Path(__file__).resolve().parents[2] / "fixtures" / "qa-yaml-corpus"
 
 

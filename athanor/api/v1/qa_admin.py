@@ -20,11 +20,14 @@ from athanor.api.schemas.qa_dashboard import (
     WorkspaceProviderOverride,
     WorkspaceProviderOverrideUpsert,
 )
+from athanor.storage.repositories.qa_workspace_provider_overrides import (
+    WorkspaceProviderOverride as WorkspaceProviderOverrideRow,
+)
 
 router = APIRouter()
 
 
-def _to_response(row) -> WorkspaceProviderOverride:
+def _to_response(row: WorkspaceProviderOverrideRow) -> WorkspaceProviderOverride:
     return WorkspaceProviderOverride(
         repo=row.repo,
         provider_type=row.provider_type,

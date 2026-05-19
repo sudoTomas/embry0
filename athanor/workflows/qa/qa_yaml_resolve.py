@@ -74,6 +74,7 @@ def resolve_app_config(
     else:
         boot_timeout_seconds = defaults.boot_timeout_seconds
 
+    seed_command: str | None
     if app_local is not None and app_local.seed_command is not None:
         seed_command = app_local.seed_command
     elif app_entry.seed_command is not None:
@@ -81,6 +82,7 @@ def resolve_app_config(
     else:
         seed_command = defaults.seed_command
 
+    e2e: QAE2E | None
     if app_local is not None and app_local.e2e is not None:
         e2e = app_local.e2e
     elif app_entry.e2e is not None:

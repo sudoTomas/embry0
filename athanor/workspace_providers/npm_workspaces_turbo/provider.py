@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from athanor.workspace_providers.npm_workspaces_turbo._affected import (
     compute_affected,
@@ -35,7 +36,7 @@ class NpmWorkspacesTurboProvider:
 
     name = "npm-workspaces-turbo"
 
-    def __init__(self, repo_root: Path, config: dict) -> None:
+    def __init__(self, repo_root: Path, config: dict[str, Any]) -> None:
         self.repo_root = Path(repo_root)
         self.config = NpmTurboConfig.model_validate(config or {})
 

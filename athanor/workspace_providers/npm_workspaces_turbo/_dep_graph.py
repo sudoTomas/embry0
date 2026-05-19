@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from athanor.workspace_providers.provider import WorkspaceProviderError
 
@@ -42,7 +43,7 @@ class DependencyGraph:
         return self._in.get(node, frozenset())
 
 
-def _read_package_json(path: Path) -> dict | None:
+def _read_package_json(path: Path) -> dict[str, Any] | None:
     """Read a package.json. Returns None if missing or unparseable; never raises.
 
     Note: contract differs from _discover._read_package_json (which raises).
@@ -103,7 +104,7 @@ def build_dep_graph(
     member_dirs = _enumerate_workspace_dirs(repo_root, apps_glob, packages_glob)
 
     # First pass: collect every workspace-internal package name.
-    name_to_pkg: dict[str, dict] = {}
+    name_to_pkg: dict[str, dict[str, Any]] = {}
     for d in member_dirs:
         pkg = _read_package_json(d / "package.json")
         if pkg is None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from athanor.workspace_providers.provider import (
     WorkspaceApp,
@@ -12,11 +13,12 @@ from athanor.workspace_providers.provider import (
 )
 
 
-def _read_package_json(path: Path) -> dict:
+def _read_package_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise WorkspaceProviderError(f"missing package.json at {path}")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        parsed: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        return parsed
     except json.JSONDecodeError as exc:
         raise WorkspaceProviderError(f"invalid JSON in {path}: {exc}") from exc
 

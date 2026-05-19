@@ -56,7 +56,9 @@ def available_provider_names() -> list[str]:
     return sorted({ep.name for ep in entry_points(group=_GROUP)})
 
 
-def load_provider(name: str, repo_root: Path, config: dict) -> WorkspaceProvider:
+def load_provider(
+    name: str, repo_root: Path, config: dict[str, Any]
+) -> WorkspaceProvider:
     """Instantiate a registered provider.
 
     Raises WorkspaceProviderError if `name` is not registered or the

@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 
 from athanor.workflows.qa.orchestrator_helpers import (
-    OrchestratorOutcome,
     resolve_apps_to_qa,
     validate_against_qa_config,
 )
@@ -14,7 +13,6 @@ from athanor.workspace_providers import (
     WorkspacePackage,
 )
 from athanor.workspace_providers.fakes import FakeWorkspaceProvider
-
 
 _QA_YAML = """
 version: 2
@@ -117,12 +115,12 @@ def test_validate_against_qa_config_separates_warnings_from_errors():
     assert len(warnings) == 1
 
 
-import asyncio
+import asyncio  # noqa: E402
 
-from athanor.workflows.qa.orchestrator_helpers import fan_out_subtasks
-from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
-from athanor.workflows.qa.qa_yaml_v2 import QAReadyCheck
-from athanor.workflows.qa.subtask_result_schema import (
+from athanor.workflows.qa.orchestrator_helpers import fan_out_subtasks  # noqa: E402
+from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig  # noqa: E402
+from athanor.workflows.qa.qa_yaml_v2 import QAReadyCheck  # noqa: E402
+from athanor.workflows.qa.subtask_result_schema import (  # noqa: E402
     CacheHits,
     SubTaskResult,
     SubTaskStatus,
@@ -240,7 +238,6 @@ from athanor.workflows.qa.orchestrator import (  # noqa: E402
     qa_orchestrator_node,
 )
 
-
 _QA_YAML_V2 = """
 version: 2
 workspace_provider:
@@ -266,17 +263,17 @@ packages:
 @pytest.mark.asyncio
 async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
     from pathlib import Path
-    from athanor.workspace_providers import (
-        AffectedSet,
-        WorkspaceApp,
-        WorkspacePackage,
-    )
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+
     from athanor.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
+    from athanor.workspace_providers import (
+        AffectedSet,
+        WorkspaceApp,
+    )
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[
@@ -334,6 +331,7 @@ async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatch):
     from pathlib import Path
+
     from athanor.workspace_providers import AffectedSet, WorkspaceApp
     from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 
@@ -569,16 +567,16 @@ async def test_orchestrator_passes_image_tag_to_run_subtask_when_repo_configured
     the looked-up image_tag is forwarded to run_subtask via fan_out_subtasks."""
     from pathlib import Path
 
-    from athanor.workspace_providers import (
-        AffectedSet,
-        WorkspaceApp,
-    )
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
     from athanor.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
+    from athanor.workspace_providers import (
+        AffectedSet,
+        WorkspaceApp,
+    )
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -694,13 +692,13 @@ async def test_orchestrator_skips_image_lookup_when_disabled(monkeypatch):
     """image_repo.get_active must NOT be called when cache.prebaked_image.enabled=False."""
     from pathlib import Path
 
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
     from athanor.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -754,15 +752,7 @@ async def test_orchestrator_skips_image_lookup_when_disabled(monkeypatch):
 @pytest.mark.asyncio
 async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch):
     """warm_shared_volume must NOT be called when cache.shared_volume.enabled=False."""
-    from pathlib import Path
 
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
-    from athanor.workflows.qa.subtask_result_schema import (
-        CacheHits,
-        SubTaskResult,
-        SubTaskStatus,
-    )
 
     warmer_called = []
 
@@ -827,13 +817,13 @@ async def test_orchestrator_skips_turbo_when_disabled(monkeypatch):
     """turbo_remote_enabled=False must reach run_subtask when cache.turbo_remote.enabled=False."""
     from pathlib import Path
 
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
     from athanor.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -1123,13 +1113,14 @@ async def test_orchestrator_persists_run_metadata_after_resolution(monkeypatch):
     whether force_all_apps was active.
     """
     from pathlib import Path
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+
     from athanor.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[
@@ -1210,13 +1201,14 @@ async def test_orchestrator_persists_run_metadata_with_force_all_apps(monkeypatc
     is empty. The diff path is bypassed, so changed_files may be empty.
     """
     from pathlib import Path
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+
     from athanor.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[
@@ -1283,13 +1275,14 @@ async def test_orchestrator_metadata_persist_failure_does_not_break_run(monkeypa
     still finishes through fan-out and produces an outcome.
     """
     from pathlib import Path
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+
     from athanor.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -1350,13 +1343,14 @@ async def test_orchestrator_no_metadata_repo_does_nothing(monkeypatch):
     The run still proceeds normally.
     """
     from pathlib import Path
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+
     from athanor.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -1411,15 +1405,16 @@ async def test_orchestrator_applies_workspace_provider_override(monkeypatch):
     """When the override repo returns a row for the current repo, the
     orchestrator MUST call load_provider with the override's type+config,
     not the qa.yaml's workspace_provider."""
+    from datetime import UTC, datetime
     from pathlib import Path
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+
+    import structlog.testing
+
     from athanor.storage.repositories.qa_workspace_provider_overrides import (
         WorkspaceProviderOverride,
     )
-    from datetime import UTC, datetime
-
-    import structlog.testing
+    from athanor.workspace_providers import AffectedSet, WorkspaceApp
+    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[
@@ -1527,6 +1522,7 @@ async def test_orchestrator_falls_back_to_qa_yaml_when_no_override(monkeypatch):
     """When the override repo returns None, the qa.yaml workspace_provider
     is used unchanged."""
     from pathlib import Path
+
     from athanor.workspace_providers import AffectedSet, WorkspaceApp
     from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 
@@ -1581,6 +1577,7 @@ async def test_orchestrator_handles_override_lookup_failure(monkeypatch):
     """If the override repo raises during get(), the run continues with the
     qa.yaml-based config — admin-side hiccup must not block QA."""
     from pathlib import Path
+
     from athanor.workspace_providers import AffectedSet, WorkspaceApp
     from athanor.workspace_providers.fakes import FakeWorkspaceProvider
 

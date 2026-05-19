@@ -175,11 +175,12 @@ def test_comment_summary_table_includes_cache_column():
     assert "| Cache |" in out
 
 
-import httpx
-import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock  # noqa: E402
 
-from athanor.notifications.qa_comment import upsert_sticky_comment
+import httpx  # noqa: E402
+import pytest  # noqa: E402
+
+from athanor.notifications.qa_comment import upsert_sticky_comment  # noqa: E402
 
 
 def _stub_resp(status_code: int, payload=None, text: str = ""):

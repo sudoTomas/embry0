@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from langchain_core.runnables import RunnableConfig
@@ -86,6 +86,14 @@ async def init_orchestrator_node(
         qa = dict(state.get("qa") or {})
         qa["outcome"] = _outcome_to_dict(outcome)
         return {"qa": qa}
+
+    # The `all([...])` guard above returned for any falsy dep/state value,
+    # so these are present and well-typed here (always true at runtime).
+    assert docker is not None
+    assert sandbox_mgr is not None
+    assert profiles_repo is not None
+    assert isinstance(job_id, str)
+    assert isinstance(repo, str)
 
     profile = await profiles_repo.get("slim")
     if profile is None:
@@ -416,6 +424,9 @@ async def _qa_orchestrator_node_impl(
     if parsed_dict is not None:
         cfg = QAYamlConfigV2.model_validate(parsed_dict)
     else:
+        # parsed_dict is None here, so the guard above guarantees yaml_text
+        # is a non-empty str (always true at runtime).
+        assert isinstance(yaml_text, str)
         cfg = parse_qa_yaml_v2(yaml_text)
 
     if cfg.qa_required == "never":
@@ -616,7 +627,9 @@ async def _qa_orchestrator_node_impl(
         shared_volume_name=shared_volume_name,
         turbo_remote_enabled=cfg.cache.turbo_remote.enabled,
         max_concurrent=cfg.parallelism.max_concurrent_apps,
-        config=config or {},
+        # RunnableConfig is a TypedDict (a plain dict at runtime); the helper
+        # treats config as a generic mapping. Cast is type-only.
+        config=cast("dict[str, Any]", config or {}),
     )
 
     # 6. Persist (idempotent upsert).  Phase 5A: route through

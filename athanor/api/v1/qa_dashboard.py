@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from athanor.api.schemas.qa_dashboard import (
+    _OVERALL,
     AffectedSetResponse,
     AppHistoryItem,
     AppResult,
@@ -18,6 +19,7 @@ from athanor.api.schemas.qa_dashboard import (
     RunDetail,
     RunListItem,
 )
+from athanor.storage.repositories.qa_app_results import QAAppResultRow
 from athanor.workflows.qa.subtask_result_schema import SubTaskStatus
 
 router = APIRouter()
@@ -37,7 +39,7 @@ _FAILED_DASHBOARD_STATUSES = frozenset(
 )
 
 
-def _to_app_result(row) -> AppResult:
+def _to_app_result(row: QAAppResultRow) -> AppResult:
     boot_phase_obj: BootPhaseDetail | None = None
     bp = getattr(row, "boot_phase", None)
     if isinstance(bp, dict):
@@ -46,7 +48,8 @@ def _to_app_result(row) -> AppResult:
         boot_phase_obj = BootPhaseDetail.model_validate(bp)
     return AppResult(
         app_name=row.app_name,
-        status=str(row.status),
+        # row.status is SubTaskStatus (StrEnum) whose .value mirrors _STATUS.
+        status=row.status.value,
         duration_ms=row.duration_ms,
         cache_hits=CacheHitsModel(
             prebaked_image=row.cache_hits.prebaked_image,
@@ -60,7 +63,7 @@ def _to_app_result(row) -> AppResult:
     )
 
 
-def _overall_status(rows) -> str:
+def _overall_status(rows: list[QAAppResultRow]) -> _OVERALL:
     """Three-way rollup mirroring orchestrator's overall_status().
 
     INFRA_FAILURE short-circuits to 'infra_error' (athanor's fault, not the

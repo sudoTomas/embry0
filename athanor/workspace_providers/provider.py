@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +80,7 @@ class WorkspaceProvider(Protocol):
     name: str
     """Class-level registry key, e.g. 'npm-workspaces-turbo'."""
 
-    def __init__(self, repo_root: Path, config: dict) -> None: ...
+    def __init__(self, repo_root: Path, config: dict[str, Any]) -> None: ...
 
     def discover(self) -> tuple[list[WorkspaceApp], list[WorkspacePackage]]:
         """Enumerate every app and package in the workspace.

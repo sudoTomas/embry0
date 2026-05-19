@@ -379,7 +379,7 @@ def cmd_purge(args: argparse.Namespace) -> None:
     _info("Purge complete")
 
 
-def cmd_migrate_qa_config(args) -> None:
+def cmd_migrate_qa_config(args: argparse.Namespace) -> None:
     """Handle `athanor migrate-qa-config`."""
     from athanor.cli.migrate_qa_config import MigrationError, migrate_v1_to_v2
 

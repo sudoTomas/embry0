@@ -31,9 +31,9 @@ class QAWorkflow:
         from athanor.workflows.qa.orchestrator_report import qa_report_node
 
         builder = StateGraph(JobState)
-        builder.add_node("init_orchestrator", init_orchestrator_node)
-        builder.add_node("orchestrate_qa", qa_orchestrator_node)
-        builder.add_node("qa_report", qa_report_node)
+        builder.add_node("init_orchestrator", init_orchestrator_node)  # type: ignore[type-var]
+        builder.add_node("orchestrate_qa", qa_orchestrator_node)  # type: ignore[type-var]
+        builder.add_node("qa_report", qa_report_node)  # type: ignore[type-var]
 
         builder.add_edge(START, "init_orchestrator")
         builder.add_edge("init_orchestrator", "orchestrate_qa")

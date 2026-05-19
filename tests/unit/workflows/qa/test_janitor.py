@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from athanor.workflows.qa.janitor import (
-    JanitorReport,
     detect_stuck_runs,
     reap_orphan_sandboxes,
 )

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from athanor.workspace_providers.provider import (
     AffectedSet,
@@ -48,7 +49,7 @@ class FakeWorkspaceProvider:
         affected_result: AffectedSet | None = None,
         validate_warnings: list[str] | None = None,
         repo_root: Path | None = None,
-        config: dict | None = None,
+        config: dict[str, Any] | None = None,
     ) -> None:
         # Mirror the WorkspaceProvider __init__ signature so registry-loaded
         # tests can drop the fake in transparently.

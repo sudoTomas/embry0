@@ -7,6 +7,7 @@ Two tests as required by C2:
 
 from __future__ import annotations
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -101,7 +102,7 @@ async def test_warm_skips_when_volume_already_warmed_for_same_lockfile(monkeypat
     - NOT create a sandbox
     - NOT run npm ci
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     docker, sandbox_mgr, profiles_repo, proxy_mgr, state_repo = _stub_deps()
 
@@ -111,7 +112,7 @@ async def test_warm_skips_when_volume_already_warmed_for_same_lockfile(monkeypat
         scope_key="job-1",
         volume_name="athanor-qa-vol-job-1",
         last_warmed_sha="aaa",
-        last_warmed_at=datetime.now(timezone.utc),
+        last_warmed_at=datetime.now(UTC),
     ))
 
     async def crash(**kw):

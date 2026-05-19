@@ -160,7 +160,7 @@ class QAMinioClient:
         def _get() -> bytes:
             resp = self._client.get_object(bucket, key)
             try:
-                return cast(bytes, resp.read())
+                return resp.read()
             finally:
                 resp.close()
                 resp.release_conn()

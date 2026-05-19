@@ -79,6 +79,14 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
             "completed_at": time.monotonic(),
         }
 
+    # The `missing` guard above returned for any None dep, so all five are
+    # present here — narrow for the type checker (always true at runtime).
+    assert docker is not None
+    assert sandbox_mgr is not None
+    assert profiles_repo is not None
+    assert minio_sandbox is not None
+    assert token_registry is not None
+
     resolved: ResolvedAppConfig = state["resolved"]
     parent_job_id = state["parent_run_id"]
     sub_job_id = f"{parent_job_id}__{resolved.app_name}"

@@ -1,6 +1,6 @@
 """Unit tests for athanor/cache/image_builder_cli.py — Task B4."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,7 +21,7 @@ async def test_run_skips_when_existing_active_tag_matches_lockfile(monkeypatch):
             repo="org/r1",
             image_tag="org_r1:existing",
             lockfile_sha="abcdef" + "0" * 58,
-            built_at=datetime(2026, 5, 5, tzinfo=timezone.utc),
+            built_at=datetime(2026, 5, 5, tzinfo=UTC),
             built_by="cli",
             is_active=True,
             metadata={},
@@ -68,7 +68,7 @@ async def test_run_force_rebuilds_even_with_matching_sha(monkeypatch):
             repo="org/r1",
             image_tag="org_r1:existing",
             lockfile_sha="aaa",
-            built_at=datetime(2026, 5, 5, tzinfo=timezone.utc),
+            built_at=datetime(2026, 5, 5, tzinfo=UTC),
             built_by="cli",
             is_active=True,
             metadata={},

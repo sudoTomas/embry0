@@ -34,7 +34,6 @@ from athanor.workflows.qa.boot import BootResult
 from athanor.workflows.qa.qa_yaml_v2 import QAE2E, QAReadyCheck
 from athanor.workflows.qa.subtask_result_schema import SubTaskStatus
 
-
 # ---------------------------------------------------------------------------
 # Helper: build a minimal ResolvedAppConfig for testing
 # ---------------------------------------------------------------------------

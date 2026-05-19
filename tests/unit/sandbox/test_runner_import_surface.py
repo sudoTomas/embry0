@@ -28,7 +28,6 @@ import subprocess
 import sys
 import textwrap
 
-
 # The exhaustive list of athanor.execution.* modules that the sandbox image
 # is allowed to load. Mirrors infra/Dockerfile.sandbox COPY directives.
 _SANDBOX_ALLOWED_EXECUTION_MODULES = {

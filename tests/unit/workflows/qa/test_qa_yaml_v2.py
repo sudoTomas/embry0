@@ -2,10 +2,8 @@ import pytest
 from pydantic import ValidationError
 
 from athanor.workflows.qa.qa_yaml_v2 import (
-    AppLocalConfig,
-    QAYamlConfigV2,
-    parse_qa_yaml_v2,
     parse_app_local_yaml,
+    parse_qa_yaml_v2,
 )
 
 MINIMAL_V2 = """
