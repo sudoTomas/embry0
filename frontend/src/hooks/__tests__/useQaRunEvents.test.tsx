@@ -41,6 +41,10 @@ class MockEventSource implements MockEventSourceInstance {
   constructor(url: string, options?: { withCredentials?: boolean }) {
     this.url = url;
     this.withCredentials = options?.withCredentials ?? false;
+    // Test double: capture the constructed instance so assertions can
+    // drive it (onmessage/onerror) and verify close() — aliasing `this`
+    // is the whole point of the mock here.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     lastEs = this;
     allEs.push(this);
   }

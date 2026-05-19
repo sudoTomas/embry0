@@ -101,12 +101,6 @@ describe("qa-dashboard hooks", () => {
     // The query is configured with a 5-minute stale window and no
     // refetchInterval — assert both via the live query state so a future
     // regression to a tighter poll loop fails this test.
-    const opts = result.current as unknown as {
-      // react-query exposes the resolved options on the query observer,
-      // but for our purposes the public fields are enough to confirm the
-      // config: a successful fetch + no refetch scheduled.
-    };
-    void opts;
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy).toHaveBeenCalledWith("org/r", 30);
     // A refetchInterval would be visible as a non-`idle` fetchStatus on a
