@@ -107,8 +107,7 @@ class NpmWorkspacesTurboProvider:
 
         for orphan in sorted(workspace_app_names - declared):
             messages.append(
-                f"warning: app {orphan!r} present in workspace but missing from "
-                f"qa.yaml apps: — athanor will not QA it"
+                f"warning: app {orphan!r} present in workspace but missing from qa.yaml apps: — athanor will not QA it"
             )
 
         return messages

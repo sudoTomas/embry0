@@ -472,9 +472,7 @@ def _media_type_for(filename: str) -> str:
     return "application/octet-stream"
 
 
-async def _find_latest_attempt_with_artifact(
-    minio: Any, sub_job_id: str, kind: str, filename: str
-) -> int | None:
+async def _find_latest_attempt_with_artifact(minio: Any, sub_job_id: str, kind: str, filename: str) -> int | None:
     """Return the highest attempt under <sub_job_id>/ whose <kind>/<filename> exists.
 
     Mirrors `_resolve_latest_attempt` but additionally requires that the
@@ -495,9 +493,7 @@ async def _find_latest_attempt_with_artifact(
     return max(attempts) if attempts else None
 
 
-async def _find_latest_attempt_for_kind(
-    minio: Any, sub_job_id: str, kind: str
-) -> int | None:
+async def _find_latest_attempt_for_kind(minio: Any, sub_job_id: str, kind: str) -> int | None:
     """Return the highest attempt that has any object under <sub>/<n>/<kind>/.
 
     Used by the listing endpoint, which doesn't know a specific filename.
@@ -546,7 +542,7 @@ async def list_app_artifacts(
     # does we don't want to surface those as filenames).
     prefix = f"{sub}/{n}/{kind}/"
     filenames = sorted(
-        o[len(prefix):] for o in objs if o.startswith(prefix) and "/" not in o[len(prefix):] and len(o) > len(prefix)
+        o[len(prefix) :] for o in objs if o.startswith(prefix) and "/" not in o[len(prefix) :] and len(o) > len(prefix)
     )
     return {"filenames": filenames}
 

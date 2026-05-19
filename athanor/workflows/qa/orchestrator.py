@@ -107,9 +107,7 @@ async def init_orchestrator_node(
         return {"qa": qa}
 
     bootstrap_job_id = f"{job_id}__bootstrap"
-    base: list[str] = (
-        docker._build_base_cmd() if hasattr(docker, "_build_base_cmd") else []
-    )
+    base: list[str] = docker._build_base_cmd() if hasattr(docker, "_build_base_cmd") else []
 
     git_proxy_url = ""
     if proxy_mgr is not None:
@@ -127,9 +125,7 @@ async def init_orchestrator_node(
     changed_files: list[str] = []
     staging_path_str: str | None = None
     try:
-        container_id, sandbox_token = await sandbox_mgr.create(
-            bootstrap_job_id, profile=profile, env=env
-        )
+        container_id, sandbox_token = await sandbox_mgr.create(bootstrap_job_id, profile=profile, env=env)
         cloned = await prep_qa_sandbox_clone(
             docker=docker,
             proxy_mgr=proxy_mgr,
@@ -143,9 +139,7 @@ async def init_orchestrator_node(
             base=base,
         )
         yaml_text = await docker.run_cmd(
-            docker.build_exec_cmd(
-                container_id, ["cat", "/workspace/.athanor/qa.yaml"]
-            ),
+            docker.build_exec_cmd(container_id, ["cat", "/workspace/.athanor/qa.yaml"]),
             timeout=10,
         )
         # Phase-2 C3: read lockfile while bootstrap container is still alive.
@@ -279,15 +273,9 @@ async def init_orchestrator_node(
                 scope = sv_cfg.scope
                 scope_key = job_id if scope == "per-job" else (repo or "")
                 vol_scope = VolumeScope(scope)
-                volume_name = await volume_mgr.ensure(
-                    scope=vol_scope, scope_key=scope_key
-                )
+                volume_name = await volume_mgr.ensure(scope=vol_scope, scope_key=scope_key)
 
-                lockfile_sha = (
-                    hashlib.sha256(lockfile_text.encode()).hexdigest()
-                    if lockfile_text
-                    else ""
-                )
+                lockfile_sha = hashlib.sha256(lockfile_text.encode()).hexdigest() if lockfile_text else ""
 
                 if lockfile_sha:
                     warm_result = await warm_shared_volume(
@@ -601,18 +589,15 @@ async def _qa_orchestrator_node_impl(
         return {"qa": qa_state}
 
     # 4. Resolve per-app configs. Phase 1: app-local files default to None.
-    resolved_configs = [
-        resolve_app_config(name, cfg, app_local=None) for name in apps
-    ]
+    resolved_configs = [resolve_app_config(name, cfg, app_local=None) for name in apps]
 
     # 4a. Look up prebaked image tag if cache layer is enabled.
     image_repo = configurable.get("qa_image_tags_repo")
     image_tag: str | None = None
     if image_repo is not None and cfg.cache.prebaked_image.enabled:
         from athanor.cache.prebaked_image import PrebakedImageLookup
-        image_tag = await PrebakedImageLookup(image_repo=image_repo).get_tag_for_repo(
-            state.get("repo") or ""
-        )
+
+        image_tag = await PrebakedImageLookup(image_repo=image_repo).get_tag_for_repo(state.get("repo") or "")
 
     # 5. Fan out.
     # Pass shared_volume_name from init_orchestrator_node (C3 wiring).
@@ -668,9 +653,7 @@ async def _qa_orchestrator_node_impl(
     qa_state["outcome"] = _outcome_to_dict(outcome)
     qa_state["per_app_results"] = [r.to_dict() for r in per_app_results]
     qa_state["final_status"] = (
-        "passed" if overall == "passed"
-        else "failed" if overall in ("failed", "infra_error")
-        else "pending"
+        "passed" if overall == "passed" else "failed" if overall in ("failed", "infra_error") else "pending"
     )
 
     logger.info(

@@ -53,8 +53,7 @@ def test_comment_failed_run_expands_failing_apps():
         apps_to_qa=["hub", "companion"],
         results=[
             _r("hub", SubTaskStatus.PASSED),
-            _r("companion", SubTaskStatus.QA_FAILURE,
-               failure_summary="customer list did not render"),
+            _r("companion", SubTaskStatus.QA_FAILURE, failure_summary="customer list did not render"),
         ],
     )
     assert "Status: Failed" in out
@@ -79,9 +78,12 @@ def test_comment_includes_trace_links_when_available():
         overall_status="failed",
         apps_to_qa=["hub"],
         results=[
-            _r("hub", SubTaskStatus.QA_FAILURE,
-               trace_url="https://athanor.example/traces/run-45/hub.zip",
-               failure_summary="loads page did not render"),
+            _r(
+                "hub",
+                SubTaskStatus.QA_FAILURE,
+                trace_url="https://athanor.example/traces/run-45/hub.zip",
+                failure_summary="loads page did not render",
+            ),
         ],
     )
     assert "https://athanor.example/traces/run-45/hub.zip" in out
@@ -118,6 +120,7 @@ def test_comment_infra_error_distinguishable():
 
 def test_human_duration_clamps_negative():
     from athanor.notifications.qa_comment import _human_duration
+
     assert _human_duration(-100) == "0.0s"
     assert _human_duration(0) == "0.0s"
     assert _human_duration(500) == "0.5s"
@@ -251,10 +254,13 @@ async def test_upsert_updates_when_existing_comment_has_marker(monkeypatch):
             return None
 
         async def get(self, url, headers=None):
-            return _stub_resp(200, [
-                {"id": 1, "body": "some other comment"},
-                {"id": 7, "body": f"{COMMENT_MARKER}\nold content"},
-            ])
+            return _stub_resp(
+                200,
+                [
+                    {"id": 1, "body": "some other comment"},
+                    {"id": 7, "body": f"{COMMENT_MARKER}\nold content"},
+                ],
+            )
 
         async def post(self, url, json=None, headers=None):
             raise AssertionError("should not post when existing comment found")
@@ -289,10 +295,13 @@ async def test_upsert_handles_multiple_marker_matches_by_picking_first(monkeypat
             return None
 
         async def get(self, url, headers=None):
-            return _stub_resp(200, [
-                {"id": 5, "body": f"{COMMENT_MARKER}\nfirst"},
-                {"id": 6, "body": f"{COMMENT_MARKER}\nsecond"},
-            ])
+            return _stub_resp(
+                200,
+                [
+                    {"id": 5, "body": f"{COMMENT_MARKER}\nfirst"},
+                    {"id": 6, "body": f"{COMMENT_MARKER}\nsecond"},
+                ],
+            )
 
         async def patch(self, url, json=None, headers=None):
             patched["url"] = url

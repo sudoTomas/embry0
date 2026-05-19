@@ -16,22 +16,26 @@ def _make_state_with_db():
 
     app = create_app()
     db = MagicMock()  # DatabasePool stand-in; the repo constructors only
-                      # store the reference and don't call anything on it
-                      # at __init__ time.
+    # store the reference and don't call anything on it
+    # at __init__ time.
 
     import asyncio
-    asyncio.run(_init_app_state(
-        app=app,
-        db=db,
-        database_url="postgresql://test/test",
-        github_token="test-token-32-characters-or-longer-x",
-    ))
+
+    asyncio.run(
+        _init_app_state(
+            app=app,
+            db=db,
+            database_url="postgresql://test/test",
+            github_token="test-token-32-characters-or-longer-x",
+        )
+    )
 
     # Simulate the lifespan's docker initialization and manager construction
     # (the real lifespan does this at line ~481 and ~645, but the test
     # short-circuits by calling _init_app_state directly).
     app.state.docker = MagicMock()
     from athanor.cache.volume_manager import SharedVolumeManager
+
     real_manager = SharedVolumeManager(
         docker=app.state.docker,
         state_repo=app.state.qa_volume_state_repo,

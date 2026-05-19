@@ -18,9 +18,7 @@ from athanor.cache.image_builder import build_qa_image
 logger = structlog.get_logger(__name__)
 
 
-async def _compute_remote_lockfile_sha(
-    *, repo: str, branch: str, deps: dict[str, Any]
-) -> str:
+async def _compute_remote_lockfile_sha(*, repo: str, branch: str, deps: dict[str, Any]) -> str:
     """Spin up a tiny probe sandbox, clone the repo, hash the lockfile, destroy.
 
     Phase-2 inelegance: we re-clone just to read the lockfile. Phase-3
@@ -36,10 +34,7 @@ async def _compute_remote_lockfile_sha(
     proxy_mgr = deps["proxy_mgr"]
 
     profile = await profiles_repo.get("slim")
-    job_id = (
-        f"image-builder-probe__{repo.replace('/', '_')}"
-        f"__{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
-    )
+    job_id = f"image-builder-probe__{repo.replace('/', '_')}__{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}"
     container_id, sandbox_token = await sandbox_mgr.create(
         job_id,
         profile=profile,
@@ -107,9 +102,7 @@ async def run_build_qa_image(
     if not force:
         active = await image_repo.get_active(repo)
         if active is not None:
-            current_sha = await _compute_remote_lockfile_sha(
-                repo=repo, branch=branch, deps=deps
-            )
+            current_sha = await _compute_remote_lockfile_sha(repo=repo, branch=branch, deps=deps)
             if active.lockfile_sha == current_sha:
                 logger.info(
                     "qa_image_build_skipped",

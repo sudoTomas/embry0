@@ -23,7 +23,12 @@ def _state(**qa_overrides):
                 "app_name": "hub",
                 "status": "passed",
                 "duration_ms": 1000,
-                "cache_hits": {"prebaked_image": False, "shared_volume": False, "turbo_remote_hits": [], "turbo_remote_misses": []},
+                "cache_hits": {
+                    "prebaked_image": False,
+                    "shared_volume": False,
+                    "turbo_remote_hits": [],
+                    "turbo_remote_misses": [],
+                },
                 "trace_url": None,
                 "failure_summary": None,
                 "raw_result": {},
@@ -155,13 +160,15 @@ async def test_failed_run_passes_failure_summary_through(monkeypatch):
     )
 
     config = {"configurable": {"github_token": "tok"}}
-    state = _state(outcome={
-        "overall_status": "infra_error",
-        "apps_to_qa": [],
-        "failure_summary": "qa.yaml not loaded",
-        "validation_errors": [],
-        "validation_warnings": [],
-    })
+    state = _state(
+        outcome={
+            "overall_status": "infra_error",
+            "apps_to_qa": [],
+            "failure_summary": "qa.yaml not loaded",
+            "validation_errors": [],
+            "validation_warnings": [],
+        }
+    )
     await qa_report_node(state, config)
 
     check_kwargs = written_check.await_args.kwargs

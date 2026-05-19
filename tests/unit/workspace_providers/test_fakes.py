@@ -24,7 +24,9 @@ def test_fake_discover_returns_canned_lists():
         WorkspacePackage(name="@x/hub", path=Path("apps/hub"), is_app=True),
         WorkspacePackage(name="@x/auth", path=Path("packages/auth"), is_app=False),
     ]
-    fake = FakeWorkspaceProvider(apps=apps, packages=packages, affected_result=AffectedSet(frozenset(), frozenset(), frozenset()))
+    fake = FakeWorkspaceProvider(
+        apps=apps, packages=packages, affected_result=AffectedSet(frozenset(), frozenset(), frozenset())
+    )
     discovered_apps, discovered_packages = fake.discover()
     assert discovered_apps == apps
     assert discovered_packages == packages

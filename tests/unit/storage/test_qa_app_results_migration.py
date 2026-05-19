@@ -21,10 +21,18 @@ async def test_qa_app_results_table_exists(pg_pool):
 @pytest.mark.asyncio
 async def test_qa_app_results_has_expected_columns(pg_pool):
     expected = {
-        "id", "job_id", "app_name", "status",
-        "started_at", "duration_ms", "cache_hits",
-        "trace_url", "failure_summary", "raw_result",
-        "created_at", "updated_at",
+        "id",
+        "job_id",
+        "app_name",
+        "status",
+        "started_at",
+        "duration_ms",
+        "cache_hits",
+        "trace_url",
+        "failure_summary",
+        "raw_result",
+        "created_at",
+        "updated_at",
     }
     async with pg_pool.acquire() as conn:
         rows = await conn.fetch(

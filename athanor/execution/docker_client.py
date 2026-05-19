@@ -126,11 +126,7 @@ class DockerClient:
         # failure mode where the inner docker daemon's cached layers won an
         # implicit race against the registry's newer digest.
         first_segment = image.split("/", 1)[0] if "/" in image else ""
-        if first_segment and (
-            "." in first_segment
-            or ":" in first_segment
-            or first_segment == "localhost"
-        ):
+        if first_segment and ("." in first_segment or ":" in first_segment or first_segment == "localhost"):
             cmd.append("--pull=always")
         cmd.extend(["--name", name])
         cmd.append(f"--network={network}")

@@ -26,10 +26,7 @@ def _v1_to_v2_dict(v1_data: dict[str, Any], app_name: str) -> dict[str, Any]:
     No filesystem side effects. Suitable for unit + golden-file tests.
     """
     if v1_data.get("version") != 1:
-        raise MigrationError(
-            f"input is not v1 (version={v1_data.get('version')!r}); migrator only "
-            "converts v1 → v2"
-        )
+        raise MigrationError(f"input is not v1 (version={v1_data.get('version')!r}); migrator only converts v1 → v2")
 
     # Validate v1 round-trip via existing schema; surface field errors clearly.
     try:

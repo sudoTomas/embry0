@@ -23,9 +23,7 @@ from athanor.workflows.qa.subtask_state import SubTaskState
 logger = structlog.get_logger(__name__)
 
 
-async def _read_boot_log_tail(
-    *, docker: Any, sandbox_id: str, max_bytes: int = 8192
-) -> str:
+async def _read_boot_log_tail(*, docker: Any, sandbox_id: str, max_bytes: int = 8192) -> str:
     """Best-effort read of the dev-server stdout log captured by run_boot_phase.
 
     boot.py backgrounds the user's startup command with stdout/stderr piped

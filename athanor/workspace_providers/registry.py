@@ -56,9 +56,7 @@ def available_provider_names() -> list[str]:
     return sorted({ep.name for ep in entry_points(group=_GROUP)})
 
 
-def load_provider(
-    name: str, repo_root: Path, config: dict[str, Any]
-) -> WorkspaceProvider:
+def load_provider(name: str, repo_root: Path, config: dict[str, Any]) -> WorkspaceProvider:
     """Instantiate a registered provider.
 
     Raises WorkspaceProviderError if `name` is not registered or the
@@ -68,8 +66,7 @@ def load_provider(
     if cls is None:
         registered = available_provider_names()
         raise WorkspaceProviderError(
-            f"no workspace_provider registered named {name!r} — "
-            f"installed providers are: {registered or '(none)'}"
+            f"no workspace_provider registered named {name!r} — installed providers are: {registered or '(none)'}"
         )
 
     instance = cls(repo_root, config)

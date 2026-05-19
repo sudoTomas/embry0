@@ -67,13 +67,15 @@ def test_owners_of_paths_aggregates_to_set():
         apps_glob="apps/*",
         packages_glob="packages/*",
     )
-    owners = idx.owners_of_paths([
-        Path("apps/hub/app/page.tsx"),
-        Path("apps/companion/app/page.tsx"),
-        Path("README.md"),                          # root file → ignored
-        Path("packages/auth/src/index.ts"),
-        Path("apps/hub/app/about.tsx"),             # also @toy/hub
-    ])
+    owners = idx.owners_of_paths(
+        [
+            Path("apps/hub/app/page.tsx"),
+            Path("apps/companion/app/page.tsx"),
+            Path("README.md"),  # root file → ignored
+            Path("packages/auth/src/index.ts"),
+            Path("apps/hub/app/about.tsx"),  # also @toy/hub
+        ]
+    )
     assert owners == frozenset({"@toy/hub", "@toy/companion", "@toy/auth"})
 
 

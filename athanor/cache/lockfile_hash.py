@@ -32,6 +32,5 @@ def compute_lockfile_sha(workspace_root: Path) -> str:
         if path.is_file():
             return hashlib.sha256(path.read_bytes()).hexdigest()
     raise LockfileNotFoundError(
-        f"no lockfile found in {workspace_root} "
-        f"(looked for: {', '.join(_LOCKFILE_CANDIDATES)})"
+        f"no lockfile found in {workspace_root} (looked for: {', '.join(_LOCKFILE_CANDIDATES)})"
     )

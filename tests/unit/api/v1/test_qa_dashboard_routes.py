@@ -289,9 +289,7 @@ def test_get_run_detail_overall_status_passed_when_all_pass():
         ]
     )
     jobs_repo = AsyncMock()
-    jobs_repo.get = AsyncMock(
-        return_value={"job_id": "j", "repo": "org/r1", "started_at": datetime.now(UTC)}
-    )
+    jobs_repo.get = AsyncMock(return_value={"job_id": "j", "repo": "org/r1", "started_at": datetime.now(UTC)})
     _, client = _make_app(qa_repo=qa_repo, jobs_repo=jobs_repo)
     resp = client.get("/api/v1/qa/runs/j", headers=_AUTH)
     assert resp.json()["overall_status"] == "passed"
@@ -325,9 +323,7 @@ def test_get_run_detail_overall_status_infra_error_when_any_infra_failure():
         ]
     )
     jobs_repo = AsyncMock()
-    jobs_repo.get = AsyncMock(
-        return_value={"job_id": "j", "repo": "org/r1", "started_at": datetime.now(UTC)}
-    )
+    jobs_repo.get = AsyncMock(return_value={"job_id": "j", "repo": "org/r1", "started_at": datetime.now(UTC)})
     _, client = _make_app(qa_repo=qa_repo, jobs_repo=jobs_repo)
     resp = client.get("/api/v1/qa/runs/j", headers=_AUTH)
     assert resp.status_code == 200
@@ -362,9 +358,7 @@ def test_get_run_detail_overall_status_skipped_is_pass():
         ]
     )
     jobs_repo = AsyncMock()
-    jobs_repo.get = AsyncMock(
-        return_value={"job_id": "j", "repo": "org/r1", "started_at": datetime.now(UTC)}
-    )
+    jobs_repo.get = AsyncMock(return_value={"job_id": "j", "repo": "org/r1", "started_at": datetime.now(UTC)})
     _, client = _make_app(qa_repo=qa_repo, jobs_repo=jobs_repo)
     resp = client.get("/api/v1/qa/runs/j", headers=_AUTH)
     assert resp.status_code == 200

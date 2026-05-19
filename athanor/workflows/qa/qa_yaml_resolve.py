@@ -55,9 +55,7 @@ def resolve_app_config(
 
     # mode and sandbox_profile follow Defaults → AppEntry → AppLocal
     sandbox_profile = (
-        (app_local.sandbox_profile if app_local else None)
-        or app_entry.sandbox_profile
-        or defaults.sandbox_profile
+        (app_local.sandbox_profile if app_local else None) or app_entry.sandbox_profile or defaults.sandbox_profile
     )
 
     if app_local is not None and app_local.ready_checks is not None:

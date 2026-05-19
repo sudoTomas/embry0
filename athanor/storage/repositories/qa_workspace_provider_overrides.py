@@ -33,8 +33,7 @@ class QAWorkspaceProviderOverridesRepository:
 
     async def list_all(self) -> list[WorkspaceProviderOverride]:
         rows = await self.db.fetch(
-            "SELECT repo, provider_type, config, updated_at "
-            "FROM qa_workspace_provider_overrides ORDER BY repo"
+            "SELECT repo, provider_type, config, updated_at FROM qa_workspace_provider_overrides ORDER BY repo"
         )
         return [
             WorkspaceProviderOverride(
@@ -48,8 +47,7 @@ class QAWorkspaceProviderOverridesRepository:
 
     async def get(self, repo: str) -> WorkspaceProviderOverride | None:
         row = await self.db.fetchrow(
-            "SELECT repo, provider_type, config, updated_at "
-            "FROM qa_workspace_provider_overrides WHERE repo = $1",
+            "SELECT repo, provider_type, config, updated_at FROM qa_workspace_provider_overrides WHERE repo = $1",
             repo,
         )
         if row is None:
@@ -94,8 +92,7 @@ class QAWorkspaceProviderOverridesRepository:
         # mutation row-by-row (see e.g. agent_definitions.delete_by_id);
         # avoids parsing asyncpg's "DELETE N" command-tag string.
         row = await self.db.fetchrow(
-            "DELETE FROM qa_workspace_provider_overrides WHERE repo = $1 "
-            "RETURNING repo",
+            "DELETE FROM qa_workspace_provider_overrides WHERE repo = $1 RETURNING repo",
             repo,
         )
         return row is not None

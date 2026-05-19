@@ -270,10 +270,10 @@ class QAStateBlock(TypedDict, total=False):
     boot_diagnostic_screenshot_path: str | None  # MinIO key, e.g. "JOB1/1/screenshots/boot-timeout.png"
     # ── Multi-app additions (Phase 1) ──
     qa_yaml_v2_raw: str | None
-    qa_yaml_v2_parsed: dict[str, Any] | None       # dict shape of QAYamlConfigV2.model_dump()
+    qa_yaml_v2_parsed: dict[str, Any] | None  # dict shape of QAYamlConfigV2.model_dump()
     apps_to_qa: list[str] | None
-    per_app_results: list[dict[str, Any]] | None   # list of SubTaskResult.to_dict()
-    outcome: dict[str, Any] | None                 # OrchestratorOutcome dump
+    per_app_results: list[dict[str, Any]] | None  # list of SubTaskResult.to_dict()
+    outcome: dict[str, Any] | None  # OrchestratorOutcome dump
     validation_errors: list[str] | None
     validation_warnings: list[str] | None
     head_sha: str | None

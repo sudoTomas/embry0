@@ -25,8 +25,7 @@ async def db(db_with_migrations: DatabasePool) -> DatabasePool:
 
 async def _seed_job(db: DatabasePool, job_id: str) -> None:
     await db.execute(
-        "INSERT INTO jobs (job_id, repo, task) VALUES ($1, 'org/repo', 'test')"
-        " ON CONFLICT (job_id) DO NOTHING",
+        "INSERT INTO jobs (job_id, repo, task) VALUES ($1, 'org/repo', 'test') ON CONFLICT (job_id) DO NOTHING",
         job_id,
     )
 

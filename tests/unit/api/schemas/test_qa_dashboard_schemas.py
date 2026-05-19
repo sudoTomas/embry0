@@ -202,13 +202,15 @@ def test_cache_layer_stats_rejects_out_of_range_hit_ratio():
 
 def test_cache_layer_stats_extra_forbid():
     with pytest.raises(ValidationError):
-        CacheLayerStats.model_validate({
-            "layer": "prebaked_image",
-            "hits": 1,
-            "misses": 1,
-            "hit_ratio": 0.5,
-            "unexpected": "x",
-        })
+        CacheLayerStats.model_validate(
+            {
+                "layer": "prebaked_image",
+                "hits": 1,
+                "misses": 1,
+                "hit_ratio": 0.5,
+                "unexpected": "x",
+            }
+        )
 
 
 def test_cache_analytics_response_round_trip():
@@ -267,33 +269,37 @@ def test_cache_analytics_response_rejects_window_days_zero_or_negative():
 
 def test_cache_analytics_response_rejects_window_days_above_max():
     with pytest.raises(ValidationError):
-        CacheAnalyticsResponse.model_validate({
-            "repo": "org/r1",
-            "window_days": 366,
-            "total_runs": 0,
-            "total_subtasks": 0,
-            "layers": [
-                {"layer": "prebaked_image", "hits": 0, "misses": 0, "hit_ratio": 0.0},
-                {"layer": "shared_volume", "hits": 0, "misses": 0, "hit_ratio": 0.0},
-                {"layer": "turbo_remote", "hits": 0, "misses": 0, "hit_ratio": 0.0},
-            ],
-        })
+        CacheAnalyticsResponse.model_validate(
+            {
+                "repo": "org/r1",
+                "window_days": 366,
+                "total_runs": 0,
+                "total_subtasks": 0,
+                "layers": [
+                    {"layer": "prebaked_image", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                    {"layer": "shared_volume", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                    {"layer": "turbo_remote", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                ],
+            }
+        )
 
 
 def test_cache_analytics_response_extra_forbid():
     with pytest.raises(ValidationError):
-        CacheAnalyticsResponse.model_validate({
-            "repo": "org/r1",
-            "window_days": 30,
-            "total_runs": 0,
-            "total_subtasks": 0,
-            "layers": [
-                {"layer": "prebaked_image", "hits": 0, "misses": 0, "hit_ratio": 0.0},
-                {"layer": "shared_volume", "hits": 0, "misses": 0, "hit_ratio": 0.0},
-                {"layer": "turbo_remote", "hits": 0, "misses": 0, "hit_ratio": 0.0},
-            ],
-            "extra_field": True,
-        })
+        CacheAnalyticsResponse.model_validate(
+            {
+                "repo": "org/r1",
+                "window_days": 30,
+                "total_runs": 0,
+                "total_subtasks": 0,
+                "layers": [
+                    {"layer": "prebaked_image", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                    {"layer": "shared_volume", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                    {"layer": "turbo_remote", "hits": 0, "misses": 0, "hit_ratio": 0.0},
+                ],
+                "extra_field": True,
+            }
+        )
 
 
 # ── Phase 5F: flake heatmap ────────────────────────────────────────────────
@@ -323,11 +329,13 @@ def test_flake_response_round_trip():
 
 def test_flake_response_rejects_window_days_above_90():
     with pytest.raises(ValidationError):
-        FlakeResponse.model_validate({
-            "repo": "org/r1",
-            "window_days": 91,
-            "apps": [],
-        })
+        FlakeResponse.model_validate(
+            {
+                "repo": "org/r1",
+                "window_days": 91,
+                "apps": [],
+            }
+        )
 
 
 def test_flake_response_rejects_window_days_zero_or_negative():
@@ -377,9 +385,11 @@ def test_flake_row_rejects_out_of_range_score():
 
 def test_flake_response_extra_forbid():
     with pytest.raises(ValidationError):
-        FlakeResponse.model_validate({
-            "repo": "org/r1",
-            "window_days": 7,
-            "apps": [],
-            "unexpected": "x",
-        })
+        FlakeResponse.model_validate(
+            {
+                "repo": "org/r1",
+                "window_days": 7,
+                "apps": [],
+                "unexpected": "x",
+            }
+        )

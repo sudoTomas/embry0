@@ -93,6 +93,7 @@ class QAResult(BaseModel):
         # the agent's actual finding). Coerce + log so the dashboard
         # reflects the QA finding while the inconsistency is visible.
         import logging  # local import — schema module stays import-light
+
         log = logging.getLogger(__name__)
 
         crash_present = any(a.category == "crash" for a in self.anomalies)

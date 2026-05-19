@@ -122,18 +122,10 @@ async def test_stage_workspace_extracts_package_jsons_and_lockfile(tmp_path: Pat
             "/workspace/apps/companion/package.json\n"
             "/workspace/packages/auth/package.json\n"
         ),
-        "cat /workspace/package.json": (
-            '{"name": "root", "private": true, "workspaces": ["apps/*", "packages/*"]}'
-        ),
-        "cat /workspace/apps/hub/package.json": (
-            '{"name": "@toy/hub", "dependencies": {"@toy/auth": "*"}}'
-        ),
-        "cat /workspace/apps/companion/package.json": (
-            '{"name": "@toy/companion"}'
-        ),
-        "cat /workspace/packages/auth/package.json": (
-            '{"name": "@toy/auth"}'
-        ),
+        "cat /workspace/package.json": ('{"name": "root", "private": true, "workspaces": ["apps/*", "packages/*"]}'),
+        "cat /workspace/apps/hub/package.json": ('{"name": "@toy/hub", "dependencies": {"@toy/auth": "*"}}'),
+        "cat /workspace/apps/companion/package.json": ('{"name": "@toy/companion"}'),
+        "cat /workspace/packages/auth/package.json": ('{"name": "@toy/auth"}'),
         "cat /workspace/package-lock.json": '{"lockfileVersion": 3}',
     }
     docker = _StubDocker(responses)
@@ -157,6 +149,7 @@ async def test_stage_workspace_extracts_package_jsons_and_lockfile(tmp_path: Pat
 
     # Contents preserved
     import json
+
     root = json.loads((staging / "package.json").read_text())
     assert root["name"] == "root"
     hub = json.loads((staging / "apps" / "hub" / "package.json").read_text())

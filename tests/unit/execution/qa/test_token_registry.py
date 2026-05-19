@@ -58,8 +58,6 @@ def test_subtask_nodes_does_not_await_unregister():
     synchronously (no `await`), matching the sync registry contract."""
     import pathlib
 
-    src = pathlib.Path(
-        "athanor/workflows/qa/subtask_nodes.py"
-    ).read_text()
+    src = pathlib.Path("athanor/workflows/qa/subtask_nodes.py").read_text()
     assert "await token_registry.unregister(" not in src
     assert "await qa_token_registry.unregister(" not in src

@@ -50,6 +50,7 @@ async def test_warm_runs_npm_ci_when_state_has_no_prior_sha(monkeypatch):
 
     async def fake_clone(**kw):
         from athanor.workflows.qa._subtask_prep import ClonedSandbox
+
         return ClonedSandbox(head_sha="abc123")
 
     monkeypatch.setattr("athanor.cache.volume_warmer.prep_qa_sandbox_clone", fake_clone)
@@ -107,13 +108,16 @@ async def test_warm_skips_when_volume_already_warmed_for_same_lockfile(monkeypat
     docker, sandbox_mgr, profiles_repo, proxy_mgr, state_repo = _stub_deps()
 
     from athanor.storage.repositories.qa_volume_state import VolumeState
-    state_repo.get = AsyncMock(return_value=VolumeState(
-        scope="per-job",
-        scope_key="job-1",
-        volume_name="athanor-qa-vol-job-1",
-        last_warmed_sha="aaa",
-        last_warmed_at=datetime.now(UTC),
-    ))
+
+    state_repo.get = AsyncMock(
+        return_value=VolumeState(
+            scope="per-job",
+            scope_key="job-1",
+            volume_name="athanor-qa-vol-job-1",
+            last_warmed_sha="aaa",
+            last_warmed_at=datetime.now(UTC),
+        )
+    )
 
     async def crash(**kw):
         raise AssertionError("prep_qa_sandbox_clone should not be called on warm-skip")

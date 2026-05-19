@@ -110,7 +110,10 @@ async def pg_pool() -> AsyncIterator[asyncpg.Pool]:
             )
 
         pool = await asyncpg.create_pool(
-            url, min_size=1, max_size=5, init=_init_connection,
+            url,
+            min_size=1,
+            max_size=5,
+            init=_init_connection,
         )
         assert pool is not None
 

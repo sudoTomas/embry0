@@ -11,11 +11,13 @@ from athanor.workflows.qa.janitor import (
 @pytest.mark.asyncio
 async def test_reap_orphan_sandboxes_removes_containers_for_inactive_runs():
     docker = AsyncMock()
-    docker.list_containers_with_label = AsyncMock(return_value=[
-        {"id": "c1", "labels": {"athanor.qa_job_id": "run-A"}},
-        {"id": "c2", "labels": {"athanor.qa_job_id": "run-B"}},
-        {"id": "c3", "labels": {"athanor.qa_job_id": "run-A"}},
-    ])
+    docker.list_containers_with_label = AsyncMock(
+        return_value=[
+            {"id": "c1", "labels": {"athanor.qa_job_id": "run-A"}},
+            {"id": "c2", "labels": {"athanor.qa_job_id": "run-B"}},
+            {"id": "c3", "labels": {"athanor.qa_job_id": "run-A"}},
+        ]
+    )
     docker.kill = AsyncMock()
     docker.remove = AsyncMock()
 
@@ -32,10 +34,12 @@ async def test_reap_orphan_sandboxes_removes_containers_for_inactive_runs():
 @pytest.mark.asyncio
 async def test_reap_continues_when_one_container_kill_fails():
     docker = AsyncMock()
-    docker.list_containers_with_label = AsyncMock(return_value=[
-        {"id": "c1", "labels": {"athanor.qa_job_id": "dead"}},
-        {"id": "c2", "labels": {"athanor.qa_job_id": "dead"}},
-    ])
+    docker.list_containers_with_label = AsyncMock(
+        return_value=[
+            {"id": "c1", "labels": {"athanor.qa_job_id": "dead"}},
+            {"id": "c2", "labels": {"athanor.qa_job_id": "dead"}},
+        ]
+    )
     docker.kill = AsyncMock(side_effect=[Exception("c1 already dead"), None])
     docker.remove = AsyncMock()
     runs_repo = MagicMock()
@@ -52,9 +56,11 @@ async def test_reap_subtask_sandbox_strips_app_suffix_to_find_parent():
     the parent run is inactive — the '__hub' suffix is stripped before calling
     is_run_active."""
     docker = AsyncMock()
-    docker.list_containers_with_label = AsyncMock(return_value=[
-        {"id": "c-sub", "labels": {"athanor.qa_job_id": "run-A__hub"}},
-    ])
+    docker.list_containers_with_label = AsyncMock(
+        return_value=[
+            {"id": "c-sub", "labels": {"athanor.qa_job_id": "run-A__hub"}},
+        ]
+    )
     docker.kill = AsyncMock()
     docker.remove = AsyncMock()
 
@@ -72,10 +78,12 @@ async def test_reap_subtask_sandbox_strips_app_suffix_to_find_parent():
 @pytest.mark.asyncio
 async def test_detect_stuck_runs_returns_runs_with_no_progress_for_threshold():
     runs_repo = MagicMock()
-    runs_repo.list_in_progress_runs_with_last_progress = AsyncMock(return_value=[
-        {"qa_run_id": "run-1", "minutes_since_progress": 5},
-        {"qa_run_id": "run-2", "minutes_since_progress": 35},
-        {"qa_run_id": "run-3", "minutes_since_progress": 60},
-    ])
+    runs_repo.list_in_progress_runs_with_last_progress = AsyncMock(
+        return_value=[
+            {"qa_run_id": "run-1", "minutes_since_progress": 5},
+            {"qa_run_id": "run-2", "minutes_since_progress": 35},
+            {"qa_run_id": "run-3", "minutes_since_progress": 60},
+        ]
+    )
     stuck = await detect_stuck_runs(runs_repo=runs_repo, threshold_minutes=30)
     assert stuck == ["run-2", "run-3"]

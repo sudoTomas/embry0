@@ -41,9 +41,7 @@ def discover_workspaces(
         # npm 7+ supports {"packages": [...]} form
         workspaces = workspaces.get("packages", [])
     if not isinstance(workspaces, list):
-        raise WorkspaceProviderError(
-            f"root package.json `workspaces` must be a list (got {type(workspaces).__name__})"
-        )
+        raise WorkspaceProviderError(f"root package.json `workspaces` must be a list (got {type(workspaces).__name__})")
 
     apps: list[WorkspaceApp] = []
     packages: list[WorkspacePackage] = []
@@ -64,9 +62,7 @@ def discover_workspaces(
         pkg = _read_package_json(pkg_json_path)
         package_name = pkg.get("name")
         if not isinstance(package_name, str):
-            raise WorkspaceProviderError(
-                f"workspace at {ws_dir.relative_to(repo_root)} has no `name` in package.json"
-            )
+            raise WorkspaceProviderError(f"workspace at {ws_dir.relative_to(repo_root)} has no `name` in package.json")
 
         if package_name in seen:
             continue

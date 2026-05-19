@@ -1,4 +1,3 @@
-
 import pytest
 
 from athanor.workflows.qa.qa_yaml_resolve import (
@@ -58,9 +57,7 @@ def test_root_app_entry_overrides_defaults():
 
 def test_app_local_overrides_root_app_entry_and_defaults():
     cfg = parse_qa_yaml_v2(_ROOT_YAML)
-    local = parse_app_local_yaml(
-        "sandbox_profile: super-jvm\nboot_timeout_seconds: 2400\n"
-    )
+    local = parse_app_local_yaml("sandbox_profile: super-jvm\nboot_timeout_seconds: 2400\n")
     resolved = resolve_app_config("companion", cfg, app_local=local)
     assert resolved.sandbox_profile == "super-jvm"
     assert resolved.boot_timeout_seconds == 2400
@@ -68,9 +65,7 @@ def test_app_local_overrides_root_app_entry_and_defaults():
 
 def test_app_local_acceptance_criteria_replaces_template():
     cfg = parse_qa_yaml_v2(_ROOT_YAML)
-    local = parse_app_local_yaml(
-        "acceptance_criteria:\n  - 'specific A'\n  - 'specific B'\n"
-    )
+    local = parse_app_local_yaml("acceptance_criteria:\n  - 'specific A'\n  - 'specific B'\n")
     resolved = resolve_app_config("hub", cfg, app_local=local)
     assert resolved.acceptance_criteria == ["specific A", "specific B"]
 
@@ -98,9 +93,7 @@ def test_ready_checks_use_root_defaults_when_app_does_not_override():
 
 def test_app_local_ready_checks_replace_defaults_entirely():
     cfg = parse_qa_yaml_v2(_ROOT_YAML)
-    local = parse_app_local_yaml(
-        "ready_checks:\n  - http: 'http://localhost:9999/health'\n    expect_status: 204\n"
-    )
+    local = parse_app_local_yaml("ready_checks:\n  - http: 'http://localhost:9999/health'\n    expect_status: 204\n")
     resolved = resolve_app_config("hub", cfg, app_local=local)
     assert len(resolved.ready_checks) == 1
     assert resolved.ready_checks[0].http == "http://localhost:9999/health"

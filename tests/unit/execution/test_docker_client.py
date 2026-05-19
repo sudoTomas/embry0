@@ -151,10 +151,7 @@ def test_build_run_cmd_tmpfs_mounts_emit_tmpfs_flags(docker: DockerClient):
     # built-ins still use ":rw,nosuid"; the explicit tmpfs_mounts entries
     # use ":rw,nosuid,mode=1777". So every value ends with one of these.
     idxs = [i for i, t in enumerate(cmd) if t == "--tmpfs"]
-    assert all(
-        cmd[i + 1].endswith(":rw,nosuid") or cmd[i + 1].endswith(":rw,nosuid,mode=1777")
-        for i in idxs
-    )
+    assert all(cmd[i + 1].endswith(":rw,nosuid") or cmd[i + 1].endswith(":rw,nosuid,mode=1777") for i in idxs)
 
 
 def test_build_run_cmd_no_tmpfs_when_omitted(docker: DockerClient):
@@ -176,9 +173,13 @@ def test_scrub_cmd_redacts_oauth_token():
     from athanor.execution.docker_client import _scrub_cmd_for_log
 
     cmd = [
-        "docker", "run", "-d",
-        "-e", "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-secret-value",
-        "-e", "QA_JOB_ID=job-1",
+        "docker",
+        "run",
+        "-d",
+        "-e",
+        "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-secret-value",
+        "-e",
+        "QA_JOB_ID=job-1",
         "registry:5000/athanor-sandbox:latest",
     ]
     scrubbed = _scrub_cmd_for_log(cmd)
@@ -195,13 +196,20 @@ def test_scrub_cmd_redacts_known_secret_keys():
     from athanor.execution.docker_client import _scrub_cmd_for_log
 
     cmd = [
-        "docker", "run",
-        "-e", "ANTHROPIC_API_KEY=sk-ant-api...",
-        "-e", "GITHUB_TOKEN=ghp_...",
-        "-e", "ATHANOR_SANDBOX_TOKEN=tok-...",
-        "-e", "POSTGRES_PASSWORD=p4ss",
-        "-e", "ENVIRONMENT_SECRET_KEY=k",
-        "-e", "PROXY_ADMIN_TOKEN=admin",
+        "docker",
+        "run",
+        "-e",
+        "ANTHROPIC_API_KEY=sk-ant-api...",
+        "-e",
+        "GITHUB_TOKEN=ghp_...",
+        "-e",
+        "ATHANOR_SANDBOX_TOKEN=tok-...",
+        "-e",
+        "POSTGRES_PASSWORD=p4ss",
+        "-e",
+        "ENVIRONMENT_SECRET_KEY=k",
+        "-e",
+        "PROXY_ADMIN_TOKEN=admin",
         "img",
     ]
     scrubbed = " ".join(_scrub_cmd_for_log(cmd))

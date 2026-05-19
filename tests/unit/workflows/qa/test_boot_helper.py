@@ -94,11 +94,13 @@ async def test_startup_command_fails_returns_startup_failed():
 
 @pytest.mark.asyncio
 async def test_polls_until_pass():
-    docker = _make_docker([
-        _probe_response(503, "boot in progress"),
-        _probe_response(503, "boot in progress"),
-        _probe_response(200, "OK"),
-    ])
+    docker = _make_docker(
+        [
+            _probe_response(503, "boot in progress"),
+            _probe_response(503, "boot in progress"),
+            _probe_response(200, "OK"),
+        ]
+    )
 
     result = await run_boot_phase(
         qa_yaml=_make_qa_yaml(boot_timeout=10),
@@ -132,14 +134,16 @@ async def test_hits_hard_timeout():
 @pytest.mark.asyncio
 async def test_multiple_ready_checks_all_must_pass():
     """If qa.yaml has 2 ready_checks, both must return 200 in the same attempt."""
-    docker = _make_docker([
-        # Attempt 1: gateway 200, frontend 503 → fails
-        _probe_response(200, "OK"),
-        _probe_response(503, "boot"),
-        # Attempt 2: both 200 → passes
-        _probe_response(200, "OK"),
-        _probe_response(200, "OK"),
-    ])
+    docker = _make_docker(
+        [
+            # Attempt 1: gateway 200, frontend 503 → fails
+            _probe_response(200, "OK"),
+            _probe_response(503, "boot"),
+            # Attempt 2: both 200 → passes
+            _probe_response(200, "OK"),
+            _probe_response(200, "OK"),
+        ]
+    )
 
     qa_yaml = _make_qa_yaml(
         boot_timeout=10,
@@ -163,10 +167,12 @@ async def test_multiple_ready_checks_all_must_pass():
 @pytest.mark.asyncio
 async def test_expect_body_regex_must_match():
     """ready_check supports expect_body_regex; mismatch counts as fail."""
-    docker = _make_docker([
-        _probe_response(200, '{"status":"DOWN"}'),
-        _probe_response(200, '{"status":"UP"}'),
-    ])
+    docker = _make_docker(
+        [
+            _probe_response(200, '{"status":"DOWN"}'),
+            _probe_response(200, '{"status":"UP"}'),
+        ]
+    )
 
     qa_yaml = _make_qa_yaml(
         boot_timeout=10,
@@ -240,12 +246,14 @@ async def test_connect_failed_treated_as_failure_not_crash():
     STATUS=0 with a body containing ERR:<type>:<msg>. That's a normal
     failure (count it as failed_check, keep polling), NOT outcome=timeout
     on first attempt or outcome=startup_failed."""
-    docker = _make_docker([
-        # Attempt 1: connect-failed (server not yet up)
-        _probe_response(0, "ERR:URLError:[Errno 111] Connection refused"),
-        # Attempt 2: server up
-        _probe_response(200, "OK"),
-    ])
+    docker = _make_docker(
+        [
+            # Attempt 1: connect-failed (server not yet up)
+            _probe_response(0, "ERR:URLError:[Errno 111] Connection refused"),
+            # Attempt 2: server up
+            _probe_response(200, "OK"),
+        ]
+    )
 
     result = await run_boot_phase(
         qa_yaml=_make_qa_yaml(boot_timeout=10),

@@ -209,6 +209,4 @@ async def test_create_container_name_is_docker_safe_for_colon_job_id(manager: Sa
     await manager.create(job_id="job-1__hub")
     call_kwargs = manager._docker.build_run_cmd.call_args
     name = call_kwargs.kwargs["name"]
-    assert docker_name_re.fullmatch(name), (
-        f"Container name {name!r} does not satisfy Docker naming regex"
-    )
+    assert docker_name_re.fullmatch(name), f"Container name {name!r} does not satisfy Docker naming regex"

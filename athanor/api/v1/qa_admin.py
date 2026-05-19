@@ -53,9 +53,7 @@ async def list_provider_overrides(
     "/qa/admin/providers/{repo:path}",
     response_model=WorkspaceProviderOverride,
 )
-async def get_provider_override(
-    repo: str, request: Request
-) -> WorkspaceProviderOverride:
+async def get_provider_override(repo: str, request: Request) -> WorkspaceProviderOverride:
     """Fetch the override for ``repo``, or 404 if no row exists."""
     repo_db = request.app.state.qa_workspace_provider_overrides_repo
     row = await repo_db.get(repo)

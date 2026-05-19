@@ -33,7 +33,9 @@ def test_minimal_v2_parses():
 
 def test_version_must_be_2():
     with pytest.raises(ValidationError) as exc:
-        parse_qa_yaml_v2("version: 1\nworkspace_provider:\n  type: x\ndefaults:\n  mode: process\n  sandbox_profile: slim\n  ready_checks: [{http: 'http://x'}]\napps: {}")
+        parse_qa_yaml_v2(
+            "version: 1\nworkspace_provider:\n  type: x\ndefaults:\n  mode: process\n  sandbox_profile: slim\n  ready_checks: [{http: 'http://x'}]\napps: {}"
+        )
     assert "version" in str(exc.value).lower()
 
 
@@ -101,11 +103,7 @@ def test_app_local_file_parses_with_sandbox_profile_override():
 
 
 def test_app_local_file_acceptance_criteria_replaces_template():
-    raw = (
-        "acceptance_criteria:\n"
-        "  - 'customer list renders'\n"
-        "  - 'no 4xx requests'\n"
-    )
+    raw = "acceptance_criteria:\n  - 'customer list renders'\n  - 'no 4xx requests'\n"
     cfg = parse_app_local_yaml(raw)
     assert cfg.acceptance_criteria == ["customer list renders", "no 4xx requests"]
 

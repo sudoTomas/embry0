@@ -350,6 +350,7 @@ async def test_e2e_single_app_passes(monkeypatch):
             duration_ms=1100,
             cache_hits=CacheHits(),
         )
+
     monkeypatch.setattr(
         "athanor.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
@@ -433,7 +434,7 @@ async def test_phase_3_acceptance_real_provider_one_app_affected(monkeypatch):
         "branch_name": "feature/touch-hub",
         "base_branch": "main",
         "issue_number": 1,
-        "repo_root": str(fixture),     # Point provider at the on-disk fixture
+        "repo_root": str(fixture),  # Point provider at the on-disk fixture
         "qa": {
             "qa_yaml_v2_raw": qa_yaml,
             "head_sha": "abc",

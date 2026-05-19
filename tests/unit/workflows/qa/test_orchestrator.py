@@ -78,9 +78,7 @@ def test_resolve_apps_to_qa_filters_out_apps_not_in_qa_yaml():
             WorkspaceApp("ghost", Path("apps/ghost"), "@x/ghost"),
         ],
         packages=[],
-        affected_result=AffectedSet(
-            frozenset(), frozenset(), frozenset({"@x/hub", "@x/ghost"})
-        ),
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset({"@x/hub", "@x/ghost"})),
     )
     apps = resolve_apps_to_qa(provider, cfg, changed_files=[])
     assert apps == ["hub"]  # ghost dropped
@@ -186,6 +184,7 @@ async def test_fan_out_collects_all_results_in_input_order(monkeypatch):
             duration_ms=10,
             cache_hits=CacheHits(),
         )
+
     monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     resolved_configs = [_resolved("hub"), _resolved("companion"), _resolved("lane")]
@@ -203,6 +202,7 @@ async def test_fan_out_collects_all_results_in_input_order(monkeypatch):
 @pytest.mark.asyncio
 async def test_fan_out_isolates_individual_subtask_crashes(monkeypatch):
     """A single sub-task raising should not poison sibling sub-tasks."""
+
     async def fake_run_subtask(resolved, **kw):
         if resolved.app_name == "companion":
             raise RuntimeError("simulated crash")
@@ -212,6 +212,7 @@ async def test_fan_out_isolates_individual_subtask_crashes(monkeypatch):
             duration_ms=5,
             cache_hits=CacheHits(),
         )
+
     monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     results = await fan_out_subtasks(
@@ -299,6 +300,7 @@ async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
             duration_ms=10,
             cache_hits=CacheHits(),
         )
+
     monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     repo_mock = AsyncMock()
@@ -384,6 +386,7 @@ async def test_orchestrator_node_validation_errors_block_fan_out(monkeypatch):
 
     async def crash_subtask(*a, **kw):
         raise AssertionError("fan-out should not have happened")
+
     monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", crash_subtask)
 
     state = {
@@ -753,7 +756,6 @@ async def test_orchestrator_skips_image_lookup_when_disabled(monkeypatch):
 async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch):
     """warm_shared_volume must NOT be called when cache.shared_volume.enabled=False."""
 
-
     warmer_called = []
 
     async def fake_warm(*a, **kw):
@@ -893,9 +895,7 @@ apps:
 
 
 @pytest.mark.asyncio
-async def test_init_orchestrator_populates_changed_files_and_repo_root(
-    tmp_path, monkeypatch
-):
+async def test_init_orchestrator_populates_changed_files_and_repo_root(tmp_path, monkeypatch):
     """The bootstrap sandbox runs git diff + finds + cats package.jsons; the
     orchestrator stashes the staging dir on state['repo_root'] and the diff
     on state['qa']['changed_files']."""
@@ -1010,9 +1010,7 @@ async def test_qa_orchestrator_publishes_done_event_on_success(monkeypatch):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
-    )
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     bus = MagicMock(spec=QAEventBus)
     bus.publish = AsyncMock()
@@ -1147,9 +1145,8 @@ async def test_orchestrator_persists_run_metadata_after_resolution(monkeypatch):
             duration_ms=10,
             cache_hits=CacheHits(),
         )
-    monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
-    )
+
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     qa_app_results_repo = AsyncMock()
     qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
@@ -1230,9 +1227,8 @@ async def test_orchestrator_persists_run_metadata_with_force_all_apps(monkeypatc
             duration_ms=1,
             cache_hits=CacheHits(),
         )
-    monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
-    )
+
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     qa_app_results_repo = AsyncMock()
     qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
@@ -1305,9 +1301,8 @@ async def test_orchestrator_metadata_persist_failure_does_not_break_run(monkeypa
             duration_ms=1,
             cache_hits=CacheHits(),
         )
-    monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
-    )
+
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     qa_app_results_repo = AsyncMock()
     qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
@@ -1373,9 +1368,8 @@ async def test_orchestrator_no_metadata_repo_does_nothing(monkeypatch):
             duration_ms=1,
             cache_hits=CacheHits(),
         )
-    monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
-    )
+
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     qa_app_results_repo = AsyncMock()
     qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
@@ -1436,9 +1430,7 @@ async def test_orchestrator_applies_workspace_provider_override(monkeypatch):
         captured["config"] = dict(config)
         return fake_provider
 
-    monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider", fake_load_provider
-    )
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator.load_provider", fake_load_provider)
 
     async def fake_run_subtask(resolved, **kw):
         from athanor.workflows.qa.subtask_result_schema import (
@@ -1446,15 +1438,15 @@ async def test_orchestrator_applies_workspace_provider_override(monkeypatch):
             SubTaskResult,
             SubTaskStatus,
         )
+
         return SubTaskResult(
             app_name=resolved.app_name,
             status=SubTaskStatus.PASSED,
             duration_ms=1,
             cache_hits=CacheHits(),
         )
-    monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask
-    )
+
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     override_repo = AsyncMock()
     override_repo.get = AsyncMock(
@@ -1500,11 +1492,7 @@ async def test_orchestrator_applies_workspace_provider_override(monkeypatch):
     # The override-applied log line must carry both the pre-override qa.yaml
     # snapshot AND the override values so the diff is reconstructable from
     # one line — not just provider_type.
-    applied = [
-        e
-        for e in log_entries
-        if e.get("event") == "qa_workspace_provider_override_applied"
-    ]
+    applied = [e for e in log_entries if e.get("event") == "qa_workspace_provider_override_applied"]
     assert len(applied) == 1, f"expected one override-applied log, got: {applied}"
     entry = applied[0]
     assert entry["repo"] == "org/repo"
@@ -1539,9 +1527,7 @@ async def test_orchestrator_falls_back_to_qa_yaml_when_no_override(monkeypatch):
         captured["config"] = dict(config)
         return fake_provider
 
-    monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider", fake_load_provider
-    )
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator.load_provider", fake_load_provider)
 
     override_repo = AsyncMock()
     override_repo.get = AsyncMock(return_value=None)
@@ -1593,9 +1579,7 @@ async def test_orchestrator_handles_override_lookup_failure(monkeypatch):
         captured["name"] = name
         return fake_provider
 
-    monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider", fake_load_provider
-    )
+    monkeypatch.setattr("athanor.workflows.qa.orchestrator.load_provider", fake_load_provider)
 
     override_repo = AsyncMock()
     override_repo.get = AsyncMock(side_effect=RuntimeError("db blew up"))

@@ -9,6 +9,7 @@ from athanor.storage.repositories.qa_image_tags import QAImageTagRow
 
 def _row(image_tag: str, lockfile_sha: str = "deadbeef") -> QAImageTagRow:
     from datetime import datetime
+
     return QAImageTagRow(
         repo="org/r1",
         image_tag=image_tag,

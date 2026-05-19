@@ -55,9 +55,7 @@ def resolve_apps_to_qa(
     Any provider-affected apps that aren't declared in qa.yaml are silently
     skipped (validate() will surface them as warnings via the comment).
     """
-    no_cascade = frozenset(
-        name for name, entry in config.packages.items() if entry.no_cascade
-    )
+    no_cascade = frozenset(name for name, entry in config.packages.items() if entry.no_cascade)
     affected = provider.affected(
         changed_files=list(changed_files),
         no_cascade_packages=no_cascade,
@@ -66,11 +64,7 @@ def resolve_apps_to_qa(
     workspace_apps, _ = provider.discover()
     pkg_to_app_name = {a.package_name: a.name for a in workspace_apps}
 
-    affected_app_names = {
-        pkg_to_app_name[pkg]
-        for pkg in affected.apps_to_qa
-        if pkg in pkg_to_app_name
-    }
+    affected_app_names = {pkg_to_app_name[pkg] for pkg in affected.apps_to_qa if pkg in pkg_to_app_name}
 
     declared = set(config.apps.keys())
     return sorted(affected_app_names & declared)

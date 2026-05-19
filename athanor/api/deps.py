@@ -122,4 +122,3 @@ def get_docker(request: Request) -> Any:
     if docker is None:
         raise HTTPException(status_code=503, detail="docker client unavailable")
     return docker
-

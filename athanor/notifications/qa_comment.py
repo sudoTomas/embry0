@@ -72,10 +72,7 @@ def _cache_glyphs(hits: CacheHits) -> str:
 def _summary_row(r: SubTaskResult) -> str:
     trace = f"[trace]({r.trace_url})" if r.trace_url else "—"
     cache = _cache_glyphs(r.cache_hits)
-    return (
-        f"| apps/{r.app_name} | {_human_status(r.status)} | "
-        f"{_human_duration(r.duration_ms)} | {cache} | {trace} |"
-    )
+    return f"| apps/{r.app_name} | {_human_status(r.status)} | {_human_duration(r.duration_ms)} | {cache} | {trace} |"
 
 
 def _detail_block(r: SubTaskResult, *, expanded: bool) -> str:
@@ -123,14 +120,10 @@ def render_qa_comment(
         return "\n".join(lines)
 
     if overall_status == "passed":
-        lines.append(
-            f"**Status: Passed** — {len(apps_to_qa)} apps validated"
-        )
+        lines.append(f"**Status: Passed** — {len(apps_to_qa)} apps validated")
     else:
         failing_count = sum(1 for r in results if r.status in FAILED_STATUSES)
-        lines.append(
-            f"**Status: Failed** — {failing_count} of {len(results)} apps did not pass QA"
-        )
+        lines.append(f"**Status: Failed** — {failing_count} of {len(results)} apps did not pass QA")
     lines.append("")
 
     sorted_results = sorted(results, key=lambda r: r.app_name)
@@ -154,10 +147,7 @@ def render_qa_comment(
         lines.append("<summary>passed / skipped (collapsed)</summary>")
         lines.append("")
         for r in passed_or_skipped:
-            lines.append(
-                f"- apps/{r.app_name} — {_human_status(r.status)} "
-                f"({_human_duration(r.duration_ms)})"
-            )
+            lines.append(f"- apps/{r.app_name} — {_human_status(r.status)} ({_human_duration(r.duration_ms)})")
         lines.append("")
         lines.append("</details>")
 

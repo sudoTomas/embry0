@@ -64,13 +64,15 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
     proxy_mgr = configurable.get("proxy_manager")
 
     missing = [
-        n for n, v in [
+        n
+        for n, v in [
             ("docker", docker),
             ("sandbox_manager", sandbox_mgr),
             ("profiles_repo", profiles_repo),
             ("qa_minio_sandbox", minio_sandbox),
             ("qa_token_registry", token_registry),
-        ] if v is None
+        ]
+        if v is None
     ]
     if missing:
         return {
@@ -114,9 +116,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
     shared_volume_name: str | None = state.get("shared_volume_name")
 
     # Create network for DinD mode (mirrors init_qa_node behavior)
-    base: list[str] = (
-        docker._build_base_cmd() if hasattr(docker, "_build_base_cmd") else []
-    )
+    base: list[str] = docker._build_base_cmd() if hasattr(docker, "_build_base_cmd") else []
     if is_dind:
         try:
             await docker.run_cmd(
@@ -150,9 +150,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
         team = os.environ.get("TURBO_TEAM", "")
         token = os.environ.get("TURBO_TOKEN", "")
         if api_url and token:
-            turbo_remote_config = TurboRemoteConfig(
-                api_url=api_url, team=team, token=token
-            )
+            turbo_remote_config = TurboRemoteConfig(api_url=api_url, team=team, token=token)
 
     env = build_qa_sandbox_env(
         user_env_vars=state.get("user_env_vars"),
@@ -165,9 +163,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
 
     # Allocate sandbox.  When the shared-volume cache layer is active, mount
     # the pre-warmed volume at /workspace so npm ci is already done.
-    sandbox_volumes = (
-        [(shared_volume_name, "/workspace")] if shared_volume_name else None
-    )
+    sandbox_volumes = [(shared_volume_name, "/workspace")] if shared_volume_name else None
     # When sub-tasks fan out across the SAME shared volume, the per-sub-task
     # `.qa/` directory (job.json, result.json, screenshots, playwright-tests)
     # would otherwise be a single physical directory shared by every container —
@@ -344,10 +340,7 @@ async def boot_app_node(state: SubTaskState, config: RunnableConfig) -> dict[str
             "boot_outcome": "timeout",
             "boot_duration_ms": result.duration_ms,
             "boot_result": result,
-            "failure_summary": (
-                f"boot_command did not become ready within "
-                f"{resolved.boot_timeout_seconds}s"
-            ),
+            "failure_summary": (f"boot_command did not become ready within {resolved.boot_timeout_seconds}s"),
             "completed_at": time.monotonic(),
             "cache_hits_partial": {
                 **(state.get("cache_hits_partial") or {}),
@@ -358,10 +351,7 @@ async def boot_app_node(state: SubTaskState, config: RunnableConfig) -> dict[str
 
     # startup_failed
     return {
-        "status": (
-            SubTaskStatus.READY_CHECK_FAILED if result.failed_checks
-            else SubTaskStatus.BOOT_FAILURE
-        ),
+        "status": (SubTaskStatus.READY_CHECK_FAILED if result.failed_checks else SubTaskStatus.BOOT_FAILURE),
         "boot_outcome": "startup_failed",
         "boot_duration_ms": result.duration_ms,
         "boot_result": result,
@@ -375,6 +365,7 @@ async def seed_node(state: SubTaskState, config: RunnableConfig) -> dict[str, An
     if state.get("status") is not None:
         return {}
     from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
+
     resolved: ResolvedAppConfig = state["resolved"]
     if resolved.seed_command is None:
         return {}
@@ -409,6 +400,7 @@ async def e2e_node(state: SubTaskState, config: RunnableConfig) -> dict[str, Any
     if state.get("status") is not None:
         return {}
     from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
+
     resolved: ResolvedAppConfig = state["resolved"]
     if resolved.e2e is None:
         return {}
@@ -529,9 +521,7 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
         if state.get("boot_outcome") not in (None, "passed"):
             stdout_tail = ""
             if docker is not None and sandbox_id is not None:
-                stdout_tail = await _read_boot_log_tail(
-                    docker=docker, sandbox_id=sandbox_id
-                )
+                stdout_tail = await _read_boot_log_tail(docker=docker, sandbox_id=sandbox_id)
             boot_phase = _boot_phase_from_state(state, stdout_tail=stdout_tail)
             return {"boot_phase": boot_phase} if boot_phase is not None else {}
         return {}

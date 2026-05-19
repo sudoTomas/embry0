@@ -209,9 +209,7 @@ class IssueExecutor:
                 # Phase 5G: workspace_provider overrides — read by
                 # qa_orchestrator_node to layer DB-set provider config on top
                 # of the .athanor/qa.yaml workspace_provider section.
-                "qa_workspace_provider_overrides_repo": (
-                    self._qa_workspace_provider_overrides_repo
-                ),
+                "qa_workspace_provider_overrides_repo": (self._qa_workspace_provider_overrides_repo),
                 "github_token": self._github_token,
             }
         }
@@ -547,9 +545,7 @@ class IssueExecutor:
             except Exception:
                 logger.warning("sandbox_destroy_failed", job_id=job_id, exc_info=True)
 
-    async def _load_merged_env_vars(
-        self, repo_name: str, job_id: str
-    ) -> list[dict[str, Any]] | None:
+    async def _load_merged_env_vars(self, repo_name: str, job_id: str) -> list[dict[str, Any]] | None:
         """Return decrypted, merged (global + repo) env vars for sandbox
         injection, or None when there's nothing to inject / no env repo.
 
@@ -575,9 +571,7 @@ class IssueExecutor:
                 # without a secrets_provider. Mirrors the legacy behaviour.
                 from athanor.api.v1.environment import _get_secrets_provider
 
-                provider = _get_secrets_provider(
-                    self._config.environment_secret_key if self._config else ""
-                )
+                provider = _get_secrets_provider(self._config.environment_secret_key if self._config else "")
             global_rows = await self._env_repo.get_global()
             repo_rows = await self._env_repo.get_repo(repo_name)
             merged: dict[str, dict[str, Any]] = {}
@@ -915,7 +909,10 @@ class IssueExecutor:
             # run); INCONCLUSIVE and the hard failures count as "did not
             # pass"; INFRA_FAILURE is Athanor's own fault and forces FAILED.
             _hard_fail = {
-                "qa_failure", "e2e_failure", "boot_failure", "ready_check_failed",
+                "qa_failure",
+                "e2e_failure",
+                "boot_failure",
+                "ready_check_failed",
             }
             passed_apps = [a["app_name"] for a in per_app if a.get("status") in ("passed", "skipped")]
             failed_apps = [a["app_name"] for a in per_app if a.get("status") in _hard_fail]

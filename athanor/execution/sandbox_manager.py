@@ -153,7 +153,7 @@ class SandboxManager:
         # "volume_name:mount_point" string so build_run_cmd emits -v flags.
         # This is standard Docker syntax for named volumes (no leading "/" on
         # the source side, which distinguishes them from bind-mounts).
-        for vol_name, mount_point in (volumes or []):
+        for vol_name, mount_point in volumes or []:
             extra_volumes.append(f"{vol_name}:{mount_point}")
 
         base_image = p.get("base_image", _DEFAULT_PROFILE["base_image"])

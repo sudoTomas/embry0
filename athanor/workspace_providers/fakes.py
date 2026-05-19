@@ -55,9 +55,7 @@ class FakeWorkspaceProvider:
         # tests can drop the fake in transparently.
         self.apps = apps or []
         self.packages = packages or []
-        self.affected_result = affected_result or AffectedSet(
-            frozenset(), frozenset(), frozenset()
-        )
+        self.affected_result = affected_result or AffectedSet(frozenset(), frozenset(), frozenset())
         self.validate_warnings = validate_warnings or []
         self.name = "fake"
         self.affected_calls = []

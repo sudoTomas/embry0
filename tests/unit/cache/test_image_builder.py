@@ -60,10 +60,10 @@ async def test_build_qa_image_happy_path(stub_helpers, monkeypatch, tmp_path):
 
     async def fake_clone(**kw):
         from athanor.workflows.qa._subtask_prep import ClonedSandbox
+
         return ClonedSandbox(head_sha="abc123")
-    monkeypatch.setattr(
-        "athanor.cache.image_builder.prep_qa_sandbox_clone", fake_clone
-    )
+
+    monkeypatch.setattr("athanor.cache.image_builder.prep_qa_sandbox_clone", fake_clone)
 
     # Stub lockfile hash so we don't need a real package-lock.json
     monkeypatch.setattr(
@@ -108,10 +108,10 @@ async def test_build_qa_image_destroys_sandbox_on_npm_ci_failure(stub_helpers, m
 
     async def fake_clone(**kw):
         from athanor.workflows.qa._subtask_prep import ClonedSandbox
+
         return ClonedSandbox(head_sha="abc")
-    monkeypatch.setattr(
-        "athanor.cache.image_builder.prep_qa_sandbox_clone", fake_clone
-    )
+
+    monkeypatch.setattr("athanor.cache.image_builder.prep_qa_sandbox_clone", fake_clone)
     monkeypatch.setattr(
         "athanor.cache.image_builder.compute_lockfile_sha",
         lambda root: "abc",
@@ -122,6 +122,7 @@ async def test_build_qa_image_destroys_sandbox_on_npm_ci_failure(stub_helpers, m
         if "npm ci" in joined:
             raise RuntimeError("npm exited non-zero")
         return ""
+
     stub_helpers["docker"].run_cmd = crash
 
     with pytest.raises(ImageBuildError) as exc:

@@ -26,9 +26,7 @@ pytestmark = pytest.mark.requires_postgres
 
 @pytest.fixture
 async def db_url() -> str:
-    return os.environ.get(
-        "TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test"
-    )
+    return os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
 
 
 @pytest.fixture
@@ -73,9 +71,7 @@ async def _apply_migrations_up_to(db: DatabasePool, last_version: int) -> None:
                 )
 
 
-async def _seed_double_encoded_qa_app_result(
-    db: DatabasePool, *, job_id: str, app_name: str
-) -> None:
+async def _seed_double_encoded_qa_app_result(db: DatabasePool, *, job_id: str, app_name: str) -> None:
     """Reproduce the pre-fix double-encoded shape on qa_app_results.
 
     We bypass the pool-level codec so we can write a raw text value (the
@@ -94,8 +90,7 @@ async def _seed_double_encoded_qa_app_result(
 
     # Seed the parent jobs row (qa_app_results FKs to jobs.job_id).
     await db.execute(
-        "INSERT INTO jobs (job_id, repo, task) VALUES ($1, 'org/repo', 'test') "
-        "ON CONFLICT (job_id) DO NOTHING",
+        "INSERT INTO jobs (job_id, repo, task) VALUES ($1, 'org/repo', 'test') ON CONFLICT (job_id) DO NOTHING",
         job_id,
     )
 
@@ -135,9 +130,7 @@ async def _seed_double_encoded_qa_app_result(
 async def test_migration_30_recasts_legacy_double_encoded_rows(fresh_db: DatabasePool):
     # Apply through migration 29 (pre-fix world) and seed the broken shape.
     await _apply_migrations_up_to(fresh_db, 29)
-    await _seed_double_encoded_qa_app_result(
-        fresh_db, job_id="legacy-1", app_name="hub"
-    )
+    await _seed_double_encoded_qa_app_result(fresh_db, job_id="legacy-1", app_name="hub")
 
     # Confirm the seed produced the broken shape.
     pre = await fresh_db.fetchrow(
@@ -181,21 +174,15 @@ async def test_migration_30_recasts_legacy_double_encoded_rows(fresh_db: Databas
 async def test_migration_30_is_idempotent(fresh_db: DatabasePool):
     """Re-running migration 30's SQL on already-fixed rows is a no-op."""
     await _apply_migrations_up_to(fresh_db, 29)
-    await _seed_double_encoded_qa_app_result(
-        fresh_db, job_id="legacy-2", app_name="hub"
-    )
+    await _seed_double_encoded_qa_app_result(fresh_db, job_id="legacy-2", app_name="hub")
     await _apply_migrations_up_to(fresh_db, 30)
 
     # Run the same UPDATE statements directly — should affect zero rows.
     result1 = await fresh_db.execute(
-        "UPDATE qa_app_results "
-        "SET cache_hits = (cache_hits #>> '{}')::jsonb "
-        "WHERE jsonb_typeof(cache_hits) = 'string'"
+        "UPDATE qa_app_results SET cache_hits = (cache_hits #>> '{}')::jsonb WHERE jsonb_typeof(cache_hits) = 'string'"
     )
     result2 = await fresh_db.execute(
-        "UPDATE qa_app_results "
-        "SET raw_result = (raw_result #>> '{}')::jsonb "
-        "WHERE jsonb_typeof(raw_result) = 'string'"
+        "UPDATE qa_app_results SET raw_result = (raw_result #>> '{}')::jsonb WHERE jsonb_typeof(raw_result) = 'string'"
     )
     result3 = await fresh_db.execute(
         "UPDATE qa_app_results "
@@ -226,19 +213,15 @@ async def test_migration_30_skips_already_correct_rows(fresh_db: DatabasePool):
         VALUES ($1, 'hub', 'passed', 100, $2::jsonb)
         """,
         "good-1",
-        {"prebaked_image": True, "shared_volume": False,
-         "turbo_remote_hits": [], "turbo_remote_misses": []},
+        {"prebaked_image": True, "shared_volume": False, "turbo_remote_hits": [], "turbo_remote_misses": []},
     )
 
-    pre = await fresh_db.fetchrow(
-        "SELECT cache_hits FROM qa_app_results WHERE job_id = 'good-1'"
-    )
+    pre = await fresh_db.fetchrow("SELECT cache_hits FROM qa_app_results WHERE job_id = 'good-1'")
 
     await _apply_migrations_up_to(fresh_db, 30)
 
     post = await fresh_db.fetchrow(
-        "SELECT jsonb_typeof(cache_hits) AS ch_type, cache_hits "
-        "FROM qa_app_results WHERE job_id = 'good-1'"
+        "SELECT jsonb_typeof(cache_hits) AS ch_type, cache_hits FROM qa_app_results WHERE job_id = 'good-1'"
     )
     assert post["ch_type"] == "object"
     assert post["cache_hits"] == pre["cache_hits"]

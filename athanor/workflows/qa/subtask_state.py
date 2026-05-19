@@ -58,7 +58,7 @@ class SubTaskState(TypedDict, total=False):
     cache_hits_partial: dict[str, Any] | None
 
     # Set by boot_app_node on success
-    boot_outcome: str | None        # "passed" | "timeout" | "startup_failed"
+    boot_outcome: str | None  # "passed" | "timeout" | "startup_failed"
     boot_duration_ms: int | None
     # Phase 5A: stash the full BootResult for collect_artifacts_node so the
     # dashboard's boot drill-down can render attempts / failed_checks /

@@ -10,6 +10,7 @@ import pytest
 
 def _make_executor():
     from athanor.services.issue_executor import IssueExecutor
+
     e = IssueExecutor(
         issues_repo=MagicMock(),
         jobs_repo=AsyncMock(),
@@ -113,9 +114,7 @@ async def test_qa_workflow_injects_merged_env_vars_into_state():
 
     with (
         patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute),
-        patch.object(
-            executor, "_load_merged_env_vars", AsyncMock(return_value=seeded)
-        ) as mock_load,
+        patch.object(executor, "_load_merged_env_vars", AsyncMock(return_value=seeded)) as mock_load,
     ):
         await executor._run_qa_workflow(
             job_id="job-env",
@@ -146,7 +145,10 @@ async def test_qa_workflow_total_cost_from_traces():
 
     with patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute):
         await executor._run_qa_workflow(
-            job_id="job-cost", repo="org/r", branch="b", qa_overrides={},
+            job_id="job-cost",
+            repo="org/r",
+            branch="b",
+            qa_overrides={},
         )
 
     executor._traces.total_cost_for_job.assert_awaited_once_with("job-cost")
@@ -166,7 +168,10 @@ async def test_qa_workflow_cost_falls_back_to_state_when_no_traces():
 
     with patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute):
         await executor._run_qa_workflow(
-            job_id="job-cost2", repo="org/r", branch="b", qa_overrides={},
+            job_id="job-cost2",
+            repo="org/r",
+            branch="b",
+            qa_overrides={},
         )
 
     _, kwargs = executor._jobs.update.call_args
@@ -181,8 +186,7 @@ def _qa_executor():
 
 
 def _qa_state(final_status, apps):
-    return {"qa": {"final_status": final_status,
-                    "per_app_results": [{"app_name": a, "status": s} for a, s in apps]}}
+    return {"qa": {"final_status": final_status, "per_app_results": [{"app_name": a, "status": s} for a, s in apps]}}
 
 
 @pytest.mark.asyncio
@@ -205,8 +209,13 @@ async def test_qa_job_partial_pass_maps_to_partial_with_breakdown():
     """≥1 pass and no infra → PARTIAL, with an informative breakdown so a
     mostly-passing multi-app run isn't dismissed as a flat failure."""
     executor = _qa_executor()
-    apps = [("hub", "passed"), ("lane", "passed"), ("credit", "boot_failure"),
-            ("reps", "inconclusive"), ("siemens", "skipped")]
+    apps = [
+        ("hub", "passed"),
+        ("lane", "passed"),
+        ("credit", "boot_failure"),
+        ("reps", "inconclusive"),
+        ("siemens", "skipped"),
+    ]
 
     async def fake_execute(initial_state, *a, **k):
         return _qa_state("failed", apps), False, None
@@ -275,9 +284,7 @@ async def test_qa_workflow_omits_user_env_vars_when_none_seeded():
 
     with (
         patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute),
-        patch.object(
-            executor, "_load_merged_env_vars", AsyncMock(return_value=None)
-        ),
+        patch.object(executor, "_load_merged_env_vars", AsyncMock(return_value=None)),
     ):
         await executor._run_qa_workflow(
             job_id="job-noenv",

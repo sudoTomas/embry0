@@ -42,8 +42,7 @@ def _result(app: str, status: SubTaskStatus, duration_ms: int = 100, **kw) -> Su
 async def _seed_job(db: DatabasePool, job_id: str) -> None:
     """Insert a minimal jobs row so qa_app_results FK is satisfied."""
     await db.execute(
-        "INSERT INTO jobs (job_id, repo, task) VALUES ($1, 'org/repo', 'test')"
-        " ON CONFLICT (job_id) DO NOTHING",
+        "INSERT INTO jobs (job_id, repo, task) VALUES ($1, 'org/repo', 'test') ON CONFLICT (job_id) DO NOTHING",
         job_id,
     )
 
@@ -609,9 +608,7 @@ async def test_flake_window_status_change_on_same_sha_one_flake(repo, db):
 
     await _seed_job_with_repo(db, "job-fl-new", repo_name, created_days_ago=0)
     await _seed_run_metadata(db, "job-fl-new", head_sha=head)
-    await _seed_app_result(
-        repo, job_id="job-fl-new", app_name="hub", status="qa_failure"
-    )
+    await _seed_app_result(repo, job_id="job-fl-new", app_name="hub", status="qa_failure")
 
     rows = await repo.flake_window(repo=repo_name, days=7)
     assert len(rows) == 1
@@ -642,9 +639,7 @@ async def test_flake_window_different_sha_no_flake(repo, db):
 
     await _seed_job_with_repo(db, "job-ds-2", repo_name, created_days_ago=0)
     await _seed_run_metadata(db, "job-ds-2", head_sha="sha-B")
-    await _seed_app_result(
-        repo, job_id="job-ds-2", app_name="hub", status="qa_failure"
-    )
+    await _seed_app_result(repo, job_id="job-ds-2", app_name="hub", status="qa_failure")
 
     rows = await repo.flake_window(repo=repo_name, days=7)
     assert len(rows) == 1
@@ -660,16 +655,12 @@ async def test_flake_window_filters_by_window(repo, db):
     # Inside the 7-day window
     await _seed_job_with_repo(db, "job-w-fresh", repo_name, created_days_ago=1)
     await _seed_run_metadata(db, "job-w-fresh", head_sha=head)
-    await _seed_app_result(
-        repo, job_id="job-w-fresh", app_name="hub", status="qa_failure"
-    )
+    await _seed_app_result(repo, job_id="job-w-fresh", app_name="hub", status="qa_failure")
     # Outside the 7-day window — even though it has a different status on the
     # same head_sha, it should NOT pair with the fresh row.
     await _seed_job_with_repo(db, "job-w-stale", repo_name, created_days_ago=20)
     await _seed_run_metadata(db, "job-w-stale", head_sha=head)
-    await _seed_app_result(
-        repo, job_id="job-w-stale", app_name="hub", status="passed"
-    )
+    await _seed_app_result(repo, job_id="job-w-stale", app_name="hub", status="passed")
 
     rows = await repo.flake_window(repo=repo_name, days=7)
     assert len(rows) == 1
@@ -691,9 +682,7 @@ async def test_flake_window_legacy_empty_head_sha_skipped(repo, db):
 
     await _seed_job_with_repo(db, "job-leg-2", repo_name, created_days_ago=0)
     await _seed_run_metadata(db, "job-leg-2", head_sha="")
-    await _seed_app_result(
-        repo, job_id="job-leg-2", app_name="hub", status="qa_failure"
-    )
+    await _seed_app_result(repo, job_id="job-leg-2", app_name="hub", status="qa_failure")
 
     rows = await repo.flake_window(repo=repo_name, days=7)
     # No rows at all — both were filtered out by the head_sha <> '' clause.
@@ -734,9 +723,7 @@ async def test_flake_window_filters_other_repos(repo, db):
     # Must NOT produce a flake event in org/mine.
     await _seed_job_with_repo(db, "job-other-1", "org/other", created_days_ago=2)
     await _seed_run_metadata(db, "job-other-1", head_sha=head)
-    await _seed_app_result(
-        repo, job_id="job-other-1", app_name="hub", status="qa_failure"
-    )
+    await _seed_app_result(repo, job_id="job-other-1", app_name="hub", status="qa_failure")
     await _seed_job_with_repo(db, "job-other-2", "org/other", created_days_ago=0)
     await _seed_run_metadata(db, "job-other-2", head_sha=head)
     await _seed_app_result(repo, job_id="job-other-2", app_name="hub", status="passed")
@@ -784,9 +771,7 @@ async def test_flake_window_lag_tiebreak_is_deterministic(repo, db):
     # Different statuses on the two rows so the LAG comparison is a true
     # status flip (any deterministic ordering must yield exactly 1 flake).
     await _seed_app_result(repo, job_id="job-tb-A", app_name="hub", status="passed")
-    await _seed_app_result(
-        repo, job_id="job-tb-B", app_name="hub", status="qa_failure"
-    )
+    await _seed_app_result(repo, job_id="job-tb-B", app_name="hub", status="qa_failure")
 
     first = await repo.flake_window(repo=repo_name, days=7)
     second = await repo.flake_window(repo=repo_name, days=7)

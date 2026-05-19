@@ -20,12 +20,14 @@ def test_full_qa_wiring_round_trip():
 
     app = create_app()
     db = MagicMock()
-    asyncio.run(_init_app_state(
-        app=app,
-        db=db,
-        database_url="postgresql://test/test",
-        github_token="test-token-32-characters-or-longer-x",
-    ))
+    asyncio.run(
+        _init_app_state(
+            app=app,
+            db=db,
+            database_url="postgresql://test/test",
+            github_token="test-token-32-characters-or-longer-x",
+        )
+    )
 
     executor = app.state.issue_executor
     cfg = executor._build_graph_config(job_id="round-trip-job")
@@ -45,10 +47,7 @@ def test_full_qa_wiring_round_trip():
     # the lifespan, so we can only assert that the executor and app.state
     # are CONSISTENT — both either None, or both pointing at the same
     # instance once a real lifespan runs.
-    assert (
-        configurable["qa_shared_volume_manager"]
-        is app.state.qa_shared_volume_manager
-    )
+    assert configurable["qa_shared_volume_manager"] is app.state.qa_shared_volume_manager
 
     # github_token is a string, not an object on app.state — assert by value.
     assert configurable["github_token"] == "test-token-32-characters-or-longer-x"
@@ -62,12 +61,14 @@ def test_full_qa_wiring_round_trip_no_github_token():
 
     app = create_app()
     db = MagicMock()
-    asyncio.run(_init_app_state(
-        app=app,
-        db=db,
-        database_url="postgresql://test/test",
-        github_token=None,
-    ))
+    asyncio.run(
+        _init_app_state(
+            app=app,
+            db=db,
+            database_url="postgresql://test/test",
+            github_token=None,
+        )
+    )
     executor = app.state.issue_executor
     cfg = executor._build_graph_config(job_id="no-token-job")
     assert cfg["configurable"]["github_token"] is None

@@ -97,7 +97,7 @@ async def test_runner_surfaces_stderr_when_subprocess_exits_nonzero_with_no_stdo
     and could not tell *why*. Now the captured stderr (truncated) must be
     appended to error_message.
     """
-    stderr = b"Traceback (most recent call last):\n  File \"runner.py\", line 9\n    boom\nNameError: boom\n"
+    stderr = b'Traceback (most recent call last):\n  File "runner.py", line 9\n    boom\nNameError: boom\n'
     proc = _FakeProc(returncode=1, stderr_chunks=[stderr])
     runner = _runner_with_proc(proc)
 

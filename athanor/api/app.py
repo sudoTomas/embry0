@@ -212,9 +212,7 @@ async def _init_app_state(
     # Phase 5G: dashboard-set per-repo workspace_provider overrides. Wired
     # through into qa_orchestrator_node via IssueExecutor; also exposed via
     # the /qa/admin/providers admin routes.
-    app.state.qa_workspace_provider_overrides_repo = (
-        QAWorkspaceProviderOverridesRepository(db)
-    )
+    app.state.qa_workspace_provider_overrides_repo = QAWorkspaceProviderOverridesRepository(db)
     # SharedVolumeManager requires app.state.docker, which is set in the lifespan
     # after docker is initialized. Set to None here; lifespan will construct
     # and set the real manager after docker is ready.
@@ -265,9 +263,7 @@ async def _init_app_state(
         qa_run_metadata_repo=app.state.qa_run_metadata_repo,
         # Phase 5G: dashboard-set workspace_provider overrides — read by
         # qa_orchestrator_node to layer over the qa.yaml file-based config.
-        qa_workspace_provider_overrides_repo=(
-            app.state.qa_workspace_provider_overrides_repo
-        ),
+        qa_workspace_provider_overrides_repo=(app.state.qa_workspace_provider_overrides_repo),
         github_token=github_token,
         github_comment_channel=github_comment_channel,
         telegram_channel=telegram_channel,
@@ -865,4 +861,3 @@ def _register_routers(app: FastAPI) -> None:
     # are also exempted from CSRF middleware.
     app.include_router(internal_qa.router, prefix="/api/v1", tags=["internal-qa"])
     app.include_router(streaming.router)
-

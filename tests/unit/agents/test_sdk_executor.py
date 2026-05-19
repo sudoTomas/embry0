@@ -347,9 +347,7 @@ async def test_evaluate_hook_does_not_set_top_level_decision_allow_or_deny() -> 
     assert allow.get("decision") not in ("allow", "deny")
 
     # Deny path
-    deny_policy = SafetyPolicy(
-        content_checks=[ContentRule(pattern=r"x", tools=["Bash"], reason="r")]
-    )
+    deny_policy = SafetyPolicy(content_checks=[ContentRule(pattern=r"x", tools=["Bash"], reason="r")])
     deny = await _evaluate_hook(
         policy=deny_policy,
         tool_name="Bash",

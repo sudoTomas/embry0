@@ -27,8 +27,8 @@ CHECK_NAME = "athanor/qa"
 @dataclass(frozen=True, slots=True)
 class QACheckPayload:
     name: str
-    status: str            # "in_progress" | "completed"
-    conclusion: str | None # "success" | "failure" | "neutral" | None when in_progress
+    status: str  # "in_progress" | "completed"
+    conclusion: str | None  # "success" | "failure" | "neutral" | None when in_progress
     title: str
     summary: str
 
@@ -55,9 +55,7 @@ def build_check_payload(
       infra_error      -> status=completed, conclusion=failure (distinct title)
     """
     if in_progress:
-        completed = sum(
-            1 for r in results if r.status != SubTaskStatus.SKIPPED
-        )
+        completed = sum(1 for r in results if r.status != SubTaskStatus.SKIPPED)
         return QACheckPayload(
             name=CHECK_NAME,
             status="in_progress",
@@ -119,10 +117,7 @@ async def _find_existing_check_run_id(
     headers: dict[str, str],
 ) -> int | None:
     """Look up an existing athanor/qa check run for this head_sha. Idempotent."""
-    url = (
-        f"{_GITHUB_API}/repos/{repo}/commits/{head_sha}/check-runs"
-        f"?check_name={CHECK_NAME}"
-    )
+    url = f"{_GITHUB_API}/repos/{repo}/commits/{head_sha}/check-runs?check_name={CHECK_NAME}"
     resp = await client.get(url, headers=headers)
     if resp.status_code != 200:
         return None
@@ -171,9 +166,7 @@ async def write_aggregate_check(
 
     headers = _headers(github_token)
     async with httpx.AsyncClient(timeout=15.0) as client:
-        existing_id = await _find_existing_check_run_id(
-            client, repo=repo, head_sha=head_sha, headers=headers
-        )
+        existing_id = await _find_existing_check_run_id(client, repo=repo, head_sha=head_sha, headers=headers)
         if existing_id is None:
             url = f"{_GITHUB_API}/repos/{repo}/check-runs"
             resp = await client.post(url, json=body, headers=headers)

@@ -37,53 +37,57 @@ def _resolved(name: str = "hub") -> ResolvedAppConfig:
 
 
 def _passed_result_json(sub_job_id: str = "run-1__hub") -> str:
-    return json.dumps({
-        "schema_version": 1,
-        "job_id": sub_job_id,
-        "attempt_n": 1,
-        "phase_reached": "report",
-        "overall": "passed",
-        "boot": None,
-        "seed": None,
-        "e2e": None,
-        "acceptance_results": [
-            {
-                "criterion": "page loads",
-                "status": "passed",
-                "evidence": ["screenshot OK"],
-                "notes": None,
-                "console_errors": [],
-                "network_failures": [],
-                "log_excerpts": [],
-            }
-        ],
-        "anomalies": [],
-    })
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "job_id": sub_job_id,
+            "attempt_n": 1,
+            "phase_reached": "report",
+            "overall": "passed",
+            "boot": None,
+            "seed": None,
+            "e2e": None,
+            "acceptance_results": [
+                {
+                    "criterion": "page loads",
+                    "status": "passed",
+                    "evidence": ["screenshot OK"],
+                    "notes": None,
+                    "console_errors": [],
+                    "network_failures": [],
+                    "log_excerpts": [],
+                }
+            ],
+            "anomalies": [],
+        }
+    )
 
 
 def _failed_result_json(sub_job_id: str = "run-1__hub") -> str:
-    return json.dumps({
-        "schema_version": 1,
-        "job_id": sub_job_id,
-        "attempt_n": 1,
-        "phase_reached": "exploratory",
-        "overall": "failed",
-        "boot": None,
-        "seed": None,
-        "e2e": None,
-        "acceptance_results": [
-            {
-                "criterion": "page loads",
-                "status": "failed",
-                "evidence": ["404"],
-                "notes": "page returned 404",
-                "console_errors": [],
-                "network_failures": [],
-                "log_excerpts": [],
-            }
-        ],
-        "anomalies": [],
-    })
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "job_id": sub_job_id,
+            "attempt_n": 1,
+            "phase_reached": "exploratory",
+            "overall": "failed",
+            "boot": None,
+            "seed": None,
+            "e2e": None,
+            "acceptance_results": [
+                {
+                    "criterion": "page loads",
+                    "status": "failed",
+                    "evidence": ["404"],
+                    "notes": "page returned 404",
+                    "console_errors": [],
+                    "network_failures": [],
+                    "log_excerpts": [],
+                }
+            ],
+            "anomalies": [],
+        }
+    )
 
 
 class _FakeDocker:
@@ -201,8 +205,14 @@ def test_build_subtask_graph_compiles():
     graph = build_subtask_graph()
     nodes = set(graph.get_graph().nodes)
     assert {
-        "acquire_sandbox", "boot_app", "seed", "e2e",
-        "exploratory_qa", "collect_artifacts", "release_sandbox", "emit_result",
+        "acquire_sandbox",
+        "boot_app",
+        "seed",
+        "e2e",
+        "exploratory_qa",
+        "collect_artifacts",
+        "release_sandbox",
+        "emit_result",
     } <= nodes
 
 

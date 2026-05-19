@@ -134,11 +134,7 @@ async def cache_analytics_window(
         # simply produced no cache data — so we exclude ratio=0 with no
         # events from the offenders list by guarding on total_events > 0.
         app_hits = pi_hits + sv_hits + tr_hits
-        app_events = (
-            pi_hits + pi_misses
-            + sv_hits + sv_misses
-            + tr_hits + tr_misses
-        )
+        app_events = pi_hits + pi_misses + sv_hits + sv_misses + tr_hits + tr_misses
         if subtasks >= 3 and app_events > 0:
             ratio = app_hits / app_events
             if ratio < 0.25:
@@ -277,10 +273,11 @@ async def flake_window(
     # Window is INCLUSIVE of today and goes back ``days`` calendar days
     # so day count = ``days``. With days=7, the grid spans the past week
     # (today, today-1, …, today-6).
-    day_keys: list[str] = [
-        (today - timedelta(days=offset)).isoformat()
-        for offset in range(int(days) - 1, -1, -1)
-    ] if int(days) > 0 else []
+    day_keys: list[str] = (
+        [(today - timedelta(days=offset)).isoformat() for offset in range(int(days) - 1, -1, -1)]
+        if int(days) > 0
+        else []
+    )
 
     out: list[dict[str, Any]] = []
     for r in rows:
@@ -294,7 +291,7 @@ async def flake_window(
 
         # Bucket flake timestamps into UTC day keys.
         per_day: dict[str, int] = {key: 0 for key in day_keys}
-        for ts in (r["flake_timestamps"] or []):
+        for ts in r["flake_timestamps"] or []:
             key = ts.astimezone(UTC).date().isoformat()
             if key in per_day:
                 per_day[key] += 1

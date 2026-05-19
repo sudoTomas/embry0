@@ -136,7 +136,7 @@ async def stage_workspace_for_provider(
         # Translate /workspace/foo/bar/package.json → target_root/foo/bar/package.json.
         if not in_sandbox_path.startswith("/workspace/"):
             continue
-        rel = in_sandbox_path[len("/workspace/"):]
+        rel = in_sandbox_path[len("/workspace/") :]
         if rel == "package.json":
             local_path = target_root / "package.json"
         else:

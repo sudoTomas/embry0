@@ -37,14 +37,10 @@ async def test_artifact_passthrough_returns_screenshot_bytes(api_with_minio):
     """Seeded PNG → 200, content-type=image/png, body matches the seeded bytes."""
     sub = "RUN1__hub"
     body = b"\x89PNG\r\n\x1a\nfake-bytes"
-    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(
-        return_value=[f"{sub}/1/screenshots/boot.png"]
-    )
+    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(return_value=[f"{sub}/1/screenshots/boot.png"])
     api_with_minio.app.state.qa_minio.get_object_bytes = AsyncMock(return_value=body)
 
-    r = await api_with_minio.get(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/boot.png"
-    )
+    r = await api_with_minio.get("/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/boot.png")
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/png"
     assert r.headers["cache-control"] == "private, max-age=300"
@@ -71,9 +67,7 @@ async def test_artifact_passthrough_picks_latest_attempt_with_file(api_with_mini
         ]
     )
     api_with_minio.app.state.qa_minio.get_object_bytes = AsyncMock(return_value=b"x")
-    r = await api_with_minio.get(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/boot.png"
-    )
+    r = await api_with_minio.get("/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/boot.png")
     assert r.status_code == 200
     call = api_with_minio.app.state.qa_minio.get_object_bytes.call_args
     key = call.args[1] if len(call.args) > 1 else call.kwargs["key"]
@@ -85,9 +79,7 @@ async def test_artifact_passthrough_returns_404_when_missing(api_with_minio):
     api_with_minio.app.state.qa_minio.list_objects = AsyncMock(
         return_value=["RUN1__hub/1/screenshots/something-else.png"]
     )
-    r = await api_with_minio.get(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/missing.png"
-    )
+    r = await api_with_minio.get("/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/missing.png")
     assert r.status_code == 404
     assert r.json()["detail"] == "artifact not found"
 
@@ -108,17 +100,13 @@ async def test_artifact_passthrough_rejects_path_traversal(api_with_minio):
 
 async def test_artifact_passthrough_rejects_leading_dot_filename(api_with_minio):
     """A filename starting with `.` (e.g. .ssh keys) is rejected with 400."""
-    r = await api_with_minio.get(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/.htaccess"
-    )
+    r = await api_with_minio.get("/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/.htaccess")
     assert r.status_code == 400
 
 
 async def test_artifact_passthrough_rejects_bad_kind(api_with_minio):
     """`kind` outside the allow-list → 400 (NOT 404)."""
-    r = await api_with_minio.get(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/secret/boot.png"
-    )
+    r = await api_with_minio.get("/api/v1/qa/runs/RUN1/apps/hub/artifacts/secret/boot.png")
     assert r.status_code == 400
     assert r.json()["detail"] == "bad artifact kind"
 
@@ -131,9 +119,7 @@ async def test_artifact_passthrough_rejects_bad_app_name(api_with_minio):
     """
     # Leading `-` in the app name. Routed via FastAPI as a path param so the
     # value reaches our validator.
-    r = await api_with_minio.get(
-        "/api/v1/qa/runs/RUN1/apps/-evil/artifacts/screenshots/boot.png"
-    )
+    r = await api_with_minio.get("/api/v1/qa/runs/RUN1/apps/-evil/artifacts/screenshots/boot.png")
     assert r.status_code == 400
 
 
@@ -149,13 +135,9 @@ async def test_artifact_passthrough_picks_correct_media_type(api_with_minio):
         ("traces", "exploratory.zip", "application/zip"),
     ]
     for kind, fn, expected in cases:
-        api_with_minio.app.state.qa_minio.list_objects = AsyncMock(
-            return_value=[f"{sub}/1/{kind}/{fn}"]
-        )
+        api_with_minio.app.state.qa_minio.list_objects = AsyncMock(return_value=[f"{sub}/1/{kind}/{fn}"])
         api_with_minio.app.state.qa_minio.get_object_bytes = AsyncMock(return_value=b"x")
-        r = await api_with_minio.get(
-            f"/api/v1/qa/runs/RUN1/apps/hub/artifacts/{kind}/{fn}"
-        )
+        r = await api_with_minio.get(f"/api/v1/qa/runs/RUN1/apps/hub/artifacts/{kind}/{fn}")
         assert r.status_code == 200, f"{kind}/{fn}: {r.text}"
         assert r.headers["content-type"] == expected, f"{kind}/{fn}"
 
@@ -170,9 +152,7 @@ async def test_artifact_passthrough_rejects_oversized_payloads(api_with_minio):
     from athanor.api.v1.qa_artifacts import _MAX_ARTIFACT_BYTES
 
     sub = "RUN1__hub"
-    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(
-        return_value=[f"{sub}/1/traces/giant.zip"]
-    )
+    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(return_value=[f"{sub}/1/traces/giant.zip"])
     api_with_minio.app.state.qa_minio.stat_object = AsyncMock(
         return_value={"size": _MAX_ARTIFACT_BYTES + 1, "etag": "x", "last_modified": None}
     )
@@ -182,9 +162,7 @@ async def test_artifact_passthrough_rejects_oversized_payloads(api_with_minio):
         side_effect=AssertionError("get_object_bytes called despite oversized payload"),
     )
 
-    r = await api_with_minio.get(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/traces/giant.zip"
-    )
+    r = await api_with_minio.get("/api/v1/qa/runs/RUN1/apps/hub/artifacts/traces/giant.zip")
     assert r.status_code == 413
     assert "too large" in r.json()["detail"]
     api_with_minio.app.state.qa_minio.get_object_bytes.assert_not_awaited()
@@ -193,13 +171,9 @@ async def test_artifact_passthrough_rejects_oversized_payloads(api_with_minio):
 async def test_artifact_passthrough_unknown_extension_falls_back(api_with_minio):
     """Unknown extension defaults to application/octet-stream so the body still downloads."""
     sub = "RUN1__hub"
-    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(
-        return_value=[f"{sub}/1/screenshots/strange.bin"]
-    )
+    api_with_minio.app.state.qa_minio.list_objects = AsyncMock(return_value=[f"{sub}/1/screenshots/strange.bin"])
     api_with_minio.app.state.qa_minio.get_object_bytes = AsyncMock(return_value=b"x")
-    r = await api_with_minio.get(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/strange.bin"
-    )
+    r = await api_with_minio.get("/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots/strange.bin")
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/octet-stream"
 
@@ -226,9 +200,7 @@ async def test_list_app_artifacts_returns_filenames_only(api_with_minio):
             ],
         ]
     )
-    r = await api_with_minio.get(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots"
-    )
+    r = await api_with_minio.get("/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots")
     assert r.status_code == 200
     assert r.json() == {"filenames": ["a.png", "b.png"]}
 
@@ -236,25 +208,19 @@ async def test_list_app_artifacts_returns_filenames_only(api_with_minio):
 async def test_list_app_artifacts_returns_empty_when_none(api_with_minio):
     """No uploads of this kind on any attempt → 200 + empty list (NOT 404)."""
     api_with_minio.app.state.qa_minio.list_objects = AsyncMock(return_value=[])
-    r = await api_with_minio.get(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/console"
-    )
+    r = await api_with_minio.get("/api/v1/qa/runs/RUN1/apps/hub/artifacts/console")
     assert r.status_code == 200
     assert r.json() == {"filenames": []}
 
 
 async def test_list_app_artifacts_rejects_bad_kind(api_with_minio):
     """`kind` outside the allow-list → 400."""
-    r = await api_with_minio.get(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/secret"
-    )
+    r = await api_with_minio.get("/api/v1/qa/runs/RUN1/apps/hub/artifacts/secret")
     assert r.status_code == 400
 
 
 async def test_list_app_artifacts_503_when_minio_unconfigured(api_client):
     """No QA MinIO wired into app.state → 503 (matches existing endpoints)."""
     api_client.app.state.qa_minio = None
-    r = await api_client.get(
-        "/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots"
-    )
+    r = await api_client.get("/api/v1/qa/runs/RUN1/apps/hub/artifacts/screenshots")
     assert r.status_code == 503

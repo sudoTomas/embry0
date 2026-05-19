@@ -130,8 +130,7 @@ class SandboxImageManager:
                 logger.error(
                     "sandbox_image_unavailable_no_build_context",
                     image=self._qualify(image),
-                    hint="run the init-push-images bootstrap to push "
-                    "athanor-sandbox to the in-stack registry",
+                    hint="run the init-push-images bootstrap to push athanor-sandbox to the in-stack registry",
                 )
                 return False
 

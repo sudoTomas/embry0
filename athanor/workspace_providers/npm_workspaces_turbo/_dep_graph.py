@@ -97,9 +97,7 @@ def build_dep_graph(
     """
     root_pkg_path = repo_root / "package.json"
     if _read_package_json(root_pkg_path) is None:
-        raise WorkspaceProviderError(
-            f"missing or unparseable root package.json at {root_pkg_path}"
-        )
+        raise WorkspaceProviderError(f"missing or unparseable root package.json at {root_pkg_path}")
 
     member_dirs = _enumerate_workspace_dirs(repo_root, apps_glob, packages_glob)
 

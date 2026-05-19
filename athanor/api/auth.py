@@ -37,4 +37,3 @@ def verify_webhook_signature(body: bytes, signature: str, secret: str, webhook_d
     expected = "sha256=" + hmac.HMAC(secret.encode(), body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, expected):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
-

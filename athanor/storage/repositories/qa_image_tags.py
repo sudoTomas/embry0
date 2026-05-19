@@ -51,9 +51,7 @@ class QAImageTagsRepository:
             metadata   = EXCLUDED.metadata,
             is_active  = true
         """
-        await self.db.execute(
-            sql, repo, image_tag, lockfile_sha, built_by, metadata or {}
-        )
+        await self.db.execute(sql, repo, image_tag, lockfile_sha, built_by, metadata or {})
 
     async def get_active(self, repo: str) -> QAImageTagRow | None:
         """Return the most recently built active image tag for the repo, or None."""
@@ -106,8 +104,7 @@ class QAImageTagsRepository:
 
     async def deactivate(self, *, repo: str, image_tag: str) -> None:
         await self.db.execute(
-            "UPDATE qa_image_tags SET is_active = false "
-            "WHERE repo = $1 AND image_tag = $2",
+            "UPDATE qa_image_tags SET is_active = false WHERE repo = $1 AND image_tag = $2",
             repo,
             image_tag,
         )

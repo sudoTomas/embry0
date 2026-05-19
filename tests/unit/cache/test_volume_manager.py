@@ -57,9 +57,11 @@ async def test_destroy_removes_volume():
 async def test_create_skips_when_volume_already_exists():
     """Ensure is idempotent: re-calling for same scope_key returns same name."""
     docker = _stub_docker()
-    docker.run_cmd = AsyncMock(side_effect=[
-        "athanor-qa-vol-job-1\n",  # `volume ls` returns existing
-    ])
+    docker.run_cmd = AsyncMock(
+        side_effect=[
+            "athanor-qa-vol-job-1\n",  # `volume ls` returns existing
+        ]
+    )
     state_repo = AsyncMock()
     state_repo.get = AsyncMock(return_value=None)
     mgr = SharedVolumeManager(docker=docker, state_repo=state_repo)

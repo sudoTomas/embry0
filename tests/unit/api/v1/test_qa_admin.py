@@ -97,9 +97,7 @@ def test_get_returns_404_when_missing():
 
 def test_get_returns_override():
     repo = AsyncMock()
-    repo.get = AsyncMock(
-        return_value=_row("org/r1", "npm-workspaces-turbo", {"apps_glob": "apps/*"})
-    )
+    repo.get = AsyncMock(return_value=_row("org/r1", "npm-workspaces-turbo", {"apps_glob": "apps/*"}))
     _, client = _make_app(repo)
 
     resp = client.get("/api/v1/qa/admin/providers/org/r1", headers=_AUTH)
@@ -116,9 +114,7 @@ def test_get_returns_override():
 def test_upsert_creates_new():
     repo = AsyncMock()
     repo.upsert = AsyncMock()
-    repo.get = AsyncMock(
-        return_value=_row("org/new", "npm-workspaces-turbo", {"affected_filter": "[HEAD^1]"})
-    )
+    repo.get = AsyncMock(return_value=_row("org/new", "npm-workspaces-turbo", {"affected_filter": "[HEAD^1]"}))
     _, client = _make_app(repo)
 
     resp = client.post(
@@ -142,9 +138,7 @@ def test_upsert_creates_new():
 def test_upsert_updates_existing():
     repo = AsyncMock()
     repo.upsert = AsyncMock()
-    repo.get = AsyncMock(
-        return_value=_row("org/r1", "pnpm-workspaces", {"apps_glob": "packages/apps/*"})
-    )
+    repo.get = AsyncMock(return_value=_row("org/r1", "pnpm-workspaces", {"apps_glob": "packages/apps/*"}))
     _, client = _make_app(repo)
 
     resp = client.post(
@@ -213,12 +207,12 @@ def test_routes_require_auth():
     csrf = {"X-Requested-With": "fetch"}
     assert client.get("/api/v1/qa/admin/providers").status_code == 401
     assert client.get("/api/v1/qa/admin/providers/org/r1").status_code == 401
-    assert client.post(
-        "/api/v1/qa/admin/providers/org/r1",
-        headers=csrf,
-        json={"provider_type": "x", "config": {}},
-    ).status_code == 401
     assert (
-        client.delete("/api/v1/qa/admin/providers/org/r1", headers=csrf).status_code
+        client.post(
+            "/api/v1/qa/admin/providers/org/r1",
+            headers=csrf,
+            json={"provider_type": "x", "config": {}},
+        ).status_code
         == 401
     )
+    assert client.delete("/api/v1/qa/admin/providers/org/r1", headers=csrf).status_code == 401

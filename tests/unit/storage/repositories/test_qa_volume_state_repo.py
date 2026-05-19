@@ -29,12 +29,16 @@ async def test_upsert_then_get(repo: QAVolumeStateRepository):
 @pytest.mark.asyncio
 async def test_upsert_replaces_on_conflict(repo: QAVolumeStateRepository):
     await repo.upsert(
-        scope="per-repo", scope_key="org/r1",
-        volume_name="qa-vol-org-r1", last_warmed_sha="aaa",
+        scope="per-repo",
+        scope_key="org/r1",
+        volume_name="qa-vol-org-r1",
+        last_warmed_sha="aaa",
     )
     await repo.upsert(
-        scope="per-repo", scope_key="org/r1",
-        volume_name="qa-vol-org-r1", last_warmed_sha="bbb",
+        scope="per-repo",
+        scope_key="org/r1",
+        volume_name="qa-vol-org-r1",
+        last_warmed_sha="bbb",
     )
     state = await repo.get(scope="per-repo", scope_key="org/r1")
     assert state.last_warmed_sha == "bbb"

@@ -83,9 +83,7 @@ async def test_run_force_rebuilds_even_with_matching_sha(monkeypatch):
         fake_compute_remote_lockfile_sha,
     )
 
-    build_mock = AsyncMock(
-        return_value=ImageBuildResult(image_tag="t2", lockfile_sha="aaa", head_sha="x")
-    )
+    build_mock = AsyncMock(return_value=ImageBuildResult(image_tag="t2", lockfile_sha="aaa", head_sha="x"))
     monkeypatch.setattr("athanor.cache.image_builder_cli.build_qa_image", build_mock)
 
     result = await run_build_qa_image(
@@ -118,9 +116,7 @@ async def test_run_builds_when_no_active_tag_exists(monkeypatch):
         fake_compute_remote_lockfile_sha,
     )
 
-    build_mock = AsyncMock(
-        return_value=ImageBuildResult(image_tag="t1", lockfile_sha="abc", head_sha="x")
-    )
+    build_mock = AsyncMock(return_value=ImageBuildResult(image_tag="t1", lockfile_sha="abc", head_sha="x"))
     monkeypatch.setattr("athanor.cache.image_builder_cli.build_qa_image", build_mock)
 
     result = await run_build_qa_image(

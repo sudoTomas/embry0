@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 def _make_executor():
     from athanor.services.issue_executor import IssueExecutor
+
     return IssueExecutor(
         issues_repo=MagicMock(),
         jobs_repo=MagicMock(),
@@ -59,9 +60,20 @@ def test_configurable_preserves_existing_keys():
     cfg = executor._build_graph_config(job_id="job-1")
     keys = cfg["configurable"]
     for required in (
-        "thread_id", "job_id", "agent_runner", "sandbox_manager",
-        "proxy_manager", "docker", "issues_repo", "inputs_repo", "db",
-        "credentials", "qa_minio", "qa_minio_sandbox", "qa_token_registry",
-        "profiles_repo", "agent_sessions_repo",
+        "thread_id",
+        "job_id",
+        "agent_runner",
+        "sandbox_manager",
+        "proxy_manager",
+        "docker",
+        "issues_repo",
+        "inputs_repo",
+        "db",
+        "credentials",
+        "qa_minio",
+        "qa_minio_sandbox",
+        "qa_token_registry",
+        "profiles_repo",
+        "agent_sessions_repo",
     ):
         assert required in keys, f"missing required key: {required}"

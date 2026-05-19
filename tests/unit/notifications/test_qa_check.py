@@ -174,7 +174,9 @@ async def test_write_patches_when_existing_check(monkeypatch):
 
         def raise_for_status(self):
             if not (200 <= self.status_code < 300):
-                raise httpx.HTTPStatusError("fail", request=MagicMock(), response=MagicMock(status_code=self.status_code))
+                raise httpx.HTTPStatusError(
+                    "fail", request=MagicMock(), response=MagicMock(status_code=self.status_code)
+                )
 
     class _StubClient:
         async def __aenter__(self):

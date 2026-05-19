@@ -38,6 +38,7 @@ from athanor.workflows.qa.subtask_result_schema import SubTaskStatus
 # Helper: build a minimal ResolvedAppConfig for testing
 # ---------------------------------------------------------------------------
 
+
 def _resolved_app(
     name: str = "hub",
     *,
@@ -59,9 +60,7 @@ def _resolved_app(
         frontend_url=frontend_url,
         mode=mode,
         sandbox_profile=sandbox_profile,
-        ready_checks=ready_checks or [
-            QAReadyCheck(http="http://localhost:3000/health", expect_status=200)
-        ],
+        ready_checks=ready_checks or [QAReadyCheck(http="http://localhost:3000/health", expect_status=200)],
         boot_timeout_seconds=boot_timeout_seconds,
         seed_command=seed_command,
         e2e=e2e,
