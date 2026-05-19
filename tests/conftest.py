@@ -46,16 +46,15 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture
 async def db_with_migrations() -> AsyncIterator[DatabasePool]:
-    """Function-scoped DatabasePool with all migrations applied.
+    """Function-scoped DatabasePool with a clean, fully-migrated schema.
 
     Requires a live PostgreSQL instance at TEST_DATABASE_URL (or the default
     athanor_test database). Tests consuming this fixture are expected to be
     marked @pytest.mark.requires_postgres.
 
-    Migrations are idempotent — run_migrations() is fast on subsequent calls
-    (SELECT MAX(version) + no-op). Individual tests must not drop the schema;
-    use the pg_pool fixture with its per-test TRUNCATE/DROP SCHEMA teardown
-    if you need a clean slate.
+    The public schema is dropped and recreated before migrations run, so every
+    consuming test gets a clean, fully-migrated database with zero rows
+    regardless of test execution order — no cross-test contamination.
     """
     import os
 
@@ -69,6 +68,8 @@ async def db_with_migrations() -> AsyncIterator[DatabasePool]:
     except Exception as exc:
         pytest.skip(f"PostgreSQL unavailable: {exc}")
         return
+    await db.execute("DROP SCHEMA public CASCADE")
+    await db.execute("CREATE SCHEMA public")
     await run_migrations(db)
     yield db
     await db.close()

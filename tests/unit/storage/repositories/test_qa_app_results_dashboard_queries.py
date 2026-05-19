@@ -1,7 +1,7 @@
 """Phase-4 dashboard queries on QAAppResultsRepository.
 
-Tests run against an in-memory Postgres via the existing pg_pool fixture.
-Marked requires_postgres so they auto-skip without a DB.
+Tests run against a clean, fully-migrated Postgres via the db_with_migrations
+fixture. Marked requires_postgres so they auto-skip without a DB.
 """
 
 from __future__ import annotations
@@ -22,28 +22,27 @@ from athanor.workflows.qa.subtask_result_schema import (
 pytestmark = pytest.mark.requires_postgres
 
 
-async def _seed_job(pg_pool, *, job_id: str, repo: str, started_at: datetime) -> None:
-    async with pg_pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO jobs (job_id, repo, status, created_at, updated_at, started_at)
-            VALUES ($1, $2, 'completed', $3, $3, $3)
-            ON CONFLICT (job_id) DO NOTHING
-            """,
-            job_id,
-            repo,
-            started_at,
-        )
+async def _seed_job(db_with_migrations, *, job_id: str, repo: str, started_at: datetime) -> None:
+    await db_with_migrations.execute(
+        """
+        INSERT INTO jobs (job_id, repo, status, created_at, updated_at, started_at)
+        VALUES ($1, $2, 'completed', $3, $3, $3)
+        ON CONFLICT (job_id) DO NOTHING
+        """,
+        job_id,
+        repo,
+        started_at,
+    )
 
 
 @pytest.mark.asyncio
-async def test_list_repos_with_runs_returns_distinct_repos_latest_first(pg_pool):
-    repo = QAAppResultsRepository(db=pg_pool)
+async def test_list_repos_with_runs_returns_distinct_repos_latest_first(db_with_migrations):
+    repo = QAAppResultsRepository(db=db_with_migrations)
     now = datetime.now(UTC)
 
-    await _seed_job(pg_pool, job_id="j-old-r1", repo="org/r1", started_at=now - timedelta(hours=2))
-    await _seed_job(pg_pool, job_id="j-new-r1", repo="org/r1", started_at=now - timedelta(minutes=5))
-    await _seed_job(pg_pool, job_id="j-r2", repo="org/r2", started_at=now - timedelta(hours=1))
+    await _seed_job(db_with_migrations, job_id="j-old-r1", repo="org/r1", started_at=now - timedelta(hours=2))
+    await _seed_job(db_with_migrations, job_id="j-new-r1", repo="org/r1", started_at=now - timedelta(minutes=5))
+    await _seed_job(db_with_migrations, job_id="j-r2", repo="org/r2", started_at=now - timedelta(hours=1))
 
     for jid in ("j-old-r1", "j-new-r1", "j-r2"):
         await repo.upsert(
@@ -66,12 +65,12 @@ async def test_list_repos_with_runs_returns_distinct_repos_latest_first(pg_pool)
 
 
 @pytest.mark.asyncio
-async def test_list_runs_for_repo_returns_runs_newest_first(pg_pool):
-    repo = QAAppResultsRepository(db=pg_pool)
+async def test_list_runs_for_repo_returns_runs_newest_first(db_with_migrations):
+    repo = QAAppResultsRepository(db=db_with_migrations)
     now = datetime.now(UTC)
 
-    await _seed_job(pg_pool, job_id="r3-j1", repo="org/r3", started_at=now - timedelta(hours=2))
-    await _seed_job(pg_pool, job_id="r3-j2", repo="org/r3", started_at=now - timedelta(hours=1))
+    await _seed_job(db_with_migrations, job_id="r3-j1", repo="org/r3", started_at=now - timedelta(hours=2))
+    await _seed_job(db_with_migrations, job_id="r3-j2", repo="org/r3", started_at=now - timedelta(hours=1))
 
     await repo.upsert("r3-j1", SubTaskResult("hub", SubTaskStatus.PASSED, 1000, CacheHits()))
     await repo.upsert("r3-j1", SubTaskResult("companion", SubTaskStatus.QA_FAILURE, 2000, CacheHits()))
@@ -91,13 +90,13 @@ async def test_list_runs_for_repo_returns_runs_newest_first(pg_pool):
 
 
 @pytest.mark.asyncio
-async def test_list_history_for_app_returns_last_n(pg_pool):
-    repo = QAAppResultsRepository(db=pg_pool)
+async def test_list_history_for_app_returns_last_n(db_with_migrations):
+    repo = QAAppResultsRepository(db=db_with_migrations)
     now = datetime.now(UTC)
 
     for i in range(3):
         jid = f"hist-{i}"
-        await _seed_job(pg_pool, job_id=jid, repo="org/r4", started_at=now - timedelta(hours=i))
+        await _seed_job(db_with_migrations, job_id=jid, repo="org/r4", started_at=now - timedelta(hours=i))
         await repo.upsert(
             jid,
             SubTaskResult(
@@ -118,12 +117,12 @@ async def test_list_history_for_app_returns_last_n(pg_pool):
 
 
 @pytest.mark.asyncio
-async def test_list_runs_for_repo_pagination(pg_pool):
-    repo = QAAppResultsRepository(db=pg_pool)
+async def test_list_runs_for_repo_pagination(db_with_migrations):
+    repo = QAAppResultsRepository(db=db_with_migrations)
     now = datetime.now(UTC)
     for i in range(5):
         jid = f"page-{i}"
-        await _seed_job(pg_pool, job_id=jid, repo="org/r5", started_at=now - timedelta(hours=i))
+        await _seed_job(db_with_migrations, job_id=jid, repo="org/r5", started_at=now - timedelta(hours=i))
         await repo.upsert(jid, SubTaskResult("hub", SubTaskStatus.PASSED, 1000, CacheHits()))
 
     page1 = await repo.list_runs_for_repo("org/r5", limit=2, offset=0)
@@ -136,11 +135,11 @@ async def test_list_runs_for_repo_pagination(pg_pool):
 
 
 @pytest.mark.asyncio
-async def test_three_way_rollup_infra_failure_yields_infra_error(pg_pool):
+async def test_three_way_rollup_infra_failure_yields_infra_error(db_with_migrations):
     """2 passed apps + 1 infra_failure → latest_status / overall_status == 'infra_error'."""
-    repo = QAAppResultsRepository(db=pg_pool)
+    repo = QAAppResultsRepository(db=db_with_migrations)
     now = datetime.now(UTC)
-    await _seed_job(pg_pool, job_id="rollup-infra", repo="org/rollup1", started_at=now)
+    await _seed_job(db_with_migrations, job_id="rollup-infra", repo="org/rollup1", started_at=now)
 
     await repo.upsert("rollup-infra", SubTaskResult("app-a", SubTaskStatus.PASSED, 1000, CacheHits()))
     await repo.upsert("rollup-infra", SubTaskResult("app-b", SubTaskStatus.PASSED, 1200, CacheHits()))
@@ -159,11 +158,11 @@ async def test_three_way_rollup_infra_failure_yields_infra_error(pg_pool):
 
 
 @pytest.mark.asyncio
-async def test_three_way_rollup_qa_failure_yields_failed(pg_pool):
+async def test_three_way_rollup_qa_failure_yields_failed(db_with_migrations):
     """2 passed apps + 1 qa_failure → overall_status == 'failed'."""
-    repo = QAAppResultsRepository(db=pg_pool)
+    repo = QAAppResultsRepository(db=db_with_migrations)
     now = datetime.now(UTC)
-    await _seed_job(pg_pool, job_id="rollup-qa", repo="org/rollup2", started_at=now)
+    await _seed_job(db_with_migrations, job_id="rollup-qa", repo="org/rollup2", started_at=now)
 
     await repo.upsert("rollup-qa", SubTaskResult("app-a", SubTaskStatus.PASSED, 1000, CacheHits()))
     await repo.upsert("rollup-qa", SubTaskResult("app-b", SubTaskStatus.PASSED, 1200, CacheHits()))
@@ -182,11 +181,11 @@ async def test_three_way_rollup_qa_failure_yields_failed(pg_pool):
 
 
 @pytest.mark.asyncio
-async def test_three_way_rollup_all_passed_yields_passed(pg_pool):
+async def test_three_way_rollup_all_passed_yields_passed(db_with_migrations):
     """2 passed apps → overall_status == 'passed'."""
-    repo = QAAppResultsRepository(db=pg_pool)
+    repo = QAAppResultsRepository(db=db_with_migrations)
     now = datetime.now(UTC)
-    await _seed_job(pg_pool, job_id="rollup-pass", repo="org/rollup3", started_at=now)
+    await _seed_job(db_with_migrations, job_id="rollup-pass", repo="org/rollup3", started_at=now)
 
     await repo.upsert("rollup-pass", SubTaskResult("app-a", SubTaskStatus.PASSED, 1000, CacheHits()))
     await repo.upsert("rollup-pass", SubTaskResult("app-b", SubTaskStatus.PASSED, 1200, CacheHits()))
