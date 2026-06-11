@@ -52,6 +52,12 @@
 - Read-only rootfs is disabled (`read_only_root: False`) because Claude CLI needs writable fs.
 - **Proxy enrollment.** As of 2026-04-28, the credential proxies (git-proxy, github-proxy, auth-proxy) require a per-sandbox bearer token enrolled via the orchestrator. The shared admin secret `PROXY_ADMIN_TOKEN` (`.env`) gates the proxies' `/admin/enroll` endpoints. Required in production; auto-generated in `AUTH_DEV_MODE=true` or `WEBHOOK_DEV_MODE=true` with a warning. Generate with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`.
 
+## QA — repo integration (`.athanor/qa.yaml`)
+
+- A target repo opts into the QA pipeline by committing a `.athanor/qa.yaml` (schema **v2**) at its root — it declares the `workspace_provider`, per-app `boot_command`/`frontend_url`/`ready_checks`, and acceptance criteria. That file is the whole integration contract.
+- **Full field-by-field reference + a worked `command-center` (24-app monorepo) example:** [`docs/qa-yaml-reference.md`](docs/qa-yaml-reference.md). Authoritative schema is `athanor/workflows/qa/qa_yaml_v2.py`; merge order is `qa_yaml_resolve.py`; examples live in `tests/fixtures/qa-yaml-corpus/v2/`.
+- **v1 is dead** — read only by the migrator (`athanor migrate-qa-config`). The README's `.athanor/qa.yaml` snippet still shows v1; the reference doc supersedes it.
+
 ## Postgres Backup / Restore
 
 Athanor runs a daily `pg_dump` via the `athanor-postgres-backup` compose service. Backups are stored in the `backup-data` named volume:
