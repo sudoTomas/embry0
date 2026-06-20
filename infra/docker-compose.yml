@@ -1,4 +1,4 @@
-name: athanor
+name: embry0
 
 services:
   frontend:
@@ -10,7 +10,7 @@ services:
         # single value in the root .env covers both surfaces. Override by
         # setting VITE_API_KEY explicitly if you want them to differ.
         VITE_API_KEY: "${VITE_API_KEY:-${API_KEY:-}}"
-    container_name: athanor-frontend
+    container_name: embry0-frontend
     ports:
       - "${PROD_PORT:-8200}:80"
     depends_on:
@@ -28,7 +28,7 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile.orchestrator
-    container_name: athanor-orchestrator
+    container_name: embry0-orchestrator
     environment:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-athanor}:${POSTGRES_PASSWORD:?must be set}@postgres:5432/${POSTGRES_DB:-athanor}"
       DOCKER_HOST: tcp://dind:2376
@@ -79,7 +79,7 @@ services:
 
   postgres:
     image: postgres:16.6-alpine
-    container_name: athanor-postgres
+    container_name: embry0-postgres
     environment:
       POSTGRES_DB: "${POSTGRES_DB:-athanor}"
       POSTGRES_USER: "${POSTGRES_USER:-athanor}"
@@ -107,7 +107,7 @@ services:
 
   postgres-backup:
     image: prodrigestivill/postgres-backup-local:16
-    container_name: athanor-postgres-backup
+    container_name: embry0-postgres-backup
     restart: unless-stopped
     volumes:
       - backup-data:/backups
@@ -132,7 +132,7 @@ services:
 
   minio:
     image: minio/minio:RELEASE.2025-05-24T17-08-30Z
-    container_name: athanor-minio
+    container_name: embry0-minio
     command: server /data --console-address :9001
     environment:
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:?must be set}"
@@ -158,7 +158,7 @@ services:
 
   dind:
     image: docker:27-dind
-    container_name: athanor-dind
+    container_name: embry0-dind
     privileged: true
     environment:
       DOCKER_TLS_CERTDIR: /certs
@@ -193,7 +193,7 @@ services:
 
   init-sandbox-networks:
     image: docker:27-cli
-    container_name: athanor-init-sandbox-networks
+    container_name: embry0-init-sandbox-networks
     entrypoint: ["sh"]
     command: ["/scripts/setup-sandbox-networks.sh"]
     environment:
@@ -215,7 +215,7 @@ services:
   # Not exposed publicly.
   registry:
     image: registry:2
-    container_name: athanor-registry
+    container_name: embry0-registry
     volumes:
       - registry-data:/var/lib/registry
     # `expose` for backend-network access from DinD/orchestrator.
@@ -263,7 +263,7 @@ services:
   # proxy containers it launches in DinD can pull successfully on first ref.
   init-push-images:
     image: docker:27-cli
-    container_name: athanor-init-push-images
+    container_name: embry0-init-push-images
     entrypoint: ["sh"]
     command: ["/scripts/push-images-to-registry.sh"]
     environment:
@@ -281,7 +281,7 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:2026.3.0
-    container_name: athanor-cloudflared
+    container_name: embry0-cloudflared
     restart: unless-stopped
     command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 run
     environment:
