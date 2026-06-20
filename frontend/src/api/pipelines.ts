@@ -2,7 +2,7 @@ import { api } from "./client";
 import type { PipelineGraph, PipelineTemplate, PipelineTemplateSummary } from "@/lib/types";
 
 /**
- * The Athanor pipeline-templates API uses snake_case fields that don't quite
+ * The embry0 pipeline-templates API uses snake_case fields that don't quite
  * match the frontend's existing types: it returns `id`/`graph_definition`
  * where the UI uses `template_id`/`graph`. Rather than rename across every
  * consumer (PipelinesPage, TemplateDrawer, TemplatePicker, PipelineEditor,

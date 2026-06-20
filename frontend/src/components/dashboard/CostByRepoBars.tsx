@@ -9,7 +9,7 @@ interface CostByRepoBarsProps {
 
 /**
  * Per-repo cost breakdown — companion's "per-project" panel, mapped onto
- * Athanor's repo dimension. Shows up to 8 repos sorted by cost descending.
+ * embry0's repo dimension. Shows up to 8 repos sorted by cost descending.
  * Each bar's width is the repo's cost as a fraction of the largest repo
  * (not of the total) so smaller repos remain visible.
  */

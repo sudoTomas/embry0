@@ -2,7 +2,7 @@ import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useLocation } from "react-router";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { Button } from "@/components/ui/Button";
-import { AthanorMark } from "@/components/divine/AthanorMark";
+import { Embry0Mark } from "@/components/divine/Embry0Mark";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { OPERATION_FOR_ROUTE, OPERATION_NUMERAL } from "@/components/divine/operations";
 
@@ -22,7 +22,7 @@ export function TopBar() {
   const { sidebarOpen, toggleSidebar } = useLayoutStore();
   const location = useLocation();
   const pathSegments = location.pathname.split("/").filter(Boolean);
-  const currentPage = breadcrumbMap[pathSegments[0] ?? ""] ?? "Athanor";
+  const currentPage = breadcrumbMap[pathSegments[0] ?? ""] ?? "embry0";
   // Resolve current route to its canonical alchemical operation. Routes
   // without an entry in OPERATION_FOR_ROUTE render no glyph.
   const routeKey = pathSegments.length === 0 ? "/" : `/${pathSegments[0]}`;
@@ -41,7 +41,7 @@ export function TopBar() {
         )}
       </Button>
       <nav className="flex items-center gap-2" aria-label="Breadcrumb">
-        <AthanorMark />
+        <Embry0Mark />
         <span className="text-white/20 mx-1">/</span>
         <span className="text-sm text-white/80 font-medium">{currentPage}</span>
         {pathSegments.length > 1 && (

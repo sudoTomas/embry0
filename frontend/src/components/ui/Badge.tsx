@@ -34,7 +34,7 @@ const TONE_CLASSES: Record<BadgeTone, string> = {
 };
 
 /**
- * Status pill primitive. Six tones backed by Athanor's @theme tokens.
+ * Status pill primitive. Six tones backed by embry0's @theme tokens.
  * Optional sigil renders inline before children — skipped on `error`
  * (operator-critical paths skip divine flourishes per divine/CLAUDE.md).
  */

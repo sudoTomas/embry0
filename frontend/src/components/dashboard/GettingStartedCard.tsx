@@ -6,7 +6,7 @@ export function GettingStartedCard() {
   return (
     <div className="athanor-card p-8">
       <div className="text-center mb-8">
-        <h2 className="text-xl font-bold text-white/90 mb-2">Welcome to Athanor</h2>
+        <h2 className="text-xl font-bold text-white/90 mb-2">Welcome to embry0</h2>
         <p className="text-sm text-white/40 max-w-md mx-auto">
           Your autonomous agent orchestration engine is ready. Here's how to get started.
         </p>

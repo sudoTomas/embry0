@@ -1,6 +1,6 @@
 /**
  * The seven canonical alchemical operations of the Magnum Opus.
- * Each operation has a distinct visual character in Athanor's
+ * Each operation has a distinct visual character in embry0's
  * geodesic vocabulary — see
  * `docs/superpowers/specs/2026-05-04-divine-operations-design.md`
  * and `frontend/src/components/divine/CLAUDE.md`.

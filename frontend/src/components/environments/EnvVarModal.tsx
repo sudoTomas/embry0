@@ -37,11 +37,11 @@ function validateQaKey(key: string): string | null {
 
 function validateNotReserved(key: string): string | null {
   if (RESERVED_ENV_KEYS.has(key)) {
-    return `"${key}" is reserved for Athanor infrastructure and cannot be set here.`;
+    return `"${key}" is reserved for embry0 infrastructure and cannot be set here.`;
   }
   for (const p of RESERVED_ENV_PREFIXES) {
     if (key.startsWith(p)) {
-      return `Keys starting with "${p}" are reserved for Athanor infrastructure.`;
+      return `Keys starting with "${p}" are reserved for embry0 infrastructure.`;
     }
   }
   return null;

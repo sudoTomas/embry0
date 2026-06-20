@@ -10,7 +10,7 @@ describe("PatentCanvas", () => {
       <PatentCanvas
         date="MAY 04, 2026"
         inventor="O. BODART"
-        patentNo="ATHANOR-001"
+        patentNo="EMBRY0-001"
         title="Geodesic Identity"
         elements="FIRE · WATER"
         epigraph="As above, so below"
@@ -20,7 +20,7 @@ describe("PatentCanvas", () => {
     );
     expect(screen.getByText("MAY 04, 2026")).toBeInTheDocument();
     expect(screen.getByText("O. BODART")).toBeInTheDocument();
-    expect(screen.getByText("ATHANOR-001")).toBeInTheDocument();
+    expect(screen.getByText("EMBRY0-001")).toBeInTheDocument();
     expect(screen.getByText("Geodesic Identity")).toBeInTheDocument();
     expect(screen.getByText("FIRE · WATER")).toBeInTheDocument();
     expect(screen.getByText("As above, so below")).toBeInTheDocument();

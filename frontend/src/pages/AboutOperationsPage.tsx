@@ -32,8 +32,8 @@ export function AboutOperationsPage() {
       {/* Hero */}
       <PatentCanvas
         date="MAY 04, 2026"
-        inventor="O. BODART · ATHANOR INC."
-        patentNo="ATHANOR-2026-001"
+        inventor="O. BODART · EMBRY0 INC."
+        patentNo="EMBRY0-2026-001"
         title="Geodesic Identity"
         elements="FIRE · WATER · AIR · EARTH · AETHER · STONE"
         epigraph='"As above, so below."'
@@ -70,7 +70,7 @@ export function AboutOperationsPage() {
 
       {/* Footer note */}
       <div className="text-[10px] tracking-[0.18em] uppercase opacity-40 text-center pt-4 font-mono">
-        Athanor — the alchemical furnace where code transmutes
+        embry0 — the alchemical furnace where code transmutes
       </div>
     </div>
   );

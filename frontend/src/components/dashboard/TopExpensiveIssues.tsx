@@ -8,7 +8,7 @@ interface TopExpensiveIssuesProps {
 
 /**
  * Top 5 most expensive issues — companion's "Top 5 Most Expensive Tasks" panel,
- * mapped onto Athanor's issue dimension. Sums total_cost_usd across all
+ * mapped onto embry0's issue dimension. Sums total_cost_usd across all
  * jobs per issue.
  */
 export function TopExpensiveIssues({ issues }: TopExpensiveIssuesProps) {

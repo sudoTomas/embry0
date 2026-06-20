@@ -2,13 +2,13 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: #09090b;
+  --color-background: #060d12;
   --color-foreground: #fafafa;
   --color-card: #0f1419;
   --color-card-foreground: #fafafa;
   --color-popover: #0f1419;
   --color-popover-foreground: #fafafa;
-  --color-primary: #d4af37;
+  --color-primary: #4dffd1;
   --color-primary-foreground: #09090b;
   --color-secondary: #1c2526;
   --color-secondary-foreground: #fafafa;
@@ -105,7 +105,7 @@ h1, h2, h3, h4, h5, h6 {
   --density-font-size: 0.8125rem;
 }
 
-/* Divine layer (Athanor identity) — see frontend/src/components/divine/CLAUDE.md */
+/* Divine layer (embry0 identity) — see frontend/src/components/divine/CLAUDE.md */
 
 @keyframes athanor-pulse {
   0%, 100% { opacity: 1; }
@@ -198,7 +198,7 @@ body[data-divine="off"] .divine-fallback {
   animation: scale-in 0.3s ease-out both;
 }
 
-/* ===== Athanor Execution Dashboard Theme ===== */
+/* ===== embry0 Execution Dashboard Theme ===== */
 :root {
   --athanor-bg-primary: #09090b;
   --athanor-bg-card: #0f1419;
