@@ -1,7 +1,9 @@
 import { Outlet } from "react-router";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
+import { FeedbackFab } from "@/components/feedback/FeedbackFab";
 import { useLayoutStore } from "@/stores/layoutStore";
+import { CommandPalette } from "@/components/CommandPalette";
 
 export function AppLayout() {
   const densityMode = useLayoutStore((s) => s.densityMode);
@@ -14,6 +16,8 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
+      <CommandPalette />
+      <FeedbackFab />
     </div>
   );
 }

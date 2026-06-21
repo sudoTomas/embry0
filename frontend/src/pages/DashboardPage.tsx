@@ -1,263 +1,78 @@
 import { useStats } from "@/hooks/useStats";
-import { useQueue } from "@/hooks/useQueue";
-import { JobStatusRing } from "@/components/divine/JobStatusRing";
-import type { CardinalStage } from "@/lib/sigils";
-import { CompactStatCard } from "@/components/stats/CompactStatCard";
-import { TierBreakdown } from "@/components/stats/TierBreakdown";
-import { CostBreakdown } from "@/components/stats/CostBreakdown";
-import { FailureCategories } from "@/components/stats/FailureCategories";
-import { SuccessSparkline } from "@/components/stats/SuccessSparkline";
-import { LiveActivityBand } from "@/components/dashboard/LiveActivityBand";
-import { CostByRepoBars } from "@/components/dashboard/CostByRepoBars";
-import { TopExpensiveIssues } from "@/components/dashboard/TopExpensiveIssues";
-import { Badge } from "@/components/ui/Badge";
-import { PageError } from "@/components/PageError";
-import { DashboardSkeleton } from "@/components/ui/PageSkeleton";
-import { GettingStartedCard } from "@/components/dashboard/GettingStartedCard";
-import { formatCost, formatPercent, formatDate } from "@/lib/utils";
+import { useAgentStats } from "@/hooks/useAgentStats";
+import {
+  Heartbeat,
+  SingleSourceTile,
+  type SingleSourceQuery,
+} from "@/components/vitals";
+
+// Format helpers — kept local; they're the only translation layer between
+// raw backend numbers and tile strings.
+const formatCount = (n: number) => String(n);
+const formatPercent = (n: number) => `${Math.round(n * 100)}%`;
+const formatUsd = (n: number) => `$${n.toFixed(2)}`;
+
+// Project a useQuery result onto the SingleSourceQuery contract with a
+// per-tile value selector. Keeping the selector at the call site means
+// each tile names its own source field, which makes the assay's
+// source-mapping guards trivially auditable.
+function selectQuery<TSource, TValue>(
+  result: { data: TSource | undefined; isPending: boolean; isError: boolean },
+  select: (source: TSource) => TValue,
+): SingleSourceQuery<TValue> {
+  return {
+    isError: result.isError,
+    isPending: result.isPending,
+    data: result.data === undefined ? undefined : select(result.data),
+  };
+}
 
 export function DashboardPage() {
-  const { data: stats, isLoading, isError, refetch } = useStats();
-  const { data: queue } = useQueue();
-
-  if (isError) {
-    return <PageError message="Failed to load dashboard stats" onRetry={() => refetch()} />;
-  }
-
-  if (isLoading || !stats) {
-    return <DashboardSkeleton />;
-  }
-
-  // Live state — prefer the dedicated /queue endpoint (5s refresh) over the
-  // 30s stats refresh; fall back to stats fields when queue isn't loaded yet.
-  const running = queue?.running ?? stats.running ?? 0;
-  const queued = queue?.pending ?? stats.queued ?? 0;
-  const awaitingInput = queue?.awaiting_input ?? stats.awaiting_input ?? 0;
-  const paused = queue?.paused ?? stats.paused ?? 0;
+  const orchestrator = useStats();
+  const agent = useAgentStats();
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between animate-fade-up">
-        <div className="flex items-center gap-4">
-          <JobStatusRing currentStage={pipelineStateFromQueue(running, awaitingInput)} size={56} />
-          <h1 className="text-2xl font-bold">Dashboard</h1>
-        </div>
-        {paused > 0 && (
-          <Badge tone="warning" title={`${paused} paused job(s)`}>
-            {paused} paused
-          </Badge>
-        )}
-      </div>
-
-      {/* Dense 6-up stat strip — companion's tasks-view summary */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-        <CompactStatCard
-          title="Running"
-          value={String(running)}
-          color="#22c55e"
-          pulse={running > 0}
-          delay={0}
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <SingleSourceTile
+          label="Running"
+          query={selectQuery(agent, (s) => s.running)}
+          format={formatCount}
         />
-        <CompactStatCard
-          title="Queued"
-          value={String(queued)}
-          color="#06b6d4"
-          delay={40}
+        <SingleSourceTile
+          label="Queued"
+          query={selectQuery(agent, (s) => s.queued)}
+          format={formatCount}
         />
-        <CompactStatCard
-          title="Awaiting Input"
-          value={String(awaitingInput)}
-          color="#f59e0b"
-          pulse={awaitingInput > 0}
-          delay={80}
+        <SingleSourceTile
+          label="Done"
+          query={selectQuery(agent, (s) => s.done)}
+          format={formatCount}
         />
-        <CompactStatCard
-          title="Failed"
-          value={String(stats.failed)}
-          color="#ef4444"
-          delay={120}
+        <SingleSourceTile
+          label="Failed"
+          query={selectQuery(agent, (s) => s.failed)}
+          format={formatCount}
         />
-        <CompactStatCard
-          title="Spent Today"
-          value={formatCost(stats.daily_cost_usd)}
-          subtitle={`Month ${formatCost(stats.monthly_cost_usd)}`}
-          color="#d4af37"
-          delay={160}
+        <SingleSourceTile
+          label="QA Pass Rate"
+          query={selectQuery(orchestrator, (s) => s.success_rate)}
+          format={formatPercent}
         />
-        <CompactStatCard
-          title="Total Issues"
-          value={String(stats.total_issues)}
-          subtitle={`${formatPercent(stats.success_rate)} pass rate`}
-          color="#a855f7"
-          delay={200}
+        <SingleSourceTile
+          label="Cost Today"
+          query={selectQuery(orchestrator, (s) => s.daily_cost_usd)}
+          format={formatUsd}
         />
       </div>
 
-      {/* Live activity band — only renders when something is happening */}
-      <LiveActivityBand
-        running={running}
-        queued={queued}
-        awaitingInput={awaitingInput}
-      />
-
-      {stats.total_issues === 0 ? (
-        <GettingStartedCard />
-      ) : (
-        <>
-          {/* Success sparkline */}
-          {stats.recent_issues.length > 0 && (
-            <div
-              className="athanor-card p-4 animate-fade-up flex items-center gap-4"
-              style={{ animationDelay: "240ms" }}
-            >
-              <span className="text-sm font-medium text-white/40 whitespace-nowrap">
-                Recent Success Rate
-              </span>
-              <SuccessSparkline recentIssues={stats.recent_issues} />
-            </div>
-          )}
-
-          {/* Cost by repo + Top expensive issues — companion-style breakdown */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <CostByRepoBars
-              costByRepo={stats.cost_by_repo ?? []}
-              totalCost={stats.total_cost_usd}
-            />
-            <TopExpensiveIssues issues={stats.top_expensive_issues ?? []} />
-          </div>
-
-          {/* Cost breakdown by tier + Failure categories */}
-          <div
-            className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-fade-up"
-            style={{ animationDelay: "420ms" }}
-          >
-            <CostBreakdown
-              costByTier={stats.cost_by_tier}
-              dailyCost={stats.daily_cost_usd}
-              monthlyCost={stats.monthly_cost_usd}
-            />
-            <FailureCategories categories={stats.failure_categories} />
-          </div>
-
-          {/* Tier breakdown */}
-          <TierBreakdown
-            costByTier={stats.cost_by_tier}
-            successRateByTier={stats.success_rate_by_tier}
-            avgAttemptsByTier={stats.avg_attempts_by_tier}
-            avgCostPerTier={stats.avg_cost_per_tier}
-          />
-
-          {/* Recent issues — refactored to use Badge primitive */}
-          <div
-            className="athanor-card animate-fade-up"
-            style={{
-              animationDelay: "540ms",
-              borderColor: "rgba(6,182,212,0.18)",
-            }}
-          >
-            <div className="px-5 pt-4 pb-2 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-white">Recent Issues</h2>
-              <span className="text-[11px] text-white/40">
-                {stats.recent_issues.length} shown
-              </span>
-            </div>
-            <div className="px-5 pb-4 overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-white/[0.06] text-white/40 text-[10px] uppercase tracking-wider">
-                    <th scope="col" className="text-left py-2 font-medium">#</th>
-                    <th scope="col" className="text-left py-2 font-medium">Repo</th>
-                    <th scope="col" className="text-left py-2 font-medium">Status</th>
-                    <th scope="col" className="text-right py-2 font-medium">Cost</th>
-                    <th scope="col" className="text-right py-2 font-medium">Timestamp</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats.recent_issues.map((issue) => (
-                    <tr
-                      key={issue.trace_id}
-                      className="border-b border-white/[0.04] hover:bg-cyan-500/[0.02] transition-colors"
-                    >
-                      <td className="py-2 font-mono tabular-nums text-white/60">
-                        {issue.issue_number || "—"}
-                      </td>
-                      <td className="py-2 font-mono text-white/80 truncate max-w-[200px]" title={issue.repo}>
-                        {issue.repo}
-                      </td>
-                      <td className="py-2">
-                        <Badge
-                          tone={statusTone(issue.status, issue.passed)}
-                          sigil={statusSigil(issue.status, issue.passed)}
-                        >
-                          {statusLabel(issue.status, issue.passed)}
-                        </Badge>
-                      </td>
-                      <td className="py-2 text-right font-mono tabular-nums text-white/70">
-                        {issue.cost_usd ? formatCost(issue.cost_usd) : "—"}
-                      </td>
-                      <td className="text-right py-2 text-muted-foreground tabular-nums">
-                        {formatDate(issue.timestamp)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      )}
+      <div
+        data-testid="heartbeat-strip"
+        className="flex flex-wrap items-center gap-6"
+      >
+        <Heartbeat label="orchestrator live" />
+        <Heartbeat label="agent live" />
+      </div>
     </div>
   );
-}
-
-function statusTone(
-  status: string | undefined,
-  passed: boolean,
-): "success" | "warning" | "error" | "info" | "neutral" {
-  if (status === "running") return "info";
-  if (status === "awaiting_input") return "warning";
-  if (status === "paused") return "warning";
-  if (status === "failed") return "error";
-  if (status === "completed" || passed) return "success";
-  return "neutral";
-}
-
-/**
- * Derive the current cardinal pipeline stage from queue counts.
- * - Running jobs → develop (active work in progress)
- * - Awaiting-input jobs → triage (routing decision pending)
- * - Otherwise → null (idle)
- *
- * The 4-stage cardinal mapping (triage / develop / validate / qa) is the
- * subset of pipeline activity the JobStatusRing visualizes. Other states
- * (paused, failed, queued) fall through to the idle render.
- */
-function pipelineStateFromQueue(
-  running: number,
-  awaitingInput: number,
-): CardinalStage | null {
-  if (running > 0) return "develop";
-  if (awaitingInput > 0) return "triage";
-  return null;
-}
-
-function statusLabel(status: string | undefined, passed: boolean): string {
-  if (status === "running") return "Running";
-  if (status === "awaiting_input") return "Awaiting Input";
-  if (status === "paused") return "Paused";
-  if (status === "failed") return "Failed";
-  if (status === "completed" || passed) return "Passed";
-  return status ?? "—";
-}
-
-function statusSigil(
-  status: string | undefined,
-  passed: boolean,
-): import("@/lib/sigils").Stage | undefined {
-  // Operator-critical states (failed) skip divine flourishes per divine/CLAUDE.md.
-  if (status === "running") return "develop"; // Sulphur — active fire
-  if (status === "awaiting_input") return "triage"; // Mercury — the messenger
-  if (status === "paused") return "validate"; // Salt — fixed/stable
-  if (status === "completed" || passed) return "publish"; // Sol — the gold
-  return undefined;
 }

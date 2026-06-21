@@ -198,6 +198,20 @@ body[data-divine="off"] .divine-fallback {
   animation: scale-in 0.3s ease-out both;
 }
 
+/* ===== vitals primitives (ticket 001) =====
+   Heartbeat pulse. Keyframes + class binding live ONLY inside the
+   prefers-reduced-motion: no-preference guard so the animation simply
+   never runs when the user requests reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes vitals-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.5; }
+  }
+  .vitals-pulse {
+    animation: vitals-pulse 1.4s ease-in-out infinite;
+  }
+}
+
 /* ===== embry0 Execution Dashboard Theme ===== */
 :root {
   --athanor-bg-primary: #09090b;

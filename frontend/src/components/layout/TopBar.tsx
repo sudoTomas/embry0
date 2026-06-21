@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { Embry0Mark } from "@/components/divine/Embry0Mark";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { OPERATION_FOR_ROUTE, OPERATION_NUMERAL } from "@/components/divine/operations";
+import { NotificationsCenter } from "@/components/NotificationsCenter";
 
 const breadcrumbMap: Record<string, string> = {
   "": "Dashboard",
@@ -59,6 +60,9 @@ export function TopBar() {
           </span>
         )}
       </nav>
+      <div className="ml-auto flex items-center gap-2">
+        <NotificationsCenter />
+      </div>
     </header>
   );
 }

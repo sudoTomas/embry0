@@ -1,5 +1,20 @@
 import { NavLink } from "react-router";
-import { LayoutDashboard, Play, Workflow, Settings, Bot, Box, CircleDot, KeyRound, Layers, SlidersHorizontal } from "lucide-react";
+import {
+  LayoutDashboard,
+  Play,
+  Workflow,
+  Settings,
+  Bot,
+  Box,
+  CircleDot,
+  KeyRound,
+  Layers,
+  SlidersHorizontal,
+  ListTodo,
+  Lightbulb,
+  GitBranch,
+  BarChart3,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -21,21 +36,58 @@ interface NavItem {
   stage?: Stage;
 }
 
-const MONITORING_ITEMS: NavItem[] = [
-  { path: "/", label: "Dashboard", icon: LayoutDashboard, stage: "publish" },
-  { path: "/issues", label: "Issues", icon: CircleDot, stage: "triage" },
-  { path: "/jobs", label: "Jobs", icon: Play, stage: "develop" },
-  { path: "/qa/repos", label: "QA", icon: Layers, stage: "qa" },
-];
+interface NavGroup {
+  label: string;
+  items: readonly NavItem[];
+}
 
-const CONFIGURATION_ITEMS: NavItem[] = [
-  { path: "/agents", label: "Agents", icon: Bot, stage: "validate" },
-  { path: "/sandboxes", label: "Sandboxes", icon: Box, stage: "qa" },
-  { path: "/pipelines", label: "Pipelines", icon: Workflow, stage: "explore" },
-  { path: "/environments", label: "Environments", icon: KeyRound },
-  // Phase 5G: per-repo workspace_provider overrides admin surface.
-  { path: "/qa/admin/providers", label: "Provider overrides", icon: SlidersHorizontal },
-  { path: "/settings", label: "Settings", icon: Settings },
+// Unified IA (ticket 011): Overview, Work, Pipelines & QA, Infra, Insights, Settings.
+const NAV_GROUPS: readonly NavGroup[] = [
+  {
+    label: "Overview",
+    items: [
+      { path: "/", label: "Overview", icon: LayoutDashboard, stage: "publish" },
+    ],
+  },
+  {
+    label: "Work",
+    items: [
+      { path: "/issues", label: "Issues", icon: CircleDot, stage: "triage" },
+      { path: "/jobs", label: "Jobs", icon: Play, stage: "develop" },
+      { path: "/tasks", label: "Tasks", icon: ListTodo },
+      { path: "/proposals", label: "Proposals", icon: Lightbulb },
+    ],
+  },
+  {
+    label: "Pipelines & QA",
+    items: [
+      { path: "/pipelines", label: "Pipelines", icon: Workflow, stage: "explore" },
+      { path: "/qa/repos", label: "QA", icon: Layers, stage: "qa" },
+      // Per-repo workspace_provider overrides admin surface (Phase 5G).
+      { path: "/qa/admin/providers", label: "Provider overrides", icon: SlidersHorizontal },
+    ],
+  },
+  {
+    label: "Infra",
+    items: [
+      { path: "/sandboxes", label: "Sandboxes", icon: Box, stage: "qa" },
+      { path: "/agents", label: "Agents", icon: Bot, stage: "validate" },
+      { path: "/environments", label: "Environments", icon: KeyRound },
+      { path: "/repos", label: "Repos", icon: GitBranch },
+    ],
+  },
+  {
+    label: "Insights",
+    items: [
+      { path: "/insights", label: "Insights", icon: BarChart3 },
+    ],
+  },
+  {
+    label: "Settings",
+    items: [
+      { path: "/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ];
 
 function NavItemLink({ item, sidebarOpen }: { item: NavItem; sidebarOpen: boolean }) {
@@ -151,23 +203,20 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 p-2">
-        {sidebarOpen && (
-          <div className="px-3 pt-4 pb-1">
-            <span className="text-[10px] font-semibold tracking-wider text-white/20 uppercase">Monitoring</span>
-          </div>
-        )}
-        {MONITORING_ITEMS.map((item) => (
-          <NavItemLink key={item.path} item={item} sidebarOpen={sidebarOpen} />
-        ))}
-
-        <div className="mx-3 my-2 border-t border-white/[0.06]" />
-        {sidebarOpen && (
-          <div className="px-3 pt-2 pb-1">
-            <span className="text-[10px] font-semibold tracking-wider text-white/20 uppercase">Configuration</span>
-          </div>
-        )}
-        {CONFIGURATION_ITEMS.map((item) => (
-          <NavItemLink key={item.path} item={item} sidebarOpen={sidebarOpen} />
+        {NAV_GROUPS.map((group, idx) => (
+          <section key={group.label} aria-label={group.label}>
+            {idx > 0 && <div className="mx-3 my-2 border-t border-white/[0.06]" />}
+            {sidebarOpen && (
+              <h3 className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-white/20 uppercase">
+                {group.label}
+              </h3>
+            )}
+            <div className="flex flex-col gap-1">
+              {group.items.map((item) => (
+                <NavItemLink key={item.path} item={item} sidebarOpen={sidebarOpen} />
+              ))}
+            </div>
+          </section>
         ))}
       </nav>
     </aside>

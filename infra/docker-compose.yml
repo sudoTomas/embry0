@@ -16,6 +16,11 @@ services:
     depends_on:
       orchestrator:
         condition: service_healthy
+    # nginx's `location /agent/ { proxy_pass http://companion:7778/; }` resolves
+    # `companion` through Docker DNS. companion runs out-of-stack on the docker host
+    # (private-server:7778), so we map the hostname to the host gateway.
+    extra_hosts:
+      - "companion:host-gateway"
     networks: [frontend]
     logging:
       driver: json-file
