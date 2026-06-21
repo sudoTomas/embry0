@@ -204,3 +204,23 @@ async def test_resume_job_rejects_extra_fields(client_with_paused_job):
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_job_dispatches_workflow(app):
+    """A direct (non-QA) job must DISPATCH the issue-to-pr workflow, not just
+    create a pending row. Regression: jobs previously sat in `pending` forever
+    because POST /jobs never kicked the executor (only the issues path did)."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/jobs",
+            json={"repo": "owner/repo", "task": "Fix the bug"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 201
+    executor = app.state.issue_executor
+    executor._run_workflow.assert_called_once()
+    executor._track_task.assert_called_once()
+    _, kwargs = executor._track_task.call_args
+    assert kwargs["job_id"] == "job-test123"

@@ -1,5 +1,6 @@
 """Jobs API — create, list, get, cancel jobs."""
 
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -57,6 +58,7 @@ async def create_job(
     if req.agent_models:
         effective_config = {**(effective_config or {}), "agent_models_override": req.agent_models}
 
+    trace_id = f"trc-{uuid.uuid4().hex[:12]}"
     job_id = await jobs.create(
         repo=req.repo,
         task=req.task,
@@ -64,6 +66,7 @@ async def create_job(
         pipeline_template=req.pipeline_template,
         pipeline_config=effective_config,
         sandbox_profile=req.sandbox_profile,
+        trace_id=trace_id,
     )
     config = request.app.state.config
     db = getattr(request.app.state, "db", None)
@@ -74,6 +77,26 @@ async def create_job(
         details={"job_id": job_id, "repo": req.repo},
         audit_log_path=config.audit_log_path,
     )
+
+    # Dispatch the issue-to-pr workflow in the background. Without this the row
+    # would sit in `pending` forever: the direct POST /jobs path created the job
+    # but never ran it (only the issues path dispatched the workflow). The
+    # workflow tolerates a null issue_id for an issue-less, API-submitted job.
+    executor = getattr(request.app.state, "issue_executor", None)
+    if executor is None:
+        raise HTTPException(status_code=503, detail="executor not initialized")
+    synthetic_issue = {
+        "repo": req.repo,
+        "title": req.task,
+        "body": "",
+        "github_number": req.issue_number,
+    }
+    executor._track_task(
+        executor._run_workflow(None, job_id, synthetic_issue),
+        kind="workflow_execute",
+        job_id=job_id,
+    )
+
     job = await jobs.get(job_id)
     return job or {"job_id": job_id}
 
