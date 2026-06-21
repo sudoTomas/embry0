@@ -19,16 +19,15 @@ logger = structlog.get_logger(__name__)
 # etc.) and the same argv shows up at debug level on docker_cmd, at
 # warning level on docker_cmd_timeout, and at error level on
 # docker_cmd_failed. Scrub before logging.
-_SECRET_ENV_KEYS = frozenset(
+# Non-secret env keys whose values are safe + useful to keep in logs. Every other
+# `-e KEY=VAL` value is redacted (default-deny), so a newly-injected secret is
+# scrubbed automatically. The previous allowlist leaked AZURE / CF / DB / CRON /
+# HUB / REPORTS secrets because they were never added to it.
+_SAFE_ENV_KEYS = frozenset(
     {
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-        "GITHUB_TOKEN",
-        "ATHANOR_SANDBOX_TOKEN",
-        "POSTGRES_PASSWORD",
-        "ENVIRONMENT_SECRET_KEY",
-        "PROXY_ADMIN_TOKEN",
+        "DOCKER_HOST",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
     }
 )
 
@@ -37,8 +36,8 @@ def _scrub_cmd_for_log(cmd: list[str]) -> list[str]:
     """Return a copy of ``cmd`` with secret ``-e KEY=VAL`` values redacted.
 
     Walks the argv looking for the docker `-e` flag followed by a
-    ``KEY=VAL`` argument. If ``KEY`` is in ``_SECRET_ENV_KEYS``, the value
-    is replaced with ``***REDACTED***``. Any other argv token is preserved
+    ``KEY=VAL`` argument. If ``KEY`` is NOT in ``_SAFE_ENV_KEYS`` (default-deny),
+    the value is replaced with ``***REDACTED***``. Any other argv token is preserved
     verbatim. Order and length are preserved so structured log consumers
     that index into the array see the same shape.
     """
@@ -49,7 +48,7 @@ def _scrub_cmd_for_log(cmd: list[str]) -> list[str]:
         if token == "-e" and i + 1 < len(cmd):
             kv = cmd[i + 1]
             key, sep, _ = kv.partition("=")
-            if sep and key in _SECRET_ENV_KEYS:
+            if sep and key not in _SAFE_ENV_KEYS:
                 scrubbed.append(token)
                 scrubbed.append(f"{key}=***REDACTED***")
                 i += 2

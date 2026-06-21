@@ -185,8 +185,8 @@ def test_scrub_cmd_redacts_oauth_token():
     scrubbed = _scrub_cmd_for_log(cmd)
     assert "CLAUDE_CODE_OAUTH_TOKEN=***REDACTED***" in scrubbed
     assert "sk-ant-oat01-secret-value" not in " ".join(scrubbed)
-    # Non-secret env stays intact.
-    assert "QA_JOB_ID=job-1" in scrubbed
+    # Default-deny: env values not on the safe-list are redacted too.
+    assert "QA_JOB_ID=***REDACTED***" in scrubbed
     # Length and order preserved (consumers may index into the array).
     assert len(scrubbed) == len(cmd)
     assert scrubbed[4] == "CLAUDE_CODE_OAUTH_TOKEN=***REDACTED***"
@@ -217,11 +217,31 @@ def test_scrub_cmd_redacts_known_secret_keys():
         assert needle not in scrubbed, f"leaked: {needle!r}"
 
 
-def test_scrub_cmd_leaves_unrelated_kv_alone():
+def test_scrub_cmd_default_deny_redacts_unlisted_secrets():
+    """Default-deny: every -e value is redacted except the docker safe-list.
+    Regression for the leak where AZURE/CF/DB/etc. secrets reached logs because
+    they were never in an allowlist."""
     from athanor.execution.docker_client import _scrub_cmd_for_log
 
-    cmd = ["docker", "exec", "-e", "FOO=bar", "-e", "DEBUG=true", "container", "true"]
-    assert _scrub_cmd_for_log(cmd) == cmd
+    cmd = [
+        "docker",
+        "run",
+        "-e",
+        "DOCKER_HOST=tcp://dind:2376",
+        "-e",
+        "AZURE_CLIENT_SECRET=supersecret",
+        "-e",
+        "FOO=bar",
+        "img",
+    ]
+    scrubbed = _scrub_cmd_for_log(cmd)
+    # safe docker connection key stays visible
+    assert "DOCKER_HOST=tcp://dind:2376" in scrubbed
+    # a previously-unlisted secret is now redacted
+    assert "AZURE_CLIENT_SECRET=***REDACTED***" in scrubbed
+    assert "supersecret" not in " ".join(scrubbed)
+    # even an unknown non-secret is redacted (fail-safe)
+    assert "FOO=***REDACTED***" in scrubbed
 
 
 def test_scrub_cmd_handles_dangling_e_flag():
