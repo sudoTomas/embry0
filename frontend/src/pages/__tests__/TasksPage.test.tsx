@@ -68,6 +68,20 @@ describe("TasksPage — list rendering", () => {
     renderPage();
     expect(await screen.findByText(/no tasks/i)).toBeInTheDocument();
   });
+
+  it("renders tasks with numeric ids and a 'stopped' status (real /stats shape)", async () => {
+    mockFetchTasks.mockResolvedValueOnce([
+      { id: 13, status: "done", title: "Done task", cost_usd: 1.01 },
+      { id: 14, status: "stopped", title: "Stopped task" },
+    ]);
+    renderPage();
+    const done = await screen.findByTestId("task-row-13");
+    expect(done).toHaveTextContent("Done task");
+    expect(done).toHaveTextContent("13");
+    const stopped = screen.getByTestId("task-row-14");
+    expect(stopped).toHaveTextContent(/stopped/i);
+    expect(stopped).not.toHaveTextContent("[object Object]");
+  });
 });
 
 describe("TasksPage — row actions", () => {

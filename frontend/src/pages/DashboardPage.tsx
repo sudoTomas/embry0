@@ -1,10 +1,17 @@
 import { useStats } from "@/hooks/useStats";
 import { useAgentStats } from "@/hooks/useAgentStats";
+import type { AgentStats } from "@/api/agent";
 import {
   Heartbeat,
   SingleSourceTile,
   type SingleSourceQuery,
 } from "@/components/vitals";
+
+// The agent's /stats returns status totals as an array of {status,count},
+// not a flat map. Look one up safely, defaulting to 0 for an absent status.
+function statusCount(stats: AgentStats, status: string): number {
+  return stats.counts.find((c) => c.status === status)?.count ?? 0;
+}
 
 // Format helpers — kept local; they're the only translation layer between
 // raw backend numbers and tile strings.
@@ -41,17 +48,17 @@ export function DashboardPage() {
         />
         <SingleSourceTile
           label="Queued"
-          query={selectQuery(agent, (s) => s.queued)}
+          query={selectQuery(agent, (s) => statusCount(s, "queued"))}
           format={formatCount}
         />
         <SingleSourceTile
           label="Done"
-          query={selectQuery(agent, (s) => s.done)}
+          query={selectQuery(agent, (s) => statusCount(s, "done"))}
           format={formatCount}
         />
         <SingleSourceTile
           label="Failed"
-          query={selectQuery(agent, (s) => s.failed)}
+          query={selectQuery(agent, (s) => statusCount(s, "failed"))}
           format={formatCount}
         />
         <SingleSourceTile

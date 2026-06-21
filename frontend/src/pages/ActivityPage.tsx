@@ -5,7 +5,7 @@ import {
   fetchEvents,
   fetchGitActivity,
   type AgentEvent,
-  type AgentGitActivity,
+  type AgentGitRepo,
 } from "@/api/agent";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -26,62 +26,76 @@ function formatRelative(iso: string): string {
   return `${diffDay}d ago`;
 }
 
+// `detail` is a JSON-encoded string. Extract a short human label defensively;
+// a malformed payload must never throw during render.
+function summarizeDetail(detail: string | undefined): string | undefined {
+  if (!detail) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(detail);
+    if (parsed && typeof parsed === "object") {
+      const rec = parsed as Record<string, unknown>;
+      for (const key of ["summary", "verdict", "status", "message"]) {
+        const v = rec[key];
+        if (typeof v === "string" && v.length > 0) return v;
+      }
+      return undefined;
+    }
+    if (typeof parsed === "string") return parsed;
+    return undefined;
+  } catch {
+    // Not JSON — fall back to the raw string, truncated.
+    return detail.length > 80 ? `${detail.slice(0, 80)}…` : detail;
+  }
+}
+
 function EventRow({ event }: { event: AgentEvent }) {
+  const summary = summarizeDetail(event.detail);
   return (
     <div
       data-testid={`activity-event-${event.id}`}
       className="animate-fade-up flex items-baseline gap-3 border-b border-border/40 py-2 last:border-b-0"
     >
       <span className="font-mono text-[11px] uppercase tracking-wider text-primary">
-        {event.type}
+        {event.event_type}
       </span>
-      {event.task_id && (
+      {event.task_id !== undefined && (
         <span className="font-mono text-xs text-foreground">
-          {event.task_id}
+          {String(event.task_id)}
         </span>
       )}
+      {summary && (
+        <span className="truncate text-xs text-muted-foreground">{summary}</span>
+      )}
       <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
-        {formatRelative(event.ts)}
+        {formatRelative(event.created_at)}
       </span>
     </div>
   );
 }
 
-function GitRow({ entry }: { entry: AgentGitActivity }) {
-  const shortSha = entry.sha ? entry.sha.slice(0, 7) : undefined;
+function GitRepoRow({ repo }: { repo: AgentGitRepo }) {
   return (
     <div
-      data-testid={`activity-git-${entry.id}`}
+      data-testid={`activity-git-${repo.name}`}
       className="animate-fade-up flex items-baseline gap-3 border-b border-border/40 py-2 last:border-b-0"
     >
       <GitBranch className="h-3 w-3 shrink-0 text-primary" aria-hidden />
-      <span className="font-mono text-xs text-foreground">{entry.repo}</span>
-      <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-        {entry.action}
-      </span>
-      {entry.branch && (
+      <span className="font-mono text-xs text-foreground">{repo.name}</span>
+      {repo.defaultBranch && (
+        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+          {repo.defaultBranch}
+        </span>
+      )}
+      {repo.openIssues !== undefined && (
         <span className="font-mono text-[11px] text-muted-foreground">
-          {entry.branch}
+          {repo.openIssues} open
         </span>
       )}
-      {shortSha && (
-        <span className="font-mono text-[11px] text-muted-foreground">
-          {shortSha}
+      {repo.pushedAt && (
+        <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+          {formatRelative(repo.pushedAt)}
         </span>
       )}
-      {entry.pr_number !== undefined && (
-        <span className="font-mono text-[11px] text-primary">
-          #{entry.pr_number}
-        </span>
-      )}
-      {entry.message && (
-        <span className="truncate text-xs text-muted-foreground">
-          {entry.message}
-        </span>
-      )}
-      <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
-        {formatRelative(entry.ts)}
-      </span>
     </div>
   );
 }
@@ -99,7 +113,7 @@ export function ActivityPage() {
   });
 
   const eventList = events.data ?? [];
-  const gitList = git.data ?? [];
+  const repoList = git.data?.repos ?? [];
 
   return (
     <div className="space-y-6 p-6" data-testid="activity-band">
@@ -134,7 +148,7 @@ export function ActivityPage() {
             ) : (
               <div className="divide-y divide-border/40">
                 {eventList.map((event) => (
-                  <EventRow key={event.id} event={event} />
+                  <EventRow key={String(event.id)} event={event} />
                 ))}
               </div>
             )}
@@ -147,7 +161,7 @@ export function ActivityPage() {
             <CardTitle className="text-base">Git activity</CardTitle>
           </CardHeader>
           <CardContent>
-            {gitList.length === 0 ? (
+            {repoList.length === 0 ? (
               <EmptyState
                 icon={GitBranch}
                 title="No git activity yet"
@@ -157,8 +171,8 @@ export function ActivityPage() {
               </EmptyState>
             ) : (
               <div className="divide-y divide-border/40">
-                {gitList.map((entry) => (
-                  <GitRow key={entry.id} entry={entry} />
+                {repoList.map((repo) => (
+                  <GitRepoRow key={repo.name} repo={repo} />
                 ))}
               </div>
             )}

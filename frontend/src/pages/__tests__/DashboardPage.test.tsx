@@ -49,11 +49,24 @@ const ORCH_OK = ready({
   recent_issues: [],
 });
 
+// Real /stats shape: { counts:[{status,count}], running, recent:[...] }.
+// Tiles derive queued/done/failed by status lookup; running is direct.
 const AGENT_OK = ready({
   running: 4,
-  queued: 7,
-  done: 100,
-  failed: 1,
+  counts: [
+    { status: "queued", count: 7 },
+    { status: "done", count: 100 },
+    { status: "failed", count: 1 },
+  ],
+  recent: [
+    {
+      id: 13,
+      title: "Wire activity band",
+      project: "companion",
+      cost_usd: 1.01,
+      finished_at: "2026-05-06 14:42:08",
+    },
+  ],
 });
 
 beforeEach(() => {

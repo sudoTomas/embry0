@@ -12,64 +12,120 @@ export const agentApi = axios.create({
   },
 });
 
+// The agent's task ids are integers in the live API (e.g. `13`), but action
+// routes and React keys treat them as strings. Accept both at the boundary;
+// stringify at the edges that need a string.
+export type AgentTaskId = string | number;
+
+// Live task statuses observed from the agent: done / failed / stopped /
+// running / queued. `dead_letter` is a client-side action target. Kept open
+// (union | string) so an unseen status never breaks rendering — callers must
+// not index a Record by status without a fallback.
 export type AgentTaskStatus =
   | "queued"
   | "running"
   | "done"
   | "failed"
+  | "stopped"
   | "dead_letter";
 
 export interface AgentTask {
-  id: string;
-  status: AgentTaskStatus;
+  id: AgentTaskId;
+  status: AgentTaskStatus | string;
   project?: string;
   title?: string;
+  cost_usd?: number;
   created_at?: string;
   updated_at?: string;
+  finished_at?: string;
 }
 
 export interface AgentTaskBlockedBy {
-  id: string;
+  id: AgentTaskId;
   blocked_by: ReadonlyArray<{
-    id: string;
-    status: AgentTaskStatus;
+    id: AgentTaskId;
+    status: AgentTaskStatus | string;
     title?: string;
   }>;
 }
 
+// GET /costs — per-provider cost/token rollups plus a daily-usage series.
+// Each provider block is optional because the agent only emits providers it
+// has data for.
+export interface AgentProviderCost {
+  real_cost_usd?: number;
+  notional_cost_usd?: number;
+  tokens_in: number;
+  tokens_out: number;
+  subscription?: string;
+}
+
+export interface AgentDailyUsage {
+  day: string;
+  tokens_in: number;
+  tokens_out: number;
+  tasks_completed: number;
+}
+
+export interface AgentReviewRollup {
+  total: number;
+  pass: number;
+  warn: number;
+  fail: number;
+  needs_review: number;
+}
+
 export interface AgentCostsSummary {
-  total_usd: number;
-  by_project?: Record<string, number>;
-  top_tasks?: Array<{ id: string; usd: number }>;
+  grok?: AgentProviderCost;
+  claude?: AgentProviderCost;
+  reviews?: AgentReviewRollup;
+  daily_usage?: ReadonlyArray<AgentDailyUsage>;
+}
+
+// GET /stats — status counts (array of {status,count}), a live `running`
+// gauge, and a list of recently-finished tasks.
+export interface AgentStatusCount {
+  status: string;
+  count: number;
+}
+
+export interface AgentRecentTask {
+  id: AgentTaskId;
+  title?: string;
+  project?: string;
+  cost_usd?: number;
+  finished_at?: string;
 }
 
 export interface AgentStats {
+  counts: ReadonlyArray<AgentStatusCount>;
   running: number;
-  queued: number;
-  done: number;
-  failed: number;
-  dead_letter?: number;
+  recent: ReadonlyArray<AgentRecentTask>;
 }
 
+// GET /events — top-level array; `detail` is a JSON-encoded string the UI
+// must parse defensively.
 export interface AgentEvent {
-  id: string;
-  type: string;
-  task_id?: string;
-  ts: string;
-  payload?: Record<string, unknown>;
+  id: AgentTaskId;
+  task_id?: AgentTaskId;
+  event_type: string;
+  detail?: string;
+  created_at: string;
+}
+
+// GET /git-activity — { commits, repos }. `repos[]` carries GitHub repo
+// metadata; `commits[]` shape is open until the agent populates it.
+export interface AgentGitRepo {
+  name: string;
+  pushedAt?: string;
+  openIssues?: number;
+  defaultBranch?: string;
+  url?: string;
 }
 
 export interface AgentGitActivity {
-  id: string;
-  repo: string;
-  branch?: string;
-  action: string;
-  ts: string;
-  sha?: string;
-  message?: string;
-  pr_number?: number;
-  pr_url?: string;
-  author?: string;
+  commits: ReadonlyArray<Record<string, unknown>>;
+  repos: ReadonlyArray<AgentGitRepo>;
 }
 
 export interface AgentProject {
@@ -78,25 +134,53 @@ export interface AgentProject {
   repo?: string;
 }
 
+// GET /routing-stats — by_model and by_phase are ARRAYS of objects, not maps.
+export interface AgentRoutingModelRow {
+  routed_model: string;
+  count: number;
+  success_rate?: number;
+}
+
+export interface AgentRoutingPhaseRow {
+  phase: string;
+  count: number;
+  success_rate?: number;
+}
+
 export interface AgentRoutingStats {
-  by_model: Record<string, number>;
+  by_model: ReadonlyArray<AgentRoutingModelRow>;
+  by_phase: ReadonlyArray<AgentRoutingPhaseRow>;
+}
+
+// GET /review-stats — by_type is an array; agreement_rate is a string ("N/A")
+// OR a number.
+export interface AgentReviewTypeRow {
+  type: string;
+  count: number;
 }
 
 export interface AgentReviewStats {
-  pass: number;
-  fail: number;
-  warn?: number;
+  by_type: ReadonlyArray<AgentReviewTypeRow>;
+  agreement_rate: string | number;
+  total_dual_reviews: number;
+  agreed: number;
 }
 
+// GET /hardware — `ollama_models` is a JSON-encoded STRING that must be
+// JSON.parse'd before use (guard against parse errors + non-array).
 export interface AgentHardware {
-  host: string;
-  cpu_pct?: number;
-  mem_pct?: number;
-  gpus?: Array<{ name: string; mem_used_mb?: number }>;
+  id?: number;
+  hostname: string;
+  total_memory_gb?: number;
+  available_memory_gb?: number;
+  gpu_info?: string;
+  ollama_models?: string;
 }
 
+// GET /memories — top-level array. Item shape is open (live response is `[]`);
+// scope/body are the fields the UI renders when present.
 export interface AgentMemory {
-  id: string;
+  id: AgentTaskId;
   scope?: string;
   body?: string;
 }
@@ -170,35 +254,35 @@ export async function fetchTasks(): Promise<AgentTask[]> {
   return data;
 }
 
-export async function fetchTaskBlockedBy(id: string): Promise<AgentTaskBlockedBy> {
+export async function fetchTaskBlockedBy(id: AgentTaskId): Promise<AgentTaskBlockedBy> {
   const { data } = await agentApi.get<AgentTaskBlockedBy>(
-    `/tasks/${encodeURIComponent(id)}/blocked-by`,
+    `/tasks/${encodeURIComponent(String(id))}/blocked-by`,
   );
   return data;
 }
 
-export async function deployTask(id: string): Promise<AgentTask> {
-  const { data } = await agentApi.post<AgentTask>(`/tasks/${encodeURIComponent(id)}/deploy`);
+export async function deployTask(id: AgentTaskId): Promise<AgentTask> {
+  const { data } = await agentApi.post<AgentTask>(`/tasks/${encodeURIComponent(String(id))}/deploy`);
   return data;
 }
 
-export async function requeueTask(id: string): Promise<AgentTask> {
-  const { data } = await agentApi.post<AgentTask>(`/tasks/${encodeURIComponent(id)}/requeue`);
+export async function requeueTask(id: AgentTaskId): Promise<AgentTask> {
+  const { data } = await agentApi.post<AgentTask>(`/tasks/${encodeURIComponent(String(id))}/requeue`);
   return data;
 }
 
-export async function retryTask(id: string): Promise<AgentTask> {
-  const { data } = await agentApi.post<AgentTask>(`/tasks/${encodeURIComponent(id)}/retry`);
+export async function retryTask(id: AgentTaskId): Promise<AgentTask> {
+  const { data } = await agentApi.post<AgentTask>(`/tasks/${encodeURIComponent(String(id))}/retry`);
   return data;
 }
 
-export async function stopTask(id: string): Promise<AgentTask> {
-  const { data } = await agentApi.post<AgentTask>(`/tasks/${encodeURIComponent(id)}/stop`);
+export async function stopTask(id: AgentTaskId): Promise<AgentTask> {
+  const { data } = await agentApi.post<AgentTask>(`/tasks/${encodeURIComponent(String(id))}/stop`);
   return data;
 }
 
-export async function deadLetterTask(id: string): Promise<AgentTask> {
-  const { data } = await agentApi.post<AgentTask>(`/tasks/${encodeURIComponent(id)}/dead-letter`);
+export async function deadLetterTask(id: AgentTaskId): Promise<AgentTask> {
+  const { data } = await agentApi.post<AgentTask>(`/tasks/${encodeURIComponent(String(id))}/dead-letter`);
   return data;
 }
 
@@ -217,8 +301,8 @@ export async function fetchEvents(): Promise<AgentEvent[]> {
   return data;
 }
 
-export async function fetchGitActivity(): Promise<AgentGitActivity[]> {
-  const { data } = await agentApi.get<AgentGitActivity[]>("/git-activity");
+export async function fetchGitActivity(): Promise<AgentGitActivity> {
+  const { data } = await agentApi.get<AgentGitActivity>("/git-activity");
   return data;
 }
 

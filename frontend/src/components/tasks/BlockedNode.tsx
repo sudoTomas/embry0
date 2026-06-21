@@ -1,18 +1,20 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { AgentTaskStatus } from "@/api/agent";
 
-type BlockedStatus = AgentTaskStatus | "selected";
+type BlockedStatus = AgentTaskStatus | string | "selected";
 
 // companion-status palette — kept local so the node is a self-contained read of
 // `{ label, status }` data. Mirrors the table row colors below.
-const STATUS_COLOR: Record<BlockedStatus, string> = {
+const STATUS_COLOR: Record<string, string> = {
   selected: "var(--color-primary)",
   running: "#06b6d4",
   queued: "#94a3b8",
   done: "#22c55e",
   failed: "#ef4444",
+  stopped: "#f59e0b",
   dead_letter: "#a855f7",
 };
+const DEFAULT_COLOR = "#94a3b8";
 
 /**
  * ReactFlow node for the blocked-by dependency graph.
@@ -26,7 +28,7 @@ const STATUS_COLOR: Record<BlockedStatus, string> = {
 export function BlockedNode({ data, selected }: NodeProps) {
   const label = (data as { label?: string }).label ?? "";
   const status = ((data as { status?: BlockedStatus }).status ?? "queued") as BlockedStatus;
-  const color = STATUS_COLOR[status];
+  const color = STATUS_COLOR[status] ?? DEFAULT_COLOR;
   const isRoot = status === "selected";
 
   return (

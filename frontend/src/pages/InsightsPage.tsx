@@ -17,12 +17,34 @@ import { StatCard } from "@/components/stats/StatCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { formatCost } from "@/lib/utils";
 
-// Insights surface for Phase 4: cost (total + by project + top tasks),
-// routing-stats, review-stats, hardware, memories. Each panel renders directly
-// from the agent's response shape — the agent (`/agent/*`) is the source of
-// truth, and any reshape should happen there.
+// Insights surface for Phase 4: cost (per-provider tokens + spend), routing
+// stats (by model / by phase), review stats (dual-review agreement), hardware,
+// and memories. Every panel renders the agent's real response shape — the
+// agent (`/agent/*`) is the source of truth. No panel renders an object or
+// array as a JSX child; each maps to scalar fields.
 
 const REFETCH_INTERVAL_MS = 30_000;
+
+// `ollama_models` arrives as a JSON-encoded string. Parse it defensively:
+// a malformed payload or a non-array must never throw during render.
+interface OllamaModel {
+  name?: string;
+  model?: string;
+  size?: number;
+}
+
+function parseOllamaModels(raw: string | undefined): OllamaModel[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (m): m is OllamaModel => typeof m === "object" && m !== null,
+    );
+  } catch {
+    return [];
+  }
+}
 
 export function InsightsPage(): JSX.Element {
   const costs = useQuery({
@@ -73,6 +95,43 @@ export function InsightsPage(): JSX.Element {
   );
 }
 
+function formatTokens(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+function ProviderRow({
+  name,
+  cost,
+  color,
+}: {
+  name: string;
+  cost: { real_cost_usd?: number; notional_cost_usd?: number; tokens_in: number; tokens_out: number; subscription?: string };
+  color: string;
+}): JSX.Element {
+  const usd = cost.real_cost_usd ?? cost.notional_cost_usd ?? 0;
+  return (
+    <li data-testid={`cost-provider-${name}`} className="text-sm">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-white/80 truncate">
+          {name}
+          {cost.subscription && (
+            <span className="ml-2 text-[10px] uppercase tracking-wider text-white/40">
+              {cost.subscription}
+            </span>
+          )}
+        </span>
+        <span className="font-mono" style={{ color }}>
+          {formatCost(usd)}
+        </span>
+      </div>
+      <div className="mt-1 flex gap-4 text-[11px] text-white/40">
+        <span>in {formatTokens(cost.tokens_in)}</span>
+        <span>out {formatTokens(cost.tokens_out)}</span>
+      </div>
+    </li>
+  );
+}
+
 function CostPanel({
   data,
   isLoading,
@@ -80,11 +139,13 @@ function CostPanel({
   data: AgentCostsSummary | undefined;
   isLoading: boolean;
 }): JSX.Element {
-  const total = data?.total_usd ?? 0;
-  const projects = Object.entries(data?.by_project ?? {});
-  const topTasks = data?.top_tasks ?? [];
-  const maxProject = Math.max(...projects.map(([, v]) => v), 0.01);
-  const maxTask = Math.max(...topTasks.map((t) => t.usd), 0.01);
+  const grok = data?.grok;
+  const claude = data?.claude;
+  const dailyUsage = data?.daily_usage ?? [];
+  const total =
+    (grok?.real_cost_usd ?? grok?.notional_cost_usd ?? 0) +
+    (claude?.real_cost_usd ?? claude?.notional_cost_usd ?? 0);
+  const hasProviders = Boolean(grok || claude);
 
   return (
     <Card data-testid="insights-cost">
@@ -96,28 +157,99 @@ function CostPanel({
 
         <section>
           <p className="text-[11px] font-medium text-white/40 uppercase tracking-wider mb-2">
-            By project
+            By provider
           </p>
           {isLoading ? (
             <p className="text-xs text-white/30">Loading...</p>
-          ) : projects.length === 0 ? (
-            <p className="text-xs text-white/30">No project spend recorded.</p>
+          ) : !hasProviders ? (
+            <p className="text-xs text-white/30">No provider spend recorded.</p>
+          ) : (
+            <ul className="space-y-3">
+              {claude && (
+                <ProviderRow name="claude" cost={claude} color="#d97757" />
+              )}
+              {grok && <ProviderRow name="grok" cost={grok} color="#a1a1aa" />}
+            </ul>
+          )}
+        </section>
+
+        <section>
+          <p className="text-[11px] font-medium text-white/40 uppercase tracking-wider mb-2">
+            Daily usage
+          </p>
+          {isLoading ? (
+            <p className="text-xs text-white/30">Loading...</p>
+          ) : dailyUsage.length === 0 ? (
+            <p className="text-xs text-white/30">No daily usage recorded.</p>
           ) : (
             <ul className="space-y-2">
-              {projects.map(([slug, usd]) => {
-                const pct = (usd / maxProject) * 100;
+              {dailyUsage.map((d) => (
+                <li
+                  key={d.day}
+                  data-testid={`cost-day-${d.day}`}
+                  className="flex items-center justify-between text-sm"
+                >
+                  <span className="font-mono text-white/80">{d.day}</span>
+                  <span className="font-mono text-white/50 tabular-nums">
+                    {d.tasks_completed} tasks · {formatTokens(d.tokens_out)} out
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RoutingPanel({
+  data,
+  isLoading,
+}: {
+  data: AgentRoutingStats | undefined;
+  isLoading: boolean;
+}): JSX.Element {
+  const byModel = data?.by_model ?? [];
+  const byPhase = data?.by_phase ?? [];
+  const maxModel = Math.max(...byModel.map((r) => r.count), 1);
+  const maxPhase = Math.max(...byPhase.map((r) => r.count), 1);
+
+  return (
+    <Card data-testid="insights-routing-stats">
+      <CardHeader>
+        <CardTitle className="text-lg">Routing</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <section>
+          <p className="text-[11px] font-medium text-white/40 uppercase tracking-wider mb-2">
+            By model
+          </p>
+          {isLoading ? (
+            <p className="text-xs text-white/30">Loading...</p>
+          ) : byModel.length === 0 ? (
+            <p className="text-xs text-white/30">No routing data yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {byModel.map((row) => {
+                const pct = (row.count / maxModel) * 100;
                 return (
                   <li
-                    key={slug}
-                    data-testid={`cost-project-${slug}`}
+                    key={row.routed_model}
+                    data-testid={`routing-row-${row.routed_model}`}
                     className="text-sm"
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-mono text-white/80 truncate">
-                        {slug}
+                        {row.routed_model}
                       </span>
-                      <span className="font-mono text-white/60">
-                        {formatCost(usd)}
+                      <span className="font-mono text-white/60 tabular-nums">
+                        {row.count}
+                        {row.success_rate !== undefined && (
+                          <span className="ml-2 text-white/40">
+                            {Math.round(row.success_rate * 100)}%
+                          </span>
+                        )}
                       </span>
                     </div>
                     <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden mt-1">
@@ -135,28 +267,28 @@ function CostPanel({
 
         <section>
           <p className="text-[11px] font-medium text-white/40 uppercase tracking-wider mb-2">
-            Top tasks
+            By phase
           </p>
           {isLoading ? (
             <p className="text-xs text-white/30">Loading...</p>
-          ) : topTasks.length === 0 ? (
-            <p className="text-xs text-white/30">No task spend recorded.</p>
+          ) : byPhase.length === 0 ? (
+            <p className="text-xs text-white/30">No phase data yet.</p>
           ) : (
             <ul className="space-y-2">
-              {topTasks.map((t) => {
-                const pct = (t.usd / maxTask) * 100;
+              {byPhase.map((row) => {
+                const pct = (row.count / maxPhase) * 100;
                 return (
                   <li
-                    key={t.id}
-                    data-testid={`cost-task-${t.id}`}
+                    key={row.phase}
+                    data-testid={`routing-phase-${row.phase}`}
                     className="text-sm"
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-mono text-white/80 truncate">
-                        {t.id}
+                        {row.phase}
                       </span>
-                      <span className="font-mono text-white/60">
-                        {formatCost(t.usd)}
+                      <span className="font-mono text-white/60 tabular-nums">
+                        {row.count}
                       </span>
                     </div>
                     <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden mt-1">
@@ -176,60 +308,6 @@ function CostPanel({
   );
 }
 
-function RoutingPanel({
-  data,
-  isLoading,
-}: {
-  data: AgentRoutingStats | undefined;
-  isLoading: boolean;
-}): JSX.Element {
-  const rows = Object.entries(data?.by_model ?? {});
-  const max = Math.max(...rows.map(([, v]) => v), 1);
-
-  return (
-    <Card data-testid="insights-routing-stats">
-      <CardHeader>
-        <CardTitle className="text-lg">Routing</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <p className="text-xs text-white/30">Loading...</p>
-        ) : rows.length === 0 ? (
-          <p className="text-xs text-white/30">No routing data yet.</p>
-        ) : (
-          <ul className="space-y-2">
-            {rows.map(([model, count]) => {
-              const pct = (count / max) * 100;
-              return (
-                <li
-                  key={model}
-                  data-testid={`routing-row-${model}`}
-                  className="text-sm"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-white/80 truncate">
-                      {model}
-                    </span>
-                    <span className="font-mono text-white/60 tabular-nums">
-                      {count}
-                    </span>
-                  </div>
-                  <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden mt-1">
-                    <div
-                      className="h-full rounded-full bg-primary"
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 function ReviewPanel({
   data,
   isLoading,
@@ -237,40 +315,74 @@ function ReviewPanel({
   data: AgentReviewStats | undefined;
   isLoading: boolean;
 }): JSX.Element {
+  // agreement_rate is a string ("N/A") OR a number — stringify for display.
+  const agreement =
+    data === undefined
+      ? "—"
+      : typeof data.agreement_rate === "number"
+        ? `${Math.round(data.agreement_rate * 100)}%`
+        : data.agreement_rate;
+
   return (
     <Card data-testid="insights-review-stats">
       <CardHeader>
         <CardTitle className="text-lg">Reviews</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
         {isLoading || !data ? (
           <p className="text-xs text-white/30">Loading...</p>
         ) : (
-          <div className="grid grid-cols-3 gap-2">
-            <div data-testid="review-pass">
-              <CompactStatCard
-                title="Pass"
-                value={String(data.pass)}
-                color="#22c55e"
-              />
-            </div>
-            <div data-testid="review-fail">
-              <CompactStatCard
-                title="Fail"
-                value={String(data.fail)}
-                color="#ef4444"
-              />
-            </div>
-            {data.warn !== undefined && (
-              <div data-testid="review-warn">
+          <>
+            <div className="grid grid-cols-3 gap-2">
+              <div data-testid="review-agreement">
                 <CompactStatCard
-                  title="Warn"
-                  value={String(data.warn)}
-                  color="#f59e0b"
+                  title="Agreement"
+                  value={String(agreement)}
+                  color="#22c55e"
                 />
               </div>
-            )}
-          </div>
+              <div data-testid="review-dual">
+                <CompactStatCard
+                  title="Dual reviews"
+                  value={String(data.total_dual_reviews)}
+                  color="#22d3ee"
+                />
+              </div>
+              <div data-testid="review-agreed">
+                <CompactStatCard
+                  title="Agreed"
+                  value={String(data.agreed)}
+                  color="#a1a1aa"
+                />
+              </div>
+            </div>
+
+            <section>
+              <p className="text-[11px] font-medium text-white/40 uppercase tracking-wider mb-2">
+                By type
+              </p>
+              {data.by_type.length === 0 ? (
+                <p className="text-xs text-white/30">No reviews by type yet.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {data.by_type.map((row) => (
+                    <li
+                      key={row.type}
+                      data-testid={`review-type-${row.type}`}
+                      className="flex items-center justify-between text-sm"
+                    >
+                      <span className="font-mono text-white/80 truncate">
+                        {row.type}
+                      </span>
+                      <span className="font-mono text-white/60 tabular-nums">
+                        {row.count}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </>
         )}
       </CardContent>
     </Card>
@@ -284,6 +396,8 @@ function HardwarePanel({
   data: AgentHardware | undefined;
   isLoading: boolean;
 }): JSX.Element {
+  const models = parseOllamaModels(data?.ollama_models);
+
   return (
     <Card data-testid="insights-hardware">
       <CardHeader>
@@ -296,54 +410,59 @@ function HardwarePanel({
           <>
             <div className="text-sm">
               <span className="text-white/40">Host: </span>
-              <span className="font-mono text-white/80">{data.host}</span>
+              <span className="font-mono text-white/80">{data.hostname}</span>
             </div>
-            {(data.cpu_pct !== undefined || data.mem_pct !== undefined) && (
+            {(data.total_memory_gb !== undefined ||
+              data.available_memory_gb !== undefined) && (
               <div className="grid grid-cols-2 gap-3 text-sm">
-                {data.cpu_pct !== undefined && (
+                {data.total_memory_gb !== undefined && (
                   <div>
                     <p className="text-[11px] text-white/40 uppercase tracking-wider">
-                      CPU
+                      Total memory
                     </p>
                     <p className="font-mono tabular-nums text-white">
-                      {data.cpu_pct}%
+                      {data.total_memory_gb} GB
                     </p>
                   </div>
                 )}
-                {data.mem_pct !== undefined && (
+                {data.available_memory_gb !== undefined && (
                   <div>
                     <p className="text-[11px] text-white/40 uppercase tracking-wider">
-                      Memory
+                      Available
                     </p>
                     <p className="font-mono tabular-nums text-white">
-                      {data.mem_pct}%
+                      {data.available_memory_gb} GB
                     </p>
                   </div>
                 )}
               </div>
             )}
-            {data.gpus && data.gpus.length > 0 && (
+            {data.gpu_info && (
+              <div className="text-sm">
+                <span className="text-white/40">GPU: </span>
+                <span className="font-mono text-white/80">{data.gpu_info}</span>
+              </div>
+            )}
+            {models.length > 0 && (
               <div>
                 <p className="text-[11px] font-medium text-white/40 uppercase tracking-wider mb-2">
-                  GPUs
+                  Ollama models
                 </p>
                 <ul className="space-y-1">
-                  {data.gpus.map((gpu, idx) => (
-                    <li
-                      key={`${gpu.name}-${idx}`}
-                      data-testid={`hardware-gpu-${idx}`}
-                      className="flex items-center justify-between text-sm"
-                    >
-                      <span className="font-mono text-white/80 truncate">
-                        {gpu.name}
-                      </span>
-                      {gpu.mem_used_mb !== undefined && (
-                        <span className="font-mono text-white/60 tabular-nums">
-                          {gpu.mem_used_mb} MB
+                  {models.map((m, idx) => {
+                    const label = m.name ?? m.model ?? `model ${idx}`;
+                    return (
+                      <li
+                        key={`${label}-${idx}`}
+                        data-testid={`hardware-model-${idx}`}
+                        className="flex items-center justify-between text-sm"
+                      >
+                        <span className="font-mono text-white/80 truncate">
+                          {label}
                         </span>
-                      )}
-                    </li>
-                  ))}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
@@ -375,7 +494,7 @@ function MemoriesPanel({
           <ul className="divide-y divide-white/[0.06]">
             {data.map((m) => (
               <li
-                key={m.id}
+                key={String(m.id)}
                 data-testid={`memory-row-${m.id}`}
                 className="py-2"
               >

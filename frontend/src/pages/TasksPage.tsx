@@ -17,7 +17,7 @@ import {
   retryTask,
   stopTask,
   type AgentTask,
-  type AgentTaskStatus,
+  type AgentTaskId,
 } from "@/api/agent";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -31,14 +31,14 @@ import { buildBlockedByGraph } from "@/lib/blockedByGraph";
 const NODE_TYPES: NodeTypes = { blockedNode: BlockedNode };
 
 const TASKS_KEY: QueryKey = ["agent", "tasks"];
-const blockedByKey = (id: string): QueryKey => [
+const blockedByKey = (id: AgentTaskId): QueryKey => [
   "agent",
   "tasks",
-  id,
+  String(id),
   "blocked-by",
 ];
 
-type ActionFn = (id: string) => Promise<AgentTask>;
+type ActionFn = (id: AgentTaskId) => Promise<AgentTask>;
 
 const ROW_ACTIONS: ReadonlyArray<{
   key: "deploy" | "requeue" | "retry" | "stop" | "dead-letter";
@@ -52,17 +52,19 @@ const ROW_ACTIONS: ReadonlyArray<{
   { key: "dead-letter", fn: deadLetterTask, label: "Dead-letter" },
 ];
 
-const STATUS_TONE: Record<AgentTaskStatus, string> = {
+const STATUS_TONE: Record<string, string> = {
   running: "text-cyan-400 border-cyan-500/40",
   queued: "text-muted-foreground border-white/10",
   done: "text-emerald-400 border-emerald-500/40",
   failed: "text-red-400 border-red-500/40",
+  stopped: "text-amber-400 border-amber-500/40",
   dead_letter: "text-fuchsia-400 border-fuchsia-500/40",
 };
+const DEFAULT_TONE = "text-muted-foreground border-white/10";
 
 export function TasksPage() {
   const queryClient = useQueryClient();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<AgentTaskId | null>(null);
 
   const tasksQ = useQuery({
     queryKey: TASKS_KEY,
@@ -77,14 +79,14 @@ export function TasksPage() {
   });
 
   const action = useMutation({
-    mutationFn: ({ id, fn }: { id: string; fn: ActionFn }) => fn(id),
+    mutationFn: ({ id, fn }: { id: AgentTaskId; fn: ActionFn }) => fn(id),
     onSuccess: (_data, { id }) => {
       // The list cache is always stale after a successful action. The
       // selected task's blocked-by graph also depends on status of its
       // siblings (status badges + edges may shift), so invalidate it too
       // — even when `id` isn't the selected row.
       queryClient.invalidateQueries({ queryKey: TASKS_KEY });
-      if (selectedId) {
+      if (selectedId !== null) {
         queryClient.invalidateQueries({ queryKey: blockedByKey(selectedId) });
       }
       toast.success(`Task ${id} updated`);
@@ -112,10 +114,11 @@ export function TasksPage() {
   }
 
   const graph =
-    selectedId && blockedByQ.data
+    selectedId !== null && blockedByQ.data
       ? buildBlockedByGraph(
           blockedByQ.data,
-          tasks.find((t) => t.id === selectedId)?.title ?? selectedId,
+          tasks.find((t) => String(t.id) === String(selectedId))?.title ??
+            String(selectedId),
         )
       : null;
 
@@ -138,19 +141,25 @@ export function TasksPage() {
           <tbody>
             {tasks.map((t) => (
               <tr
-                key={t.id}
+                key={String(t.id)}
                 data-testid={`task-row-${t.id}`}
-                data-selected={selectedId === t.id ? "true" : "false"}
+                data-selected={
+                  String(selectedId) === String(t.id) ? "true" : "false"
+                }
                 className="cursor-pointer border-t border-border hover:bg-white/[0.02] data-[selected=true]:bg-white/[0.04]"
                 onClick={() => setSelectedId(t.id)}
               >
                 <td className="px-3 py-2">
-                  <div className="font-medium truncate">{t.title ?? t.id}</div>
-                  <div className="text-[10px] font-mono text-muted-foreground">{t.id}</div>
+                  <div className="font-medium truncate">
+                    {t.title ?? String(t.id)}
+                  </div>
+                  <div className="text-[10px] font-mono text-muted-foreground">
+                    {String(t.id)}
+                  </div>
                 </td>
                 <td className="px-3 py-2">
                   <span
-                    className={`inline-block rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${STATUS_TONE[t.status]}`}
+                    className={`inline-block rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${STATUS_TONE[t.status] ?? DEFAULT_TONE}`}
                   >
                     {t.status.replace("_", " ")}
                   </span>

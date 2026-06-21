@@ -22,10 +22,29 @@ function wrapper() {
   );
 }
 
-const EMPTY_COSTS: AgentCostsSummary = { total_usd: 0 };
-const EMPTY_ROUTING: AgentRoutingStats = { by_model: {} };
-const EMPTY_REVIEW: AgentReviewStats = { pass: 0, fail: 0 };
-const EMPTY_HARDWARE: AgentHardware = { host: "unknown" };
+// Empty fixtures use the REAL response shapes (per the live agent), so the
+// empty/loading branches are exercised against the actual contract.
+const EMPTY_COSTS: AgentCostsSummary = {
+  grok: { real_cost_usd: 0, tokens_in: 0, tokens_out: 0 },
+  claude: { notional_cost_usd: 0, tokens_in: 0, tokens_out: 0 },
+  reviews: { total: 0, pass: 0, warn: 0, fail: 0, needs_review: 0 },
+  daily_usage: [],
+};
+const EMPTY_ROUTING: AgentRoutingStats = { by_model: [], by_phase: [] };
+const EMPTY_REVIEW: AgentReviewStats = {
+  by_type: [],
+  agreement_rate: "N/A",
+  total_dual_reviews: 0,
+  agreed: 0,
+};
+const EMPTY_HARDWARE: AgentHardware = {
+  id: 1,
+  hostname: "unknown",
+  total_memory_gb: 0,
+  available_memory_gb: 0,
+  gpu_info: "",
+  ollama_models: "[]",
+};
 const EMPTY_MEMORIES: AgentMemory[] = [];
 
 function mockAllEmpty() {
@@ -61,13 +80,18 @@ describe("InsightsPage", () => {
     });
   });
 
-  it("cost panel renders total, by_project rows, and top_tasks rows", async () => {
+  it("cost panel renders total, per-provider rows, and daily usage", async () => {
     vi.spyOn(agentApi, "fetchCosts").mockResolvedValue({
-      total_usd: 42.5,
-      by_project: { "ravens-cargo": 30.25, embry0: 12.25 },
-      top_tasks: [
-        { id: "task-alpha", usd: 9.0 },
-        { id: "task-beta", usd: 5.5 },
+      grok: { real_cost_usd: 0, tokens_in: 0, tokens_out: 0 },
+      claude: {
+        notional_cost_usd: 4.54,
+        tokens_in: 415,
+        tokens_out: 54231,
+        subscription: "max",
+      },
+      reviews: { total: 0, pass: 0, warn: 0, fail: 0, needs_review: 0 },
+      daily_usage: [
+        { day: "2026-05-06", tokens_in: 384, tokens_out: 35601, tasks_completed: 6 },
       ],
     });
     vi.spyOn(agentApi, "fetchRoutingStats").mockResolvedValue(EMPTY_ROUTING);
@@ -77,96 +101,136 @@ describe("InsightsPage", () => {
 
     render(<InsightsPage />, { wrapper: wrapper() });
 
-    expect(await screen.findByText("$42.50")).toBeInTheDocument();
-    // Project breakdown rows
-    expect(screen.getByTestId("cost-project-ravens-cargo")).toHaveTextContent(
-      "ravens-cargo",
+    // Total = grok (0) + claude (4.54). The value appears both in the
+    // Total-Spend StatCard and the claude provider row, so assert via testid.
+    const claudeRow = await screen.findByTestId("cost-provider-claude");
+    expect(screen.getByTestId("insights-cost")).toHaveTextContent("$4.54");
+    expect(claudeRow).toHaveTextContent("claude");
+    expect(claudeRow).toHaveTextContent("max");
+    expect(claudeRow).toHaveTextContent("415");
+    expect(screen.getByTestId("cost-provider-grok")).toHaveTextContent("grok");
+    // Daily usage row.
+    expect(screen.getByTestId("cost-day-2026-05-06")).toHaveTextContent(
+      "6 tasks",
     );
-    expect(screen.getByTestId("cost-project-ravens-cargo")).toHaveTextContent(
-      "$30.25",
-    );
-    expect(screen.getByTestId("cost-project-embry0")).toHaveTextContent("$12.25");
-    // Top tasks rows
-    expect(screen.getByTestId("cost-task-task-alpha")).toHaveTextContent(
-      "task-alpha",
-    );
-    expect(screen.getByTestId("cost-task-task-alpha")).toHaveTextContent("$9.00");
-    expect(screen.getByTestId("cost-task-task-beta")).toHaveTextContent("$5.50");
   });
 
-  it("routing-stats panel renders model -> count rows", async () => {
+  it("routing-stats panel renders by_model array rows (model + count + success rate)", async () => {
     vi.spyOn(agentApi, "fetchCosts").mockResolvedValue(EMPTY_COSTS);
     vi.spyOn(agentApi, "fetchRoutingStats").mockResolvedValue({
-      by_model: { "claude-sonnet-4-6": 17, "claude-opus-4-7": 4 },
+      by_model: [
+        { routed_model: "sonnet", count: 10, success_rate: 0.5 },
+        { routed_model: "opus", count: 4, success_rate: 1 },
+      ],
+      by_phase: [{ phase: "implement", count: 8, success_rate: 0.75 }],
     });
     vi.spyOn(agentApi, "fetchReviewStats").mockResolvedValue(EMPTY_REVIEW);
     vi.spyOn(agentApi, "fetchHardware").mockResolvedValue(EMPTY_HARDWARE);
     vi.spyOn(agentApi, "fetchMemories").mockResolvedValue(EMPTY_MEMORIES);
 
     render(<InsightsPage />, { wrapper: wrapper() });
-    expect(
-      await screen.findByTestId("routing-row-claude-sonnet-4-6"),
-    ).toHaveTextContent("claude-sonnet-4-6");
-    expect(
-      screen.getByTestId("routing-row-claude-sonnet-4-6"),
-    ).toHaveTextContent("17");
-    expect(screen.getByTestId("routing-row-claude-opus-4-7")).toHaveTextContent(
-      "4",
+    const sonnet = await screen.findByTestId("routing-row-sonnet");
+    expect(sonnet).toHaveTextContent("sonnet");
+    expect(sonnet).toHaveTextContent("10");
+    expect(sonnet).toHaveTextContent("50%");
+    expect(screen.getByTestId("routing-row-opus")).toHaveTextContent("4");
+    // by_phase array also renders, never as a raw object.
+    expect(screen.getByTestId("routing-phase-implement")).toHaveTextContent(
+      "implement",
     );
+    expect(screen.queryByText("[object Object]")).toBeNull();
   });
 
-  it("review-stats panel renders pass / fail / warn counts", async () => {
+  it("routing-stats panel shows an empty state when arrays are empty", async () => {
+    mockAllEmpty();
+    render(<InsightsPage />, { wrapper: wrapper() });
+    // Wait for the resolved empty state, not the loading placeholder.
+    expect(await screen.findByText(/no routing data/i)).toBeInTheDocument();
+    expect(screen.queryByTestId(/^routing-row-/)).toBeNull();
+  });
+
+  it("review-stats panel renders agreement_rate, dual reviews, agreed, and by_type", async () => {
     vi.spyOn(agentApi, "fetchCosts").mockResolvedValue(EMPTY_COSTS);
     vi.spyOn(agentApi, "fetchRoutingStats").mockResolvedValue(EMPTY_ROUTING);
     vi.spyOn(agentApi, "fetchReviewStats").mockResolvedValue({
-      pass: 21,
-      fail: 3,
-      warn: 5,
+      by_type: [{ type: "consensus", count: 4 }],
+      agreement_rate: 0.8,
+      total_dual_reviews: 5,
+      agreed: 4,
     });
     vi.spyOn(agentApi, "fetchHardware").mockResolvedValue(EMPTY_HARDWARE);
     vi.spyOn(agentApi, "fetchMemories").mockResolvedValue(EMPTY_MEMORIES);
 
     render(<InsightsPage />, { wrapper: wrapper() });
-    expect(await screen.findByTestId("review-pass")).toHaveTextContent("21");
-    expect(screen.getByTestId("review-fail")).toHaveTextContent("3");
-    expect(screen.getByTestId("review-warn")).toHaveTextContent("5");
+    // Numeric agreement_rate renders as a percentage.
+    expect(await screen.findByTestId("review-agreement")).toHaveTextContent(
+      "80%",
+    );
+    expect(screen.getByTestId("review-dual")).toHaveTextContent("5");
+    expect(screen.getByTestId("review-agreed")).toHaveTextContent("4");
+    expect(screen.getByTestId("review-type-consensus")).toHaveTextContent("4");
   });
 
-  it("review-stats panel hides warn when not provided", async () => {
+  it("review-stats panel renders a string agreement_rate ('N/A') verbatim", async () => {
     vi.spyOn(agentApi, "fetchCosts").mockResolvedValue(EMPTY_COSTS);
     vi.spyOn(agentApi, "fetchRoutingStats").mockResolvedValue(EMPTY_ROUTING);
-    vi.spyOn(agentApi, "fetchReviewStats").mockResolvedValue({ pass: 1, fail: 2 });
+    vi.spyOn(agentApi, "fetchReviewStats").mockResolvedValue(EMPTY_REVIEW);
     vi.spyOn(agentApi, "fetchHardware").mockResolvedValue(EMPTY_HARDWARE);
     vi.spyOn(agentApi, "fetchMemories").mockResolvedValue(EMPTY_MEMORIES);
 
     render(<InsightsPage />, { wrapper: wrapper() });
-    expect(await screen.findByTestId("review-pass")).toHaveTextContent("1");
-    expect(screen.queryByTestId("review-warn")).toBeNull();
+    expect(await screen.findByTestId("review-agreement")).toHaveTextContent(
+      "N/A",
+    );
   });
 
-  it("hardware panel renders host, cpu/mem, and gpus", async () => {
+  it("hardware panel renders hostname, memory, gpu_info, and parsed ollama models", async () => {
     vi.spyOn(agentApi, "fetchCosts").mockResolvedValue(EMPTY_COSTS);
     vi.spyOn(agentApi, "fetchRoutingStats").mockResolvedValue(EMPTY_ROUTING);
     vi.spyOn(agentApi, "fetchReviewStats").mockResolvedValue(EMPTY_REVIEW);
     vi.spyOn(agentApi, "fetchHardware").mockResolvedValue({
-      host: "private-server",
-      cpu_pct: 38,
-      mem_pct: 71,
-      gpus: [
-        { name: "RTX 5070 Ti", mem_used_mb: 4096 },
-        { name: "RTX 4090" },
-      ],
+      id: 1,
+      hostname: "private-server",
+      total_memory_gb: 251.1,
+      available_memory_gb: 239,
+      gpu_info: "RTX 5070 Ti",
+      // ollama_models is a JSON-ENCODED STRING and must be parsed.
+      ollama_models: JSON.stringify([
+        { name: "hermes3:70b" },
+        { name: "qwen2.5:32b" },
+      ]),
     });
     vi.spyOn(agentApi, "fetchMemories").mockResolvedValue(EMPTY_MEMORIES);
 
     render(<InsightsPage />, { wrapper: wrapper() });
     expect(await screen.findByText("private-server")).toBeInTheDocument();
     const panel = screen.getByTestId("insights-hardware");
-    expect(panel).toHaveTextContent("38%");
-    expect(panel).toHaveTextContent("71%");
-    expect(screen.getByTestId("hardware-gpu-0")).toHaveTextContent("RTX 5070 Ti");
-    expect(screen.getByTestId("hardware-gpu-0")).toHaveTextContent("4096");
-    expect(screen.getByTestId("hardware-gpu-1")).toHaveTextContent("RTX 4090");
+    expect(panel).toHaveTextContent("251.1 GB");
+    expect(panel).toHaveTextContent("239 GB");
+    expect(panel).toHaveTextContent("RTX 5070 Ti");
+    expect(screen.getByTestId("hardware-model-0")).toHaveTextContent(
+      "hermes3:70b",
+    );
+    expect(screen.getByTestId("hardware-model-1")).toHaveTextContent(
+      "qwen2.5:32b",
+    );
+  });
+
+  it("hardware panel does not crash when ollama_models is malformed JSON", async () => {
+    vi.spyOn(agentApi, "fetchCosts").mockResolvedValue(EMPTY_COSTS);
+    vi.spyOn(agentApi, "fetchRoutingStats").mockResolvedValue(EMPTY_ROUTING);
+    vi.spyOn(agentApi, "fetchReviewStats").mockResolvedValue(EMPTY_REVIEW);
+    vi.spyOn(agentApi, "fetchHardware").mockResolvedValue({
+      id: 1,
+      hostname: "private-server",
+      ollama_models: "{ not valid json",
+    });
+    vi.spyOn(agentApi, "fetchMemories").mockResolvedValue(EMPTY_MEMORIES);
+
+    render(<InsightsPage />, { wrapper: wrapper() });
+    // Host still renders; no model rows; no crash.
+    expect(await screen.findByText("private-server")).toBeInTheDocument();
+    expect(screen.queryByTestId(/^hardware-model-/)).toBeNull();
   });
 
   it("memories panel renders one row per memory with scope + body", async () => {
@@ -187,12 +251,24 @@ describe("InsightsPage", () => {
     expect(screen.getByTestId("memory-row-m-2")).toHaveTextContent("raven");
   });
 
-  it("cost panel renders an empty state when there is no spend", async () => {
+  it("memories panel renders an empty state for a top-level empty array", async () => {
     mockAllEmpty();
     render(<InsightsPage />, { wrapper: wrapper() });
-    const panel = await screen.findByTestId("insights-cost");
-    expect(panel).toHaveTextContent("$0.00");
-    expect(screen.queryByTestId(/^cost-project-/)).toBeNull();
-    expect(screen.queryByTestId(/^cost-task-/)).toBeNull();
+    expect(await screen.findByText(/no memories/i)).toBeInTheDocument();
+    expect(screen.queryByTestId(/^memory-row-/)).toBeNull();
+  });
+
+  it("cost panel renders an empty state when there is no provider spend", async () => {
+    vi.spyOn(agentApi, "fetchCosts").mockResolvedValue({ daily_usage: [] });
+    vi.spyOn(agentApi, "fetchRoutingStats").mockResolvedValue(EMPTY_ROUTING);
+    vi.spyOn(agentApi, "fetchReviewStats").mockResolvedValue(EMPTY_REVIEW);
+    vi.spyOn(agentApi, "fetchHardware").mockResolvedValue(EMPTY_HARDWARE);
+    vi.spyOn(agentApi, "fetchMemories").mockResolvedValue(EMPTY_MEMORIES);
+
+    render(<InsightsPage />, { wrapper: wrapper() });
+    // Wait for the resolved empty state, not the loading placeholder.
+    expect(await screen.findByText(/no provider spend/i)).toBeInTheDocument();
+    expect(screen.getByTestId("insights-cost")).toHaveTextContent("$0.00");
+    expect(screen.queryByTestId(/^cost-provider-/)).toBeNull();
   });
 });

@@ -25,10 +25,12 @@ beforeEach(() => {
   vi.restoreAllMocks();
 });
 
+const EMPTY_GIT = { commits: [], repos: [] };
+
 describe("ActivityPage", () => {
   it("renders the activity-band region and a heartbeat indicator", async () => {
     vi.spyOn(agent, "fetchEvents").mockResolvedValue([]);
-    vi.spyOn(agent, "fetchGitActivity").mockResolvedValue([]);
+    vi.spyOn(agent, "fetchGitActivity").mockResolvedValue(EMPTY_GIT);
 
     renderWithProviders();
 
@@ -40,7 +42,7 @@ describe("ActivityPage", () => {
 
   it("renders an empty state for events when /events returns nothing", async () => {
     vi.spyOn(agent, "fetchEvents").mockResolvedValue([]);
-    vi.spyOn(agent, "fetchGitActivity").mockResolvedValue([]);
+    vi.spyOn(agent, "fetchGitActivity").mockResolvedValue(EMPTY_GIT);
 
     renderWithProviders();
 
@@ -49,36 +51,62 @@ describe("ActivityPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders a row per /events payload with type + task id", async () => {
+  it("renders a row per /events payload with event_type + task id, parsing detail", async () => {
+    // Real /events shape: numeric id/task_id, event_type, JSON-string detail,
+    // created_at timestamp. detail must be parsed, never rendered as an object.
     vi.spyOn(agent, "fetchEvents").mockResolvedValue([
       {
-        id: "evt-1",
-        type: "task.queued",
-        task_id: "T-99",
-        ts: new Date(Date.now() - 5_000).toISOString(),
+        id: 73,
+        task_id: 13,
+        event_type: "consensus_review",
+        detail: JSON.stringify({ verdict: "pass", note: "looks good" }),
+        created_at: new Date(Date.now() - 5_000).toISOString(),
       },
       {
-        id: "evt-2",
-        type: "task.done",
-        task_id: "T-77",
-        ts: new Date(Date.now() - 60_000).toISOString(),
+        id: 74,
+        task_id: 14,
+        event_type: "task_done",
+        detail: "{}",
+        created_at: new Date(Date.now() - 60_000).toISOString(),
       },
     ]);
-    vi.spyOn(agent, "fetchGitActivity").mockResolvedValue([]);
+    vi.spyOn(agent, "fetchGitActivity").mockResolvedValue(EMPTY_GIT);
 
     renderWithProviders();
 
-    const rowOne = await screen.findByTestId("activity-event-evt-1");
-    expect(rowOne).toHaveTextContent("task.queued");
-    expect(rowOne).toHaveTextContent("T-99");
-    expect(screen.getByTestId("activity-event-evt-2")).toHaveTextContent(
-      "task.done",
+    const rowOne = await screen.findByTestId("activity-event-73");
+    expect(rowOne).toHaveTextContent("consensus_review");
+    expect(rowOne).toHaveTextContent("13");
+    // The parsed verdict surfaces; the raw JSON object must NOT.
+    expect(rowOne).toHaveTextContent("pass");
+    expect(rowOne).not.toHaveTextContent("[object Object]");
+    expect(screen.getByTestId("activity-event-74")).toHaveTextContent(
+      "task_done",
     );
   });
 
-  it("renders an empty state for git-activity when /git-activity returns nothing", async () => {
+  it("does not crash when an event detail is not valid JSON", async () => {
+    vi.spyOn(agent, "fetchEvents").mockResolvedValue([
+      {
+        id: 99,
+        task_id: 1,
+        event_type: "raw_note",
+        detail: "not json at all",
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    vi.spyOn(agent, "fetchGitActivity").mockResolvedValue(EMPTY_GIT);
+
+    renderWithProviders();
+
+    const row = await screen.findByTestId("activity-event-99");
+    expect(row).toHaveTextContent("raw_note");
+    expect(row).toHaveTextContent("not json at all");
+  });
+
+  it("renders an empty state for git-activity when /git-activity returns no repos", async () => {
     vi.spyOn(agent, "fetchEvents").mockResolvedValue([]);
-    vi.spyOn(agent, "fetchGitActivity").mockResolvedValue([]);
+    vi.spyOn(agent, "fetchGitActivity").mockResolvedValue(EMPTY_GIT);
 
     renderWithProviders();
 
@@ -87,42 +115,45 @@ describe("ActivityPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders a row per /git-activity payload with repo + action + sha/pr", async () => {
+  it("renders a row per /git-activity repo with name + branch + open issues", async () => {
+    // Real /git-activity shape: { commits, repos } where repos carry GitHub
+    // metadata. The page must iterate repos, never render the wrapper object.
     vi.spyOn(agent, "fetchEvents").mockResolvedValue([]);
-    vi.spyOn(agent, "fetchGitActivity").mockResolvedValue([
-      {
-        id: "ga-1",
-        repo: "former-org/embry0",
-        branch: "opus/ticket-008",
-        action: "push",
-        ts: new Date(Date.now() - 10_000).toISOString(),
-        sha: "abc1234567",
-        message: "Add activity band",
-      },
-      {
-        id: "ga-2",
-        repo: "former-org/embry0",
-        action: "pr_merge",
-        ts: new Date(Date.now() - 600_000).toISOString(),
-        pr_number: 42,
-      },
-    ]);
+    vi.spyOn(agent, "fetchGitActivity").mockResolvedValue({
+      commits: [],
+      repos: [
+        {
+          name: "embry0",
+          pushedAt: new Date(Date.now() - 10_000).toISOString(),
+          openIssues: 3,
+          defaultBranch: "main",
+          url: "https://github.com/former-org/embry0",
+        },
+        {
+          name: "companion",
+          pushedAt: new Date(Date.now() - 600_000).toISOString(),
+          openIssues: 0,
+          defaultBranch: "master",
+          url: "https://github.com/former-org/companion",
+        },
+      ],
+    });
 
     renderWithProviders();
 
-    const rowOne = await screen.findByTestId("activity-git-ga-1");
-    expect(rowOne).toHaveTextContent("former-org/embry0");
-    expect(rowOne).toHaveTextContent("push");
-    expect(rowOne).toHaveTextContent("abc1234"); // shortened sha
+    const rowOne = await screen.findByTestId("activity-git-embry0");
+    expect(rowOne).toHaveTextContent("embry0");
+    expect(rowOne).toHaveTextContent("main");
+    expect(rowOne).toHaveTextContent("3 open");
 
-    const rowTwo = screen.getByTestId("activity-git-ga-2");
-    expect(rowTwo).toHaveTextContent("pr_merge");
-    expect(rowTwo).toHaveTextContent("#42");
+    const rowTwo = screen.getByTestId("activity-git-companion");
+    expect(rowTwo).toHaveTextContent("companion");
+    expect(rowTwo).toHaveTextContent("master");
   });
 
   it("polls both /events and /git-activity at the standard agent refetch cadence", async () => {
     const events = vi.spyOn(agent, "fetchEvents").mockResolvedValue([]);
-    const git = vi.spyOn(agent, "fetchGitActivity").mockResolvedValue([]);
+    const git = vi.spyOn(agent, "fetchGitActivity").mockResolvedValue(EMPTY_GIT);
 
     renderWithProviders();
 

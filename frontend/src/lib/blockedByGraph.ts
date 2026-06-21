@@ -7,7 +7,7 @@ const NODE_HEIGHT = 56;
 
 export type BlockedNodeData = {
   label: string;
-  status: AgentTaskStatus | "selected";
+  status: AgentTaskStatus | string | "selected";
 };
 
 export type BlockedByGraph = {
@@ -25,25 +25,26 @@ export function buildBlockedByGraph(
   data: AgentTaskBlockedBy,
   rootLabel: string,
 ): BlockedByGraph {
+  const rootId = String(data.id);
   const rawNodes: Node<BlockedNodeData>[] = [
     {
-      id: data.id,
+      id: rootId,
       type: "blockedNode",
       position: { x: 0, y: 0 },
       data: { label: rootLabel, status: "selected" },
     },
     ...data.blocked_by.map<Node<BlockedNodeData>>((b) => ({
-      id: b.id,
+      id: String(b.id),
       type: "blockedNode",
       position: { x: 0, y: 0 },
-      data: { label: b.title ?? b.id, status: b.status },
+      data: { label: b.title ?? String(b.id), status: b.status },
     })),
   ];
 
   const edges: Edge[] = data.blocked_by.map((b) => ({
-    id: `${b.id}->${data.id}`,
-    source: b.id,
-    target: data.id,
+    id: `${String(b.id)}->${rootId}`,
+    source: String(b.id),
+    target: rootId,
   }));
 
   const g = new dagre.graphlib.Graph();
