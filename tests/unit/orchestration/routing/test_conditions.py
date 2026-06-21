@@ -126,3 +126,10 @@ def test_budget_at_boundary():
     """Exactly at budget should be within (not strictly over)."""
     state = {"total_cost_usd": 10.0, "pipeline_config": {"budget_usd": 10.0}}
     assert check_budget(state) == "within_budget"
+
+
+def test_review_decision_errored_agent_fails_closed():
+    """An errored review agent must NOT auto-approve — fail closed to max_retries
+    (regression: errored review was silently treated as 'approved')."""
+    state = {"agent_outputs": [{"agent_type": "review", "is_error": True, "output": ""}]}
+    assert check_review_decision(state) == "max_retries"

@@ -28,6 +28,11 @@ def check_review_decision(state: dict[str, Any]) -> Literal["approved", "changes
         return "changes_requested"
 
     latest = review_outputs[-1]
+    if latest.get("is_error"):
+        # The review agent itself errored (no valid verdict). Fail closed —
+        # never auto-approve an errored review. Routes to max_retries (terminal),
+        # mirroring how triage/developer handle their own agent errors.
+        return "max_retries"
     output_text = latest.get("output", "")
 
     # Parse structured JSON from review output
