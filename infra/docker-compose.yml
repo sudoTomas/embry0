@@ -11,6 +11,9 @@ services:
         # setting VITE_API_KEY explicitly if you want them to differ.
         VITE_API_KEY: "${VITE_API_KEY:-${API_KEY:-}}"
     container_name: embry0-frontend
+    environment:
+      # Server-side bearer for the /agent proxy; from root .env, never in the bundle.
+      EMBRY0_AGENT_TOKEN: "${EMBRY0_AGENT_TOKEN:-}"
     ports:
       - "${PROD_PORT:-8200}:80"
     depends_on:
