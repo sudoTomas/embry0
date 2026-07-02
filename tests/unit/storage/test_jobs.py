@@ -161,3 +161,11 @@ async def test_create_repo_less_job_with_context(jobs_repo):
     job = await jobs_repo.get(job_id)
     assert job["repo"] is None
     assert job["context"] == {"type": "none"}
+
+
+@pytest.mark.asyncio
+async def test_create_derives_none_context_when_repo_and_context_omitted(jobs_repo):
+    job_id = await jobs_repo.create(task="Research the market")
+    job = await jobs_repo.get(job_id)
+    assert job["repo"] is None
+    assert job["context"] == {"type": "none"}
