@@ -697,6 +697,11 @@ class IssueExecutor:
                 "budget_overrun_usd": 0.0,
             }
 
+            initial_state["context"] = (job_row or {}).get("context") or {
+                "type": "git",
+                "repo": issue.get("repo") or "",
+            }
+
             # Pass through any per-agent model override supplied at job creation
             # time (JobCreateRequest.agent_models). Stored on the job row under
             # pipeline_config.agent_models_override; read here and surfaced on
@@ -748,20 +753,9 @@ class IssueExecutor:
                 job_id=job_id,
                 error=str(exc),
             )
-            from athanor.orchestration.nodes.agent import SandboxRequiredError
-            from athanor.orchestration.state import TriageParseError
-            from athanor.safety.error_codes import ErrorCode
+            from athanor.safety.error_codes import error_code_for_exception
 
-            if isinstance(exc, SandboxRequiredError):
-                code = ErrorCode.SANDBOX_REQUIRED
-            elif isinstance(exc, TriageParseError):
-                code = ErrorCode.TRIAGE_MALFORMED
-            elif isinstance(exc, RuntimeError) and "not registered" in str(exc):
-                code = ErrorCode.WORKFLOW_UNKNOWN
-            elif isinstance(exc, RuntimeError) and "Sandbox initialization failed" in str(exc):
-                code = ErrorCode.SANDBOX_INIT
-            else:
-                code = ErrorCode.UNKNOWN
+            code = error_code_for_exception(exc)
             await self._jobs.update(
                 job_id,
                 status="failed",
@@ -1378,20 +1372,9 @@ class IssueExecutor:
 
         except Exception as exc:
             logger.error("pipeline_resume_failed", issue_id=issue_id, job_id=job_id, error=str(exc))
-            from athanor.orchestration.nodes.agent import SandboxRequiredError
-            from athanor.orchestration.state import TriageParseError
-            from athanor.safety.error_codes import ErrorCode
+            from athanor.safety.error_codes import error_code_for_exception
 
-            if isinstance(exc, SandboxRequiredError):
-                code = ErrorCode.SANDBOX_REQUIRED
-            elif isinstance(exc, TriageParseError):
-                code = ErrorCode.TRIAGE_MALFORMED
-            elif isinstance(exc, RuntimeError) and "not registered" in str(exc):
-                code = ErrorCode.WORKFLOW_UNKNOWN
-            elif isinstance(exc, RuntimeError) and "Sandbox initialization failed" in str(exc):
-                code = ErrorCode.SANDBOX_INIT
-            else:
-                code = ErrorCode.UNKNOWN
+            code = error_code_for_exception(exc)
             await self._jobs.update(
                 job_id,
                 status="failed",

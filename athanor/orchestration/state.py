@@ -167,6 +167,7 @@ class UnsupportedContextError(Exception):
 class JobState(TypedDict, total=False):
     job_id: str
     repo: str
+    context: dict[str, Any] | None  # INT-599 typed job context; None → treat as git for back-compat
     task: str
     issue_number: int | None
     issue_id: str | None

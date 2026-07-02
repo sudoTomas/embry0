@@ -48,3 +48,22 @@ class ErrorCode(StrEnum):
 
     # Developer pipeline guard
     DEV_BRANCH_NOT_PUSHED = "ERR_DEV_BRANCH_NOT_PUSHED"  # developer_node finished but its branch was never pushed to origin (LLM forgot the push step) — caught before init_qa hits a generic clone failure
+
+
+def error_code_for_exception(exc: Exception) -> "ErrorCode":
+    """Classify a workflow exception into an ErrorCode. Lazy imports avoid
+    import cycles with the orchestration layer."""
+    from athanor.orchestration.nodes.agent import SandboxRequiredError
+    from athanor.orchestration.state import TriageParseError, UnsupportedContextError
+
+    if isinstance(exc, UnsupportedContextError):
+        return ErrorCode.UNSUPPORTED_CONTEXT
+    if isinstance(exc, SandboxRequiredError):
+        return ErrorCode.SANDBOX_REQUIRED
+    if isinstance(exc, TriageParseError):
+        return ErrorCode.TRIAGE_MALFORMED
+    if isinstance(exc, RuntimeError) and "not registered" in str(exc):
+        return ErrorCode.WORKFLOW_UNKNOWN
+    if isinstance(exc, RuntimeError) and "Sandbox initialization failed" in str(exc):
+        return ErrorCode.SANDBOX_INIT
+    return ErrorCode.UNKNOWN
