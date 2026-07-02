@@ -1,6 +1,5 @@
-import pytest
-from athanor.safety.error_codes import ErrorCode
 from athanor.orchestration.state import UnsupportedContextError
+from athanor.safety.error_codes import ErrorCode
 
 
 def test_unsupported_context_error_code_value():

@@ -1052,11 +1052,7 @@ class IssueExecutor:
                 error_message = result.get("result_summary")
                 if not error_message:
                     errs = result.get("errors") or []
-                    error_message = (
-                        "; ".join(str(e) for e in errs)
-                        if errs
-                        else f"failed at stage {current_stage!r}"
-                    )
+                    error_message = "; ".join(str(e) for e in errs) if errs else f"failed at stage {current_stage!r}"
             await self._jobs.update(
                 job_id,
                 status=final_status,

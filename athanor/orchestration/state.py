@@ -158,10 +158,7 @@ class UnsupportedContextError(Exception):
 
     def __init__(self, context_type: str) -> None:
         self.context_type = context_type
-        super().__init__(
-            f"Context type {context_type!r} isn't executable yet — "
-            "init/routing land in INT-600/INT-601"
-        )
+        super().__init__(f"Context type {context_type!r} isn't executable yet — init/routing land in INT-600/INT-601")
 
 
 class JobState(TypedDict, total=False):

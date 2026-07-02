@@ -2,7 +2,7 @@
 
 import re
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -41,7 +41,7 @@ class QAJobOverrides(BaseModel):
     force_all_apps: bool = False
 
 
-class ContextType(str, Enum):
+class ContextType(StrEnum):
     git = "git"
     http = "http"
     local = "local"
@@ -55,10 +55,10 @@ class JobContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: ContextType
-    repo: str | None = None    # git:   owner/name
-    ref: str | None = None     # git:   branch/sha (init applies default "main")
-    url: str | None = None     # http:  source URL
-    path: str | None = None    # local: absolute host path
+    repo: str | None = None  # git:   owner/name
+    ref: str | None = None  # git:   branch/sha (init applies default "main")
+    url: str | None = None  # http:  source URL
+    path: str | None = None  # local: absolute host path
 
     @field_validator("repo")
     @classmethod
@@ -160,9 +160,7 @@ class JobCreateRequest(BaseModel):
             return self
         if self.context is not None and self.repo is not None:
             if self.context.type != ContextType.git or self.context.repo != self.repo:
-                raise ValueError(
-                    "repo and context conflict; omit repo or send context.type=git with matching repo"
-                )
+                raise ValueError("repo and context conflict; omit repo or send context.type=git with matching repo")
         if self.context is None:
             if self.repo is not None:
                 self.context = JobContext(type=ContextType.git, repo=self.repo)

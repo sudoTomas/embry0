@@ -28,7 +28,9 @@ class ErrorCode(StrEnum):
     DOCKER_TIMEOUT = "ERR_DOCKER_TIMEOUT"  # Underlying docker command timed out
     MAX_AGENT_QUESTIONS = "ERR_MAX_AGENT_QUESTIONS"  # Agent exceeded the ask_user round cap
     MAX_TRIAGE_QUESTIONS = "ERR_MAX_TRIAGE_QUESTIONS"  # Triage interrupt/resume loop exceeded the 5-round cap
-    UNSUPPORTED_CONTEXT = "ERR_UNSUPPORTED_CONTEXT"  # Non-git job context not executable yet (INT-599 foundation; init lands in INT-600)
+    UNSUPPORTED_CONTEXT = (
+        "ERR_UNSUPPORTED_CONTEXT"  # Non-git job context not executable yet (INT-599 foundation; init lands in INT-600)
+    )
     UNKNOWN = "ERR_UNKNOWN"  # Uncategorised — should diminish over time
 
     # Phase 1 — pluggable agent execution modes
@@ -50,7 +52,7 @@ class ErrorCode(StrEnum):
     DEV_BRANCH_NOT_PUSHED = "ERR_DEV_BRANCH_NOT_PUSHED"  # developer_node finished but its branch was never pushed to origin (LLM forgot the push step) — caught before init_qa hits a generic clone failure
 
 
-def error_code_for_exception(exc: Exception) -> "ErrorCode":
+def error_code_for_exception(exc: Exception) -> ErrorCode:
     """Classify a workflow exception into an ErrorCode. Lazy imports avoid
     import cycles with the orchestration layer."""
     from athanor.orchestration.nodes.agent import SandboxRequiredError
