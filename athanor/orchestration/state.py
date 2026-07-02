@@ -147,6 +147,23 @@ class TriageParseError(ValueError):
     """
 
 
+class UnsupportedContextError(Exception):
+    """Raised when a job's context type has no init strategy yet (INT-599).
+
+    Non-git contexts (http/local/none) validate and persist fine but are not
+    executable until INT-600 (init strategies) + INT-601 (routing) land. The
+    guard in init_node raises this before any sandbox is created; issue_executor
+    maps it to ErrorCode.UNSUPPORTED_CONTEXT.
+    """
+
+    def __init__(self, context_type: str) -> None:
+        self.context_type = context_type
+        super().__init__(
+            f"Context type {context_type!r} isn't executable yet — "
+            "init/routing land in INT-600/INT-601"
+        )
+
+
 class JobState(TypedDict, total=False):
     job_id: str
     repo: str
