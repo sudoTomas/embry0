@@ -95,7 +95,7 @@ class JobContext(BaseModel):
 
 
 class JobCreateRequest(BaseModel):
-    repo: str = Field(..., max_length=200)
+    repo: str | None = Field(default=None, max_length=200)
     # ``task`` is required for the legacy issue-to-pr flow but optional for
     # ``pipeline='qa'`` (which has no LLM-author task to summarize). Validated
     # in the handler when pipeline != 'qa'.
@@ -104,6 +104,7 @@ class JobCreateRequest(BaseModel):
     pipeline: Literal["issue-to-pr", "qa"] | None = None
     branch: str | None = Field(default=None, max_length=255)
     qa: QAJobOverrides | None = None
+    context: JobContext | None = None
     pipeline_template: str | None = None
     pipeline_config: dict[str, Any] | None = None
     sandbox_profile: str | None = None
@@ -122,7 +123,9 @@ class JobCreateRequest(BaseModel):
 
     @field_validator("repo")
     @classmethod
-    def validate_repo_format(cls, v: str) -> str:
+    def validate_repo_format(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
         if not _REPO_PATTERN.match(v):
             msg = "repo must be in 'owner/name' format"
             raise ValueError(msg)
@@ -139,6 +142,32 @@ class JobCreateRequest(BaseModel):
         if self.pipeline != "qa":
             if self.task is None or not self.task.strip():
                 raise ValueError("task is required and must be non-empty for non-qa pipelines")
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_context(self) -> "JobCreateRequest":
+        """Reconcile the deprecated top-level `repo` alias with `context`.
+
+        - qa pipeline: repo required, context untouched (qa is always git).
+        - repo only        -> context = {git, repo}
+        - context only     -> as-is
+        - both             -> must be git + matching repo, else reject
+        - neither          -> context = {none}
+        """
+        if self.pipeline == "qa":
+            if self.repo is None:
+                raise ValueError("repo is required for pipeline=qa")
+            return self
+        if self.context is not None and self.repo is not None:
+            if self.context.type != ContextType.git or self.context.repo != self.repo:
+                raise ValueError(
+                    "repo and context conflict; omit repo or send context.type=git with matching repo"
+                )
+        if self.context is None:
+            if self.repo is not None:
+                self.context = JobContext(type=ContextType.git, repo=self.repo)
+            else:
+                self.context = JobContext(type=ContextType.none)
         return self
 
 

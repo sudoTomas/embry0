@@ -3,6 +3,8 @@ from pydantic import ValidationError
 
 from athanor.api.schemas import (
     BudgetConfigResponse,
+    ContextType,
+    JobContext,
     JobCreateRequest,
     JobResponse,
     SandboxProfileRequest,
@@ -57,3 +59,36 @@ def test_budget_config_response():
         overrun_mode="soft",
     )
     assert resp.overrun_mode == "soft"
+
+
+def test_legacy_repo_task_coerces_to_git_context():
+    req = JobCreateRequest(repo="owner/repo", task="Fix the bug")
+    assert req.repo == "owner/repo"
+    assert req.context is not None
+    assert req.context.type == ContextType.git
+    assert req.context.repo == "owner/repo"
+
+
+def test_bare_task_defaults_to_none_context():
+    req = JobCreateRequest(task="Research the market")
+    assert req.repo is None
+    assert req.context.type == ContextType.none
+
+
+def test_explicit_http_context_without_repo():
+    req = JobCreateRequest(task="Summarize", context=JobContext(type=ContextType.http, url="https://x/y"))
+    assert req.context.type == ContextType.http
+
+
+def test_conflicting_repo_and_context_rejected():
+    with pytest.raises(ValidationError):
+        JobCreateRequest(
+            repo="owner/repo",
+            task="x",
+            context=JobContext(type=ContextType.http, url="https://x/y"),
+        )
+
+
+def test_qa_pipeline_still_requires_repo():
+    with pytest.raises(ValidationError):
+        JobCreateRequest(pipeline="qa", branch="feat/x", task="qa")
