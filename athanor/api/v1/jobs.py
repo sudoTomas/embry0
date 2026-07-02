@@ -67,6 +67,7 @@ async def create_job(
         pipeline_config=effective_config,
         sandbox_profile=req.sandbox_profile,
         trace_id=trace_id,
+        context=req.context.model_dump() if req.context else None,
     )
     config = request.app.state.config
     db = getattr(request.app.state, "db", None)
