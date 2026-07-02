@@ -2,6 +2,7 @@
 
 import re
 from datetime import datetime
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -38,6 +39,59 @@ class QAJobOverrides(BaseModel):
     # declared under apps: in qa.yaml. Equivalent to setting
     # `qa_required: always` in qa.yaml — but per-job rather than per-repo.
     force_all_apps: bool = False
+
+
+class ContextType(str, Enum):
+    git = "git"
+    http = "http"
+    local = "local"
+    none = "none"
+
+
+class JobContext(BaseModel):
+    """What a job operates on. `git` reproduces today's clone-a-repo behavior;
+    http/local/none are non-code contexts (execution lands in INT-600/601)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: ContextType
+    repo: str | None = None    # git:   owner/name
+    ref: str | None = None     # git:   branch/sha (init applies default "main")
+    url: str | None = None     # http:  source URL
+    path: str | None = None    # local: absolute host path
+
+    @field_validator("repo")
+    @classmethod
+    def _validate_repo(cls, v: str | None) -> str | None:
+        if v is not None and not _REPO_PATTERN.match(v):
+            raise ValueError("repo must be in 'owner/name' format")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_per_type(self) -> "JobContext":
+        if self.type == ContextType.git:
+            if not self.repo:
+                raise ValueError("context.repo is required for type=git")
+            if self.url or self.path:
+                raise ValueError("context.url/path not allowed for type=git")
+        elif self.type == ContextType.http:
+            if not self.url:
+                raise ValueError("context.url is required for type=http")
+            if not re.match(r"^https?://", self.url):
+                raise ValueError("context.url must be an http(s) URL")
+            if self.repo or self.ref or self.path:
+                raise ValueError("only context.url is allowed for type=http")
+        elif self.type == ContextType.local:
+            if not self.path:
+                raise ValueError("context.path is required for type=local")
+            if not self.path.startswith("/") or ".." in self.path.split("/"):
+                raise ValueError("context.path must be absolute with no '..' segments")
+            if self.repo or self.ref or self.url:
+                raise ValueError("only context.path is allowed for type=local")
+        else:  # none
+            if self.repo or self.ref or self.url or self.path:
+                raise ValueError("type=none takes no fields")
+        return self
 
 
 class JobCreateRequest(BaseModel):
