@@ -62,6 +62,17 @@ def _filter_user_env_for_sandbox(user_env: list[dict[str, str]] | dict[str, str]
 
 async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Create sandbox container and clone the repo."""
+    # INT-599 guard: only git contexts have an init strategy today. Non-git
+    # jobs (http/local/none) validate + persist but are not executable until
+    # INT-600 fills in the other branches of this switch. Raise BEFORE touching
+    # the stream writer or sandbox manager so no sandbox is ever created.
+    context = state.get("context") or {"type": "git", "repo": state.get("repo", "")}
+    ctx_type = context.get("type", "git")
+    if ctx_type != "git":
+        from athanor.orchestration.state import UnsupportedContextError
+
+        raise UnsupportedContextError(ctx_type)
+
     writer = get_stream_writer()
     writer({"type": "node_started", "node": "init"})
 
