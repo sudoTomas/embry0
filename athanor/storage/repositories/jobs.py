@@ -81,24 +81,27 @@ class JobsRepository:
 
     async def create(
         self,
-        repo: str,
-        task: str,
+        repo: str | None = None,
+        task: str | None = None,
         issue_number: int | None = None,
         issue_id: str | None = None,
         pipeline_template: str | None = None,
         pipeline_config: dict[str, Any] | None = None,
         sandbox_profile: str | None = None,
         trace_id: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> str:
         """Create a new job and return its ID."""
+        if context is None:
+            context = {"type": "git", "repo": repo} if repo else {"type": "none"}
         job_id = f"job-{uuid.uuid4().hex[:12]}"
         await self._db.execute(
             """
             INSERT INTO jobs (
                 job_id, repo, task, issue_number, issue_id,
-                pipeline_template, pipeline_config, sandbox_profile, trace_id
+                pipeline_template, pipeline_config, sandbox_profile, trace_id, context
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             """,
             job_id,
             repo,
@@ -109,6 +112,7 @@ class JobsRepository:
             pipeline_config,
             sandbox_profile,
             trace_id,
+            context,
         )
         logger.info("job_created", job_id=job_id, repo=repo, trace_id=trace_id)
         return job_id

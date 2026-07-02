@@ -145,3 +145,19 @@ async def test_get_log_events_filters_by_since_seq(jobs_repo):
     # since_seq=seq3 — return nothing (nothing newer)
     after_last = await jobs_repo.get_log_events(job_id, since_seq=seq3)
     assert after_last == []
+
+
+@pytest.mark.asyncio
+async def test_create_derives_git_context_from_repo(jobs_repo):
+    job_id = await jobs_repo.create(repo="owner/repo", task="Fix the bug")
+    job = await jobs_repo.get(job_id)
+    assert job["repo"] == "owner/repo"
+    assert job["context"] == {"type": "git", "repo": "owner/repo"}
+
+
+@pytest.mark.asyncio
+async def test_create_repo_less_job_with_context(jobs_repo):
+    job_id = await jobs_repo.create(task="Research the market", context={"type": "none"})
+    job = await jobs_repo.get(job_id)
+    assert job["repo"] is None
+    assert job["context"] == {"type": "none"}
