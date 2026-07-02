@@ -806,6 +806,23 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ADD COLUMN IF NOT EXISTS is_builtin BOOLEAN NOT NULL DEFAULT FALSE;
         """,
     ),
+    (
+        34,
+        "jobs — make repo nullable + add context JSONB for non-code jobs (INT-599)",
+        # INT-599: repo becomes optional; a job's context is a typed object
+        # (git|http|local|none). Existing rows are all git, so backfill their
+        # context from repo. New non-git jobs write context directly and leave
+        # repo NULL.
+        """
+        ALTER TABLE jobs ALTER COLUMN repo DROP NOT NULL;
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS context JSONB;
+        UPDATE jobs
+            SET context = jsonb_build_object('type', 'git', 'repo', repo)
+            WHERE context IS NULL AND repo IS NOT NULL;
+        COMMENT ON COLUMN jobs.context IS
+            'Typed job context (git|http|local|none). INT-599. NULL only for pre-migration rows with a NULL repo, which never existed before this migration.';
+        """,
+    ),
 ]
 
 
