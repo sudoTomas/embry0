@@ -21,6 +21,16 @@ def test_builtin_seeds_define_slim_and_qa_jvm():
     assert qa["extra_networks"] == []
 
 
+def test_builtin_seeds_define_dev_python():
+    assert "dev-python" in BUILTIN_SANDBOX_PROFILES
+    dev = BUILTIN_SANDBOX_PROFILES["dev-python"]
+    assert dev["base_image"] == "athanor-sandbox-dev-python:latest"
+    assert dev["dind_enabled"] is False
+    # Poetry/pip need PyPI egress; the Claude CLI needs api.anthropic.com —
+    # same rationale as the slim profile's sandbox-internet attachment.
+    assert dev["extra_networks"] == ["sandbox-internet"]
+
+
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_seed_idempotent(db_with_migrations):

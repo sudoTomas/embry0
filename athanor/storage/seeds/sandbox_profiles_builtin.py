@@ -39,6 +39,27 @@ BUILTIN_SANDBOX_PROFILES: dict[str, dict[str, Any]] = {
         "extra_networks": ["sandbox-internet"],
         "env_defaults": {},
     },
+    "dev-python": {
+        "base_image": "athanor-sandbox-dev-python:latest",
+        "description": (
+            "Dev sandbox for Python services (first consumer: client-project/"
+            "ai-quoting ml/): slim toolchain + Poetry for container-free "
+            ".e0/dev.yaml checks."
+        ),
+        "memory": "6g",
+        "cpus": "4",
+        "pids_limit": 256,
+        # Dev checks run `poetry install` + pytest — allow the same agent
+        # budget as QA rather than slim's 300s.
+        "agent_timeout_seconds": 600,
+        "container_timeout_seconds": 3600,
+        "idle_timeout_seconds": 600,
+        "dind_enabled": False,
+        # sandbox-internet for the same reason as slim (Claude CLI egress),
+        # plus PyPI for per-job `poetry install`.
+        "extra_networks": ["sandbox-internet"],
+        "env_defaults": {},
+    },
     "qa-jvm": {
         "base_image": "athanor-sandbox-qa:latest",
         "description": "Full-stack QA runtime: Node + Java JDK + Python + Playwright + DinD.",
