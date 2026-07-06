@@ -111,3 +111,28 @@ def test_proxy_admin_token_required():
     docker = MagicMock()
     with pytest.raises(ValueError, match="proxy_admin_token is required"):
         ProxyManager(docker, proxy_admin_token="")
+
+
+async def _manager_with_git_proxy(monkeypatch):
+    pm = ProxyManager(docker=AsyncMock(), proxy_admin_token="x" * 20)
+    pm._http = object()  # bypass the "start() first" guard; _exec_admin_request is patched below
+    pm.git_proxy_url = "http://git-proxy:9101"
+    captured = []
+
+    async def fake_exec(**kwargs):
+        captured.append(kwargs)
+
+    monkeypatch.setattr(pm, "_exec_admin_request", fake_exec)
+    return pm, captured
+
+
+async def test_enroll_includes_github_token_when_given(monkeypatch):
+    pm, captured = await _manager_with_git_proxy(monkeypatch)
+    await pm.enroll_sandbox("sandbox-1", github_token="ghp_RAVEN")
+    assert captured and all(c["body"].get("github_token") == "ghp_RAVEN" for c in captured)
+
+
+async def test_enroll_omits_github_token_when_none(monkeypatch):
+    pm, captured = await _manager_with_git_proxy(monkeypatch)
+    await pm.enroll_sandbox("sandbox-1")
+    assert captured and all("github_token" not in c["body"] for c in captured)

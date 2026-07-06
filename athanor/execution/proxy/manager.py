@@ -231,7 +231,7 @@ class ProxyManager:
             "must not be registered yet."
         )
 
-    async def enroll_sandbox(self, sandbox_id: str) -> str:
+    async def enroll_sandbox(self, sandbox_id: str, *, github_token: str | None = None) -> str:
         """Enroll a new sandbox with all running credential proxies.
 
         Returns the bearer token to plumb into the sandbox.
@@ -247,6 +247,11 @@ class ProxyManager:
         Network-plumbing proxies (minio, presign) have no admin endpoints and
         require no enrollment.
 
+        ``github_token``, when provided, is included in the enroll body so the
+        proxies can store a per-sandbox (per-owner) GitHub token instead of
+        falling back to the global token. Omitted (falsy) means back-compat:
+        the proxies keep using the global token.
+
         Raises RuntimeError if any enrollment exec fails. Caller
         (SandboxManager) rolls back the just-created container in that case.
         """
@@ -254,7 +259,9 @@ class ProxyManager:
             raise RuntimeError("ProxyManager.start() must be called before enroll_sandbox")
 
         sandbox_token = secrets.token_urlsafe(32)
-        body = {"sandbox_id": sandbox_id, "sandbox_token": sandbox_token}
+        body: dict[str, str] = {"sandbox_id": sandbox_id, "sandbox_token": sandbox_token}
+        if github_token:
+            body["github_token"] = github_token
 
         targets: list[tuple[str, int]] = []
         if self.git_proxy_url:
