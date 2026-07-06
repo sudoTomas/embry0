@@ -44,6 +44,8 @@ def create_github_proxy_app(github_token: str, admin_token: str) -> web.Applicat
     app["enrolled_by_id"] = {}
     # sha256(sandbox_token) -> sandbox_id; used by proxy handler for O(1) lookup
     app["enrolled_by_hash"] = {}
+    # sandbox_id -> per-sandbox github token (B2); absent => global fallback
+    app["token_by_id"] = {}
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
     app.router.add_get("/health", _health_handler)
@@ -119,6 +121,7 @@ async def _enroll_handler(request: web.Request) -> web.Response:
     new_hash = _sha256(sandbox_token)
     request.app["enrolled_by_id"][sandbox_id] = new_hash
     request.app["enrolled_by_hash"][new_hash] = sandbox_id
+    request.app["token_by_id"][sandbox_id] = body.get("github_token") or request.app["github_token"]
     logger.info("github_proxy_sandbox_enrolled", sandbox_id=sandbox_id)
     return web.json_response({"status": "enrolled"})
 
@@ -132,6 +135,7 @@ async def _unenroll_handler(request: web.Request) -> web.Response:
     old_hash = request.app["enrolled_by_id"].pop(sandbox_id, None)
     if old_hash is not None:
         request.app["enrolled_by_hash"].pop(old_hash, None)
+    request.app["token_by_id"].pop(sandbox_id, None)
     logger.info("github_proxy_sandbox_unenrolled", sandbox_id=sandbox_id)
     return web.json_response({"status": "unenrolled"})
 
@@ -142,7 +146,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     if sandbox_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
 
-    token = request.app["github_token"]
+    token = request.app["token_by_id"].get(sandbox_id) or request.app["github_token"]
     path = "/" + request.match_info.get("path", "")
     upstream_url = f"{GITHUB_API_BASE}{path}"
     if request.query_string:
