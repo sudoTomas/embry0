@@ -210,3 +210,54 @@ async def test_create_container_name_is_docker_safe_for_colon_job_id(manager: Sa
     call_kwargs = manager._docker.build_run_cmd.call_args
     name = call_kwargs.kwargs["name"]
     assert docker_name_re.fullmatch(name), f"Container name {name!r} does not satisfy Docker naming regex"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_token_for_repo / per-owner token resolution + enrollment wiring
+# (B2 Task 5, INT-654)
+# ---------------------------------------------------------------------------
+
+
+def _mgr(github_token="ghp_DEFAULT"):
+    return SandboxManager(
+        docker=AsyncMock(),
+        proxy_manager=AsyncMock(),
+        github_token=github_token,
+    )
+
+
+def test_resolve_token_for_repo_uses_owner_env(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN__RAVEN_CARGO", "ghp_raven")
+    assert _mgr()._resolve_token_for_repo("client-project/ai-quoting") == "ghp_raven"
+
+
+def test_resolve_token_for_repo_falls_back(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN__ALQVIMIA_LABS", raising=False)
+    assert _mgr()._resolve_token_for_repo("former-org/embry0") == "ghp_DEFAULT"
+
+
+def test_resolve_token_for_repo_none_returns_default():
+    assert _mgr()._resolve_token_for_repo(None) == "ghp_DEFAULT"
+
+
+def test_resolve_token_for_repo_no_slash_returns_default():
+    assert _mgr()._resolve_token_for_repo("noslash") == "ghp_DEFAULT"
+
+
+@pytest.mark.asyncio
+async def test_create_passes_resolved_token_to_enroll_sandbox(monkeypatch):
+    """create() must resolve the per-owner token from `repo` and forward it
+    to enroll_sandbox as the github_token kwarg."""
+    monkeypatch.setenv("GITHUB_TOKEN__RAVEN_CARGO", "ghp_raven_owner")
+
+    docker = MagicMock()
+    docker.run_cmd = AsyncMock(return_value="container-repo")
+    docker.build_run_cmd = MagicMock(return_value=["docker", "run", "..."])
+
+    proxy_mgr = _make_proxy_manager()
+
+    mgr = SandboxManager(docker=docker, proxy_manager=proxy_mgr, github_token="ghp_DEFAULT")
+
+    await mgr.create(job_id="job-repo", repo="client-project/ai-quoting")
+
+    proxy_mgr.enroll_sandbox.assert_awaited_once_with("container-repo", github_token="ghp_raven_owner")

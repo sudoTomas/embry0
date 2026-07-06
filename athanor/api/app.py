@@ -517,7 +517,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         proxy_admin_token=config.proxy_admin_token,
         image_registry=config.image_registry,
     )
-    sandbox_mgr = SandboxManager(docker, proxy_manager=proxy_mgr, image_registry=config.image_registry)
+    sandbox_mgr = SandboxManager(
+        docker,
+        proxy_manager=proxy_mgr,
+        image_registry=config.image_registry,
+        github_token=config.github_token,
+    )
     agent_runner = AgentRunner(sandbox_mgr, docker)
 
     app.state.docker = docker

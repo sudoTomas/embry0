@@ -74,10 +74,18 @@ class SandboxManager:
         *,
         proxy_manager: ProxyManager,
         image_registry: str = "",
+        github_token: str = "",
     ) -> None:
         self._docker = docker
         self._proxy_manager = proxy_manager
         self._image_registry = image_registry
+        self._github_token = github_token
+
+    def _resolve_token_for_repo(self, repo: str | None) -> str:
+        from athanor.execution.github_tokens import resolve_github_token
+
+        owner = repo.split("/", 1)[0] if repo and "/" in repo else None
+        return resolve_github_token(owner, self._github_token)
 
     async def create(
         self,
@@ -86,6 +94,7 @@ class SandboxManager:
         env: dict[str, str] | None = None,
         volumes: list[tuple[str, str]] | None = None,
         tmpfs_mounts: list[str] | None = None,
+        repo: str | None = None,
     ) -> tuple[str, str]:
         """Create a persistent sandbox container. Returns (container_id, sandbox_token).
 
@@ -174,8 +183,11 @@ class SandboxManager:
             extra_hosts=extra_hosts or None,
         )
         container_id = await self._docker.run_cmd(cmd)
+        resolved_token = self._resolve_token_for_repo(repo)
         try:
-            sandbox_token = await self._proxy_manager.enroll_sandbox(container_id)
+            sandbox_token = await self._proxy_manager.enroll_sandbox(
+                container_id, github_token=resolved_token
+            )
         except RuntimeError as exc:
             logger.error("sandbox_enroll_failed_rolling_back", container=name, error=str(exc))
             # Clean any partial enrollment from earlier proxies before rm.
