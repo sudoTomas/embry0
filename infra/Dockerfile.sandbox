@@ -1,4 +1,4 @@
-FROM python:3.12.7-slim-bookworm
+FROM python:3.12.7-slim-bookworm AS base
 
 # System dependencies — base + Playwright/Chromium runtime libraries.
 #
@@ -69,5 +69,16 @@ RUN useradd --create-home agent
 # Create writable workspace (tmpfs in docker run, but need the dir)
 RUN mkdir -p /workspace && chown agent:agent /workspace
 
+USER agent
+WORKDIR /workspace
+
+# --- dev-python -------------------------------------------------------------
+# Lean dev-check toolchain for Python repos (first consumer: client-project/
+# ai-quoting ml/ — Poetry 1.8.4 per its pyproject/CI). Same base as the slim
+# sandbox: no Chromium, no Docker CLI, no JDK. Repo dependencies are installed
+# per-job by the agent (`poetry install`), not baked here.
+FROM base AS dev-python
+USER root
+RUN pip install --no-cache-dir "poetry==1.8.4"
 USER agent
 WORKDIR /workspace

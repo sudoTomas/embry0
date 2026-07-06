@@ -11,7 +11,7 @@
 set -eu
 
 REGISTRY="${REGISTRY:-127.0.0.1:5001}"
-IMAGES="${IMAGES:-athanor-proxy athanor-sandbox}"
+IMAGES="${IMAGES:-athanor-proxy athanor-sandbox athanor-sandbox-dev-python}"
 TAG="${TAG:-latest}"
 
 for image in $IMAGES; do

@@ -258,6 +258,17 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile.sandbox
+      # Dockerfile.sandbox is multi-stage; without an explicit target the
+      # final stage (dev-python) would be tagged as the slim sandbox.
+      target: base
+
+  dev-python-image-builder:
+    profiles: ["images"]
+    image: athanor-sandbox-dev-python:latest
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.sandbox
+      target: dev-python
 
   proxy-image-builder:
     profiles: ["images"]
