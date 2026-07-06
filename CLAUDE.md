@@ -37,9 +37,10 @@
 - **After code changes to `athanor/sandbox/` or `athanor/safety/`** (rebuild + repush + restart orchestrator):
   ```bash
   cd infra
-  docker compose --profile images build sandbox-image-builder
+  docker compose --profile images build sandbox-image-builder dev-python-image-builder
   docker compose up -d --force-recreate init-push-images orchestrator
   ```
+  `dev-python-image-builder` must build alongside the base sandbox: `init-push-images` pushes `athanor-sandbox-dev-python:latest` too, and fails startup if the tag is missing from the host daemon.
 - **After code changes to `athanor/execution/proxy/`**:
   ```bash
   cd infra
