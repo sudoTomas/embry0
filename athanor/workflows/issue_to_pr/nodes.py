@@ -60,6 +60,21 @@ def _filter_user_env_for_sandbox(user_env: list[dict[str, str]] | dict[str, str]
     return out
 
 
+def _build_clone_shell(repo: str) -> str:
+    """Shell for the init clone; ONLY the main:main fetch is best-effort.
+
+    The ``|| true`` must be brace-scoped to the fetch: ``a && b || true``
+    rescues the WHOLE chain, which let a failed clone exit 0 and report
+    "Repository cloned" over an empty /workspace (2026-07-06, INT-655
+    access smoke). The fetch stays best-effort because it fails benignly
+    when the clone already checked out main.
+    """
+    return (
+        f"git clone --depth=50 https://github.com/{repo}.git /workspace"
+        f" && {{ git -C /workspace fetch origin main:main --depth=50 || true; }}"
+    )
+
+
 async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Create sandbox container and clone the repo."""
     # INT-599 guard: only git contexts have an init strategy today. Non-git
@@ -141,17 +156,9 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                 )
 
             # Fail loudly on clone error — if /workspace isn't a git repo, every
-            # downstream agent call silently misbehaves. `set -e` surfaces a
-            # non-zero exit from `git clone` which DockerClient.run_cmd then
-            # raises as RuntimeError.
-            clone_cmd = [
-                "bash",
-                "-c",
-                (
-                    f"set -e && git clone --depth=50 https://github.com/{repo}.git /workspace"
-                    f" && git -C /workspace fetch origin main:main --depth=50 || true"
-                ),
-            ]
+            # downstream agent call silently misbehaves. A non-zero exit from
+            # `git clone` makes DockerClient.run_cmd raise RuntimeError.
+            clone_cmd = ["bash", "-c", _build_clone_shell(repo)]
             try:
                 # 300s (was 120s): large monorepos cloned via the git-proxy at
                 # --depth=50 can exceed two minutes when the proxy adds latency
