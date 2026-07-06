@@ -35,15 +35,10 @@ def test_branch_slug_is_git_safe(task: str, expected_safe: bool) -> None:
 
 def test_clone_command_depth_is_50() -> None:
     """Clone command must use --depth=50 and fetch main:main at --depth=50."""
-    # The command is constructed inline in init_node; we verify the string shape.
-    # Actual init_node test would need async + mocked docker; this tests the
-    # command template directly.
-    depth = 50
-    repo = "owner/repo"
-    clone_cmd = (
-        f"set -e && git clone --depth={depth} https://github.com/{repo}.git /workspace"
-        f" && git -C /workspace fetch origin main:main --depth={depth} || true"
-    )
-    assert f"--depth={depth}" in clone_cmd
+    from athanor.workflows.issue_to_pr.nodes import _build_clone_shell
+
+    clone_cmd = _build_clone_shell("owner/repo")
+    assert clone_cmd.count("--depth=50") == 2  # clone AND the main:main fetch
+    assert "git clone --depth=50 https://github.com/owner/repo.git /workspace" in clone_cmd
     assert "fetch origin main:main" in clone_cmd
     assert "--depth=1" not in clone_cmd
