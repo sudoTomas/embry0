@@ -108,7 +108,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
         # by sandbox/github/client.py (it takes proxy_url directly as a constructor
         # arg; no env-var hook exists). Wiring it as a sandbox env var requires
         # adding a base-URL env hook inside the client. Tracked as a follow-up.
-        container_id, sandbox_token = await sandbox_mgr.create(job_id, env=env)
+        container_id, sandbox_token = await sandbox_mgr.create(job_id, env=env, repo=repo)
         logger.info("sandbox_created", job_id=job_id, container_id=container_id)
         writer({"type": "progress", "message": "Sandbox container created"})
 
