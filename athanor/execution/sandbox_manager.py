@@ -185,9 +185,7 @@ class SandboxManager:
         container_id = await self._docker.run_cmd(cmd)
         resolved_token = self._resolve_token_for_repo(repo)
         try:
-            sandbox_token = await self._proxy_manager.enroll_sandbox(
-                container_id, github_token=resolved_token
-            )
+            sandbox_token = await self._proxy_manager.enroll_sandbox(container_id, github_token=resolved_token)
         except RuntimeError as exc:
             logger.error("sandbox_enroll_failed_rolling_back", container=name, error=str(exc))
             # Clean any partial enrollment from earlier proxies before rm.
