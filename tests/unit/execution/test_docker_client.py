@@ -380,3 +380,42 @@ def test_proxy_run_cmd_uses_env_file(tmp_path):
         assert all("GITHUB_TOKEN=" not in arg for arg in cmd)
     finally:
         os.unlink(env_file)
+
+
+def test_proxy_run_cmd_registry_qualified_image_forces_pull():
+    """Proxies must force a fresh pull for registry-qualified images, exactly
+    like sandboxes (test_build_run_cmd_registry_qualified_image_forces_pull).
+    Without it DinD serves its cached `latest` after the host rebuilds and
+    init-push-images refreshes the registry — the stale-image failure mode
+    that silently ran a pre-B2 git-proxy for two months (found 2026-07-06
+    during the INT-655 access smoke: per-owner enroll tokens were ignored by
+    the old handler still running from a 2026-05-04 cache)."""
+    import os
+
+    cmd, env_file = DockerClient().build_run_proxy_cmd(
+        name="git-proxy",
+        image="registry:5000/athanor-proxy:latest",
+        network="sandbox-restricted",
+        env={"PROXY_TYPE": "git"},
+    )
+    try:
+        assert "--pull=always" in cmd
+        assert cmd.index("--pull=always") < cmd.index("registry:5000/athanor-proxy:latest")
+    finally:
+        os.unlink(env_file)
+
+
+def test_proxy_run_cmd_unqualified_image_omits_pull():
+    """A bare local-only image name must not add --pull=always (pull would fail)."""
+    import os
+
+    cmd, env_file = DockerClient().build_run_proxy_cmd(
+        name="git-proxy",
+        image="athanor-proxy:latest",
+        network="sandbox-restricted",
+        env={"PROXY_TYPE": "git"},
+    )
+    try:
+        assert "--pull=always" not in cmd
+    finally:
+        os.unlink(env_file)

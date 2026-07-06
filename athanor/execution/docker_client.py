@@ -71,6 +71,16 @@ class DockerClient:
         self._tls_verify = tls_verify
         self._cert_path = cert_path
 
+    @staticmethod
+    def _registry_qualified(image: str) -> bool:
+        """True when ``image`` is qualified against a registry host —
+        first path segment contains ``.``/``:`` or is ``localhost``
+        (registry:5000/..., ghcr.io/..., 1.2.3.4:5000/...). Only then is
+        ``--pull=always`` valid; a bare local-only name would fail to pull.
+        """
+        first_segment = image.split("/", 1)[0] if "/" in image else ""
+        return bool(first_segment) and ("." in first_segment or ":" in first_segment or first_segment == "localhost")
+
     def _build_base_cmd(self) -> list[str]:
         """Build base docker command with host and TLS flags."""
         cmd = ["docker"]
@@ -117,15 +127,12 @@ class DockerClient:
         """
         cmd = self._build_base_cmd()
         cmd.extend(["run", "-d", "--init"])
-        # When the image is qualified against a registry (registry:5000/...,
-        # 1.2.3.4:5000/..., or any host with a `.`/`:`/literal `localhost`
-        # in its first segment), force a pull on every launch. This keeps
+        # Registry-qualified image => force a pull on every launch. This keeps
         # DinD from serving stale `latest` after the host has rebuilt and
         # init-push-images has refreshed the registry — a previous silent
         # failure mode where the inner docker daemon's cached layers won an
         # implicit race against the registry's newer digest.
-        first_segment = image.split("/", 1)[0] if "/" in image else ""
-        if first_segment and ("." in first_segment or ":" in first_segment or first_segment == "localhost"):
+        if self._registry_qualified(image):
             cmd.append("--pull=always")
         cmd.extend(["--name", name])
         cmd.append(f"--network={network}")
@@ -203,6 +210,12 @@ class DockerClient:
 
         cmd = self._build_base_cmd()
         cmd.extend(["run", "-d"])
+        # Same stale-`latest` guard as build_run_cmd. Proxies missed this flag
+        # and DinD silently ran a 2026-05-04 cached athanor-proxy for two
+        # months — the pushed per-owner-token (B2) proxy never started until
+        # the INT-655 access smoke exposed it (2026-07-06).
+        if self._registry_qualified(image):
+            cmd.append("--pull=always")
         cmd.extend(["--name", name])
         cmd.append(f"--network={network}")
         cmd.extend(["--env-file", env_file_path])
