@@ -51,3 +51,19 @@ async def test_unenroll_clears_per_sandbox_token(client):
     await client.delete("/admin/enroll/s1", headers={"X-Admin-Token": ADMIN})
     r = await client.get("/git-credentials", headers={"Authorization": f"Bearer {TOK}"})
     assert r.status == 401
+
+
+async def test_reenroll_overwrites_per_sandbox_token(client):
+    t1, t2 = "tok-a-" + "a" * 32, "tok-b-" + "b" * 32
+    await _enroll(client, "s1", t1, github_token="ghp_A")
+    await _enroll(client, "s1", t2, github_token="ghp_B")  # re-enroll same sandbox_id
+    r = await client.get("/git-credentials", headers={"Authorization": f"Bearer {t2}"})
+    assert "password=ghp_B" in await r.text()
+
+
+async def test_reenroll_without_token_resets_to_global(client):
+    t1, t2 = "tok-c-" + "c" * 32, "tok-d-" + "d" * 32
+    await _enroll(client, "s1", t1, github_token="ghp_A")
+    await _enroll(client, "s1", t2)  # re-enroll with NO github_token
+    r = await client.get("/git-credentials", headers={"Authorization": f"Bearer {t2}"})
+    assert "password=ghp_GLOBAL" in await r.text()
