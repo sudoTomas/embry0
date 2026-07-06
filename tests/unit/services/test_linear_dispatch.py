@@ -94,3 +94,55 @@ def test_fetch_linear_issue_raises_when_issue_missing(monkeypatch):
     monkeypatch.setattr(ld.httpx, "post", lambda *a, **k: _FakeResponse({"data": {"issue": None}}))
     with pytest.raises(ValueError, match="INT-999"):
         ld.fetch_linear_issue("INT-999", api_key="k")
+
+
+def test_dispatch_job_posts_bearer_to_jobs_endpoint(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return _FakeResponse({"job_id": "job-123", "status": "pending"})
+
+    monkeypatch.setattr(ld.httpx, "post", fake_post)
+    result = ld.dispatch_job({"repo": "o/r"}, base_url="http://localhost:8200/", api_key="sekret")
+    assert captured["url"] == "http://localhost:8200/api/v1/jobs"
+    assert captured["headers"]["Authorization"] == "Bearer sekret"
+    assert captured["json"] == {"repo": "o/r"}
+    assert result["job_id"] == "job-123"
+
+
+def test_main_dry_run_prints_payload_without_posting(monkeypatch, capsys):
+    monkeypatch.setenv("LINEAR_API_KEY", "lin_api_x")
+    monkeypatch.setattr(ld, "fetch_linear_issue", lambda rav_id, api_key: _issue())
+
+    def boom(*a, **k):
+        raise AssertionError("dispatch_job must not be called in --dry-run")
+
+    monkeypatch.setattr(ld, "dispatch_job", boom)
+    rc = ld.main(["INT-700", "--dry-run"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert '"repo": "client-project/ai-quoting"' in out
+    assert '"sandbox_profile": "dev-python"' in out
+
+
+def test_main_dispatches_and_prints_console_url(monkeypatch, capsys):
+    monkeypatch.setenv("LINEAR_API_KEY", "lin_api_x")
+    monkeypatch.setenv("EMBRY0_API_KEY", "sekret")
+    monkeypatch.setenv("EMBRY0_URL", "http://0.0.0.0:8200")
+    monkeypatch.setattr(ld, "fetch_linear_issue", lambda rav_id, api_key: _issue())
+    monkeypatch.setattr(ld, "dispatch_job", lambda payload, base_url, api_key: {"job_id": "job-9"})
+    rc = ld.main(["INT-700", "--profile", "dev-python"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "job-9" in out
+    assert "http://0.0.0.0:8200/jobs/job-9" in out
+
+
+def test_main_fails_fast_without_linear_key(monkeypatch, capsys):
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    rc = ld.main(["INT-700", "--dry-run"])
+    assert rc == 2
+    assert "LINEAR_API_KEY" in capsys.readouterr().err

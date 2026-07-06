@@ -6,7 +6,10 @@ W1c Linear-trigger adapter; `main()` (Task 4) is the operator CLI on top.
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
+import sys
 from dataclasses import dataclass
 
 import httpx
@@ -105,3 +108,56 @@ def build_job_payload(issue: LinearIssue, repo: str, profile: str) -> dict[str, 
         "sandbox_profile": profile,
         "additional_context": compose_additional_context(issue.identifier),
     }
+
+
+def dispatch_job(payload: dict[str, str], base_url: str, api_key: str) -> dict:
+    """POST the composed payload to embry0's job API."""
+    resp = httpx.post(
+        f"{base_url.rstrip('/')}/api/v1/jobs",
+        json=payload,
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=60.0,
+    )
+    resp.raise_for_status()
+    result: dict = resp.json()
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="dispatch-embry0",
+        description="Dispatch a Linear ticket to embry0 as a coding job.",
+    )
+    parser.add_argument("rav_id", help="Linear issue identifier, e.g. INT-655")
+    parser.add_argument("--repo", default=DEFAULT_REPO)
+    parser.add_argument("--profile", default=DEFAULT_PROFILE)
+    parser.add_argument("--dry-run", action="store_true", help="Print the composed payload; do not POST.")
+    args = parser.parse_args(argv)
+
+    linear_key = os.environ.get("LINEAR_API_KEY", "")
+    if not linear_key:
+        print("LINEAR_API_KEY is not set", file=sys.stderr)
+        return 2
+
+    issue = fetch_linear_issue(args.rav_id, api_key=linear_key)
+    payload = build_job_payload(issue, repo=args.repo, profile=args.profile)
+
+    if args.dry_run:
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    base_url = os.environ.get("EMBRY0_URL", "http://localhost:8200")
+    api_key = os.environ.get("EMBRY0_API_KEY") or os.environ.get("API_KEY", "")
+    if not api_key:
+        print("EMBRY0_API_KEY (or API_KEY) is not set", file=sys.stderr)
+        return 2
+
+    job = dispatch_job(payload, base_url=base_url, api_key=api_key)
+    job_id = job.get("job_id") or job.get("id", "")
+    print(f"job_id: {job_id}")
+    print(f"console: {base_url.rstrip('/')}/jobs/{job_id}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
