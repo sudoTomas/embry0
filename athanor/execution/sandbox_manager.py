@@ -82,10 +82,9 @@ class SandboxManager:
         self._github_token = github_token
 
     def _resolve_token_for_repo(self, repo: str | None) -> str:
-        from athanor.execution.github_tokens import resolve_github_token
+        from athanor.execution.github_tokens import resolve_for_repo
 
-        owner = repo.split("/", 1)[0] if repo and "/" in repo else None
-        return resolve_github_token(owner, self._github_token)
+        return resolve_for_repo(repo, self._github_token)
 
     async def create(
         self,

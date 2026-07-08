@@ -16,3 +16,23 @@ def resolve_github_token(owner: str | None, default: str) -> str:
         return default
     key = "GITHUB_TOKEN__" + owner.upper().replace("-", "_")
     return os.environ.get(key) or default
+
+
+def resolve_for_repo(repo: str | None, default: str) -> str:
+    """Resolve the token for a repo's owner; ``default`` when repo is unset/slashless."""
+    owner = repo.split("/", 1)[0] if repo and "/" in repo else None
+    return resolve_github_token(owner, default)
+
+
+def all_github_tokens(default: str) -> list[str]:
+    """All configured GitHub tokens, ordered: default first, then per-owner
+    env tokens sorted by env key. Deduped, empties dropped. Used by consumers
+    that need to fan out across owners (e.g. the /github/repos listing).
+    """
+    tokens: list[str] = [default] if default else []
+    for key in sorted(os.environ):
+        if key.startswith("GITHUB_TOKEN__"):
+            value = os.environ[key]
+            if value and value not in tokens:
+                tokens.append(value)
+    return tokens
