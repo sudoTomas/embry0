@@ -261,3 +261,115 @@ async def test_create_passes_resolved_token_to_enroll_sandbox(monkeypatch):
     await mgr.create(job_id="job-repo", repo="client-project/ai-quoting")
 
     proxy_mgr.enroll_sandbox.assert_awaited_once_with("container-repo", github_token="ghp_raven_owner")
+
+
+# ---------------------------------------------------------------------------
+# Worker-cap env-var injection (EAGAIN fix — iss-19330094)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_injects_worker_cap_env_vars(manager: SandboxManager):
+    """Sandbox must receive worker-cap env vars sized from the profile's cpus
+    value.  Without these, Node.js os.cpus() returns the HOST CPU count (47 on
+    private-server) and build tools (Next.js, webpack) spawn per-host-CPU
+    workers that exceed the sandbox's pids_limit → EAGAIN."""
+    await manager.create(job_id="job-worker-caps")
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    env_passed = kwargs.get("env", {}) or {}
+
+    # Default profile has cpus="4", so worker caps should be 4
+    assert env_passed.get("UV_THREADPOOL_SIZE") == "4"
+    assert env_passed.get("NEXT_PRIVATE_WORKER_THREADS") == "4"
+    assert env_passed.get("GOMAXPROCS") == "4"
+    assert env_passed.get("MAKEFLAGS") == "-j4"
+
+
+@pytest.mark.asyncio
+async def test_create_worker_caps_follow_custom_profile_cpus(manager: SandboxManager):
+    """Worker caps must track the profile's cpus, not hardcoded values."""
+    profile = {"cpus": "6", "pids_limit": 512}
+    await manager.create(job_id="job-6cpu", profile=profile)
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    env_passed = kwargs.get("env", {}) or {}
+
+    assert env_passed.get("UV_THREADPOOL_SIZE") == "6"
+    assert env_passed.get("NEXT_PRIVATE_WORKER_THREADS") == "6"
+    assert env_passed.get("GOMAXPROCS") == "6"
+    assert env_passed.get("MAKEFLAGS") == "-j6"
+
+
+@pytest.mark.asyncio
+async def test_create_worker_caps_do_not_override_user_env(manager: SandboxManager):
+    """User-provided env vars must take precedence over auto-injected
+    worker caps.  A user who knows their build needs UV_THREADPOOL_SIZE=16
+    should not have it silently capped to 4."""
+    await manager.create(
+        job_id="job-user-override",
+        env={"UV_THREADPOOL_SIZE": "16", "GOMAXPROCS": "8"},
+    )
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    env_passed = kwargs.get("env", {}) or {}
+
+    # User values win
+    assert env_passed["UV_THREADPOOL_SIZE"] == "16"
+    assert env_passed["GOMAXPROCS"] == "8"
+    # Non-overridden caps still injected
+    assert env_passed["NEXT_PRIVATE_WORKER_THREADS"] == "4"
+    assert env_passed["MAKEFLAGS"] == "-j4"
+
+
+# ---------------------------------------------------------------------------
+# Profile env_defaults merging
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_merges_profile_env_defaults(manager: SandboxManager):
+    """Profile env_defaults (stored in DB) should be merged into the
+    sandbox env.  Previously they were stored but never wired through."""
+    profile = {"env_defaults": {"LANG": "C.UTF-8", "FOO": "bar"}}
+    await manager.create(job_id="job-env-defaults", profile=profile)
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    env_passed = kwargs.get("env", {}) or {}
+
+    assert env_passed.get("LANG") == "C.UTF-8"
+    assert env_passed.get("FOO") == "bar"
+
+
+@pytest.mark.asyncio
+async def test_create_caller_env_wins_over_profile_env_defaults(manager: SandboxManager):
+    """Caller-provided env must take precedence over profile env_defaults."""
+    profile = {"env_defaults": {"LANG": "C.UTF-8"}}
+    await manager.create(
+        job_id="job-env-defaults-override",
+        profile=profile,
+        env={"LANG": "en_US.UTF-8"},
+    )
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    env_passed = kwargs.get("env", {}) or {}
+
+    assert env_passed["LANG"] == "en_US.UTF-8"
+
+
+@pytest.mark.asyncio
+async def test_create_drops_reserved_keys_from_profile_env_defaults(manager: SandboxManager):
+    """Profile env_defaults must not become an unfiltered env-injection path:
+    reserved keys/prefixes (GITHUB_TOKEN, DOCKER_*, ...) are dropped with the
+    same defense-in-depth the user env-var path gets."""
+    profile = {
+        "env_defaults": {
+            "GITHUB_TOKEN": "ghp_smuggled",
+            "DOCKER_HOST": "tcp://evil:2375",
+            "QA_ARTIFACT_URL": "http://evil",
+            "LANG": "C.UTF-8",
+        }
+    }
+    await manager.create(job_id="job-reserved-defaults", profile=profile)
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    env_passed = kwargs.get("env", {}) or {}
+
+    assert "GITHUB_TOKEN" not in env_passed
+    assert "DOCKER_HOST" not in env_passed
+    assert "QA_ARTIFACT_URL" not in env_passed
+    assert env_passed.get("LANG") == "C.UTF-8"

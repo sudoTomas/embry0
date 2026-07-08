@@ -11,8 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from athanor.execution.auth_provider import RESERVED_ENV_KEYS, RESERVED_ENV_PREFIXES
 from athanor.execution.docker_client import DockerClient
 from athanor.execution.image_registry import qualify_image
+from athanor.execution.worker_env import compute_worker_env
 from athanor.safety.error_codes import ErrorCode
 
 if TYPE_CHECKING:
@@ -124,6 +126,28 @@ class SandboxManager:
         oauth_token = self._read_oauth_token()
         if oauth_token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+
+        # Merge profile-level env_defaults (stored in DB but previously
+        # never wired into the env passed to create).  Use setdefault so
+        # caller-provided values win — env_defaults are profile baselines.
+        # Reserved keys/prefixes are dropped: profiles must not become an
+        # unfiltered env-injection path (same defense-in-depth the user
+        # env-var path gets in _filter_user_env_for_sandbox).
+        for key, value in (p.get("env_defaults") or {}).items():
+            if key in RESERVED_ENV_KEYS or key.startswith(RESERVED_ENV_PREFIXES):
+                logger.warning("profile_env_default_reserved_key_dropped", key=key)
+                continue
+            env.setdefault(key, value)
+
+        # Inject worker-cap env vars derived from the container CPU limit.
+        # Node.js os.cpus() returns the HOST cpu count (not the container
+        # cgroup quota), so build tools that size worker pools from
+        # os.cpus().length (Next.js, webpack, jest, …) spawn far more
+        # workers than the sandbox's pids/memory limits allow — resulting
+        # in EAGAIN on fork/pthread_create.  Cap them to the profile's
+        # --cpus value.  setdefault lets user-provided overrides win.
+        for key, value in compute_worker_env(p["cpus"]).items():
+            env.setdefault(key, value)
 
         # DinD: when the profile opts in, bind-mount /certs/client RO into the
         # sandbox and set DOCKER_HOST/TLS env vars so the Docker CLI inside the
