@@ -11,6 +11,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -111,7 +112,7 @@ def build_job_payload(issue: LinearIssue, repo: str, profile: str) -> dict[str, 
     }
 
 
-def dispatch_job(payload: dict[str, str], base_url: str, api_key: str) -> dict:
+def dispatch_job(payload: dict[str, str], base_url: str, api_key: str) -> dict[str, Any]:
     """POST the composed payload to embry0's job API."""
     resp = httpx.post(
         f"{base_url.rstrip('/')}/api/v1/jobs",
@@ -120,7 +121,7 @@ def dispatch_job(payload: dict[str, str], base_url: str, api_key: str) -> dict:
         timeout=60.0,
     )
     resp.raise_for_status()
-    result: dict = resp.json()
+    result: dict[str, Any] = resp.json()
     return result
 
 
