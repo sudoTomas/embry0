@@ -7,6 +7,7 @@ numbered question list and a dashboard deep-link. Inbound (parsing
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import structlog
@@ -18,14 +19,24 @@ class GitHubCommentChannel:
     """Conforms to the :class:`NotificationChannel` protocol.
 
     ``http_client`` must be an ``httpx.AsyncClient`` (or compatible) configured
-    with ``base_url`` set to the GitHub API root and the github-proxy's
-    Authorization header pre-set on its default headers. Construct once at
-    app startup and inject everywhere — the channel itself adds no auth.
+    with ``base_url`` set to the GitHub API root. The client's pre-set default
+    Authorization header is the fallback (single-token deploys); when a
+    ``token_resolver`` is provided, its per-repo result wins on a per-request
+    basis (httpx per-request headers override client defaults). Construct
+    once at app startup and inject everywhere.
     """
 
-    def __init__(self, http_client: Any, dashboard_base_url: str) -> None:
+    def __init__(
+        self,
+        http_client: Any,
+        dashboard_base_url: str,
+        token_resolver: Callable[[str], str] | None = None,
+    ) -> None:
         self._client = http_client
         self._dashboard_base = dashboard_base_url.rstrip("/")
+        # Per-repo owner token resolution (INT-727). None => rely on the
+        # client's baked default Authorization header (single-token deploys).
+        self._token_resolver = token_resolver
 
     async def dispatch(self, issue: dict[str, Any], questions: list[dict[str, Any]]) -> None:
         gh_number = issue.get("github_number")
@@ -69,8 +80,13 @@ class GitHubCommentChannel:
         body = "\n".join(lines)
 
         url = f"/repos/{repo}/issues/{gh_number}/comments"
+        post_kwargs: dict[str, Any] = {"json": {"body": body}}
+        if self._token_resolver is not None:
+            token = self._token_resolver(repo)
+            if token:
+                post_kwargs["headers"] = {"Authorization": f"Bearer {token}"}
         try:
-            resp = await self._client.post(url, json={"body": body})
+            resp = await self._client.post(url, **post_kwargs)
             if resp.status_code >= 400:
                 logger.warning(
                     "github_comment_post_failed",

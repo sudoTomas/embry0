@@ -78,3 +78,39 @@ async def test_github_channel_does_not_add_per_call_auth_header():
     _, kwargs = fake_client.post.call_args
     # No explicit Authorization header — proxy handles it
     assert "Authorization" not in (kwargs.get("headers") or {})
+
+
+@pytest.mark.asyncio
+async def test_dispatch_uses_token_resolver_per_repo():
+    """When a token_resolver is provided, dispatch adds a per-request
+    Authorization header derived from it (INT-727 per-repo owner tokens)."""
+    from athanor.notifications.github_comment import GitHubCommentChannel
+
+    fake_client = MagicMock()
+    fake_client.post = AsyncMock(return_value=MagicMock(status_code=201, json=lambda: {"id": 1, "html_url": "x"}))
+    channel = GitHubCommentChannel(
+        http_client=fake_client,
+        dashboard_base_url="http://dash",
+        token_resolver=lambda repo: f"tok-for-{repo.split('/', 1)[0]}",
+    )
+    issue = {"id": "i1", "repo": "client-project/ai-quoting", "github_number": 7}
+    await channel.dispatch(issue, [{"question": "Q?"}])
+
+    _, kwargs = fake_client.post.call_args
+    assert kwargs["headers"]["Authorization"] == "Bearer tok-for-client-project"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_without_resolver_sends_no_per_request_auth():
+    """Without a token_resolver, dispatch falls back to today's behavior:
+    no per-request Authorization header (client-level default header wins)."""
+    from athanor.notifications.github_comment import GitHubCommentChannel
+
+    fake_client = MagicMock()
+    fake_client.post = AsyncMock(return_value=MagicMock(status_code=201, json=lambda: {"id": 1, "html_url": "x"}))
+    channel = GitHubCommentChannel(http_client=fake_client, dashboard_base_url="http://dash")
+    issue = {"id": "i1", "repo": "client-project/ai-quoting", "github_number": 7}
+    await channel.dispatch(issue, [{"question": "Q?"}])
+
+    _, kwargs = fake_client.post.call_args
+    assert "headers" not in kwargs or kwargs.get("headers") is None

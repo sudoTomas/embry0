@@ -661,9 +661,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "Set DASHBOARD_PUBLIC_URL to your dashboard's public URL.",
         )
 
+    from athanor.execution.github_tokens import resolve_for_repo
+
     github_comment_channel = GitHubCommentChannel(
         http_client=github_http_client,
         dashboard_base_url=dashboard_url,
+        token_resolver=lambda repo: resolve_for_repo(repo, config.github_token or ""),
     )
     app.state.github_comment_channel = github_comment_channel
 
