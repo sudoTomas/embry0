@@ -168,9 +168,13 @@ async def resume_job(
         raise HTTPException(status_code=409, detail=f"Job is {job['status']}, not paused")
 
     executor = request.app.state.issue_executor
-    issue_id = job.get("issue_id")
-    if not issue_id:
-        raise HTTPException(status_code=400, detail="Job has no associated issue")
+    # issue_id is None for issue-less, API-submitted jobs (POST /jobs with a
+    # task string). The workflow tolerates that on first run (_run_workflow is
+    # dispatched with None from create_job) and IssuesRepository.update()
+    # no-ops on a missing issue, so resume must tolerate it too — otherwise
+    # every paused API job is unrecoverable (its interrupt options can never
+    # be exercised; only /cancel works).
+    issue_id = job.get("issue_id") or None
 
     executor._track_task(
         executor.resume(issue_id, job_id, {"choice": req.choice, "guidance": req.guidance}),

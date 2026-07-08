@@ -219,7 +219,7 @@ class IssueExecutor:
         graph: Any,
         input_value: Any,
         graph_config: dict[str, Any],
-        issue_id: str,
+        issue_id: str | None,
         job_id: str,
     ) -> tuple[dict[str, Any] | None, bool, Any]:
         """Stream graph execution events, detect interrupts.
@@ -622,7 +622,7 @@ class IssueExecutor:
     async def _execute_workflow_stream(
         self,
         input_value: Any,
-        issue_id: str,
+        issue_id: str | None,
         job_id: str,
         pipeline: str = "issue-to-pr",
     ) -> tuple[dict[str, Any] | None, bool, dict[str, Any] | None]:
@@ -649,7 +649,7 @@ class IssueExecutor:
 
     async def _handle_interrupt(
         self,
-        issue_id: str,
+        issue_id: str | None,
         job_id: str,
         interrupt_value: dict[str, Any] | None,
     ) -> None:
@@ -675,7 +675,7 @@ class IssueExecutor:
 
     async def _run_workflow(
         self,
-        issue_id: str,
+        issue_id: str | None,
         job_id: str,
         issue: dict[str, Any],
         additional_context: str = "",
@@ -1025,7 +1025,7 @@ class IssueExecutor:
                 except Exception:
                     logger.warning("trace_id_unbind_failed", job_id=job_id, exc_info=True)
 
-    async def _handle_workflow_result(self, issue_id: str, job_id: str, result: dict[str, Any]) -> None:
+    async def _handle_workflow_result(self, issue_id: str | None, job_id: str, result: dict[str, Any]) -> None:
         """Process the workflow result and update issue/job status."""
         # action lives in triage_decision (D4: state["pipeline_config"] is now the
         # flat PipelineConfig dict; it has no "action" key).
@@ -1112,7 +1112,7 @@ class IssueExecutor:
                 issue_id=issue_id,
             )
 
-    async def _handle_split(self, issue_id: str, job_id: str, decision: dict[str, Any]) -> None:
+    async def _handle_split(self, issue_id: str | None, job_id: str, decision: dict[str, Any]) -> None:
         """Decompose issue into child issues based on triage split decision."""
         sub_tasks = decision.get("sub_tasks", [])
         if not sub_tasks:
@@ -1202,7 +1202,7 @@ class IssueExecutor:
         if self._event_bus is not None:
             await self._event_bus.publish(job_id, event)
 
-    async def _handle_needs_info(self, issue_id: str, job_id: str, decision: dict[str, Any]) -> None:
+    async def _handle_needs_info(self, issue_id: str | None, job_id: str, decision: dict[str, Any]) -> None:
         """Create input records, dispatch notifications, and pause for blocking questions.
 
         Atomicity: the INSERTs for all input rows and the status UPDATEs for the
@@ -1342,6 +1342,13 @@ class IssueExecutor:
             # questions. Now the agent sees the Q&A block and can proceed.
             qa_block = _fold_auto_answers_into_context(enriched_questions)
             await self._jobs.update(job_id, status="completed")
+            if issue_id is None:
+                # Issue-less API jobs have no issue row to re-triage — the
+                # auto-answer re-run path is issue-driven. Surfaced by the
+                # str|None sweep; previously execute(None) raised and was
+                # swallowed by the except below. Make the skip explicit.
+                logger.warning("auto_answer_retriage_skipped_issueless", job_id=job_id)
+                return
             await self._issues.update(issue_id, status="triaging")
             try:
                 new_job_id = await self.execute(issue_id, additional_context=qa_block)
@@ -1357,8 +1364,12 @@ class IssueExecutor:
 
         logger.info("needs_info_handled", issue_id=issue_id, blocking=has_blocking)
 
-    async def resume(self, issue_id: str, job_id: str, answers: Any) -> None:
-        """Resume a paused pipeline with user answers using Command(resume=)."""
+    async def resume(self, issue_id: str | None, job_id: str, answers: Any) -> None:
+        """Resume a paused pipeline with user answers using Command(resume=).
+
+        ``issue_id`` is None for issue-less API-submitted jobs; issue-status
+        updates no-op in that case (IssuesRepository.update skips missing rows).
+        """
         from langgraph.types import Command
 
         final_state: dict[str, Any] | None = None

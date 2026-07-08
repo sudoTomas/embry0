@@ -151,8 +151,13 @@ class IssuesRepository:
         logger.info("issue_created", issue_id=issue_id, title=title)
         return issue_id
 
-    async def get(self, issue_id: str) -> dict[str, Any] | None:
-        """Fetch a single issue by ID, including children_count, jobs_count, and active_agent."""
+    async def get(self, issue_id: str | None) -> dict[str, Any] | None:
+        """Fetch a single issue by ID, including children_count, jobs_count, and active_agent.
+
+        ``issue_id=None`` (issue-less API-submitted jobs) returns None.
+        """
+        if issue_id is None:
+            return None
         row = await self._db.fetchrow(
             """
             SELECT
@@ -246,14 +251,19 @@ class IssuesRepository:
         )
         return [dict(r) for r in rows], int(total or 0)
 
-    async def update(self, issue_id: str, **fields: Any) -> None:
+    async def update(self, issue_id: str | None, **fields: Any) -> None:
         """Update specific fields on an issue. updated_at is always refreshed.
+
+        ``issue_id=None`` (issue-less API-submitted jobs) is a silent no-op,
+        matching the missing-row behaviour below.
 
         When a status transition is requested, uses a compare-and-swap UPDATE
         (WHERE status=$expected RETURNING id) to eliminate the read-then-write
         race. Raises StatusTransitionConflict if no row is updated (another
         writer changed the status concurrently).
         """
+        if issue_id is None:
+            return
         valid = {k: v for k, v in fields.items() if k in _ALLOWED_UPDATE_FIELDS}
         if not valid:
             return
@@ -378,8 +388,11 @@ class IssuesRepository:
         """
         return await self.get_by_github(repo=repo, github_number=github_number)
 
-    async def update_parent_status(self, issue_id: str) -> None:
-        """Recalculate parent issue status based on children statuses."""
+    async def update_parent_status(self, issue_id: str | None) -> None:
+        """Recalculate parent issue status based on children statuses.
+
+        ``issue_id=None`` is a no-op (self.get returns None).
+        """
         issue = await self.get(issue_id)
         if not issue or not issue.get("parent_issue_id"):
             return

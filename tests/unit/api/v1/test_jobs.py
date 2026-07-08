@@ -233,6 +233,37 @@ async def test_resume_job_accepts_valid_choice(client_with_paused_job):
 
 
 @pytest.mark.asyncio
+async def test_resume_job_without_issue(app):
+    """Issue-less API-submitted jobs (issue_id None) must be resumable —
+    regression for the 400 that made every paused API job unrecoverable."""
+    paused_job = {
+        "job_id": "job-noissue12",
+        "status": "paused",
+        "repo": "owner/repo",
+        "task": "Fix bug",
+        "issue_id": None,
+        "total_cost_usd": 0.0,
+        "budget_overrun_usd": 0.0,
+    }
+    app.state.jobs_repo.get = AsyncMock(return_value=paused_job)
+    app.state.issue_executor._track_task = MagicMock()
+    app.state.issue_executor.resume = MagicMock()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/jobs/job-noissue12/resume",
+            json={"choice": "continue_retrying"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "resuming"
+    # Executor invoked with issue_id=None, not rejected at the endpoint.
+    app.state.issue_executor.resume.assert_called_once()
+    assert app.state.issue_executor.resume.call_args.args[0] is None
+
+
+@pytest.mark.asyncio
 async def test_resume_job_rejects_extra_fields(client_with_paused_job):
     """extra='forbid' should reject unexpected fields."""
     client, job_id = client_with_paused_job
