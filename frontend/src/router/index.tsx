@@ -5,6 +5,7 @@ import { PageError } from "../components/PageError";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 const DashboardPage = lazy(() => import("../pages/DashboardPage").then(m => ({ default: m.DashboardPage })));
+const ConsolePage = lazy(() => import("../pages/ConsolePage").then(m => ({ default: m.ConsolePage })));
 const JobsPage = lazy(() => import("../pages/JobsPage").then(m => ({ default: m.JobsPage })));
 const TasksPage = lazy(() => import("../pages/TasksPage").then(m => ({ default: m.TasksPage })));
 const JobDetailPage = lazy(() => import("../pages/JobDetailPage").then(m => ({ default: m.JobDetailPage })));
@@ -41,6 +42,7 @@ export const router = createBrowserRouter([
     errorElement: <PageError message="Something went wrong" />,
     children: [
       { index: true, element: <ErrorBoundary inline><Suspense fallback={fallback}><DashboardPage /></Suspense></ErrorBoundary> },
+      { path: "console", element: <ErrorBoundary inline><Suspense fallback={fallback}><ConsolePage /></Suspense></ErrorBoundary> },
       { path: "jobs", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobsPage /></Suspense></ErrorBoundary> },
       { path: "tasks", element: <ErrorBoundary inline><Suspense fallback={fallback}><TasksPage /></Suspense></ErrorBoundary> },
       { path: "jobs/:jobId", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobDetailPage /></Suspense></ErrorBoundary> },

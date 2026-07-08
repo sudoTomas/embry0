@@ -14,9 +14,11 @@ import {
   Lightbulb,
   GitBranch,
   BarChart3,
+  SquareTerminal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/stores/layoutStore";
+import { useAwaitingIndicator } from "@/hooks/useAwaitingIndicator";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { APP_NAME } from "@/lib/branding";
 import { AlchemicalSigil } from "@/components/divine/AlchemicalSigil";
@@ -52,6 +54,7 @@ const NAV_GROUPS: readonly NavGroup[] = [
   {
     label: "Work",
     items: [
+      { path: "/console", label: "Console", icon: SquareTerminal },
       { path: "/issues", label: "Issues", icon: CircleDot, stage: "triage" },
       { path: "/jobs", label: "Jobs", icon: Play, stage: "develop" },
       { path: "/tasks", label: "Tasks", icon: ListTodo },
@@ -90,8 +93,19 @@ const NAV_GROUPS: readonly NavGroup[] = [
   },
 ];
 
-function NavItemLink({ item, sidebarOpen }: { item: NavItem; sidebarOpen: boolean }) {
+function NavItemLink({
+  item,
+  sidebarOpen,
+  badge,
+}: {
+  item: NavItem;
+  sidebarOpen: boolean;
+  /** Attention count rendered as an amber pill (dot when collapsed). Hidden
+   * at zero — used for the Console entry's awaiting-input count. */
+  badge?: number;
+}) {
   const { path, label, icon: Icon, accentColor, stage } = item;
+  const showBadge = badge != null && badge > 0;
 
   const link = (
     <NavLink
@@ -100,7 +114,7 @@ function NavItemLink({ item, sidebarOpen }: { item: NavItem; sidebarOpen: boolea
       end={path === "/"}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
+          "relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
           "text-white/50 hover:text-white/80 hover:bg-cyan-500/[0.03] hover:translate-x-0.5",
           isActive && "!text-primary bg-primary/[0.08] border-l-2 border-primary translate-x-0",
           !isActive && accentColor && "hover:translate-x-0.5"
@@ -149,6 +163,22 @@ function NavItemLink({ item, sidebarOpen }: { item: NavItem; sidebarOpen: boolea
               {label}
             </span>
           )}
+          {showBadge &&
+            (sidebarOpen ? (
+              <span
+                data-testid="nav-awaiting-badge"
+                className="ml-auto rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-mono text-amber-400"
+              >
+                {badge}
+              </span>
+            ) : (
+              // Collapsed rail: the count has no room, but the amber dot
+              // still says "something is blocked".
+              <span
+                data-testid="nav-awaiting-dot"
+                className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400"
+              />
+            ))}
         </>
       )}
     </NavLink>
@@ -166,6 +196,10 @@ function NavItemLink({ item, sidebarOpen }: { item: NavItem; sidebarOpen: boolea
 
 export function Sidebar() {
   const sidebarOpen = useLayoutStore((s) => s.sidebarOpen);
+  // Blocked-job (awaiting_input + paused) count: badges the Console entry
+  // and mirrors into document.title ("(2⚠) …") — the sidebar is mounted on
+  // every route, so the title stays honest app-wide.
+  const awaitingCount = useAwaitingIndicator();
 
   return (
     <aside
@@ -213,7 +247,12 @@ export function Sidebar() {
             )}
             <div className="flex flex-col gap-1">
               {group.items.map((item) => (
-                <NavItemLink key={item.path} item={item} sidebarOpen={sidebarOpen} />
+                <NavItemLink
+                  key={item.path}
+                  item={item}
+                  sidebarOpen={sidebarOpen}
+                  badge={item.path === "/console" ? awaitingCount : undefined}
+                />
               ))}
             </div>
           </section>

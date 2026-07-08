@@ -2,11 +2,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJobs, fetchJob, createJob, runJob, cancelJob } from "@/api/jobs";
 import type { JobCreateRequest, JobFilters } from "@/lib/types";
 
-export function useJobs(filters: JobFilters = {}) {
+export function useJobs(filters: JobFilters = {}, refetchInterval = 10_000) {
   return useQuery({
     queryKey: ["jobs", filters],
     queryFn: () => fetchJobs(filters),
-    refetchInterval: 10_000,
+    refetchInterval,
   });
 }
 
