@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   LogEvent,
   PipelineGraph,
@@ -7,9 +7,7 @@ import type {
   FeedbackResolvedEvent,
   AwaitingInputEvent,
 } from "@/lib/types";
-import { fetchJobLogEvents } from "@/api/logs";
-
-const MAX_RECONNECT_RETRIES = 10;
+import { useJobEventStream } from "./useJobEventStream";
 
 interface UseJobLogsResult {
   events: LogEvent[];
@@ -30,8 +28,6 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
   const eventsRef = useRef<LogEvent[]>([]);
   const [events, setEvents] = useState<LogEvent[]>([]);
   const flushTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const [isConnected, setIsConnected] = useState(false);
-  const [isComplete, setIsComplete] = useState(false);
   const [cost, setCost] = useState(0);
   const [tokensIn, setTokensIn] = useState(0);
   const [tokensOut, setTokensOut] = useState(0);
@@ -42,44 +38,11 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
   const [pendingInputs, setPendingInputs] = useState<Record<string, AwaitingInputEvent>>({});
   const [autoAnsweredInputIds, setAutoAnsweredInputIds] = useState<Set<string>>(new Set());
   const [fallbackEvents, setFallbackEvents] = useState<LogEvent[]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const isCompleteRef = useRef(false);
-  const retryCountRef = useRef(0);
-  const wsEverConnectedRef = useRef(false);
 
-  const connect = useCallback(() => {
-    if (!jobId) return;
-
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-    const subprotocols = apiKey ? [`athanor.bearer.${apiKey}`] : [];
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/jobs/${jobId}/events`, subprotocols);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setIsConnected(true);
-      wsEverConnectedRef.current = true;
-      retryCountRef.current = 0;
-    };
-
-    ws.onmessage = (e) => {
-      try {
-        const event: LogEvent = JSON.parse(e.data);
-
-        if (event.type === "stream_end") {
-          setIsComplete(true);
-          isCompleteRef.current = true;
-          retryCountRef.current = 0;
-          // Force flush pending events
-          if (flushTimeoutRef.current) {
-            clearTimeout(flushTimeoutRef.current);
-            flushTimeoutRef.current = undefined;
-          }
-          setEvents([...eventsRef.current]);
-          return;
-        }
-
+  const { isConnected, isComplete } = useJobEventStream(
+    jobId,
+    {
+      onEvent: (event) => {
         eventsRef.current.push(event);
         if (!flushTimeoutRef.current) {
           flushTimeoutRef.current = setTimeout(() => {
@@ -134,82 +97,40 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
             return next;
           });
         }
-
-        if (event.type === "complete") {
-          setIsComplete(true);
-          isCompleteRef.current = true;
-          retryCountRef.current = 0;
-          // Force flush pending events
-          if (flushTimeoutRef.current) {
-            clearTimeout(flushTimeoutRef.current);
-            flushTimeoutRef.current = undefined;
-          }
-          setEvents([...eventsRef.current]);
+      },
+      onStreamEnd: () => {
+        // Force flush pending events
+        if (flushTimeoutRef.current) {
+          clearTimeout(flushTimeoutRef.current);
+          flushTimeoutRef.current = undefined;
         }
-      } catch {
-        // Ignore malformed messages
-      }
-    };
+        setEvents([...eventsRef.current]);
+      },
+      onFallbackEvents: (persisted) => {
+        setFallbackEvents(persisted);
+      },
+      onReset: () => {
+        clearTimeout(flushTimeoutRef.current);
+        flushTimeoutRef.current = undefined;
+        eventsRef.current = [];
+        setEvents([]);
+        setFallbackEvents([]);
+        setCost(0);
+        setTokensIn(0);
+        setTokensOut(0);
+        setTurns(0);
+        setPipelineGraph(null);
+        setNodeStates({});
+        setFeedbackStates({});
+        setPendingInputs({});
+        setAutoAnsweredInputIds(new Set());
+      },
+    },
+    events.length > 0,
+  );
 
-    ws.onclose = () => {
-      setIsConnected(false);
-      if (!isCompleteRef.current && retryCountRef.current < MAX_RECONNECT_RETRIES) {
-        retryCountRef.current += 1;
-        // Buffer is intentionally preserved across reconnects. The backend's
-        // since_seq replay cursor (Plan A) ensures events received after reconnect
-        // are appended without duplicates. The buffer is only reset when jobId
-        // changes (see useEffect cleanup above).
-        reconnectTimeoutRef.current = setTimeout(connect, 3000);
-      }
-    };
-
-    ws.onerror = () => ws.close();
-  }, [jobId]);
-
-  useEffect(() => {
-    eventsRef.current = [];
-    setEvents([]);
-    setFallbackEvents([]);
-    setIsComplete(false);
-    isCompleteRef.current = false;
-    retryCountRef.current = 0;
-    wsEverConnectedRef.current = false;
-    setCost(0);
-    setTokensIn(0);
-    setTokensOut(0);
-    setTurns(0);
-    setPipelineGraph(null);
-    setNodeStates({});
-    setFeedbackStates({});
-    setPendingInputs({});
-    setAutoAnsweredInputIds(new Set());
-    connect();
-
-    return () => {
-      clearTimeout(reconnectTimeoutRef.current);
-      clearTimeout(flushTimeoutRef.current);
-      flushTimeoutRef.current = undefined;
-      wsRef.current?.close();
-    };
-  }, [connect]);
-
-  // Fallback: load persisted events for completed/failed jobs
-  useEffect(() => {
-    if (!jobId || isConnected || wsEverConnectedRef.current || events.length > 0) return;
-    const timer = setTimeout(async () => {
-      try {
-        const persisted = await fetchJobLogEvents(jobId);
-        if (persisted.length > 0) {
-          setFallbackEvents(persisted);
-        }
-      } catch {
-        // Ignore — no persisted events available
-      }
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [jobId, isConnected, events.length]);
-
-  // Process fallback events for graph and node states
+  // Process fallback events for graph and node states (isComplete for
+  // persisted terminal events is handled inside useJobEventStream)
   useEffect(() => {
     if (fallbackEvents.length === 0) return;
     for (const event of fallbackEvents) {
@@ -233,9 +154,6 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
         if (event.tokens_in != null) setTokensIn(event.tokens_in);
         if (event.tokens_out != null) setTokensOut(event.tokens_out);
         if (event.turns != null) setTurns(event.turns);
-      }
-      if (event.type === "complete" || event.type === "stream_end") {
-        setIsComplete(true);
       }
     }
   }, [fallbackEvents]);

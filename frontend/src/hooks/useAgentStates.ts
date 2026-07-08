@@ -54,8 +54,11 @@ export interface AgentState {
  * both so the AgentCard pipeline view actually populates — without this, every
  * node_started event slipped through silently and triage/developer/review all
  * appeared as "Waiting" forever.
+ *
+ * Exported for reuse by useLiveJobSummary, which tracks the current node the
+ * same way.
  */
-function getNodeId(event: LogEvent): string {
+export function getNodeId(event: LogEvent): string {
   if ("node_id" in event && typeof event.node_id === "string") {
     return event.node_id;
   }
