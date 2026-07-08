@@ -175,6 +175,13 @@ class JobResponse(BaseModel):
     repo: str
     task: str
     issue_number: int | None = None
+    # Internal issues-table FK. NULL means the job did not originate from an
+    # Athanor issue (operator/API dispatch) — the Console board's explicit
+    # operator-job signal.
+    issue_id: str | None = None
+    # Latest workflow stage persisted by the executor at each node transition
+    # (migration 35). NULL for legacy rows and jobs that never streamed one.
+    current_stage: str | None = None
     pipeline_template: str | None = None
     sandbox_profile: str | None = None
     total_cost_usd: float = 0.0

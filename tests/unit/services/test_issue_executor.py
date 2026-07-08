@@ -612,3 +612,93 @@ async def test_handle_needs_info_all_auto_passes_context_to_execute(monkeypatch)
     assert ctx, "additional_context must be non-empty"
     assert "Which database?" in ctx
     assert "PostgreSQL" in ctx
+
+
+class _FakeGraph:
+    """Minimal graph stub for _process_stream: replays canned astream events
+    and reports no pending interrupt from aget_state."""
+
+    def __init__(self, events):
+        self._events = events
+
+    async def astream(self, input_value, config=None, stream_mode=None):
+        for event in self._events:
+            yield event
+
+    async def aget_state(self, config):
+        return None  # falsy → no interrupt
+
+
+def _stream_executor(jobs):
+    from athanor.services.issue_executor import IssueExecutor
+
+    executor = IssueExecutor.__new__(IssueExecutor)
+    executor._jobs = jobs
+    return executor
+
+
+@pytest.mark.asyncio
+async def test_process_stream_persists_current_stage_per_node_transition():
+    """Each node update carrying a new current_stage writes it to the jobs row
+    (the Console board reads it from the poll alone)."""
+    jobs = MagicMock()
+    jobs.update = AsyncMock()
+    executor = _stream_executor(jobs)
+
+    graph = _FakeGraph(
+        [
+            ("updates", {"init": {"current_stage": "initialized"}}),
+            ("updates", {"triage": {"current_stage": "triage_complete"}}),
+            ("updates", {"developer": {"current_stage": "developer_complete"}}),
+        ]
+    )
+    final_state, interrupted, interrupt_value = await executor._process_stream(graph, {}, {}, "iss-1", "job-1")
+
+    assert not interrupted
+    assert final_state["current_stage"] == "developer_complete"
+    stage_writes = [c.kwargs["current_stage"] for c in jobs.update.await_args_list]
+    assert stage_writes == ["initialized", "triage_complete", "developer_complete"]
+    assert all(c.args == ("job-1",) for c in jobs.update.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_process_stream_dedupes_repeated_and_skips_missing_stage():
+    """No write when a node output repeats the last stage or omits/blanks it —
+    one DB write per actual transition, not per event."""
+    jobs = MagicMock()
+    jobs.update = AsyncMock()
+    executor = _stream_executor(jobs)
+
+    graph = _FakeGraph(
+        [
+            ("updates", {"triage": {"current_stage": "triage_complete"}}),
+            ("updates", {"noop": {"current_stage": "triage_complete"}}),  # repeat
+            ("updates", {"other": {"agent_outputs": []}}),  # no stage key
+            ("updates", {"blank": {"current_stage": ""}}),  # empty stage
+        ]
+    )
+    await executor._process_stream(graph, {}, {}, "iss-1", "job-1")
+
+    assert jobs.update.await_count == 1
+    assert jobs.update.await_args.kwargs == {"current_stage": "triage_complete"}
+
+
+@pytest.mark.asyncio
+async def test_process_stream_stage_write_failure_does_not_break_stream(capsys):
+    """The stage write is best-effort: a DB failure logs a warning and the
+    stream (and final_state accumulation) continues."""
+    jobs = MagicMock()
+    jobs.update = AsyncMock(side_effect=RuntimeError("db down"))
+    executor = _stream_executor(jobs)
+
+    graph = _FakeGraph(
+        [
+            ("updates", {"triage": {"current_stage": "triage_complete"}}),
+            ("updates", {"developer": {"current_stage": "developer_complete"}}),
+        ]
+    )
+    final_state, interrupted, _ = await executor._process_stream(graph, {}, {}, "iss-1", "job-1")
+
+    assert not interrupted
+    assert final_state["current_stage"] == "developer_complete"
+    assert "current_stage_persist_failed" in capsys.readouterr().out

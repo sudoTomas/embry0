@@ -71,6 +71,44 @@ async def test_list_jobs(app):
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_surfaces_issue_id_and_current_stage(app):
+    """GET /jobs builds JobResponse from the row — the Console board fields
+    (issue_id, current_stage) must survive the model, and legacy rows without
+    them must serialize as null rather than fail validation."""
+    app.state.jobs_repo.list_all = AsyncMock(
+        return_value=(
+            [
+                {
+                    "job_id": "job-issue1",
+                    "status": "running",
+                    "repo": "owner/repo",
+                    "task": "Fix bug",
+                    "issue_id": "iss-1",
+                    "current_stage": "triage_complete",
+                },
+                {
+                    # Legacy-shaped row: no issue_id/current_stage keys at all.
+                    "job_id": "job-legacy",
+                    "status": "completed",
+                    "repo": "owner/repo",
+                    "task": "Old job",
+                },
+            ],
+            2,
+        )
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/v1/jobs")
+    assert resp.status_code == 200
+    jobs = resp.json()["jobs"]
+    assert jobs[0]["issue_id"] == "iss-1"
+    assert jobs[0]["current_stage"] == "triage_complete"
+    assert jobs[1]["issue_id"] is None
+    assert jobs[1]["current_stage"] is None
+
+
+@pytest.mark.asyncio
 async def test_get_job(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

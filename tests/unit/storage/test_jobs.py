@@ -47,6 +47,22 @@ async def test_update_job(jobs_repo: JobsRepository):
 
 
 @pytest.mark.asyncio
+async def test_current_stage_defaults_null_and_is_updatable(jobs_repo: JobsRepository):
+    """Migration 35: current_stage starts NULL (legacy-row shape) and accepts
+    plain updates without a status transition."""
+    job_id = await jobs_repo.create(repo="a/b", task="Task")
+
+    job = await jobs_repo.get(job_id)
+    assert job is not None
+    assert job["current_stage"] is None
+
+    await jobs_repo.update(job_id, current_stage="triage_complete")
+    job = await jobs_repo.get(job_id)
+    assert job is not None
+    assert job["current_stage"] == "triage_complete"
+
+
+@pytest.mark.asyncio
 async def test_increment_cost(jobs_repo: JobsRepository):
     job_id = await jobs_repo.create(repo="a/b", task="Task")
     await jobs_repo.increment_cost(job_id, 1.50)

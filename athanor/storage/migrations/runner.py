@@ -823,6 +823,21 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'Typed job context (git|http|local|none). INT-599. NULL only for pre-migration rows with a NULL repo, which never existed before this migration.';
         """,
     ),
+    (
+        35,
+        "jobs — current_stage column for live pipeline-stage surfacing",
+        # Live Console board (2026-07-08 design): the executor persists the
+        # workflow's current_stage on the jobs row at each node transition so
+        # the board can render a stage badge from the poll alone — no WS or
+        # log fetch per job, and the board stays correct when a WS drops.
+        # Nullable by design: legacy rows (and jobs that never streamed a
+        # stage) stay NULL and the API tolerates that.
+        """
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS current_stage TEXT;
+        COMMENT ON COLUMN jobs.current_stage IS
+            'Latest workflow current_stage observed by the executor stream (e.g. triage_complete, review_passed). NULL for rows that predate this column.';
+        """,
+    ),
 ]
 
 

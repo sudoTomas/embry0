@@ -227,6 +227,7 @@ class IssueExecutor:
         Returns (final_state, interrupted, interrupt_value).
         """
         final_state: dict[str, Any] | None = None
+        last_persisted_stage: str | None = None
 
         async for event in graph.astream(
             input_value,
@@ -243,6 +244,25 @@ class IssueExecutor:
                     for _node_name, node_output in data.items():
                         if isinstance(node_output, dict):
                             final_state = {**(final_state or {}), **node_output}
+                            # Persist the workflow stage on the jobs row at each
+                            # node transition so pollers (the Console board)
+                            # see it without a WS or log fetch. This is the
+                            # single write point: every workflow — issue-to-pr
+                            # and QA, fresh run and resume — streams through
+                            # here. Best-effort: a stage write must never fail
+                            # the workflow (same stance as checkpoint purge).
+                            stage = node_output.get("current_stage")
+                            if stage and stage != last_persisted_stage:
+                                last_persisted_stage = stage
+                                try:
+                                    await self._jobs.update(job_id, current_stage=stage)
+                                except Exception:
+                                    logger.warning(
+                                        "current_stage_persist_failed",
+                                        job_id=job_id,
+                                        stage=stage,
+                                        exc_info=True,
+                                    )
 
         # Check if graph was interrupted
         state_snapshot = await graph.aget_state(graph_config)

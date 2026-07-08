@@ -45,6 +45,30 @@ def test_job_response_serialization():
     assert data["status"] == "pending"
 
 
+def test_job_response_exposes_issue_id_and_current_stage():
+    """Console board fields: issue_id (operator-job signal) and current_stage
+    (stage badge from the poll alone) round-trip through the response model."""
+    resp = JobResponse(
+        job_id="job-abc123",
+        status="running",
+        repo="owner/repo",
+        task="Fix bug",
+        issue_id="iss-42",
+        current_stage="developer_complete",
+    )
+    data = resp.model_dump()
+    assert data["issue_id"] == "iss-42"
+    assert data["current_stage"] == "developer_complete"
+
+
+def test_job_response_tolerates_legacy_rows_without_stage_or_issue():
+    """Legacy rows carry NULL issue_id/current_stage (or predate the columns
+    entirely) — the model must default both to None."""
+    resp = JobResponse(job_id="job-old", status="completed", repo="owner/repo", task="Old job")
+    assert resp.issue_id is None
+    assert resp.current_stage is None
+
+
 def test_sandbox_profile_request():
     req = SandboxProfileRequest(name="python-3.12", base_image="athanor-sandbox-python:3.12")
     assert req.name == "python-3.12"
