@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 import structlog
 
+from athanor.execution.github_tokens import resolve_for_repo
 from athanor.storage.repositories.issues import IssuesRepository
 
 logger = structlog.get_logger(__name__)
@@ -44,10 +45,11 @@ class GitHubSyncService:
     def __init__(self, github_token: str | None = None) -> None:
         self._token = github_token
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, repo: str | None = None) -> dict[str, str]:
         headers = {"Accept": "application/vnd.github+json"}
-        if self._token:
-            headers["Authorization"] = f"Bearer {self._token}"
+        token = resolve_for_repo(repo, self._token or "")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         return headers
 
     async def push_create(self, issue_id: str, issues_repo: IssuesRepository) -> dict[str, Any] | None:
@@ -59,7 +61,7 @@ class GitHubSyncService:
         payload = {"title": issue["title"], "body": issue.get("body", ""), "labels": issue.get("labels", [])}
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{_GITHUB_API}/repos/{repo}/issues", json=payload, headers=self._headers(), timeout=15.0
+                f"{_GITHUB_API}/repos/{repo}/issues", json=payload, headers=self._headers(repo), timeout=15.0
             )
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
@@ -85,7 +87,7 @@ class GitHubSyncService:
         }
         async with httpx.AsyncClient() as client:
             resp = await client.patch(
-                f"{_GITHUB_API}/repos/{repo}/issues/{number}", json=payload, headers=self._headers(), timeout=15.0
+                f"{_GITHUB_API}/repos/{repo}/issues/{number}", json=payload, headers=self._headers(repo), timeout=15.0
             )
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
