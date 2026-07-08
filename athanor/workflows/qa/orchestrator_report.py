@@ -110,7 +110,7 @@ async def qa_report_node(
     if not github_token or not repo:
         logger.warning(
             "qa_report_skipped_no_github_token_or_repo",
-            has_token=github_token is not None,
+            has_token=bool(github_token),
             repo=repo,
         )
         return {}
