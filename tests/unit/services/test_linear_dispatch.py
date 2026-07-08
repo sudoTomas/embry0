@@ -141,6 +141,22 @@ def test_main_dispatches_and_prints_console_url(monkeypatch, capsys):
     assert "http://0.0.0.0:8200/jobs/job-9" in out
 
 
+def test_main_prints_repo_filtered_board_url(monkeypatch, capsys):
+    """After the per-job console URL, main prints a Console board deep link
+    with the repo URL-encoded (the slash must not survive raw)."""
+    monkeypatch.setenv("LINEAR_API_KEY", "lin_api_x")
+    monkeypatch.setenv("EMBRY0_API_KEY", "sekret")
+    monkeypatch.setenv("EMBRY0_URL", "http://0.0.0.0:8200")
+    monkeypatch.setattr(ld, "fetch_linear_issue", lambda rav_id, api_key: _issue())
+    monkeypatch.setattr(ld, "dispatch_job", lambda payload, base_url, api_key: {"job_id": "job-9"})
+    rc = ld.main(["INT-700", "--repo", "client-project/ai-quoting"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "board: http://0.0.0.0:8200/console?repo=client-project%2Fai-quoting" in out
+    # Board line comes after the per-job console line.
+    assert out.index("console:") < out.index("board:")
+
+
 def test_main_fails_fast_without_linear_key(monkeypatch, capsys):
     monkeypatch.delenv("LINEAR_API_KEY", raising=False)
     rc = ld.main(["INT-700", "--dry-run"])

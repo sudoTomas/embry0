@@ -11,6 +11,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import httpx
 
@@ -156,6 +157,10 @@ def main(argv: list[str] | None = None) -> int:
     job_id = job.get("job_id") or job.get("id", "")
     print(f"job_id: {job_id}")
     print(f"console: {base_url.rstrip('/')}/jobs/{job_id}")
+    # Board deep link (Console kanban, 2026-07-08 design): repo-filtered view
+    # of the live board so the dispatching session can watch the whole batch.
+    # safe="" so the repo's slash is percent-encoded into the query param.
+    print(f"board: {base_url.rstrip('/')}/console?repo={quote(args.repo, safe='')}")
     return 0
 
 
