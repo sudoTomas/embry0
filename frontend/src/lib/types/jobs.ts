@@ -12,14 +12,24 @@ export interface JobResponse {
   started_at: string | null;
   finished_at: string | null;
   issue_number: number | null;
+  // Internal issues-table FK. NULL means the job did not originate from an
+  // Athanor issue (operator/API dispatch) — the Console board's explicit
+  // operator-job signal.
+  issue_id?: string | null;
+  // Latest workflow stage persisted by the executor at each node transition.
+  // NULL for legacy rows and jobs that never streamed one. Lets board cards
+  // show a stage badge from the poll alone when the WS is down.
+  current_stage?: string | null;
   tier: Tier | null;
   provider_mode: ProviderMode | null;
   model: string | null;
   attempts: number;
   pr_url: string | null;
   error_message: string | null;
+  error_code?: string | null;
   validation_summary: string | null;
   total_cost_usd: number;
+  budget_overrun_usd?: number;
   pipeline_graph?: Record<string, unknown> | null;
   pipeline_source?: string | null;
   pipeline_template?: string | null;

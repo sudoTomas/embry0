@@ -1,43 +1,14 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { AgentState } from "@/hooks/useAgentStates";
+import { useLiveDuration } from "@/hooks/useLiveDuration";
+import { formatDuration, getColors } from "@/lib/agentVisuals";
 import { ToolCallStream } from "./ToolCallStream";
 import { ThinkingBlock } from "./ThinkingBlock";
 
 interface AgentCardProps {
   agent: AgentState;
   expanded?: boolean;
-}
-
-const AGENT_COLORS: Record<string, { text: string; bg: string; border: string; icon: string }> = {
-  triage: { text: "text-cyan-400", bg: "bg-cyan-500/[0.04]", border: "border-cyan-500/25", icon: "\u25C9" },
-  developer: { text: "text-violet-400", bg: "bg-violet-500/[0.04]", border: "border-violet-500/25", icon: "\u270E" },
-  review: { text: "text-rose-400", bg: "bg-rose-500/[0.04]", border: "border-rose-500/25", icon: "\u2611" },
-};
-
-function getColors(agent: string) {
-  return AGENT_COLORS[agent] || { text: "text-white/60", bg: "bg-white/[0.02]", border: "border-white/10", icon: "\u2022" };
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rs = s % 60;
-  return `${m}m ${rs}s`;
-}
-
-function useLiveDuration(startedAt: string | undefined, isActive: boolean, frozenMs: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!isActive) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [isActive]);
-  if (!isActive) return frozenMs;
-  if (!startedAt) return frozenMs;
-  return now - new Date(startedAt).getTime();
 }
 
 export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
