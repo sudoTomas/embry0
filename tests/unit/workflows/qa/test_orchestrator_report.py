@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import AsyncMock
 
 import pytest
 
 from athanor.workflows.qa.orchestrator_report import qa_report_node
+
+
+@pytest.fixture(autouse=True)
+def _clean_owner_tokens(monkeypatch):
+    for key in [k for k in os.environ if k.startswith("GITHUB_TOKEN__")]:
+        monkeypatch.delenv(key)
 
 
 def _state(**qa_overrides):
@@ -174,3 +181,26 @@ async def test_failed_run_passes_failure_summary_through(monkeypatch):
     check_kwargs = written_check.await_args.kwargs
     assert check_kwargs["overall_status"] == "infra_error"
     assert check_kwargs["failure_summary"] == "qa.yaml not loaded"
+
+
+@pytest.mark.asyncio
+async def test_qa_report_resolves_per_owner_token(monkeypatch):
+    written_check = AsyncMock(return_value={"id": 1})
+    written_comment = AsyncMock(return_value=99)
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_report.write_aggregate_check",
+        written_check,
+    )
+    monkeypatch.setattr(
+        "athanor.workflows.qa.orchestrator_report.upsert_sticky_comment",
+        written_comment,
+    )
+    monkeypatch.setenv("GITHUB_TOKEN__RAVEN_CARGO", "tok-rc")
+
+    state = _state()
+    state["repo"] = "client-project/ai-quoting"
+    config = {"configurable": {"github_token": "tok-default"}}
+    await qa_report_node(state, config)
+
+    assert written_check.await_args.kwargs["github_token"] == "tok-rc"
+    assert written_comment.await_args.kwargs["github_token"] == "tok-rc"

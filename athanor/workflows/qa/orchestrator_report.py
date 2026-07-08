@@ -8,7 +8,10 @@ Persistence to qa_app_results was done by qa_orchestrator_node already.
 This node is purely the GitHub-facing reporting surface.
 
 Configurable deps:
-  - github_token (str): orchestrator-side token. Fed in via config['configurable'].
+  - github_token (str): orchestrator-side default token, fed in via
+    config['configurable']. Resolved per-repo owner via `resolve_for_repo`
+    (GITHUB_TOKEN__<OWNER> env override) before use; falls back to this
+    default when no owner-specific token is configured.
 
 State reads:
   - state['qa']['outcome']         (dict from OrchestratorOutcome)
@@ -23,11 +26,12 @@ State reads:
 Failures here log warnings but DO NOT fail the run — final_status was set by
 the orchestrator already, and a missing GitHub-side surface is not a QA verdict.
 
-Security boundary: the `github_token` is orchestrator-side only and MUST
-NOT be propagated into sub-task config['configurable']. Sub-tasks read
-their own credentials via the per-sandbox proxy + sandbox_token. Reviewers
-of future cache-layer work in Phase 2: do not forward github_token through
-to sub-task subgraph invocations.
+Security boundary: the `github_token` is orchestrator-side only, resolved
+per-repo owner (see `resolve_for_repo`), and MUST NOT be propagated into
+sub-task config['configurable']. Sub-tasks read their own credentials via
+the per-sandbox proxy + sandbox_token. Reviewers of future cache-layer work
+in Phase 2: do not forward github_token through to sub-task subgraph
+invocations.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ from typing import Any
 import structlog
 from langchain_core.runnables import RunnableConfig
 
+from athanor.execution.github_tokens import resolve_for_repo
 from athanor.notifications.qa_check import write_aggregate_check
 from athanor.notifications.qa_comment import render_qa_comment, upsert_sticky_comment
 from athanor.workflows.qa.subtask_result_schema import (
@@ -84,7 +89,6 @@ async def qa_report_node(
     already set by qa_orchestrator_node; this node is reporting only.
     """
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
-    github_token = configurable.get("github_token")
 
     qa_state = state.get("qa") or {}
     outcome = qa_state.get("outcome") or {}
@@ -99,8 +103,11 @@ async def qa_report_node(
     overall_status = outcome.get("overall_status") or "infra_error"
     failure_summary = outcome.get("failure_summary")
 
+    default_token = configurable.get("github_token")
+    github_token = resolve_for_repo(repo, default_token or "") or default_token
+
     # If we have no GitHub token or no repo, skip both writes — log a warning.
-    if github_token is None or not repo:
+    if not github_token or not repo:
         logger.warning(
             "qa_report_skipped_no_github_token_or_repo",
             has_token=github_token is not None,
