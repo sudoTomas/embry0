@@ -137,7 +137,8 @@ class _FakeResponse:
     def raise_for_status(self):
         if self.status_code >= 400:
             raise httpx.HTTPStatusError(
-                "err", request=httpx.Request("GET", "https://api.github.com/user/repos"),
+                "err",
+                request=httpx.Request("GET", "https://api.github.com/user/repos"),
                 response=httpx.Response(self.status_code),
             )
 
