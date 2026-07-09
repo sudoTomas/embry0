@@ -11,6 +11,15 @@ description = "Athanor allowlist — placeholder + test fixture exemptions"
 paths = [
     '''.env\.example''',
     '''tests/.*''',
+    # Historical docs that contained the pre-2026-07-09 orchestrator API_KEY
+    # (leaked 2026-05-05 / 2026-06-20, ROTATED 2026-07-09, INT-737) plus a
+    # deliberately-invalid test literal. Current file contents are redacted;
+    # only git history retains the dead value. Path allowlist (not commit
+    # fingerprints) because gitleaks also attributes findings to GitHub's
+    # synthetic refs/pull/N/merge commits, whose hashes can't be pinned.
+    '''docs/HANDOFF-rebuild-validate\.archived\.md''',
+    '''docs/superpowers/plans/2026-05-05-qa-pipeline-wiring-and-base-branch-plan\.md''',
+    '''docs/superpowers/plans/2026-05-05-athanor-monorepo-support-phase-4-dashboard-plan\.md''',
 ]
 regexes = [
     # Placeholder GitHub token pattern in docs / fixtures
