@@ -15,18 +15,18 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from athanor.workflows.qa.orchestrator import qa_orchestrator_node
-from athanor.workflows.qa.subtask_result_schema import (
+from embry0.workflows.qa.orchestrator import qa_orchestrator_node
+from embry0.workflows.qa.subtask_result_schema import (
     CacheHits,
     SubTaskResult,
     SubTaskStatus,
 )
-from athanor.workspace_providers import (
+from embry0.workspace_providers import (
     AffectedSet,
     WorkspaceApp,
     WorkspacePackage,
 )
-from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
 _QA_YAML_V2_WITH_CACHE = """
 version: 2
@@ -82,7 +82,7 @@ async def test_phase_2_warm_cache_three_apps_under_30s(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -101,7 +101,7 @@ async def test_phase_2_warm_cache_three_apps_under_30s(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 

@@ -8,9 +8,9 @@ describe("Heartbeat", () => {
     expect(getByRole("status")).toHaveAccessibleName(/orchestrator live/i);
   });
 
-  it("does not reuse the legacy 16px athanor-card chrome", () => {
+  it("does not reuse the legacy 16px embry0-card chrome", () => {
     const { container } = render(<Heartbeat label="x" />);
-    expect(container.querySelector(".athanor-card")).toBeNull();
+    expect(container.querySelector(".embry0-card")).toBeNull();
   });
 
   it("drives the pulse via the reduced-motion-safe vitals-pulse class", () => {

@@ -13,7 +13,6 @@ const ROLE_CONFIG = {
  * agent sphere: ring + cardinal dots + equator + a single pole accent
  * (start = north pole, end = south pole).
  *
- * See `docs/superpowers/specs/2026-05-04-auto-arrange-circular-design.md`
  * §3.2 — sentinels sit on the equator at ±1.4R in circular layout.
  */
 export function StartEndNode({ data, selected }: NodeProps) {

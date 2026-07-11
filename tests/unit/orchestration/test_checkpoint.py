@@ -19,12 +19,12 @@ async def test_checkpointer_context_creates_saver():
     except ImportError:
         pytest.skip("psycopg not installed")
 
-    from athanor.orchestration.checkpoint import checkpointer_context
+    from embry0.orchestration.checkpoint import checkpointer_context
 
     # This will fail to connect without a real DB, but we can verify the function exists
     # and returns the right type structure. For a real integration test, use testcontainers.
     try:
-        async with checkpointer_context("postgresql://athanor:athanor@localhost:5432/athanor") as saver:
+        async with checkpointer_context("postgresql://embry0:embry0@localhost:5432/embry0") as saver:
             assert isinstance(saver, AsyncPostgresSaver)
     except (psycopg.OperationalError, OSError, ConnectionRefusedError):
         pytest.skip("PostgreSQL not available — skipping integration test")
@@ -36,9 +36,9 @@ async def test_purge_thread_is_idempotent_for_nonexistent_thread(pg_pool):
     and safe to call on an already-purged / never-written thread."""
     import asyncpg
 
-    from athanor.orchestration.checkpoint import checkpointer_context, purge_thread
+    from embry0.orchestration.checkpoint import checkpointer_context, purge_thread
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
 
     try:
         async with checkpointer_context(url) as _saver:
@@ -55,9 +55,9 @@ async def test_purge_thread_deletes_only_target_thread_rows(pg_pool):
     checkpoint tables, leaving other threads' rows intact."""
     import asyncpg
 
-    from athanor.orchestration.checkpoint import checkpointer_context, purge_thread
+    from embry0.orchestration.checkpoint import checkpointer_context, purge_thread
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
 
     try:
         async with checkpointer_context(url) as _saver:

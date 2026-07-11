@@ -123,8 +123,7 @@ const FRAMES: Record<Operation, ReactElement> = {
  * by the divine-element CSS rule which hides it — the layer's escape
  * hatch still applies.
  *
- * See `docs/superpowers/specs/2026-05-04-divine-operations-design.md` §3
- * (the same vocabulary, frozen).
+ * The seven-operation vocabulary is frozen — see `divine/CLAUDE.md`.
  */
 export function OperationGlyph({
   operation,

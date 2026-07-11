@@ -13,19 +13,19 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from athanor.storage.repositories.qa_app_results import (
+from embry0.storage.repositories.qa_app_results import (
     AppHistoryRow,
     QAAppResultRow,
     RepoSummary,
     RunSummary,
 )
-from athanor.workflows.qa.subtask_result_schema import CacheHits, SubTaskStatus
+from embry0.workflows.qa.subtask_result_schema import CacheHits, SubTaskStatus
 
 _KEY = "phase-4-test-key-32chars-or-longer-x"
 
 
 def _make_app(qa_repo, jobs_repo):
-    from athanor.api.app import create_app
+    from embry0.api.app import create_app
 
     app = create_app()
 

@@ -1,7 +1,7 @@
 import pytest
 
-from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
-from athanor.storage.seeds.sandbox_profiles_builtin import (
+from embry0.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+from embry0.storage.seeds.sandbox_profiles_builtin import (
     BUILTIN_SANDBOX_PROFILES,
     seed_builtin_sandbox_profiles,
 )
@@ -11,7 +11,7 @@ def test_builtin_seeds_define_slim_and_qa_jvm():
     assert "slim" in BUILTIN_SANDBOX_PROFILES
     assert "qa-jvm" in BUILTIN_SANDBOX_PROFILES
     qa = BUILTIN_SANDBOX_PROFILES["qa-jvm"]
-    assert qa["base_image"] == "athanor-sandbox-qa:latest"
+    assert qa["base_image"] == "embry0-sandbox-qa:latest"
     assert qa["dind_enabled"] is True
     # Phase 1.5: extra_networks is intentionally empty. The sandbox no longer
     # attaches to `backend` (which doesn't exist inside DinD anyway). Instead
@@ -24,7 +24,7 @@ def test_builtin_seeds_define_slim_and_qa_jvm():
 def test_builtin_seeds_define_dev_python():
     assert "dev-python" in BUILTIN_SANDBOX_PROFILES
     dev = BUILTIN_SANDBOX_PROFILES["dev-python"]
-    assert dev["base_image"] == "athanor-sandbox-dev-python:latest"
+    assert dev["base_image"] == "embry0-sandbox-dev-python:latest"
     assert dev["dind_enabled"] is False
     # Poetry/pip need PyPI egress; the Claude CLI needs api.anthropic.com —
     # same rationale as the slim profile's sandbox-internet attachment.
@@ -57,7 +57,7 @@ async def test_seed_marks_is_builtin(db_with_migrations):
 @pytest.mark.asyncio
 async def test_seed_overwrites_user_modifications(db_with_migrations):
     """Builtin seeds win on every startup. User cannot accidentally rebrand
-    'qa-jvm' as 'no-dind' and have Athanor honor it for QA jobs."""
+    'qa-jvm' as 'no-dind' and have embry0 honor it for QA jobs."""
     repo = SandboxProfilesRepository(db_with_migrations)
     await seed_builtin_sandbox_profiles(repo)
     # Simulate someone bypassing the API and editing the row.

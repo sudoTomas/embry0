@@ -11,7 +11,9 @@ def test_compose_cache_yaml_parses():
     assert parsed["services"]["turbo-cache"]["image"].startswith("ducktors/")
 
 
-def test_compose_cache_yaml_uses_external_athanor_network():
+def test_compose_cache_yaml_joins_backend_network():
+    """The overlay attaches turbo-cache to the main stack's `backend` network
+    (defined in infra/docker-compose.yml; the overlay is merged-mode only)."""
     p = Path(__file__).resolve().parents[3] / "infra" / "docker-compose.cache.yml"
     parsed = yaml.safe_load(p.read_text(encoding="utf-8"))
-    assert parsed["networks"]["athanor"]["external"] is True
+    assert parsed["services"]["turbo-cache"]["networks"] == ["backend"]

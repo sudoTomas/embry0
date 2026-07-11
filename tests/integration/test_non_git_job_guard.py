@@ -1,4 +1,4 @@
-"""INT-599 acceptance criterion 5 — end-to-end non-git guard.
+"""End-to-end non-git job guard.
 
 A repo-less (non-git) job creates + persists, and on dispatch lands
 ``status="failed"`` / ``error_code="ERR_UNSUPPORTED_CONTEXT"`` WITHOUT any
@@ -16,10 +16,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.services.issue_executor import IssueExecutor
-from athanor.storage.repositories.jobs import JobsRepository
-from athanor.workflows.issue_to_pr.graph import IssueToprWorkflow
-from athanor.workflows.registry import WorkflowRegistry
+from embry0.services.issue_executor import IssueExecutor
+from embry0.storage.repositories.jobs import JobsRepository
+from embry0.workflows.issue_to_pr.graph import IssueToprWorkflow
+from embry0.workflows.registry import WorkflowRegistry
 
 pytestmark = [pytest.mark.requires_postgres, pytest.mark.asyncio]
 
@@ -31,7 +31,7 @@ async def jobs_repo(db_with_migrations) -> JobsRepository:
 
 @pytest.fixture
 async def issue_executor(db_with_migrations, jobs_repo) -> IssueExecutor:
-    """Construct IssueExecutor as ``athanor/api/app.py`` lifespan does, but
+    """Construct IssueExecutor as ``embry0/api/app.py`` lifespan does, but
     with a real ``JobsRepository`` over the test DB, a real
     ``WorkflowRegistry`` carrying the issue-to-pr workflow, and MagicMocks for
     every dependency the guard must never reach. ``issues_repo`` is an

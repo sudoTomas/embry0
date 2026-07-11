@@ -27,11 +27,6 @@ export default defineConfig({
         target: process.env.API_URL || "http://localhost:8000",
         changeOrigin: true,
       },
-      "/agent": {
-        target: process.env.AGENT_URL || "http://localhost:7778",
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/agent/, ""),
-      },
     },
   },
 });

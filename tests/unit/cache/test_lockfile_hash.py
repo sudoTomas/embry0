@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from athanor.cache.lockfile_hash import (
+from embry0.cache.lockfile_hash import (
     LockfileNotFoundError,
     compute_lockfile_sha,
 )

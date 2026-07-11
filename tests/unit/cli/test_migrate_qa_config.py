@@ -5,12 +5,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from athanor.cli.migrate_qa_config import (
+from embry0.cli.migrate_qa_config import (
     MigrationError,
     migrate_v1_text_to_v2_text,
     migrate_v1_to_v2,
 )
-from athanor.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
+from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
 
 CORPUS = Path(__file__).resolve().parents[2] / "fixtures" / "qa-yaml-corpus"
 
@@ -86,9 +86,9 @@ def test_migrate_v1_to_v2_dry_run_does_not_write(tmp_path: Path):
 
 def test_migrate_default_app_name_uses_parent_dir_when_unspecified(tmp_path: Path):
     repo = tmp_path / "my-cool-repo"
-    athanor_dir = repo / ".athanor"
-    athanor_dir.mkdir(parents=True)
-    qa_path = athanor_dir / "qa.yaml"
+    embry0_dir = repo / ".embry0"
+    embry0_dir.mkdir(parents=True)
+    qa_path = embry0_dir / "qa.yaml"
     qa_path.write_text(_read(CORPUS / "v1" / "single-app.yaml"), encoding="utf-8")
 
     migrate_v1_to_v2(qa_path, app_name=None, write=True)
@@ -97,11 +97,11 @@ def test_migrate_default_app_name_uses_parent_dir_when_unspecified(tmp_path: Pat
     assert "my-cool-repo" in parsed.apps
 
 
-CLI_BIN = [sys.executable, "-m", "athanor.cli"]
+CLI_BIN = [sys.executable, "-m", "embry0.cli"]
 
 
 def _toy_v1_in(tmp_path: Path) -> Path:
-    qa_dir = tmp_path / "demo-repo" / ".athanor"
+    qa_dir = tmp_path / "demo-repo" / ".embry0"
     qa_dir.mkdir(parents=True)
     qa = qa_dir / "qa.yaml"
     qa.write_text((CORPUS / "v1" / "single-app.yaml").read_text(encoding="utf-8"), encoding="utf-8")

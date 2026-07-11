@@ -1,4 +1,4 @@
-from athanor.workflows.registry import WorkflowRegistry
+from embry0.workflows.registry import WorkflowRegistry
 
 
 class MockWorkflow:

@@ -12,8 +12,6 @@ interface PatentFigureProps {
  * Single figure inside a patent canvas. Centers the children, captions
  * "FIG. <number> — <caption>" below in monospace small-caps. `inset`
  * shrinks the caption for sub-figures.
- *
- * See `docs/superpowers/specs/2026-05-04-patent-drawing-layer-design.md` §3.3.
  */
 export function PatentFigure({ number, caption, inset = false, children, className }: PatentFigureProps) {
   return (

@@ -44,7 +44,7 @@ async def test_webhook_labeled_issue_triggers(app: AsyncClient):
         {
             "action": "labeled",
             "repository": {"full_name": "owner/repo"},
-            "issue": {"number": 42, "title": "Fix auth", "labels": [{"name": "Athanor"}]},
+            "issue": {"number": 42, "title": "Fix auth", "labels": [{"name": "embry0"}]},
         }
     ).encode()
     resp = await app.post(

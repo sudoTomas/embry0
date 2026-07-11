@@ -1,6 +1,6 @@
 """Migration 35 — nullable current_stage column on jobs (Console board)."""
 
-from athanor.storage.migrations.runner import MIGRATIONS
+from embry0.storage.migrations.runner import MIGRATIONS
 
 
 def test_migration_35_present() -> None:

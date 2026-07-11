@@ -1,6 +1,6 @@
 # Divine Layer — Hard Rules
 
-The components in this directory render Athanor's alchemical/hermetic identity. The intent is **atmospheric**, not decorative. The user must never feel they're using a "themed" tool; they feel they're operating an **instrument**.
+The components in this directory render embry0's alchemical/hermetic identity. The intent is **atmospheric**, not decorative. The user must never feel they're using a "themed" tool; they feel they're operating an **instrument**.
 
 When editing files in this directory or adding new divine elements, every one of these rules is a hard constraint.
 
@@ -22,7 +22,7 @@ Every sigil and every mark stroke uses `stroke="currentColor"` (or `fill="curren
   1. **One-shot animations** (rule's spirit is "no constant restless motion"; one-shots are temporal events, not motion).
   2. **Narrow-range opacity composed with another property**, where the opacity range is narrow enough (≤0.7 span) that the visual reads as a single composed motion.
   3. **Dissipation motion** — `r` (or equivalent size) + `opacity` together, where the visual reads as a single coherent expand-and-fade gesture (e.g. a ring dissolving outward). Justification: opacity is bound mechanically to the size — an expanding ring without fading would be visually wrong; the two properties are one motion, not two.
-- Current explicit exceptions: `<DivineRipple>` (one-shot `r` + `opacity`), `divine-equator-scan` (narrow opacity + transform), `divine-op-dissolve-ring` (dissipation), `divine-op-distill-*` (dissipation x3), `divine-op-ferment-core` (narrow opacity + transform-scale). See `docs/superpowers/specs/2026-05-04-divine-animations-design.md` §3.6 and `2026-05-04-divine-operations-design.md` §3.2.
+- Current explicit exceptions: `<DivineRipple>` (one-shot `r` + `opacity`), `divine-equator-scan` (narrow opacity + transform), `divine-op-dissolve-ring` (dissipation), `divine-op-distill-*` (dissipation x3), `divine-op-ferment-core` (narrow opacity + transform-scale). Each exception is justified in the docstring of the component (or the CSS comment of the keyframe) that owns it.
 - No animation longer than 4 seconds; no animation that loops faster than 2 seconds. (One-shots are exempt from the loop-floor rule by definition.)
 
 ## 4. Escape hatch
@@ -46,9 +46,9 @@ If you're adding a new divine element to a surface, ask: "Does this surface ever
 
 ## 6. Never combine more than one divine element per component instance
 
-Bad: an `<AthanorMark />` next to a `<SacredDivider />` next to a `<AlchemicalSigil />` in the same row. The cumulative effect tips into "themed".
+Bad: an `<Embry0Mark />` next to an `<AlchemicalSigil />` next to yet another glyph in the same row. The cumulative effect tips into "themed".
 
-Good: one divine element per layout region. The TopBar carries `<AthanorMark />` and nothing else divine. The Pipeline Editor agent nodes each carry one `<AlchemicalSigil />` and nothing else divine.
+Good: one divine element per layout region. The TopBar carries `<Embry0Mark />` and nothing else divine. The Pipeline Editor agent nodes each carry one `<AlchemicalSigil />` and nothing else divine.
 
 ## 7. Hermetic copy register stays close to operator copy
 
@@ -61,9 +61,9 @@ When re-wording empty states or error messages with hermetic language:
 Pattern (good): "Drop agents here" → "The vessel is empty. Drag an agent to begin."
 Pattern (bad): "Drop agents here" → "PRIMA MATERIA: Place the seven agents in the order of their elemental affinity to begin the Great Work."
 
-## 8. New divine elements require a justification in the spec
+## 8. New divine elements require a written justification
 
-Any addition (new sigil, new component, new animation) lands as a small spec under `docs/superpowers/specs/YYYY-MM-DD-divine-<addition>-design.md`, even if it's a one-line CSS change. The discipline keeps the layer from accumulating flourishes by drift.
+Any addition (new sigil, new component, new animation) lands with a short written justification — in the PR description and in the docstring of the new element — even if it's a one-line CSS change. The discipline keeps the layer from accumulating flourishes by drift.
 
 ---
 

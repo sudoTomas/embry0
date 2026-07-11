@@ -7,8 +7,8 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_review_loads_prior_session_and_persists_new_one():
-    from athanor.agents.session import AgentSession
-    from athanor.workflows.issue_to_pr.nodes import review_node
+    from embry0.agents.session import AgentSession
+    from embry0.workflows.issue_to_pr.nodes import review_node
 
     # Pre-existing session for this (job, agent)
     repo = AsyncMock()
@@ -58,7 +58,7 @@ async def test_review_loads_prior_session_and_persists_new_one():
         "repo": "o/r",
         "task": "x",
         "sandbox_container_id": "C",
-        "branch_name": "athanor/test",
+        "branch_name": "embry0/test",
         "pr_url": "https://github.com/o/r/pull/1",
         "agent_outputs": [],
         "errors": [],
@@ -66,8 +66,8 @@ async def test_review_loads_prior_session_and_persists_new_one():
     }
 
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         await review_node(
             state,

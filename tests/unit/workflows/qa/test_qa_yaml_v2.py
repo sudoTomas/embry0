@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from athanor.workflows.qa.qa_yaml_v2 import (
+from embry0.workflows.qa.qa_yaml_v2 import (
     parse_app_local_yaml,
     parse_qa_yaml_v2,
 )

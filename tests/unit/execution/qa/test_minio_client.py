@@ -11,14 +11,14 @@ import secrets
 
 import pytest
 
-from athanor.execution.qa.minio_client import QAMinioClient
+from embry0.execution.qa.minio_client import QAMinioClient
 
 
 @pytest.fixture
 def minio_client():
     return QAMinioClient(
         endpoint=os.environ.get("MINIO_ENDPOINT", "minio:9000"),
-        access_key=os.environ.get("MINIO_ROOT_USER", "athanor"),
+        access_key=os.environ.get("MINIO_ROOT_USER", "embry0"),
         secret_key=os.environ.get("MINIO_ROOT_PASSWORD", "change-me-in-prod"),
         secure=False,
     )

@@ -1,4 +1,4 @@
-"""Tests for athanor.execution.worker_env — worker-cap env var computation.
+"""Tests for embry0.execution.worker_env — worker-cap env var computation.
 
 The sandbox runs with --cpus=N (cgroup cpu.max quota) but Node.js
 os.cpus() returns the HOST cpu count, causing build tools to spawn
@@ -10,7 +10,7 @@ env-var caps for each supported tool.
 
 import pytest
 
-from athanor.execution.worker_env import _floor_cpus, compute_worker_env
+from embry0.execution.worker_env import _floor_cpus, compute_worker_env
 
 # ---------------------------------------------------------------------------
 # _floor_cpus — parse Docker --cpus value to an integer ≥ 1

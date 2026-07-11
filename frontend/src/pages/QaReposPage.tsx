@@ -17,7 +17,7 @@ export function QaReposPage() {
         <EmptyState
           stage="qa"
           title="No QA runs yet"
-          description="Trigger a QA pipeline run on a repo with .athanor/qa.yaml v2 to see results here."
+          description="Trigger a QA pipeline run on a repo with .embry0/qa.yaml v2 to see results here."
         />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

@@ -11,19 +11,11 @@ services:
         # setting VITE_API_KEY explicitly if you want them to differ.
         VITE_API_KEY: "${VITE_API_KEY:-${API_KEY:-}}"
     container_name: embry0-frontend
-    environment:
-      # Server-side bearer for the /agent proxy; from root .env, never in the bundle.
-      EMBRY0_AGENT_TOKEN: "${EMBRY0_AGENT_TOKEN:-}"
     ports:
       - "${PROD_PORT:-8200}:80"
     depends_on:
       orchestrator:
         condition: service_healthy
-    # nginx's `location /agent/ { proxy_pass http://companion:7778/; }` resolves
-    # `companion` through Docker DNS. companion runs out-of-stack on the docker host
-    # (private-server:7778), so we map the hostname to the host gateway.
-    extra_hosts:
-      - "companion:host-gateway"
     networks: [frontend]
     logging:
       driver: json-file
@@ -38,7 +30,7 @@ services:
       dockerfile: infra/Dockerfile.orchestrator
     container_name: embry0-orchestrator
     environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-athanor}:${POSTGRES_PASSWORD:?must be set}@postgres:5432/${POSTGRES_DB:-athanor}"
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-embry0}:${POSTGRES_PASSWORD:?must be set}@postgres:5432/${POSTGRES_DB:-embry0}"
       DOCKER_HOST: tcp://dind:2376
       DOCKER_TLS_VERIFY: "1"
       DOCKER_CERT_PATH: /certs/client
@@ -47,11 +39,12 @@ services:
     env_file: ../.env
     expose:
       - "8000"
+    # Claude OAuth for Agent SDK / sandbox CLI calls comes in via the
+    # CLAUDE_CODE_OAUTH_TOKEN env var (root .env, loaded through env_file).
+    # See .env.example for how to generate it.
     volumes:
       - dind-certs-client:/certs/client:ro
       - orchestrator-data:/data
-      # Claude CLI OAuth credentials (for Agent SDK triage calls)
-      - ${HOME}/.claude:/home/orchestrator/.claude:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,13 +82,13 @@ services:
     image: postgres:16.6-alpine
     container_name: embry0-postgres
     environment:
-      POSTGRES_DB: "${POSTGRES_DB:-athanor}"
-      POSTGRES_USER: "${POSTGRES_USER:-athanor}"
+      POSTGRES_DB: "${POSTGRES_DB:-embry0}"
+      POSTGRES_USER: "${POSTGRES_USER:-embry0}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?must be set}"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-athanor}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-embry0}"]
       interval: 10s
       timeout: 5s
       start_period: 10s
@@ -121,8 +114,8 @@ services:
       - backup-data:/backups
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_DB: "${POSTGRES_DB:-athanor}"
-      POSTGRES_USER: "${POSTGRES_USER:-athanor}"
+      POSTGRES_DB: "${POSTGRES_DB:-embry0}"
+      POSTGRES_USER: "${POSTGRES_USER:-embry0}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?must be set}"
       SCHEDULE: "@daily"
       BACKUP_KEEP_DAYS: "7"
@@ -254,7 +247,7 @@ services:
   # so `docker compose up -d` does not try to start them.
   sandbox-image-builder:
     profiles: ["images"]
-    image: athanor-sandbox:latest
+    image: embry0-sandbox:latest
     build:
       context: ..
       dockerfile: infra/Dockerfile.sandbox
@@ -264,7 +257,7 @@ services:
 
   dev-python-image-builder:
     profiles: ["images"]
-    image: athanor-sandbox-dev-python:latest
+    image: embry0-sandbox-dev-python:latest
     build:
       context: ..
       dockerfile: infra/Dockerfile.sandbox
@@ -272,12 +265,12 @@ services:
 
   proxy-image-builder:
     profiles: ["images"]
-    image: athanor-proxy:latest
+    image: embry0-proxy:latest
     build:
       context: ..
       dockerfile: infra/Dockerfile.proxy
 
-  # Tag the host-built athanor-sandbox + athanor-proxy images and push them to
+  # Tag the host-built embry0-sandbox + embry0-proxy images and push them to
   # the in-stack registry. The orchestrator depends on this completing so the
   # proxy containers it launches in DinD can pull successfully on first ref.
   init-push-images:

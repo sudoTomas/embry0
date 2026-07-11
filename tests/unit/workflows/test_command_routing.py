@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from langgraph.types import Command
 
-from athanor.workflows.issue_to_pr.nodes import developer_node, review_node, triage_node
+from embry0.workflows.issue_to_pr.nodes import developer_node, review_node, triage_node
 
 
 @pytest.fixture(autouse=True)
 def _stub_stream_writer(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replace get_stream_writer so nodes run outside a LangGraph runtime."""
-    import athanor.workflows.issue_to_pr.nodes as nodes_module
+    import embry0.workflows.issue_to_pr.nodes as nodes_module
 
     monkeypatch.setattr(nodes_module, "get_stream_writer", lambda: lambda _e: None)
 
@@ -43,7 +43,7 @@ def _state(**over) -> dict[str, Any]:  # noqa: ANN002
 
 @pytest.mark.asyncio
 async def test_developer_node_goes_to_review_on_happy_path() -> None:
-    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
+    with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -67,7 +67,7 @@ async def test_developer_node_goes_to_review_on_happy_path() -> None:
 
 @pytest.mark.asyncio
 async def test_developer_node_goes_to_ask_user_when_questions_pending() -> None:
-    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
+    with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -92,7 +92,7 @@ async def test_developer_node_goes_to_ask_user_when_questions_pending() -> None:
 async def test_developer_node_goes_to_max_retries_when_budget_over() -> None:
     state = _state(total_cost_usd=1000.0)
     state["pipeline_config"] = {"pipeline_config": {"budget_usd": 1.0}}
-    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
+    with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -115,7 +115,7 @@ async def test_developer_node_goes_to_max_retries_when_budget_over() -> None:
 @pytest.mark.asyncio
 async def test_developer_node_goes_to_max_retries_when_questions_exhausted() -> None:
     state = _state(agent_questions_exhausted=True)
-    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
+    with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -155,7 +155,7 @@ async def test_review_node_marks_review_passed_on_approved() -> None:
     ``current_stage="review_passed"``. The conditional edge
     ``route_after_review`` in graph.py dispatches to init_qa or END
     based on state["qa"]["needs_qa"]."""
-    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
+    with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -184,7 +184,7 @@ async def test_review_node_marks_review_failed_on_changes_requested() -> None:
     """Phase 5 Task 5: changes_requested → return plain dict with
     ``current_stage="review_failed"``. The conditional edge maps
     "developer" → the existing retry node."""
-    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
+    with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -210,7 +210,7 @@ async def test_review_node_marks_review_failed_on_changes_requested() -> None:
 
 @pytest.mark.asyncio
 async def test_review_node_goes_to_max_retries_when_capped() -> None:
-    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
+    with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -258,7 +258,7 @@ async def test_review_node_no_runner_sets_error_code() -> None:
 @pytest.mark.asyncio
 async def test_developer_node_extracts_ask_user_from_events() -> None:
     """When the executor emits agent_ask_user events, questions get extracted."""
-    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
+    with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock()) as mock_rn:
         mock_rn.return_value = {
             "agent_outputs": [
                 {
@@ -338,10 +338,10 @@ async def test_triage_node_enforces_ask_user_cap() -> None:
     mock_runner = object()  # non-None so the sandbox branch runs
     mock_run_agent = _make_run_agent_node_with_event(ask_event)
 
-    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=mock_run_agent):
+    with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=mock_run_agent):
         # Also stub parse_triage_response so we don't need real agent output parsing
         with patch(
-            "athanor.orchestration.nodes.triage.parse_triage_response",
+            "embry0.orchestration.nodes.triage.parse_triage_response",
             return_value={"action": "proceed"},
         ):
             state = _state(
@@ -387,7 +387,7 @@ async def test_review_node_uses_per_agent_model_from_pipeline_config() -> None:
             "current_stage": "review_complete",
         }
 
-    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=fake_run_agent_node):
+    with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=fake_run_agent_node):
         state = _state(
             agent_outputs=[],
             pr_url="http://x",
@@ -411,7 +411,7 @@ async def test_review_node_enforces_ask_user_cap() -> None:
     mock_runner = object()  # non-None so review_node doesn't short-circuit
     mock_run_agent = _make_run_agent_node_with_event(ask_event)
 
-    with patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=mock_run_agent):
+    with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=mock_run_agent):
         state = _state(
             agent_outputs=[],
             agent_question_rounds=5,  # cap already reached

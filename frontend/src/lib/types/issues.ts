@@ -1,9 +1,9 @@
 export type IssueStatus = "open" | "triaging" | "awaiting_input" | "in_progress" | "closed" | "cancelled";
 export type IssuePriority = "critical" | "high" | "medium" | "low";
 // Channels the orchestrator can fan out agent ask-user questions to. Mirrors
-// athanor.orchestration.state.AskUserChannel on the backend; the API responds
+// embry0.orchestration.state.AskUserChannel on the backend; the API responds
 // with these as plain strings (see IssueResponse.notification_channels in
-// athanor/api/schemas/issues.py).
+// embry0/api/schemas/issues.py).
 export type NotificationChannel = "dashboard" | "telegram" | "github";
 
 export interface IssueResponse {

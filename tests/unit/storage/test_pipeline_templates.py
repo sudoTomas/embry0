@@ -1,7 +1,7 @@
 import pytest
 
-from athanor.storage.database import DatabasePool
-from athanor.storage.repositories.pipeline_templates import PipelineTemplatesRepository
+from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
 
 pytestmark = pytest.mark.requires_postgres
 

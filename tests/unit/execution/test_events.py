@@ -1,6 +1,6 @@
 import json
 
-from athanor.execution.events import (
+from embry0.execution.events import (
     AgentCompletedEvent,
     AgentStartedEvent,
     EventType,

@@ -17,8 +17,6 @@ interface PatentCanvasProps {
  * Patent-drawing-style framing component for hero / lore / completion
  * surfaces. Renders the gold-on-dark patent chrome (header, title,
  * footer) and lets children own the figures inside.
- *
- * See `docs/superpowers/specs/2026-05-04-patent-drawing-layer-design.md` §3.2.
  */
 export function PatentCanvas({
   patentNo,

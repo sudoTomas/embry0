@@ -1,9 +1,7 @@
 /**
  * The seven canonical alchemical operations of the Magnum Opus.
  * Each operation has a distinct visual character in embry0's
- * geodesic vocabulary — see
- * `docs/superpowers/specs/2026-05-04-divine-operations-design.md`
- * and `frontend/src/components/divine/CLAUDE.md`.
+ * geodesic vocabulary — see `frontend/src/components/divine/CLAUDE.md`.
  */
 
 export type Operation =
@@ -171,8 +169,7 @@ export function agentTypeToOperation(agentType: string | undefined | null): Oper
  *
  * Failure terminals (`failed` / `cancelled` / `expired` / `pr_closed`) are
  * deliberately not success — divine layer rule #5 keeps flourishes off
- * operator-critical paths. See
- * `docs/superpowers/specs/2026-05-04-divine-completion-flare-design.md`.
+ * operator-critical paths.
  */
 export function shouldFireCompletionFlare(
   prev: string | null | undefined,

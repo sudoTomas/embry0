@@ -1,4 +1,4 @@
-from athanor.storage.schemas import FailedTestCase, JobStatus, TraceRecord, ValidationResult
+from embry0.storage.schemas import FailedTestCase, JobStatus, TraceRecord, ValidationResult
 
 
 def test_job_status_values():

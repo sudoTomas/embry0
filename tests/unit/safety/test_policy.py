@@ -2,7 +2,7 @@
 
 import pytest
 
-from athanor.safety.policy import (
+from embry0.safety.policy import (
     ContentRule,
     SafetyPolicy,
     Verdict,
@@ -124,7 +124,7 @@ def test_default_policy_includes_workspace_allow_rules() -> None:
 def test_default_policy_includes_dangerous_bash_content_checks() -> None:
     policy = default_policy_for_agent("developer")
     patterns_in_policy = {r.pattern for r in policy.content_checks}
-    from athanor.safety.patterns import DANGEROUS_BASH_PATTERNS
+    from embry0.safety.patterns import DANGEROUS_BASH_PATTERNS
 
     for p in DANGEROUS_BASH_PATTERNS:
         assert p in patterns_in_policy, f"missing pattern from default policy: {p}"

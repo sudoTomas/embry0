@@ -3,7 +3,7 @@
 Verifies that when a prior session is supplied:
 - For ``anthropic_api`` mode the messages are dumped to a host tempfile,
   ``DockerClient.copy_into`` is invoked exactly once with the expected
-  destination path, and ``--session-blob /tmp/.athanor-resume-blob`` is
+  destination path, and ``--session-blob /tmp/.embry0-resume-blob`` is
   appended to the runner's docker exec command.
 - For ``claude_max`` mode the session bytes are streamed in via
   ``copy_bytes_into`` and ``--session-id <id>`` is appended.
@@ -19,8 +19,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.agents.session import AgentSession
-from athanor.execution.agent_runner import RESUME_BLOB_SANDBOX_PATH, AgentRunner
+from embry0.agents.session import AgentSession
+from embry0.execution.agent_runner import RESUME_BLOB_SANDBOX_PATH, AgentRunner
 
 
 class _FakeStdout:
@@ -144,14 +144,14 @@ async def test_resume_session_anthropic_api_copies_blob_and_passes_arg(tmp_path:
     assert len(seen_calls) == 1
     container, dst, dumped = seen_calls[0]
     assert container == "sandbox-J1"
-    assert dst == RESUME_BLOB_SANDBOX_PATH == "/tmp/.athanor-resume-blob"
+    assert dst == RESUME_BLOB_SANDBOX_PATH == "/tmp/.embry0-resume-blob"
     assert dumped == prior_messages
 
     # The runner exec command must include --session-blob <path>
     assert len(captured_commands) == 1
     cmd = captured_commands[0]
     assert "--session-blob" in cmd
-    assert cmd[cmd.index("--session-blob") + 1] == "/tmp/.athanor-resume-blob"
+    assert cmd[cmd.index("--session-blob") + 1] == "/tmp/.embry0-resume-blob"
     assert "--session-id" not in cmd
 
     # Successful round-trip — final_result was parsed and returned.

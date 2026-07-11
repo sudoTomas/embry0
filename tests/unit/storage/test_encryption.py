@@ -2,7 +2,7 @@
 
 import pytest
 
-from athanor.storage.encryption import FernetSecretsProvider
+from embry0.storage.encryption import FernetSecretsProvider
 
 
 @pytest.mark.asyncio

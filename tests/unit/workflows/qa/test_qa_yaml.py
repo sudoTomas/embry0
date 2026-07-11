@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from athanor.workflows.qa.qa_yaml import (
+from embry0.workflows.qa.qa_yaml import (
     QAE2E,  # noqa: F401  (symbol-export probe)
     QAReadyCheck,
     QASeed,  # noqa: F401  (symbol-export probe)

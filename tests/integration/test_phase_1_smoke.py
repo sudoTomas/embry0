@@ -3,9 +3,9 @@ hits /internal/qa/presign from inside the sandbox via curl, and runs
 `docker info` against DinD to prove the certs work.
 
 Requires:
-- DinD up (athanor-dind container reachable from orchestrator)
-- MinIO up (athanor-minio container; MINIO_ENDPOINT set)
-- athanor-sandbox-qa:latest loaded into DinD (run infra/scripts/load-qa-image-into-dind.sh first)
+- DinD up (embry0-dind container reachable from orchestrator)
+- MinIO up (embry0-minio container; MINIO_ENDPOINT set)
+- embry0-sandbox-qa:latest loaded into DinD (run infra/scripts/load-qa-image-into-dind.sh first)
 - Live orchestrator running Phase 1 code (presign endpoint mounted, qa_minio + qa_token_registry on app.state)
 """
 
@@ -43,7 +43,7 @@ async def test_qa_jvm_sandbox_can_presign_and_run_docker(app, qa_minio_seeded):
     assert profile["dind_enabled"] is True
 
     # 2. Manually start a sandbox using SandboxManager.
-    from athanor.execution.sandbox_manager import SandboxManager
+    from embry0.execution.sandbox_manager import SandboxManager
 
     docker = app.app.state.docker
     proxy_mgr = app.app.state.proxy_manager

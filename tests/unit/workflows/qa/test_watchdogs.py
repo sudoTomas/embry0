@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from athanor.workflows.qa.watchdogs import IdleWatchdog, TotalBudgetWatchdog
+from embry0.workflows.qa.watchdogs import IdleWatchdog, TotalBudgetWatchdog
 
 
 @pytest.mark.asyncio

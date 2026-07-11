@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from athanor.cache.prebaked_image import PrebakedImageLookup
-from athanor.storage.repositories.qa_image_tags import QAImageTagRow
+from embry0.cache.prebaked_image import PrebakedImageLookup
+from embry0.storage.repositories.qa_image_tags import QAImageTagRow
 
 
 def _row(image_tag: str, lockfile_sha: str = "deadbeef") -> QAImageTagRow:

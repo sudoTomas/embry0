@@ -7,8 +7,8 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_triage_loads_prior_session_and_persists_new_one():
-    from athanor.agents.session import AgentSession
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.agents.session import AgentSession
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     # Pre-existing session for this (job, agent)
     repo = AsyncMock()
@@ -66,12 +66,12 @@ async def test_triage_loads_prior_session_and_persists_new_one():
     }
 
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
         # apply_repo_preferences_override is async; default to passthrough so
         # the parsed triage_dict reaches result["pipeline_config"] unchanged.
         patch(
-            "athanor.orchestration.nodes.triage.apply_repo_preferences_override",
+            "embry0.orchestration.nodes.triage.apply_repo_preferences_override",
             new=AsyncMock(side_effect=lambda d, *_a, **_kw: d),
         ),
     ):

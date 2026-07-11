@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import pytest
 
-from athanor.workspace_providers.npm_workspaces_turbo._affected import (
+from embry0.workspace_providers.npm_workspaces_turbo._affected import (
     compute_affected,
 )
-from athanor.workspace_providers.npm_workspaces_turbo._dep_graph import (
+from embry0.workspace_providers.npm_workspaces_turbo._dep_graph import (
     DependencyGraph,
 )
 

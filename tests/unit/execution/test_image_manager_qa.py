@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.execution.image_manager import ContainerReaper
+from embry0.execution.image_manager import ContainerReaper
 
 
 @pytest.mark.asyncio
@@ -16,7 +16,7 @@ async def test_sweep_qa_orphans_removes_old_containers_via_both_labels():
     #   1. ps for compose label -> "old-cid-1\n"
     #   2. inspect cid 1 -> old timestamp
     #   3. rm cid 1
-    #   4. ps for athanor.qa_job_id label -> "old-cid-2\n"
+    #   4. ps for embry0.qa_job_id label -> "old-cid-2\n"
     #   5. inspect cid 2 -> old timestamp
     #   6. rm cid 2
     #   7. network ls -> "qa-net-A\nqa-net-B\n"
@@ -42,7 +42,7 @@ async def test_sweep_qa_orphans_removes_old_containers_via_both_labels():
     cmds = [c.args[0] for c in docker.run_cmd.call_args_list]
     flat = " ".join(" ".join(map(str, c)) for c in cmds)
     assert "com.docker.compose.project=qa_" in flat
-    assert "athanor.qa_job_id=" in flat
+    assert "embry0.qa_job_id=" in flat
     assert "rm -f old-cid-1" in flat
     assert "rm -f old-cid-2" in flat
     assert "network rm qa-net-A" in flat
@@ -79,7 +79,7 @@ async def test_sweep_qa_orphans_swallows_in_use_network():
     docker.run_cmd = AsyncMock(
         side_effect=[
             "",  # ps for compose label -> empty
-            "",  # ps for athanor.qa_job_id label -> empty
+            "",  # ps for embry0.qa_job_id label -> empty
             "qa-net-busy\n",  # network ls
             RuntimeError("network has active endpoints"),  # network rm
         ]

@@ -1,6 +1,6 @@
 import pytest
 
-from athanor.storage.repositories.environment import EnvironmentRepository
+from embry0.storage.repositories.environment import EnvironmentRepository
 
 
 @pytest.mark.requires_postgres

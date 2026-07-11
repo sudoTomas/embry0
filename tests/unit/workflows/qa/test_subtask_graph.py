@@ -15,10 +15,10 @@ import json
 
 import pytest
 
-from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
-from athanor.workflows.qa.qa_yaml_v2 import QAReadyCheck
-from athanor.workflows.qa.subtask_graph import build_subtask_graph, run_subtask
-from athanor.workflows.qa.subtask_result_schema import SubTaskStatus
+from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
+from embry0.workflows.qa.qa_yaml_v2 import QAReadyCheck
+from embry0.workflows.qa.subtask_graph import build_subtask_graph, run_subtask
+from embry0.workflows.qa.subtask_result_schema import SubTaskStatus
 
 
 def _resolved(name: str = "hub") -> ResolvedAppConfig:
@@ -125,7 +125,7 @@ class _FakeDocker:
 
 
 def _stub_run_boot_phase(monkeypatch, *, outcome: str = "passed", failed_checks=None):
-    from athanor.workflows.qa.boot import BootResult
+    from embry0.workflows.qa.boot import BootResult
 
     async def fake(**_):
         return BootResult(
@@ -138,7 +138,7 @@ def _stub_run_boot_phase(monkeypatch, *, outcome: str = "passed", failed_checks=
 
     # subtask_nodes imports run_boot_phase at module top — patch at the
     # subtask_nodes module so the in-test import resolves to the fake.
-    monkeypatch.setattr("athanor.workflows.qa.subtask_nodes.run_boot_phase", fake)
+    monkeypatch.setattr("embry0.workflows.qa.subtask_nodes.run_boot_phase", fake)
 
 
 def _stub_legacy_qa_node(monkeypatch):
@@ -148,7 +148,7 @@ def _stub_legacy_qa_node(monkeypatch):
     async def fake(state, config):
         return {"agent_outputs": []}
 
-    monkeypatch.setattr("athanor.workflows.qa.nodes.qa_node", fake)
+    monkeypatch.setattr("embry0.workflows.qa.nodes.qa_node", fake)
 
 
 def _build_config(*, docker, result_json: str | None = None):

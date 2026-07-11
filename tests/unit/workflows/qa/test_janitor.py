@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.workflows.qa.janitor import (
+from embry0.workflows.qa.janitor import (
     detect_stuck_runs,
     reap_orphan_sandboxes,
 )
@@ -13,9 +13,9 @@ async def test_reap_orphan_sandboxes_removes_containers_for_inactive_runs():
     docker = AsyncMock()
     docker.list_containers_with_label = AsyncMock(
         return_value=[
-            {"id": "c1", "labels": {"athanor.qa_job_id": "run-A"}},
-            {"id": "c2", "labels": {"athanor.qa_job_id": "run-B"}},
-            {"id": "c3", "labels": {"athanor.qa_job_id": "run-A"}},
+            {"id": "c1", "labels": {"embry0.qa_job_id": "run-A"}},
+            {"id": "c2", "labels": {"embry0.qa_job_id": "run-B"}},
+            {"id": "c3", "labels": {"embry0.qa_job_id": "run-A"}},
         ]
     )
     docker.kill = AsyncMock()
@@ -36,8 +36,8 @@ async def test_reap_continues_when_one_container_kill_fails():
     docker = AsyncMock()
     docker.list_containers_with_label = AsyncMock(
         return_value=[
-            {"id": "c1", "labels": {"athanor.qa_job_id": "dead"}},
-            {"id": "c2", "labels": {"athanor.qa_job_id": "dead"}},
+            {"id": "c1", "labels": {"embry0.qa_job_id": "dead"}},
+            {"id": "c2", "labels": {"embry0.qa_job_id": "dead"}},
         ]
     )
     docker.kill = AsyncMock(side_effect=[Exception("c1 already dead"), None])
@@ -58,7 +58,7 @@ async def test_reap_subtask_sandbox_strips_app_suffix_to_find_parent():
     docker = AsyncMock()
     docker.list_containers_with_label = AsyncMock(
         return_value=[
-            {"id": "c-sub", "labels": {"athanor.qa_job_id": "run-A__hub"}},
+            {"id": "c-sub", "labels": {"embry0.qa_job_id": "run-A__hub"}},
         ]
     )
     docker.kill = AsyncMock()

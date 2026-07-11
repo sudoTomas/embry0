@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from athanor.workspace_providers import load_provider
-from athanor.workspace_providers.npm_workspaces_turbo.provider import (
+from embry0.workspace_providers import load_provider
+from embry0.workspace_providers.npm_workspaces_turbo.provider import (
     NpmWorkspacesTurboProvider,
 )
 

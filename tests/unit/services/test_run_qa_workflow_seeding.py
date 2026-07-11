@@ -9,7 +9,7 @@ import pytest
 
 
 def _make_executor():
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     e = IssueExecutor(
         issues_repo=MagicMock(),
@@ -118,12 +118,12 @@ async def test_qa_workflow_injects_merged_env_vars_into_state():
     ):
         await executor._run_qa_workflow(
             job_id="job-env",
-            repo="client-project/command-center",
-            branch="feat/athanor-qa-config",
+            repo="acme-corp/monorepo",
+            branch="feat/embry0-qa-config",
             qa_overrides={"force_all_apps": True},
         )
 
-    mock_load.assert_awaited_once_with("client-project/command-center", "job-env")
+    mock_load.assert_awaited_once_with("acme-corp/monorepo", "job-env")
     assert captured.get("user_env_vars") == seeded
 
 
@@ -247,7 +247,7 @@ async def test_qa_job_zero_pass_maps_to_failed():
 
 @pytest.mark.asyncio
 async def test_qa_job_infra_failure_forces_failed_even_with_passes():
-    """INFRA_FAILURE is Athanor's own fault — never PARTIAL even if some
+    """INFRA_FAILURE is embry0's own fault — never PARTIAL even if some
     apps passed."""
     executor = _qa_executor()
     apps = [("hub", "passed"), ("lane", "passed"), ("credit", "infra_failure")]
@@ -264,8 +264,8 @@ async def test_qa_job_infra_failure_forces_failed_even_with_passes():
 
 
 def test_valid_job_transitions_include_partial():
-    from athanor.storage.repositories.jobs import VALID_JOB_TRANSITIONS
-    from athanor.storage.schemas import JobStatus
+    from embry0.storage.repositories.jobs import VALID_JOB_TRANSITIONS
+    from embry0.storage.schemas import JobStatus
 
     assert JobStatus.PARTIAL in VALID_JOB_TRANSITIONS[JobStatus.RUNNING]
     assert VALID_JOB_TRANSITIONS[JobStatus.PARTIAL] == set()  # terminal

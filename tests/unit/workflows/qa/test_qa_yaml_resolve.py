@@ -1,9 +1,9 @@
 import pytest
 
-from athanor.workflows.qa.qa_yaml_resolve import (
+from embry0.workflows.qa.qa_yaml_resolve import (
     resolve_app_config,
 )
-from athanor.workflows.qa.qa_yaml_v2 import (
+from embry0.workflows.qa.qa_yaml_v2 import (
     AppEntry,
     DefaultsBlock,
     QAReadyCheck,
@@ -111,7 +111,7 @@ def test_app_can_disable_ready_checks_with_explicit_empty_list():
     """Regression for ultrareview bug_015. An explicit `ready_checks: []`
     at the app level must opt out of inherited defaults, not collapse
     to defaults via the truthy `or` chain."""
-    from athanor.workflows.qa.qa_yaml_v2 import (
+    from embry0.workflows.qa.qa_yaml_v2 import (
         WorkspaceProviderRef,
     )
 

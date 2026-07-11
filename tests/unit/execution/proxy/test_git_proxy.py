@@ -1,7 +1,7 @@
 import pytest
 from aiohttp.test_utils import TestClient
 
-from athanor.execution.proxy.git_proxy import create_git_proxy_app
+from embry0.execution.proxy.git_proxy import create_git_proxy_app
 
 
 @pytest.fixture

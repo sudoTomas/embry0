@@ -4,7 +4,7 @@ Even from a container on the same Docker network, the git-proxy
 must return 401 for any request with no Authorization header.
 The response body must not contain the GITHUB_TOKEN value.
 
-Requires: Docker daemon, athanor-proxy:latest image.
+Requires: Docker daemon, embry0-proxy:latest image.
 """
 
 import asyncio
@@ -42,13 +42,13 @@ class TestProxyUnauthenticatedBlocked:
                 f"GITHUB_TOKEN={fake_github_token}",
                 "-p",
                 "0:9101",
-                "athanor-proxy:latest",
+                "embry0-proxy:latest",
             ],
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
-            pytest.skip(f"Could not start proxy container (is athanor-proxy:latest built?): {result.stderr}")
+            pytest.skip(f"Could not start proxy container (is embry0-proxy:latest built?): {result.stderr}")
         container_id = result.stdout.strip()
 
         port_result = subprocess.run(
@@ -100,7 +100,7 @@ class TestProxyUnauthenticatedBlocked:
                 "GITHUB_TOKEN=ghp_fake",
                 "-p",
                 "0:9101",
-                "athanor-proxy:latest",
+                "embry0-proxy:latest",
             ],
             capture_output=True,
             text=True,

@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.cache.volume_manager import (
+from embry0.cache.volume_manager import (
     SharedVolumeManager,
     VolumeScope,
 )
@@ -48,7 +48,7 @@ async def test_destroy_removes_volume():
     docker = _stub_docker()
     state_repo = AsyncMock()
     mgr = SharedVolumeManager(docker=docker, state_repo=state_repo)
-    await mgr.destroy("athanor-qa-vol-job-1")
+    await mgr.destroy("embry0-qa-vol-job-1")
     cmds = [" ".join(c.args[0]) for c in docker.run_cmd.call_args_list]
     assert any("volume rm" in s for s in cmds)
 
@@ -59,14 +59,14 @@ async def test_create_skips_when_volume_already_exists():
     docker = _stub_docker()
     docker.run_cmd = AsyncMock(
         side_effect=[
-            "athanor-qa-vol-job-1\n",  # `volume ls` returns existing
+            "embry0-qa-vol-job-1\n",  # `volume ls` returns existing
         ]
     )
     state_repo = AsyncMock()
     state_repo.get = AsyncMock(return_value=None)
     mgr = SharedVolumeManager(docker=docker, state_repo=state_repo)
     name = await mgr.ensure(scope=VolumeScope.PER_JOB, scope_key="job-1")
-    assert name == "athanor-qa-vol-job-1"
+    assert name == "embry0-qa-vol-job-1"
     # `volume create` was NOT called
     cmds = [" ".join(c.args[0]) for c in docker.run_cmd.call_args_list]
     assert not any("volume create" in s for s in cmds)

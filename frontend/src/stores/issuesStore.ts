@@ -12,6 +12,6 @@ export const useIssuesStore = create<IssuesState>()(
       viewMode: "list",
       setViewMode: (viewMode) => set({ viewMode }),
     }),
-    { name: "athanor-issues-view" },
+    { name: "embry0-issues-view" },
   ),
 );

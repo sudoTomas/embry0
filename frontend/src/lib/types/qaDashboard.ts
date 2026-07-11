@@ -1,6 +1,6 @@
 /**
  * Types for the multi-app QA dashboard surface.
- * Mirror athanor/api/schemas/qa_dashboard.py — keep in sync.
+ * Mirror embry0/api/schemas/qa_dashboard.py — keep in sync.
  */
 
 export type AppStatus =
@@ -107,7 +107,7 @@ export interface AffectedSetResponse {
 /**
  * Phase 5E: per-layer cache hit/miss aggregate over a window.
  *
- * Mirrors `athanor/api/schemas/qa_dashboard.py:CacheLayerStats`. The
+ * Mirrors `embry0/api/schemas/qa_dashboard.py:CacheLayerStats`. The
  * `layer` literal is repeated server-side so a contract drift surfaces
  * as a TypeScript error, not silent data loss.
  */
@@ -138,9 +138,9 @@ export interface CacheAnalyticsResponse {
  * Phase 5G: per-repo workspace_provider override returned from
  * GET /api/v1/qa/admin/providers and POST /api/v1/qa/admin/providers/{repo}.
  *
- * Mirrors `athanor.api.schemas.qa_dashboard.WorkspaceProviderOverride`.
+ * Mirrors `embry0.api.schemas.qa_dashboard.WorkspaceProviderOverride`.
  * When a row exists for a repo, the orchestrator uses it instead of the
- * .athanor/qa.yaml workspace_provider section.
+ * .embry0/qa.yaml workspace_provider section.
  */
 export interface WorkspaceProviderOverride {
   repo: string;

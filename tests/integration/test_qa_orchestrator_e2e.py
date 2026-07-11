@@ -27,19 +27,19 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from athanor.workflows.qa.orchestrator import qa_orchestrator_node
-from athanor.workflows.qa.orchestrator_report import qa_report_node
-from athanor.workflows.qa.subtask_result_schema import (
+from embry0.workflows.qa.orchestrator import qa_orchestrator_node
+from embry0.workflows.qa.orchestrator_report import qa_report_node
+from embry0.workflows.qa.subtask_result_schema import (
     CacheHits,
     SubTaskResult,
     SubTaskStatus,
 )
-from athanor.workspace_providers import (
+from embry0.workspace_providers import (
     AffectedSet,
     WorkspaceApp,
     WorkspacePackage,
 )
-from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
 _QA_YAML_V2 = """
 version: 2
@@ -87,7 +87,7 @@ async def test_e2e_three_apps_two_pass_one_fails(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -109,7 +109,7 @@ async def test_e2e_three_apps_two_pass_one_fails(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 
@@ -154,11 +154,11 @@ async def test_e2e_qa_report_writes_check_and_comment(monkeypatch):
     written_check = AsyncMock(return_value={"id": 1})
     written_comment = AsyncMock(return_value=99)
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_report.write_aggregate_check",
+        "embry0.workflows.qa.orchestrator_report.write_aggregate_check",
         written_check,
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_report.upsert_sticky_comment",
+        "embry0.workflows.qa.orchestrator_report.upsert_sticky_comment",
         written_comment,
     )
 
@@ -242,7 +242,7 @@ async def test_e2e_no_affected_apps_short_circuits_pass(monkeypatch):
         affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -250,7 +250,7 @@ async def test_e2e_no_affected_apps_short_circuits_pass(monkeypatch):
         raise AssertionError("no fan-out should happen for empty apps_to_qa")
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 
@@ -291,7 +291,7 @@ async def test_e2e_validation_error_blocks_fan_out(monkeypatch):
         ],
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -299,7 +299,7 @@ async def test_e2e_validation_error_blocks_fan_out(monkeypatch):
         raise AssertionError("fan-out should not happen on validation error")
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 
@@ -326,7 +326,7 @@ async def test_e2e_validation_error_blocks_fan_out(monkeypatch):
 async def test_e2e_single_app_passes(monkeypatch):
     """Migrated-from-v1 N=1 case: one app declared in qa.yaml v2, passes.
     This proves the multi-app graph correctly handles the legacy single-app
-    contract that `athanor migrate-qa-config` produces."""
+    contract that `embry0 migrate-qa-config` produces."""
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("app", Path("apps/app"), "@x/app")],
         packages=[
@@ -339,7 +339,7 @@ async def test_e2e_single_app_passes(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -352,7 +352,7 @@ async def test_e2e_single_app_passes(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 
@@ -421,11 +421,11 @@ async def test_phase_3_acceptance_real_provider_one_app_affected(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 
-    qa_yaml = (fixture / ".athanor" / "qa.yaml").read_text()
+    qa_yaml = (fixture / ".embry0" / "qa.yaml").read_text()
 
     results_repo = AsyncMock()
     state = {
@@ -461,13 +461,13 @@ async def test_phase_3_acceptance_no_cascade_blocks_all_apps(monkeypatch):
     no_cascade, the orchestrator must short-circuit through "no affected
     apps" → overall_status=passed, apps_to_qa=[], no fan-out."""
     fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "toy-monorepo"
-    qa_yaml = (fixture / ".athanor" / "qa.yaml").read_text()
+    qa_yaml = (fixture / ".embry0" / "qa.yaml").read_text()
 
     async def fake_run_subtask(resolved, **kw):
         raise AssertionError("no fan-out should happen with @toy/types-only diff")
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 
@@ -495,7 +495,7 @@ async def test_phase_3_acceptance_no_cascade_blocks_all_apps(monkeypatch):
 async def test_phase_3_acceptance_package_change_cascades_to_two_apps(monkeypatch):
     """Phase-3 acceptance: @toy/auth diff → @toy/hub + @toy/companion QA'd."""
     fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "toy-monorepo"
-    qa_yaml = (fixture / ".athanor" / "qa.yaml").read_text()
+    qa_yaml = (fixture / ".embry0" / "qa.yaml").read_text()
 
     async def fake_run_subtask(resolved, **kw):
         return SubTaskResult(
@@ -506,7 +506,7 @@ async def test_phase_3_acceptance_package_change_cascades_to_two_apps(monkeypatc
         )
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 

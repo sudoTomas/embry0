@@ -2,9 +2,9 @@
 
 import pytest
 
-from athanor.agents.resolver import resolve_agent_invocation
-from athanor.execution.auth_provider import AuthConfigError
-from athanor.safety.error_codes import ErrorCode
+from embry0.agents.resolver import resolve_agent_invocation
+from embry0.execution.auth_provider import AuthConfigError
+from embry0.safety.error_codes import ErrorCode
 
 
 def _base_args(**over):  # noqa: ANN002

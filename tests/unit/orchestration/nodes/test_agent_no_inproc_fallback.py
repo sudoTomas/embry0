@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.orchestration.nodes.agent import SandboxRequiredError, run_agent_node
+from embry0.orchestration.nodes.agent import SandboxRequiredError, run_agent_node
 
 
 @pytest.mark.asyncio

@@ -7,8 +7,8 @@ from collections.abc import AsyncIterator
 import asyncpg
 import pytest
 
-from athanor.storage.database import DatabasePool, _jsonb_decoder, _jsonb_encoder
-from athanor.storage.migrations.runner import run_migrations
+from embry0.storage.database import DatabasePool, _jsonb_decoder, _jsonb_encoder
+from embry0.storage.migrations.runner import run_migrations
 
 
 def pytest_collection_modifyitems(config, items):
@@ -49,7 +49,7 @@ async def db_with_migrations() -> AsyncIterator[DatabasePool]:
     """Function-scoped DatabasePool with a clean, fully-migrated schema.
 
     Requires a live PostgreSQL instance at TEST_DATABASE_URL (or the default
-    athanor_test database). Tests consuming this fixture are expected to be
+    embry0_test database). Tests consuming this fixture are expected to be
     marked @pytest.mark.requires_postgres.
 
     The public schema is dropped and recreated before migrations run, so every
@@ -60,7 +60,7 @@ async def db_with_migrations() -> AsyncIterator[DatabasePool]:
 
     url = os.environ.get(
         "TEST_DATABASE_URL",
-        "postgresql://athanor:athanor@localhost:5432/athanor_test",
+        "postgresql://embry0:embry0@localhost:5432/embry0_test",
     )
     db = DatabasePool(url, min_size=1, max_size=5)
     try:
@@ -85,7 +85,7 @@ async def pg_pool() -> AsyncIterator[asyncpg.Pool]:
     """
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
 
     try:
         # Create database if needed

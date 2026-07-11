@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from athanor.api.schemas import ContextType, JobContext
+from embry0.api.schemas import ContextType, JobContext
 
 
 def test_git_context_valid():

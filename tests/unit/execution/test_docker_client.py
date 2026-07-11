@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from athanor.execution.docker_client import DockerClient
+from embry0.execution.docker_client import DockerClient
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def test_build_base_cmd_no_tls():
 def test_build_run_cmd(docker: DockerClient):
     """Run command includes security and resource flags."""
     cmd = docker.build_run_cmd(
-        image="athanor-sandbox:latest",
+        image="embry0-sandbox:latest",
         name="sandbox-job-123",
         network="sandbox-restricted",
         memory="8g",
@@ -56,14 +56,14 @@ def test_build_run_cmd(docker: DockerClient):
     assert "--pids-limit=256" in cmd
     assert "--read-only" in cmd
     assert "--network=sandbox-restricted" in cmd
-    assert "athanor-sandbox:latest" in cmd
+    assert "embry0-sandbox:latest" in cmd
     assert cmd[-1] == "infinity"  # sleep infinity
 
 
 def test_build_run_cmd_volumes(docker: DockerClient):
     """Volumes are passed as -v flags, appearing before image."""
     cmd = docker.build_run_cmd(
-        image="athanor-sandbox:latest",
+        image="embry0-sandbox:latest",
         name="sandbox-job-123",
         volumes=["/host/path:/container/path:ro", "/data:/data"],
     )
@@ -73,21 +73,21 @@ def test_build_run_cmd_volumes(docker: DockerClient):
     assert "/host/path:/container/path:ro" in v_pairs
     assert "/data:/data" in v_pairs
     # Image must come after all -v flags
-    image_idx = cmd.index("athanor-sandbox:latest")
+    image_idx = cmd.index("embry0-sandbox:latest")
     for v in v_pairs:
         assert cmd.index(v) < image_idx
 
 
 def test_build_run_cmd_no_volumes(docker: DockerClient):
     """Without volumes parameter, no -v flags appear."""
-    cmd = docker.build_run_cmd(image="athanor-sandbox:latest", name="sandbox-job-123")
+    cmd = docker.build_run_cmd(image="embry0-sandbox:latest", name="sandbox-job-123")
     assert "-v" not in cmd
 
 
 def test_build_run_cmd_extra_hosts(docker: DockerClient):
     """extra_hosts maps to --add-host=name:ip flags."""
     cmd = docker.build_run_cmd(
-        image="athanor-sandbox:latest",
+        image="embry0-sandbox:latest",
         name="sandbox-1",
         extra_hosts={"dind": "172.24.0.3", "minio-proxy": "172.24.0.7"},
     )
@@ -97,14 +97,14 @@ def test_build_run_cmd_extra_hosts(docker: DockerClient):
 
 def test_build_run_cmd_no_extra_hosts(docker: DockerClient):
     """Without extra_hosts, no --add-host flag is emitted."""
-    cmd = docker.build_run_cmd(image="athanor-sandbox:latest", name="sandbox-1")
+    cmd = docker.build_run_cmd(image="embry0-sandbox:latest", name="sandbox-1")
     assert not any(t.startswith("--add-host") for t in cmd)
 
 
 def test_build_run_cmd_unqualified_image_omits_pull(docker: DockerClient):
     """A bare image name (no registry segment) must NOT add --pull=always —
     the image only exists locally and a pull would fail."""
-    cmd = docker.build_run_cmd(image="athanor-sandbox:latest", name="sandbox-1")
+    cmd = docker.build_run_cmd(image="embry0-sandbox:latest", name="sandbox-1")
     assert "--pull=always" not in cmd
 
 
@@ -114,22 +114,22 @@ def test_build_run_cmd_registry_qualified_image_forces_pull(docker: DockerClient
     prevents DinD from serving a stale `latest` after the host rebuilds
     and init-push-images refreshes the registry — the silent failure
     mode that masked the QA pipeline's runner-import crash on 2026-05-06."""
-    cmd = docker.build_run_cmd(image="registry:5000/athanor-sandbox:latest", name="sandbox-1")
+    cmd = docker.build_run_cmd(image="registry:5000/embry0-sandbox:latest", name="sandbox-1")
     assert "--pull=always" in cmd
     # And it must precede the image arg / "run -d" must still be there.
     assert "run" in cmd
-    assert cmd.index("--pull=always") < cmd.index("registry:5000/athanor-sandbox:latest")
+    assert cmd.index("--pull=always") < cmd.index("registry:5000/embry0-sandbox:latest")
 
 
 def test_build_run_cmd_dotted_registry_host_forces_pull(docker: DockerClient):
     """A registry hostname with a `.` (e.g. ghcr.io/...) is also qualified."""
-    cmd = docker.build_run_cmd(image="ghcr.io/client-project/athanor-sandbox:latest", name="sandbox-1")
+    cmd = docker.build_run_cmd(image="ghcr.io/acme-corp/embry0-sandbox:latest", name="sandbox-1")
     assert "--pull=always" in cmd
 
 
 def test_build_run_cmd_localhost_registry_forces_pull(docker: DockerClient):
     """A `localhost/...` qualified image (Docker's special form) also pulls."""
-    cmd = docker.build_run_cmd(image="localhost/athanor-sandbox:latest", name="sandbox-1")
+    cmd = docker.build_run_cmd(image="localhost/embry0-sandbox:latest", name="sandbox-1")
     assert "--pull=always" in cmd
 
 
@@ -170,7 +170,7 @@ def test_build_run_cmd_no_tmpfs_when_omitted(docker: DockerClient):
 
 def test_scrub_cmd_redacts_oauth_token():
     """The OAuth token passed to sandbox launches must not reach logs."""
-    from athanor.execution.docker_client import _scrub_cmd_for_log
+    from embry0.execution.docker_client import _scrub_cmd_for_log
 
     cmd = [
         "docker",
@@ -180,7 +180,7 @@ def test_scrub_cmd_redacts_oauth_token():
         "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-secret-value",
         "-e",
         "QA_JOB_ID=job-1",
-        "registry:5000/athanor-sandbox:latest",
+        "registry:5000/embry0-sandbox:latest",
     ]
     scrubbed = _scrub_cmd_for_log(cmd)
     assert "CLAUDE_CODE_OAUTH_TOKEN=***REDACTED***" in scrubbed
@@ -193,7 +193,7 @@ def test_scrub_cmd_redacts_oauth_token():
 
 
 def test_scrub_cmd_redacts_known_secret_keys():
-    from athanor.execution.docker_client import _scrub_cmd_for_log
+    from embry0.execution.docker_client import _scrub_cmd_for_log
 
     cmd = [
         "docker",
@@ -203,7 +203,7 @@ def test_scrub_cmd_redacts_known_secret_keys():
         "-e",
         "GITHUB_TOKEN=ghp_...",
         "-e",
-        "ATHANOR_SANDBOX_TOKEN=tok-...",
+        "EMBRY0_SANDBOX_TOKEN=tok-...",
         "-e",
         "POSTGRES_PASSWORD=p4ss",
         "-e",
@@ -221,7 +221,7 @@ def test_scrub_cmd_default_deny_redacts_unlisted_secrets():
     """Default-deny: every -e value is redacted except the docker safe-list.
     Regression for the leak where AZURE/CF/DB/etc. secrets reached logs because
     they were never in an allowlist."""
-    from athanor.execution.docker_client import _scrub_cmd_for_log
+    from embry0.execution.docker_client import _scrub_cmd_for_log
 
     cmd = [
         "docker",
@@ -246,7 +246,7 @@ def test_scrub_cmd_default_deny_redacts_unlisted_secrets():
 
 def test_scrub_cmd_handles_dangling_e_flag():
     """`-e` at the end with nothing after it: don't crash, don't redact spuriously."""
-    from athanor.execution.docker_client import _scrub_cmd_for_log
+    from embry0.execution.docker_client import _scrub_cmd_for_log
 
     cmd = ["docker", "run", "img", "-e"]
     assert _scrub_cmd_for_log(cmd) == cmd
@@ -254,7 +254,7 @@ def test_scrub_cmd_handles_dangling_e_flag():
 
 def test_scrub_cmd_handles_e_without_equals():
     """`-e KEY` (no value) — docker reads it from the host env. Pass through."""
-    from athanor.execution.docker_client import _scrub_cmd_for_log
+    from embry0.execution.docker_client import _scrub_cmd_for_log
 
     cmd = ["docker", "run", "-e", "GITHUB_TOKEN", "img"]
     # No `=` in the value, so the partition fallback kicks in and we just
@@ -266,7 +266,7 @@ def test_build_exec_cmd(docker: DockerClient):
     """Exec command targets container by name."""
     cmd = docker.build_exec_cmd(
         container="sandbox-job-123",
-        command=["python", "-m", "athanor.sandbox.runner", "--config", "{}"],
+        command=["python", "-m", "embry0.sandbox.runner", "--config", "{}"],
     )
     assert "exec" in cmd
     assert "sandbox-job-123" in cmd
@@ -361,7 +361,7 @@ def test_proxy_run_cmd_uses_env_file(tmp_path):
 
     cmd, env_file = DockerClient().build_run_proxy_cmd(
         name="git-proxy",
-        image="athanor-proxy:latest",
+        image="embry0-proxy:latest",
         network="sandbox-restricted",
         env={"PROXY_TYPE": "git", "GITHUB_TOKEN": "x", "PROXY_ADMIN_TOKEN": "y"},
     )
@@ -387,20 +387,20 @@ def test_proxy_run_cmd_registry_qualified_image_forces_pull():
     like sandboxes (test_build_run_cmd_registry_qualified_image_forces_pull).
     Without it DinD serves its cached `latest` after the host rebuilds and
     init-push-images refreshes the registry — the stale-image failure mode
-    that silently ran a pre-B2 git-proxy for two months (found 2026-07-06
-    during the INT-655 access smoke: per-owner enroll tokens were ignored by
+    that silently ran a stale git-proxy for two months (found 2026-07-06
+    during an access smoke test: per-owner enroll tokens were ignored by
     the old handler still running from a 2026-05-04 cache)."""
     import os
 
     cmd, env_file = DockerClient().build_run_proxy_cmd(
         name="git-proxy",
-        image="registry:5000/athanor-proxy:latest",
+        image="registry:5000/embry0-proxy:latest",
         network="sandbox-restricted",
         env={"PROXY_TYPE": "git"},
     )
     try:
         assert "--pull=always" in cmd
-        assert cmd.index("--pull=always") < cmd.index("registry:5000/athanor-proxy:latest")
+        assert cmd.index("--pull=always") < cmd.index("registry:5000/embry0-proxy:latest")
     finally:
         os.unlink(env_file)
 
@@ -411,7 +411,7 @@ def test_proxy_run_cmd_unqualified_image_omits_pull():
 
     cmd, env_file = DockerClient().build_run_proxy_cmd(
         name="git-proxy",
-        image="athanor-proxy:latest",
+        image="embry0-proxy:latest",
         network="sandbox-restricted",
         env={"PROXY_TYPE": "git"},
     )

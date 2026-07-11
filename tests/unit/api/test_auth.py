@@ -4,7 +4,7 @@ import hmac
 import pytest
 from fastapi import HTTPException
 
-from athanor.api.auth import verify_api_key, verify_webhook_signature
+from embry0.api.auth import verify_api_key, verify_webhook_signature
 
 # ---------------------------------------------------------------------------
 # verify_api_key

@@ -1,8 +1,8 @@
 import pytest
 
-from athanor.storage.database import DatabasePool
-from athanor.storage.repositories.jobs import JobsRepository
-from athanor.storage.repositories.traces import TracesRepository
+from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.jobs import JobsRepository
+from embry0.storage.repositories.traces import TracesRepository
 
 pytestmark = pytest.mark.requires_postgres
 

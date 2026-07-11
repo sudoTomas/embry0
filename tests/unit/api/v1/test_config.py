@@ -3,13 +3,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from athanor.api.app import create_app
-from athanor.config import AthanorConfig
+from embry0.api.app import create_app
+from embry0.config import Embry0Config
 
 
 @pytest.fixture
 def app():
-    config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True)
+    config = Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True)
     app = create_app(config)
     mock_budget = MagicMock()
     mock_budget.get = AsyncMock(
@@ -45,7 +45,7 @@ async def test_get_model_config_returns_configured_models(app):
     assert isinstance(data["heavy"], str) and data["heavy"]
     assert isinstance(data["medium"], str) and data["medium"]
     assert isinstance(data["light"], str) and data["light"]
-    # Verify values match the AthanorConfig defaults
+    # Verify values match the Embry0Config defaults
     assert data["heavy"] == "claude-opus-4-7"
     assert data["medium"] == "claude-sonnet-4-6"
     assert data["light"] == "claude-haiku-4-5"

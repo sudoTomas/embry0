@@ -30,7 +30,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && npm install -g @anthropic-ai/claude-code@2.1.92
 
 # Python dependencies for sandbox
-# langchain-core: athanor.sandbox.runner uses RunnableConfig (type hint only,
+# langchain-core: embry0.sandbox.runner uses RunnableConfig (type hint only,
 # but imported at module load via cast()).
 RUN pip install --no-cache-dir \
     "claude-agent-sdk>=0.1.48,<0.2" \
@@ -39,8 +39,8 @@ RUN pip install --no-cache-dir \
     "langchain-core>=0.3,<1"
 
 # Sandbox code (runs inside container).
-# athanor/agents/ + the docker_client/auth_provider/agent_runner subset are
-# imported transitively from athanor.sandbox.runner -> executor_factory ->
+# embry0/agents/ + the docker_client/auth_provider/agent_runner subset are
+# imported transitively from embry0.sandbox.runner -> executor_factory ->
 # SdkAgentExecutor; the sandbox runner cannot start without them.
 #
 # sandbox_manager.py is intentionally NOT copied: the runner only needs
@@ -49,17 +49,17 @@ RUN pip install --no-cache-dir \
 # TYPE_CHECKING so loading the module does not transitively pull in
 # image_registry / cache_manager / etc. — modules that don't belong inside
 # the sandbox.
-COPY athanor/sandbox/ /app/athanor/sandbox/
-COPY athanor/safety/ /app/athanor/safety/
-COPY athanor/agents/ /app/athanor/agents/
-COPY athanor/execution/events.py /app/athanor/execution/events.py
-COPY athanor/execution/agent_runner.py /app/athanor/execution/agent_runner.py
-COPY athanor/execution/auth_provider.py /app/athanor/execution/auth_provider.py
-COPY athanor/execution/docker_client.py /app/athanor/execution/docker_client.py
+COPY embry0/sandbox/ /app/embry0/sandbox/
+COPY embry0/safety/ /app/embry0/safety/
+COPY embry0/agents/ /app/embry0/agents/
+COPY embry0/execution/events.py /app/embry0/execution/events.py
+COPY embry0/execution/agent_runner.py /app/embry0/execution/agent_runner.py
+COPY embry0/execution/auth_provider.py /app/embry0/execution/auth_provider.py
+COPY embry0/execution/docker_client.py /app/embry0/execution/docker_client.py
 
-# Make athanor packages importable
-RUN mkdir -p /app/athanor/execution && \
-    touch /app/athanor/__init__.py /app/athanor/execution/__init__.py
+# Make embry0 packages importable
+RUN mkdir -p /app/embry0/execution && \
+    touch /app/embry0/__init__.py /app/embry0/execution/__init__.py
 
 ENV PYTHONPATH=/app
 
@@ -73,10 +73,9 @@ USER agent
 WORKDIR /workspace
 
 # --- dev-python -------------------------------------------------------------
-# Lean dev-check toolchain for Python repos (first consumer: client-project/
-# ai-quoting ml/ — Poetry 1.8.4 per its pyproject/CI). Same base as the slim
-# sandbox: no Chromium, no Docker CLI, no JDK. Repo dependencies are installed
-# per-job by the agent (`poetry install`), not baked here.
+# Lean dev-check toolchain for Poetry-based Python repos. Same base as the
+# slim sandbox: no Chromium, no Docker CLI, no JDK. Repo dependencies are
+# installed per-job by the agent (`poetry install`), not baked here.
 FROM base AS dev-python
 USER root
 RUN pip install --no-cache-dir "poetry==1.8.4"

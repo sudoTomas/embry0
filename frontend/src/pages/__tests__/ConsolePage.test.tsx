@@ -231,14 +231,14 @@ describe("ConsolePage — URL-synced state", () => {
     mockFetchJobs.mockResolvedValue(
       jobList([makeJob({ status: "running", task: "Running task" })]),
     );
-    renderPage("/console?label=batch:raven-recruit-v1.4");
+    renderPage("/console?label=batch:demo-recruit-v1.4");
 
     // Jobs without a labels field still render — the filter cannot hide them.
     const running = screen.getByTestId("board-column-running");
     expect(await within(running).findByText("Running task")).toBeInTheDocument();
 
     const chip = screen.getByTestId("label-filter-chip");
-    expect(chip).toHaveTextContent("batch:raven-recruit-v1.4");
+    expect(chip).toHaveTextContent("batch:demo-recruit-v1.4");
     fireEvent.click(chip);
     expect(screen.getByTestId("location")).toHaveTextContent(/\/console$/);
   });

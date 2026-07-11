@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from athanor.api.v1.queue import router
+from embry0.api.v1.queue import router
 
 
 def _app(summary: dict[str, int]) -> FastAPI:

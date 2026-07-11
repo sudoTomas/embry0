@@ -6,7 +6,7 @@ import json
 
 
 def test_ask_user_emits_event(capsys):
-    from athanor.sandbox.ask_user import ask_user
+    from embry0.sandbox.ask_user import ask_user
 
     ask_user("Which database?", category="design", options=["postgres", "mysql"])
 

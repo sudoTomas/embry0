@@ -1,7 +1,7 @@
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from athanor.execution.proxy.github_proxy import create_github_proxy_app
+from embry0.execution.proxy.github_proxy import create_github_proxy_app
 
 ADMIN = "admin-secret-xxxxxxxxxxxxxxxxxxxx"
 GLOBAL = "ghp_GLOBAL"

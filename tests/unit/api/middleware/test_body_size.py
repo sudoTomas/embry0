@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from athanor.api.middleware.body_size import DEFAULT_MAX_BYTES, BodySizeMiddleware
+from embry0.api.middleware.body_size import DEFAULT_MAX_BYTES, BodySizeMiddleware
 
 
 def _app(max_bytes: int = DEFAULT_MAX_BYTES) -> FastAPI:

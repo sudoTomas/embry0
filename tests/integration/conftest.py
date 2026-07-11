@@ -11,18 +11,18 @@ import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from athanor.api.app import _init_app_state, create_app
-from athanor.config import AthanorConfig
-from athanor.storage.database import DatabasePool
-from athanor.storage.encryption import FernetSecretsProvider
-from athanor.storage.migrations.runner import run_migrations
+from embry0.api.app import _init_app_state, create_app
+from embry0.config import Embry0Config
+from embry0.storage.database import DatabasePool
+from embry0.storage.encryption import FernetSecretsProvider
+from embry0.storage.migrations.runner import run_migrations
 
 
 @pytest.fixture(scope="session")
 def database_url() -> str:
     return os.environ.get(
         "TEST_DATABASE_URL",
-        "postgresql://athanor:athanor@localhost:5432/athanor_integration_test",
+        "postgresql://embry0:embry0@localhost:5432/embry0_integration_test",
     )
 
 
@@ -83,7 +83,7 @@ def _make_test_lifespan(database_url: str):
 @pytest.fixture
 async def app(setup_database: str) -> AsyncIterator[AsyncClient]:
     """Create a test FastAPI app with real database (no Docker/proxy)."""
-    config = AthanorConfig(
+    config = Embry0Config(
         _env_file=None,
         database_url=setup_database,
         auth_dev_mode=True,
@@ -130,14 +130,14 @@ async def builtin_profile_seeded(app: AsyncClient, database_url: str) -> AsyncIt
     """Seed builtin sandbox profiles (slim, qa-jvm) into the integration test DB.
 
     The integration test lifespan does NOT seed builtins (the production
-    lifespan in athanor/api/app.py does, but the test lifespan stops at
+    lifespan in embry0/api/app.py does, but the test lifespan stops at
     _init_app_state). Tests that depend on builtin profiles being present
     request this fixture; it opens a short-lived pool to the same
     TEST_DATABASE_URL and runs the seed. The test app's own pool sees the
     rows because they share one Postgres database. Seeding is idempotent.
     """
-    from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
-    from athanor.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
+    from embry0.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+    from embry0.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
 
     seed_db = DatabasePool(database_url)
     await seed_db.connect()
@@ -162,7 +162,7 @@ async def qa_minio_seeded(app):
     endpoint = os.environ.get("MINIO_ENDPOINT", "")
     if not endpoint:
         pytest.skip("MINIO_ENDPOINT not set")
-    from athanor.execution.qa.minio_client import QAMinioClient
+    from embry0.execution.qa.minio_client import QAMinioClient
 
     client = QAMinioClient(
         endpoint=endpoint,

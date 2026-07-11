@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from athanor.api.schemas import (
+from embry0.api.schemas import (
     BudgetConfigResponse,
     ContextType,
     JobContext,
@@ -70,7 +70,7 @@ def test_job_response_tolerates_legacy_rows_without_stage_or_issue():
 
 
 def test_sandbox_profile_request():
-    req = SandboxProfileRequest(name="python-3.12", base_image="athanor-sandbox-python:3.12")
+    req = SandboxProfileRequest(name="python-3.12", base_image="embry0-sandbox-python:3.12")
     assert req.name == "python-3.12"
 
 

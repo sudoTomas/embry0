@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from athanor.storage.database import DatabasePool
-from athanor.storage.repositories.qa_workspace_provider_overrides import (
+from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.qa_workspace_provider_overrides import (
     QAWorkspaceProviderOverridesRepository,
     WorkspaceProviderOverride,
 )

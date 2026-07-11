@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from athanor.workflows.qa._orchestrator_workspace import (
+from embry0.workflows.qa._orchestrator_workspace import (
     compute_changed_files_via_diff,
     stage_workspace_for_provider,
 )
@@ -134,11 +134,11 @@ async def test_stage_workspace_extracts_package_jsons_and_lockfile(tmp_path: Pat
         docker=docker,
         container_id="bootstrap-1",
         job_id="job-abc",
-        target_root=tmp_path / "athanor-workspace-job-abc",
+        target_root=tmp_path / "embry0-workspace-job-abc",
     )
 
     # Returned path
-    assert staging == tmp_path / "athanor-workspace-job-abc"
+    assert staging == tmp_path / "embry0-workspace-job-abc"
 
     # Files staged
     assert (staging / "package.json").is_file()
@@ -181,7 +181,7 @@ async def test_stage_workspace_handles_missing_lockfile_gracefully(tmp_path: Pat
         docker=docker,
         container_id="bootstrap-1",
         job_id="job-x",
-        target_root=tmp_path / "athanor-workspace-job-x",
+        target_root=tmp_path / "embry0-workspace-job-x",
     )
     assert (staging / "package.json").is_file()
     assert not (staging / "package-lock.json").exists()

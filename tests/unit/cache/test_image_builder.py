@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.cache.image_builder import (
+from embry0.cache.image_builder import (
     ImageBuildError,
     ImageBuildResult,
     _make_image_tag,
@@ -19,7 +19,7 @@ def test_make_image_tag_lowercases_uppercase_repo_names():
     # Everything before the ':' (the timestamp tag separator) must be lowercase
     name_part, _, _ = tag.partition(":")
     assert name_part == name_part.lower(), tag
-    assert name_part == "athanor-qa-vercel_next.js"
+    assert name_part == "embry0-qa-vercel_next.js"
 
 
 @pytest.fixture
@@ -59,15 +59,15 @@ async def test_build_qa_image_happy_path(stub_helpers, monkeypatch, tmp_path):
     """build_qa_image clones, npm ci's, turbo builds, commits, and records."""
 
     async def fake_clone(**kw):
-        from athanor.workflows.qa._subtask_prep import ClonedSandbox
+        from embry0.workflows.qa._subtask_prep import ClonedSandbox
 
         return ClonedSandbox(head_sha="abc123")
 
-    monkeypatch.setattr("athanor.cache.image_builder.prep_qa_sandbox_clone", fake_clone)
+    monkeypatch.setattr("embry0.cache.image_builder.prep_qa_sandbox_clone", fake_clone)
 
     # Stub lockfile hash so we don't need a real package-lock.json
     monkeypatch.setattr(
-        "athanor.cache.image_builder.compute_lockfile_sha",
+        "embry0.cache.image_builder.compute_lockfile_sha",
         lambda root: "deadbeef" * 8,
     )
 
@@ -107,13 +107,13 @@ async def test_build_qa_image_destroys_sandbox_on_npm_ci_failure(stub_helpers, m
     """If `npm ci` fails, the bootstrap sandbox is still destroyed."""
 
     async def fake_clone(**kw):
-        from athanor.workflows.qa._subtask_prep import ClonedSandbox
+        from embry0.workflows.qa._subtask_prep import ClonedSandbox
 
         return ClonedSandbox(head_sha="abc")
 
-    monkeypatch.setattr("athanor.cache.image_builder.prep_qa_sandbox_clone", fake_clone)
+    monkeypatch.setattr("embry0.cache.image_builder.prep_qa_sandbox_clone", fake_clone)
     monkeypatch.setattr(
-        "athanor.cache.image_builder.compute_lockfile_sha",
+        "embry0.cache.image_builder.compute_lockfile_sha",
         lambda root: "abc",
     )
 

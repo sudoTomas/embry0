@@ -21,7 +21,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_boot_node_polls_real_http_until_pass():
-    from athanor.workflows.qa.nodes import boot_qa_node
+    from embry0.workflows.qa.nodes import boot_qa_node
 
     docker = MagicMock()
     docker.run_cmd = AsyncMock(return_value="started")
@@ -59,8 +59,8 @@ async def test_boot_node_polls_real_http_until_pass():
     # Also force run_boot_phase's sleep to 0 so the test doesn't actually
     # wait between attempts.
     with (
-        patch("athanor.workflows.qa.boot._probe_ready_check", side_effect=fake_probe),
-        patch("athanor.workflows.qa.boot.asyncio.sleep", AsyncMock()),
+        patch("embry0.workflows.qa.boot._probe_ready_check", side_effect=fake_probe),
+        patch("embry0.workflows.qa.boot.asyncio.sleep", AsyncMock()),
     ):
         cmd = await boot_qa_node(state, config)
 

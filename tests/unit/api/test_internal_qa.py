@@ -16,7 +16,7 @@ class _FakeMinio:
 @pytest.fixture
 async def api_with_qa(api_client):
     """Wires fake MinIO + a registered token into the test app."""
-    from athanor.execution.qa.token_registry import SandboxTokenRegistry
+    from embry0.execution.qa.token_registry import SandboxTokenRegistry
 
     api_client.app.state.qa_minio = _FakeMinio()
     reg = SandboxTokenRegistry()
@@ -80,7 +80,7 @@ async def test_presign_uses_sandbox_facing_minio_client(api_client):
     SANDBOX-facing client mints URLs (so the URL hostname matches what the
     sandbox can reach). qa_minio is the internal client used for bucket admin.
     """
-    from athanor.execution.qa.token_registry import SandboxTokenRegistry
+    from embry0.execution.qa.token_registry import SandboxTokenRegistry
 
     class _SandboxClient:
         async def presign_put(self, bucket, key, expires_seconds):

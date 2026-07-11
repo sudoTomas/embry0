@@ -1,13 +1,13 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from athanor.api.app import create_app
-from athanor.config import AthanorConfig
+from embry0.api.app import create_app
+from embry0.config import Embry0Config
 
 
 @pytest.fixture
 def app():
-    config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True)
+    config = Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True)
     return create_app(config)
 
 

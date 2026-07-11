@@ -29,7 +29,7 @@ export function CompactStatCard({
   return (
     <div
       className={clsx(
-        "athanor-card relative overflow-hidden px-3 py-2.5 animate-fade-up",
+        "embry0-card relative overflow-hidden px-3 py-2.5 animate-fade-up",
         className,
       )}
       style={{ animationDelay: `${delay}ms` }}

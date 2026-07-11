@@ -9,14 +9,14 @@ def _build_executor() -> object:
     ``_select_workflow`` only reads the pipeline argument, so attributes can
     be left unset.
     """
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     return IssueExecutor.__new__(IssueExecutor)
 
 
 def test_select_workflow_qa_returns_qa_workflow() -> None:
     """pipeline='qa' returns a QAWorkflow instance."""
-    from athanor.workflows.qa.graph import QAWorkflow
+    from embry0.workflows.qa.graph import QAWorkflow
 
     executor = _build_executor()
     wf = executor._select_workflow("qa")
@@ -25,7 +25,7 @@ def test_select_workflow_qa_returns_qa_workflow() -> None:
 
 def test_select_workflow_default_returns_issue_to_pr() -> None:
     """pipeline='issue-to-pr' returns IssueToprWorkflow."""
-    from athanor.workflows.issue_to_pr.graph import IssueToprWorkflow
+    from embry0.workflows.issue_to_pr.graph import IssueToprWorkflow
 
     executor = _build_executor()
     wf = executor._select_workflow("issue-to-pr")
@@ -38,7 +38,7 @@ def test_select_workflow_unknown_falls_back_to_issue_to_pr() -> None:
     Production callers can pass arbitrary template ids via pipeline_template;
     silently routing them to the default workflow preserves prior behaviour.
     """
-    from athanor.workflows.issue_to_pr.graph import IssueToprWorkflow
+    from embry0.workflows.issue_to_pr.graph import IssueToprWorkflow
 
     executor = _build_executor()
     wf = executor._select_workflow("some-future-pipeline")
@@ -47,7 +47,7 @@ def test_select_workflow_unknown_falls_back_to_issue_to_pr() -> None:
 
 def test_build_graph_config_includes_qa_deps() -> None:
     """_build_graph_config surfaces QA deps under config['configurable']."""
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._config = None

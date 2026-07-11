@@ -1,12 +1,12 @@
 from pathlib import Path
 
-from athanor.workspace_providers import (
+from embry0.workspace_providers import (
     AffectedSet,
     WorkspaceApp,
     WorkspacePackage,
     WorkspaceProvider,
 )
-from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
 
 def test_fake_satisfies_protocol():

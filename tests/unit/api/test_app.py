@@ -2,7 +2,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 try:
-    from athanor.api.app import _check_postgres_password, create_app
+    from embry0.api.app import _check_postgres_password, create_app
 except ImportError:
     pytest.skip("psycopg not available", allow_module_level=True)
 
@@ -10,11 +10,11 @@ except ImportError:
 @pytest.mark.asyncio
 async def test_default_postgres_password_rejected_in_production():
     """Orchestrator must refuse to start with the well-known default password."""
-    from athanor.config import AthanorConfig
+    from embry0.config import Embry0Config
 
-    config = AthanorConfig(
+    config = Embry0Config(
         _env_file=None,
-        database_url="postgresql://athanor:athanor@postgres:5432/athanor",
+        database_url="postgresql://embry0:embry0@postgres:5432/embry0",
         auth_dev_mode=False,
         webhook_dev_mode=False,
         api_key="test-key",
@@ -28,11 +28,11 @@ async def test_default_postgres_password_rejected_in_production():
 @pytest.mark.asyncio
 async def test_default_postgres_password_allowed_in_dev_mode():
     """In auth_dev_mode the default password is accepted (local dev convenience)."""
-    from athanor.config import AthanorConfig
+    from embry0.config import Embry0Config
 
-    config = AthanorConfig(
+    config = Embry0Config(
         _env_file=None,
-        database_url="postgresql://athanor:athanor@postgres:5432/athanor",
+        database_url="postgresql://embry0:embry0@postgres:5432/embry0",
         auth_dev_mode=True,
         webhook_dev_mode=True,
         api_key="",
@@ -47,7 +47,7 @@ async def test_default_postgres_password_allowed_in_dev_mode():
 async def test_app_creates_successfully():
     app = create_app()
     assert app is not None
-    assert app.title == "Athanor API"
+    assert app.title == "embry0 API"
 
 
 @pytest.mark.asyncio

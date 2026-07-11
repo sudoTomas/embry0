@@ -16,21 +16,21 @@ from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
-from athanor.storage.repositories.qa_app_results import (
+from embry0.storage.repositories.qa_app_results import (
     AppHistoryRow,
     QAAppResultRow,
     RepoSummary,
     RunSummary,
 )
-from athanor.storage.repositories.qa_run_metadata import QARunMetadata
-from athanor.workflows.qa.subtask_result_schema import CacheHits, SubTaskStatus
+from embry0.storage.repositories.qa_run_metadata import QARunMetadata
+from embry0.workflows.qa.subtask_result_schema import CacheHits, SubTaskStatus
 
 _KEY = "test-api-key-32-characters-minimum-x"
 _AUTH = {"Authorization": f"Bearer {_KEY}"}
 
 
 def _make_app(qa_repo=None, jobs_repo=None, run_md_repo=None):
-    from athanor.api.app import create_app
+    from embry0.api.app import create_app
 
     app = create_app()
 

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from athanor.storage.database import DatabasePool
-from athanor.storage.repositories.qa_app_results import (
+from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.qa_app_results import (
     QAAppResultsRepository,
 )
-from athanor.workflows.qa.subtask_result_schema import (
+from embry0.workflows.qa.subtask_result_schema import (
     CacheHits,
     SubTaskResult,
     SubTaskStatus,

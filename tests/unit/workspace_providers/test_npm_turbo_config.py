@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from athanor.workspace_providers.npm_workspaces_turbo.config import NpmTurboConfig
+from embry0.workspace_providers.npm_workspaces_turbo.config import NpmTurboConfig
 
 
 def test_config_defaults_match_spec():

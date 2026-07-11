@@ -1,4 +1,4 @@
-"""Tests for athanor/qa Check Run writer."""
+"""Tests for embry0/qa Check Run writer."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from athanor.notifications.qa_check import (
+from embry0.notifications.qa_check import (
     CHECK_NAME,
     build_check_payload,
     write_aggregate_check,
 )
-from athanor.workflows.qa.subtask_result_schema import (
+from embry0.workflows.qa.subtask_result_schema import (
     CacheHits,
     SubTaskResult,
     SubTaskStatus,
@@ -141,7 +141,7 @@ async def test_write_creates_when_no_existing_check(monkeypatch):
         async def patch(self, url, json=None, headers=None):
             raise AssertionError("should not patch when no existing check")
 
-    monkeypatch.setattr("athanor.notifications.qa_check.httpx.AsyncClient", lambda **kw: _StubClient())
+    monkeypatch.setattr("embry0.notifications.qa_check.httpx.AsyncClient", lambda **kw: _StubClient())
 
     result = await write_aggregate_check(
         github_token="tok",
@@ -196,7 +196,7 @@ async def test_write_patches_when_existing_check(monkeypatch):
             patched["body"] = json
             return _StubResp(200, {"id": 99})
 
-    monkeypatch.setattr("athanor.notifications.qa_check.httpx.AsyncClient", lambda **kw: _StubClient())
+    monkeypatch.setattr("embry0.notifications.qa_check.httpx.AsyncClient", lambda **kw: _StubClient())
 
     result = await write_aggregate_check(
         github_token="tok",
@@ -239,7 +239,7 @@ async def test_write_raises_on_github_error(monkeypatch):
         async def post(self, url, json=None, headers=None):
             return _StubResp(403)
 
-    monkeypatch.setattr("athanor.notifications.qa_check.httpx.AsyncClient", lambda **kw: _StubClient())
+    monkeypatch.setattr("embry0.notifications.qa_check.httpx.AsyncClient", lambda **kw: _StubClient())
 
     with pytest.raises(httpx.HTTPStatusError):
         await write_aggregate_check(

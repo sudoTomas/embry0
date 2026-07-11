@@ -30,7 +30,7 @@ export const BOARD_COLUMNS: readonly BoardColumnConfig[] = [
  * new status without assigning it a lane is a compile-time error, not a
  * silently invisible card.
  *
- * Note: Athanor has no "queued" status; `pending` is it (the `queued` name
+ * Note: embry0 has no "queued" status; `pending` is it (the `queued` name
  * belongs to the legacy companion agent backend).
  */
 export function columnForStatus(status: JobStatus): BoardColumnId {

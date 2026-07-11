@@ -2,7 +2,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from athanor.api.middleware.csrf import CSRFMiddleware
+from embry0.api.middleware.csrf import CSRFMiddleware
 
 
 @pytest.fixture

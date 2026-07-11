@@ -1,6 +1,6 @@
 """Pure-function parser for /answer N: <text> and /skip N comment syntax."""
 
-from athanor.notifications.inbound_parser import parse_answer_directives
+from embry0.notifications.inbound_parser import parse_answer_directives
 
 
 def test_parse_single_answer_one_line():

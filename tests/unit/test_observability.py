@@ -5,7 +5,7 @@ import json
 
 import structlog
 
-from athanor.observability import configure_structlog
+from embry0.observability import configure_structlog
 
 
 def test_configure_structlog_json_produces_json_output() -> None:

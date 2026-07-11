@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from athanor.agents.executor import _assert_sdk_supports_hooks
+from embry0.agents.executor import _assert_sdk_supports_hooks
 
 
 def test_real_sdk_passes():

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.execution.sandbox_manager import SandboxManager, _sanitize_docker_name_component
+from embry0.execution.sandbox_manager import SandboxManager, _sanitize_docker_name_component
 
 
 def _make_proxy_manager(token: str = "tok-abc123") -> MagicMock:
@@ -84,16 +84,16 @@ async def test_sandbox_manager_does_not_inject_github_token(manager: SandboxMana
 
 @pytest.mark.asyncio
 async def test_sandbox_manager_passes_through_caller_env(manager: SandboxManager):
-    """Caller-provided env (like ATHANOR_GIT_PROXY_URL) must reach the container."""
+    """Caller-provided env (like EMBRY0_GIT_PROXY_URL) must reach the container."""
     await manager.create(
         job_id="job-xyz",
-        env={"ATHANOR_GIT_PROXY_URL": "http://git-proxy:9101"},
+        env={"EMBRY0_GIT_PROXY_URL": "http://git-proxy:9101"},
     )
 
     kwargs = manager._docker.build_run_cmd.call_args.kwargs
     env_passed = kwargs.get("env", {}) or {}
 
-    assert env_passed.get("ATHANOR_GIT_PROXY_URL") == "http://git-proxy:9101"
+    assert env_passed.get("EMBRY0_GIT_PROXY_URL") == "http://git-proxy:9101"
 
 
 @pytest.mark.asyncio
@@ -106,7 +106,7 @@ async def test_create_passes_tmpfs_mounts_through_to_docker_run(manager: Sandbox
     summaries copied from one neighbouring sub-task)."""
     await manager.create(
         job_id="job-fanout",
-        volumes=[("athanor-qa-vol-job-1", "/workspace")],
+        volumes=[("embry0-qa-vol-job-1", "/workspace")],
         tmpfs_mounts=["/workspace/.qa"],
     )
     kwargs = manager._docker.build_run_cmd.call_args.kwargs
@@ -123,14 +123,14 @@ async def test_create_omits_tmpfs_mounts_when_caller_does_not_set_them(manager: 
 @pytest.mark.asyncio
 async def test_create_with_custom_profile(manager: SandboxManager):
     profile = {
-        "base_image": "athanor-sandbox-java:17",
+        "base_image": "embry0-sandbox-java:17",
         "memory": "12g",
         "cpus": "6",
         "pids_limit": 512,
     }
     await manager.create(job_id="job-y", profile=profile)
     kwargs = manager._docker.build_run_cmd.call_args.kwargs
-    assert kwargs["image"] == "athanor-sandbox-java:17"
+    assert kwargs["image"] == "embry0-sandbox-java:17"
     assert kwargs["memory"] == "12g"
     assert kwargs["cpus"] == "6"
     assert kwargs["pids_limit"] == 512
@@ -139,7 +139,7 @@ async def test_create_with_custom_profile(manager: SandboxManager):
 @pytest.mark.asyncio
 async def test_create_rolls_back_on_enrollment_failure():
     """If enroll_sandbox fails, the container is removed and SandboxInitError raised."""
-    from athanor.execution.sandbox_manager import SandboxInitError
+    from embry0.execution.sandbox_manager import SandboxInitError
 
     docker = MagicMock()
     docker.run_cmd = AsyncMock(return_value="container-fail")
@@ -163,7 +163,7 @@ async def test_create_rolls_back_partial_enrollment_on_enroll_failure():
     """On enroll_sandbox failure, unenroll_sandbox is called before container rm
     to clean up any partial proxy enrollments that succeeded before the failure.
     """
-    from athanor.execution.sandbox_manager import SandboxInitError
+    from embry0.execution.sandbox_manager import SandboxInitError
 
     docker = MagicMock()
     docker.run_cmd = AsyncMock(return_value="container-partial")
@@ -214,7 +214,7 @@ async def test_create_container_name_is_docker_safe_for_colon_job_id(manager: Sa
 
 # ---------------------------------------------------------------------------
 # _resolve_token_for_repo / per-owner token resolution + enrollment wiring
-# (B2 Task 5, INT-654)
+# (per-owner token resolution)
 # ---------------------------------------------------------------------------
 
 
@@ -227,13 +227,13 @@ def _mgr(github_token="ghp_DEFAULT"):
 
 
 def test_resolve_token_for_repo_uses_owner_env(monkeypatch):
-    monkeypatch.setenv("GITHUB_TOKEN__RAVEN_CARGO", "ghp_raven")
-    assert _mgr()._resolve_token_for_repo("client-project/ai-quoting") == "ghp_raven"
+    monkeypatch.setenv("GITHUB_TOKEN__ACME_CORP", "ghp_acme")
+    assert _mgr()._resolve_token_for_repo("acme-corp/widgets") == "ghp_acme"
 
 
 def test_resolve_token_for_repo_falls_back(monkeypatch):
-    monkeypatch.delenv("GITHUB_TOKEN__ALQVIMIA_LABS", raising=False)
-    assert _mgr()._resolve_token_for_repo("former-org/embry0") == "ghp_DEFAULT"
+    monkeypatch.delenv("GITHUB_TOKEN__OCTO_ORG", raising=False)
+    assert _mgr()._resolve_token_for_repo("octo-org/embry0") == "ghp_DEFAULT"
 
 
 def test_resolve_token_for_repo_none_returns_default():
@@ -248,7 +248,7 @@ def test_resolve_token_for_repo_no_slash_returns_default():
 async def test_create_passes_resolved_token_to_enroll_sandbox(monkeypatch):
     """create() must resolve the per-owner token from `repo` and forward it
     to enroll_sandbox as the github_token kwarg."""
-    monkeypatch.setenv("GITHUB_TOKEN__RAVEN_CARGO", "ghp_raven_owner")
+    monkeypatch.setenv("GITHUB_TOKEN__ACME_CORP", "ghp_acme_owner")
 
     docker = MagicMock()
     docker.run_cmd = AsyncMock(return_value="container-repo")
@@ -258,9 +258,9 @@ async def test_create_passes_resolved_token_to_enroll_sandbox(monkeypatch):
 
     mgr = SandboxManager(docker=docker, proxy_manager=proxy_mgr, github_token="ghp_DEFAULT")
 
-    await mgr.create(job_id="job-repo", repo="client-project/ai-quoting")
+    await mgr.create(job_id="job-repo", repo="acme-corp/widgets")
 
-    proxy_mgr.enroll_sandbox.assert_awaited_once_with("container-repo", github_token="ghp_raven_owner")
+    proxy_mgr.enroll_sandbox.assert_awaited_once_with("container-repo", github_token="ghp_acme_owner")
 
 
 # ---------------------------------------------------------------------------
@@ -271,8 +271,8 @@ async def test_create_passes_resolved_token_to_enroll_sandbox(monkeypatch):
 @pytest.mark.asyncio
 async def test_create_injects_worker_cap_env_vars(manager: SandboxManager):
     """Sandbox must receive worker-cap env vars sized from the profile's cpus
-    value.  Without these, Node.js os.cpus() returns the HOST CPU count (47 on
-    private-server) and build tools (Next.js, webpack) spawn per-host-CPU
+    value.  Without these, Node.js os.cpus() returns the HOST CPU count (e.g.
+    47 on the observed host) and build tools (Next.js, webpack) spawn per-host-CPU
     workers that exceed the sandbox's pids_limit → EAGAIN."""
     await manager.create(job_id="job-worker-caps")
     kwargs = manager._docker.build_run_cmd.call_args.kwargs

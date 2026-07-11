@@ -1,8 +1,8 @@
 import pytest
 
-from athanor.storage.database import DatabasePool
-from athanor.storage.migrations.runner import run_migrations
-from athanor.storage.repositories.budget_config import BudgetConfigRepository
+from embry0.storage.database import DatabasePool
+from embry0.storage.migrations.runner import run_migrations
+from embry0.storage.repositories.budget_config import BudgetConfigRepository
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -11,7 +11,7 @@ pytestmark = pytest.mark.requires_postgres
 async def budget_repo() -> BudgetConfigRepository:
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
     db = DatabasePool(url)
     await db.connect()
     await run_migrations(db)

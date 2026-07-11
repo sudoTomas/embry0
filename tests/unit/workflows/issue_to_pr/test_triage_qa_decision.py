@@ -102,7 +102,7 @@ async def test_triage_parses_inline_set_qa_decision_true() -> None:
     """When triage embeds set_qa_decision inline in its JSON output (the prompt's
     primary path), triage_node copies needs_qa/reason/acceptance_criteria onto
     state["qa"] without needing a tool_call event."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     inline_json = _triage_decision_json_with_qa(
         {
@@ -121,8 +121,8 @@ async def test_triage_parses_inline_set_qa_decision_true() -> None:
 
     runner_mock = AsyncMock(side_effect=_run)
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_state(), _make_config())
 
@@ -136,7 +136,7 @@ async def test_triage_parses_inline_set_qa_decision_true() -> None:
 async def test_triage_parses_set_qa_decision_true() -> None:
     """When the agent emits set_qa_decision(needs_qa=True), triage_node writes
     needs_qa=True, qa_required_reason, and acceptance_criteria onto state.qa."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     qa_event = {
         "type": "tool_call",
@@ -153,8 +153,8 @@ async def test_triage_parses_set_qa_decision_true() -> None:
 
     runner_mock = _runner_emitting([qa_event])
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_state(), _make_config())
 
@@ -169,7 +169,7 @@ async def test_triage_parses_set_qa_decision_true() -> None:
 async def test_triage_parses_set_qa_decision_false() -> None:
     """When the agent emits set_qa_decision(needs_qa=False), triage_node writes
     needs_qa=False on state.qa and does NOT write acceptance_criteria."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     qa_event = {
         "type": "tool_call",
@@ -186,8 +186,8 @@ async def test_triage_parses_set_qa_decision_false() -> None:
 
     runner_mock = _runner_emitting([qa_event])
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_state(), _make_config())
 
@@ -204,7 +204,7 @@ async def test_triage_parses_set_qa_decision_false() -> None:
 async def test_triage_no_qa_decision_defaults_to_no_qa() -> None:
     """If the agent emits no set_qa_decision tool call, state.qa is not
     populated by triage_node and downstream readers see needs_qa as falsy."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     # Only an unrelated event in the stream — no set_qa_decision tool call.
     unrelated_event = {
@@ -218,8 +218,8 @@ async def test_triage_no_qa_decision_defaults_to_no_qa() -> None:
 
     runner_mock = _runner_emitting([unrelated_event])
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_state(), _make_config())
 
@@ -236,7 +236,7 @@ async def test_triage_set_qa_decision_invalid_payload_is_ignored() -> None:
     the node still returns a successful result with qa absent so the job can
     proceed (defaulting to no QA) rather than failing because the agent emitted
     a bad QA payload."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     bad_event = {
         "type": "tool_call",
@@ -250,8 +250,8 @@ async def test_triage_set_qa_decision_invalid_payload_is_ignored() -> None:
 
     runner_mock = _runner_emitting([bad_event])
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_state(), _make_config())
 
@@ -264,7 +264,7 @@ async def test_triage_last_set_qa_decision_wins() -> None:
     """If the agent emits multiple set_qa_decision tool calls (e.g. across an
     initial pass and a needs_info → resume re-run), the LAST one wins so the
     final decision reflects the agent's most recent reasoning."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     earlier = {
         "type": "tool_call",
@@ -293,8 +293,8 @@ async def test_triage_last_set_qa_decision_wins() -> None:
 
     runner_mock = _runner_emitting([earlier, later])
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_state(), _make_config())
 

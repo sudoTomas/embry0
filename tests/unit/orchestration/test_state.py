@@ -1,4 +1,4 @@
-from athanor.orchestration.state import (
+from embry0.orchestration.state import (
     AgentOutputEntry,
     JobState,
     PipelineConfig,
@@ -87,7 +87,7 @@ def test_job_state_has_cycle_guard_fields():
 
 
 def test_qa_state_block_carries_boot_outcome_fields():
-    from athanor.orchestration.state import QAStateBlock
+    from embry0.orchestration.state import QAStateBlock
 
     qa: QAStateBlock = {
         "needs_qa": True,

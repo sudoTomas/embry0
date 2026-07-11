@@ -16,7 +16,7 @@ work in isolation: ``triage_node`` requires both an ``agent_runner`` and a
 sandbox container_id, neither of which the integration test lifespan
 populates (test_lifespan stops at ``_init_app_state`` without
 sandbox_manager / agent_runner). So the test instead patches the four
-agent-bearing nodes on ``athanor.workflows.issue_to_pr.graph`` BEFORE the
+agent-bearing nodes on ``embry0.workflows.issue_to_pr.graph`` BEFORE the
 executor compiles the graph — exactly the pattern from
 ``test_phase_5_smoke.py`` but extended to drive a full pause-resume cycle.
 
@@ -33,7 +33,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END
 from langgraph.types import Command
 
-# All non-GET routes require this CSRF header (see athanor.api.security).
+# All non-GET routes require this CSRF header (see embry0.api.security).
 CSRF: dict[str, str] = {"X-Requested-With": "XMLHttpRequest"}
 
 
@@ -94,7 +94,7 @@ async def _stub_developer(state: dict[str, Any], config: RunnableConfig) -> Comm
         update={
             "current_stage": "developer_complete",
             "pr_url": "https://github.com/owner/repo/pull/stub",
-            "branch_name": "athanor/stub",
+            "branch_name": "embry0/stub",
         },
     )
 
@@ -150,7 +150,7 @@ async def test_three_questions_one_pause_batched_resume(app) -> None:
     6. Assert the issue moves out of ``awaiting_input`` (resumed).
     7. Cleanup: cancel the issue (cascades to jobs + inputs).
     """
-    import athanor.workflows.issue_to_pr.graph as g_mod
+    import embry0.workflows.issue_to_pr.graph as g_mod
 
     issue_id: str | None = None
     try:

@@ -9,16 +9,16 @@ describe("VitalsTile", () => {
     expect(screen.getByText("42")).toBeInTheDocument();
   });
 
-  it("uses the 8px rounded-lg primitive (not the legacy 16px athanor-card)", () => {
+  it("uses the 8px rounded-lg primitive (not the legacy 16px embry0-card)", () => {
     const { container } = render(<VitalsTile label="x" value="1" />);
     const root = container.firstElementChild;
     expect(root?.className).toMatch(/\brounded-lg\b/);
-    expect(root?.className).not.toMatch(/\bathanor-card\b/);
+    expect(root?.className).not.toMatch(/\bembry0-card\b/);
   });
 
-  it("never reuses the athanor-card chrome anywhere in the subtree", () => {
+  it("never reuses the embry0-card chrome anywhere in the subtree", () => {
     const { container } = render(<VitalsTile label="x" value="1" />);
-    expect(container.querySelector(".athanor-card")).toBeNull();
+    expect(container.querySelector(".embry0-card")).toBeNull();
   });
 
   it("renders the optional trend when supplied", () => {

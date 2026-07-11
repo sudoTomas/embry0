@@ -1,6 +1,6 @@
 """Tests for build_qa_sandbox_env shared helper."""
 
-from athanor.workflows.qa._subtask_env import build_qa_sandbox_env
+from embry0.workflows.qa._subtask_env import build_qa_sandbox_env
 
 
 def test_build_qa_sandbox_env_includes_infra_vars():
@@ -14,7 +14,7 @@ def test_build_qa_sandbox_env_includes_infra_vars():
     assert env["QA_JOB_ID"] == "run-1"
     assert env["QA_ATTEMPT_N"] == "2"
     assert env["QA_NETWORK_NAME"] == "qa-net-run-1"
-    assert "ATHANOR_GIT_PROXY_URL" not in env
+    assert "EMBRY0_GIT_PROXY_URL" not in env
 
 
 def test_build_qa_sandbox_env_includes_git_proxy_when_set():
@@ -25,7 +25,7 @@ def test_build_qa_sandbox_env_includes_git_proxy_when_set():
         attempt_n=1,
         qa_network_name="",
     )
-    assert env["ATHANOR_GIT_PROXY_URL"] == "http://git-proxy:9101"
+    assert env["EMBRY0_GIT_PROXY_URL"] == "http://git-proxy:9101"
 
 
 def test_build_qa_sandbox_env_user_env_passes_through():
@@ -58,7 +58,7 @@ def test_build_qa_sandbox_env_empty_qa_network_name_still_sets_var():
 
 
 def test_build_qa_sandbox_env_includes_turbo_when_configured():
-    from athanor.cache.turbo_remote import TurboRemoteConfig
+    from embry0.cache.turbo_remote import TurboRemoteConfig
 
     cfg = TurboRemoteConfig(api_url="https://t", team="x", token="y")
     env = build_qa_sandbox_env(

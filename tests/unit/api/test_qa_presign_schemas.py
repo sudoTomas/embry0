@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from athanor.api.schemas import QAPresignBatchRequest
+from embry0.api.schemas import QAPresignBatchRequest
 
 
 def test_minimal_request():

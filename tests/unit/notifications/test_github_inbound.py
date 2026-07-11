@@ -1,6 +1,6 @@
 """GitHub webhook ingestion of /answer N: directives in issue_comment events.
 
-These tests drive the FastAPI handler in ``athanor/api/v1/webhooks.py``
+These tests drive the FastAPI handler in ``embry0/api/v1/webhooks.py``
 through ``httpx.AsyncClient`` against an in-memory ASGI app whose
 ``app.state`` repos are mocks. ``webhook_dev_mode=True`` plus an empty
 secret bypasses HMAC verification (smee.io flow), so the tests focus on
@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from athanor.api.app import create_app
-from athanor.config import AthanorConfig
+from embry0.api.app import create_app
+from embry0.config import Embry0Config
 
 
 def _make_app(*, issue: dict | None, pending_inputs: list[dict] | None = None):
@@ -28,7 +28,7 @@ def _make_app(*, issue: dict | None, pending_inputs: list[dict] | None = None):
     the inputs_repo so the dispatcher's ``list_pending_for_issue`` finds
     matching rows for ``/answer N:`` directives.
     """
-    config = AthanorConfig(
+    config = Embry0Config(
         _env_file=None,
         auth_dev_mode=True,
         webhook_dev_mode=True,
@@ -127,7 +127,7 @@ async def test_issue_comment_without_directive_is_ignored():
 
 @pytest.mark.asyncio
 async def test_issue_comment_for_unknown_repo_is_ignored():
-    """If the (repo, github_number) isn't tracked in Athanor, the webhook is a no-op."""
+    """If the (repo, github_number) isn't tracked in embry0, the webhook is a no-op."""
     app, issues_repo, inputs_repo, executor = _make_app(issue=None, pending_inputs=[])
 
     payload = {

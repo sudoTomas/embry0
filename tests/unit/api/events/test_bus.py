@@ -7,7 +7,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_event_bus_subscribe_returns_queue():
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     bus = EventBus()
     q = await bus.subscribe("job-1")
@@ -16,7 +16,7 @@ async def test_event_bus_subscribe_returns_queue():
 
 @pytest.mark.asyncio
 async def test_event_bus_publish_delivers_to_subscribers():
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     bus = EventBus()
     q1 = await bus.subscribe("job-1")
@@ -33,7 +33,7 @@ async def test_event_bus_publish_delivers_to_subscribers():
 @pytest.mark.asyncio
 async def test_event_bus_publish_ignores_unknown_job():
     """Publishing for a job with no subscribers is a no-op — no error."""
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     bus = EventBus()
     await bus.publish("no-subscribers", {"type": "progress"})
@@ -41,7 +41,7 @@ async def test_event_bus_publish_ignores_unknown_job():
 
 @pytest.mark.asyncio
 async def test_event_bus_unsubscribe_removes_queue():
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     bus = EventBus()
     q = await bus.subscribe("job-1")
@@ -54,7 +54,7 @@ async def test_event_bus_unsubscribe_removes_queue():
 @pytest.mark.asyncio
 async def test_event_bus_unsubscribe_cleans_up_empty_lists():
     """After the last subscriber leaves, the job_id entry is removed."""
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     bus = EventBus()
     q = await bus.subscribe("job-1")
@@ -72,7 +72,7 @@ async def test_event_bus_publish_does_not_block_on_failing_subscriber(capsys):
     """
     import structlog.testing
 
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     bus = EventBus()
     q_good = await bus.subscribe("job-1")
@@ -100,7 +100,7 @@ async def test_event_bus_publish_does_not_block_on_failing_subscriber(capsys):
 async def test_event_bus_concurrent_subscribe_and_publish_no_race():
     """Stress: 50 concurrent subscribes + 50 concurrent publishes must not
     raise KeyError, list-mutation-during-iteration, or drop messages."""
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     bus = EventBus()
     queues: list[asyncio.Queue] = []
@@ -125,7 +125,7 @@ async def test_event_bus_concurrent_subscribe_and_publish_no_race():
 @pytest.mark.asyncio
 async def test_event_bus_concurrent_unsubscribe_during_publish():
     """Unsubscribing concurrently with publish must not crash the publisher."""
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     bus = EventBus()
     q = await bus.subscribe("job-1")
@@ -147,7 +147,7 @@ async def test_event_bus_bounded_queue_drops_on_full():
     """A full subscriber queue triggers ws_slow_consumer warning; does not raise."""
     import structlog.testing
 
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     bus = EventBus()
     q = await bus.subscribe("job-1", maxsize=2)
@@ -170,7 +170,7 @@ async def test_event_bus_bounded_queue_drops_on_full():
 @pytest.mark.asyncio
 async def test_event_bus_subscribe_default_maxsize():
     """Default subscribe creates a bounded queue (maxsize=1000)."""
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     bus = EventBus()
     q = await bus.subscribe("job-1")

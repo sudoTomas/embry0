@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from athanor.agents.claude_cli_session import (
+from embry0.agents.claude_cli_session import (
     canonical_session_path_for,
     find_session_file,
     sanitize_cwd_for_session_dir,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Operator CLI: dispatch a Linear ticket to embry0 (INT-655 W1b).
+# Operator CLI: dispatch a Linear ticket to embry0.
 # Env: LINEAR_API_KEY (required); EMBRY0_URL (default http://localhost:8200);
-#      EMBRY0_API_KEY or API_KEY (required unless --dry-run).
+#      EMBRY0_DEFAULT_REPO (or pass --repo); EMBRY0_API_KEY or API_KEY (required unless --dry-run).
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec "${REPO_ROOT}/.venv/bin/python" -m athanor.services.linear_dispatch "$@"
+exec "${REPO_ROOT}/.venv/bin/python" -m embry0.services.linear_dispatch "$@"

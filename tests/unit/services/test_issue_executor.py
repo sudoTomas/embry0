@@ -9,7 +9,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_broadcast_event_accumulates_cost_across_events():
     """Successive cost_update events must ADD, not overwrite."""
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     jobs = MagicMock()
     jobs.append_log_event = AsyncMock()
@@ -18,7 +18,7 @@ async def test_broadcast_event_accumulates_cost_across_events():
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._jobs = jobs
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     executor._event_bus = EventBus()
 
@@ -37,7 +37,7 @@ async def test_broadcast_event_accumulates_cost_across_events():
 @pytest.mark.asyncio
 async def test_broadcast_event_ignores_cost_update_without_amount():
     """cost_update events with missing or zero cost_usd must not call increment_cost."""
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     jobs = MagicMock()
     jobs.append_log_event = AsyncMock()
@@ -45,7 +45,7 @@ async def test_broadcast_event_ignores_cost_update_without_amount():
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._jobs = jobs
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     executor._event_bus = EventBus()
 
@@ -60,8 +60,8 @@ async def test_broadcast_event_ignores_cost_update_without_amount():
 async def test_broadcast_event_stamps_event_seq_from_persist():
     """The seq returned by append_log_event must be stamped onto the event
     before it reaches subscribers, so WS clients can use it as a cursor."""
-    from athanor.api.events.bus import EventBus
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.api.events.bus import EventBus
+    from embry0.services.issue_executor import IssueExecutor
 
     jobs = MagicMock()
     jobs.append_log_event = AsyncMock(return_value=12345)
@@ -85,8 +85,8 @@ async def test_broadcast_event_stamps_event_seq_from_persist():
 async def test_broadcast_event_no_event_seq_when_persist_fails():
     """If append_log_event raises, the event still reaches subscribers but
     carries no event_seq stamp (nothing to stamp since nothing was persisted)."""
-    from athanor.api.events.bus import EventBus
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.api.events.bus import EventBus
+    from embry0.services.issue_executor import IssueExecutor
 
     jobs = MagicMock()
     jobs.append_log_event = AsyncMock(side_effect=RuntimeError("db down"))
@@ -109,8 +109,8 @@ async def test_broadcast_event_no_event_seq_when_persist_fails():
 @pytest.mark.asyncio
 async def test_track_task_registers_and_removes_on_completion():
     """_track_task adds to the set; callback removes on normal completion."""
-    from athanor.api.events.bus import EventBus
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.api.events.bus import EventBus
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
@@ -133,8 +133,8 @@ async def test_track_task_registers_and_removes_on_completion():
 async def test_track_task_logs_and_publishes_on_failure(capsys):
     """If the coroutine raises an unexpected exception, _track_task logs it
     AND publishes a job_failed event via the bus (so WS clients see it)."""
-    from athanor.api.events.bus import EventBus
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.api.events.bus import EventBus
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
@@ -173,8 +173,8 @@ async def test_track_task_logs_and_publishes_on_failure(capsys):
 async def test_track_task_ignores_cancelled_error(capsys):
     """Task cancellation during shutdown is normal; must NOT log as an error
     or emit a job_failed event."""
-    from athanor.api.events.bus import EventBus
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.api.events.bus import EventBus
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
@@ -202,8 +202,8 @@ async def test_track_task_ignores_cancelled_error(capsys):
 @pytest.mark.asyncio
 async def test_track_task_removes_from_set_on_exception():
     """Even when the coro raises, the task must be removed from the tracking set."""
-    from athanor.api.events.bus import EventBus
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.api.events.bus import EventBus
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
@@ -234,7 +234,7 @@ async def test_handle_needs_info_sequences_inserts_before_updates():
     real-DB end-to-end rollback behaviour is covered by
     test_handle_needs_info_real_transaction_rolls_back_inserts below.
     """
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     # Build a fake db with a transaction() that raises on the second statement
     class _FakeConn:
@@ -299,8 +299,8 @@ async def test_handle_needs_info_sequences_inserts_before_updates():
 @pytest.mark.asyncio
 async def test_track_task_registers_in_tasks_by_job():
     """_track_task must populate _tasks_by_job with the new task."""
-    from athanor.api.events.bus import EventBus
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.api.events.bus import EventBus
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
@@ -321,8 +321,8 @@ async def test_track_task_registers_in_tasks_by_job():
 @pytest.mark.asyncio
 async def test_cancel_job_cancels_running_task(monkeypatch):
     """cancel_job cancels the active task, purges sandbox/checkpoints/status."""
-    from athanor.api.events.bus import EventBus
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.api.events.bus import EventBus
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
@@ -346,7 +346,7 @@ async def test_cancel_job_cancels_running_task(monkeypatch):
     executor._sandbox = sandbox
 
     # Stub purge_thread to avoid real DB
-    import athanor.orchestration.checkpoint as ckpt_mod
+    import embry0.orchestration.checkpoint as ckpt_mod
 
     purge_calls: list[tuple[str, str]] = []
 
@@ -356,7 +356,7 @@ async def test_cancel_job_cancels_running_task(monkeypatch):
     monkeypatch.setattr(ckpt_mod, "purge_thread", _fake_purge)
 
     # Stub emit_audit (imported into issue_executor)
-    import athanor.services.issue_executor as exec_mod
+    import embry0.services.issue_executor as exec_mod
 
     audit_calls: list[dict] = []
 
@@ -388,7 +388,7 @@ async def test_cancel_job_cancels_running_task(monkeypatch):
 @pytest.mark.asyncio
 async def test_cancel_job_is_idempotent_when_no_task(monkeypatch):
     """cancel_job called for a job with no live task completes cleanly."""
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
@@ -414,8 +414,8 @@ async def test_cancel_job_is_idempotent_when_no_task(monkeypatch):
     async def _fake_audit(*a, **k):
         pass
 
-    import athanor.orchestration.checkpoint as ckpt_mod
-    import athanor.services.issue_executor as exec_mod
+    import embry0.orchestration.checkpoint as ckpt_mod
+    import embry0.services.issue_executor as exec_mod
 
     monkeypatch.setattr(ckpt_mod, "purge_thread", _fake_purge)
     monkeypatch.setattr(exec_mod, "emit_audit", _fake_audit)
@@ -427,7 +427,7 @@ async def test_cancel_job_is_idempotent_when_no_task(monkeypatch):
 @pytest.mark.asyncio
 async def test_execute_generates_trace_id_and_passes_to_jobs_create(monkeypatch):
     """IssueExecutor.execute() generates a trc-* id and passes it via jobs.create."""
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._background_tasks = set()
@@ -455,7 +455,7 @@ async def test_execute_generates_trace_id_and_passes_to_jobs_create(monkeypatch)
     executor._jobs = jobs
 
     # Stub emit_audit
-    import athanor.services.issue_executor as exec_mod
+    import embry0.services.issue_executor as exec_mod
 
     async def _fake_audit(*a, **k):
         pass
@@ -485,7 +485,7 @@ async def test_handle_interrupt_max_retries_pauses():
     awaiting_input | cancelled | closed | in_progress | open), so paused
     is a job-only status; the issue is reset to open so the user can
     re-trigger triage."""
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._jobs = MagicMock()
@@ -501,7 +501,7 @@ async def test_handle_interrupt_max_retries_pauses():
 @pytest.mark.asyncio
 async def test_handle_interrupt_no_value_sets_awaiting_input():
     """_handle_interrupt with no interrupt_value must set both to awaiting_input."""
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._jobs = MagicMock()
@@ -518,7 +518,7 @@ async def test_handle_interrupt_no_value_sets_awaiting_input():
 async def test_auto_answerable_retriage_folds_answers_into_context() -> None:
     """When all triage questions are auto-answerable, execute() receives a
     non-empty additional_context containing the Q&A pairs."""
-    from athanor.services.issue_executor import _fold_auto_answers_into_context
+    from embry0.services.issue_executor import _fold_auto_answers_into_context
 
     # Unit-test the helper directly
     questions = [
@@ -535,7 +535,7 @@ async def test_auto_answerable_retriage_folds_answers_into_context() -> None:
 @pytest.mark.asyncio
 async def test_fold_auto_answers_returns_empty_when_no_answers() -> None:
     """Helper returns empty string if no auto_answers are present."""
-    from athanor.services.issue_executor import _fold_auto_answers_into_context
+    from embry0.services.issue_executor import _fold_auto_answers_into_context
 
     questions = [
         {"question": "Which database?", "importance": "blocking", "auto_answer": None},
@@ -548,7 +548,7 @@ async def test_fold_auto_answers_returns_empty_when_no_answers() -> None:
 async def test_handle_needs_info_all_auto_passes_context_to_execute(monkeypatch) -> None:
     """When all questions are auto-answerable, _handle_needs_info must call
     execute() with a non-empty additional_context containing the Q&A text."""
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     # Minimal fake DB with transaction support
     class _FakeConn:
@@ -588,7 +588,7 @@ async def test_handle_needs_info_all_auto_passes_context_to_execute(monkeypatch)
     executor.execute = _fake_execute  # type: ignore[method-assign]
 
     # Stub emit_audit
-    import athanor.services.issue_executor as exec_mod
+    import embry0.services.issue_executor as exec_mod
 
     monkeypatch.setattr(exec_mod, "emit_audit", AsyncMock())
 
@@ -630,7 +630,7 @@ class _FakeGraph:
 
 
 def _stream_executor(jobs):
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._jobs = jobs

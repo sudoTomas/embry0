@@ -3,13 +3,13 @@
 `a && b || true` rescues the WHOLE chain, not just `b` — that precedence bug
 let a failed clone exit 0, log "Repository cloned" 0.4s after sandbox create,
 and hand every downstream agent an empty /workspace (found 2026-07-06 during
-the INT-655 access smoke). Only the best-effort main:main fetch may be
+an access smoke test). Only the best-effort main:main fetch may be
 rescued, so it must be brace-scoped.
 """
 
 import subprocess
 
-from athanor.workflows.issue_to_pr.nodes import _build_clone_shell
+from embry0.workflows.issue_to_pr.nodes import _build_clone_shell
 
 
 def _run_with_git_stub(git_stub: str) -> int:

@@ -13,7 +13,6 @@ const HALO_RADIUS = 30; // SVG units, viewBox 0..64
  * signature shows on every node while the operator still gets an
  * at-a-glance category cue from the surrounding ring.
  *
- * See `docs/superpowers/specs/2026-05-04-auto-arrange-circular-design.md` §3.4.
  */
 export function AgentNode({ data, selected }: NodeProps) {
   const agentType = data.agentType as string;

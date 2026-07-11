@@ -2,7 +2,7 @@
 
 import pytest
 
-from athanor.api.v1.environment import _parse_env_file
+from embry0.api.v1.environment import _parse_env_file
 
 
 def test_parse_env_file_basic():
@@ -51,19 +51,19 @@ def test_parse_env_file_empty_value_is_none():
 
 
 def test_env_var_input_rejects_reserved_keys():
-    """Reserved infrastructure keys (ATHANOR_GIT_PROXY_URL etc.) must be blocked
+    """Reserved infrastructure keys (EMBRY0_GIT_PROXY_URL etc.) must be blocked
     at the API boundary — allowing them would let a user repoint the credential
     proxy URL to an attacker endpoint, exfiltrating GitHub credentials from
     every subsequent job on that repo."""
     from pydantic import ValidationError
 
-    from athanor.api.schemas.environment import RESERVED_ENV_KEYS, EnvVarInput
+    from embry0.api.schemas.environment import RESERVED_ENV_KEYS, EnvVarInput
 
-    assert "ATHANOR_GIT_PROXY_URL" in RESERVED_ENV_KEYS
+    assert "EMBRY0_GIT_PROXY_URL" in RESERVED_ENV_KEYS
     assert "GITHUB_TOKEN" in RESERVED_ENV_KEYS
 
     with pytest.raises(ValidationError) as exc:
-        EnvVarInput(key="ATHANOR_GIT_PROXY_URL", value="http://evil.example", var_type="config")
+        EnvVarInput(key="EMBRY0_GIT_PROXY_URL", value="http://evil.example", var_type="config")
     assert "reserved" in str(exc.value).lower()
 
     # Non-reserved keys still work
@@ -77,7 +77,7 @@ def test_init_node_drops_reserved_user_env_keys(monkeypatch):
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
 
-    from athanor.workflows.issue_to_pr.nodes import init_node
+    from embry0.workflows.issue_to_pr.nodes import init_node
 
     sandbox_mgr = MagicMock()
     sandbox_mgr.create = AsyncMock(return_value=("container-x", "a" * 43))
@@ -88,7 +88,7 @@ def test_init_node_drops_reserved_user_env_keys(monkeypatch):
     proxy_mgr = MagicMock()
     proxy_mgr.git_proxy_url = "http://git-proxy:9101"
 
-    import athanor.workflows.issue_to_pr.nodes as nodes_module
+    import embry0.workflows.issue_to_pr.nodes as nodes_module
 
     def _noop_writer():
         return lambda _e: None
@@ -102,7 +102,7 @@ def test_init_node_drops_reserved_user_env_keys(monkeypatch):
                     "job_id": "job-x",
                     "repo": "o/r",
                     "user_env_vars": {
-                        "ATHANOR_GIT_PROXY_URL": "http://attacker.example",
+                        "EMBRY0_GIT_PROXY_URL": "http://attacker.example",
                         "SAFE_VAR": "value",
                     },
                 },
@@ -122,6 +122,6 @@ def test_init_node_drops_reserved_user_env_keys(monkeypatch):
     _, kwargs = sandbox_mgr.create.call_args
     env_passed = kwargs.get("env", {}) or {}
     # Attacker key was dropped; infrastructure key stayed; safe key preserved.
-    assert env_passed.get("ATHANOR_GIT_PROXY_URL") == "http://git-proxy:9101"
+    assert env_passed.get("EMBRY0_GIT_PROXY_URL") == "http://git-proxy:9101"
     assert env_passed.get("SAFE_VAR") == "value"
     assert "http://attacker" not in str(env_passed)

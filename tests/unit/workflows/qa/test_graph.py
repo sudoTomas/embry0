@@ -1,6 +1,6 @@
 """Unit tests for QAWorkflow LangGraph compilation."""
 
-from athanor.workflows.qa.graph import QAWorkflow
+from embry0.workflows.qa.graph import QAWorkflow
 
 
 def test_graph_compiles_with_expected_nodes():

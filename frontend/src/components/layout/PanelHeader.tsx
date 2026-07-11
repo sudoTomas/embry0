@@ -21,7 +21,6 @@ interface PanelHeaderProps {
  * (when `operation` prop is set). The double rule echoes the equator
  * across the panel chrome.
  *
- * See `docs/superpowers/specs/2026-05-04-geodesic-identity-design.md` §3.4
  * and `2026-05-04-divine-operations-design.md` (PR B — static glyphs).
  */
 export function PanelHeader({ title, trailing, className, operation }: PanelHeaderProps) {

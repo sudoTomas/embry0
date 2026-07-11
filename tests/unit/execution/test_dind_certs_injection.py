@@ -21,12 +21,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from athanor.execution.sandbox_manager import SandboxManager
+from embry0.execution.sandbox_manager import SandboxManager
 
 
 def _slim_profile() -> dict[str, Any]:
     return {
-        "base_image": "athanor-sandbox:latest",
+        "base_image": "embry0-sandbox:latest",
         "memory": "8g",
         "cpus": "4",
         "pids_limit": 256,
@@ -46,7 +46,7 @@ def _qa_jvm_profile() -> dict[str, Any]:
     p = _slim_profile()
     p.update(
         {
-            "base_image": "athanor-sandbox-qa:latest",
+            "base_image": "embry0-sandbox-qa:latest",
             "dind_enabled": True,
             "extra_networks": ["backend"],
         }
@@ -87,7 +87,7 @@ async def test_dind_enabled_mounts_certs_and_sets_env() -> None:
     mgr = SandboxManager(docker=docker, proxy_manager=proxy_mgr)
 
     with patch(
-        "athanor.execution.sandbox_manager.socket.gethostbyname",
+        "embry0.execution.sandbox_manager.socket.gethostbyname",
         return_value="172.24.0.3",
     ):
         container_id, token = await mgr.create(
@@ -184,7 +184,7 @@ async def test_dind_enabled_multiple_extra_networks() -> None:
     profile["extra_networks"] = ["backend", "metrics"]
 
     with patch(
-        "athanor.execution.sandbox_manager.socket.gethostbyname",
+        "embry0.execution.sandbox_manager.socket.gethostbyname",
         return_value="172.24.0.3",
     ):
         await mgr.create(job_id="job-multi-net", profile=profile)
@@ -219,7 +219,7 @@ async def test_dind_enabled_resolution_failure_raises() -> None:
     mgr = SandboxManager(docker=docker, proxy_manager=proxy_mgr)
 
     with patch(
-        "athanor.execution.sandbox_manager.socket.gethostbyname",
+        "embry0.execution.sandbox_manager.socket.gethostbyname",
         side_effect=OSError("name does not resolve"),
     ):
         with pytest.raises(RuntimeError, match="Cannot resolve `dind`"):

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from athanor.api.schemas.environment import EnvVarInput, EnvVarResponse
+from embry0.api.schemas.environment import EnvVarInput, EnvVarResponse
 
 
 def test_input_accepts_qa_scope():
@@ -47,5 +47,5 @@ def test_input_rejects_docker_prefix():
 
 
 def test_qa_job_id_reserved():
-    with pytest.raises(ValidationError, match=r"reserved for Athanor infrastructure"):
+    with pytest.raises(ValidationError, match=r"reserved for embry0 infrastructure"):
         EnvVarInput(key="QA_JOB_ID", value="x", scope="qa")

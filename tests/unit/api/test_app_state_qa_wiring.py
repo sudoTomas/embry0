@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 def _make_state_with_db():
     """Run the body of _init_app_state with a stubbed DB so we can inspect
     app.state attrs without a real Postgres or lifespan."""
-    from athanor.api.app import _init_app_state, create_app
+    from embry0.api.app import _init_app_state, create_app
 
     app = create_app()
     db = MagicMock()  # DatabasePool stand-in; the repo constructors only
@@ -34,7 +34,7 @@ def _make_state_with_db():
     # (the real lifespan does this at line ~481 and ~645, but the test
     # short-circuits by calling _init_app_state directly).
     app.state.docker = MagicMock()
-    from athanor.cache.volume_manager import SharedVolumeManager
+    from embry0.cache.volume_manager import SharedVolumeManager
 
     real_manager = SharedVolumeManager(
         docker=app.state.docker,

@@ -9,11 +9,11 @@ import { createFocusTrap } from "@/lib/focus-trap";
 
 const QA_KEY_PATTERN = /^QA_[A-Z0-9_]+$/;
 
-// Mirror of athanor/execution/auth_provider.py — keep in sync.
+// Mirror of embry0/execution/auth_provider.py — keep in sync.
 // Backend will reject these with 422 even if the client doesn't catch them;
 // this list exists for fast UX feedback.
 const RESERVED_ENV_KEYS = new Set([
-  "ATHANOR_GIT_PROXY_URL",
+  "EMBRY0_GIT_PROXY_URL",
   "CLAUDE_CODE_OAUTH_TOKEN",
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",

@@ -8,7 +8,7 @@ by triage:
                    orchestrate_qa → qa_report → qa_failure_bookkeeping → END
   needs_qa=False → init → triage → developer → review → END
 
-The plan's Task 8 Steps 1-4 (real ``gh issue create``, real Athanor job, manual
+The plan's Task 8 Steps 1-4 (real ``gh issue create``, real embry0 job, manual
 dashboard verification) are MANUAL verification covered by Task 9 (live
 deployment). Step 5's unit-level failure-routing test is already covered by
 ``tests/unit/workflows/issue_to_pr/test_qa_failure_routing_in_triage.py``.
@@ -66,7 +66,7 @@ async def _stub_developer(state: dict[str, Any], config: RunnableConfig) -> Comm
         goto="review",
         update={
             "pr_url": "https://github.com/owner/repo/pull/1",
-            "branch_name": "athanor/test-branch",
+            "branch_name": "embry0/test-branch",
             "current_stage": "developer_complete",
         },
     )
@@ -120,7 +120,7 @@ async def test_qa_gate_routes_to_qa_when_needs_qa_true() -> None:
     bookkeeping → END (because final_status=passed routes to "end" via
     route_after_qa_report).
     """
-    import athanor.workflows.issue_to_pr.graph as g_mod
+    import embry0.workflows.issue_to_pr.graph as g_mod
 
     triage_stub = _stub_triage_factory(
         needs_qa=True,
@@ -171,7 +171,7 @@ async def test_qa_gate_skips_qa_when_needs_qa_false() -> None:
     """needs_qa=False path: triage sets qa.needs_qa=False; route_after_review
     dispatches straight to END. None of init_qa / qa / qa_report should run —
     the forbidden stubs raise if reached."""
-    import athanor.workflows.issue_to_pr.graph as g_mod
+    import embry0.workflows.issue_to_pr.graph as g_mod
 
     triage_stub = _stub_triage_factory(
         needs_qa=False,

@@ -6,7 +6,6 @@ import { categoryToStage, type CardinalStage } from "@/lib/sigils";
  * Stage-name aliases (developer ≡ develop, review ≡ validate) are resolved
  * via categoryToStage at lookup time.
  *
- * See `docs/superpowers/specs/2026-05-04-auto-arrange-circular-design.md` §3.3.
  */
 const CANONICAL_ORDER: readonly CardinalStage[] = [
   "triage",

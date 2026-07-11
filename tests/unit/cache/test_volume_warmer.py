@@ -1,4 +1,4 @@
-"""Unit tests for athanor.cache.volume_warmer.warm_shared_volume.
+"""Unit tests for embry0.cache.volume_warmer.warm_shared_volume.
 
 Two tests as required by C2:
   1. Warms (runs npm ci + upserts state) when there is no prior sha recorded.
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.cache.volume_warmer import warm_shared_volume
+from embry0.cache.volume_warmer import warm_shared_volume
 
 
 def _stub_deps():
@@ -49,16 +49,16 @@ async def test_warm_runs_npm_ci_when_state_has_no_prior_sha(monkeypatch):
     docker, sandbox_mgr, profiles_repo, proxy_mgr, state_repo = _stub_deps()
 
     async def fake_clone(**kw):
-        from athanor.workflows.qa._subtask_prep import ClonedSandbox
+        from embry0.workflows.qa._subtask_prep import ClonedSandbox
 
         return ClonedSandbox(head_sha="abc123")
 
-    monkeypatch.setattr("athanor.cache.volume_warmer.prep_qa_sandbox_clone", fake_clone)
+    monkeypatch.setattr("embry0.cache.volume_warmer.prep_qa_sandbox_clone", fake_clone)
 
     result = await warm_shared_volume(
         repo="org/r1",
         branch="main",
-        volume_name="athanor-qa-vol-job-1",
+        volume_name="embry0-qa-vol-job-1",
         current_lockfile_sha="aaa",
         scope="per-job",
         scope_key="job-1",
@@ -81,7 +81,7 @@ async def test_warm_runs_npm_ci_when_state_has_no_prior_sha(monkeypatch):
     assert call_kwargs["last_warmed_sha"] == "aaa"
     assert call_kwargs["scope"] == "per-job"
     assert call_kwargs["scope_key"] == "job-1"
-    assert call_kwargs["volume_name"] == "athanor-qa-vol-job-1"
+    assert call_kwargs["volume_name"] == "embry0-qa-vol-job-1"
 
     # Sandbox should have been destroyed in the finally block
     sandbox_mgr.destroy.assert_awaited_once_with("sb-warmer")
@@ -92,7 +92,7 @@ async def test_warm_runs_npm_ci_when_state_has_no_prior_sha(monkeypatch):
     # both be present).
     sandbox_mgr.create.assert_awaited_once()
     create_kwargs = sandbox_mgr.create.call_args.kwargs
-    assert create_kwargs.get("volumes") == [("athanor-qa-vol-job-1", "/workspace")]
+    assert create_kwargs.get("volumes") == [("embry0-qa-vol-job-1", "/workspace")]
 
 
 @pytest.mark.asyncio
@@ -107,13 +107,13 @@ async def test_warm_skips_when_volume_already_warmed_for_same_lockfile(monkeypat
 
     docker, sandbox_mgr, profiles_repo, proxy_mgr, state_repo = _stub_deps()
 
-    from athanor.storage.repositories.qa_volume_state import VolumeState
+    from embry0.storage.repositories.qa_volume_state import VolumeState
 
     state_repo.get = AsyncMock(
         return_value=VolumeState(
             scope="per-job",
             scope_key="job-1",
-            volume_name="athanor-qa-vol-job-1",
+            volume_name="embry0-qa-vol-job-1",
             last_warmed_sha="aaa",
             last_warmed_at=datetime.now(UTC),
         )
@@ -122,12 +122,12 @@ async def test_warm_skips_when_volume_already_warmed_for_same_lockfile(monkeypat
     async def crash(**kw):
         raise AssertionError("prep_qa_sandbox_clone should not be called on warm-skip")
 
-    monkeypatch.setattr("athanor.cache.volume_warmer.prep_qa_sandbox_clone", crash)
+    monkeypatch.setattr("embry0.cache.volume_warmer.prep_qa_sandbox_clone", crash)
 
     result = await warm_shared_volume(
         repo="org/r1",
         branch="main",
-        volume_name="athanor-qa-vol-job-1",
+        volume_name="embry0-qa-vol-job-1",
         current_lockfile_sha="aaa",
         scope="per-job",
         scope_key="job-1",

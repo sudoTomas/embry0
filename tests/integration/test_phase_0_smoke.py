@@ -33,7 +33,7 @@ async def test_phase_0_smoke_round_trip(app, builtin_profile_seeded, database_ur
     # not by attaching extra docker networks. SandboxManager injects --add-host
     # for minio-proxy / presign-proxy at create time. See seeds/sandbox_profiles_builtin.py.
     assert qa["extra_networks"] == []
-    assert qa["base_image"] == "athanor-sandbox-qa:latest"
+    assert qa["base_image"] == "embry0-sandbox-qa:latest"
 
     # 3. Editing builtin via PUT is rejected with 403
     r = await app.put(
@@ -112,8 +112,8 @@ async def test_phase_0_smoke_round_trip(app, builtin_profile_seeded, database_ur
 
     # 8. Reset endpoint restores builtin defaults.
     # First, simulate drift via a direct repo write (bypassing the API guards).
-    from athanor.storage.database import DatabasePool
-    from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+    from embry0.storage.database import DatabasePool
+    from embry0.storage.repositories.sandbox_profiles import SandboxProfilesRepository
 
     pool = DatabasePool(database_url)
     await pool.connect()
@@ -139,4 +139,4 @@ async def test_phase_0_smoke_round_trip(app, builtin_profile_seeded, database_ur
     assert r.status_code == 200
     body = r.json()
     assert body["dind_enabled"] is True
-    assert body["base_image"] == "athanor-sandbox-qa:latest"
+    assert body["base_image"] == "embry0-sandbox-qa:latest"

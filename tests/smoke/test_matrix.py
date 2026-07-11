@@ -11,9 +11,9 @@ async def test_sdk_api_key(smoke_api_key) -> None:
     """End-to-end: sdk execution_mode + api_key auth_mode against real Anthropic API."""
     pytest.importorskip("claude_agent_sdk")
 
-    from athanor.agents.executor_factory import select_executor
-    from athanor.agents.invocation import AgentInvocation
-    from athanor.safety.policy import default_policy_for_agent
+    from embry0.agents.executor_factory import select_executor
+    from embry0.agents.invocation import AgentInvocation
+    from embry0.safety.policy import default_policy_for_agent
 
     invocation = AgentInvocation(
         agent_type="developer",

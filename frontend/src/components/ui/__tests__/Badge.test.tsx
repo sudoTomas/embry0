@@ -24,10 +24,10 @@ describe("Badge", () => {
   it("merges a custom className", () => {
     render(
       <Badge tone="gold" className="ml-2">
-        athanor
+        embry0
       </Badge>,
     );
-    const el = screen.getByText("athanor");
+    const el = screen.getByText("embry0");
     expect(el.className).toContain("ml-2");
     expect(el.className).toContain("text-primary");
   });

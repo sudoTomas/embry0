@@ -15,14 +15,14 @@ import os
 
 import pytest
 
-from athanor.storage.database import DatabasePool
+from embry0.storage.database import DatabasePool
 
 pytestmark = pytest.mark.requires_postgres
 
 
 @pytest.fixture
 async def db_url() -> str:
-    return os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    return os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
 
 
 @pytest.fixture
@@ -43,16 +43,16 @@ async def fresh_db(db_url: str) -> DatabasePool:
 
 async def _apply_migrations_up_to(db: DatabasePool, last_version: int) -> None:
     """Apply un-applied migrations up to (and including) ``last_version``."""
-    from athanor.storage.migrations.runner import MIGRATIONS
+    from embry0.storage.migrations.runner import MIGRATIONS
 
     async with db.pool.acquire() as conn:
         await conn.execute(
-            "CREATE TABLE IF NOT EXISTS athanor_migrations ("
+            "CREATE TABLE IF NOT EXISTS embry0_migrations ("
             "version INTEGER PRIMARY KEY, "
             "description TEXT NOT NULL, "
             "applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
         )
-        current = await conn.fetchval("SELECT COALESCE(MAX(version), 0) FROM athanor_migrations")
+        current = await conn.fetchval("SELECT COALESCE(MAX(version), 0) FROM embry0_migrations")
         for version, description, sql in MIGRATIONS:
             if version <= current:
                 continue
@@ -61,7 +61,7 @@ async def _apply_migrations_up_to(db: DatabasePool, last_version: int) -> None:
             async with conn.transaction():
                 await conn.execute(sql)
                 await conn.execute(
-                    "INSERT INTO athanor_migrations (version, description) VALUES ($1, $2)",
+                    "INSERT INTO embry0_migrations (version, description) VALUES ($1, $2)",
                     version,
                     description,
                 )
@@ -188,7 +188,7 @@ async def test_migration_15_is_idempotent(fresh_db: DatabasePool) -> None:
     """Applying migration 15 a second time must not raise (IF NOT EXISTS / IF EXISTS guards)."""
     await _apply_migrations_up_to(fresh_db, 15)
     # Re-running the migration 15 SQL directly should be a no-op due to DROP IF EXISTS guards.
-    from athanor.storage.migrations.runner import MIGRATIONS
+    from embry0.storage.migrations.runner import MIGRATIONS
 
     sql_15 = next(sql for ver, _desc, sql in MIGRATIONS if ver == 15)
     async with fresh_db.pool.acquire() as conn:

@@ -7,8 +7,8 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_qa_loads_prior_session_and_persists_new_one():
-    from athanor.agents.session import AgentSession
-    from athanor.workflows.qa.nodes import qa_node
+    from embry0.agents.session import AgentSession
+    from embry0.workflows.qa.nodes import qa_node
 
     # Pre-existing session for this (job, agent)
     sessions_repo = AsyncMock()
@@ -90,10 +90,10 @@ async def test_qa_loads_prior_session_and_persists_new_one():
 
     with (
         patch(
-            "athanor.storage.repositories.agent_definitions.AgentDefinitionsRepository",
+            "embry0.storage.repositories.agent_definitions.AgentDefinitionsRepository",
             return_value=fake_agent_def_repo,
         ),
-        patch("athanor.orchestration.nodes.agent.run_agent_node", new=AsyncMock(side_effect=_run)),
+        patch("embry0.orchestration.nodes.agent.run_agent_node", new=AsyncMock(side_effect=_run)),
     ):
         await qa_node(state, config)
 

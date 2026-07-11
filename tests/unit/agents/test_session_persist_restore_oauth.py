@@ -3,7 +3,7 @@
 
 
 def test_capture_session_id_and_blob_from_oauth_result(tmp_path):
-    from athanor.agents.session import capture_session_after_run
+    from embry0.agents.session import capture_session_after_run
 
     blob_path = tmp_path / "sessions" / "sess-abc.jsonl"
     blob_path.parent.mkdir(parents=True)
@@ -24,7 +24,7 @@ def test_capture_session_id_and_blob_from_oauth_result(tmp_path):
 def test_restore_writes_blob_to_canonical_projects_path(tmp_path):
     """When project_cwd is given, restore writes to projects/<sanitize(cwd)>/<id>.jsonl
     so the current CLI finds it via its first lookup branch."""
-    from athanor.agents.session import AgentSession, restore_session_into_options
+    from embry0.agents.session import AgentSession, restore_session_into_options
 
     sess = AgentSession(
         job_id="J",
@@ -53,7 +53,7 @@ def test_restore_writes_blob_to_canonical_projects_path(tmp_path):
 def test_restore_falls_back_to_legacy_sessions_path_when_no_project_cwd(tmp_path):
     """When project_cwd is absent, fall back to legacy sessions/ layout —
     canonical_session_path_for handles that case explicitly."""
-    from athanor.agents.session import AgentSession, restore_session_into_options
+    from embry0.agents.session import AgentSession, restore_session_into_options
 
     sess = AgentSession(
         job_id="J",

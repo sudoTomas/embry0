@@ -1,7 +1,7 @@
 """PipelineConfig and JobCreateRequest extended with new dimensions."""
 
-from athanor.api.schemas import JobCreateRequest
-from athanor.orchestration.state import PipelineConfig
+from embry0.api.schemas import JobCreateRequest
+from embry0.orchestration.state import PipelineConfig
 
 
 def test_pipeline_config_accepts_execution_modes() -> None:

@@ -2,7 +2,7 @@
 
 import pytest
 
-from athanor.execution.auth_provider import (
+from embry0.execution.auth_provider import (
     RESERVED_ENV_KEYS,
     AuthConfigError,
     resolve_env,
@@ -44,7 +44,7 @@ def test_unknown_mode_rejected() -> None:
 def test_reserved_env_keys_export_expected_set() -> None:
     # These must NEVER be user-settable via the environment UI.
     expected = {
-        "ATHANOR_GIT_PROXY_URL",
+        "EMBRY0_GIT_PROXY_URL",
         "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
@@ -62,7 +62,7 @@ def test_reserved_env_keys_export_expected_set() -> None:
 
 
 def test_reserved_env_prefixes_export_expected_tuple() -> None:
-    from athanor.execution.auth_provider import RESERVED_ENV_PREFIXES
+    from embry0.execution.auth_provider import RESERVED_ENV_PREFIXES
 
     # These prefixes must NEVER be user-settable via the environment UI.
     assert RESERVED_ENV_PREFIXES == ("QA_ARTIFACT_", "DOCKER_")

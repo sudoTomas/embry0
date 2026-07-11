@@ -1,6 +1,6 @@
 import pytest
 
-from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+from embry0.storage.repositories.sandbox_profiles import SandboxProfilesRepository
 
 
 @pytest.mark.requires_postgres
@@ -9,7 +9,7 @@ async def test_upsert_persists_new_qa_columns(db_with_migrations):
     repo = SandboxProfilesRepository(db_with_migrations)
     await repo.upsert(
         name="qa-jvm-test",
-        base_image="athanor-sandbox-qa:latest",
+        base_image="embry0-sandbox-qa:latest",
         description="JVM + Node + DinD QA runtime",
         dind_enabled=True,
         idle_timeout_seconds=900,
@@ -75,7 +75,7 @@ async def test_upsert_rejects_overwriting_builtin(db_with_migrations):
         await repo.upsert(name="seed-test", base_image="evil:latest")
     # Original row unchanged
     row = await repo.get("seed-test")
-    assert row["base_image"] == "athanor-sandbox:latest"  # default; not "evil:latest"
+    assert row["base_image"] == "embry0-sandbox:latest"  # default; not "evil:latest"
 
 
 @pytest.mark.requires_postgres

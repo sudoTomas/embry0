@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.workflows.qa.boot import run_boot_phase
+from embry0.workflows.qa.boot import run_boot_phase
 
 
 def _make_qa_yaml(boot_timeout: int = 30, ready_checks: list | None = None) -> dict:

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
-from athanor.storage.repositories.qa_workspace_provider_overrides import (
+from embry0.storage.repositories.qa_workspace_provider_overrides import (
     WorkspaceProviderOverride,
 )
 
@@ -20,7 +20,7 @@ _AUTH_MUT = {**_AUTH, "X-Requested-With": "fetch"}
 
 
 def _make_app(overrides_repo=None):
-    from athanor.api.app import create_app
+    from embry0.api.app import create_app
 
     app = create_app()
 

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from athanor.orchestration.nodes.triage import parse_triage_response
+from embry0.orchestration.nodes.triage import parse_triage_response
 
 
 def test_parse_triage_response_proceed():
@@ -63,7 +63,7 @@ def test_parse_triage_response_split():
 
 def test_parse_triage_response_invalid_json():
     """Strict parser now raises TriageParseError on invalid JSON."""
-    from athanor.orchestration.state import TriageParseError
+    from embry0.orchestration.state import TriageParseError
 
     with pytest.raises(TriageParseError):
         parse_triage_response("not json at all")
@@ -71,7 +71,7 @@ def test_parse_triage_response_invalid_json():
 
 def test_parse_triage_response_raises_on_invalid_schema():
     """Schema violation (bad action value) raises TriageParseError."""
-    from athanor.orchestration.state import TriageParseError
+    from embry0.orchestration.state import TriageParseError
 
     with pytest.raises(TriageParseError):
         parse_triage_response('{"action": "chaos", "confidence": 0.5}')
@@ -147,7 +147,7 @@ async def test_low_confidence_triggers_needs_info():
 @pytest.mark.asyncio
 async def test_apply_repo_preferences_override_sets_sandbox_profile():
     """apply_repo_preferences_override replaces sandbox_profile when prefs have one."""
-    from athanor.orchestration.nodes.triage import apply_repo_preferences_override
+    from embry0.orchestration.nodes.triage import apply_repo_preferences_override
 
     prefs_repo = AsyncMock()
     prefs_repo.get = AsyncMock(return_value={"repo": "acme/w", "sandbox_profile": "java-17"})
@@ -162,7 +162,7 @@ async def test_apply_repo_preferences_override_sets_sandbox_profile():
 @pytest.mark.asyncio
 async def test_apply_repo_preferences_override_skips_null_profile():
     """A preferences row with sandbox_profile=None must not overwrite the LLM's pick."""
-    from athanor.orchestration.nodes.triage import apply_repo_preferences_override
+    from embry0.orchestration.nodes.triage import apply_repo_preferences_override
 
     prefs_repo = AsyncMock()
     prefs_repo.get = AsyncMock(return_value={"repo": "acme/w", "sandbox_profile": None})
@@ -176,7 +176,7 @@ async def test_apply_repo_preferences_override_skips_null_profile():
 @pytest.mark.asyncio
 async def test_apply_repo_preferences_override_no_prefs_repo():
     """Without a prefs_repo, the decision is returned unchanged."""
-    from athanor.orchestration.nodes.triage import apply_repo_preferences_override
+    from embry0.orchestration.nodes.triage import apply_repo_preferences_override
 
     decision = {"pipeline_config": {"sandbox_profile": "python-3.12"}}
     result = await apply_repo_preferences_override(decision, "acme/w", None)
@@ -189,7 +189,7 @@ async def test_triage_node_writes_flat_pipeline_config_to_state() -> None:
     to state['pipeline_config'], and the full decision to state['triage_decision']."""
     import json as _json
 
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     valid_decision_json = _json.dumps(
         {
@@ -239,8 +239,8 @@ async def test_triage_node_writes_flat_pipeline_config_to_state() -> None:
     }
 
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=agent_output)),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=agent_output)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(state, config)
 
@@ -264,7 +264,7 @@ async def test_triage_cycle_guard_terminates_at_round_5() -> None:
     from langgraph.graph import END
     from langgraph.types import Command
 
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     state = {
         "job_id": "job-cycle-test",
@@ -300,9 +300,9 @@ async def test_triage_cycle_guard_terminates_at_round_5() -> None:
     # The cycle guard fires BEFORE the interrupt() call, so interrupt should
     # not be called at all when rounds >= 5.
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=needs_info_output)),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
-        patch("athanor.workflows.issue_to_pr.nodes.interrupt") as mock_interrupt,
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=needs_info_output)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.interrupt") as mock_interrupt,
     ):
         result = await triage_node(state, config)
 

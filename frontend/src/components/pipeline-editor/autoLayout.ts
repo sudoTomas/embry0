@@ -23,7 +23,6 @@ export type AutoLayoutResult = {
  *
  * Pure: input arrays are not mutated.
  *
- * See `docs/superpowers/specs/2026-05-04-auto-arrange-circular-design.md`.
  */
 export function autoLayout(
   nodes: Node[],

@@ -2,7 +2,7 @@
 
 import pytest
 
-from athanor.storage.database import DatabasePool
+from embry0.storage.database import DatabasePool
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -24,7 +24,7 @@ async def _seed_job(db: DatabasePool, job_id: str) -> None:
 
 @pytest.mark.asyncio
 async def test_upsert_and_get(db):
-    from athanor.storage.repositories.agent_sessions import AgentSessionsRepository
+    from embry0.storage.repositories.agent_sessions import AgentSessionsRepository
 
     await _seed_job(db, "job-test-as1")
     repo = AgentSessionsRepository(db)
@@ -44,7 +44,7 @@ async def test_upsert_and_get(db):
 
 @pytest.mark.asyncio
 async def test_upsert_overwrites_same_job_agent(db):
-    from athanor.storage.repositories.agent_sessions import AgentSessionsRepository
+    from embry0.storage.repositories.agent_sessions import AgentSessionsRepository
 
     await _seed_job(db, "job-test-as2")
     repo = AgentSessionsRepository(db)
@@ -56,7 +56,7 @@ async def test_upsert_overwrites_same_job_agent(db):
 
 @pytest.mark.asyncio
 async def test_delete_for_job_cascades_to_all_agents(db):
-    from athanor.storage.repositories.agent_sessions import AgentSessionsRepository
+    from embry0.storage.repositories.agent_sessions import AgentSessionsRepository
 
     await _seed_job(db, "job-test-as3")
     repo = AgentSessionsRepository(db)

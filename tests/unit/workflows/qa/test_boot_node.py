@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from athanor.workflows.qa.boot import BootResult
+from embry0.workflows.qa.boot import BootResult
 
 
 @pytest.mark.asyncio
 async def test_boot_pass_routes_to_qa():
-    from athanor.workflows.qa.nodes import boot_qa_node
+    from embry0.workflows.qa.nodes import boot_qa_node
 
     state = {
         "job_id": "J",
@@ -35,7 +35,7 @@ async def test_boot_pass_routes_to_qa():
     config = {"configurable": {"docker": MagicMock()}}
 
     fake_result = BootResult(outcome="passed", attempts=3, duration_ms=4500)
-    with patch("athanor.workflows.qa.nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
+    with patch("embry0.workflows.qa.nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
         cmd = await boot_qa_node(state, config)
 
     assert cmd.goto == "qa"
@@ -48,7 +48,7 @@ async def test_boot_pass_routes_to_qa():
 
 @pytest.mark.asyncio
 async def test_boot_timeout_uploads_screenshot_routes_to_qa_report():
-    from athanor.workflows.qa.nodes import boot_qa_node
+    from embry0.workflows.qa.nodes import boot_qa_node
 
     state = {
         "job_id": "J",
@@ -78,8 +78,8 @@ async def test_boot_timeout_uploads_screenshot_routes_to_qa_report():
         failed_checks=["http://h/: got 503 expected 200"],
     )
     with (
-        patch("athanor.workflows.qa.nodes.run_boot_phase", AsyncMock(return_value=fake_result)),
-        patch("athanor.workflows.qa.nodes.take_diagnostic_screenshot", AsyncMock(return_value=b"\x89PNGfake")),
+        patch("embry0.workflows.qa.nodes.run_boot_phase", AsyncMock(return_value=fake_result)),
+        patch("embry0.workflows.qa.nodes.take_diagnostic_screenshot", AsyncMock(return_value=b"\x89PNGfake")),
     ):
         cmd = await boot_qa_node(state, config)
 
@@ -96,7 +96,7 @@ async def test_boot_timeout_uploads_screenshot_routes_to_qa_report():
 
 @pytest.mark.asyncio
 async def test_boot_startup_failed_routes_to_qa_report_no_screenshot():
-    from athanor.workflows.qa.nodes import boot_qa_node
+    from embry0.workflows.qa.nodes import boot_qa_node
 
     state = {
         "job_id": "J",
@@ -118,8 +118,8 @@ async def test_boot_startup_failed_routes_to_qa_report_no_screenshot():
         outcome="startup_failed", attempts=0, duration_ms=200, error_message="docker compose up failed"
     )
     with (
-        patch("athanor.workflows.qa.nodes.run_boot_phase", AsyncMock(return_value=fake_result)),
-        patch("athanor.workflows.qa.nodes.take_diagnostic_screenshot", AsyncMock(return_value=None)) as ss,
+        patch("embry0.workflows.qa.nodes.run_boot_phase", AsyncMock(return_value=fake_result)),
+        patch("embry0.workflows.qa.nodes.take_diagnostic_screenshot", AsyncMock(return_value=None)) as ss,
     ):
         cmd = await boot_qa_node(state, config)
 

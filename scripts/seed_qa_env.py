@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Seed client-project/command-center's QA env vars into Athanor from a dotenv file.
+"""Seed a repo's QA env vars into embry0 from a dotenv file.
 
-Run this MANUALLY after a Postgres reset. Athanor stores per-repo QA env
+Run this MANUALLY after a Postgres reset. embry0 stores per-repo QA env
 vars in the `repo_environment` table (Fernet-encrypted) — a DB reset wipes
 them. The durable source of truth is the dotenv seed file; this script
 replays it into the env API.
@@ -11,9 +11,10 @@ is idempotent: every run leaves repo_environment exactly matching the seed
 file, no duplicates, no stale keys.
 
 Usage:
-    scripts/seed_qa_env.py [SEED_FILE]
+    QA_TARGET_REPO=owner/name scripts/seed_qa_env.py [SEED_FILE]
 
-    SEED_FILE   dotenv file (default: <repo>/.env.qa-seed)
+    QA_TARGET_REPO  target repo as owner/name (required)
+    SEED_FILE       dotenv file (default: <repo>/.env.qa-seed)
 
 Reads API_KEY from <repo>/.env for auth. Prints key names + counts only —
 never values.
@@ -24,6 +25,7 @@ Exit codes: 0 ok · 1 usage/parse error · 2 API error.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -31,9 +33,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SEED = REPO_ROOT / ".env.qa-seed"
-ATHANOR_ENV = REPO_ROOT / ".env"
+EMBRY0_ENV = REPO_ROOT / ".env"
 API_BASE = "http://localhost:8200"
-TARGET_REPO = "client-project/command-center"  # owner/name
+TARGET_REPO = os.environ.get("QA_TARGET_REPO", "")  # owner/name
 
 _KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -47,7 +49,7 @@ def _read_dotenv(path: Path) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
-            line = line[len("export "):].lstrip()
+            line = line[len("export ") :].lstrip()
         if "=" not in line:
             continue
         key, _, val = line.partition("=")
@@ -69,14 +71,17 @@ def _read_dotenv(path: Path) -> dict[str, str]:
 
 
 def _api_key() -> str:
-    for line in ATHANOR_ENV.read_text().splitlines():
+    for line in EMBRY0_ENV.read_text().splitlines():
         line = line.strip()
         if line.startswith("API_KEY="):
             return line.split("=", 1)[1].strip()
-    sys.exit("Could not find API_KEY in athanor .env")
+    sys.exit("Could not find API_KEY in embry0 .env")
 
 
 def main() -> int:
+    if not TARGET_REPO or "/" not in TARGET_REPO:
+        print("QA_TARGET_REPO must be set to owner/name", file=sys.stderr)
+        return 1
     seed_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SEED
     if not seed_path.is_file():
         print(f"Seed file not found: {seed_path}", file=sys.stderr)
@@ -92,8 +97,7 @@ def main() -> int:
     # API's GET responses; functionally identical to 'config' for sandbox
     # injection.
     variables = [
-        {"key": k, "value": v, "var_type": "secret", "required": False, "scope": "app"}
-        for k, v in pairs.items()
+        {"key": k, "value": v, "var_type": "secret", "required": False, "scope": "app"} for k, v in pairs.items()
     ]
 
     owner, name = TARGET_REPO.split("/", 1)

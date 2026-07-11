@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.execution.agent_runner import AgentOutput, AgentRunner
+from embry0.execution.agent_runner import AgentOutput, AgentRunner
 
 
 def test_agent_output_dataclass():

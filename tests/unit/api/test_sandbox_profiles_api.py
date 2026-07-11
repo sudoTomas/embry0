@@ -14,7 +14,7 @@ from httpx import AsyncClient
 async def test_create_with_qa_fields_round_trips(api_client: AsyncClient):
     payload = {
         "name": "qa-test-create",
-        "base_image": "athanor-sandbox-qa:latest",
+        "base_image": "embry0-sandbox-qa:latest",
         "description": "QA test profile",
         "dind_enabled": True,
         "idle_timeout_seconds": 900,
@@ -50,7 +50,7 @@ async def test_request_rejects_is_builtin_input(api_client: AsyncClient):
 @pytest.mark.asyncio
 async def test_delete_user_profile_returns_200(api_client: AsyncClient):
     """Deleting a non-builtin profile succeeds."""
-    payload = {"name": "delete-me-test", "base_image": "athanor-sandbox:latest"}
+    payload = {"name": "delete-me-test", "base_image": "embry0-sandbox:latest"}
     r = await api_client.post("/api/v1/sandbox-profiles", json=payload)
     assert r.status_code == 201
     r = await api_client.delete("/api/v1/sandbox-profiles/delete-me-test")
@@ -76,7 +76,7 @@ async def test_reset_unknown_profile_returns_404(api_client: AsyncClient):
 @pytest.mark.asyncio
 async def test_reset_user_profile_returns_404(api_client: AsyncClient):
     """Reset is for builtin profiles only — user-created profiles cannot be 'reset'."""
-    payload = {"name": "user-profile-x", "base_image": "athanor-sandbox:latest"}
+    payload = {"name": "user-profile-x", "base_image": "embry0-sandbox:latest"}
     create_r = await api_client.post("/api/v1/sandbox-profiles", json=payload)
     assert create_r.status_code == 201
     r = await api_client.post("/api/v1/sandbox-profiles/user-profile-x/reset")
@@ -90,12 +90,12 @@ async def test_reset_builtin_restores_seed(api_client: AsyncClient, builtin_prof
     # Reach the repo: import inside the test so we use the same DB.
     import os
 
-    from athanor.storage.database import DatabasePool
-    from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+    from embry0.storage.database import DatabasePool
+    from embry0.storage.repositories.sandbox_profiles import SandboxProfilesRepository
 
     database_url = os.environ.get(
         "TEST_DATABASE_URL",
-        "postgresql://athanor:athanor@localhost:5432/athanor_unit_api_test",
+        "postgresql://embry0:embry0@localhost:5432/embry0_unit_api_test",
     )
 
     # Mutate qa-jvm to flip dind_enabled OFF (simulating bit-rot or a manual edit).
@@ -115,4 +115,4 @@ async def test_reset_builtin_restores_seed(api_client: AsyncClient, builtin_prof
     body = r.json()
     assert body["name"] == "qa-jvm"
     assert body["dind_enabled"] is True
-    assert body["base_image"] == "athanor-sandbox-qa:latest"
+    assert body["base_image"] == "embry0-sandbox-qa:latest"

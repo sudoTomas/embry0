@@ -1,8 +1,8 @@
 import pytest
 
-from athanor.storage.database import DatabasePool
-from athanor.storage.repositories.jobs import JobsRepository, StatusTransitionConflict
-from athanor.storage.schemas import JobStatus
+from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.jobs import JobsRepository, StatusTransitionConflict
+from embry0.storage.schemas import JobStatus
 
 pytestmark = pytest.mark.requires_postgres
 

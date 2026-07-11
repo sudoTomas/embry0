@@ -43,7 +43,7 @@ async def test_triage_parse_error_routes_to_end(
     mock_config: dict[str, Any],
 ) -> None:
     """TriageParseError must return Command(goto=END), not a plain dict."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     agent_output = {
         "agent_outputs": [{"agent_type": "triage", "is_error": False, "output": "NOT VALID JSON <<<"}],
@@ -52,8 +52,8 @@ async def test_triage_parse_error_routes_to_end(
     }
 
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=agent_output)),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=agent_output)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(base_state, mock_config)
 
@@ -69,7 +69,7 @@ async def test_triage_agent_error_routes_to_end(
     mock_config: dict[str, Any],
 ) -> None:
     """Agent is_error=True must route to END without reaching developer node."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     agent_output = {
         "agent_outputs": [
@@ -85,8 +85,8 @@ async def test_triage_agent_error_routes_to_end(
     }
 
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=agent_output)),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=agent_output)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(base_state, mock_config)
 
@@ -101,7 +101,7 @@ async def test_triage_empty_agent_outputs_routes_to_end(
     mock_config: dict[str, Any],
 ) -> None:
     """Empty agent_outputs must route to END."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     agent_output: dict[str, Any] = {
         "agent_outputs": [],
@@ -110,8 +110,8 @@ async def test_triage_empty_agent_outputs_routes_to_end(
     }
 
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=agent_output)),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=agent_output)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(base_state, mock_config)
 

@@ -1,7 +1,7 @@
 """Plan B Task 7 — end-to-end inbound smoke.
 
 GitHub posts an ``issue_comment`` containing a ``/answer N: <text>`` directive
-to the webhook. The webhook handler in ``athanor/api/v1/webhooks.py`` should:
+to the webhook. The webhook handler in ``embry0/api/v1/webhooks.py`` should:
 
   parse the directive
     → look up the matching pending ``issue_inputs`` row by sequence
@@ -17,7 +17,7 @@ The integration ``app`` fixture in ``conftest.py`` skips when Postgres is
 unavailable. The fixture configures ``webhook_dev_mode=True`` AND a
 non-empty ``github_webhook_secret="test-secret"`` — that combination
 *requires* a valid HMAC signature (dev_mode only bypasses when the secret
-is empty, per ``athanor.api.auth.verify_webhook_signature``). So the
+is empty, per ``embry0.api.auth.verify_webhook_signature``). So the
 test computes a real ``sha256=...`` over the JSON-encoded body using the
 known fixture secret rather than patching ``verify_webhook_signature``.
 """

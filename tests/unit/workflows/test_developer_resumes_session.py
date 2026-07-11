@@ -7,8 +7,8 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_developer_loads_prior_session_and_persists_new_one():
-    from athanor.agents.session import AgentSession
-    from athanor.workflows.issue_to_pr.nodes import developer_node
+    from embry0.agents.session import AgentSession
+    from embry0.workflows.issue_to_pr.nodes import developer_node
 
     # Pre-existing session for this (job, agent)
     repo = AsyncMock()
@@ -64,8 +64,8 @@ async def test_developer_loads_prior_session_and_persists_new_one():
     }
 
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         await developer_node(
             state,

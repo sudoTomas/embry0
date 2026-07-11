@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.execution.image_manager import ContainerReaper, SandboxImageManager
+from embry0.execution.image_manager import ContainerReaper, SandboxImageManager
 
 
 @pytest.mark.asyncio
@@ -32,9 +32,9 @@ async def test_check_proxy_image_present_uses_correct_image_tag():
     docker.run_cmd = AsyncMock(return_value=b"")
     mgr = SandboxImageManager(docker)
     await mgr.check_proxy_image_present()
-    # The cmd issued should have included athanor-proxy:latest
+    # The cmd issued should have included embry0-proxy:latest
     called_cmd = docker.run_cmd.call_args[0][0]
-    assert "athanor-proxy:latest" in called_cmd
+    assert "embry0-proxy:latest" in called_cmd
     assert "image" in called_cmd
     assert "inspect" in called_cmd
 
@@ -75,7 +75,7 @@ async def test_expire_paused_jobs_uses_jobs_repo():
 @pytest.mark.asyncio
 async def test_expire_paused_jobs_calls_purge_thread(monkeypatch):
     """After expiring a paused job, purge_thread should be called with database_url + job_id."""
-    import athanor.orchestration.checkpoint as ckpt_mod
+    import embry0.orchestration.checkpoint as ckpt_mod
 
     purge_calls: list[tuple[str, str]] = []
 
@@ -114,7 +114,7 @@ async def test_expire_paused_jobs_calls_purge_thread(monkeypatch):
 @pytest.mark.asyncio
 async def test_expire_paused_jobs_purge_failure_does_not_break_loop(monkeypatch):
     """A purge_thread failure must not propagate — the job is still marked expired."""
-    import athanor.orchestration.checkpoint as ckpt_mod
+    import embry0.orchestration.checkpoint as ckpt_mod
 
     async def _failing_purge(database_url: str, thread_id: str) -> None:
         raise RuntimeError("db gone")
@@ -151,7 +151,7 @@ async def test_expire_paused_jobs_purge_failure_does_not_break_loop(monkeypatch)
 @pytest.mark.asyncio
 async def test_expire_paused_jobs_no_purge_without_database_url(monkeypatch):
     """When database_url is not set, purge_thread must not be called."""
-    import athanor.orchestration.checkpoint as ckpt_mod
+    import embry0.orchestration.checkpoint as ckpt_mod
 
     purge_calls: list[tuple[str, str]] = []
 
@@ -226,7 +226,7 @@ async def test_ensure_image_defers_to_registry_when_no_build_context(tmp_path):
     docker._build_base_cmd = MagicMock(return_value=["docker"])
     docker.run_cmd = AsyncMock(return_value=b"ok")  # image inspect succeeds
     mgr = SandboxImageManager(docker, app_root=str(tmp_path))  # no infra/ here
-    built = await mgr.ensure_image("athanor-sandbox:latest")
+    built = await mgr.ensure_image("embry0-sandbox:latest")
     assert built is False
     for call in docker.run_cmd.call_args_list:
         assert "build" not in call[0][0], "must not attempt a self-build"
@@ -240,7 +240,7 @@ async def test_ensure_image_no_context_and_image_missing_returns_false(tmp_path)
     docker._build_base_cmd = MagicMock(return_value=["docker"])
     docker.run_cmd = AsyncMock(side_effect=RuntimeError("No such image"))
     mgr = SandboxImageManager(docker, app_root=str(tmp_path))
-    built = await mgr.ensure_image("athanor-sandbox:latest")
+    built = await mgr.ensure_image("embry0-sandbox:latest")
     assert built is False
     for call in docker.run_cmd.call_args_list:
         assert "build" not in call[0][0]
@@ -256,7 +256,7 @@ async def test_ensure_image_self_builds_when_context_present(tmp_path):
     docker._build_base_cmd = MagicMock(return_value=["docker"])
     docker.run_cmd = AsyncMock(return_value="deadbeef")
     mgr = SandboxImageManager(docker, app_root=str(tmp_path))
-    built = await mgr.ensure_image("athanor-sandbox:latest", force=True)
+    built = await mgr.ensure_image("embry0-sandbox:latest", force=True)
     assert built is True
     issued = [c[0][0] for c in docker.run_cmd.call_args_list]
     assert any("build" in cmd for cmd in issued), "self-build must still occur"

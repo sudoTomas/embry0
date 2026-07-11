@@ -107,17 +107,17 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Divine layer (embry0 identity) — see frontend/src/components/divine/CLAUDE.md */
 
-@keyframes athanor-pulse {
+@keyframes embry0-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.78; }
 }
 
-.athanor-mark {
-  animation: athanor-pulse 4s ease-in-out infinite;
+.embry0-mark {
+  animation: embry0-pulse 4s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .athanor-mark {
+  .embry0-mark {
     animation: none;
   }
 }
@@ -126,7 +126,7 @@ h1, h2, h3, h4, h5, h6 {
 body[data-divine="off"] .divine-element {
   display: none !important;
 }
-body[data-divine="off"] .athanor-mark {
+body[data-divine="off"] .embry0-mark {
   animation: none;
 }
 
@@ -214,50 +214,50 @@ body[data-divine="off"] .divine-fallback {
 
 /* ===== embry0 Execution Dashboard Theme ===== */
 :root {
-  --athanor-bg-primary: #09090b;
-  --athanor-bg-card: #0f1419;
-  --athanor-accent-primary: #d4af37;
-  --athanor-glow-border: rgba(6, 182, 212, 0.15);
-  --athanor-glow-shadow: rgba(6, 182, 212, 0.05);
-  --athanor-gradient-card: linear-gradient(135deg, rgba(15, 20, 25, 0.95), rgba(9, 9, 11, 0.98));
+  --embry0-bg-primary: #09090b;
+  --embry0-bg-card: #0f1419;
+  --embry0-accent-primary: #d4af37;
+  --embry0-glow-border: rgba(6, 182, 212, 0.15);
+  --embry0-glow-shadow: rgba(6, 182, 212, 0.05);
+  --embry0-gradient-card: linear-gradient(135deg, rgba(15, 20, 25, 0.95), rgba(9, 9, 11, 0.98));
 
-  --athanor-phase-triage: #10b981;
-  --athanor-phase-developer: #f59e0b;
-  --athanor-phase-validator: #22c55e;
-  --athanor-phase-reviewer: #ec4899;
-  --athanor-phase-output: #f43f5e;
+  --embry0-phase-triage: #10b981;
+  --embry0-phase-developer: #f59e0b;
+  --embry0-phase-validator: #22c55e;
+  --embry0-phase-reviewer: #ec4899;
+  --embry0-phase-output: #f43f5e;
 }
 
-.athanor-card {
-  background: var(--athanor-gradient-card);
-  border: 1px solid var(--athanor-glow-border);
+.embry0-card {
+  background: var(--embry0-gradient-card);
+  border: 1px solid var(--embry0-glow-border);
   border-radius: 16px;
-  box-shadow: 0 0 20px var(--athanor-glow-shadow);
+  box-shadow: 0 0 20px var(--embry0-glow-shadow);
 }
 
-@keyframes athanor-flow-down {
+@keyframes embry0-flow-down {
   0% { top: 0; opacity: 0; }
   20% { opacity: 1; }
   80% { opacity: 1; }
   100% { top: 100%; opacity: 0; }
 }
 
-@keyframes athanor-pulse-border {
+@keyframes embry0-pulse-border {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }
 }
 
-@keyframes athanor-spin {
+@keyframes embry0-spin {
   to { transform: rotate(360deg); }
 }
 
-.athanor-spinner {
+.embry0-spinner {
   width: 18px;
   height: 18px;
   border: 2px solid rgba(255, 255, 255, 0.08);
   border-top-color: currentColor;
   border-radius: 50%;
-  animation: athanor-spin 0.8s linear infinite;
+  animation: embry0-spin 0.8s linear infinite;
 }
 
 @keyframes agent-bounce {

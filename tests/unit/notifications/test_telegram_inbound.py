@@ -1,6 +1,6 @@
 """Telegram reply-to-message routes the answer to the correct issue_inputs row.
 
-The handler in ``athanor/api/v1/telegram.py`` looks up an input by its
+The handler in ``embry0/api/v1/telegram.py`` looks up an input by its
 ``telegram_message_id`` regardless of which node originally asked the
 question — so triage ``needs_info`` and developer/review ``agent_ask_user``
 rows go through the same path. Plan B Task 4 locks that behavior with a
@@ -21,8 +21,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from athanor.api.app import create_app
-from athanor.config import AthanorConfig
+from embry0.api.app import create_app
+from embry0.config import Embry0Config
 
 WEBHOOK_SECRET = "test-telegram-secret"
 
@@ -35,7 +35,7 @@ def _make_app(*, input_row: dict | None, pending_blocking_after: int = 0):
     is the value ``count_pending_blocking`` returns after the answer is
     recorded — 0 means the workflow should resume.
     """
-    config = AthanorConfig(
+    config = Embry0Config(
         _env_file=None,
         auth_dev_mode=True,
         webhook_dev_mode=True,

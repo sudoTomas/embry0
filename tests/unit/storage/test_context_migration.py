@@ -5,7 +5,7 @@ pytestmark = pytest.mark.requires_postgres
 
 @pytest.mark.asyncio
 async def test_repo_is_nullable_after_migration(db_with_migrations):
-    # A row with NULL repo must be insertable (was NOT NULL before INT-599).
+    # A row with NULL repo must be insertable (was NOT NULL before migration 34).
     await db_with_migrations.execute("INSERT INTO jobs (job_id, task) VALUES ('job-nullrepo', 'research')")
     row = await db_with_migrations.fetchrow("SELECT repo, context FROM jobs WHERE job_id = 'job-nullrepo'")
     assert row["repo"] is None

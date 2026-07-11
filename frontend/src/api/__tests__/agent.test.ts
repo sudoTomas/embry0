@@ -45,6 +45,35 @@ describe("agentApi axios instance", () => {
   it("targets the /agent reverse-proxy prefix, not /api/v1", () => {
     expect(agentApi.defaults.baseURL).toBe("/agent");
   });
+
+  // Deployments without the optional /agent reverse-proxy serve the SPA
+  // fallback (HTTP 200 + index.html) for agent requests. The response
+  // interceptor must reject those so react-query lands on the error path
+  // instead of caching an HTML string as data.
+  it("rejects SPA-fallback HTML responses instead of resolving them", async () => {
+    const adapter = vi.fn(async (config: unknown) => ({
+      data: "<!doctype html><html><body>app</body></html>",
+      status: 200,
+      statusText: "OK",
+      headers: { "content-type": "text/html; charset=utf-8" },
+      config: config as never,
+    }));
+    await expect(agentApi.get("/tasks", { adapter })).rejects.toThrow(
+      /non-JSON response/,
+    );
+  });
+
+  it("passes real JSON responses through untouched", async () => {
+    const adapter = vi.fn(async (config: unknown) => ({
+      data: [{ id: 1, status: "done" }],
+      status: 200,
+      statusText: "OK",
+      headers: { "content-type": "application/json" },
+      config: config as never,
+    }));
+    const { data } = await agentApi.get("/tasks", { adapter });
+    expect(data).toEqual([{ id: 1, status: "done" }]);
+  });
 });
 
 describe("agent API client — read endpoints", () => {

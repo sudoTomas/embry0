@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ─── Claude Code shortcut into the running production orchestrator ─────────
-# This script opens a Claude Code session inside the athanor-orchestrator
+# This script opens a Claude Code session inside the embry0-orchestrator
 # container. The orchestrator must already be running via:
 #   cd infra && docker compose up -d
 #
@@ -11,7 +11,7 @@ set -euo pipefail
 #   ./lab claude       — same as above, with optional extra args forwarded
 #   ./lab help         — show this message
 
-CONTAINER="athanor-orchestrator"
+CONTAINER="embry0-orchestrator"
 
 cd "$(dirname "$0")"
 
@@ -29,7 +29,7 @@ case "${1:-claude}" in
   help|--help|-h)
     echo "Usage: ./lab [claude] [extra-claude-args...]"
     echo ""
-    echo "Opens Claude Code inside the running athanor-orchestrator container."
+    echo "Opens Claude Code inside the running embry0-orchestrator container."
     echo "The container must be started first: cd infra && docker compose up -d"
     echo ""
     echo "Commands:"

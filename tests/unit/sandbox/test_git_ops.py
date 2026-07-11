@@ -1,6 +1,6 @@
 import pytest
 
-from athanor.sandbox.github.git_ops import (
+from embry0.sandbox.github.git_ops import (
     build_clone_url,
     build_sandbox_credential_config_cmd,
 )

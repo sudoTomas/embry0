@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from athanor.workspace_providers import WorkspaceProviderError
-from athanor.workspace_providers.registry import (
+from embry0.workspace_providers import WorkspaceProviderError
+from embry0.workspace_providers.registry import (
     available_provider_names,
     load_provider,
 )
@@ -31,7 +31,7 @@ def test_available_provider_names_returns_list_of_strings():
 def test_load_provider_caches_class_resolution(monkeypatch):
     """Repeated load_provider calls for the same name share an underlying
     EntryPoint resolution — registry lookup is fast on the hot path."""
-    from athanor.workspace_providers import registry
+    from embry0.workspace_providers import registry
 
     calls = {"count": 0}
     real = registry._resolve_entry_point

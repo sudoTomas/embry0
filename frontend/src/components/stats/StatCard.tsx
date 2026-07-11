@@ -10,7 +10,7 @@ interface StatCardProps {
 export function StatCard({ title, value, subtitle, color = "#3b82f6", delay = 0 }: StatCardProps) {
   return (
     <div
-      className="athanor-card relative overflow-hidden p-5 animate-fade-up"
+      className="embry0-card relative overflow-hidden p-5 animate-fade-up"
       style={{ animationDelay: `${delay}ms` }}
     >
       <div

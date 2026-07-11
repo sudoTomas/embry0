@@ -1,7 +1,7 @@
 import pytest
 
-from athanor.storage.database import DatabasePool
-from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.sandbox_profiles import SandboxProfilesRepository
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -15,13 +15,13 @@ async def profiles_repo(db_with_migrations: DatabasePool) -> SandboxProfilesRepo
 async def test_create_and_get_profile(profiles_repo: SandboxProfilesRepository):
     await profiles_repo.upsert(
         name="python-3.12",
-        base_image="athanor-sandbox-python:3.12",
+        base_image="embry0-sandbox-python:3.12",
         memory="8g",
         cpus="4",
     )
     profile = await profiles_repo.get("python-3.12")
     assert profile is not None
-    assert profile["base_image"] == "athanor-sandbox-python:3.12"
+    assert profile["base_image"] == "embry0-sandbox-python:3.12"
     assert profile["memory"] == "8g"
 
 

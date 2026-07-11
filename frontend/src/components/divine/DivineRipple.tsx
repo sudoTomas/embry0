@@ -19,8 +19,6 @@ function prefersReducedMotion(): boolean {
  *
  * Compound-property exception per divine rule #3 (animates r + opacity,
  * justified as a one-shot — see `divine/CLAUDE.md` rule #3).
- *
- * See `docs/superpowers/specs/2026-05-04-divine-animations-design.md` §3.4.
  */
 export function DivineRipple({ size = 120, className }: DivineRippleProps) {
   if (prefersReducedMotion()) return null;

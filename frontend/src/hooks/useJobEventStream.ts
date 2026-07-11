@@ -74,7 +74,7 @@ export function useJobEventStream(
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-    const subprotocols = apiKey ? [`athanor.bearer.${apiKey}`] : [];
+    const subprotocols = apiKey ? [`embry0.bearer.${apiKey}`] : [];
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/jobs/${jobId}/events`, subprotocols);
     wsRef.current = ws;
 

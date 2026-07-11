@@ -6,7 +6,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from athanor.execution.proxy.minio_proxy import create_minio_proxy_app
+from embry0.execution.proxy.minio_proxy import create_minio_proxy_app
 
 
 @pytest.mark.asyncio

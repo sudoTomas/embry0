@@ -3,7 +3,7 @@ into options for the next invocation."""
 
 
 def test_capture_messages_from_api_mode_result():
-    from athanor.agents.session import capture_session_after_run
+    from embry0.agents.session import capture_session_after_run
 
     result = {
         "agent_type": "developer",
@@ -20,7 +20,7 @@ def test_capture_messages_from_api_mode_result():
 
 
 def test_restore_messages_into_options_api():
-    from athanor.agents.session import AgentSession, restore_session_into_options
+    from embry0.agents.session import AgentSession, restore_session_into_options
 
     sess = AgentSession(
         job_id="J",
@@ -34,7 +34,7 @@ def test_restore_messages_into_options_api():
 
 
 def test_round_trip_api():
-    from athanor.agents.session import (
+    from embry0.agents.session import (
         capture_session_after_run,
         restore_session_into_options,
     )

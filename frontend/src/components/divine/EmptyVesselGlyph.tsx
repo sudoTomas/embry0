@@ -22,9 +22,6 @@ interface EmptyVesselGlyphProps {
  * Optional `operation` prop swaps the static mark for an animated
  * `<DivineOperation>` (e.g. "calcinate" — the matter is being broken
  * down, the work begins).
- *
- * See `docs/superpowers/specs/2026-05-04-geodesic-identity-design.md` §3.6
- * and `docs/superpowers/specs/2026-05-04-divine-operations-design.md` §3.4.
  */
 export function EmptyVesselGlyph({
   copy,

@@ -1,6 +1,6 @@
 """Migration 12 — execution_mode + auth_mode nullable columns."""
 
-from athanor.storage.migrations.runner import MIGRATIONS
+from embry0.storage.migrations.runner import MIGRATIONS
 
 
 def test_migration_12_present() -> None:

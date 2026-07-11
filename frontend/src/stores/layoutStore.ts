@@ -16,6 +16,6 @@ export const useLayoutStore = create<LayoutState>()(
       toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
       setDensityMode: (densityMode) => set({ densityMode }),
     }),
-    { name: "athanor-layout" }
+    { name: "embry0-layout" }
   )
 );

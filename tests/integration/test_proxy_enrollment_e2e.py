@@ -3,7 +3,7 @@
 Tests the full enroll → use bearer → unenroll → bearer rejected cycle
 against a real git-proxy container running in Docker (not a mock).
 
-Requires: Docker daemon, athanor-proxy:latest image loadable.
+Requires: Docker daemon, embry0-proxy:latest image loadable.
 """
 
 import asyncio
@@ -37,13 +37,13 @@ class TestProxyEnrollmentE2E:
                 f"GITHUB_TOKEN={github_token}",
                 "-p",
                 "0:9101",
-                "athanor-proxy:latest",
+                "embry0-proxy:latest",
             ],
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
-            pytest.skip(f"Could not start git-proxy container (is athanor-proxy:latest built?): {result.stderr}")
+            pytest.skip(f"Could not start git-proxy container (is embry0-proxy:latest built?): {result.stderr}")
         container_id = result.stdout.strip()
 
         # Get the mapped host port

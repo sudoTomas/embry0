@@ -4,7 +4,7 @@ import pytest
 from langgraph.graph import END
 from langgraph.types import Command
 
-from athanor.workflows.qa.nodes import retry_node
+from embry0.workflows.qa.nodes import retry_node
 
 
 def _mk_state(*, exit_reason: str, attempts: int, max_retries: int = 2):

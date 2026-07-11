@@ -44,10 +44,8 @@ const STRUT_PATHS = [
  * Animation gated by `prefers-reduced-motion: no-preference` AND
  * `body:not([data-divine="off"])` — see frontend/src/index.css.
  *
- * Per spec §3.5 + divine rule #5: NEVER use this on latency-sensitive
- * surfaces (job feeds, log tails, error toasts).
- *
- * See `docs/superpowers/specs/2026-05-04-divine-radiate-operation-cycling-design.md`.
+ * Per divine rule #5: NEVER use this on latency-sensitive surfaces
+ * (job feeds, log tails, error toasts).
  */
 export function DivineRadiate({
   size = 80,

@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 
 def test_full_qa_wiring_round_trip():
-    from athanor.api.app import _init_app_state, create_app
+    from embry0.api.app import _init_app_state, create_app
 
     app = create_app()
     db = MagicMock()
@@ -57,7 +57,7 @@ def test_full_qa_wiring_round_trip_no_github_token():
     """When _init_app_state is called without a github_token (auth_dev_mode
     or unconfigured prod), configurable['github_token'] is None — and
     qa_report_node short-circuits gracefully (existing behavior)."""
-    from athanor.api.app import _init_app_state, create_app
+    from embry0.api.app import _init_app_state, create_app
 
     app = create_app()
     db = MagicMock()

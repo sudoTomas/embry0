@@ -8,7 +8,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_dispatch_two_answers_to_two_pending_inputs():
-    from athanor.notifications.inbound_dispatch import apply_inbound_directives
+    from embry0.notifications.inbound_dispatch import apply_inbound_directives
 
     inputs_repo = MagicMock()
     inputs_repo.list_pending_for_issue = AsyncMock(
@@ -43,7 +43,7 @@ async def test_dispatch_two_answers_to_two_pending_inputs():
 async def test_dispatch_skip_marks_input_as_skipped():
     """A /skip N directive marks the input as 'skipped' status — the workflow
     can either continue past it (if non-blocking) or escalate."""
-    from athanor.notifications.inbound_dispatch import apply_inbound_directives
+    from embry0.notifications.inbound_dispatch import apply_inbound_directives
 
     inputs_repo = MagicMock()
     inputs_repo.list_pending_for_issue = AsyncMock(
@@ -71,7 +71,7 @@ async def test_dispatch_skip_marks_input_as_skipped():
 @pytest.mark.asyncio
 async def test_dispatch_ignores_unknown_sequence():
     """A directive with a sequence > pending count is silently skipped (logged)."""
-    from athanor.notifications.inbound_dispatch import apply_inbound_directives
+    from embry0.notifications.inbound_dispatch import apply_inbound_directives
 
     inputs_repo = MagicMock()
     inputs_repo.list_pending_for_issue = AsyncMock(
@@ -99,7 +99,7 @@ async def test_dispatch_ignores_unknown_sequence():
 async def test_dispatch_does_not_resume_when_blocking_questions_remain():
     """If after applying directives there are still pending blocking inputs,
     on_all_answered is NOT called."""
-    from athanor.notifications.inbound_dispatch import apply_inbound_directives
+    from embry0.notifications.inbound_dispatch import apply_inbound_directives
 
     inputs_repo = MagicMock()
     inputs_repo.list_pending_for_issue = AsyncMock(

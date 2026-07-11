@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 
 def _make_executor():
-    from athanor.services.issue_executor import IssueExecutor
+    from embry0.services.issue_executor import IssueExecutor
 
     return IssueExecutor(
         issues_repo=MagicMock(),

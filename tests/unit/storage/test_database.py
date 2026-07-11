@@ -1,6 +1,6 @@
 import pytest
 
-from athanor.storage.database import DatabasePool
+from embry0.storage.database import DatabasePool
 
 
 @pytest.mark.requires_postgres
@@ -9,7 +9,7 @@ async def test_pool_connect_and_query():
     """Pool can execute a simple query."""
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
     db = DatabasePool(url)
     await db.connect()
     result = await db.fetchval("SELECT 1")
@@ -23,7 +23,7 @@ async def test_database_pool_lifecycle():
     """DatabasePool creates and closes pool correctly."""
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
     db = DatabasePool(url)
     await db.connect()
     assert db.pool is not None
@@ -40,7 +40,7 @@ async def test_database_pool_execute():
     """DatabasePool.execute runs DDL statements."""
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
     db = DatabasePool(url)
     await db.connect()
 
@@ -60,7 +60,7 @@ async def test_transaction_commits_on_success():
     """Queries inside transaction() block must commit when the block exits cleanly."""
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
     db = DatabasePool(url)
     await db.connect()
 
@@ -84,7 +84,7 @@ async def test_transaction_rolls_back_on_exception():
     """If the transaction() block raises, ALL statements roll back."""
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
     db = DatabasePool(url)
     await db.connect()
 
@@ -117,9 +117,9 @@ async def test_handle_needs_info_end_to_end_against_real_db():
     import os
     import uuid as uuid_mod
 
-    from athanor.storage.migrations.runner import run_migrations
+    from embry0.storage.migrations.runner import run_migrations
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
     db = DatabasePool(url)
     await db.connect()
     # pg_pool fixture creates the database; we need the schema too
@@ -148,7 +148,7 @@ async def test_handle_needs_info_end_to_end_against_real_db():
         # Build a minimal executor and call the real method against real DB
         from unittest.mock import AsyncMock
 
-        from athanor.services.issue_executor import IssueExecutor
+        from embry0.services.issue_executor import IssueExecutor
 
         executor = IssueExecutor.__new__(IssueExecutor)
         executor._db = db
@@ -205,7 +205,7 @@ async def test_transaction_yields_asyncpg_connection():
     """The yielded object must be an asyncpg Connection with execute/fetchrow."""
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
     db = DatabasePool(url)
     await db.connect()
 

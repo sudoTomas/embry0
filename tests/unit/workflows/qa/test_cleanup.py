@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from athanor.workflows.qa.cleanup import cleanup_qa_resources
+from embry0.workflows.qa.cleanup import cleanup_qa_resources
 
 
 @pytest.mark.asyncio
@@ -16,7 +16,7 @@ async def test_cleanup_runs_all_three_filters_and_removes_network():
     cmds = [c.args[0] for c in docker.run_cmd.call_args_list]
     flat = [" ".join(map(str, c)) for c in cmds]
     assert any("com.docker.compose.project=qa_JOB1" in s for s in flat)
-    assert any("athanor.qa_job_id=JOB1" in s for s in flat)
+    assert any("embry0.qa_job_id=JOB1" in s for s in flat)
     assert any("network rm qa-net-JOB1" in s for s in flat)
 
 

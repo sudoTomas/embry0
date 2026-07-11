@@ -7,14 +7,14 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_github_channel_posts_one_comment_with_numbered_questions():
-    from athanor.notifications.github_comment import GitHubCommentChannel
+    from embry0.notifications.github_comment import GitHubCommentChannel
 
     fake_client = MagicMock()
     fake_client.post = AsyncMock(
         return_value=MagicMock(status_code=201, json=lambda: {"id": 999, "html_url": "https://x"})
     )
 
-    channel = GitHubCommentChannel(http_client=fake_client, dashboard_base_url="https://athanor.local")
+    channel = GitHubCommentChannel(http_client=fake_client, dashboard_base_url="https://embry0.local")
     issue = {
         "id": "iss-1",
         "repo": "owner/repo",
@@ -34,18 +34,18 @@ async def test_github_channel_posts_one_comment_with_numbered_questions():
         "/repos/owner/repo/issues/42/comments"
     )
     body = kwargs["json"]["body"]
-    assert "Athanor agent" in body
+    assert "embry0 agent" in body
     assert "1." in body and "2." in body
     assert "design" in body
     assert "Should I support batch?" in body
     # Dashboard answer link present
-    assert "https://athanor.local" in body
+    assert "https://embry0.local" in body
 
 
 @pytest.mark.asyncio
 async def test_github_channel_skipped_when_issue_not_github_synced():
     """If github_number is None, the channel is a no-op (no API call)."""
-    from athanor.notifications.github_comment import GitHubCommentChannel
+    from embry0.notifications.github_comment import GitHubCommentChannel
 
     fake_client = MagicMock()
     fake_client.post = AsyncMock()
@@ -63,7 +63,7 @@ async def test_github_channel_does_not_add_per_call_auth_header():
     lifespan time with the orchestrator's GITHUB_TOKEN). The channel itself
     must not add another Authorization header per-call — that would either
     duplicate or override the client default."""
-    from athanor.notifications.github_comment import GitHubCommentChannel
+    from embry0.notifications.github_comment import GitHubCommentChannel
 
     fake_client = MagicMock()
     fake_client.post = AsyncMock(return_value=MagicMock(status_code=201, json=lambda: {"id": 1, "html_url": "x"}))
@@ -83,8 +83,8 @@ async def test_github_channel_does_not_add_per_call_auth_header():
 @pytest.mark.asyncio
 async def test_dispatch_uses_token_resolver_per_repo():
     """When a token_resolver is provided, dispatch adds a per-request
-    Authorization header derived from it (INT-727 per-repo owner tokens)."""
-    from athanor.notifications.github_comment import GitHubCommentChannel
+    Authorization header derived from it (per-repo owner tokens)."""
+    from embry0.notifications.github_comment import GitHubCommentChannel
 
     fake_client = MagicMock()
     fake_client.post = AsyncMock(return_value=MagicMock(status_code=201, json=lambda: {"id": 1, "html_url": "x"}))
@@ -93,23 +93,23 @@ async def test_dispatch_uses_token_resolver_per_repo():
         dashboard_base_url="http://dash",
         token_resolver=lambda repo: f"tok-for-{repo.split('/', 1)[0]}",
     )
-    issue = {"id": "i1", "repo": "client-project/ai-quoting", "github_number": 7}
+    issue = {"id": "i1", "repo": "acme-corp/widgets", "github_number": 7}
     await channel.dispatch(issue, [{"question": "Q?"}])
 
     _, kwargs = fake_client.post.call_args
-    assert kwargs["headers"]["Authorization"] == "Bearer tok-for-client-project"
+    assert kwargs["headers"]["Authorization"] == "Bearer tok-for-acme-corp"
 
 
 @pytest.mark.asyncio
 async def test_dispatch_without_resolver_sends_no_per_request_auth():
     """Without a token_resolver, dispatch falls back to today's behavior:
     no per-request Authorization header (client-level default header wins)."""
-    from athanor.notifications.github_comment import GitHubCommentChannel
+    from embry0.notifications.github_comment import GitHubCommentChannel
 
     fake_client = MagicMock()
     fake_client.post = AsyncMock(return_value=MagicMock(status_code=201, json=lambda: {"id": 1, "html_url": "x"}))
     channel = GitHubCommentChannel(http_client=fake_client, dashboard_base_url="http://dash")
-    issue = {"id": "i1", "repo": "client-project/ai-quoting", "github_number": 7}
+    issue = {"id": "i1", "repo": "acme-corp/widgets", "github_number": 7}
     await channel.dispatch(issue, [{"question": "Q?"}])
 
     _, kwargs = fake_client.post.call_args

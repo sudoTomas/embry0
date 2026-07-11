@@ -12,6 +12,25 @@ export const agentApi = axios.create({
   },
 });
 
+// The agent backend is an optional companion service. When a deployment has no
+// /agent reverse-proxy, requests fall through to the SPA fallback and come back
+// as HTTP 200 with an HTML body. Axios treats that as success, which would
+// poison react-query caches with HTML strings and crash renderers expecting
+// arrays/objects. Reject those responses so callers land on their existing
+// error/empty states instead.
+agentApi.interceptors.response.use((response) => {
+  const contentType = String(response.headers?.["content-type"] ?? "");
+  if (
+    typeof response.data === "string" &&
+    (contentType.includes("text/html") || response.data.trimStart().startsWith("<"))
+  ) {
+    return Promise.reject(
+      new Error("Agent backend unavailable: /agent returned a non-JSON response"),
+    );
+  }
+  return response;
+});
+
 // The agent's task ids are integers in the live API (e.g. `13`), but action
 // routes and React keys treat them as strings. Accept both at the boundary;
 // stringify at the edges that need a string.

@@ -21,7 +21,7 @@ type ProfileForm = Omit<SandboxProfile, "created_at" | "updated_at" | "is_builti
 
 const DEFAULT_PROFILE: ProfileForm = {
   name: "",
-  base_image: "athanor-sandbox:latest",
+  base_image: "embry0-sandbox:latest",
   additional_packages: [],
   setup_commands: [],
   memory: "8g",
@@ -241,7 +241,7 @@ export function SandboxFormPage() {
                 value={form.base_image}
                 onChange={(e) => setField("base_image", e.target.value)}
                 disabled={isBuiltin}
-                placeholder="athanor-sandbox:latest"
+                placeholder="embry0-sandbox:latest"
                 className="mt-1"
               />
             </div>

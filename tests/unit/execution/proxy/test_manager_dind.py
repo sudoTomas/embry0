@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.execution.proxy.manager import ProxyManager
+from embry0.execution.proxy.manager import ProxyManager
 
 _ADMIN_TOKEN = "test-admin-token"
 
@@ -20,7 +20,7 @@ def _mock_backend_resolution(monkeypatch):
     available; stub it to a fixed IP so start() doesn't blow up.
     """
     monkeypatch.setattr(
-        "athanor.execution.proxy.manager.socket.gethostbyname",
+        "embry0.execution.proxy.manager.socket.gethostbyname",
         lambda host: "10.99.0.1",
     )
 
@@ -45,7 +45,7 @@ async def test_start_launches_git_proxy(docker_mock):
     await pm.start(github_token="ghp_test", anthropic_api_key="")
     docker_mock.build_run_proxy_cmd.assert_any_call(
         name="git-proxy",
-        image="athanor-proxy:latest",
+        image="embry0-proxy:latest",
         network="sandbox-restricted",
         env={
             "PROXY_TYPE": "git",
@@ -63,7 +63,7 @@ async def test_start_launches_github_proxy_dual_network(docker_mock):
     await pm.start(github_token="ghp_test", anthropic_api_key="")
     docker_mock.build_run_proxy_cmd.assert_any_call(
         name="github-proxy",
-        image="athanor-proxy:latest",
+        image="embry0-proxy:latest",
         network="sandbox-restricted",
         env={
             "PROXY_TYPE": "github",
@@ -82,7 +82,7 @@ async def test_start_launches_auth_proxy_when_key_set(docker_mock):
     await pm.start(github_token="", anthropic_api_key="sk-ant-test", enable_auth_proxy=True)
     docker_mock.build_run_proxy_cmd.assert_any_call(
         name="auth-proxy",
-        image="athanor-proxy:latest",
+        image="embry0-proxy:latest",
         network="sandbox-restricted",
         env={
             "PROXY_TYPE": "auth",
@@ -126,7 +126,7 @@ async def test_start_launches_minio_and_presign_proxies(docker_mock):
 
     docker_mock.build_run_proxy_cmd.assert_any_call(
         name="minio-proxy",
-        image="athanor-proxy:latest",
+        image="embry0-proxy:latest",
         network="sandbox-restricted",
         env={
             "PROXY_TYPE": "minio",
@@ -137,7 +137,7 @@ async def test_start_launches_minio_and_presign_proxies(docker_mock):
     )
     docker_mock.build_run_proxy_cmd.assert_any_call(
         name="presign-proxy",
-        image="athanor-proxy:latest",
+        image="embry0-proxy:latest",
         network="sandbox-restricted",
         env={
             "PROXY_TYPE": "presign",
@@ -173,22 +173,6 @@ async def test_start_cleans_existing_containers_first(docker_mock):
     flattened = [arg for call in rm_call_args for arg in call]
     # Confirm at least one rm command included git-proxy
     assert any("git-proxy" in arg or arg == "git-proxy" for arg in flattened)
-
-
-@pytest.mark.asyncio
-async def test_start_athanor_proxy_for_job_is_stub(docker_mock):
-    """The per-job Athanor API proxy is deferred — the method must raise
-    NotImplementedError loudly rather than silently returning an empty URL."""
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
-    with pytest.raises(NotImplementedError, match="Athanor API proxy is deferred"):
-        await pm.start_athanor_proxy_for_job(
-            issues_repo=None,
-            inputs_repo=None,
-            issue_id="iss-test",
-            job_id="job-test",
-            repo="owner/repo",
-            db=None,
-        )
 
 
 @pytest.mark.asyncio

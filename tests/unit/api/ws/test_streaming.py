@@ -3,24 +3,24 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 try:
-    from athanor.api.app import create_app
+    from embry0.api.app import create_app
 except ImportError:
     pytest.skip("psycopg not available", allow_module_level=True)
-from athanor.config import AthanorConfig
+from embry0.config import Embry0Config
 
 VALID_API_KEY = "test-secret-key-12345"
 
 
 def _make_ws_app(*, auth_dev_mode: bool = False, api_key: str = VALID_API_KEY):
     """Create a minimal FastAPI app with the WS streaming router attached."""
-    config = AthanorConfig(
+    config = Embry0Config(
         _env_file=None,
         auth_dev_mode=auth_dev_mode,
         webhook_dev_mode=True,
         api_key=api_key,
     )
     app = create_app(config)
-    from athanor.api.events.bus import EventBus
+    from embry0.api.events.bus import EventBus
 
     app.state.event_bus = EventBus()
     return app
@@ -51,7 +51,7 @@ def test_ws_rejects_wrong_subprotocol():
     with pytest.raises(WebSocketDisconnect) as exc_info:
         with client.websocket_connect(
             "/ws/jobs/job-1/events",
-            subprotocols=["athanor.bearer.wrong-key"],
+            subprotocols=["embry0.bearer.wrong-key"],
         ):
             pass
     assert exc_info.value.code == 4001
@@ -63,7 +63,7 @@ def test_ws_accepts_correct_subprotocol():
     client = TestClient(app)
     with client.websocket_connect(
         "/ws/jobs/job-1/events",
-        subprotocols=[f"athanor.bearer.{VALID_API_KEY}"],
+        subprotocols=[f"embry0.bearer.{VALID_API_KEY}"],
     ):
         pass  # successfully connected and closed
 
@@ -86,7 +86,7 @@ def test_ws_no_api_key_configured_skips_auth():
 
 def test_passes_filter_no_filter_accepts_everything():
     """Empty wanted set means "no filter" — every event passes."""
-    from athanor.api.ws.streaming import _passes_filter
+    from embry0.api.ws.streaming import _passes_filter
 
     assert _passes_filter({"type": "progress"}, set()) is True
     assert _passes_filter({"type": "cost_update"}, set()) is True
@@ -94,7 +94,7 @@ def test_passes_filter_no_filter_accepts_everything():
 
 
 def test_passes_filter_allows_wanted_types():
-    from athanor.api.ws.streaming import _passes_filter
+    from embry0.api.ws.streaming import _passes_filter
 
     wanted = {"progress", "cost_update"}
     assert _passes_filter({"type": "progress"}, wanted) is True
@@ -102,7 +102,7 @@ def test_passes_filter_allows_wanted_types():
 
 
 def test_passes_filter_rejects_unwanted_types():
-    from athanor.api.ws.streaming import _passes_filter
+    from embry0.api.ws.streaming import _passes_filter
 
     wanted = {"progress"}
     assert _passes_filter({"type": "thinking"}, wanted) is False

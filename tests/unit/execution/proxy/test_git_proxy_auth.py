@@ -3,7 +3,7 @@
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from athanor.execution.proxy.git_proxy import create_git_proxy_app
+from embry0.execution.proxy.git_proxy import create_git_proxy_app
 
 ADMIN = "test-admin-secret-not-real"
 PAT = "ghp_PAT_TESTING_ONLY"

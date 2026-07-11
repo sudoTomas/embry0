@@ -18,9 +18,9 @@ jobs:
       postgres:
         image: postgres:16.6-alpine
         env:
-          POSTGRES_USER: athanor
-          POSTGRES_PASSWORD: athanor_ci
-          POSTGRES_DB: athanor_unit_test
+          POSTGRES_USER: embry0
+          POSTGRES_PASSWORD: embry0_ci
+          POSTGRES_DB: embry0_unit_test
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -29,7 +29,7 @@ jobs:
         ports:
           - 5432:5432
     env:
-      TEST_DATABASE_URL: postgresql://athanor:athanor_ci@localhost:5432/athanor_unit_test
+      TEST_DATABASE_URL: postgresql://embry0:embry0_ci@localhost:5432/embry0_unit_test
     steps:
       - uses: actions/checkout@v4
 
@@ -44,13 +44,13 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Ruff check
-        run: ruff check athanor/ tests/
+        run: ruff check embry0/ tests/
 
       - name: Ruff format check
-        run: ruff format --check athanor/ tests/
+        run: ruff format --check embry0/ tests/
 
       - name: Verify app imports
-        run: python -c "from athanor.api.app import create_app; print('OK')"
+        run: python -c "from embry0.api.app import create_app; print('OK')"
 
       - name: Run unit tests
         run: pytest tests/unit/ -v --tb=short --timeout=30
@@ -86,7 +86,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: false
-          tags: athanor-${{ matrix.name }}:ci
+          tags: embry0-${{ matrix.name }}:ci
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
@@ -97,19 +97,19 @@ jobs:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Build athanor-sandbox-qa
+      - name: Build embry0-sandbox-qa
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infra/Dockerfile.sandbox.qa
-          tags: athanor-sandbox-qa:latest
+          tags: embry0-sandbox-qa:latest
           push: false
           load: true
           cache-from: type=gha,scope=sandbox-qa
           cache-to: type=gha,mode=max,scope=sandbox-qa
       - name: Smoke-test runtimes
         run: |
-          docker run --rm athanor-sandbox-qa:latest bash -c '
+          docker run --rm embry0-sandbox-qa:latest bash -c '
             java -version 2>&1 &&
             node --version &&
             python --version &&
@@ -135,7 +135,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Mypy
-        run: mypy athanor
+        run: mypy embry0
 
   frontend:
     name: Frontend Build & Typecheck
@@ -186,7 +186,7 @@ jobs:
           context: .
           file: infra/Dockerfile.orchestrator
           push: false
-          tags: athanor-orchestrator:ci
+          tags: embry0-orchestrator:ci
           load: true
           cache-from: type=gha,scope=orchestrator
 
@@ -196,7 +196,7 @@ jobs:
           context: .
           file: infra/Dockerfile.sandbox
           push: false
-          tags: athanor-sandbox:ci
+          tags: embry0-sandbox:ci
           load: true
           cache-from: type=gha,scope=sandbox
 
@@ -206,7 +206,7 @@ jobs:
           context: .
           file: infra/Dockerfile.proxy
           push: false
-          tags: athanor-proxy:ci
+          tags: embry0-proxy:ci
           load: true
           cache-from: type=gha,scope=proxy
 
@@ -216,7 +216,7 @@ jobs:
           context: frontend
           file: frontend/Dockerfile
           push: false
-          tags: athanor-frontend:ci
+          tags: embry0-frontend:ci
           load: true
           cache-from: type=gha,scope=frontend
 
@@ -249,33 +249,33 @@ jobs:
           failure-threshold: warning
 
       - name: Trivy — orchestrator
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: athanor-orchestrator:ci
+          image-ref: embry0-orchestrator:ci
           format: table
           exit-code: "0"
           severity: CRITICAL,HIGH
 
       - name: Trivy — sandbox
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: athanor-sandbox:ci
+          image-ref: embry0-sandbox:ci
           format: table
           exit-code: "0"
           severity: CRITICAL,HIGH
 
       - name: Trivy — proxy
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: athanor-proxy:ci
+          image-ref: embry0-proxy:ci
           format: table
           exit-code: "0"
           severity: CRITICAL,HIGH
 
       - name: Trivy — frontend
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: athanor-frontend:ci
+          image-ref: embry0-frontend:ci
           format: table
           exit-code: "0"
           severity: CRITICAL,HIGH
@@ -304,9 +304,9 @@ jobs:
       postgres:
         image: postgres:16.6-alpine
         env:
-          POSTGRES_USER: athanor
-          POSTGRES_PASSWORD: athanor_ci
-          POSTGRES_DB: athanor_integration_test
+          POSTGRES_USER: embry0
+          POSTGRES_PASSWORD: embry0_ci
+          POSTGRES_DB: embry0_integration_test
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -315,7 +315,7 @@ jobs:
         ports:
           - 5432:5432
     env:
-      TEST_DATABASE_URL: postgresql://athanor:athanor_ci@localhost:5432/athanor_integration_test
+      TEST_DATABASE_URL: postgresql://embry0:embry0_ci@localhost:5432/embry0_integration_test
     steps:
       - uses: actions/checkout@v4
 
@@ -328,7 +328,7 @@ jobs:
           context: .
           file: infra/Dockerfile.proxy
           push: false
-          tags: athanor-proxy:latest
+          tags: embry0-proxy:latest
           load: true
           cache-from: type=gha,scope=proxy
 

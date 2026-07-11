@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp.test_utils import TestClient
 
-from athanor.execution.proxy.github_proxy import create_github_proxy_app
+from embry0.execution.proxy.github_proxy import create_github_proxy_app
 
 ADMIN = "test-admin-secret-not-real"
 SANDBOX_TOKEN = "tok-test-" + "a" * 30  # >= 32 chars

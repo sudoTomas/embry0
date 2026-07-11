@@ -24,7 +24,7 @@ export function LiveActivityBand({ running, queued, awaitingInput }: LiveActivit
 
   return (
     <div
-      className="athanor-card animate-fade-up flex items-center gap-3 px-4 py-2.5"
+      className="embry0-card animate-fade-up flex items-center gap-3 px-4 py-2.5"
       style={{ animationDelay: "60ms", borderColor: "rgba(34,197,94,0.15)" }}
     >
       <Activity size={14} className="text-success animate-pulse-glow shrink-0" />

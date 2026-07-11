@@ -29,9 +29,9 @@ from unittest.mock import patch
 
 import pytest
 
-from athanor.agents.executor import SdkAgentExecutor
-from athanor.agents.invocation import AgentInvocation
-from athanor.safety.policy import default_policy_for_agent
+from embry0.agents.executor import SdkAgentExecutor
+from embry0.agents.invocation import AgentInvocation
+from embry0.safety.policy import default_policy_for_agent
 
 
 def _inv(**kw: Any) -> AgentInvocation:
@@ -115,7 +115,7 @@ async def _scripted_query(messages: list[Any]):
 @pytest.mark.asyncio
 async def test_api_key_mode_captures_full_message_history(tmp_path: Any, monkeypatch: Any) -> None:
     """api_key mode: AgentOutput.messages == [user_prompt, assistant_turn_1, ...]."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     messages = [
         _AssistantMessage([_TextBlock("first reply")]),
@@ -144,7 +144,7 @@ async def test_api_key_mode_captures_full_message_history(tmp_path: Any, monkeyp
 @pytest.mark.asyncio
 async def test_api_key_mode_drops_tool_use_only_assistant_turns(tmp_path: Any, monkeypatch: Any) -> None:
     """Assistant turns with no text blocks (only tool_use) are dropped from messages."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     messages = [
         # Pure tool-call turn → omitted from the Messages-API replay buffer.
@@ -168,7 +168,7 @@ async def test_api_key_mode_drops_tool_use_only_assistant_turns(tmp_path: Any, m
 @pytest.mark.asyncio
 async def test_api_key_mode_concatenates_multiple_text_blocks(tmp_path: Any, monkeypatch: Any) -> None:
     """Multiple text blocks within one assistant turn collapse to a single content string."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     messages = [
         _AssistantMessage([_TextBlock("part one "), _TextBlock("part two")]),
@@ -190,7 +190,7 @@ async def test_api_key_mode_concatenates_multiple_text_blocks(tmp_path: Any, mon
 @pytest.mark.asyncio
 async def test_oauth_mode_captures_session_id_and_blob_path(tmp_path: Any, monkeypatch: Any) -> None:
     """oauth/claude_max mode: session_id snapshotted, blob_path discovered via find_session_file."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -199,7 +199,7 @@ async def test_oauth_mode_captures_session_id_and_blob_path(tmp_path: Any, monke
     sid = "11111111-2222-3333-4444-555555555555"
 
     # Pre-create the session file at the canonical projects path so find_session_file discovers it.
-    from athanor.agents.claude_cli_session import sanitize_cwd_for_session_dir
+    from embry0.agents.claude_cli_session import sanitize_cwd_for_session_dir
 
     session_dir = tmp_path / ".claude" / "projects" / sanitize_cwd_for_session_dir(str(workspace))
     session_dir.mkdir(parents=True)
@@ -228,7 +228,7 @@ async def test_oauth_mode_captures_session_id_and_blob_path(tmp_path: Any, monke
 @pytest.mark.asyncio
 async def test_oauth_mode_picks_session_id_from_first_carrier(tmp_path: Any, monkeypatch: Any) -> None:
     """First message that carries a session_id wins; later mismatches don't overwrite."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -238,7 +238,7 @@ async def test_oauth_mode_picks_session_id_from_first_carrier(tmp_path: Any, mon
     second_sid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
     # Pre-create the session file for first_sid so find_session_file discovers it.
-    from athanor.agents.claude_cli_session import sanitize_cwd_for_session_dir
+    from embry0.agents.claude_cli_session import sanitize_cwd_for_session_dir
 
     session_dir = tmp_path / ".claude" / "projects" / sanitize_cwd_for_session_dir(str(workspace))
     session_dir.mkdir(parents=True)
@@ -265,7 +265,7 @@ async def test_oauth_mode_picks_session_id_from_first_carrier(tmp_path: Any, mon
 @pytest.mark.asyncio
 async def test_oauth_mode_without_session_id_emits_no_blob_path(tmp_path: Any, monkeypatch: Any) -> None:
     """If the SDK emits no session_id, AgentOutput holds None for both fields."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     messages = [
         _AssistantMessage([_TextBlock("hi")]),  # session_id=None default
@@ -286,7 +286,7 @@ async def test_oauth_mode_without_session_id_emits_no_blob_path(tmp_path: Any, m
 @pytest.mark.asyncio
 async def test_error_path_omits_session_state(tmp_path: Any, monkeypatch: Any) -> None:
     """A failed turn returns ``messages=None`` / ``session_id=None``: no half-state to persist."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     async def raising_query(**_kw: Any):
         # SDK raises before yielding anything → executor catches → is_error.
@@ -308,7 +308,7 @@ async def test_error_path_omits_session_state(tmp_path: Any, monkeypatch: Any) -
 @pytest.mark.asyncio
 async def test_oauth_error_path_omits_session_state(tmp_path: Any, monkeypatch: Any) -> None:
     """Same negative as above but for oauth mode — also omits session_id."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     async def raising_query(**_kw: Any):
         raise RuntimeError("nope")
@@ -330,7 +330,7 @@ async def test_oauth_mode_emits_none_when_session_file_does_not_exist(tmp_path: 
     """If the SDK emitted a session_id but the on-disk file isn't where
     discovery looks, session_blob_path is None — we don't lie about
     where the file is. The runner will skip the docker cp."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
     workspace = tmp_path / "workspace"
     workspace.mkdir()

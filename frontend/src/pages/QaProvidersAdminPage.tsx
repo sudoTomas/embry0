@@ -80,7 +80,7 @@ export function QaProvidersAdminPage() {
           <h1 className="text-2xl font-bold">Provider overrides</h1>
           <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
             Per-repo workspace_provider config that overrides{" "}
-            <code className="font-mono">.athanor/qa.yaml</code>. Useful when
+            <code className="font-mono">.embry0/qa.yaml</code>. Useful when
             you want to iterate on{" "}
             <code className="font-mono">affected_filter</code> /{" "}
             <code className="font-mono">apps_glob</code> without committing.
@@ -112,7 +112,7 @@ export function QaProvidersAdminPage() {
         <EmptyState
           stage="qa"
           title="No overrides"
-          description="All repos use the workspace_provider config in their .athanor/qa.yaml."
+          description="All repos use the workspace_provider config in their .embry0/qa.yaml."
         />
       ) : (
         <div

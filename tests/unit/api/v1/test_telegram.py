@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from athanor.api.v1.telegram import router
+from embry0.api.v1.telegram import router
 
 
 def _make_app(secret: str, inputs_repo=None, issues_repo=None, executor=None, config=None):

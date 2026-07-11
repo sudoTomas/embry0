@@ -3,3 +3,6 @@ dist
 .vite
 *.md
 .eslintrc*
+.env
+.env.*
+!.env.example

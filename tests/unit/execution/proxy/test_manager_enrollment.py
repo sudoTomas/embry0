@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import structlog
 
-from athanor.execution.proxy.manager import ProxyManager
+from embry0.execution.proxy.manager import ProxyManager
 
 
 def _make_docker_mock(http_code: int = 200):

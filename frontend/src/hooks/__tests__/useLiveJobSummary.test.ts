@@ -138,7 +138,7 @@ describe("useLiveJobSummary", () => {
 
     expect(lastCreatedWs).not.toBeNull();
     expect(lastCreatedWs!.url).toBe("ws://localhost:3001/ws/jobs/job-123/events");
-    expect(lastCreatedWs!.protocols).toEqual(["athanor.bearer.test-api-key"]);
+    expect(lastCreatedWs!.protocols).toEqual(["embry0.bearer.test-api-key"]);
   });
 
   it("sets isConnected to true when the WebSocket opens", async () => {

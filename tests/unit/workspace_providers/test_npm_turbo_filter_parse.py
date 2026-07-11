@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from athanor.workspace_providers.npm_workspaces_turbo._filter_parse import (
+from embry0.workspace_providers.npm_workspaces_turbo._filter_parse import (
     FilterParseResult,
     parse_affected_filter,
 )

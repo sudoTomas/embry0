@@ -1,5 +1,5 @@
-from athanor.orchestration.state import UnsupportedContextError
-from athanor.safety.error_codes import ErrorCode, error_code_for_exception
+from embry0.orchestration.state import UnsupportedContextError
+from embry0.safety.error_codes import ErrorCode, error_code_for_exception
 
 
 def test_unsupported_context_maps_to_code():

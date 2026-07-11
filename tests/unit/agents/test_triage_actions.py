@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from athanor.agents.triage_actions import SetQADecision
+from embry0.agents.triage_actions import SetQADecision
 
 
 def test_minimal_positive_decision():

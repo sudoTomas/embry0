@@ -17,11 +17,11 @@ import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from athanor.api.app import _init_app_state, create_app
-from athanor.config import AthanorConfig
-from athanor.storage.database import DatabasePool
-from athanor.storage.encryption import FernetSecretsProvider
-from athanor.storage.migrations.runner import run_migrations
+from embry0.api.app import _init_app_state, create_app
+from embry0.config import Embry0Config
+from embry0.storage.database import DatabasePool
+from embry0.storage.encryption import FernetSecretsProvider
+from embry0.storage.migrations.runner import run_migrations
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ async def api_client() -> AsyncIterator[AsyncClient]:
     """Async HTTP client backed by a real PostgreSQL test database.
 
     Mirrors the integration `app` fixture pattern (tests/integration/conftest.py).
-    Provisions/migrates the dedicated `athanor_unit_api_test` database, then
+    Provisions/migrates the dedicated `embry0_unit_api_test` database, then
     TRUNCATEs the tables that API unit tests touch so each test starts clean.
     Skips cleanly when PostgreSQL is unavailable.
 
@@ -38,7 +38,7 @@ async def api_client() -> AsyncIterator[AsyncClient]:
     """
     database_url = os.environ.get(
         "TEST_DATABASE_URL",
-        "postgresql://athanor:athanor@localhost:5432/athanor_unit_api_test",
+        "postgresql://embry0:embry0@localhost:5432/embry0_unit_api_test",
     )
 
     # Ensure the test database exists and migrations are applied.
@@ -83,7 +83,7 @@ async def api_client() -> AsyncIterator[AsyncClient]:
         yield
         await db.close()
 
-    config = AthanorConfig(
+    config = Embry0Config(
         _env_file=None,
         database_url=database_url,
         auth_dev_mode=True,
@@ -118,12 +118,12 @@ async def builtin_profile_seeded(api_client: AsyncClient) -> AsyncIterator[None]
     the same TEST_DATABASE_URL and runs the seed against it; the test app's
     own pool sees the seeded rows because they share one Postgres database.
     """
-    from athanor.storage.repositories.sandbox_profiles import SandboxProfilesRepository
-    from athanor.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
+    from embry0.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+    from embry0.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
 
     database_url = os.environ.get(
         "TEST_DATABASE_URL",
-        "postgresql://athanor:athanor@localhost:5432/athanor_unit_api_test",
+        "postgresql://embry0:embry0@localhost:5432/embry0_unit_api_test",
     )
     seed_db = DatabasePool(database_url)
     await seed_db.connect()

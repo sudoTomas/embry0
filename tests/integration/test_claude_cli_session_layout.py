@@ -10,7 +10,7 @@ When this test fails:
 
 1. ``docker exec <sandbox> find /home/agent/.claude -name '*.jsonl'`` to
    see where the CLI now writes.
-2. Update ``athanor/agents/claude_cli_session.py``'s discovery hierarchy
+2. Update ``embry0/agents/claude_cli_session.py``'s discovery hierarchy
    to cover the new location (keep old branches for back-compat).
 3. Update ``docs/contracts/claude-cli-session-file-layout.md`` to the
    new pinned CLI version.

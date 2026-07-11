@@ -1,6 +1,6 @@
 import pytest
 
-from athanor.safety.patterns import is_dangerous_command, normalize_command
+from embry0.safety.patterns import is_dangerous_command, normalize_command
 
 
 class TestNormalizeCommand:

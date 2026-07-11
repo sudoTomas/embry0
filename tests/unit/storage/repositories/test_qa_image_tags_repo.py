@@ -1,6 +1,6 @@
 import pytest
 
-from athanor.storage.repositories.qa_image_tags import (
+from embry0.storage.repositories.qa_image_tags import (
     QAImageTagsRepository,
 )
 

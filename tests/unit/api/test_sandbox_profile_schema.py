@@ -1,13 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from athanor.api.schemas import SandboxProfileRequest
+from embry0.api.schemas import SandboxProfileRequest
 
 
 def test_request_accepts_qa_fields():
     req = SandboxProfileRequest(
         name="qa-jvm",
-        base_image="athanor-sandbox-qa:latest",
+        base_image="embry0-sandbox-qa:latest",
         description="JVM + Node QA",
         dind_enabled=True,
         idle_timeout_seconds=900,

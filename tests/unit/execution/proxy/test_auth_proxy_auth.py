@@ -6,7 +6,7 @@ import httpx
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from athanor.execution.proxy.auth_proxy import create_auth_proxy_app
+from embry0.execution.proxy.auth_proxy import create_auth_proxy_app
 
 ADMIN = "test-admin-secret-not-real"
 API_KEY = "sk-ant-test-key-XXXXXXXXXXXXXXXXXXXXXXXX"

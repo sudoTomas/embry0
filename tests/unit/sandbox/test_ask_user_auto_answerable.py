@@ -7,7 +7,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_auto_answerable_question_does_not_pause_workflow():
-    from athanor.workflows.issue_to_pr.nodes import developer_node
+    from embry0.workflows.issue_to_pr.nodes import developer_node
 
     fake_events = [
         {
@@ -43,8 +43,8 @@ async def test_auto_answerable_question_does_not_pause_workflow():
     }
 
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await developer_node(state, {"configurable": {"agent_runner": object(), "credentials": {}}})
 

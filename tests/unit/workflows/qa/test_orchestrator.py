@@ -2,17 +2,17 @@ from pathlib import Path
 
 import pytest
 
-from athanor.workflows.qa.orchestrator_helpers import (
+from embry0.workflows.qa.orchestrator_helpers import (
     resolve_apps_to_qa,
     validate_against_qa_config,
 )
-from athanor.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
-from athanor.workspace_providers import (
+from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
+from embry0.workspace_providers import (
     AffectedSet,
     WorkspaceApp,
     WorkspacePackage,
 )
-from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
 _QA_YAML = """
 version: 2
@@ -115,10 +115,10 @@ def test_validate_against_qa_config_separates_warnings_from_errors():
 
 import asyncio  # noqa: E402
 
-from athanor.workflows.qa.orchestrator_helpers import fan_out_subtasks  # noqa: E402
-from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig  # noqa: E402
-from athanor.workflows.qa.qa_yaml_v2 import QAReadyCheck  # noqa: E402
-from athanor.workflows.qa.subtask_result_schema import (  # noqa: E402
+from embry0.workflows.qa.orchestrator_helpers import fan_out_subtasks  # noqa: E402
+from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig  # noqa: E402
+from embry0.workflows.qa.qa_yaml_v2 import QAReadyCheck  # noqa: E402
+from embry0.workflows.qa.subtask_result_schema import (  # noqa: E402
     CacheHits,
     SubTaskResult,
     SubTaskStatus,
@@ -160,7 +160,7 @@ async def test_fan_out_respects_max_concurrent_apps(monkeypatch):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     resolved_configs = [_resolved(f"app{i}") for i in range(8)]
     results = await fan_out_subtasks(
@@ -185,7 +185,7 @@ async def test_fan_out_collects_all_results_in_input_order(monkeypatch):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     resolved_configs = [_resolved("hub"), _resolved("companion"), _resolved("lane")]
     results = await fan_out_subtasks(
@@ -213,7 +213,7 @@ async def test_fan_out_isolates_individual_subtask_crashes(monkeypatch):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     results = await fan_out_subtasks(
         [_resolved("hub"), _resolved("companion"), _resolved("lane")],
@@ -234,7 +234,7 @@ async def test_fan_out_isolates_individual_subtask_crashes(monkeypatch):
 
 from unittest.mock import AsyncMock  # noqa: E402
 
-from athanor.workflows.qa.orchestrator import (  # noqa: E402
+from embry0.workflows.qa.orchestrator import (  # noqa: E402
     init_orchestrator_node,
     qa_orchestrator_node,
 )
@@ -265,16 +265,16 @@ packages:
 async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
     from pathlib import Path
 
-    from athanor.workflows.qa.subtask_result_schema import (
+    from embry0.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
-    from athanor.workspace_providers import (
+    from embry0.workspace_providers import (
         AffectedSet,
         WorkspaceApp,
     )
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[
@@ -289,7 +289,7 @@ async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -301,7 +301,7 @@ async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     repo_mock = AsyncMock()
     repo_mock.upsert_with_boot_phase = AsyncMock()
@@ -334,8 +334,8 @@ async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
 async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatch):
     from pathlib import Path
 
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -343,7 +343,7 @@ async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatc
         affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -367,8 +367,8 @@ async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatc
 
 @pytest.mark.asyncio
 async def test_orchestrator_node_validation_errors_block_fan_out(monkeypatch):
-    from athanor.workspace_providers import AffectedSet
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers import AffectedSet
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[],
@@ -380,14 +380,14 @@ async def test_orchestrator_node_validation_errors_block_fan_out(monkeypatch):
         ],
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
     async def crash_subtask(*a, **kw):
         raise AssertionError("fan-out should not have happened")
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", crash_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", crash_subtask)
 
     state = {
         "job_id": "run-3",
@@ -443,7 +443,7 @@ async def test_init_orchestrator_node_writes_yaml_to_state(monkeypatch):
             joined = " ".join(cmd)
             if "rev-parse HEAD" in joined:
                 return "abc123\n"
-            if "/workspace/.athanor/qa.yaml" in joined:
+            if "/workspace/.embry0/qa.yaml" in joined:
                 return _QA_YAML_V2
             return ""
 
@@ -461,8 +461,8 @@ async def test_init_orchestrator_node_writes_yaml_to_state(monkeypatch):
     qa = out["qa"]
     assert qa["qa_yaml_v2_raw"] == _QA_YAML_V2
     assert qa["qa_yaml_v2_parsed"]["version"] == 2
-    # I3: bootstrap sandbox must receive ATHANOR_GIT_PROXY_URL + QA_JOB_ID.
-    assert sb.last_env.get("ATHANOR_GIT_PROXY_URL") == "http://git-proxy:9101"
+    # I3: bootstrap sandbox must receive EMBRY0_GIT_PROXY_URL + QA_JOB_ID.
+    assert sb.last_env.get("EMBRY0_GIT_PROXY_URL") == "http://git-proxy:9101"
     assert sb.last_env.get("QA_JOB_ID") == "run-4__bootstrap"
     assert sb.last_env.get("QA_ATTEMPT_N") == "1"
 
@@ -514,13 +514,13 @@ async def test_orchestrator_node_qa_required_never_short_circuits(monkeypatch):
     async def crash_subtask(*a, **kw):
         raise AssertionError("fan-out should not have happened when qa_required=never")
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", crash_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", crash_subtask)
 
     # load_provider should also never be called
     def crash_load_provider(*a, **kw):
         raise AssertionError("load_provider should not be called when qa_required=never")
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator.load_provider", crash_load_provider)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator.load_provider", crash_load_provider)
 
     state = {
         "job_id": "run-never",
@@ -570,16 +570,16 @@ async def test_orchestrator_passes_image_tag_to_run_subtask_when_repo_configured
     the looked-up image_tag is forwarded to run_subtask via fan_out_subtasks."""
     from pathlib import Path
 
-    from athanor.workflows.qa.subtask_result_schema import (
+    from embry0.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
-    from athanor.workspace_providers import (
+    from embry0.workspace_providers import (
         AffectedSet,
         WorkspaceApp,
     )
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -591,7 +591,7 @@ async def test_orchestrator_passes_image_tag_to_run_subtask_when_repo_configured
         ),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -615,7 +615,7 @@ async def test_orchestrator_passes_image_tag_to_run_subtask_when_repo_configured
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", spy_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", spy_run_subtask)
 
     state = {
         "job_id": "run-b5",
@@ -695,13 +695,13 @@ async def test_orchestrator_skips_image_lookup_when_disabled(monkeypatch):
     """image_repo.get_active must NOT be called when cache.prebaked_image.enabled=False."""
     from pathlib import Path
 
-    from athanor.workflows.qa.subtask_result_schema import (
+    from embry0.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -713,7 +713,7 @@ async def test_orchestrator_skips_image_lookup_when_disabled(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -728,7 +728,7 @@ async def test_orchestrator_skips_image_lookup_when_disabled(monkeypatch):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     state = {
         "job_id": "run-e1-image",
@@ -762,7 +762,7 @@ async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch):
         warmer_called.append(True)
 
     monkeypatch.setattr(
-        "athanor.cache.volume_warmer.warm_shared_volume",
+        "embry0.cache.volume_warmer.warm_shared_volume",
         fake_warm,
     )
 
@@ -788,7 +788,7 @@ async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch):
             joined = " ".join(cmd)
             if "rev-parse HEAD" in joined:
                 return "abc123\n"
-            if "/workspace/.athanor/qa.yaml" in joined:
+            if "/workspace/.embry0/qa.yaml" in joined:
                 return _QA_YAML_CACHE_DISABLED
             return ""
 
@@ -819,13 +819,13 @@ async def test_orchestrator_skips_turbo_when_disabled(monkeypatch):
     """turbo_remote_enabled=False must reach run_subtask when cache.turbo_remote.enabled=False."""
     from pathlib import Path
 
-    from athanor.workflows.qa.subtask_result_schema import (
+    from embry0.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -837,7 +837,7 @@ async def test_orchestrator_skips_turbo_when_disabled(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -852,7 +852,7 @@ async def test_orchestrator_skips_turbo_when_disabled(monkeypatch):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", spy_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", spy_run_subtask)
 
     state = {
         "job_id": "run-e1-turbo",
@@ -899,7 +899,7 @@ async def test_init_orchestrator_populates_changed_files_and_repo_root(tmp_path,
     """The bootstrap sandbox runs git diff + finds + cats package.jsons; the
     orchestrator stashes the staging dir on state['repo_root'] and the diff
     on state['qa']['changed_files']."""
-    from athanor.workflows.qa.orchestrator import init_orchestrator_node
+    from embry0.workflows.qa.orchestrator import init_orchestrator_node
 
     # Stub docker.run_cmd to dispatch by command shape.
     async def fake_run(cmd, timeout=60):
@@ -914,7 +914,7 @@ async def test_init_orchestrator_populates_changed_files_and_repo_root(tmp_path,
             return '{"name": "root", "workspaces": ["apps/*"]}'
         if "cat /workspace/apps/hub/package.json" in s:
             return '{"name": "@toy/hub"}'
-        if "cat /workspace/.athanor/qa.yaml" in s:
+        if "cat /workspace/.embry0/qa.yaml" in s:
             return _MIN_QA_YAML_V2
         if "cat /workspace/package-lock.json" in s:
             return '{"lockfileVersion": 3}'
@@ -938,8 +938,8 @@ async def test_init_orchestrator_populates_changed_files_and_repo_root(tmp_path,
 
     # Force staging into tmp_path so the test doesn't write to /tmp.
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator._staging_dir_for",
-        lambda job_id: tmp_path / f"athanor-workspace-{job_id}",
+        "embry0.workflows.qa.orchestrator._staging_dir_for",
+        lambda job_id: tmp_path / f"embry0-workspace-{job_id}",
     )
 
     state = {
@@ -962,10 +962,10 @@ async def test_init_orchestrator_populates_changed_files_and_repo_root(tmp_path,
     # changed_files populated.
     assert qa["changed_files"] == ["apps/hub/app/page.tsx", "packages/auth/src/index.ts"]
     # repo_root set to the local staging dir (so provider.affected can read).
-    assert out["repo_root"] == str(tmp_path / "athanor-workspace-job-1")
+    assert out["repo_root"] == str(tmp_path / "embry0-workspace-job-1")
     # Staged files exist.
-    assert (tmp_path / "athanor-workspace-job-1" / "package.json").is_file()
-    assert (tmp_path / "athanor-workspace-job-1" / "apps" / "hub" / "package.json").is_file()
+    assert (tmp_path / "embry0-workspace-job-1" / "package.json").is_file()
+    assert (tmp_path / "embry0-workspace-job-1" / "apps" / "hub" / "package.json").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -980,9 +980,9 @@ async def test_qa_orchestrator_publishes_done_event_on_success(monkeypatch):
     route can close the stream."""
     from unittest.mock import MagicMock
 
-    from athanor.qa.event_bus import QAEventBus
-    from athanor.workflows.qa.orchestrator import qa_orchestrator_node
-    from athanor.workflows.qa.subtask_result_schema import (
+    from embry0.qa.event_bus import QAEventBus
+    from embry0.workflows.qa.orchestrator import qa_orchestrator_node
+    from embry0.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
@@ -998,7 +998,7 @@ async def test_qa_orchestrator_publishes_done_event_on_success(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -1010,7 +1010,7 @@ async def test_qa_orchestrator_publishes_done_event_on_success(monkeypatch):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     bus = MagicMock(spec=QAEventBus)
     bus.publish = AsyncMock()
@@ -1043,8 +1043,8 @@ async def test_qa_orchestrator_publishes_done_on_init_failure_pass_through():
     orchestrator still publishes ``done`` so the SSE route closes the stream."""
     from unittest.mock import MagicMock
 
-    from athanor.qa.event_bus import QAEventBus
-    from athanor.workflows.qa.orchestrator import qa_orchestrator_node
+    from embry0.qa.event_bus import QAEventBus
+    from embry0.workflows.qa.orchestrator import qa_orchestrator_node
 
     bus = MagicMock(spec=QAEventBus)
     bus.publish = AsyncMock()
@@ -1078,7 +1078,7 @@ async def test_qa_orchestrator_publishes_done_on_init_failure_pass_through():
 @pytest.mark.asyncio
 async def test_qa_orchestrator_skips_publish_when_no_event_bus():
     """No bus wired → no publish; existing tests continue to pass."""
-    from athanor.workflows.qa.orchestrator import qa_orchestrator_node
+    from embry0.workflows.qa.orchestrator import qa_orchestrator_node
 
     state = {
         "job_id": "RUN-NO-BUS",
@@ -1112,13 +1112,13 @@ async def test_orchestrator_persists_run_metadata_after_resolution(monkeypatch):
     """
     from pathlib import Path
 
-    from athanor.workflows.qa.subtask_result_schema import (
+    from embry0.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[
@@ -1134,7 +1134,7 @@ async def test_orchestrator_persists_run_metadata_after_resolution(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -1146,7 +1146,7 @@ async def test_orchestrator_persists_run_metadata_after_resolution(monkeypatch):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     qa_app_results_repo = AsyncMock()
     qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
@@ -1199,13 +1199,13 @@ async def test_orchestrator_persists_run_metadata_with_force_all_apps(monkeypatc
     """
     from pathlib import Path
 
-    from athanor.workflows.qa.subtask_result_schema import (
+    from embry0.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[
@@ -1216,7 +1216,7 @@ async def test_orchestrator_persists_run_metadata_with_force_all_apps(monkeypatc
         affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -1228,7 +1228,7 @@ async def test_orchestrator_persists_run_metadata_with_force_all_apps(monkeypatc
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     qa_app_results_repo = AsyncMock()
     qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
@@ -1272,13 +1272,13 @@ async def test_orchestrator_metadata_persist_failure_does_not_break_run(monkeypa
     """
     from pathlib import Path
 
-    from athanor.workflows.qa.subtask_result_schema import (
+    from embry0.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -1290,7 +1290,7 @@ async def test_orchestrator_metadata_persist_failure_does_not_break_run(monkeypa
         ),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -1302,7 +1302,7 @@ async def test_orchestrator_metadata_persist_failure_does_not_break_run(monkeypa
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     qa_app_results_repo = AsyncMock()
     qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
@@ -1339,13 +1339,13 @@ async def test_orchestrator_no_metadata_repo_does_nothing(monkeypatch):
     """
     from pathlib import Path
 
-    from athanor.workflows.qa.subtask_result_schema import (
+    from embry0.workflows.qa.subtask_result_schema import (
         CacheHits,
         SubTaskResult,
         SubTaskStatus,
     )
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -1357,7 +1357,7 @@ async def test_orchestrator_no_metadata_repo_does_nothing(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -1369,7 +1369,7 @@ async def test_orchestrator_no_metadata_repo_does_nothing(monkeypatch):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     qa_app_results_repo = AsyncMock()
     qa_app_results_repo.upsert_with_boot_phase = AsyncMock()
@@ -1404,11 +1404,11 @@ async def test_orchestrator_applies_workspace_provider_override(monkeypatch):
 
     import structlog.testing
 
-    from athanor.storage.repositories.qa_workspace_provider_overrides import (
+    from embry0.storage.repositories.qa_workspace_provider_overrides import (
         WorkspaceProviderOverride,
     )
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[
@@ -1430,10 +1430,10 @@ async def test_orchestrator_applies_workspace_provider_override(monkeypatch):
         captured["config"] = dict(config)
         return fake_provider
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator.load_provider", fake_load_provider)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator.load_provider", fake_load_provider)
 
     async def fake_run_subtask(resolved, **kw):
-        from athanor.workflows.qa.subtask_result_schema import (
+        from embry0.workflows.qa.subtask_result_schema import (
             CacheHits,
             SubTaskResult,
             SubTaskStatus,
@@ -1446,7 +1446,7 @@ async def test_orchestrator_applies_workspace_provider_override(monkeypatch):
             cache_hits=CacheHits(),
         )
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
 
     override_repo = AsyncMock()
     override_repo.get = AsyncMock(
@@ -1511,8 +1511,8 @@ async def test_orchestrator_falls_back_to_qa_yaml_when_no_override(monkeypatch):
     is used unchanged."""
     from pathlib import Path
 
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -1527,7 +1527,7 @@ async def test_orchestrator_falls_back_to_qa_yaml_when_no_override(monkeypatch):
         captured["config"] = dict(config)
         return fake_provider
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator.load_provider", fake_load_provider)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator.load_provider", fake_load_provider)
 
     override_repo = AsyncMock()
     override_repo.get = AsyncMock(return_value=None)
@@ -1564,8 +1564,8 @@ async def test_orchestrator_handles_override_lookup_failure(monkeypatch):
     qa.yaml-based config — admin-side hiccup must not block QA."""
     from pathlib import Path
 
-    from athanor.workspace_providers import AffectedSet, WorkspaceApp
-    from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
     fake_provider = FakeWorkspaceProvider(
         apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
@@ -1579,7 +1579,7 @@ async def test_orchestrator_handles_override_lookup_failure(monkeypatch):
         captured["name"] = name
         return fake_provider
 
-    monkeypatch.setattr("athanor.workflows.qa.orchestrator.load_provider", fake_load_provider)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator.load_provider", fake_load_provider)
 
     override_repo = AsyncMock()
     override_repo.get = AsyncMock(side_effect=RuntimeError("db blew up"))

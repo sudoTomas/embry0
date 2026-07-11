@@ -8,7 +8,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from athanor.execution.proxy.presign_proxy import create_presign_proxy_app
+from embry0.execution.proxy.presign_proxy import create_presign_proxy_app
 
 
 @pytest.mark.asyncio

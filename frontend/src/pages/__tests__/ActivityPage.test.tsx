@@ -127,14 +127,14 @@ describe("ActivityPage", () => {
           pushedAt: new Date(Date.now() - 10_000).toISOString(),
           openIssues: 3,
           defaultBranch: "main",
-          url: "https://github.com/former-org/embry0",
+          url: "https://github.com/acme-org/embry0",
         },
         {
-          name: "companion",
+          name: "tooling",
           pushedAt: new Date(Date.now() - 600_000).toISOString(),
           openIssues: 0,
           defaultBranch: "master",
-          url: "https://github.com/former-org/companion",
+          url: "https://github.com/acme-org/tooling",
         },
       ],
     });
@@ -146,8 +146,8 @@ describe("ActivityPage", () => {
     expect(rowOne).toHaveTextContent("main");
     expect(rowOne).toHaveTextContent("3 open");
 
-    const rowTwo = screen.getByTestId("activity-git-companion");
-    expect(rowTwo).toHaveTextContent("companion");
+    const rowTwo = screen.getByTestId("activity-git-tooling");
+    expect(rowTwo).toHaveTextContent("tooling");
     expect(rowTwo).toHaveTextContent("master");
   });
 

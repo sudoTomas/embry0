@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.workflows.qa.screenshot import take_diagnostic_screenshot
+from embry0.workflows.qa.screenshot import take_diagnostic_screenshot
 
 
 @pytest.mark.asyncio
@@ -18,7 +18,7 @@ async def test_runs_node_script_in_sandbox():
         docker=docker,
         container_id="C",
         frontend_url="http://macrolab-frontend:3000",
-        sandbox_path="/tmp/.athanor-boot-screenshot.png",
+        sandbox_path="/tmp/.embry0-boot-screenshot.png",
     )
     assert blob.startswith(b"\x89PNG")
     docker.run_cmd.assert_awaited_once()
@@ -26,8 +26,8 @@ async def test_runs_node_script_in_sandbox():
     joined = " ".join(cmd)
     assert "node" in joined or "playwright" in joined
     assert "macrolab-frontend" in joined
-    assert "/tmp/.athanor-boot-screenshot.png" in joined
-    docker.copy_bytes_from.assert_awaited_once_with("C", "/tmp/.athanor-boot-screenshot.png")
+    assert "/tmp/.embry0-boot-screenshot.png" in joined
+    docker.copy_bytes_from.assert_awaited_once_with("C", "/tmp/.embry0-boot-screenshot.png")
 
 
 @pytest.mark.asyncio
@@ -42,7 +42,7 @@ async def test_returns_none_on_run_failure():
         docker=docker,
         container_id="C",
         frontend_url="http://macrolab-frontend:3000",
-        sandbox_path="/tmp/.athanor-boot-screenshot.png",
+        sandbox_path="/tmp/.embry0-boot-screenshot.png",
     )
     assert blob is None
     docker.copy_bytes_from.assert_not_awaited()
@@ -60,6 +60,6 @@ async def test_returns_none_on_copy_failure():
         docker=docker,
         container_id="C",
         frontend_url="http://macrolab-frontend:3000",
-        sandbox_path="/tmp/.athanor-boot-screenshot.png",
+        sandbox_path="/tmp/.embry0-boot-screenshot.png",
     )
     assert blob is None

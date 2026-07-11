@@ -1,4 +1,4 @@
-"""Unit tests for athanor.workflows.qa.subtask_nodes.
+"""Unit tests for embry0.workflows.qa.subtask_nodes.
 
 Coverage map (spec §16.8):
   1.  initial_state_for_app — fields populated, status=None, started_at set
@@ -30,9 +30,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from athanor.workflows.qa.boot import BootResult
-from athanor.workflows.qa.qa_yaml_v2 import QAE2E, QAReadyCheck
-from athanor.workflows.qa.subtask_result_schema import SubTaskStatus
+from embry0.workflows.qa.boot import BootResult
+from embry0.workflows.qa.qa_yaml_v2 import QAE2E, QAReadyCheck
+from embry0.workflows.qa.subtask_result_schema import SubTaskStatus
 
 # ---------------------------------------------------------------------------
 # Helper: build a minimal ResolvedAppConfig for testing
@@ -52,7 +52,7 @@ def _resolved_app(
     e2e: QAE2E | None = None,
     acceptance_criteria: list[str] | None = None,
 ):
-    from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
+    from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
 
     return ResolvedAppConfig(
         app_name=name,
@@ -82,7 +82,7 @@ def _minimal_config(**extras):
 
 
 def test_initial_state_for_app_populates_fields():
-    from athanor.workflows.qa.subtask_state import initial_state_for_app
+    from embry0.workflows.qa.subtask_state import initial_state_for_app
 
     resolved = _resolved_app("hub")
     state = initial_state_for_app(
@@ -111,7 +111,7 @@ def test_initial_state_for_app_populates_fields():
 
 
 def test_synth_v1_qa_yaml_required_keys():
-    from athanor.workflows.qa.subtask_state import _synth_v1_qa_yaml
+    from embry0.workflows.qa.subtask_state import _synth_v1_qa_yaml
 
     resolved = _resolved_app(
         "hub",
@@ -139,7 +139,7 @@ def test_synth_v1_qa_yaml_required_keys():
 
 
 def test_synth_v1_qa_yaml_no_seed_no_e2e():
-    from athanor.workflows.qa.subtask_state import _synth_v1_qa_yaml
+    from embry0.workflows.qa.subtask_state import _synth_v1_qa_yaml
 
     resolved = _resolved_app("hub")
     result = _synth_v1_qa_yaml(resolved)
@@ -154,7 +154,7 @@ def test_synth_v1_qa_yaml_no_seed_no_e2e():
 
 @pytest.mark.asyncio
 async def test_emit_result_node_passed():
-    from athanor.workflows.qa.subtask_nodes import emit_result_node
+    from embry0.workflows.qa.subtask_nodes import emit_result_node
 
     now = time.monotonic()
     state = {
@@ -177,7 +177,7 @@ async def test_emit_result_node_passed():
 
 @pytest.mark.asyncio
 async def test_emit_result_node_no_status_defaults_to_infra_failure():
-    from athanor.workflows.qa.subtask_nodes import emit_result_node
+    from embry0.workflows.qa.subtask_nodes import emit_result_node
 
     state = {
         "app_name": "hub",
@@ -201,7 +201,7 @@ async def test_emit_result_node_no_status_defaults_to_infra_failure():
 
 @pytest.mark.asyncio
 async def test_boot_app_node_timeout_returns_boot_failure():
-    from athanor.workflows.qa.subtask_nodes import boot_app_node
+    from embry0.workflows.qa.subtask_nodes import boot_app_node
 
     resolved = _resolved_app("hub", boot_timeout_seconds=30)
     state = {
@@ -217,7 +217,7 @@ async def test_boot_app_node_timeout_returns_boot_failure():
         failed_checks=["http://localhost:3000/health: got 503 expected 200"],
     )
 
-    with patch("athanor.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
+    with patch("embry0.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
         out = await boot_app_node(state, config)
 
     assert out["status"] == SubTaskStatus.BOOT_FAILURE
@@ -229,7 +229,7 @@ async def test_boot_app_node_timeout_returns_boot_failure():
 
 @pytest.mark.asyncio
 async def test_boot_app_node_startup_failed_with_failed_checks_returns_ready_check_failed():
-    from athanor.workflows.qa.subtask_nodes import boot_app_node
+    from embry0.workflows.qa.subtask_nodes import boot_app_node
 
     resolved = _resolved_app("hub")
     state = {
@@ -246,7 +246,7 @@ async def test_boot_app_node_startup_failed_with_failed_checks_returns_ready_che
         error_message="",
     )
 
-    with patch("athanor.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
+    with patch("embry0.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
         out = await boot_app_node(state, config)
 
     assert out["status"] == SubTaskStatus.READY_CHECK_FAILED
@@ -255,7 +255,7 @@ async def test_boot_app_node_startup_failed_with_failed_checks_returns_ready_che
 
 @pytest.mark.asyncio
 async def test_boot_app_node_passed_sets_outcome_no_status():
-    from athanor.workflows.qa.subtask_nodes import boot_app_node
+    from embry0.workflows.qa.subtask_nodes import boot_app_node
 
     resolved = _resolved_app("hub")
     state = {
@@ -266,7 +266,7 @@ async def test_boot_app_node_passed_sets_outcome_no_status():
     config = _minimal_config()
     fake_result = BootResult(outcome="passed", attempts=2, duration_ms=1500)
 
-    with patch("athanor.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
+    with patch("embry0.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
         out = await boot_app_node(state, config)
 
     assert out.get("status") is None
@@ -276,7 +276,7 @@ async def test_boot_app_node_passed_sets_outcome_no_status():
 
 @pytest.mark.asyncio
 async def test_boot_app_node_short_circuits_on_prior_status():
-    from athanor.workflows.qa.subtask_nodes import boot_app_node
+    from embry0.workflows.qa.subtask_nodes import boot_app_node
 
     resolved = _resolved_app("hub")
     state = {
@@ -323,7 +323,7 @@ def _make_result_json(*, overall: str, criterion: str = "App loads", status: str
 
 @pytest.mark.asyncio
 async def test_collect_artifacts_node_passed():
-    from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
+    from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
 
     docker = MagicMock()
     docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
@@ -347,7 +347,7 @@ async def test_collect_artifacts_node_passed():
 
 @pytest.mark.asyncio
 async def test_collect_artifacts_node_failed_maps_first_criterion():
-    from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
+    from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
 
     result_json = _make_result_json(
         overall="failed",
@@ -381,7 +381,7 @@ async def test_collect_artifacts_node_inconclusive_maps_inconclusive():
     infrastructure failure — it should reduce to 'failed' at the run level,
     not 'infra_error'.
     """
-    from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
+    from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
 
     # overall=inconclusive with all acceptance_results=inconclusive (no failed)
     data = {
@@ -429,8 +429,8 @@ async def test_collect_artifacts_node_inconclusive_maps_inconclusive():
 async def test_collect_artifacts_node_boot_passed_no_ready_checks_injects_sentinel():
     """When boot passed but no ready_checks are configured, a sentinel
     ready_check is injected so QABootResult schema validation succeeds."""
-    from athanor.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
-    from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
+    from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
+    from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
 
     docker = MagicMock()
     docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
@@ -470,7 +470,7 @@ async def test_collect_artifacts_node_boot_passed_no_ready_checks_injects_sentin
 
 @pytest.mark.asyncio
 async def test_collect_artifacts_node_malformed_json():
-    from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
+    from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
 
     docker = MagicMock()
     docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
@@ -493,7 +493,7 @@ async def test_collect_artifacts_node_malformed_json():
 
 @pytest.mark.asyncio
 async def test_collect_artifacts_node_short_circuits_on_prior_status():
-    from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
+    from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
 
     resolved = _resolved_app("hub")
     state = {
@@ -514,7 +514,7 @@ async def test_collect_artifacts_node_records_boot_phase_on_timeout():
     because BootResult.stdout is just the ack line, not the actual log
     content (see boot.py:138-160).
     """
-    from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
+    from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
 
     fake_log_tail = (
         "[next-server] info: ready - started server on http://localhost:3000\n"
@@ -559,7 +559,7 @@ async def test_collect_artifacts_node_records_boot_phase_on_timeout():
 async def test_collect_artifacts_node_no_boot_phase_when_boot_passed():
     """When boot passed and the agent runs to completion, no boot_phase key
     leaks into the return — the dashboard hides the panel for passed runs."""
-    from athanor.workflows.qa.subtask_nodes import collect_artifacts_node
+    from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
 
     docker = MagicMock()
     docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
@@ -585,7 +585,7 @@ async def test_collect_artifacts_node_no_boot_phase_when_boot_passed():
 async def test_emit_result_node_passes_boot_phase_to_subtask_result():
     """Phase 5A: emit_result_node threads state['boot_phase'] onto SubTaskResult
     so the orchestrator's upsert_with_boot_phase persists it to JSONB."""
-    from athanor.workflows.qa.subtask_nodes import emit_result_node
+    from embry0.workflows.qa.subtask_nodes import emit_result_node
 
     boot_phase = {
         "outcome": "timeout",
@@ -618,7 +618,7 @@ async def test_emit_result_node_boot_phase_defaults_to_none():
     """When state has no boot_phase key (e.g. boot passed, infra failure),
     SubTaskResult.boot_phase is None — preserves the legacy passed-run
     contract for the dashboard."""
-    from athanor.workflows.qa.subtask_nodes import emit_result_node
+    from embry0.workflows.qa.subtask_nodes import emit_result_node
 
     state = {
         "app_name": "hub",
@@ -643,8 +643,8 @@ async def test_emit_result_node_publishes_subtask_status_to_event_bus():
     """When config['configurable']['qa_event_bus'] is present, emit_result_node
     publishes a subtask_status event with the run_id, app, status, duration,
     failure_summary, and boot_phase fields the SSE route forwards verbatim."""
-    from athanor.qa.event_bus import QAEventBus
-    from athanor.workflows.qa.subtask_nodes import emit_result_node
+    from embry0.qa.event_bus import QAEventBus
+    from embry0.workflows.qa.subtask_nodes import emit_result_node
 
     bus = MagicMock(spec=QAEventBus)
     bus.publish = AsyncMock()
@@ -682,7 +682,7 @@ async def test_emit_result_node_publishes_subtask_status_to_event_bus():
 @pytest.mark.asyncio
 async def test_emit_result_node_skips_publish_when_no_event_bus():
     """No-op when config['configurable']['qa_event_bus'] is absent."""
-    from athanor.workflows.qa.subtask_nodes import emit_result_node
+    from embry0.workflows.qa.subtask_nodes import emit_result_node
 
     state = {
         "app_name": "hub",
@@ -703,8 +703,8 @@ async def test_emit_result_node_skips_publish_when_no_event_bus():
 async def test_emit_result_node_swallows_publish_errors():
     """A flaky bus must not break the orchestrator — exceptions are logged
     and swallowed so SubTaskResult is still emitted."""
-    from athanor.qa.event_bus import QAEventBus
-    from athanor.workflows.qa.subtask_nodes import emit_result_node
+    from embry0.qa.event_bus import QAEventBus
+    from embry0.workflows.qa.subtask_nodes import emit_result_node
 
     bus = MagicMock(spec=QAEventBus)
     bus.publish = AsyncMock(side_effect=RuntimeError("bus exploded"))
@@ -733,7 +733,7 @@ async def test_emit_result_node_swallows_publish_errors():
 
 @pytest.mark.asyncio
 async def test_release_sandbox_node_calls_all_cleanup():
-    from athanor.workflows.qa.subtask_nodes import release_sandbox_node
+    from embry0.workflows.qa.subtask_nodes import release_sandbox_node
 
     sandbox_mgr = MagicMock()
     sandbox_mgr.destroy = AsyncMock()
@@ -761,7 +761,7 @@ async def test_release_sandbox_node_calls_all_cleanup():
     }
 
     with patch(
-        "athanor.workflows.qa.subtask_nodes.cleanup_qa_resources",
+        "embry0.workflows.qa.subtask_nodes.cleanup_qa_resources",
         AsyncMock(),
     ) as mock_cleanup:
         out = await release_sandbox_node(state, config)
@@ -775,7 +775,7 @@ async def test_release_sandbox_node_calls_all_cleanup():
 @pytest.mark.asyncio
 async def test_release_sandbox_node_tolerates_missing_sandbox_id():
     """No sandbox_id — nothing to destroy, should return {} without error."""
-    from athanor.workflows.qa.subtask_nodes import release_sandbox_node
+    from embry0.workflows.qa.subtask_nodes import release_sandbox_node
 
     sandbox_mgr = MagicMock()
     sandbox_mgr.destroy = AsyncMock()
@@ -802,7 +802,7 @@ async def test_release_sandbox_node_tolerates_missing_sandbox_id():
 
 @pytest.mark.asyncio
 async def test_acquire_sandbox_node_missing_configurable_returns_infra_failure():
-    from athanor.workflows.qa.subtask_nodes import acquire_sandbox_node
+    from embry0.workflows.qa.subtask_nodes import acquire_sandbox_node
 
     resolved = _resolved_app("hub")
     state = {
@@ -827,7 +827,7 @@ async def test_acquire_sandbox_node_missing_configurable_returns_infra_failure()
 
 @pytest.mark.asyncio
 async def test_seed_node_skips_when_no_seed_command():
-    from athanor.workflows.qa.subtask_nodes import seed_node
+    from embry0.workflows.qa.subtask_nodes import seed_node
 
     resolved = _resolved_app("hub", seed_command=None)
     state = {
@@ -847,7 +847,7 @@ async def test_seed_node_skips_when_no_seed_command():
 
 @pytest.mark.asyncio
 async def test_e2e_node_skips_when_no_e2e():
-    from athanor.workflows.qa.subtask_nodes import e2e_node
+    from embry0.workflows.qa.subtask_nodes import e2e_node
 
     resolved = _resolved_app("hub", e2e=None)
     state = {
@@ -867,7 +867,7 @@ async def test_e2e_node_skips_when_no_e2e():
 
 @pytest.mark.asyncio
 async def test_exploratory_qa_node_short_circuits_on_prior_status():
-    from athanor.workflows.qa.subtask_nodes import exploratory_qa_node
+    from embry0.workflows.qa.subtask_nodes import exploratory_qa_node
 
     resolved = _resolved_app("hub")
     state = {
@@ -939,8 +939,8 @@ async def test_acquire_sandbox_uses_image_tag_when_provided(monkeypatch):
     """When prebaked_image_tag is set, sandbox_mgr.create receives a profile
     with image overridden to that tag and cache_hits_partial["prebaked_image"]
     is True in the result patch."""
-    from athanor.workflows.qa._subtask_prep import ClonedSandbox
-    from athanor.workflows.qa.subtask_nodes import acquire_sandbox_node
+    from embry0.workflows.qa._subtask_prep import ClonedSandbox
+    from embry0.workflows.qa.subtask_nodes import acquire_sandbox_node
 
     captured_profile: dict = {}
 
@@ -958,11 +958,11 @@ async def test_acquire_sandbox_uses_image_tag_when_provided(monkeypatch):
 
     with (
         patch(
-            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
+            "embry0.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
             AsyncMock(return_value=fake_cloned),
         ),
         patch(
-            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
+            "embry0.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
             AsyncMock(return_value=None),
         ),
     ):
@@ -979,8 +979,8 @@ async def test_acquire_sandbox_uses_image_tag_when_provided(monkeypatch):
 async def test_acquire_sandbox_falls_back_to_base_when_no_tag(monkeypatch):
     """When prebaked_image_tag is None, the profile is used unchanged and
     cache_hits_partial["prebaked_image"] is False in the result patch."""
-    from athanor.workflows.qa._subtask_prep import ClonedSandbox
-    from athanor.workflows.qa.subtask_nodes import acquire_sandbox_node
+    from embry0.workflows.qa._subtask_prep import ClonedSandbox
+    from embry0.workflows.qa.subtask_nodes import acquire_sandbox_node
 
     captured_profile: dict = {}
 
@@ -997,11 +997,11 @@ async def test_acquire_sandbox_falls_back_to_base_when_no_tag(monkeypatch):
 
     with (
         patch(
-            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
+            "embry0.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
             AsyncMock(return_value=fake_cloned),
         ),
         patch(
-            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
+            "embry0.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
             AsyncMock(return_value=None),
         ),
     ):
@@ -1026,12 +1026,12 @@ async def test_acquire_sandbox_uses_shared_volume_when_provided(monkeypatch):
     - Call prep_qa_sandbox_clone with cached_volume=volume_name (not None)
     - Set cache_hits_partial["shared_volume"] = True in the return dict
     """
-    from athanor.workflows.qa._subtask_prep import ClonedSandbox
-    from athanor.workflows.qa.subtask_nodes import acquire_sandbox_node
+    from embry0.workflows.qa._subtask_prep import ClonedSandbox
+    from embry0.workflows.qa.subtask_nodes import acquire_sandbox_node
 
     captured_create_kwargs: dict = {}
     captured_clone_kwargs: dict = {}
-    volume_name = "athanor-qa-vol-job-42"
+    volume_name = "embry0-qa-vol-job-42"
 
     async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None):
         captured_create_kwargs["volumes"] = volumes
@@ -1059,11 +1059,11 @@ async def test_acquire_sandbox_uses_shared_volume_when_provided(monkeypatch):
 
     with (
         patch(
-            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
+            "embry0.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
             AsyncMock(side_effect=fake_clone),
         ),
         patch(
-            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
+            "embry0.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
             AsyncMock(return_value=None),
         ),
     ):
@@ -1099,8 +1099,8 @@ async def test_acquire_sandbox_no_shared_volume_when_name_absent(monkeypatch):
     - Call prep_qa_sandbox_clone with cached_volume=None
     - Set cache_hits_partial["shared_volume"] = False
     """
-    from athanor.workflows.qa._subtask_prep import ClonedSandbox
-    from athanor.workflows.qa.subtask_nodes import acquire_sandbox_node
+    from embry0.workflows.qa._subtask_prep import ClonedSandbox
+    from embry0.workflows.qa.subtask_nodes import acquire_sandbox_node
 
     captured_create_kwargs: dict = {}
     captured_clone_kwargs: dict = {}
@@ -1122,11 +1122,11 @@ async def test_acquire_sandbox_no_shared_volume_when_name_absent(monkeypatch):
 
     with (
         patch(
-            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
+            "embry0.workflows.qa._subtask_prep.prep_qa_sandbox_clone",
             AsyncMock(side_effect=fake_clone),
         ),
         patch(
-            "athanor.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
+            "embry0.workflows.qa._subtask_prep.prep_qa_sandbox_jobjson",
             AsyncMock(return_value=None),
         ),
     ):
@@ -1149,7 +1149,7 @@ async def test_acquire_sandbox_no_shared_volume_when_name_absent(monkeypatch):
 async def test_boot_app_node_parses_turbo_stdout_into_partial():
     """When BootResult.stdout contains turbo cache lines, boot_app_node should
     extract hits/misses and merge them into cache_hits_partial."""
-    from athanor.workflows.qa.subtask_nodes import boot_app_node
+    from embry0.workflows.qa.subtask_nodes import boot_app_node
 
     turbo_stdout = (
         "  apps/hub#build: cache hit, replaying logs abc123\n"
@@ -1169,7 +1169,7 @@ async def test_boot_app_node_parses_turbo_stdout_into_partial():
     config = _minimal_config()
     fake_result = BootResult(outcome="passed", attempts=1, duration_ms=800, stdout=turbo_stdout)
 
-    with patch("athanor.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
+    with patch("embry0.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
         out = await boot_app_node(state, config)
 
     assert out.get("status") is None
@@ -1186,7 +1186,7 @@ async def test_boot_app_node_parses_turbo_stdout_into_partial():
 @pytest.mark.asyncio
 async def test_boot_app_node_empty_stdout_yields_empty_turbo_lists():
     """When BootResult.stdout is empty, turbo_remote_hits/misses should be []."""
-    from athanor.workflows.qa.subtask_nodes import boot_app_node
+    from embry0.workflows.qa.subtask_nodes import boot_app_node
 
     resolved = _resolved_app("hub")
     state = {
@@ -1197,7 +1197,7 @@ async def test_boot_app_node_empty_stdout_yields_empty_turbo_lists():
     config = _minimal_config()
     fake_result = BootResult(outcome="passed", attempts=1, duration_ms=500, stdout="")
 
-    with patch("athanor.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
+    with patch("embry0.workflows.qa.subtask_nodes.run_boot_phase", AsyncMock(return_value=fake_result)):
         out = await boot_app_node(state, config)
 
     assert out["boot_outcome"] == "passed"

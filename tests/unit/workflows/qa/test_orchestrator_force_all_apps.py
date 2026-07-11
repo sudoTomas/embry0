@@ -7,18 +7,18 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from athanor.workflows.qa.orchestrator import qa_orchestrator_node
-from athanor.workflows.qa.subtask_result_schema import (
+from embry0.workflows.qa.orchestrator import qa_orchestrator_node
+from embry0.workflows.qa.subtask_result_schema import (
     CacheHits,
     SubTaskResult,
     SubTaskStatus,
 )
-from athanor.workspace_providers import (
+from embry0.workspace_providers import (
     AffectedSet,
     WorkspaceApp,
     WorkspacePackage,
 )
-from athanor.workspace_providers.fakes import FakeWorkspaceProvider
+from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
 _QA_YAML_ALWAYS = """
 version: 2
@@ -71,7 +71,7 @@ async def test_qa_required_always_runs_all_apps(monkeypatch, fake_provider):
     """qa_required: always in qa.yaml => fan-out runs every declared app
     even when the affected-set is empty."""
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -87,7 +87,7 @@ async def test_qa_required_always_runs_all_apps(monkeypatch, fake_provider):
         )
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 
@@ -115,7 +115,7 @@ async def test_force_all_apps_state_flag_runs_all_apps(monkeypatch, fake_provide
     """state['qa']['force_all_apps'] = True overrides qa_required: auto and
     forces every declared app to run."""
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -131,7 +131,7 @@ async def test_force_all_apps_state_flag_runs_all_apps(monkeypatch, fake_provide
         )
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 
@@ -159,7 +159,7 @@ async def test_qa_required_auto_with_no_diff_still_short_circuits(monkeypatch, f
     """Regression: qa_required: auto + empty affected set still short-circuits
     to 'no apps to QA'. Force-all paths are opt-in, not the default."""
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator.load_provider",
+        "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
 
@@ -167,7 +167,7 @@ async def test_qa_required_auto_with_no_diff_still_short_circuits(monkeypatch, f
         raise AssertionError("force-all should not have triggered")
 
     monkeypatch.setattr(
-        "athanor.workflows.qa.orchestrator_helpers.run_subtask",
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
         fake_run_subtask,
     )
 

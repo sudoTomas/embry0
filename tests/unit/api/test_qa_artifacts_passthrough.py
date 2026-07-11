@@ -149,7 +149,7 @@ async def test_artifact_passthrough_rejects_oversized_payloads(api_with_minio):
     or trace zip, which would otherwise OOM the orchestrator the first time
     anyone clicks the panel.
     """
-    from athanor.api.v1.qa_artifacts import _MAX_ARTIFACT_BYTES
+    from embry0.api.v1.qa_artifacts import _MAX_ARTIFACT_BYTES
 
     sub = "RUN1__hub"
     api_with_minio.app.state.qa_minio.list_objects = AsyncMock(return_value=[f"{sub}/1/traces/giant.zip"])

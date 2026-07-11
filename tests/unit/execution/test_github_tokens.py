@@ -1,6 +1,6 @@
 import pytest
 
-from athanor.execution.github_tokens import all_github_tokens, resolve_for_repo, resolve_github_token
+from embry0.execution.github_tokens import all_github_tokens, resolve_for_repo, resolve_github_token
 
 
 @pytest.fixture(autouse=True)
@@ -12,18 +12,18 @@ def _clean_owner_tokens(monkeypatch):
 
 
 def test_resolves_per_owner_env(monkeypatch):
-    monkeypatch.setenv("GITHUB_TOKEN__RAVEN_CARGO", "ghp_raven")
-    assert resolve_github_token("client-project", "ghp_default") == "ghp_raven"
+    monkeypatch.setenv("GITHUB_TOKEN__ACME_CORP", "ghp_acme")
+    assert resolve_github_token("acme-corp", "ghp_default") == "ghp_acme"
 
 
 def test_sanitizes_hyphens_and_uppercases(monkeypatch):
-    monkeypatch.setenv("GITHUB_TOKEN__ALQVIMIA_LABS", "ghp_alq")
-    assert resolve_github_token("former-org", "ghp_default") == "ghp_alq"
+    monkeypatch.setenv("GITHUB_TOKEN__OCTO_ORG", "ghp_octo")
+    assert resolve_github_token("octo-org", "ghp_default") == "ghp_octo"
 
 
 def test_falls_back_to_default_when_no_owner_env(monkeypatch):
-    monkeypatch.delenv("GITHUB_TOKEN__RAVEN_CARGO", raising=False)
-    assert resolve_github_token("client-project", "ghp_default") == "ghp_default"
+    monkeypatch.delenv("GITHUB_TOKEN__ACME_CORP", raising=False)
+    assert resolve_github_token("acme-corp", "ghp_default") == "ghp_default"
 
 
 def test_none_owner_returns_default():
@@ -35,8 +35,8 @@ def test_empty_owner_returns_default():
 
 
 def test_resolve_for_repo_hits_owner_env(monkeypatch):
-    monkeypatch.setenv("GITHUB_TOKEN__RAVEN_CARGO", "tok-rc")
-    assert resolve_for_repo("client-project/ai-quoting", "tok-default") == "tok-rc"
+    monkeypatch.setenv("GITHUB_TOKEN__ACME_CORP", "tok-rc")
+    assert resolve_for_repo("acme-corp/widgets", "tok-default") == "tok-rc"
 
 
 def test_resolve_for_repo_falls_back_to_default(monkeypatch):

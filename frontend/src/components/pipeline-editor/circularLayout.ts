@@ -150,7 +150,6 @@ function uniformCircularLayout(
  * Also infers any missing edges in the canonical cycle order. Returns
  * { nodes, edges } where edges = existing + inferred (additive).
  *
- * See `docs/superpowers/specs/2026-05-04-auto-arrange-circular-design.md` §3.
  */
 export function circularLayout(
   nodes: Node[],

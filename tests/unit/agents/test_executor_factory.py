@@ -2,11 +2,11 @@
 
 import pytest
 
-from athanor.agents.executor_factory import select_executor
-from athanor.agents.invocation import AgentInvocation
-from athanor.execution.auth_provider import AuthConfigError
-from athanor.safety.error_codes import ErrorCode
-from athanor.safety.policy import default_policy_for_agent
+from embry0.agents.executor_factory import select_executor
+from embry0.agents.invocation import AgentInvocation
+from embry0.execution.auth_provider import AuthConfigError
+from embry0.safety.error_codes import ErrorCode
+from embry0.safety.policy import default_policy_for_agent
 
 
 def _inv(execution_mode: str) -> AgentInvocation:
@@ -29,7 +29,7 @@ def _inv(execution_mode: str) -> AgentInvocation:
 
 
 def test_select_executor_returns_sdk_for_sdk_mode() -> None:
-    from athanor.agents.executor import SdkAgentExecutor
+    from embry0.agents.executor import SdkAgentExecutor
 
     executor = select_executor(_inv("sdk"))
     assert isinstance(executor, SdkAgentExecutor)

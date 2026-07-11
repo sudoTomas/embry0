@@ -1,6 +1,6 @@
 """Tests for the job-wide ask_user round cap."""
 
-from athanor.orchestration.nodes.agent import _enforce_ask_user_cap
+from embry0.orchestration.nodes.agent import _enforce_ask_user_cap
 
 
 def test_first_round_not_exhausted():

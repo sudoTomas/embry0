@@ -5,7 +5,7 @@ import json
 
 
 def test_runner_passes_messages_to_executor_when_blob_given(tmp_path):
-    from athanor.sandbox.runner import _build_run_kwargs
+    from embry0.sandbox.runner import _build_run_kwargs
 
     blob = tmp_path / "msgs.json"
     blob.write_text(json.dumps([{"role": "user", "content": "hi"}]))
@@ -16,7 +16,7 @@ def test_runner_passes_messages_to_executor_when_blob_given(tmp_path):
 
 
 def test_runner_ignores_blob_when_not_given():
-    from athanor.sandbox.runner import _build_run_kwargs
+    from embry0.sandbox.runner import _build_run_kwargs
 
     config = {"agent_type": "developer", "execution_mode": "sdk", "auth_mode": "api_key"}
     kwargs = _build_run_kwargs(config, session_blob_path=None, session_id=None)

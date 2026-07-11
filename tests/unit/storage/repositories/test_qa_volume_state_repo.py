@@ -1,6 +1,6 @@
 import pytest
 
-from athanor.storage.repositories.qa_volume_state import (
+from embry0.storage.repositories.qa_volume_state import (
     QAVolumeStateRepository,
 )
 
@@ -59,7 +59,7 @@ async def test_upsert_preserves_last_warmed_sha_when_none_passed(repo: QAVolumeS
     await repo.upsert(
         scope="per-repo",
         scope_key="org/r1",
-        volume_name="athanor-qa-vol-org-r1",
+        volume_name="embry0-qa-vol-org-r1",
         last_warmed_sha="abc123",
     )
 
@@ -67,7 +67,7 @@ async def test_upsert_preserves_last_warmed_sha_when_none_passed(repo: QAVolumeS
     await repo.upsert(
         scope="per-repo",
         scope_key="org/r1",
-        volume_name="athanor-qa-vol-org-r1",
+        volume_name="embry0-qa-vol-org-r1",
         last_warmed_sha=None,
     )
 

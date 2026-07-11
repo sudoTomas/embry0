@@ -116,7 +116,7 @@ async def test_triage_routes_retry_developer_after_qa_failure() -> None:
     ``qa_failure_action.kind = retry_developer``, triage_node returns a
     Command(goto="developer") with developer_prompt_addendum and
     developer_focus_files populated."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     output = _triage_decision_with_qa_failure_action(
         {
@@ -127,8 +127,8 @@ async def test_triage_routes_retry_developer_after_qa_failure() -> None:
     )
     runner_mock = _runner_returning(output)
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_qa_failed_state(), _make_config())
 
@@ -148,7 +148,7 @@ async def test_triage_routes_rerun_qa_after_qa_failure() -> None:
     """When qa.final_status == "failed" and the agent emits
     ``qa_failure_action.kind = rerun_qa``, triage_node routes to init_qa
     with qa_rerun_reason populated."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     output = _triage_decision_with_qa_failure_action(
         {
@@ -158,8 +158,8 @@ async def test_triage_routes_rerun_qa_after_qa_failure() -> None:
     )
     runner_mock = _runner_returning(output)
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_qa_failed_state(), _make_config())
 
@@ -177,7 +177,7 @@ async def test_triage_routes_ask_user_after_qa_failure() -> None:
     """When qa.final_status == "failed" and the agent emits
     ``qa_failure_action.kind = ask_user``, triage_node routes to
     ask_user_interrupt with pending_user_question populated."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     output = _triage_decision_with_qa_failure_action(
         {
@@ -187,8 +187,8 @@ async def test_triage_routes_ask_user_after_qa_failure() -> None:
     )
     runner_mock = _runner_returning(output)
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_qa_failed_state(), _make_config())
 
@@ -206,15 +206,15 @@ async def test_triage_qa_failure_no_action_ends_with_error_code() -> None:
     """When qa.final_status == "failed" but the agent omits qa_failure_action,
     triage_node ends the job with ErrorCode.QA_FAILURES_UNRESOLVED and sets
     qa.final_status = "exhausted"."""
-    from athanor.safety.error_codes import ErrorCode
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.safety.error_codes import ErrorCode
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     # No qa_failure_action — agent forgot the contract.
     output = _triage_decision_with_qa_failure_action(None)
     runner_mock = _runner_returning(output)
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_qa_failed_state(), _make_config())
 
@@ -232,15 +232,15 @@ async def test_triage_qa_failure_malformed_payload_ends_with_error_code() -> Non
     Pydantic validation (e.g. ``retry_developer`` without ``prompt``) should
     also terminate with QA_FAILURES_UNRESOLVED rather than crashing or
     silently routing on garbage."""
-    from athanor.safety.error_codes import ErrorCode
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.safety.error_codes import ErrorCode
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     # retry_developer requires prompt with min_length=10; "hi" is too short.
     output = _triage_decision_with_qa_failure_action({"kind": "retry_developer", "prompt": "hi"})
     runner_mock = _runner_returning(output)
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_qa_failed_state(), _make_config())
 
@@ -256,14 +256,14 @@ async def test_triage_qa_failure_malformed_payload_ends_with_error_code() -> Non
 async def test_triage_qa_failure_unknown_kind_ends_with_error_code() -> None:
     """A qa_failure_action with an unknown kind should terminate with
     QA_FAILURES_UNRESOLVED rather than fall through silently."""
-    from athanor.safety.error_codes import ErrorCode
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.safety.error_codes import ErrorCode
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     output = _triage_decision_with_qa_failure_action({"kind": "halt_universe", "reason": "no"})
     runner_mock = _runner_returning(output)
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(_make_qa_failed_state(), _make_config())
 
@@ -278,7 +278,7 @@ async def test_triage_does_not_bump_failure_rounds() -> None:
     """failure_rounds is owned by the graph's _qa_failure_bookkeeping_node;
     triage_node must not increment it on top. The state arriving at triage
     already has the bumped count."""
-    from athanor.workflows.issue_to_pr.nodes import triage_node
+    from embry0.workflows.issue_to_pr.nodes import triage_node
 
     state = _make_qa_failed_state()
     # bookkeeping bumped this from 0 → 1 before re-entering triage.
@@ -292,8 +292,8 @@ async def test_triage_does_not_bump_failure_rounds() -> None:
     )
     runner_mock = _runner_returning(output)
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await triage_node(state, _make_config())
 

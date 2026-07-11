@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from athanor.workspace_providers.npm_workspaces_turbo._path_index import (
+from embry0.workspace_providers.npm_workspaces_turbo._path_index import (
     PackagePathIndex,
     build_path_index,
 )

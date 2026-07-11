@@ -24,7 +24,6 @@ const OPERATION_ROLE: Record<Operation, string> = {
  * patent cards plus a hero. Hand-authored static SVG, gold on dark,
  * patent-drawing chrome.
  *
- * See `docs/superpowers/specs/2026-05-04-patent-drawing-layer-design.md`.
  */
 export function AboutOperationsPage() {
   return (

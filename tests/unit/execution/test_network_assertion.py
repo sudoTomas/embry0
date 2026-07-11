@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from athanor.execution.docker_client import DockerClient
+from embry0.execution.docker_client import DockerClient
 
 
 @pytest.fixture

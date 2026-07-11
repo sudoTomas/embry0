@@ -190,7 +190,7 @@ describe("InsightsPage", () => {
     vi.spyOn(agentApi, "fetchReviewStats").mockResolvedValue(EMPTY_REVIEW);
     vi.spyOn(agentApi, "fetchHardware").mockResolvedValue({
       id: 1,
-      hostname: "private-server",
+      hostname: "demo-server",
       total_memory_gb: 251.1,
       available_memory_gb: 239,
       gpu_info: "RTX 5070 Ti",
@@ -203,7 +203,7 @@ describe("InsightsPage", () => {
     vi.spyOn(agentApi, "fetchMemories").mockResolvedValue(EMPTY_MEMORIES);
 
     render(<InsightsPage />, { wrapper: wrapper() });
-    expect(await screen.findByText("private-server")).toBeInTheDocument();
+    expect(await screen.findByText("demo-server")).toBeInTheDocument();
     const panel = screen.getByTestId("insights-hardware");
     expect(panel).toHaveTextContent("251.1 GB");
     expect(panel).toHaveTextContent("239 GB");
@@ -222,14 +222,14 @@ describe("InsightsPage", () => {
     vi.spyOn(agentApi, "fetchReviewStats").mockResolvedValue(EMPTY_REVIEW);
     vi.spyOn(agentApi, "fetchHardware").mockResolvedValue({
       id: 1,
-      hostname: "private-server",
+      hostname: "demo-server",
       ollama_models: "{ not valid json",
     });
     vi.spyOn(agentApi, "fetchMemories").mockResolvedValue(EMPTY_MEMORIES);
 
     render(<InsightsPage />, { wrapper: wrapper() });
     // Host still renders; no model rows; no crash.
-    expect(await screen.findByText("private-server")).toBeInTheDocument();
+    expect(await screen.findByText("demo-server")).toBeInTheDocument();
     expect(screen.queryByTestId(/^hardware-model-/)).toBeNull();
   });
 
@@ -240,7 +240,7 @@ describe("InsightsPage", () => {
     vi.spyOn(agentApi, "fetchHardware").mockResolvedValue(EMPTY_HARDWARE);
     vi.spyOn(agentApi, "fetchMemories").mockResolvedValue([
       { id: "m-1", scope: "global", body: "Always prefer ripgrep" },
-      { id: "m-2", scope: "raven", body: "vendor-tms runs on private-server" },
+      { id: "m-2", scope: "acme-org", body: "The staging DB runs on demo-server" },
     ]);
 
     render(<InsightsPage />, { wrapper: wrapper() });
@@ -248,7 +248,7 @@ describe("InsightsPage", () => {
     expect(screen.getByTestId("memory-row-m-1")).toHaveTextContent(
       "Always prefer ripgrep",
     );
-    expect(screen.getByTestId("memory-row-m-2")).toHaveTextContent("raven");
+    expect(screen.getByTestId("memory-row-m-2")).toHaveTextContent("acme-org");
   });
 
   it("memories panel renders an empty state for a top-level empty array", async () => {

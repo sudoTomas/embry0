@@ -1,8 +1,8 @@
 import pytest
 
-from athanor.storage.database import DatabasePool
-from athanor.storage.migrations.runner import run_migrations
-from athanor.storage.repositories.integration_config import IntegrationConfigRepository, _mask
+from embry0.storage.database import DatabasePool
+from embry0.storage.migrations.runner import run_migrations
+from embry0.storage.repositories.integration_config import IntegrationConfigRepository, _mask
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -11,7 +11,7 @@ pytestmark = pytest.mark.requires_postgres
 async def integration_repo() -> IntegrationConfigRepository:
     import os
 
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://athanor:athanor@localhost:5432/athanor_test")
+    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
     db = DatabasePool(url)
     await db.connect()
     await run_migrations(db)
@@ -48,7 +48,7 @@ def test_mask_exactly_visible_plus_one():
 @pytest.mark.asyncio
 async def test_get_returns_defaults(integration_repo: IntegrationConfigRepository):
     config = await integration_repo.get()
-    assert config["trigger_labels"] == ["Athanor"]
+    assert config["trigger_labels"] == ["embry0"]
     assert config["webhook_secret_set"] is False
     assert config["slack_webhook_url_set"] is False
     assert config["telegram_bot_token_set"] is False
@@ -61,8 +61,8 @@ async def test_get_returns_defaults(integration_repo: IntegrationConfigRepositor
 
 @pytest.mark.asyncio
 async def test_update_trigger_labels(integration_repo: IntegrationConfigRepository):
-    config = await integration_repo.update(trigger_labels=["Athanor", "bot"])
-    assert config["trigger_labels"] == ["Athanor", "bot"]
+    config = await integration_repo.update(trigger_labels=["embry0", "bot"])
+    assert config["trigger_labels"] == ["embry0", "bot"]
 
 
 @pytest.mark.asyncio
@@ -104,9 +104,9 @@ async def test_telegram_chat_id_returned_as_plain(integration_repo: IntegrationC
 async def test_get_reads_trigger_labels_from_env_when_no_row(
     integration_repo: IntegrationConfigRepository, monkeypatch
 ):
-    monkeypatch.setenv("TRIGGER_LABELS", "Athanor,bot,agent")
+    monkeypatch.setenv("TRIGGER_LABELS", "embry0,bot,agent")
     config = await integration_repo.get()
-    assert config["trigger_labels"] == ["Athanor", "bot", "agent"]
+    assert config["trigger_labels"] == ["embry0", "bot", "agent"]
 
 
 @pytest.mark.asyncio

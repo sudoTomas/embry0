@@ -174,8 +174,6 @@ const BODIES: Record<Operation, () => React.ReactElement> = {
  * Renders the geodesic mark with one of the seven alchemical operations'
  * specific motion applied. Component-level reduced-motion guard returns
  * null; CSS gating handles `body[data-divine="off"]`.
- *
- * See `docs/superpowers/specs/2026-05-04-divine-operations-design.md`.
  */
 export function DivineOperation({
   operation,

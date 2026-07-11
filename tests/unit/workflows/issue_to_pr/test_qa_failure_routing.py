@@ -20,7 +20,7 @@ reflects the just-completed QA round.
 
 from __future__ import annotations
 
-from athanor.workflows.issue_to_pr.routing import route_after_qa_report
+from embry0.workflows.issue_to_pr.routing import route_after_qa_report
 
 
 def test_passed_routes_to_end() -> None:

@@ -1,19 +1,19 @@
-"""Unit tests for athanor/cache/image_builder_cli.py — Task B4."""
+"""Unit tests for embry0/cache/image_builder_cli.py — Task B4."""
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
 
-from athanor.cache.image_builder import ImageBuildResult
-from athanor.cache.image_builder_cli import run_build_qa_image
+from embry0.cache.image_builder import ImageBuildResult
+from embry0.cache.image_builder_cli import run_build_qa_image
 
 
 @pytest.mark.asyncio
 async def test_run_skips_when_existing_active_tag_matches_lockfile(monkeypatch):
     """If qa_image_tags already has an active row for (repo, current lockfile_sha),
     no new build kicks off (idempotency)."""
-    from athanor.storage.repositories.qa_image_tags import QAImageTagRow
+    from embry0.storage.repositories.qa_image_tags import QAImageTagRow
 
     image_repo = AsyncMock()
     image_repo.get_active = AsyncMock(
@@ -33,13 +33,13 @@ async def test_run_skips_when_existing_active_tag_matches_lockfile(monkeypatch):
         return "abcdef" + "0" * 58
 
     monkeypatch.setattr(
-        "athanor.cache.image_builder_cli._compute_remote_lockfile_sha",
+        "embry0.cache.image_builder_cli._compute_remote_lockfile_sha",
         fake_compute_remote_lockfile_sha,
     )
 
     # If the build path were called, this AsyncMock would record it.
     build_mock = AsyncMock()
-    monkeypatch.setattr("athanor.cache.image_builder_cli.build_qa_image", build_mock)
+    monkeypatch.setattr("embry0.cache.image_builder_cli.build_qa_image", build_mock)
 
     result = await run_build_qa_image(
         repo="org/r1",
@@ -60,7 +60,7 @@ async def test_run_skips_when_existing_active_tag_matches_lockfile(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_force_rebuilds_even_with_matching_sha(monkeypatch):
     """--force flag triggers a fresh build regardless of existing active tag."""
-    from athanor.storage.repositories.qa_image_tags import QAImageTagRow
+    from embry0.storage.repositories.qa_image_tags import QAImageTagRow
 
     image_repo = AsyncMock()
     image_repo.get_active = AsyncMock(
@@ -79,12 +79,12 @@ async def test_run_force_rebuilds_even_with_matching_sha(monkeypatch):
         return "aaa"
 
     monkeypatch.setattr(
-        "athanor.cache.image_builder_cli._compute_remote_lockfile_sha",
+        "embry0.cache.image_builder_cli._compute_remote_lockfile_sha",
         fake_compute_remote_lockfile_sha,
     )
 
     build_mock = AsyncMock(return_value=ImageBuildResult(image_tag="t2", lockfile_sha="aaa", head_sha="x"))
-    monkeypatch.setattr("athanor.cache.image_builder_cli.build_qa_image", build_mock)
+    monkeypatch.setattr("embry0.cache.image_builder_cli.build_qa_image", build_mock)
 
     result = await run_build_qa_image(
         repo="org/r1",
@@ -112,12 +112,12 @@ async def test_run_builds_when_no_active_tag_exists(monkeypatch):
         return "abc"
 
     monkeypatch.setattr(
-        "athanor.cache.image_builder_cli._compute_remote_lockfile_sha",
+        "embry0.cache.image_builder_cli._compute_remote_lockfile_sha",
         fake_compute_remote_lockfile_sha,
     )
 
     build_mock = AsyncMock(return_value=ImageBuildResult(image_tag="t1", lockfile_sha="abc", head_sha="x"))
-    monkeypatch.setattr("athanor.cache.image_builder_cli.build_qa_image", build_mock)
+    monkeypatch.setattr("embry0.cache.image_builder_cli.build_qa_image", build_mock)
 
     result = await run_build_qa_image(
         repo="org/r1",

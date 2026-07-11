@@ -109,14 +109,14 @@ export function ProposalsPage() {
       )}
 
       {!isLoading && proposals.length === 0 && (
-        <div className="athanor-card p-6 text-sm text-white/60">
+        <div className="embry0-card p-6 text-sm text-white/60">
           No proposals from the scanner yet.
         </div>
       )}
 
       {proposals.length > 0 && (
         <div
-          className="athanor-card overflow-hidden"
+          className="embry0-card overflow-hidden"
           data-testid="proposals-list"
         >
           <table className="w-full text-xs">

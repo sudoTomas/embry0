@@ -1,7 +1,7 @@
 import pytest
 
-from athanor.storage.database import DatabasePool
-from athanor.storage.repositories.context_config import ContextConfigRepository
+from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.context_config import ContextConfigRepository
 
 pytestmark = pytest.mark.requires_postgres
 

@@ -8,7 +8,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_qa_node_invokes_run_agent_node():
     """qa_node calls run_agent_node with agent_type='qa'."""
-    from athanor.workflows.qa.nodes import qa_node
+    from embry0.workflows.qa.nodes import qa_node
 
     state = {
         "job_id": "JOB1",
@@ -59,8 +59,8 @@ async def test_qa_node_invokes_run_agent_node():
     )
 
     with (
-        patch("athanor.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=fake_repo),
-        patch("athanor.orchestration.nodes.agent.run_agent_node", fake_run),
+        patch("embry0.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=fake_repo),
+        patch("embry0.orchestration.nodes.agent.run_agent_node", fake_run),
     ):
         new_state = await qa_node(state, config)
 
@@ -78,7 +78,7 @@ async def test_qa_node_invokes_run_agent_node():
 @pytest.mark.asyncio
 async def test_qa_node_records_agent_error():
     """If run_agent_node returns an error output, record it on the attempt."""
-    from athanor.workflows.qa.nodes import qa_node
+    from embry0.workflows.qa.nodes import qa_node
 
     state = {
         "job_id": "JOB",
@@ -119,8 +119,8 @@ async def test_qa_node_records_agent_error():
     )
 
     with (
-        patch("athanor.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=fake_repo),
-        patch("athanor.orchestration.nodes.agent.run_agent_node", fake_run),
+        patch("embry0.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=fake_repo),
+        patch("embry0.orchestration.nodes.agent.run_agent_node", fake_run),
     ):
         new_state = await qa_node(state, config)
 
@@ -133,7 +133,7 @@ async def test_qa_node_records_agent_error():
 @pytest.mark.asyncio
 async def test_qa_node_raises_without_agent_runner():
     """No agent_runner in config — fail loudly (no in-process fallback)."""
-    from athanor.workflows.qa.nodes import qa_node
+    from embry0.workflows.qa.nodes import qa_node
 
     state = {
         "job_id": "X",

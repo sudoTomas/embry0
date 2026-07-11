@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from athanor.workflows.qa.graph import QAWorkflow
+from embry0.workflows.qa.graph import QAWorkflow
 
 
 def test_compiled_graph_includes_three_top_level_nodes():

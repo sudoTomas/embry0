@@ -1,11 +1,11 @@
-"""Phase 2 end-to-end smoke against a fixture repo with .athanor/qa.yaml.
+"""Phase 2 end-to-end smoke against a fixture repo with .embry0/qa.yaml.
 
 Requires:
 - Live orchestrator with Phase 2 deployed
-- DinD up; athanor-sandbox-qa:latest loaded
+- DinD up; embry0-sandbox-qa:latest loaded
 - MinIO up
 - A repo+branch combo at QA_SMOKE_REPO/QA_SMOKE_BRANCH (default: a fixture
-  branch that ships a tiny http-echo compose stack + .athanor/qa.yaml)
+  branch that ships a tiny http-echo compose stack + .embry0/qa.yaml)
 
 Skips cleanly when env vars are not set.
 """

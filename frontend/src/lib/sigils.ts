@@ -18,7 +18,6 @@
  * (Antimony ⚯ and Sol ☉) — they sit outside the 4-cardinal mapping;
  * full reconciliation is deferred per spec §6.
  *
- * See `docs/superpowers/specs/2026-05-04-geodesic-identity-design.md`.
  */
 
 export type Stage =

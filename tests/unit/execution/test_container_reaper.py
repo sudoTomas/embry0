@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from athanor.execution.image_manager import ContainerReaper
+from embry0.execution.image_manager import ContainerReaper
 
 
 def _ago(hours: float, tz_abbrev: str = "UTC") -> str:

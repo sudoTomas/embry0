@@ -3,9 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "athanor"
+name = "embry0"
 version = "0.1.0"
 description = "General-purpose agent orchestration engine built on LangGraph and Claude Agent SDK"
+license = "AGPL-3.0-or-later"
+authors = [{ name = "Tomas McMonigal" }]
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.0,<3",
@@ -18,7 +20,6 @@ dependencies = [
     "langgraph>=0.4,<1",
     "langgraph-checkpoint-postgres>=2.0,<3",
     "aiohttp>=3.9,<4",
-    "anthropic>=0.86,<1",
     "claude-agent-sdk>=0.1.50",
     "psycopg[binary]>=3.0,<4",
     "cryptography>=42,<47",
@@ -28,11 +29,15 @@ dependencies = [
     "sse-starlette>=2.0,<4",
 ]
 
-[project.scripts]
-athanor = "athanor.cli.__main__:main"
+[project.urls]
+Repository = "https://github.com/sudoTomas/embry0"
+Issues = "https://github.com/sudoTomas/embry0/issues"
 
-[project.entry-points."athanor.workspace_providers"]
-npm-workspaces-turbo = "athanor.workspace_providers.npm_workspaces_turbo.provider:NpmWorkspacesTurboProvider"
+[project.scripts]
+embry0 = "embry0.cli.__main__:main"
+
+[project.entry-points."embry0.workspace_providers"]
+npm-workspaces-turbo = "embry0.workspace_providers.npm_workspaces_turbo.provider:NpmWorkspacesTurboProvider"
 
 [project.optional-dependencies]
 dev = [
@@ -48,7 +53,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["athanor"]
+packages = ["embry0"]
 
 [tool.ruff]
 line-length = 120

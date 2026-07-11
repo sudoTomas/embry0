@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from athanor.workspace_providers.npm_workspaces_turbo._dep_graph import (
+from embry0.workspace_providers.npm_workspaces_turbo._dep_graph import (
     DependencyGraph,
     build_dep_graph,
 )
@@ -108,7 +108,7 @@ def test_unknown_node_lookup_returns_empty():
 
 def test_missing_root_package_json_raises(tmp_path: Path):
     """Root package.json absent → WorkspaceProviderError (not silent)."""
-    from athanor.workspace_providers.provider import WorkspaceProviderError
+    from embry0.workspace_providers.provider import WorkspaceProviderError
 
     # tmp_path has no package.json at the root
     with pytest.raises(WorkspaceProviderError, match="missing or unparseable"):
@@ -117,7 +117,7 @@ def test_missing_root_package_json_raises(tmp_path: Path):
 
 def test_unparseable_root_package_json_raises(tmp_path: Path):
     """Root package.json present but invalid JSON → WorkspaceProviderError."""
-    from athanor.workspace_providers.provider import WorkspaceProviderError
+    from embry0.workspace_providers.provider import WorkspaceProviderError
 
     (tmp_path / "package.json").write_text("{not valid json")
     with pytest.raises(WorkspaceProviderError, match="missing or unparseable"):

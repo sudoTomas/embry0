@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from athanor.api.schemas.qa_dashboard import (
+from embry0.api.schemas.qa_dashboard import (
     AppHistoryItem,
     AppResult,
     BootPhaseDetail,

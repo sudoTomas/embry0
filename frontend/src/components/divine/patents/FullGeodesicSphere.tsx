@@ -8,8 +8,7 @@ interface FullGeodesicSphereProps {
  * with N-pole strut triangulation, latitude bands, equator (3D ellipse),
  * and cardinal dots — the long-form rendering of the geodesic mark.
  *
- * Pure SVG, currentColor stroke, ~1.5KB inline. See
- * `docs/superpowers/specs/2026-05-04-patent-drawing-layer-design.md` §3.4.
+ * Pure SVG, currentColor stroke, ~1.5KB inline.
  */
 export function FullGeodesicSphere({ size = 240, className }: FullGeodesicSphereProps) {
   return (

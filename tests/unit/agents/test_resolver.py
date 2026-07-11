@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from athanor.agents.resolver import ResolvedAgentConfig, resolve_agent_config
+from embry0.agents.resolver import ResolvedAgentConfig, resolve_agent_config
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers

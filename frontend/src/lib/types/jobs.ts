@@ -13,7 +13,7 @@ export interface JobResponse {
   finished_at: string | null;
   issue_number: number | null;
   // Internal issues-table FK. NULL means the job did not originate from an
-  // Athanor issue (operator/API dispatch) — the Console board's explicit
+  // embry0 issue (operator/API dispatch) — the Console board's explicit
   // operator-job signal.
   issue_id?: string | null;
   // Latest workflow stage persisted by the executor at each node transition.

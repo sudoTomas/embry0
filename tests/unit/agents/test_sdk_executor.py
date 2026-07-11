@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-from athanor.agents.executor import SdkAgentExecutor
-from athanor.agents.invocation import AgentInvocation
-from athanor.safety.policy import default_policy_for_agent
+from embry0.agents.executor import SdkAgentExecutor
+from embry0.agents.invocation import AgentInvocation
+from embry0.safety.policy import default_policy_for_agent
 
 
 def _inv(**kw) -> AgentInvocation:  # noqa: ANN003
@@ -64,7 +64,7 @@ async def _scripted_query(messages: list[Any]):
 async def test_sdk_executor_returns_output(tmp_path, monkeypatch) -> None:
     # Point the executor at a tmp /workspace so settings.json writes don't
     # pollute the real FS.
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     messages = [
         _FakeAssistantMessage("hello"),
@@ -94,7 +94,7 @@ async def test_sdk_executor_returns_output(tmp_path, monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_sdk_executor_writes_settings_json(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     with patch(
         "claude_agent_sdk.query",
@@ -115,7 +115,7 @@ async def test_sdk_executor_writes_settings_json(tmp_path, monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_sdk_executor_timeout_path(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     async def never_yields():
         import asyncio as _a
@@ -151,7 +151,7 @@ class _FakeAssistantMessageWithTool:
 @pytest.mark.asyncio
 async def test_sdk_executor_tools_called_counts_once_per_invocation(tmp_path, monkeypatch) -> None:
     """Regression: tools_called must not be double-counted (hook + block)."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     messages = [
         _FakeAssistantMessageWithTool("Bash"),
@@ -176,21 +176,21 @@ async def test_sdk_executor_tools_called_counts_once_per_invocation(tmp_path, mo
 
 
 def test_workspace_root_respects_env_var(monkeypatch, tmp_path) -> None:
-    from athanor.agents.executor import _workspace_root
+    from embry0.agents.executor import _workspace_root
 
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     assert _workspace_root() == tmp_path
 
 
 def test_workspace_root_default(monkeypatch) -> None:
-    from athanor.agents.executor import _workspace_root
+    from embry0.agents.executor import _workspace_root
 
-    monkeypatch.delenv("ATHANOR_WORKSPACE_ROOT", raising=False)
+    monkeypatch.delenv("EMBRY0_WORKSPACE_ROOT", raising=False)
     assert str(_workspace_root()) == "/workspace"
 
 
 def test_resolve_writer_returns_test_writer() -> None:
-    from athanor.agents.executor import _resolve_writer
+    from embry0.agents.executor import _resolve_writer
 
     calls = []
 
@@ -202,7 +202,7 @@ def test_resolve_writer_returns_test_writer() -> None:
 
 
 def test_resolve_writer_no_op_fallback() -> None:
-    from athanor.agents.executor import _resolve_writer
+    from embry0.agents.executor import _resolve_writer
 
     writer = _resolve_writer(None)
     # Should not raise and should be callable
@@ -210,43 +210,43 @@ def test_resolve_writer_no_op_fallback() -> None:
 
 
 def test_summarize_tool_input_read_uses_file_path() -> None:
-    from athanor.agents.executor import _summarize_tool_input
+    from embry0.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Read", {"file_path": "/a/b"}) == "/a/b"
 
 
 def test_summarize_tool_input_glob_uses_pattern() -> None:
-    from athanor.agents.executor import _summarize_tool_input
+    from embry0.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Glob", {"pattern": "**/*.py"}) == "**/*.py"
 
 
 def test_summarize_tool_input_write_uses_file_path() -> None:
-    from athanor.agents.executor import _summarize_tool_input
+    from embry0.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Write", {"file_path": "/out/f"}) == "/out/f"
 
 
 def test_summarize_tool_input_edit_uses_file_path() -> None:
-    from athanor.agents.executor import _summarize_tool_input
+    from embry0.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Edit", {"file_path": "/out/f"}) == "/out/f"
 
 
 def test_summarize_tool_input_bash_uses_command() -> None:
-    from athanor.agents.executor import _summarize_tool_input
+    from embry0.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Bash", {"command": "ls"}) == "ls"
 
 
 def test_summarize_tool_input_non_dict() -> None:
-    from athanor.agents.executor import _summarize_tool_input
+    from embry0.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("Read", "not a dict") == "not a dict"
 
 
 def test_summarize_tool_input_unknown_tool() -> None:
-    from athanor.agents.executor import _summarize_tool_input
+    from embry0.agents.executor import _summarize_tool_input
 
     assert _summarize_tool_input("MysteryTool", {"key": "val"}) == "{'key': 'val'}"
 
@@ -261,8 +261,8 @@ async def test_evaluate_hook_allows_safe_command() -> None:
     """Allow returns the SDK's PreToolUseHookSpecificOutput shape with
     ``permissionDecision: "allow"`` (NOT the legacy top-level ``{"decision":
     "allow"}`` form, which the CLI Zod validator rejects)."""
-    from athanor.agents.executor import _evaluate_hook
-    from athanor.safety.policy import SafetyPolicy
+    from embry0.agents.executor import _evaluate_hook
+    from embry0.safety.policy import SafetyPolicy
 
     result = await _evaluate_hook(
         policy=SafetyPolicy(),
@@ -282,8 +282,8 @@ async def test_evaluate_hook_allows_safe_command() -> None:
 async def test_evaluate_hook_denies_dangerous_command() -> None:
     """Deny returns ``hookSpecificOutput.permissionDecision: "deny"`` plus the
     blocked reason in ``permissionDecisionReason``."""
-    from athanor.agents.executor import _evaluate_hook
-    from athanor.safety.policy import ContentRule, SafetyPolicy
+    from embry0.agents.executor import _evaluate_hook
+    from embry0.safety.policy import ContentRule, SafetyPolicy
 
     deny_policy = SafetyPolicy(
         content_checks=[
@@ -308,8 +308,8 @@ async def test_evaluate_hook_denies_dangerous_command() -> None:
 @pytest.mark.asyncio
 async def test_evaluate_hook_non_dict_input_coerced() -> None:
     """Non-dict tool_input is coerced to {} (fail-safe) — should allow."""
-    from athanor.agents.executor import _evaluate_hook
-    from athanor.safety.policy import SafetyPolicy
+    from embry0.agents.executor import _evaluate_hook
+    from embry0.safety.policy import SafetyPolicy
 
     result = await _evaluate_hook(
         policy=SafetyPolicy(),
@@ -328,13 +328,13 @@ async def test_evaluate_hook_does_not_set_top_level_decision_allow_or_deny() -> 
     The Claude CLI's stdin protocol validator rejects PreToolUse hook
     outputs whose top-level ``decision`` is anything other than
     ``"block"``. The legacy ``{"decision": "allow" | "deny"}`` shape that
-    Athanor used to emit caused ``ZodError: Invalid input`` and crashed
+    embry0 used to emit caused ``ZodError: Invalid input`` and crashed
     the runner subprocess (1 of 14 sub-tasks errored on the prior QA
     run because of this exact mismatch). The hook MUST express the
     decision via ``hookSpecificOutput.permissionDecision`` instead.
     """
-    from athanor.agents.executor import _evaluate_hook
-    from athanor.safety.policy import ContentRule, SafetyPolicy
+    from embry0.agents.executor import _evaluate_hook
+    from embry0.safety.policy import ContentRule, SafetyPolicy
 
     # Allow path
     allow = await _evaluate_hook(
@@ -367,7 +367,7 @@ async def test_evaluate_hook_does_not_set_top_level_decision_allow_or_deny() -> 
 
 @pytest.mark.asyncio
 async def test_sdk_executor_exception_sets_error(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     async def raises():
         raise RuntimeError("boom")
@@ -398,7 +398,7 @@ async def test_sdk_executor_with_real_sdk_instances(tmp_path, monkeypatch) -> No
         TextBlock,
     )
 
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
 
     text_block = TextBlock(text="hello from sdk")
@@ -436,7 +436,7 @@ async def test_sdk_executor_with_real_tool_use_block(tmp_path, monkeypatch) -> N
     """Use real ToolUseBlock to hit the isinstance() fast-path."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock
 
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
 
     tool_block = ToolUseBlock(id="t1", name="Bash", input={"command": "echo hi"})
@@ -473,7 +473,7 @@ async def test_sdk_executor_with_thinking_block(tmp_path, monkeypatch) -> None:
     """Use real ThinkingBlock to hit the isinstance() branch."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, ThinkingBlock
 
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
 
     thinking_block = ThinkingBlock(thinking="I should check the file", signature="sig1")
@@ -511,7 +511,7 @@ async def test_sdk_executor_with_tool_result_block(tmp_path, monkeypatch) -> Non
     """Use real ToolResultBlock to hit the isinstance() branch."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, ToolResultBlock
 
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
 
     tool_result = ToolResultBlock(tool_use_id="t1", content="file content here", is_error=False)
@@ -558,7 +558,7 @@ async def test_sdk_executor_hooks_unavailable_logs_warning(tmp_path, monkeypatch
     """If options.hooks assignment raises, executor logs warning and continues."""
     from unittest.mock import MagicMock
 
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
 
     mock_options = MagicMock()
     # Make setting .hooks raise to simulate legacy SDK
@@ -572,7 +572,7 @@ async def test_sdk_executor_hooks_unavailable_logs_warning(tmp_path, monkeypatch
             "claude_agent_sdk.query",
             return_value=_scripted_query([_FakeResultMessage("done", 0.001)]),
         ),
-        patch("athanor.agents.executor.build_sdk_options", return_value=mock_options),
+        patch("embry0.agents.executor.build_sdk_options", return_value=mock_options),
     ):
         executor = SdkAgentExecutor()
         out = await executor.run(
@@ -592,7 +592,7 @@ async def test_sdk_executor_hooks_unavailable_logs_warning(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_sdk_executor_result_message_uses_fallback_result(tmp_path, monkeypatch) -> None:
     """When output_text is empty and result message has .result, use it."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
 
     # No AssistantMessage → output_text stays empty → result comes from ResultMessage.result
@@ -614,7 +614,7 @@ async def test_sdk_executor_result_message_uses_fallback_result(tmp_path, monkey
 @pytest.mark.asyncio
 async def test_sdk_executor_system_context_prepended(tmp_path, monkeypatch) -> None:
     """system_context is prepended to the prompt when non-empty."""
-    monkeypatch.setenv("ATHANOR_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     captured_prompts: list[str] = []
 
     async def capturing_query(prompt, options):  # noqa: ARG001

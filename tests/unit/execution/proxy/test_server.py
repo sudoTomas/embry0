@@ -1,9 +1,9 @@
-"""Tests for athanor/execution/proxy/server.py — the container entrypoint."""
+"""Tests for embry0/execution/proxy/server.py — the container entrypoint."""
 
 import pytest
 from aiohttp import web
 
-from athanor.execution.proxy import server
+from embry0.execution.proxy import server
 
 
 def test_build_app_git_returns_git_app(monkeypatch):

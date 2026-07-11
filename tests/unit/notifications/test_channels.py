@@ -9,7 +9,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_dispatch_to_dashboard_only_invokes_no_external_channel():
     """When channels=['dashboard'], no Telegram or GitHub-comment is invoked."""
-    from athanor.notifications.channels import DashboardChannel, dispatch_to_channels
+    from embry0.notifications.channels import DashboardChannel, dispatch_to_channels
 
     dashboard = DashboardChannel()
     dashboard.dispatch = AsyncMock()
@@ -28,7 +28,7 @@ async def test_dispatch_to_dashboard_only_invokes_no_external_channel():
 
 @pytest.mark.asyncio
 async def test_dispatch_to_dashboard_and_telegram_invokes_both():
-    from athanor.notifications.channels import dispatch_to_channels
+    from embry0.notifications.channels import dispatch_to_channels
 
     dashboard = MagicMock()
     dashboard.dispatch = AsyncMock()
@@ -49,7 +49,7 @@ async def test_dispatch_to_dashboard_and_telegram_invokes_both():
 async def test_dispatch_skips_unknown_channel_with_warning():
     """An unknown channel name in issue.notification_channels does not crash —
     it logs a warning and continues with the rest."""
-    from athanor.notifications.channels import dispatch_to_channels
+    from embry0.notifications.channels import dispatch_to_channels
 
     dashboard = MagicMock()
     dashboard.dispatch = AsyncMock()
@@ -67,7 +67,7 @@ async def test_dispatch_skips_unknown_channel_with_warning():
 @pytest.mark.asyncio
 async def test_one_channel_failure_does_not_block_others():
     """If Telegram dispatch raises, dashboard still gets dispatched."""
-    from athanor.notifications.channels import dispatch_to_channels
+    from embry0.notifications.channels import dispatch_to_channels
 
     dashboard = MagicMock()
     dashboard.dispatch = AsyncMock()
@@ -92,7 +92,7 @@ async def test_dispatch_runs_channels_concurrently():
     import asyncio
     import time
 
-    from athanor.notifications.channels import dispatch_to_channels
+    from embry0.notifications.channels import dispatch_to_channels
 
     async def slow_dispatch(_issue, _questions):
         await asyncio.sleep(0.05)

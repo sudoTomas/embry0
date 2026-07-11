@@ -1,7 +1,7 @@
 import pytest
 
-from athanor.storage.database import DatabasePool
-from athanor.storage.repositories.agent_definitions import (
+from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.agent_definitions import (
     BUILTIN_SEED,
     AgentDefinitionsRepository,
 )
@@ -14,7 +14,7 @@ async def agent_repo(db_with_migrations: DatabasePool) -> AgentDefinitionsReposi
     # Migrations seed triage/developer/review; qa is seeded at app startup
     # by seed_qa_agent (it has heavier deps that don't belong in a migration).
     # Do the same here so BUILTIN_SEED ⊆ list_all() holds.
-    from athanor.workflows.qa.agent_seed import seed_qa_agent
+    from embry0.workflows.qa.agent_seed import seed_qa_agent
 
     repo = AgentDefinitionsRepository(db_with_migrations)
     await seed_qa_agent(repo)

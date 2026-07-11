@@ -1,4 +1,4 @@
-"""Unit tests for athanor.qa.event_bus.QAEventBus.
+"""Unit tests for embry0.qa.event_bus.QAEventBus.
 
 Coverage:
   1. Subscriber receives an event published after subscribe().
@@ -15,7 +15,7 @@ import asyncio
 
 import pytest
 
-from athanor.qa.event_bus import QAEventBus
+from embry0.qa.event_bus import QAEventBus
 
 # ---------------------------------------------------------------------------
 # Helper: drain a subscriber until it sees a sentinel "done" event.

@@ -7,7 +7,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_report_node_uploads_logs_validates_result_and_cleans_up():
-    from athanor.workflows.qa.nodes import report_node
+    from embry0.workflows.qa.nodes import report_node
 
     docker = AsyncMock()
     docker._build_base_cmd = lambda: ["docker"]
@@ -85,7 +85,7 @@ async def test_report_node_uploads_logs_validates_result_and_cleans_up():
 @pytest.mark.asyncio
 async def test_report_node_handles_missing_result_json():
     """Sandbox crash before writing result.json — set exit_reason and final_status=pending."""
-    from athanor.workflows.qa.nodes import report_node
+    from embry0.workflows.qa.nodes import report_node
 
     docker = AsyncMock()
     docker._build_base_cmd = lambda: ["docker"]
@@ -135,7 +135,7 @@ async def test_report_node_preserves_existing_boot_timeout_exit_reason():
     """When boot_qa_node already stamped exit_reason='boot_timeout' before
     routing here, report_node must NOT overwrite it (otherwise retry_node
     won't auto-retry the boot)."""
-    from athanor.workflows.qa.nodes import report_node
+    from embry0.workflows.qa.nodes import report_node
 
     docker = AsyncMock()
     docker._build_base_cmd = lambda: ["docker"]
@@ -191,7 +191,7 @@ async def test_report_node_preserves_existing_boot_timeout_exit_reason():
 async def test_report_node_synthesizes_boot_from_state():
     """report_node must populate result.boot from state.qa, ignoring whatever
     the agent wrote — backend is the source of truth for boot."""
-    from athanor.workflows.qa.nodes import report_node
+    from embry0.workflows.qa.nodes import report_node
 
     docker = AsyncMock()
     docker._build_base_cmd = lambda: ["docker"]

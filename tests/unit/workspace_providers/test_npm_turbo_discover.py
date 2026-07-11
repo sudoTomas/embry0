@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from athanor.workspace_providers.npm_workspaces_turbo.provider import (
+from embry0.workspace_providers.npm_workspaces_turbo.provider import (
     NpmWorkspacesTurboProvider,
 )
 
@@ -54,7 +54,7 @@ def test_discover_with_overridden_globs(toy_repo: Path):
 
 
 def test_discover_missing_package_json_raises(tmp_path: Path):
-    from athanor.workspace_providers import WorkspaceProviderError
+    from embry0.workspace_providers import WorkspaceProviderError
 
     provider = NpmWorkspacesTurboProvider(tmp_path, {})
     with pytest.raises(WorkspaceProviderError) as exc:

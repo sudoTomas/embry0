@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from athanor.workspace_providers.npm_workspaces_turbo.provider import (
+from embry0.workspace_providers.npm_workspaces_turbo.provider import (
     NpmWorkspacesTurboProvider,
 )
 
@@ -26,7 +26,7 @@ def test_validate_flags_unknown_app_as_error(toy_repo: Path):
 
 def test_validate_warns_when_workspace_app_missing_from_qa_config(toy_repo: Path):
     """An app in the workspace but absent from qa.yaml is a warning, not an
-    error — athanor will silently skip it. Surface so the user notices."""
+    error — embry0 will silently skip it. Surface so the user notices."""
     provider = NpmWorkspacesTurboProvider(toy_repo, {})
     warnings = provider.validate(["hub", "companion"])  # `lane` missing
     assert any("lane" in w and "qa.yaml" in w for w in warnings)

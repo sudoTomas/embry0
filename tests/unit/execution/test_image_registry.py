@@ -1,8 +1,8 @@
-from athanor.execution.image_registry import qualify_image
+from embry0.execution.image_registry import qualify_image
 
 
 def test_empty_registry_passthrough():
-    assert qualify_image("athanor-sandbox:latest", "") == "athanor-sandbox:latest"
+    assert qualify_image("embry0-sandbox:latest", "") == "embry0-sandbox:latest"
 
 
 def test_empty_image_passthrough():
@@ -10,7 +10,7 @@ def test_empty_image_passthrough():
 
 
 def test_prefixes_unqualified_image():
-    assert qualify_image("athanor-proxy:latest", "registry:5000") == "registry:5000/athanor-proxy:latest"
+    assert qualify_image("embry0-proxy:latest", "registry:5000") == "registry:5000/embry0-proxy:latest"
 
 
 def test_prefixes_unqualified_image_with_path_separator():
@@ -23,7 +23,7 @@ def test_does_not_double_qualify_with_dot():
 
 
 def test_does_not_double_qualify_with_port():
-    assert qualify_image("registry:5000/athanor-proxy:latest", "registry:5000") == "registry:5000/athanor-proxy:latest"
+    assert qualify_image("registry:5000/embry0-proxy:latest", "registry:5000") == "registry:5000/embry0-proxy:latest"
 
 
 def test_does_not_double_qualify_localhost():
@@ -31,8 +31,8 @@ def test_does_not_double_qualify_localhost():
 
 
 def test_strips_trailing_slash_from_registry():
-    assert qualify_image("athanor-sandbox:latest", "registry:5000/") == "registry:5000/athanor-sandbox:latest"
+    assert qualify_image("embry0-sandbox:latest", "registry:5000/") == "registry:5000/embry0-sandbox:latest"
 
 
 def test_handles_image_without_tag():
-    assert qualify_image("athanor-proxy", "registry:5000") == "registry:5000/athanor-proxy"
+    assert qualify_image("embry0-proxy", "registry:5000") == "registry:5000/embry0-proxy"

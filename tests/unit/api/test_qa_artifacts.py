@@ -453,7 +453,7 @@ async def test_get_result_returns_parsed_json(api_with_minio, monkeypatch):
 
     stream_resp = _make_stream_response(status_code=200, chunks=[body_bytes], content_length=str(len(body_bytes)))
 
-    import athanor.api.v1.qa_artifacts as mod
+    import embry0.api.v1.qa_artifacts as mod
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
 
@@ -474,7 +474,7 @@ async def test_get_result_404_when_upstream_404(api_with_minio, monkeypatch):
 
     stream_resp = _make_stream_response(status_code=404, chunks=[], content_length="0")
 
-    import athanor.api.v1.qa_artifacts as mod
+    import embry0.api.v1.qa_artifacts as mod
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
 
@@ -497,7 +497,7 @@ async def test_get_result_502_on_invalid_json(api_with_minio, monkeypatch):
     bad_body = b"<html>not json</html>"
     stream_resp = _make_stream_response(status_code=200, chunks=[bad_body], content_length=str(len(bad_body)))
 
-    import athanor.api.v1.qa_artifacts as mod
+    import embry0.api.v1.qa_artifacts as mod
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
 
@@ -514,7 +514,7 @@ async def test_get_result_504_on_upstream_timeout(api_with_minio, monkeypatch):
         return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
     )
 
-    import athanor.api.v1.qa_artifacts as mod
+    import embry0.api.v1.qa_artifacts as mod
 
     monkeypatch.setattr(
         mod.httpx,
@@ -535,7 +535,7 @@ async def test_get_result_502_on_connect_error(api_with_minio, monkeypatch):
         return_value="http://minio/qa-artifacts/JOB1/1/result.json?signed"
     )
 
-    import athanor.api.v1.qa_artifacts as mod
+    import embry0.api.v1.qa_artifacts as mod
 
     monkeypatch.setattr(
         mod.httpx,
@@ -563,7 +563,7 @@ async def test_get_result_413_on_oversized_body(api_with_minio, monkeypatch):
     chunk = b"x" * (3 * 1024 * 1024)  # 3 MiB
     stream_resp = _make_stream_response(status_code=200, chunks=[chunk, chunk], content_length=None)
 
-    import athanor.api.v1.qa_artifacts as mod
+    import embry0.api.v1.qa_artifacts as mod
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
 
@@ -602,7 +602,7 @@ async def test_get_result_413_on_oversized_content_length(api_with_minio, monkey
 
     stream_resp = _ExplodingStreamResponse()
 
-    import athanor.api.v1.qa_artifacts as mod
+    import embry0.api.v1.qa_artifacts as mod
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", _fake_async_client_factory(stream_resp))
 

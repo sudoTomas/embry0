@@ -3,13 +3,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from athanor.api.app import create_app
-from athanor.config import AthanorConfig
+from embry0.api.app import create_app
+from embry0.config import Embry0Config
 
 
 @pytest.fixture
 def app():
-    config = AthanorConfig(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True)
+    config = Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True)
     app = create_app(config)
     mock_jobs = MagicMock()
     mock_jobs.create = AsyncMock(return_value="job-test123")

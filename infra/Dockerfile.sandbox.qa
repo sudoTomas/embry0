@@ -1,10 +1,10 @@
-# QA sandbox image — extends athanor-sandbox with the runtimes the QA agent
+# QA sandbox image — extends embry0-sandbox with the runtimes the QA agent
 # needs to boot and validate full-stack apps: Java JDK 21, Docker CLI (for
 # DinD compose stacks), Playwright + Chromium, qa-compose wrapper.
 
 FROM python:3.12.7-slim-bookworm
 
-# System dependencies — superset of athanor-sandbox plus tooling needed
+# System dependencies — superset of embry0-sandbox plus tooling needed
 # for browser automation and JVM apps. JDK 21 isn't in Debian bookworm
 # (main ships JDK 17, backports has nothing newer), so we use Eclipse
 # Temurin's apt repo — the standard Adoptium-signed OpenJDK 21 build.
@@ -61,7 +61,7 @@ RUN node /usr/lib/node_modules/@playwright/mcp/node_modules/playwright-core/cli.
 
 # Python deps — same set as the slim image. MinIO uploads from inside the
 # sandbox use presigned URLs via curl/httpx, so no MinIO SDK is needed here.
-# langchain-core: athanor.sandbox.runner uses RunnableConfig (type hint only,
+# langchain-core: embry0.sandbox.runner uses RunnableConfig (type hint only,
 # but imported at module load via cast()).
 RUN pip install --no-cache-dir \
     "claude-agent-sdk>=0.1.48,<0.2" \
@@ -70,19 +70,19 @@ RUN pip install --no-cache-dir \
     "langchain-core>=0.3,<1"
 
 # Sandbox code (same layout as base image).
-# athanor/agents/ + the docker_client/sandbox_manager/auth_provider/agent_runner
-# subset are imported transitively from athanor.sandbox.runner -> executor_factory
+# embry0/agents/ + the docker_client/sandbox_manager/auth_provider/agent_runner
+# subset are imported transitively from embry0.sandbox.runner -> executor_factory
 # -> SdkAgentExecutor; the sandbox runner cannot start without them.
-COPY athanor/sandbox/ /app/athanor/sandbox/
-COPY athanor/safety/ /app/athanor/safety/
-COPY athanor/agents/ /app/athanor/agents/
-COPY athanor/execution/events.py /app/athanor/execution/events.py
-COPY athanor/execution/agent_runner.py /app/athanor/execution/agent_runner.py
-COPY athanor/execution/auth_provider.py /app/athanor/execution/auth_provider.py
-COPY athanor/execution/docker_client.py /app/athanor/execution/docker_client.py
-COPY athanor/execution/sandbox_manager.py /app/athanor/execution/sandbox_manager.py
-RUN mkdir -p /app/athanor/execution \
-    && touch /app/athanor/__init__.py /app/athanor/execution/__init__.py
+COPY embry0/sandbox/ /app/embry0/sandbox/
+COPY embry0/safety/ /app/embry0/safety/
+COPY embry0/agents/ /app/embry0/agents/
+COPY embry0/execution/events.py /app/embry0/execution/events.py
+COPY embry0/execution/agent_runner.py /app/embry0/execution/agent_runner.py
+COPY embry0/execution/auth_provider.py /app/embry0/execution/auth_provider.py
+COPY embry0/execution/docker_client.py /app/embry0/execution/docker_client.py
+COPY embry0/execution/sandbox_manager.py /app/embry0/execution/sandbox_manager.py
+RUN mkdir -p /app/embry0/execution \
+    && touch /app/embry0/__init__.py /app/embry0/execution/__init__.py
 ENV PYTHONPATH=/app
 
 # QA-specific bundled scripts.

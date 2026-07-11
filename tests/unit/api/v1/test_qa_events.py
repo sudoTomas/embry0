@@ -17,7 +17,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from athanor.qa.event_bus import QAEventBus
+from embry0.qa.event_bus import QAEventBus
 
 _KEY = "test-api-key-32-characters-minimum-x"
 _AUTH = {"Authorization": f"Bearer {_KEY}"}
@@ -27,7 +27,7 @@ def _make_app(*, with_bus: bool = True):
     """Build a bare FastAPI app without entering the lifespan, mirroring
     the pattern from ``test_qa_dashboard_routes.py``. ``app.state`` is
     populated manually so each test can control the bus presence."""
-    from athanor.api.app import create_app
+    from embry0.api.app import create_app
 
     app = create_app()
 
@@ -81,7 +81,7 @@ async def test_sse_route_streams_events_until_done() -> None:
     # publishes between iterator advances on the same loop.
     from starlette.requests import Request
 
-    from athanor.api.v1.qa_events import stream_run_events
+    from embry0.api.v1.qa_events import stream_run_events
 
     # Minimal ASGI scope; ``is_disconnected()`` reads from ``receive``.
     async def fake_receive():

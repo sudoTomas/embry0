@@ -1,9 +1,9 @@
-"""Tests for the sticky athanor/qa PR comment renderer."""
+"""Tests for the sticky embry0/qa PR comment renderer."""
 
 from __future__ import annotations
 
-from athanor.notifications.qa_comment import COMMENT_MARKER, render_qa_comment
-from athanor.workflows.qa.subtask_result_schema import (
+from embry0.notifications.qa_comment import COMMENT_MARKER, render_qa_comment
+from embry0.workflows.qa.subtask_result_schema import (
     CacheHits,
     SubTaskResult,
     SubTaskStatus,
@@ -81,12 +81,12 @@ def test_comment_includes_trace_links_when_available():
             _r(
                 "hub",
                 SubTaskStatus.QA_FAILURE,
-                trace_url="https://athanor.example/traces/run-45/hub.zip",
+                trace_url="https://embry0.example/traces/run-45/hub.zip",
                 failure_summary="loads page did not render",
             ),
         ],
     )
-    assert "https://athanor.example/traces/run-45/hub.zip" in out
+    assert "https://embry0.example/traces/run-45/hub.zip" in out
 
 
 def test_comment_summary_table_orders_apps_alphabetically():
@@ -119,7 +119,7 @@ def test_comment_infra_error_distinguishable():
 
 
 def test_human_duration_clamps_negative():
-    from athanor.notifications.qa_comment import _human_duration
+    from embry0.notifications.qa_comment import _human_duration
 
     assert _human_duration(-100) == "0.0s"
     assert _human_duration(0) == "0.0s"
@@ -183,7 +183,7 @@ from unittest.mock import MagicMock  # noqa: E402
 import httpx  # noqa: E402
 import pytest  # noqa: E402
 
-from athanor.notifications.qa_comment import upsert_sticky_comment  # noqa: E402
+from embry0.notifications.qa_comment import upsert_sticky_comment  # noqa: E402
 
 
 def _stub_resp(status_code: int, payload=None, text: str = ""):
@@ -230,7 +230,7 @@ async def test_upsert_creates_when_no_existing_comment_with_marker(monkeypatch):
             posted["body"] = json
             return _stub_resp(201, {"id": 99})
 
-    monkeypatch.setattr("athanor.notifications.qa_comment.httpx.AsyncClient", lambda **kw: _StubClient())
+    monkeypatch.setattr("embry0.notifications.qa_comment.httpx.AsyncClient", lambda **kw: _StubClient())
 
     new_id = await upsert_sticky_comment(
         github_token="tok",
@@ -270,7 +270,7 @@ async def test_upsert_updates_when_existing_comment_has_marker(monkeypatch):
             patched["body"] = json
             return _stub_resp(200, {"id": 7})
 
-    monkeypatch.setattr("athanor.notifications.qa_comment.httpx.AsyncClient", lambda **kw: _StubClient())
+    monkeypatch.setattr("embry0.notifications.qa_comment.httpx.AsyncClient", lambda **kw: _StubClient())
 
     new_id = await upsert_sticky_comment(
         github_token="tok",
@@ -310,7 +310,7 @@ async def test_upsert_handles_multiple_marker_matches_by_picking_first(monkeypat
         async def post(self, url, json=None, headers=None):
             raise AssertionError("should not post")
 
-    monkeypatch.setattr("athanor.notifications.qa_comment.httpx.AsyncClient", lambda **kw: _StubClient())
+    monkeypatch.setattr("embry0.notifications.qa_comment.httpx.AsyncClient", lambda **kw: _StubClient())
 
     new_id = await upsert_sticky_comment(
         github_token="tok",

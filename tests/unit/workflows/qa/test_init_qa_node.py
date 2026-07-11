@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# A token matching _SANDBOX_TOKEN_RE in athanor/sandbox/github/git_ops.py
+# A token matching _SANDBOX_TOKEN_RE in embry0/sandbox/github/git_ops.py
 # (URL-safe base64, length 40-80). Required when git_proxy_url is set so
 # build_sandbox_credential_config_cmd accepts the value.
 _VALID_SANDBOX_TOKEN = "abcdefghijklmnopqrstuvwxyz0123456789ABCD"
@@ -15,7 +15,7 @@ _VALID_SANDBOX_TOKEN = "abcdefghijklmnopqrstuvwxyz0123456789ABCD"
 @pytest.mark.asyncio
 async def test_init_qa_validates_qa_yaml_and_creates_network():
     """Mode=dind: yaml is parsed, qa-net is created, sandbox is started."""
-    from athanor.workflows.qa.nodes import init_qa_node
+    from embry0.workflows.qa.nodes import init_qa_node
 
     # Mock dependencies. SandboxManager.create returns (container_id, sandbox_token).
     docker = AsyncMock()
@@ -39,7 +39,7 @@ async def test_init_qa_validates_qa_yaml_and_creates_network():
     #   3. git credential helper setup       (prep_qa_sandbox_clone)
     #   4. git clone                         (prep_qa_sandbox_clone)
     #   5. git rev-parse HEAD                (prep_qa_sandbox_clone)
-    #   6. cat .athanor/qa.yaml              (init_qa_node)
+    #   6. cat .embry0/qa.yaml              (init_qa_node)
     #   7. write job.json (base64-encoded)   (prep_qa_sandbox_jobjson)
     docker.run_cmd = AsyncMock(
         side_effect=[
@@ -60,7 +60,7 @@ async def test_init_qa_validates_qa_yaml_and_creates_network():
     profiles_repo.get = AsyncMock(
         return_value={
             "name": "qa-jvm",
-            "base_image": "athanor-sandbox-qa:latest",
+            "base_image": "embry0-sandbox-qa:latest",
             "dind_enabled": True,
             "extra_networks": [],
             "memory": "8g",
@@ -86,7 +86,7 @@ async def test_init_qa_validates_qa_yaml_and_creates_network():
 
     state = {
         "job_id": "JOB1",
-        "repo": "tomas-mcmonigal/macro-lab",
+        "repo": "acme-corp/webapp",
         "branch_name": "main",
         "pipeline": "qa",
         "qa_active": True,
@@ -119,7 +119,7 @@ async def test_init_qa_validates_qa_yaml_and_creates_network():
     env = create_kwargs["env"]
     assert env["QA_JOB_ID"] == "JOB1"
     assert env["QA_NETWORK_NAME"] == "qa-net-JOB1"
-    assert env["ATHANOR_GIT_PROXY_URL"] == "http://git-proxy:9101"
+    assert env["EMBRY0_GIT_PROXY_URL"] == "http://git-proxy:9101"
 
     # Token registered
     token_registry.register.assert_called_once()
@@ -157,7 +157,7 @@ async def test_init_qa_validates_qa_yaml_and_creates_network():
 @pytest.mark.asyncio
 async def test_init_qa_process_mode_skips_qa_net():
     """Mode=process: no qa-net created, no network connect, no proxy creds."""
-    from athanor.workflows.qa.nodes import init_qa_node
+    from embry0.workflows.qa.nodes import init_qa_node
 
     docker = AsyncMock()
     docker._build_base_cmd = lambda: ["docker"]
@@ -185,7 +185,7 @@ async def test_init_qa_process_mode_skips_qa_net():
     profiles_repo.get = AsyncMock(
         return_value={
             "name": "slim",
-            "base_image": "athanor-sandbox:latest",
+            "base_image": "embry0-sandbox:latest",
             "dind_enabled": False,
             "extra_networks": [],
             "memory": "8g",

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from athanor.workflows.qa.result_schema import (
+from embry0.workflows.qa.result_schema import (
     QAAcceptanceResult,
     QAAnomaly,
     QABootResult,

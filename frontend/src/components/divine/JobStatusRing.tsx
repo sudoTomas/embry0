@@ -40,8 +40,6 @@ const ARC_TRANSITION_STYLE = { transition: "opacity 600ms ease-out" } as const;
  * encodes pipeline recency. Cardinal dots pulse N→E→S→W when idle; the
  * equator scans top↔bottom when scanning. Arc opacity changes transition
  * smoothly over 600ms (the Stage Shift effect).
- *
- * See `docs/superpowers/specs/2026-05-04-divine-animations-design.md`.
  */
 export function JobStatusRing({
   currentStage,

@@ -1,7 +1,7 @@
 import pytest
 
-from athanor.storage.repositories.agent_definitions import BUILTIN_SEED, AgentDefinitionsRepository
-from athanor.workflows.qa.agent_seed import QA_AGENT_SEED, seed_qa_agent
+from embry0.storage.repositories.agent_definitions import BUILTIN_SEED, AgentDefinitionsRepository
+from embry0.workflows.qa.agent_seed import QA_AGENT_SEED, seed_qa_agent
 
 
 def test_seed_definition_shape():

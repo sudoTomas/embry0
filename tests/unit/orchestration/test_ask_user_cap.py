@@ -10,7 +10,7 @@ from langgraph.types import Command
 async def test_developer_with_brainstorming_skill_uses_cap_15():
     """When developer's agent_skills includes superpowers:brainstorming,
     the ask-user cap is 15 rounds (not 5)."""
-    from athanor.workflows.issue_to_pr.nodes import developer_node
+    from embry0.workflows.issue_to_pr.nodes import developer_node
 
     # State: developer has 14 prior rounds + brainstorming skill loaded
     state = {
@@ -44,8 +44,8 @@ async def test_developer_with_brainstorming_skill_uses_cap_15():
         return fake_result
 
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await developer_node(state, {"configurable": {"agent_runner": object(), "credentials": {}}})
 
@@ -61,7 +61,7 @@ async def test_developer_with_brainstorming_skill_uses_cap_15():
 @pytest.mark.asyncio
 async def test_developer_without_brainstorming_skill_uses_cap_5():
     """Default cap of 5 still applies when brainstorming isn't loaded."""
-    from athanor.workflows.issue_to_pr.nodes import developer_node
+    from embry0.workflows.issue_to_pr.nodes import developer_node
 
     state = {
         "job_id": "JOB",
@@ -93,8 +93,8 @@ async def test_developer_without_brainstorming_skill_uses_cap_5():
         return fake_result
 
     with (
-        patch("athanor.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
-        patch("athanor.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         result = await developer_node(state, {"configurable": {"agent_runner": object(), "credentials": {}}})
 

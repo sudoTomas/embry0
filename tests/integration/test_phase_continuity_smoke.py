@@ -38,9 +38,9 @@ async def test_developer_session_persists_and_resumes_with_user_answer(
     app: AsyncClient,
 ) -> None:
     """End-to-end: developer_node persists session on call 1, restores on call 2."""
-    from athanor.agents.session import AgentSession
-    from athanor.storage.repositories.agent_sessions import AgentSessionsRepository
-    from athanor.workflows.issue_to_pr.nodes import developer_node
+    from embry0.agents.session import AgentSession
+    from embry0.storage.repositories.agent_sessions import AgentSessionsRepository
+    from embry0.workflows.issue_to_pr.nodes import developer_node
 
     # ---- 1. Live DB pool + repo (the conftest already applied migrations 1-23) ----
     fastapi_app = app._transport.app  # noqa: SLF001
@@ -125,11 +125,11 @@ async def test_developer_session_persists_and_resumes_with_user_answer(
         # ---- 4. First developer_node invocation ----
         with (
             patch(
-                "athanor.workflows.issue_to_pr.nodes.run_agent_node",
+                "embry0.workflows.issue_to_pr.nodes.run_agent_node",
                 new=AsyncMock(side_effect=_make_mock_run(first_messages)),
             ),
             patch(
-                "athanor.workflows.issue_to_pr.nodes.get_stream_writer",
+                "embry0.workflows.issue_to_pr.nodes.get_stream_writer",
                 return_value=lambda _ev: None,
             ),
         ):
@@ -153,11 +153,11 @@ async def test_developer_session_persists_and_resumes_with_user_answer(
 
         with (
             patch(
-                "athanor.workflows.issue_to_pr.nodes.run_agent_node",
+                "embry0.workflows.issue_to_pr.nodes.run_agent_node",
                 new=AsyncMock(side_effect=_make_mock_run(second_messages)),
             ),
             patch(
-                "athanor.workflows.issue_to_pr.nodes.get_stream_writer",
+                "embry0.workflows.issue_to_pr.nodes.get_stream_writer",
                 return_value=lambda _ev: None,
             ),
         ):
@@ -205,9 +205,9 @@ async def test_developer_session_persists_and_resumes_claude_max_mode(
     """End-to-end claude_max mode: developer_node persists session_id + blob,
     restores them as resume_session on the next turn — proving the canonical
     projects/<cwd>/<id>.jsonl round-trip works after Plan 2."""
-    from athanor.agents.session import AgentSession
-    from athanor.storage.repositories.agent_sessions import AgentSessionsRepository
-    from athanor.workflows.issue_to_pr.nodes import developer_node
+    from embry0.agents.session import AgentSession
+    from embry0.storage.repositories.agent_sessions import AgentSessionsRepository
+    from embry0.workflows.issue_to_pr.nodes import developer_node
 
     fastapi_app = app._transport.app  # noqa: SLF001
     db = fastapi_app.state.db
@@ -282,11 +282,11 @@ async def test_developer_session_persists_and_resumes_claude_max_mode(
         # ---- First developer_node invocation ----
         with (
             patch(
-                "athanor.workflows.issue_to_pr.nodes.run_agent_node",
+                "embry0.workflows.issue_to_pr.nodes.run_agent_node",
                 new=AsyncMock(side_effect=_make_mock_run(first_session_id, first_blob)),
             ),
             patch(
-                "athanor.workflows.issue_to_pr.nodes.get_stream_writer",
+                "embry0.workflows.issue_to_pr.nodes.get_stream_writer",
                 return_value=lambda _ev: None,
             ),
         ):
@@ -307,11 +307,11 @@ async def test_developer_session_persists_and_resumes_claude_max_mode(
 
         with (
             patch(
-                "athanor.workflows.issue_to_pr.nodes.run_agent_node",
+                "embry0.workflows.issue_to_pr.nodes.run_agent_node",
                 new=AsyncMock(side_effect=_make_mock_run(second_session_id, second_blob)),
             ),
             patch(
-                "athanor.workflows.issue_to_pr.nodes.get_stream_writer",
+                "embry0.workflows.issue_to_pr.nodes.get_stream_writer",
                 return_value=lambda _ev: None,
             ),
         ):

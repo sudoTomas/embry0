@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from athanor.workspace_providers import (
+from embry0.workspace_providers import (
     AffectedSet,
     WorkspaceApp,
     WorkspacePackage,
