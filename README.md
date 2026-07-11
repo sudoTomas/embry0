@@ -1,6 +1,6 @@
 <div align="center">
 
-# Athanor
+# embry0
 
 **Autonomous Agent Orchestration Engine**
 
@@ -9,13 +9,13 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![React 19](https://img.shields.io/badge/react-19-61DAFB?logo=react&logoColor=white)](https://react.dev)
 [![LangGraph](https://img.shields.io/badge/langgraph-orchestration-06b6d4)](https://github.com/langchain-ai/langgraph)
-[![License](https://img.shields.io/badge/license-proprietary-f97316)]()
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
 </div>
 
 ---
 
-Athanor is a production-grade agent orchestration engine that autonomously resolves GitHub issues by dispatching AI agents through a configurable pipeline. It uses **LangGraph** for workflow orchestration and **Claude Agent SDK** for agent execution inside isolated Docker sandboxes.
+embry0 is a production-grade agent orchestration engine that autonomously resolves GitHub issues by dispatching AI agents through a configurable pipeline. It uses **LangGraph** for workflow orchestration and **Claude Agent SDK** for agent execution inside isolated Docker sandboxes.
 
 **Core principle: no customer code retention.** All code lives exclusively inside sandbox containers. When a container is destroyed, customer code is gone.
 
@@ -28,7 +28,7 @@ graph TB
         API["REST API"]
     end
 
-    subgraph Athanor["Athanor Orchestrator"]
+    subgraph embry0["embry0 Orchestrator"]
         TR["Triage Agent<br/><small>LLM-based pipeline config</small>"]
         LG["LangGraph Engine<br/><small>StateGraph + Checkpointing</small>"]
     end
@@ -60,13 +60,13 @@ graph TB
     LG --> WS
     LG --> DB
 
-    style Athanor fill:#0f1419,stroke:#06b6d4,color:#e4e4e7
+    style embry0 fill:#0f1419,stroke:#06b6d4,color:#e4e4e7
     style Sandbox fill:#1a1a2e,stroke:#f59e0b,color:#e4e4e7
 ```
 
 ## Architecture
 
-Athanor runs as a Docker Compose stack with 5 services:
+embry0 runs as a Docker Compose stack with 5 services:
 
 | Service | Purpose |
 |---------|---------|
@@ -150,7 +150,7 @@ See [docs/architecture.md](docs/architecture.md#qa-pipeline) for the full graph 
 ```mermaid
 stateDiagram-v2
     [*] --> InitQA
-    InitQA --> Boot: clone repo + parse .athanor/qa.yaml + start sandbox
+    InitQA --> Boot: clone repo + parse .embry0/qa.yaml + start sandbox
     Boot --> Seed: ready_checks pass
     Seed --> E2E
     E2E --> Exploratory
@@ -158,22 +158,27 @@ stateDiagram-v2
     Report --> [*]: write result.json + upload artifacts
 ```
 
-**One-time per target repo — add a `.athanor/qa.yaml`:**
+**One-time per target repo — add a `.embry0/qa.yaml`** (schema v2 — see [docs/qa-yaml-reference.md](docs/qa-yaml-reference.md) for the full field reference and monorepo examples):
 
 ```yaml
-version: 1
-mode: dind
-sandbox_profile: qa-jvm        # or qa-node, qa-python — see /sandboxes
-startup:
-  command: "cd infra && docker compose -p qa_${QA_JOB_ID} -f docker-compose.yml -f ../compose.qa.override.yml --profile dev up -d gateway frontend timescaledb redis"
+version: 2
+
+defaults:
+  mode: dind
+  sandbox_profile: qa-node       # or qa-jvm, qa-python — see /sandboxes
   ready_checks:
     - http: "http://my-app:8080/healthz"
       expect_status: 200
   boot_timeout_seconds: 300
-frontend_url: "http://my-app-frontend:3000"
-acceptance_criteria_template:
-  - "home page loads at frontend_url with no console errors"
+  acceptance_criteria_template:
+    - "home page loads at frontend_url with no console errors"
+
 qa_required: auto
+
+apps:
+  my-app:
+    boot_command: "cd infra && docker compose -p qa_${QA_JOB_ID} -f docker-compose.yml -f ../compose.qa.override.yml up -d"
+    frontend_url: "http://my-app-frontend:3000"
 ```
 
 **One-time — `compose.qa.override.yml`** (only if your `docker-compose.yml` uses an external network or the services rely on short DNS names like `redis`/`timescaledb`):
@@ -182,7 +187,7 @@ qa_required: auto
 networks:
   default:
     external: true
-    name: ${QA_NETWORK_NAME}    # qa-net-{job_id}, set by Athanor
+    name: ${QA_NETWORK_NAME}    # qa-net-{job_id}, set by embry0
 
 services:
   # When the default network is external, Compose does NOT auto-register
@@ -194,12 +199,12 @@ services:
     networks: { default: { aliases: [timescaledb] } }
 ```
 
-**Gotchas worth knowing up front** (every one of these caused a debug round during macro-lab integration):
+**Gotchas worth knowing up front** (every one of these caused a real debug round during integration):
 
 - The startup command MUST use `-p qa_${QA_JOB_ID}` so cleanup can find the containers. Without it, every run leaks the entire stack into DinD.
 - The startup command MUST pass `-f ../compose.qa.override.yml` explicitly — Compose doesn't auto-load it.
 - Use the **prod** frontend service (built into the image), not a `frontend-dev` style service that bind-mounts source — bind-mount source paths inside DinD resolve on the DinD daemon's filesystem, not the QA sandbox's.
-- Set `frontend_url` to a DNS-resolvable container hostname (`http://macrolab-frontend:3000`), not `localhost:<host_port>` — the QA agent's headless Chromium runs inside the sandbox container.
+- Set `frontend_url` to a DNS-resolvable container hostname (`http://my-app-frontend:3000`), not `localhost:<host_port>` — the QA agent's headless Chromium runs inside the sandbox container.
 
 **Trigger a run:**
 
@@ -227,7 +232,7 @@ curl -X POST http://localhost:8200/api/v1/jobs \
 
 ## Issues & Human-in-the-Loop
 
-Athanor includes a full-featured **issue tracker** with optional GitHub two-way sync:
+embry0 includes a full-featured **issue tracker** with optional GitHub two-way sync:
 
 - **Create issues** from the dashboard or receive them via GitHub webhook
 - **Triage agent** analyzes issues, asks clarifying questions if needed, or decomposes complex issues into subtasks
@@ -249,13 +254,14 @@ Athanor includes a full-featured **issue tracker** with optional GitHub two-way 
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/sudoTomas/athanor.git
-cd athanor
+git clone https://github.com/sudoTomas/embry0.git
+cd embry0
 cp .env.example .env
 # Edit .env with your credentials:
 #   PROVIDER_MODE=anthropic_api (or claude_max)
 #   ANTHROPIC_API_KEY=sk-ant-...
 #   GITHUB_TOKEN=ghp_...
+#   API_KEY=<generate: python -c 'import secrets; print(secrets.token_hex(32))'>
 ```
 
 ### 2. Install the CLI
@@ -268,7 +274,7 @@ pip install -e ".[dev]"
 
 ### 3. Environment Secrets
 
-Athanor encrypts per-repo secret environment variables at rest using Fernet. Set an encryption key before starting the stack:
+embry0 encrypts per-repo secret environment variables at rest using Fernet. Set an encryption key before starting the stack:
 
 ```bash
 # Generate a strong key (or use your favorite secret manager)
@@ -280,14 +286,14 @@ Add to `.env`:
 ENVIRONMENT_SECRET_KEY=<generated-value>
 ```
 
-If unset, Athanor logs a warning and uses an insecure default — DO NOT use that in production. Rotating the key will make previously-encrypted secrets undecryptable; the orchestrator will log `secret_decryption_failed` for each affected key on the next job that needs them.
+In production the orchestrator refuses to start without a real key; in dev mode a default is tolerated with a loud warning. Rotating the key will make previously-encrypted secrets undecryptable; the orchestrator will log `secret_decryption_failed` for each affected key on the next job that needs them.
 
 Per-repo and global env vars are managed through the `/environments` page in the dashboard.
 
 ### 4. Start the stack
 
 ```bash
-athanor start
+embry0 start
 ```
 
 This builds all images, starts PostgreSQL + DinD + Orchestrator + Frontend, waits for health checks, and builds the sandbox image inside DinD.
@@ -300,19 +306,19 @@ http://localhost:8200
 
 ## CLI Reference
 
-### Production Stack (`athanor`)
+### Production Stack (`embry0`)
 
 ```bash
-athanor start              # Start the full stack
-athanor start --port 8201  # Start on a custom port
-athanor stop               # Stop the stack
-athanor build              # Build images (clean, no cache)
-athanor build --cached     # Build with Docker cache
-athanor build-sandbox      # Rebuild sandbox image inside DinD
-athanor health             # Check stack health
-athanor config             # Validate and display config (secrets masked)
-athanor purge              # Remove all Docker artifacts
-athanor purge --volumes    # Remove only volumes
+embry0 start              # Start the full stack
+embry0 start --port 8201  # Start on a custom port
+embry0 stop               # Stop the stack
+embry0 build              # Build images (clean, no cache)
+embry0 build --cached     # Build with Docker cache
+embry0 build-sandbox      # Rebuild sandbox image inside DinD
+embry0 health             # Check stack health
+embry0 config             # Validate and display config (secrets masked)
+embry0 purge              # Remove all Docker artifacts
+embry0 purge --volumes    # Remove only volumes
 ```
 
 ### Development (`./lab`)
@@ -414,7 +420,7 @@ curl http://localhost:8200/api/v1/sandbox-profiles
 curl -X POST http://localhost:8200/api/v1/sandbox-profiles \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
-  -d '{"name": "java-17", "base_image": "athanor-sandbox-java:17", "memory": "12g"}'
+  -d '{"name": "java-17", "base_image": "embry0-sandbox-java:17", "memory": "12g"}'
 ```
 
 ### Environment Variables
@@ -485,7 +491,7 @@ ws.onmessage = (event) => {
 
 ## Webhook Setup
 
-Athanor reacts to GitHub events (issues opened/labeled/edited/closed, issue comments, pull requests) via a single webhook endpoint at `POST /api/v1/webhook`. Because Athanor usually runs on a private network, you need a way to get GitHub's webhook POSTs into your instance. Two supported approaches:
+embry0 reacts to GitHub events (issues opened/labeled/edited/closed, issue comments, pull requests) via a single webhook endpoint at `POST /api/v1/webhook`. Because embry0 usually runs on a private network, you need a way to get GitHub's webhook POSTs into your instance. Two supported approaches:
 
 | Approach | Use when | Signature verification |
 |----------|----------|------------------------|
@@ -494,65 +500,37 @@ Athanor reacts to GitHub events (issues opened/labeled/edited/closed, issue comm
 
 ### Option A — Cloudflare Tunnel (production)
 
-The compose stack ships a `cloudflared` service that runs in remote-managed mode. You provision the tunnel once via the workspace scripts, paste the token into `.env`, and bring up the container.
+The compose stack ships a `cloudflared` service that runs in remote-managed mode. You create a tunnel once in the Cloudflare dashboard (or via their API), paste the token into `.env`, and bring up the container. Any other tunnel/reverse-proxy solution (ngrok, Tailscale Funnel, a plain reverse proxy on a VPS) works the same way — the only requirement is that HTTPS POSTs reach the frontend's `/api/v1/webhook` route.
 
-**Prerequisites:**
-- A Cloudflare account with the zone you want to use already onboarded.
-- A Cloudflare API token with `Account → Cloudflare Tunnel: Edit` and `Zone → DNS: Edit` permissions for the target zone. Store it at `~/workspace/cloudflare/.env` as `CLOUDFLARE_API_TOKEN` along with the relevant `CLOUDFLARE_ACCOUNT_ID_*` and `CLOUDFLARE_ZONE_*` lookup IDs (see `~/workspace/cloudflare/CLAUDE.md` for the format).
+**1. Create the tunnel** (one-time): in [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → Networks → Tunnels → Create a tunnel, add a public hostname (e.g. `webhooks.example.com`) pointing at `http://frontend:80`, and copy the tunnel token. Restricting the tunnel to the `/api/v1/webhook` path (via the tunnel config or a Cloudflare Access policy) is strongly recommended — keep the dashboard and full API LAN-only.
 
-**1. Provision the tunnel** (one-time per athanor instance):
+**2. Paste the token into `.env`:**
 
 ```bash
-cd ~/workspace/cloudflare && set -a && source .env && set +a
-
-TUNNEL_INFO=$(./scripts/tunnel-create.sh \
-    --account-id "$CLOUDFLARE_ACCOUNT_ID_EASTWOOD" \
-    --zone-id    "$CLOUDFLARE_ZONE_EASTWOOD_AI" \
-    --name       my-instance-name \
-    --hostname   webhooks.example.com)
-
-echo "$TUNNEL_INFO" | jq -r .tunnel_token
+echo "TUNNEL_TOKEN=<your-tunnel-token>" >> .env
+echo "CLOUDFLARED_TUNNEL_TOKEN=<your-tunnel-token>" >> .env
 ```
 
-The script is idempotent — re-running it with the same `--name` reuses the existing tunnel and refreshes its ingress + DNS to the desired state. See `~/workspace/cloudflare/CLAUDE.md` for the full API.
-
-**2. Paste the token into this instance's `.env`:**
-
-```bash
-TOKEN=$(echo "$TUNNEL_INFO" | jq -r .tunnel_token)
-echo "TUNNEL_TOKEN=$TOKEN" >> /home/user/repos/athanor/.env
-echo "CLOUDFLARED_TUNNEL_TOKEN=$TOKEN" >> /home/user/repos/athanor/.env
-```
-
-(Both names are written because the upstream `cloudflare/cloudflared` image expects `TUNNEL_TOKEN`, while athanor's `.env.example` documents `CLOUDFLARED_TUNNEL_TOKEN` for clarity. Either alone would work; setting both is harmless and matches what `tunnel-create.sh`'s output expects.)
+(Both names are written because the upstream `cloudflare/cloudflared` image expects `TUNNEL_TOKEN`, while the `.env.example` documents `CLOUDFLARED_TUNNEL_TOKEN` for clarity. Either alone would work.)
 
 **3. Bring up the tunnel container:**
 
 ```bash
-cd /home/user/repos/athanor/infra
+cd infra
 docker compose up -d cloudflared
 sleep 8
-docker logs athanor-cloudflared --tail 20 | grep 'Registered tunnel'
+docker logs embry0-cloudflared --tail 20 | grep 'Registered tunnel'
 ```
 
 You should see at least one `Registered tunnel connection` log line. Webhooks posted to `https://webhooks.example.com/api/v1/webhook` now flow through the tunnel into `orchestrator:8000`.
 
 **4. Configure GitHub** to send webhooks to your hostname (Settings → Webhooks → Payload URL = `https://webhooks.example.com/api/v1/webhook`, content type `application/json`, secret = the value of `GITHUB_WEBHOOK_SECRET` in `.env`).
 
-**Tearing down:**
-
-```bash
-cd /home/user/repos/athanor/infra && docker compose stop cloudflared
-~/workspace/cloudflare/scripts/tunnel-delete.sh \
-    --account-id "$CLOUDFLARE_ACCOUNT_ID_EASTWOOD" \
-    --name my-instance-name \
-    --zone-id "$CLOUDFLARE_ZONE_EASTWOOD_AI" \
-    --hostname webhooks.example.com
-```
+**Tearing down:** `docker compose stop cloudflared`, then delete the tunnel and its DNS record in the Cloudflare dashboard.
 
 ### Option B — smee.io relay (local development)
 
-For testing real GitHub events against a local Athanor instance on your laptop, with no public hostname needed. smee.io re-serializes the webhook body before forwarding, which invalidates GitHub's HMAC — so this flow uses `WEBHOOK_DEV_MODE=true` and no secret.
+For testing real GitHub events against a local embry0 instance on your laptop, with no public hostname needed. smee.io re-serializes the webhook body before forwarding, which invalidates GitHub's HMAC — so this flow uses `WEBHOOK_DEV_MODE=true` and no secret.
 
 **1. Get a smee channel:** visit [https://smee.io](https://smee.io), click **Start a new channel**, and copy the channel URL (e.g. `https://smee.io/aBcDeF1234`).
 
@@ -584,7 +562,7 @@ cd infra && docker compose build orchestrator && docker compose up -d orchestrat
 - **Secret:** *(leave blank)*
 - **Events:** Issues, Issue comments, Pull requests
 
-**5. Verify:** trigger an event in the repo. You should see the event appear in the smee-client terminal AND in `docker logs -f infra-orchestrator-1 | grep webhook_received`.
+**5. Verify:** trigger an event in the repo. You should see the event appear in the smee-client terminal AND in `docker logs -f embry0-orchestrator | grep webhook_received`.
 
 > **Note:** smee caches recent events and replays them on reconnect, which can cause duplicate job triggers after restarting the relay. For demos or production, always use Cloudflare Tunnel with HMAC verification.
 
@@ -595,8 +573,8 @@ You can trigger jobs manually via the dashboard — open the Issues page, find y
 ## Project Structure
 
 ```
-athanor/
-├── athanor/                     # Python backend
+embry0/
+├── embry0/                     # Python backend
 │   ├── api/                    # FastAPI endpoints + WebSocket
 │   │   ├── v1/                 # REST routes (jobs, graphs, config, ...)
 │   │   └── ws/                 # WebSocket streaming
@@ -611,7 +589,7 @@ athanor/
 │   │   ├── sandbox_manager.py  # Container lifecycle (DinD)
 │   │   ├── agent_runner.py     # docker exec + stdout parsing
 │   │   ├── image_manager.py    # Sandbox image auto-build + reaper
-│   │   └── proxy/              # Auth, Git, GitHub API, Athanor proxies
+│   │   └── proxy/              # Auth, Git, GitHub API, embry0 proxies
 │   ├── sandbox/                # Code that runs inside containers
 │   │   ├── runner.py           # Agent SDK execution
 │   │   ├── safety.py           # Blocked command enforcement
@@ -650,9 +628,9 @@ athanor/
 │   ├── unit/                   # 183+ unit tests
 │   └── integration/            # 18 integration tests (real PostgreSQL)
 ├── docs/
-│   └── superpowers/
-│       ├── specs/              # Architecture design + ADRs
-│       └── plans/              # Implementation plans (1-9)
+│   ├── architecture.md         # Full architecture reference
+│   ├── glossary.md             # Domain vocabulary
+│   └── qa-yaml-reference.md    # .embry0/qa.yaml v2 field reference
 ├── lab                         # Dev container helper (bash)
 ├── pyproject.toml              # Python project config + CLI entry point
 └── .env.example                # Configuration template
@@ -660,7 +638,7 @@ athanor/
 
 ## Configuration
 
-Athanor uses environment variables for infrastructure config and API endpoints for runtime config.
+embry0 uses environment variables for infrastructure config and API endpoints for runtime config.
 
 ### Environment Variables (`.env`)
 
@@ -673,7 +651,7 @@ Athanor uses environment variables for infrastructure config and API endpoints f
 | `GITHUB_WEBHOOK_SECRET` | — | HMAC secret for webhook verification |
 | `AUTH_DEV_MODE` | `false` | Bypass API key authentication. NEVER use in production. |
 | `WEBHOOK_DEV_MODE` | `false` | Bypass webhook HMAC verification. Required for smee.io relay. NEVER use in production. |
-| `DATABASE_URL` | `postgresql://athanor:athanor@postgres:5432/athanor` | PostgreSQL connection |
+| `DATABASE_URL` | `postgresql://embry0:embry0@postgres:5432/embry0` | PostgreSQL connection |
 | `MAX_BUDGET_USD` | `10.0` | Default per-job budget |
 | `DAILY_BUDGET_CAP_USD` | `100.0` | Daily spending cap |
 | `MONTHLY_BUDGET_CAP_USD` | `500.0` | Monthly spending cap |
@@ -682,11 +660,11 @@ Athanor uses environment variables for infrastructure config and API endpoints f
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot token for notifications |
 | `TELEGRAM_CHAT_ID` | — | Telegram chat ID for notifications |
 | `TELEGRAM_WEBHOOK_URL` | — | Public URL for Telegram callback (e.g. Cloudflare tunnel) |
-| `TRIGGER_LABELS` | `Athanor` | GitHub labels that trigger jobs |
+| `TRIGGER_LABELS` | `embry0` | GitHub labels that trigger jobs |
 | `ENVIRONMENT_SECRET_KEY` | — | Fernet key for encrypting env var secrets at rest |
+| `API_KEY` | — | **Required in production** — bearer key for the orchestrator API. Empty is only tolerated when a dev-mode flag is set. Generate with `python -c 'import secrets; print(secrets.token_hex(32))'`. |
 | `PROXY_ADMIN_TOKEN` | — | Required, gates the credential proxies' admin endpoints. Generate with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`. |
 | `PAUSED_JOB_TTL_HOURS` | `48` | Hours before a paused job's sandbox is expired |
-| `DEV_MODE` | (deprecated) | **Deprecated in 2026-04-28.** Set `AUTH_DEV_MODE` and `WEBHOOK_DEV_MODE` explicitly. Honoured for one release as a compat shim; remove in next release. |
 
 See `.env.example` for the complete list.
 
@@ -700,7 +678,7 @@ Budget controls, context injection, and sandbox profiles are configurable via th
 
 ## Agent Execution & Auth Modes
 
-Athanor invokes Claude through a pluggable executor layer with two orthogonal config dimensions:
+embry0 invokes Claude through a pluggable executor layer with two orthogonal config dimensions:
 
 | Dimension | Values | Meaning |
 |---|---|---|
@@ -713,7 +691,7 @@ All 4 combinations are valid in Phase 2+. **Phase 1 supports `sdk` only**; reque
 
 Later levels win:
 
-1. **Global** — `AthanorConfig.default_execution_mode`, `.default_auth_mode` (env vars `DEFAULT_EXECUTION_MODE`, `DEFAULT_AUTH_MODE`).
+1. **Global** — `Embry0Config.default_execution_mode`, `.default_auth_mode` (env vars `DEFAULT_EXECUTION_MODE`, `DEFAULT_AUTH_MODE`).
 2. **Per-repo** — `repo_preferences.execution_mode`, `.auth_mode` columns.
 3. **Per-job** — `JobCreateRequest.execution_mode_override`, `.auth_mode_override`.
 4. **Per-agent-type** — `agent_definitions.execution_mode`, `.auth_mode` columns.
@@ -723,8 +701,8 @@ NULL at any level falls through to the previous level.
 
 ### Credentials
 
-- `auth_mode=oauth` requires `CLAUDE_CODE_OAUTH_TOKEN` (loaded from the host's `~/.claude/.credentials.json` by the sandbox manager). Missing token → `ERR_MISSING_OAUTH_TOKEN`.
-- `auth_mode=api_key` requires `ANTHROPIC_API_KEY` in `AthanorConfig`. Missing key → `ERR_MISSING_API_KEY`.
+- `auth_mode=oauth` requires `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (generate one with `claude setup-token`). Missing token → `ERR_MISSING_OAUTH_TOKEN`.
+- `auth_mode=api_key` requires `ANTHROPIC_API_KEY` in `Embry0Config`. Missing key → `ERR_MISSING_API_KEY`.
 
 ### Safety Policy (three rings)
 
@@ -744,7 +722,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 
 # Run linting
-ruff check athanor/ tests/
+ruff check embry0/ tests/
 
 # Frontend dev server
 cd frontend && npm install && npm run dev
@@ -757,7 +735,7 @@ cd frontend && npm install && npm run dev
 pytest tests/unit/ -v
 
 # Integration tests (requires PostgreSQL)
-TEST_DATABASE_URL=postgresql://athanor:athanor@localhost:5432/athanor_test \
+TEST_DATABASE_URL=postgresql://embry0:embry0@localhost:5432/embry0_test \
   pytest tests/integration/ -v
 
 # Full suite
@@ -766,11 +744,15 @@ pytest tests/ -v
 
 ## Future Roadmap
 
-- **Spring Boot SaaS Layer** — Multi-tenant fleet management (one Athanor instance per tenant)
+- **Spring Boot SaaS Layer** — Multi-tenant fleet management (one embry0 instance per tenant)
 - **Kubernetes Deployment** — Helm chart, DinD replaced by K8s pod launching
 - **Custom Workflows** — User-defined LangGraph graphs via API
 - **Pipeline Template Marketplace** — Pre-built workflows for common tasks
 - **Claude Code Skills Integration** — Configurable skills per agent (superpowers, TDD, debugging)
+
+## License
+
+embry0 is released under the [GNU Affero General Public License v3.0](LICENSE). In short: you can use, modify, and self-host it freely; if you offer a modified version as a network service, you must make your modifications available under the same license.
 
 ---
 
