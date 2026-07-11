@@ -8,7 +8,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![React 19](https://img.shields.io/badge/react-19-61DAFB?logo=react&logoColor=white)](https://react.dev)
 [![LangGraph](https://img.shields.io/badge/langgraph-orchestration-06b6d4)](https://github.com/langchain-ai/langgraph)
-[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 </div>
 
@@ -130,7 +130,7 @@ Kubernetes deployment (Helm, DinD → pod launching) · user-defined LangGraph w
 
 ## License
 
-[AGPL-3.0](LICENSE) — use, modify, and self-host freely; if you offer a modified version as a network service, share your modifications under the same license.
+[MIT](LICENSE) — use, modify, and distribute freely, including in proprietary and commercial software.
 
 ---
 

@@ -2,7 +2,7 @@
   "name": "embry0-frontend",
   "private": true,
   "version": "0.1.0",
-  "license": "AGPL-3.0-or-later",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/sudoTomas/embry0.git"
