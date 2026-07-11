@@ -27,11 +27,14 @@ node_modules/
 # IDE
 .vscode/
 .idea/
+.claude/settings.local.json
 *.swp
 *.swo
 *~
 
 # Docker
+# Owner/deployer-local compose overlay — never committed
+infra/docker-compose.override.local.yml
 .superpowers/
 .worktrees/
 

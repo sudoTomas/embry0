@@ -8,14 +8,14 @@
 ## What is this?
 
 The Claude CLI (bundled into the `@anthropic-ai/claude-code` npm package)
-writes per-session conversation state to disk as JSONL. Athanor's
+writes per-session conversation state to disk as JSONL. embry0's
 conversation-continuity layer (Plan C) needs to:
 
 1. **Discover** session files at end-of-run, to capture conversation state.
 2. **Restore** session blobs at start-of-resume, by writing them to the path
    the CLI will look in.
 
-Both operations route through `athanor/agents/claude_cli_session.py` —
+Both operations route through `embry0/agents/claude_cli_session.py` —
 the single source of truth.
 
 ## Current on-disk layout (claude-code 2.1.92)

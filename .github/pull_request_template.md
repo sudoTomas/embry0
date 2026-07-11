@@ -1,8 +1,8 @@
 <!--
-  Athanor PR Template — high-standard contribution loop.
+  embry0 PR Template — high-standard contribution loop.
 
   Required sections:  Summary, Motivation, How it works, Verification.
-  Required for spec-backed PRs:  Spec + Plan links.
+  Required when this PR implements a written design or plan:  Design + Plan links.
   Required when adopting an external pattern:  Pattern provenance.
 
   Delete unused sections rather than leaving them empty.
@@ -35,10 +35,10 @@ A reader should leave knowing how the piece works without opening the code.
 ## Pattern provenance
 
 <!--
-For pattern imports (companion, collaborator, other internal tools), cite the source:
+When porting a pattern from another project or tool, cite the source:
 
-  "Concept ported from companion-dashboard/server.mjs:441 (proposals CRUD).
-  No code copied; design re-implemented for Athanor's React + LangGraph stack."
+  "Concept ported from <project>/<file> (proposals CRUD).
+  No code copied; design re-implemented for embry0's React + LangGraph stack."
 
 For original work, write "N/A — originated in this PR".
 -->
@@ -72,19 +72,20 @@ Explicit list of things deliberately left out so the reviewer doesn't
 think they were forgotten.  One line per item.
 -->
 
-## Spec + Plan
+## Design + Plan
 
-<!-- Required when this PR implements a spec.  Both files live in docs/superpowers/. -->
+<!-- Required when this PR implements a written design or plan.  Link the
+     issue, discussion, or in-repo doc that describes the intended design. -->
 
-- Spec: `docs/superpowers/specs/...`
-- Plan: `docs/superpowers/plans/...`
+- Design: <!-- link or "N/A" -->
+- Plan: <!-- link or "N/A" -->
 
 ## Anti-goals respected
 
 <!-- Tick the rows this PR honors.  Delete rows that don't apply. -->
 
 - [ ] Purely additive — no existing code removed without explicit follow-up
-- [ ] No identity drift — Athanor stays gold-primary + cyan-ring; red is destructive-only
+- [ ] No identity drift — embry0 stays gold-primary + cyan-ring; red is destructive-only
 - [ ] No new npm/Python dependency (or, if added: list package + rationale below)
 - [ ] No silent default flip — existing user behavior preserved
 - [ ] Divine layer escape hatches respected (if applicable): `prefers-reduced-motion` + `body[data-divine="off"]`
@@ -95,5 +96,4 @@ think they were forgotten.  One line per item.
 
 - [ ] PR title follows Conventional Commits — `type(scope): short subject`
 - [ ] Each commit is one concept, individually meaningful
-- [ ] Spec status set to `Accepted` if PR ships the implementation
-- [ ] Linked spec/plan files exist in this PR
+- [ ] Linked design/plan references (if any) are reachable

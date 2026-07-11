@@ -1,17 +1,17 @@
-# Athanor Glossary
+# embry0 Glossary
 
-> Single-paragraph definitions for every operator, scope, and node type Athanor exposes. Cross-referenced; entries link to one another so a reader can chase any thread without re-reading the docs.
+> Single-paragraph definitions for every operator, scope, and node type embry0 exposes. Cross-referenced; entries link to one another so a reader can chase any thread without re-reading the docs.
 >
 > **When to update this file:** when you add a new operation, agent type, node type, pipeline primitive, or sandbox/scope concept. When a term gains a stable ID, record it here. When semantics change, bump the entry's date stamp.
 >
-> **Inspiration:** the Definiciones section of the Universidad De La former-org practice protocol — a 14-page glossary that makes every operator unambiguous. This is Athanor's equivalent.
+> **Inspiration:** the Definiciones section of a hermetic practice protocol — a long-form glossary that makes every operator unambiguous. This is embry0's equivalent.
 
 ---
 
 ## Core Concepts
 
-### Athanor
-The alchemical furnace. The product. A self-hosted, container-isolated agent platform that takes an issue + a repository and produces a reviewed pull request through a configurable [pipeline](#pipeline) of [agents](#agent). The name is literal: an athanor is the slow, sustained-temperature furnace medieval alchemists used for transmutation work that needed days or weeks. The product is named for the patience and isolation it provides — not for spectacle.
+### embry0
+The alchemical furnace. The product. A self-hosted, container-isolated agent platform that takes an issue + a repository and produces a reviewed pull request through a configurable [pipeline](#pipeline) of [agents](#agent). The name is literal: an embry0 is the slow, sustained-temperature furnace medieval alchemists used for transmutation work that needed days or weeks. The product is named for the patience and isolation it provides — not for spectacle.
 
 ### Job
 A single end-to-end run of a [pipeline](#pipeline) against a specific [issue](#issue) and repository. Owns its own [sandbox](#sandbox), trajectory, logs, and final artifact ([Caja de Regalos](#caja-de-regalos)). Identified by a stable job ID. Re-runnable via [Replay-N](#replay-n).
@@ -23,7 +23,7 @@ An ordered, possibly-branching graph of [agents](#agent), [functions](#function)
 A container-isolated execution environment created per [job](#job). Mirrors the Practice's [Contenedor](#contenedor) concept: a unit-of-work with its own boundary, its own inputs/outputs, and (once cleaned/sealed) immutability against further mutation. Sandboxes are spun up on the DinD layer with read-write rootfs (Claude CLI requires it), restricted network through credential proxies, and explicit per-sandbox bearer tokens for proxy enrollment.
 
 ### Issue
-The unit of work that enters Athanor. Originates from a webhook (GitHub) or manual API call. Pre-pipeline state. Becomes a [job](#job) when a [pipeline](#pipeline) is selected and dispatched.
+The unit of work that enters embry0. Originates from a webhook (GitHub) or manual API call. Pre-pipeline state. Becomes a [job](#job) when a [pipeline](#pipeline) is selected and dispatched.
 
 ### Template
 A reusable, parametric [pipeline](#pipeline) shape. The [seven operations](#seven-operations) ship as templates plus three composite templates (`opus-full-cycle`, `op-refactor-suite`, `op-triage-and-decompose`). User-editable: clone, modify, save-as. Lives in the `pipeline_templates` table; loaded via the [TemplateDrawer](#templatedrawer).
@@ -38,10 +38,10 @@ The [PipelineEditor](#pipelineeditor) lets operators compose pipelines from four
 The atomic unit. A single capability, skill reference, or data value. Examples: a specific [agent](#agent) type, a specific tool (lint, typecheck), a specific environment variable. Identified by a stable [original ID](#stable-id) (e.g. `OP04` for the conjoin operation, `SP0014` for a superpowers skill). Energies are the leaves of pipeline graphs.
 
 ### Function
-A pure, side-effect-light transform over a [container](#contenedor). Takes inputs, returns diagnostics or a transformed value, does not mutate persistent state. Examples (proposed): `f_lint(target)`, `f_typecheck(target)`, `f_test(target)`, `f_search(query)`, `f_format(target)`. Functions can be chained; a function's output is another function's input. Mirrors the Practice's `f_luz()`, `f_conocimiento()`. *Specced in [`docs/superpowers/specs/2026-05-04-pipeline-library-functions-commands-design.md`](superpowers/specs/2026-05-04-pipeline-library-functions-commands-design.md).*
+A pure, side-effect-light transform over a [container](#contenedor). Takes inputs, returns diagnostics or a transformed value, does not mutate persistent state. Examples (proposed): `f_lint(target)`, `f_typecheck(target)`, `f_test(target)`, `f_search(query)`, `f_format(target)`. Functions can be chained; a function's output is another function's input. Mirrors the Practice's `f_luz()`, `f_conocimiento()`.
 
 ### Command
-A named, idempotent operation with explicit guards/preconditions. Mutates state. Safe to retry. Examples (proposed): `Cleanup(scope)`, `Migrate(scope)`, `Deploy(scope)`, [`Replay-N`](#replay-n). Mirrors the Practice's `Limpieza()`, `Salud()`, `Repito los N Comandos`. Distinguished from [Functions](#function) by mutation; distinguished from [Templates](#template) by atomicity. *Specced in the same library spec linked above.*
+A named, idempotent operation with explicit guards/preconditions. Mutates state. Safe to retry. Examples (proposed): `Cleanup(scope)`, `Migrate(scope)`, `Deploy(scope)`, [`Replay-N`](#replay-n). Mirrors the Practice's `Limpieza()`, `Salud()`, `Repito los N Comandos`. Distinguished from [Functions](#function) by mutation; distinguished from [Templates](#template) by atomicity.
 
 ### Template
 See [above](#template). The composite of the four — a parametric pipeline assembled from energies, functions, commands, and other templates.
@@ -61,8 +61,6 @@ The canonical alchemical operations, used as opinionated [pipeline templates](#t
 | `OP05` | [Ferment](#ferment) | Let a change cook in CI / staging |
 | `OP06` | [Distill](#distill) | Extract reusable essence from a successful job |
 | `OP07` | [Coagulate](#coagulate) | Solidify ephemeral work into a shipped artifact |
-
-Full spec: [`docs/superpowers/specs/2026-05-04-alchemical-operations-agents-design.md`](superpowers/specs/2026-05-04-alchemical-operations-agents-design.md).
 
 ### Calcinate
 **OP01 — Fire.** The triage operation. Reduces an issue body to a 1-2 sentence statement of what + why, stripped of noise. Performed by the [triage](#triage) agent. Output: a crisp intent statement. Sigil: 🜂.
@@ -120,28 +118,28 @@ The slide-in drawer in the [PipelineEditor](#pipelineeditor) that lists saved [t
 The horizontal bar at the bottom of the [PipelineEditor](#pipelineeditor) holding draggable agent chips. Each chip carries its substance sigil and color. Drag a chip onto the canvas to place an agent node. Filters out [triage](#triage) (orchestrator-side, not a pipeline node).
 
 ### Replay-N
-A [command](#command) that re-executes the last N completed stages of a [job](#job) as a unit. Mirrors the Practice's `Repito los N Comandos`. Use case: a config or environment variable changed; you want stages 5-8 re-run with the new value, but not the entire pipeline. *Specced in the library spec.*
+A [command](#command) that re-executes the last N completed stages of a [job](#job) as a unit. Mirrors the Practice's `Repito los N Comandos`. Use case: a config or environment variable changed; you want stages 5-8 re-run with the new value, but not the entire pipeline.
 
 ---
 
 ## Scope & Container Concepts
 
 ### Contenedor
-The Practice's term for a unit-of-work scope. Athanor's [sandbox](#sandbox) is a Contenedor. So is a [job](#job). The Contenedor pattern includes auto-encapsulation: once the work inside is complete and validated, the boundary becomes immutable. This maps to Athanor's run records — once a job is done, its trajectory and artifacts are sealed.
+The Practice's term for a unit-of-work scope. embry0's [sandbox](#sandbox) is a Contenedor. So is a [job](#job). The Contenedor pattern includes auto-encapsulation: once the work inside is complete and validated, the boundary becomes immutable. This maps to embry0's run records — once a job is done, its trajectory and artifacts are sealed.
 
 ### Conjunto
-The Practice's term for a composite scope built by explicit inclusion. Each inclusion is a guarded clause: "Que no exista la posibilidad de que haya X que no esté Y." Athanor's [pipelines](#pipeline) and [templates](#template) should adopt this pattern: explicit declaration of what's in scope, guarded by preconditions, rather than implicit globals.
+The Practice's term for a composite scope built by explicit inclusion. Each inclusion is a guarded clause: "Que no exista la posibilidad de que haya X que no esté Y." embry0's [pipelines](#pipeline) and [templates](#template) should adopt this pattern: explicit declaration of what's in scope, guarded by preconditions, rather than implicit globals.
 
 ### Caja de Regalos
-The Practice's term for a wrapped output artifact: a labeled box, a ribbon, an [Armadura](#armadura), and an explicit sender. Maps to Athanor's per-job output envelope:
+The Practice's term for a wrapped output artifact: a labeled box, a ribbon, an [Armadura](#armadura), and an explicit sender. Maps to embry0's per-job output envelope:
 
-- **Label** — commit subject + Athanor run-ID
+- **Label** — commit subject + embry0 run-ID
 - **Ribbon** — PR description (auto-generated from the spec)
 - **Armadura** — integrity hash + signing tag (bidirectional protection: run can't be modified post-hoc, source spec can't be retroactively edited without invalidating the run)
 - **Sender** — explicit `agent_id` (e.g., `developer-v2.3 + qa-v1.7`) recorded on the run
 
 ### Armadura
-Bidirectional integrity envelope. The Practice's pattern: "nada de afuera afecte adentro y nada de adentro afecte afuera." Applied to Athanor's audit log: protects the run record from retroactive modification AND protects the source spec from edits that would invalidate the run.
+Bidirectional integrity envelope. The Practice's pattern: "nada de afuera afecte adentro y nada de adentro afecte afuera." Applied to embry0's audit log: protects the run record from retroactive modification AND protects the source spec from edits that would invalidate the run.
 
 ---
 
@@ -165,10 +163,10 @@ ISO-8601 (`YYYY-MM-DD`) date marking the last semantic change to a [stable-ID](#
 ## Conventions
 
 ### "Practice" not "Ceremony"
-Per the Athanor [project CLAUDE.md](../CLAUDE.md): "NEVER use 'ceremony' — use 'practice'. No ritualistic, new-age, or woo-woo framing." This rule extends to all docs, UI copy, and skill text. Hermetic vocabulary stays in the [divine layer](#divine-layer) where it's an aesthetic choice; functional language stays plain.
+Per the embry0 [project CLAUDE.md](../CLAUDE.md): "NEVER use 'ceremony' — use 'practice'. No ritualistic, new-age, or woo-woo framing." This rule extends to all docs, UI copy, and skill text. Hermetic vocabulary stays in the [divine layer](#divine-layer) where it's an aesthetic choice; functional language stays plain.
 
 ### Divine Layer
-The atmospheric SVG/sigil layer that gives Athanor its alchemical identity. Lives in `frontend/src/components/divine/`. Strict rules in `frontend/src/components/divine/CLAUDE.md`: pure SVG only, `currentColor` stroke, animation suppressed by default, escape hatch via `<body data-divine="off">`, never on operator-critical paths (errors, destructive confirms, latency-sensitive lists), never combine more than one divine element per component instance.
+The atmospheric SVG/sigil layer that gives embry0 its alchemical identity. Lives in `frontend/src/components/divine/`. Strict rules in `frontend/src/components/divine/CLAUDE.md`: pure SVG only, `currentColor` stroke, animation suppressed by default, escape hatch via `<body data-divine="off">`, never on operator-critical paths (errors, destructive confirms, latency-sensitive lists), never combine more than one divine element per component instance.
 
 ---
 
@@ -176,6 +174,5 @@ The atmospheric SVG/sigil layer that gives Athanor its alchemical identity. Live
 
 - [`frontend/src/components/divine/operations.ts`](../frontend/src/components/divine/operations.ts) — operation definitions and stable IDs
 - [`frontend/src/components/divine/CLAUDE.md`](../frontend/src/components/divine/CLAUDE.md) — divine layer hard rules
-- [`docs/superpowers/specs/2026-05-04-alchemical-operations-agents-design.md`](superpowers/specs/2026-05-04-alchemical-operations-agents-design.md) — the seven operations as pipeline templates
 - [`docs/architecture.md`](architecture.md) — system architecture
 - [`CLAUDE.md`](../CLAUDE.md) — project rules

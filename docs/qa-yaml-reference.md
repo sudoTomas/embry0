@@ -1,19 +1,19 @@
-# `.athanor/qa.yaml` Reference (v2)
+# `.embry0/qa.yaml` Reference (v2)
 
-How a target repo opts into Athanor's QA pipeline. Commit a `.athanor/qa.yaml`
+How a target repo opts into embry0's QA pipeline. Commit a `.embry0/qa.yaml`
 (schema **version 2**) at the repo root; that file is the entire integration
 contract — it tells the QA orchestrator which apps to boot, how to boot them,
 how to know they're up, and what "passing" means.
 
-- **Authoritative schema:** `athanor/workflows/qa/qa_yaml_v2.py` (Pydantic).
-- **Merge logic:** `athanor/workflows/qa/qa_yaml_resolve.py`.
+- **Authoritative schema:** `embry0/workflows/qa/qa_yaml_v2.py` (Pydantic).
+- **Merge logic:** `embry0/workflows/qa/qa_yaml_resolve.py`.
 - **Worked examples:** `tests/fixtures/qa-yaml-corpus/v2/` and
-  `tests/fixtures/toy-monorepo/.athanor/qa.yaml`.
+  `tests/fixtures/toy-monorepo/.embry0/qa.yaml`.
 
 > **v1 is dead.** The old single-app schema (`version: 1`, top-level `mode` /
 > `startup:` / `frontend_url`) is read **only** by the migrator. Convert with
-> `athanor migrate-qa-config` (`--write` backs the old file up to
-> `qa.v1.yaml.bak`). The README's "add a `.athanor/qa.yaml`" snippet still shows
+> `embry0 migrate-qa-config` (`--write` backs the old file up to
+> `qa.v1.yaml.bak`). The README's "add a `.embry0/qa.yaml`" snippet still shows
 > v1 — ignore it; this doc supersedes it.
 
 ---
@@ -24,7 +24,7 @@ how to know they're up, and what "passing" means.
    (or QA runs automatically as the verify stage of an issue→PR job when triage
    sets `needs_qa=true`).
 2. The orchestrator boots a bootstrap sandbox, clones the repo at `branch`,
-   `cat`s `/workspace/.athanor/qa.yaml`, and validates it against the v2 schema.
+   `cat`s `/workspace/.embry0/qa.yaml`, and validates it against the v2 schema.
    A schema error fails the run with `qa.yaml v2 parse failed: …`.
 3. The **workspace provider** diffs the branch against its `affected_filter`
    base and computes the **affected set** — which declared apps changed, directly
@@ -53,7 +53,7 @@ qa_required: auto                # auto | always | never   (default: auto)
 parallelism:
   max_concurrent_apps: 4         # 1..64 (default: 4)
 
-apps: { ... }                    # the apps Athanor may boot (the core section)
+apps: { ... }                    # the apps embry0 may boot (the core section)
 packages: { ... }                # shared packages + cascade behaviour
 ```
 
@@ -96,7 +96,7 @@ hard validation error**, not a silent ignore.
 ### `apps:` — `{ <app_name>: AppEntry }`
 
 `app_name` must match what the workspace provider reports. Lightweight overrides
-only — heavy overrides go in `apps/<name>/.athanor/app.yaml` (below).
+only — heavy overrides go in `apps/<name>/.embry0/app.yaml` (below).
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -149,7 +149,7 @@ These keep monorepo QA from paying full cold-install/build costs every run.
 
 ---
 
-## Per-app overrides — `apps/<name>/.athanor/app.yaml`
+## Per-app overrides — `apps/<name>/.embry0/app.yaml`
 
 Heavy, app-local overrides live next to the app, not in the root file:
 
@@ -172,7 +172,7 @@ acceptance_criteria:               # REPLACES defaults.acceptance_criteria_templ
 1. Built-in model defaults
 2. Root `defaults:`
 3. Root `apps.<name>:`
-4. App-local `apps/<name>/.athanor/app.yaml`
+4. App-local `apps/<name>/.embry0/app.yaml`
 
 `acceptance_criteria` in the app-local file **replaces** (does not extend)
 `acceptance_criteria_template`. `ready_checks` likewise replace rather than
@@ -187,14 +187,14 @@ contract; these are one-off.
 
 ---
 
-## Worked example — `command-center` (npm-workspaces + Turborepo, 24 apps)
+## Worked example — `acme/monorepo-demo` (npm-workspaces + Turborepo, 24 apps)
 
-`command-center` (`client-project` monorepo: root `package.json` workspaces
-`apps/*` + `packages/*`, `turbo ^2`, `turbo.json` present) is the canonical
-multi-app target. Apps are Next.js packages named `@raven/<app>`; the workspace
-name — not the directory — is what `npm --workspace=` takes (e.g. the `apps/hub`
-directory is the package `@raven/command-center`). The dashboards are Auth0/
-Supabase-gated, so `/` does not return 200 pre-login — hence the
+`monorepo-demo` (a fictional `acme/monorepo-demo` monorepo: root `package.json`
+workspaces `apps/*` + `packages/*`, `turbo ^2`, `turbo.json` present) is the
+canonical multi-app target. Apps are Next.js packages named `@acme/<app>`; the
+workspace name — not the directory — is what `npm --workspace=` takes (e.g. the
+`apps/hub` directory is the package `@acme/hub-console`). The dashboards are
+Auth0/Supabase-gated, so `/` does not return 200 pre-login — hence the
 `expect_status` list.
 
 ```yaml
@@ -225,29 +225,29 @@ parallelism:
 
 apps:
   dashboard:
-    boot_command: "npm --workspace=@raven/dashboard run dev"   # dev script pins --port 3004
+    boot_command: "npm --workspace=@acme/dashboard run dev"    # dev script pins --port 3004
     frontend_url: "http://localhost:3004"
-  companion:
-    boot_command: "npm --workspace=@raven/companion run dev"       # --port 3001
+  admin:
+    boot_command: "npm --workspace=@acme/admin run dev"        # --port 3001
     frontend_url: "http://localhost:3001"
   reports:
-    boot_command: "npm --workspace=@raven/reports run dev"     # --port 3005
+    boot_command: "npm --workspace=@acme/reports run dev"      # --port 3005
     frontend_url: "http://localhost:3005"
-  lane:
-    boot_command: "npm --workspace=@raven/lane run dev"        # --port 3007
+  billing:
+    boot_command: "npm --workspace=@acme/billing run dev"      # --port 3007
     frontend_url: "http://localhost:3007"
   hub:
-    boot_command: "PORT=3000 npm --workspace=@raven/command-center run dev"  # hub's dev has no fixed port
+    boot_command: "PORT=3000 npm --workspace=@acme/hub-console run dev"  # hub's dev has no fixed port
     frontend_url: "http://localhost:3000"
   # … one entry per remaining app (read each app's dev script for its port)
 
 packages:
-  "@raven/ui": {}            # change cascades QA to every consuming app
-  "@raven/auth": {}          # security-critical — want the cascade
-  "@raven/db": {}
-  "@raven/config":
+  "@acme/ui": {}             # change cascades QA to every consuming app
+  "@acme/auth": {}           # security-critical — want the cascade
+  "@acme/db": {}
+  "@acme/config":
     no_cascade: true         # config churn shouldn't re-QA all apps
-  "@raven/app-manifest":
+  "@acme/app-manifest":
     no_cascade: true
 ```
 

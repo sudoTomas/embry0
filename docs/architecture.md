@@ -1,12 +1,12 @@
-# Athanor Architecture
+# embry0 Architecture
 
-Detailed technical documentation of the Athanor agent orchestration engine.
+Detailed technical documentation of the embry0 agent orchestration engine.
 
 ---
 
 ## System Overview
 
-Athanor is a general-purpose agent orchestration engine built on LangGraph and Claude Agent SDK. GitHub issues or API requests create issues which are triaged by an LLM agent, questions are dispatched to the user via multiple channels (Dashboard, Telegram, GitHub), agents execute inside Docker sandboxes, and on success a PR is opened automatically. Customer code never persists on the host — it lives only inside ephemeral sandbox containers.
+embry0 is a general-purpose agent orchestration engine built on LangGraph and Claude Agent SDK. GitHub issues or API requests create issues which are triaged by an LLM agent, questions are dispatched to the user via multiple channels (Dashboard, Telegram, GitHub), agents execute inside Docker sandboxes, and on success a PR is opened automatically. Customer code never persists on the host — it lives only inside ephemeral sandbox containers.
 
 ```mermaid
 graph TB
@@ -21,7 +21,7 @@ graph TB
     SB -.->|"Claude API"| AP["Auth Proxy"]
     SB -.->|"git clone/push"| GP["Git Remote Proxy"]
     SB -.->|"GitHub REST API"| GHP["GitHub API Proxy"]
-    SB -.->|"create issues, request input"| LP["Athanor API Proxy"]
+    SB -.->|"create issues, request input"| LP["embry0 API Proxy"]
 
     SB -->|"create PR, post comments<br/>(via proxy)"| GH
 
@@ -55,7 +55,7 @@ graph TB
             AP["Auth Proxy<br/>(Claude API)"]
             GP["Git Remote Proxy<br/>(git clone/push)"]
             GHP["GitHub API Proxy<br/>(PRs, comments)"]
-            LP["Athanor API Proxy<br/>(create issues, request input)"]
+            LP["embry0 API Proxy<br/>(create issues, request input)"]
         end
 
         PG["PostgreSQL 16<br/>Jobs + Issues + Checkpoints"]
@@ -127,8 +127,8 @@ graph TB
 
 | Service | Image | Purpose | Resources |
 |---------|-------|---------|-----------|
-| Frontend | `athanor-frontend` | nginx serving React SPA, reverse proxy | — |
-| Orchestrator | `athanor-orchestrator` | FastAPI + LangGraph, job management, proxy services. Never touches customer code. | configurable via `.env` |
+| Frontend | `embry0-frontend` | nginx serving React SPA, reverse proxy | — |
+| Orchestrator | `embry0-orchestrator` | FastAPI + LangGraph, job management, proxy services. Never touches customer code. | configurable via `.env` |
 | PostgreSQL | `postgres:16` | Application data + LangGraph checkpoints | configurable via `.env` |
 | DinD | `docker:dind` | Runs sandbox containers (privileged) | configurable via `.env` |
 | MinIO | `minio/minio` | S3-compatible artifact store. `qa-artifacts` bucket holds QA `result.json`, screenshots, traces, and `logs/full.log` per `<job_id>/<attempt_n>/...`. | configurable via `.env` |
@@ -139,7 +139,7 @@ No shared workspace volumes. All resource limits, ports, image tags, and credent
 
 ## Issues & Human-in-the-Loop
 
-Issues are first-class entities in Athanor — independent of jobs. An issue is the **what** (the problem/request), a job is the **how** (the execution). Issues support optional two-way GitHub sync and can be decomposed into child issues by the triage agent.
+Issues are first-class entities in embry0 — independent of jobs. An issue is the **what** (the problem/request), a job is the **how** (the execution). Issues support optional two-way GitHub sync and can be decomposed into child issues by the triage agent.
 
 ### Issue Lifecycle
 
@@ -177,8 +177,8 @@ Answers from any channel trigger cross-channel sync (e.g., answer via Telegram �
 
 ### GitHub Two-Way Sync
 
-- **Outbound (Athanor → GitHub):** Issue create/update pushes to GitHub API
-- **Inbound (GitHub → Athanor):** Webhook handles `issues.opened`, `issues.edited`, `issues.closed`, `issues.reopened`, `issues.labeled`, `issues.unlabeled`, `issue_comment.created`
+- **Outbound (embry0 → GitHub):** Issue create/update pushes to GitHub API
+- **Inbound (GitHub → embry0):** Webhook handles `issues.opened`, `issues.edited`, `issues.closed`, `issues.reopened`, `issues.labeled`, `issues.unlabeled`, `issue_comment.created`
 - **Conflict handling:** Last-write-wins with timestamps
 
 ---
@@ -312,7 +312,7 @@ stateDiagram-v2
     End2 --> [*]
 ```
 
-> **Note on `split`:** The `split` action creates child issues as a side effect inside `run_triage_node` (calling the Athanor API proxy) and then terminates the current workflow; there is no dedicated child-creation node in the graph.
+> **Note on `split`:** The `split` action creates child issues as a side effect inside `run_triage_node` (calling the embry0 API proxy) and then terminates the current workflow; there is no dedicated child-creation node in the graph.
 
 > **Note on QA gate:** Triage emits `set_qa_decision` (initial pass) and `qa_failure_action` (after a failed QA run) inline in its JSON output. The QA subpath reuses the standalone QA workflow's nodes verbatim — see the QA Pipeline section below for the inner workings.
 
@@ -326,7 +326,7 @@ stateDiagram-v2
 | `review` | Yes | Read, Bash, Glob, Grep | Code review with structured JSON output. Can request changes (triggers retry). |
 | `retry` | No | — | Inject review feedback into state, increment counter |
 | `max_retries` | No | — | `interrupt()` — ask user: continue, merge as-is, or abandon |
-| `init_qa` | No | — | (QA gate, when `needs_qa=true`) Create QA sandbox + per-job network, parse `.athanor/qa.yaml`, mint MinIO presigned PUT URLs, write `/workspace/.qa/job.json` |
+| `init_qa` | No | — | (QA gate, when `needs_qa=true`) Create QA sandbox + per-job network, parse `.embry0/qa.yaml`, mint MinIO presigned PUT URLs, write `/workspace/.qa/job.json` |
 | `qa` | Yes | Read, Glob, Grep, Bash, Edit, Playwright MCP (22 tools) | Run the 5 QA phases (boot, seed, e2e, exploratory, report) and write `result.json` |
 | `qa_report` | No | — | Read + Pydantic-validate `result.json`, set `qa.final_status`, upload artifacts, destroy sandbox, cleanup network |
 | `qa_failure_bookkeeping` | No | — | Increment `qa.failure_rounds` when `final_status=failed` |
@@ -379,7 +379,7 @@ Both modes share the same nodes (`init_qa`, `qa`, `qa_report`) and the same `qa-
 ```mermaid
 graph LR
     subgraph DinD
-        QS["QA Sandbox<br/>athanor-sandbox-qa<br/>(JDK 21, Docker CLI, Chromium,<br/>Playwright MCP)"]
+        QS["QA Sandbox<br/>embry0-sandbox-qa<br/>(JDK 21, Docker CLI, Chromium,<br/>Playwright MCP)"]
         QN["qa-net-jobC"]
         APP["Target app stack<br/>compose -p qa_jobC<br/>(gateway, frontend, db, ...)"]
         MP["minio-proxy"]
@@ -418,7 +418,7 @@ graph LR
 | 3. presign | `init_qa` | Generate two MinIO presigned PUT URLs (`result.json`, `logs/full.log`) signed against the **sandbox-facing** endpoint (`minio-proxy:9100`) so the URL host resolves over qa-net |
 | 4. job.json | `init_qa` | Write `/workspace/.qa/job.json` with the URLs, `presign_refresh_url`, `sandbox_token`, parsed `qa.yaml`, and acceptance criteria |
 | 5. clone | `init_qa` | `git clone --branch <branch>` from inside sandbox via git-proxy |
-| 6. agent | `qa` | `python -m athanor.sandbox.runner` invokes the QA agent — runs the 5 phases, uploads artifacts via curl |
+| 6. agent | `qa` | `python -m embry0.sandbox.runner` invokes the QA agent — runs the 5 phases, uploads artifacts via curl |
 | 7. parse | `qa_report` | `cat /workspace/.qa/result.json` → `QAResult.model_validate_json` → set `qa.final_status` |
 | 8. teardown | `qa_report` | sandbox destroy → `cleanup_qa_resources` (containers/volumes/network by dual-label filter). Order matters — sandbox must die before `network rm` or it stays attached. |
 
@@ -486,10 +486,10 @@ graph LR
         AP["Auth Proxy"]
         GP["Git Remote Proxy"]
         GHP["GitHub API Proxy"]
-        LP["Athanor API Proxy<br/>(CreateIssue, RequestInput)"]
+        LP["embry0 API Proxy<br/>(CreateIssue, RequestInput)"]
     end
 
-    subgraph Sandbox["Sandbox Container (athanor-sandbox)"]
+    subgraph Sandbox["Sandbox Container (embry0-sandbox)"]
         RN["runner.py"]
         SDK["Agent SDK<br/>query()"]
         SF["safety.py"]
@@ -520,29 +520,29 @@ graph LR
 | Credentials | Injected via proxies (see Proxy Services) — `GITHUB_TOKEN` and `ANTHROPIC_API_KEY` never enter the sandbox env. **Scoped exception:** `CLAUDE_CODE_OAUTH_TOKEN` is passed to the sandbox env in Claude Max mode because the Claude CLI reads it directly from env (product constraint, not a deferred fix). |
 | Command blocking | 34 regex patterns, NFKC unicode normalization, Glob path restriction, symlink defense via `os.path.realpath()` |
 | Code retention | None — repo cloned inside container, deleted on teardown |
-| OAuth credentials | Mounted read-only from orchestrator (`~/.claude`) |
+| OAuth credentials | The orchestrator receives the Claude OAuth token via the `CLAUDE_CODE_OAUTH_TOKEN` env var and passes it to the sandbox (see the Credentials row above) |
 | Ring-3 enforcement | Asserted at orchestrator startup (refuses to boot if the installed `claude_agent_sdk` does not expose `hooks`). Per-run hook attachment is unconditional — no fall-back. The in-process executor fallback was removed in 2026-04 hardening. |
 
-**Sandbox env surface:** The container env contains only non-sensitive config: `ATHANOR_GIT_PROXY_URL` (just the proxy URL; not a secret), plus `CLAUDE_CODE_OAUTH_TOKEN` when Claude Max OAuth mode is active (see the Credentials row above). No `GITHUB_TOKEN`. No `ANTHROPIC_API_KEY`.
+**Sandbox env surface:** The container env contains only non-sensitive config: `EMBRY0_GIT_PROXY_URL` (just the proxy URL; not a secret), plus `CLAUDE_CODE_OAUTH_TOKEN` when Claude Max OAuth mode is active (see the Credentials row above). No `GITHUB_TOKEN`. No `ANTHROPIC_API_KEY`.
 
 ### Sandbox Image Management
 
 The `SandboxImageManager` handles image lifecycle inside DinD:
 
-- **Auto-build on startup** — computes SHA256 hash of `Dockerfile.sandbox` + sandbox source files, compares with image label `athanor.build-hash`, rebuilds if stale
-- **Profile-specific images** — `athanor-sandbox:{profile_name}` extends the base image with additional packages/commands
-- **QA sandbox variant** — `athanor-sandbox-qa:latest` is a separate image (built from `infra/Dockerfile.sandbox.qa`) with the superset needed by the QA agent: JDK 21 (Adoptium Temurin), Docker CLI + compose plugin (talks to DinD daemon over TCP+TLS), Chromium + headless-shell pre-installed at `/opt/playwright`, the `playwright-mcp` global binary, and the qa-compose / qa-ready-check helpers in `/usr/local/bin`. Selected by sandbox profile `qa-jvm` (or `qa-node` / `qa-python`). The Chromium revision is pinned to whatever `@playwright/mcp`'s bundled `playwright-core` expects — installing via the standalone `playwright` package's CLI gives a different revision and breaks MCP launches.
-- **Container reaper** — background task destroys containers older than 24 hours, **unless the matching job is still active in the DB**. Active-status lookup failures fail closed (the reaper does nothing rather than risk killing live work). The reaper also sweeps DinD-side QA orphans — containers with `com.docker.compose.project=qa_*` OR `athanor.qa_job_id=*` whose owning job is no longer active.
+- **Auto-build on startup** — computes SHA256 hash of `Dockerfile.sandbox` + sandbox source files, compares with image label `embry0.build-hash`, rebuilds if stale
+- **Profile-specific images** — `embry0-sandbox:{profile_name}` extends the base image with additional packages/commands
+- **QA sandbox variant** — `embry0-sandbox-qa:latest` is a separate image (built from `infra/Dockerfile.sandbox.qa`) with the superset needed by the QA agent: JDK 21 (Adoptium Temurin), Docker CLI + compose plugin (talks to DinD daemon over TCP+TLS), Chromium + headless-shell pre-installed at `/opt/playwright`, the `playwright-mcp` global binary, and the qa-compose / qa-ready-check helpers in `/usr/local/bin`. Selected by sandbox profile `qa-jvm` (or `qa-node` / `qa-python`). The Chromium revision is pinned to whatever `@playwright/mcp`'s bundled `playwright-core` expects — installing via the standalone `playwright` package's CLI gives a different revision and breaks MCP launches.
+- **Container reaper** — background task destroys containers older than 24 hours, **unless the matching job is still active in the DB**. Active-status lookup failures fail closed (the reaper does nothing rather than risk killing live work). The reaper also sweeps DinD-side QA orphans — containers with `com.docker.compose.project=qa_*` OR `embry0.qa_job_id=*` whose owning job is no longer active.
 
 ---
 
 ## Proxy Services
 
-Three credential-injecting proxies (`git-proxy`, `github-proxy`, `auth-proxy`) run as **containers inside DinD** on the `sandbox-restricted` network. They are launched by `ProxyManager` at orchestrator startup using the `athanor-proxy:latest` image. Sandboxes resolve them by Docker DNS (`http://git-proxy:9101`, `http://github-proxy:9103`, `http://auth-proxy:9100`) — not via `host.docker.internal`.
+Three credential-injecting proxies (`git-proxy`, `github-proxy`, `auth-proxy`) run as **containers inside DinD** on the `sandbox-restricted` network. They are launched by `ProxyManager` at orchestrator startup using the `embry0-proxy:latest` image. Sandboxes resolve them by Docker DNS (`http://git-proxy:9101`, `http://github-proxy:9103`, `http://auth-proxy:9100`) — not via `host.docker.internal`.
 
 Proxies that need outbound internet (`github-proxy`, `auth-proxy`) are also attached to `sandbox-internet`. The `git-proxy` only returns a static credential helper response and needs no egress.
 
-A fourth proxy — the **per-job Athanor API proxy** that exposes CreateIssue / RequestInput / UpdateStatus to agents — is **currently deferred**. `start_athanor_proxy_for_job()` raises `NotImplementedError`, and `WorkflowRegistry.register()` rejects any `pipeline_template` that declares `CreateIssue`, `RequestInput`, or `UpdateStatus` tools at registration time. Until this is implemented, those tools are unavailable to all workflows. Tracked as a follow-up.
+A fourth proxy — the **per-job embry0 API proxy** that exposes CreateIssue / RequestInput / UpdateStatus to agents — is **currently deferred**. `start_embry0_proxy_for_job()` raises `NotImplementedError`, and `WorkflowRegistry.register()` rejects any `pipeline_template` that declares `CreateIssue`, `RequestInput`, or `UpdateStatus` tools at registration time. Until this is implemented, those tools are unavailable to all workflows. Tracked as a follow-up.
 
 **Credential injection via proxies** — GitHub auth flows exclusively through the git credential proxy (port 9101): the sandbox's git credential helper curls the proxy, which injects the orchestrator's `GITHUB_TOKEN` in the response. `GITHUB_TOKEN` is never present in the sandbox env. The auth proxy (port 9100) for Anthropic API keys is launched but not currently consumed by the sandbox runner — currently unused. **Scoped exception:** `CLAUDE_CODE_OAUTH_TOKEN` is passed into the sandbox env when Claude Max OAuth mode is active, because the Claude CLI reads it directly from env. This is a product-level constraint (the CLI doesn't support per-request injection for OAuth), not a deferred fix.
 
@@ -551,7 +551,7 @@ A fourth proxy — the **per-job Athanor API proxy** that exposes CreateIssue / 
 | Auth Proxy | 9100 | Claude API requests | `x-api-key` header |
 | Git Remote Proxy | 9101 | `git clone/push` | Git credential helper response |
 | GitHub API Proxy | — | GitHub REST API (PRs, comments) | `Authorization: Bearer` header |
-| Athanor API Proxy | 9102 (deferred) | Athanor internal API (per-job) | Scoped to current issue/job |
+| embry0 API Proxy | 9102 (deferred) | embry0 internal API (per-job) | Scoped to current issue/job |
 | MinIO Proxy | 9100 (DinD-side) | QA agent → MinIO PUT/GET via DNS-resolvable name | None — only forwards to host MinIO |
 | Presign Proxy | 9104 (DinD-side) | QA agent → orchestrator `POST /api/v1/internal/qa/presign` to mint additional URLs at runtime | Per-sandbox bearer (same scheme as the credential proxies) |
 
@@ -563,11 +563,11 @@ A fourth proxy — the **per-job Athanor API proxy** that exposes CreateIssue / 
 > over the network; only sandbox-scoped bearers are. Bearers are revoked when
 > the sandbox is destroyed (`unenroll_sandbox`).
 
-### Athanor API Proxy
+### embry0 API Proxy
 
-> **Status:** Deferred. `start_athanor_proxy_for_job()` raises `NotImplementedError` and `WorkflowRegistry.register()` rejects any `pipeline_template` that declares `CreateIssue`/`RequestInput`/`UpdateStatus` tools. Until this is implemented, those tools are unavailable to all workflows. The table below describes the intended interface; tracked as a follow-up.
+> **Status:** Deferred. `start_embry0_proxy_for_job()` raises `NotImplementedError` and `WorkflowRegistry.register()` rejects any `pipeline_template` that declares `CreateIssue`/`RequestInput`/`UpdateStatus` tools. Until this is implemented, those tools are unavailable to all workflows. The table below describes the intended interface; tracked as a follow-up.
 
-Gives sandbox agents controlled access to Athanor's own API, scoped to the current job's issue:
+Gives sandbox agents controlled access to embry0's own API, scoped to the current job's issue:
 
 | Tool | Endpoint | Used By |
 |------|----------|---------|
@@ -834,7 +834,7 @@ LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writ
 
 Per-repo and global environment variables are stored in `global_environment` / `repo_environment`. Variables of type `secret` are Fernet-encrypted at rest using a key derived from `ENVIRONMENT_SECRET_KEY` via PBKDF2-HMAC-SHA256. Responses mask secret values (`****`); a separate `/reveal` endpoint returns plaintext and emits an `environment.secret_revealed` audit event.
 
-Reserved keys (`ATHANOR_GIT_PROXY_URL`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`) are blocked at the API layer and again at sandbox injection time to prevent users from hijacking orchestrator-injected infrastructure variables. If `ENVIRONMENT_SECRET_KEY` is unset the backend falls back to an insecure default and logs a startup warning; rotating the key makes prior secrets undecryptable and surfaces as `secret_decryption_failed` log events on the next job that needs them.
+Reserved keys (`EMBRY0_GIT_PROXY_URL`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`) are blocked at the API layer and again at sandbox injection time to prevent users from hijacking orchestrator-injected infrastructure variables. If `ENVIRONMENT_SECRET_KEY` is unset the backend falls back to an insecure default and logs a startup warning; rotating the key makes prior secrets undecryptable and surfaces as `secret_decryption_failed` log events on the next job that needs them.
 
 ### ID Prefix Conventions
 
@@ -851,7 +851,7 @@ Note: `traces.trace_id` and `jobs.trace_id` / `audit_log.trace_id` share the `tr
 
 ### Migrations Reference
 
-The migration runner (`athanor/storage/migrations/runner.py`) applies these idempotently, in order, on orchestrator startup:
+The migration runner (`embry0/storage/migrations/runner.py`) applies these idempotently, in order, on orchestrator startup:
 
 | # | Description | Tables/Columns |
 |---|---|---|
@@ -880,17 +880,17 @@ The migration runner (`athanor/storage/migrations/runner.py`) applies these idem
 
 ## Job Lifecycle & Executor
 
-The `IssueExecutor` (`athanor/services/issue_executor.py`) owns the lifecycle of every background coroutine spawned to run a workflow.
+The `IssueExecutor` (`embry0/services/issue_executor.py`) owns the lifecycle of every background coroutine spawned to run a workflow.
 
 **Task lifecycle.** `IssueExecutor._track_task(coro, *, kind, job_id, issue_id)` is the single entry point for creating background coroutines. It registers the task in both `_background_tasks` (set) and `_tasks_by_job` (dict) and attaches a done-callback that logs non-`CancelledError` failures and publishes a `job_failed` WS event. `IssueExecutor.cancel_job(job_id)` is the centralised cancellation flow: cancel the live task (with a 5s grace), destroy the sandbox, update job+issue status, purge LangGraph checkpoints for the thread, and emit a `job.cancelled` audit event.
 
 **Trace ID threading (Plan H).** Every job is assigned a `trace_id` (format `trc-<12hex>`) at creation; the id is bound to structlog contextvars for the duration of `_run_workflow` and persisted onto every `audit_log` row written in that span. Use it as a grep key to reconstruct an issue's full timeline across logs and audit events.
 
-**Agent-initiated questions (Plan L — `ask_user`).** Agents can pause the pipeline mid-execution by calling `athanor.sandbox.ask_user(question, category, options)`. The sandbox runner emits `agent_ask_user` events; `developer_node` picks them up and the graph routes to `ask_user_interrupt`, which raises `interrupt(...)` with the pending questions. `_handle_needs_info` persists questions to `issue_inputs` and transitions status to `awaiting_input` (reusing the triage-question infrastructure). On resume via `Command(resume=answers)`, the developer re-runs with a Q&A block prepended to its prompt. Capped at 5 rounds per job; past that the job fails with `ERR_MAX_AGENT_QUESTIONS`.
+**Agent-initiated questions (Plan L — `ask_user`).** Agents can pause the pipeline mid-execution by calling `embry0.sandbox.ask_user(question, category, options)`. The sandbox runner emits `agent_ask_user` events; `developer_node` picks them up and the graph routes to `ask_user_interrupt`, which raises `interrupt(...)` with the pending questions. `_handle_needs_info` persists questions to `issue_inputs` and transitions status to `awaiting_input` (reusing the triage-question infrastructure). On resume via `Command(resume=answers)`, the developer re-runs with a Q&A block prepended to its prompt. Capped at 5 rounds per job; past that the job fails with `ERR_MAX_AGENT_QUESTIONS`.
 
 ### Failure Classification
 
-Failures populate the `jobs.error_code` column (migration 8) with one of the canonical values in `athanor.safety.error_codes.ErrorCode`:
+Failures populate the `jobs.error_code` column (migration 8) with one of the canonical values in `embry0.safety.error_codes.ErrorCode`:
 
 | Code | Meaning |
 |------|---------|
@@ -911,13 +911,13 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 
 ## WebSocket Streaming
 
-Live event fan-out to the dashboard is served by `WS /ws/jobs/{id}/events`. The handler lives in `athanor/api/ws/streaming.py`.
+Live event fan-out to the dashboard is served by `WS /ws/jobs/{id}/events`. The handler lives in `embry0/api/ws/streaming.py`.
 
-WebSocket fan-out is managed by `athanor.api.events.EventBus` — a concurrency-safe class that holds per-`job_id` `asyncio.Queue` subscribers under an `asyncio.Lock` and exposes `subscribe`, `unsubscribe`, and `publish`. Event producers (graph nodes, the executor, the sandbox manager) call `EventBus.publish(job_id, event)` and every currently-subscribed queue for that job receives a copy.
+WebSocket fan-out is managed by `embry0.api.events.EventBus` — a concurrency-safe class that holds per-`job_id` `asyncio.Queue` subscribers under an `asyncio.Lock` and exposes `subscribe`, `unsubscribe`, and `publish`. Event producers (graph nodes, the executor, the sandbox manager) call `EventBus.publish(job_id, event)` and every currently-subscribed queue for that job receives a copy.
 
 **Replay cursor (`since_seq`).** Every broadcast event carries an `event_seq` field — the monotonic `BIGSERIAL` `id` from the `job_logs` table stamped at persist time. When a WS client reconnects after a dropped connection, it passes `?since_seq=<last_seen>`; the handler replays only rows with `id > since_seq`, tracks the highest id as a watermark, and then drops live events with `event_seq <= watermark` to prevent duplicates during the subscribe→replay race.
 
-**Authentication.** WS clients authenticate via the `Sec-WebSocket-Protocol` subprotocol header: `athanor.bearer.<api_key>`. The server validates with `hmac.compare_digest` and echoes the matched subprotocol back on accept (RFC 6455). Token-in-URL is no longer supported. Per-job event queues are bounded at 1000 events; on overflow, the publisher drops the event with a `ws_slow_consumer` warning.
+**Authentication.** WS clients authenticate via the `Sec-WebSocket-Protocol` subprotocol header: `embry0.bearer.<api_key>`. The server validates with `hmac.compare_digest` and echoes the matched subprotocol back on accept (RFC 6455). Token-in-URL is no longer supported. Per-job event queues are bounded at 1000 events; on overflow, the publisher drops the event with a `ws_slow_consumer` warning.
 
 ---
 
@@ -974,7 +974,7 @@ graph TB
         APR["auth_proxy.py"]
         GPR["git_proxy.py"]
         GHPR["github_proxy.py"]
-        LPR["athanor_proxy.py"]
+        LPR["embry0_proxy.py"]
     end
 
     subgraph Sandbox["sandbox/ (in container)"]
@@ -1027,7 +1027,7 @@ graph TB
 
 ### Cloudflare Tunnel (production webhook ingress)
 
-The public endpoint at `athanor.example.com` is restricted to webhook paths only:
+The public endpoint (e.g. `embry0.example.com`) is restricted to webhook paths only:
 
 | Path | Service | Purpose |
 |------|---------|---------|
@@ -1035,13 +1035,13 @@ The public endpoint at `athanor.example.com` is restricted to webhook paths only
 | `/api/v1/telegram/callback` | Telegram Bot API | Reply-to-message answers |
 | Everything else | **403 Forbidden** | Dashboard only accessible on LAN |
 
-Signature verification is always on in production: `GITHUB_WEBHOOK_SECRET` is set and the handler enforces HMAC-SHA256 (`verify_webhook_signature` in `athanor/api/auth.py`).
+Signature verification is always on in production: `GITHUB_WEBHOOK_SECRET` is set and the handler enforces HMAC-SHA256 (`verify_webhook_signature` in `embry0/api/auth.py`).
 
 ### smee.io Relay (local development webhook ingress)
 
-For developer laptops without a public URL, Athanor supports the [smee.io](https://smee.io) relay pattern. The GitHub webhook is pointed at a smee channel URL, and `smee-client` forwards received events to `http://localhost:8200/api/v1/webhook`. Because smee re-serializes the JSON payload before forwarding, GitHub's HMAC signature is invalidated — so this flow requires `WEBHOOK_DEV_MODE=true` and an empty `GITHUB_WEBHOOK_SECRET`. (`AUTH_DEV_MODE` is the unrelated separate flag for bypassing API key auth; do NOT enable it just for the webhook flow.)
+For developer laptops without a public URL, embry0 supports the [smee.io](https://smee.io) relay pattern. The GitHub webhook is pointed at a smee channel URL, and `smee-client` forwards received events to `http://localhost:8200/api/v1/webhook`. Because smee re-serializes the JSON payload before forwarding, GitHub's HMAC signature is invalidated — so this flow requires `WEBHOOK_DEV_MODE=true` and an empty `GITHUB_WEBHOOK_SECRET`. (`AUTH_DEV_MODE` is the unrelated separate flag for bypassing API key auth; do NOT enable it just for the webhook flow.)
 
-The handler in `athanor/api/v1/webhooks.py` supports this flow in two ways:
+The handler in `embry0/api/v1/webhooks.py` supports this flow in two ways:
 
 1. `verify_webhook_signature(..., webhook_dev_mode=True)` skips HMAC verification when no secret is configured.
 2. After JSON parsing, the handler detects and unwraps smee's `{"payload": "<json-string>"}` envelope so downstream code sees the real GitHub payload unchanged.
@@ -1059,7 +1059,7 @@ See README "Webhook Setup → Option B — smee.io relay" for the end-to-end set
 
 ## Future: Spring Boot SaaS Layer
 
-Spring Boot manages a fleet of Athanor instances — one per tenant. Athanor remains single-tenant internally.
+Spring Boot manages a fleet of embry0 instances — one per tenant. embry0 remains single-tenant internally.
 
 ```mermaid
 graph TB
@@ -1069,10 +1069,10 @@ graph TB
         BL["Billing"]
     end
 
-    subgraph Fleet["Athanor Fleet (K8s)"]
-        L1["Athanor<br/>Tenant A"]
-        L2["Athanor<br/>Tenant B"]
-        L3["Athanor<br/>Tenant C"]
+    subgraph Fleet["embry0 Fleet (K8s)"]
+        L1["embry0<br/>Tenant A"]
+        L2["embry0<br/>Tenant B"]
+        L3["embry0<br/>Tenant C"]
     end
 
     GW --> L1

@@ -7,19 +7,12 @@ useDefault = true
 # Global allowlist: applies to all rules. Listing both `paths` and `regexes`
 # at the same level is OR-combined (any single match suppresses the finding).
 [allowlist]
-description = "Athanor allowlist — placeholder + test fixture exemptions"
+description = "embry0 allowlist — placeholder + test fixture exemptions"
 paths = [
-    '''.env\.example''',
-    '''tests/.*''',
-    # Historical docs that contained the pre-2026-07-09 orchestrator API_KEY
-    # (leaked 2026-05-05 / 2026-06-20, ROTATED 2026-07-09, INT-737) plus a
-    # deliberately-invalid test literal. Current file contents are redacted;
-    # only git history retains the dead value. Path allowlist (not commit
-    # fingerprints) because gitleaks also attributes findings to GitHub's
-    # synthetic refs/pull/N/merge commits, whose hashes can't be pinned.
-    '''docs/HANDOFF-rebuild-validate\.archived\.md''',
-    '''docs/superpowers/plans/2026-05-05-qa-pipeline-wiring-and-base-branch-plan\.md''',
-    '''docs/superpowers/plans/2026-05-05-athanor-monorepo-support-phase-4-dashboard-plan\.md''',
+    # Test fixtures that use deliberately fake secrets (placeholder webhook
+    # secrets / wrong-key literals) which trip the generic-api-key rule.
+    '''tests/unit/storage/test_integration_config\.py''',
+    '''tests/unit/api/v2/test_login_route\.py''',
 ]
 regexes = [
     # Placeholder GitHub token pattern in docs / fixtures
@@ -27,6 +20,6 @@ regexes = [
     # sk-ant prefix without a real key shape
     '''sk-ant-your-api-key-here''',
     # Synthetic sandbox token (40-char a-z0-9 ramp) used by QA + sandbox unit tests
-    # to satisfy _SANDBOX_TOKEN_RE in athanor/sandbox/github/git_ops.py.
+    # to satisfy _SANDBOX_TOKEN_RE in embry0/sandbox/github/git_ops.py.
     '''abcdefghijklmnopqrstuvwxyz0123456789ABCD''',
 ]

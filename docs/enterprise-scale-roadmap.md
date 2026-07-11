@@ -1,6 +1,6 @@
 # Enterprise-Scale Roadmap
 
-A short note on the work that turns Athanor from a single-stack
+A short note on the work that turns embry0 from a single-stack
 deployment into a multi-tenant SaaS / on-prem product. The current
 architecture (orchestrator non-privileged + DinD privileged + per-job
 sandbox + proxy-injected credentials + three-ring defense) is the right
@@ -119,9 +119,7 @@ rewriting core components.
 ## Things explicitly NOT on the roadmap
 
 - **Collapsing the sandbox boundary** — the security model is the
-  product. Discussed in detail in the
-  [QA agent design spec](superpowers/specs/2026-04-30-qa-agent-design.md)
-  and the architecture review notes.
+  product.
 - **Replacing LangGraph with a custom workflow engine** — checkpointing,
   conditional edges, and stream events are exactly what we need. The
   surface area is small enough that swapping is cheap if it ever
