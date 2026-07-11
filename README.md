@@ -66,7 +66,7 @@ graph TB
 
 ## Architecture
 
-embry0 runs as a Docker Compose stack with 5 services:
+embry0 runs as a Docker Compose stack. Five core services do the work:
 
 | Service | Purpose |
 |---------|---------|
@@ -75,6 +75,8 @@ embry0 runs as a Docker Compose stack with 5 services:
 | **DinD** | Docker-in-Docker — runs isolated sandbox containers for agent execution. The QA pipeline also runs target-application compose stacks here, on per-job networks (`qa-net-{job_id}`). |
 | **MinIO** | S3-compatible artifact store — `qa-artifacts` bucket holds per-attempt `result.json`, screenshots, traces, and full compose logs from QA runs |
 | **Frontend** | React SPA — execution dashboard, pipeline visualization, configuration, QA tab with live thumbnail + SSE log tail |
+
+The full compose file defines 13 services: the five above plus supporting long-running services (**postgres-backup** for daily dumps, an in-stack **registry** sidecar that DinD pulls sandbox images from, and the optional **cloudflared** webhook tunnel), two one-shot init services (`init-sandbox-networks`, `init-push-images`), and three image builders behind the `images` profile.
 
 ```mermaid
 graph LR
@@ -620,7 +622,7 @@ embry0/
 │   ├── Dockerfile              # Multi-stage (Node build + nginx)
 │   └── nginx.conf              # Reverse proxy to orchestrator
 ├── infra/
-│   ├── docker-compose.yml      # 4-service stack
+│   ├── docker-compose.yml      # Full stack (core + support + init services)
 │   ├── Dockerfile.orchestrator
 │   ├── Dockerfile.sandbox
 │   └── scripts/
