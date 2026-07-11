@@ -1,24 +1,6 @@
-"""Athanor API proxy is deferred — calling it must fail loudly."""
-
-from unittest.mock import MagicMock
+"""The embry0 API proxy is deferred — pipelines must not declare its tools."""
 
 import pytest
-
-from athanor.execution.proxy.manager import ProxyManager
-
-
-@pytest.mark.asyncio
-async def test_start_athanor_proxy_raises_not_implemented():
-    docker = MagicMock()
-    mgr = ProxyManager(docker, proxy_admin_token="admin")
-    with pytest.raises(NotImplementedError, match="Athanor API proxy is deferred"):
-        await mgr.start_athanor_proxy_for_job(
-            issues_repo=None,
-            inputs_repo=None,
-            issue_id="iss-x",
-            job_id="job-x",
-        )
-
 
 # ---------------------------------------------------------------------------
 # Shared validate_pipeline_tools helper (called from registry AND templates API)
@@ -26,7 +8,7 @@ async def test_start_athanor_proxy_raises_not_implemented():
 
 
 def test_validate_pipeline_tools_rejects_deferred_tools():
-    from athanor.workflows._validation import validate_pipeline_tools
+    from embry0.workflows._validation import validate_pipeline_tools
 
     bad = {"agent_tools": {"developer": ["Read", "Write", "CreateIssue"]}}
     with pytest.raises(ValueError, match="declares deferred tool"):
@@ -34,14 +16,14 @@ def test_validate_pipeline_tools_rejects_deferred_tools():
 
 
 def test_validate_pipeline_tools_accepts_normal_tools():
-    from athanor.workflows._validation import validate_pipeline_tools
+    from embry0.workflows._validation import validate_pipeline_tools
 
     good = {"agent_tools": {"developer": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]}}
     validate_pipeline_tools("custom_workflow", good)  # no raise
 
 
 def test_validate_pipeline_tools_rejects_request_input():
-    from athanor.workflows._validation import validate_pipeline_tools
+    from embry0.workflows._validation import validate_pipeline_tools
 
     bad = {"agent_tools": {"review": ["Read", "RequestInput"]}}
     with pytest.raises(ValueError, match="declares deferred tool"):
@@ -49,7 +31,7 @@ def test_validate_pipeline_tools_rejects_request_input():
 
 
 def test_validate_pipeline_tools_rejects_update_status():
-    from athanor.workflows._validation import validate_pipeline_tools
+    from embry0.workflows._validation import validate_pipeline_tools
 
     bad = {"agent_tools": {"developer": ["UpdateStatus", "Read"]}}
     with pytest.raises(ValueError, match="declares deferred tool"):
@@ -57,7 +39,7 @@ def test_validate_pipeline_tools_rejects_update_status():
 
 
 def test_validate_pipeline_tools_empty_config_is_ok():
-    from athanor.workflows._validation import validate_pipeline_tools
+    from embry0.workflows._validation import validate_pipeline_tools
 
     validate_pipeline_tools("empty_template", {})  # no raise
 
@@ -68,7 +50,7 @@ def test_validate_pipeline_tools_empty_config_is_ok():
 
 
 def test_workflow_registry_rejects_deferred_tools():
-    from athanor.workflows.registry import WorkflowRegistry
+    from embry0.workflows.registry import WorkflowRegistry
 
     class BadWorkflow:
         name = "bad"
@@ -94,13 +76,13 @@ async def test_create_template_rejects_deferred_tools():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from athanor.api.v1.pipeline_templates import router
+    from embry0.api.v1.pipeline_templates import router
 
     _app = FastAPI()
     _app.include_router(router, prefix="/api/v1")
 
     # Stub the dependency
-    from athanor.api.deps import get_templates_repo
+    from embry0.api.deps import get_templates_repo
 
     async def _fake_repo():
         return None  # never reached — validation fires first
@@ -125,8 +107,8 @@ async def test_update_template_rejects_deferred_tools():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from athanor.api.deps import get_templates_repo
-    from athanor.api.v1.pipeline_templates import router
+    from embry0.api.deps import get_templates_repo
+    from embry0.api.v1.pipeline_templates import router
 
     _app = FastAPI()
     _app.include_router(router, prefix="/api/v1")
