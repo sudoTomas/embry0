@@ -135,6 +135,8 @@ graph TB
 
 No shared workspace volumes. All resource limits, ports, image tags, and credentials are configurable via `.env` file.
 
+Beyond these five core services, the compose file defines 13 services in total: supporting long-running services (`postgres-backup` for daily dumps, an in-stack `registry` sidecar that DinD pulls sandbox images from, and the optional `cloudflared` webhook tunnel), two one-shot init services (`init-sandbox-networks`, `init-push-images`), and three image builders behind the `images` profile.
+
 ---
 
 ## Issues & Human-in-the-Loop
@@ -1046,7 +1048,7 @@ The handler in `embry0/api/v1/webhooks.py` supports this flow in two ways:
 1. `verify_webhook_signature(..., webhook_dev_mode=True)` skips HMAC verification when no secret is configured.
 2. After JSON parsing, the handler detects and unwraps smee's `{"payload": "<json-string>"}` envelope so downstream code sees the real GitHub payload unchanged.
 
-See README "Webhook Setup → Option B — smee.io relay" for the end-to-end setup. **Never enable this configuration in production** — any unsigned `POST` to `/api/v1/webhook` will be accepted and could trigger jobs.
+See [webhooks.md](webhooks.md#option-b--smeeio-relay-local-development) for the end-to-end setup. **Never enable this configuration in production** — any unsigned `POST` to `/api/v1/webhook` will be accepted and could trigger jobs.
 
 ### Telegram Bot
 

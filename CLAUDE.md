@@ -21,8 +21,8 @@
   - Both: `cd infra && docker compose build orchestrator frontend && docker compose up -d orchestrator frontend --force-recreate`
 - The frontend is served via nginx on port 8200 and proxies `/api` to the orchestrator container.
 - Always verify health after restart: `curl -s http://localhost:8200/health`
-- The Cloudflare tunnel runs as a containerized service (`embry0-cloudflared` in compose). Configuration (hostname, target service, allowed paths) lives in the Cloudflare-side tunnel config, not in this repo. Create a tunnel in the Cloudflare dashboard (see README "Webhook Setup") and paste its token into `.env` as both `CLOUDFLARED_TUNNEL_TOKEN` and `TUNNEL_TOKEN`. Webhooks-only by design — the orchestrator's full API and the dashboard stay LAN-only at `:8200`.
-- For local development without a public URL, use the smee.io relay: set `WEBHOOK_DEV_MODE=true` and leave `GITHUB_WEBHOOK_SECRET` empty, then run `npx smee-client --url https://smee.io/<channel> --target http://localhost:8200/api/v1/webhook`. `WEBHOOK_DEV_MODE=true` is required because smee re-serializes the payload, invalidating GitHub's HMAC signature. See README "Webhook Setup" for full steps. Never use this configuration in production.
+- The Cloudflare tunnel runs as a containerized service (`embry0-cloudflared` in compose). Configuration (hostname, target service, allowed paths) lives in the Cloudflare-side tunnel config, not in this repo. Create a tunnel in the Cloudflare dashboard (see `docs/webhooks.md`) and paste its token into `.env` as both `CLOUDFLARED_TUNNEL_TOKEN` and `TUNNEL_TOKEN`. Webhooks-only by design — the orchestrator's full API and the dashboard stay LAN-only at `:8200`.
+- For local development without a public URL, use the smee.io relay: set `WEBHOOK_DEV_MODE=true` and leave `GITHUB_WEBHOOK_SECRET` empty, then run `npx smee-client --url https://smee.io/<channel> --target http://localhost:8200/api/v1/webhook`. `WEBHOOK_DEV_MODE=true` is required because smee re-serializes the payload, invalidating GitHub's HMAC signature. See `docs/webhooks.md` for full steps. Never use this configuration in production.
 
 ## Sandbox
 

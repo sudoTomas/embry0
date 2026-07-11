@@ -13,8 +13,7 @@ how to know they're up, and what "passing" means.
 > **v1 is dead.** The old single-app schema (`version: 1`, top-level `mode` /
 > `startup:` / `frontend_url`) is read **only** by the migrator. Convert with
 > `embry0 migrate-qa-config` (`--write` backs the old file up to
-> `qa.v1.yaml.bak`). The README's "add a `.embry0/qa.yaml`" snippet still shows
-> v1 — ignore it; this doc supersedes it.
+> `qa.v1.yaml.bak`).
 
 ---
 
