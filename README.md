@@ -73,9 +73,9 @@ graph TB
 ## Security model
 
 - **Sandbox isolation** — every job runs in its own container with `--cap-drop=ALL` and `--security-opt=no-new-privileges`, inside Docker-in-Docker.
-- **Credentials never enter the sandbox** — three proxy services (git, GitHub API, auth) inject tokens transparently, gated by per-sandbox enrollment.
+- **GitHub credentials never touch the sandbox** — git and GitHub-API proxies inject the token transparently, gated by per-sandbox enrollment, so agent code never sees it.
 - **Dynamic network switching** — agents get internet access only when a step needs it.
-- **Command safety** — 34 blocked bash patterns with NFKC unicode normalization, glob restriction, and symlink defense, enforced fail-closed before tool dispatch.
+- **Command safety** — 43 blocked bash patterns with NFKC unicode normalization, glob restriction, and symlink defense, enforced fail-closed before tool dispatch.
 
 Found a vulnerability? See [SECURITY.md](SECURITY.md).
 

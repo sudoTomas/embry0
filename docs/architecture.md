@@ -520,7 +520,7 @@ graph LR
 | Filesystem | Writable root (read-only disabled — Claude CLI requires writable fs), writable `/tmp` (tmpfs, noexec, nosuid), writable `/workspace` |
 | Network | `sandbox-restricted` (default) or `sandbox-internet` (research agents) |
 | Credentials | Injected via proxies (see Proxy Services) — `GITHUB_TOKEN` and `ANTHROPIC_API_KEY` never enter the sandbox env. **Scoped exception:** `CLAUDE_CODE_OAUTH_TOKEN` is passed to the sandbox env in Claude Max mode because the Claude CLI reads it directly from env (product constraint, not a deferred fix). |
-| Command blocking | 34 regex patterns, NFKC unicode normalization, Glob path restriction, symlink defense via `os.path.realpath()` |
+| Command blocking | 43 regex patterns, NFKC unicode normalization, Glob path restriction, symlink defense via `os.path.realpath()` |
 | Code retention | None — repo cloned inside container, deleted on teardown |
 | OAuth credentials | The orchestrator receives the Claude OAuth token via the `CLAUDE_CODE_OAUTH_TOKEN` env var and passes it to the sandbox (see the Credentials row above) |
 | Ring-3 enforcement | Asserted at orchestrator startup (refuses to boot if the installed `claude_agent_sdk` does not expose `hooks`). Per-run hook attachment is unconditional — no fall-back. The in-process executor fallback was removed in 2026-04 hardening. |
