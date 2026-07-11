@@ -31,7 +31,7 @@ export const BOARD_COLUMNS: readonly BoardColumnConfig[] = [
  * silently invisible card.
  *
  * Note: embry0 has no "queued" status; `pending` is it (the `queued` name
- * belongs to the legacy companion agent backend).
+ * belongs to the legacy Companion agent backend).
  */
 export function columnForStatus(status: JobStatus): BoardColumnId {
   switch (status) {

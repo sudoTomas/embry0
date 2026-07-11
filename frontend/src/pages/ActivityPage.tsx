@@ -121,7 +121,7 @@ export function ActivityPage() {
         <div>
           <h1 className="text-2xl font-bold">Activity</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Live agent events and git activity, streaming from the companion agent
+            Live agent events and git activity, streaming from the Companion agent
             via the /agent proxy.
           </p>
         </div>

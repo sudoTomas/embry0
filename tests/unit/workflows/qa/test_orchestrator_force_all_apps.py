@@ -106,8 +106,8 @@ async def test_qa_required_always_runs_all_apps(monkeypatch, fake_provider):
 
     qa = out["qa"]
     assert qa["outcome"]["overall_status"] == "passed"
-    assert sorted(qa["apps_to_qa"]) == ["hub", "lane", "companion"]
-    assert sorted(captured) == ["hub", "lane", "companion"]
+    assert sorted(qa["apps_to_qa"]) == ["companion", "hub", "lane"]
+    assert sorted(captured) == ["companion", "hub", "lane"]
 
 
 @pytest.mark.asyncio
@@ -151,7 +151,7 @@ async def test_force_all_apps_state_flag_runs_all_apps(monkeypatch, fake_provide
 
     qa = out["qa"]
     assert qa["outcome"]["overall_status"] == "passed"
-    assert sorted(qa["apps_to_qa"]) == ["hub", "lane", "companion"]
+    assert sorted(qa["apps_to_qa"]) == ["companion", "hub", "lane"]
 
 
 @pytest.mark.asyncio

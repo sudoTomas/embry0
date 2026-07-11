@@ -4,7 +4,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 // Phase 5: global bug-report / feature-request FAB. Mounted once at AppLayout,
 // fixed to the bottom-right of the viewport, opens a modal with
 // category/severity/urgency + title/body + optional screenshot capture, and
-// posts via the companion agent's `/feedback` intake.
+// posts via the Companion agent's `/feedback` intake.
 
 const mockSubmit = vi.fn();
 const mockCapture = vi.fn();

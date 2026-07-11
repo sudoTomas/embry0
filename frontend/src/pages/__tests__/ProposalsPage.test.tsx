@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-// ProposalsPage talks to the companion agent (not the orchestrator) through
+// ProposalsPage talks to the Companion agent (not the orchestrator) through
 // `src/api/agent.ts`. Tests stub the four touched functions and assert the
 // page renders the list, fires the right mutation per action, and reflects
 // optimistic state on the row immediately (before the mutation resolves).

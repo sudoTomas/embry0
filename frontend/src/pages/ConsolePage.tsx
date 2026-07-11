@@ -66,7 +66,7 @@ function NeedsYouCardWithInputs({ job }: { job: JobResponse }) {
  * drag-and-drop. Board/Runs tabs, `?status=`/`?repo=`/`?label=`/`?tab=`
  * URL-synced so dispatching sessions can hand back a watchable link.
  *
- * Polling defenses (the companion-dashboard idioms as React): react-query's
+ * Polling defenses (the Companion-dashboard idioms as React): react-query's
  * structural sharing keeps the jobs array identity stable when a poll returns
  * unchanged data, so the memoized cards skip re-render; per-card open/scroll
  * state lives in the cards themselves, never in polled data.

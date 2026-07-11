@@ -8,7 +8,7 @@ interface LiveActivityBandProps {
 
 /**
  * Slim live-activity band — visible only when there's something actually
- * happening. Mirrors companion's "progress-wrap" affordance but reads as a
+ * happening. Mirrors Companion's "progress-wrap" affordance but reads as a
  * status strip rather than a literal progress bar (embry0 jobs do not
  * report % completion in a way that would be honest to render).
  */

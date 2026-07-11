@@ -90,7 +90,7 @@ export function CommandPalette() {
               data-testid="command-palette-input"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Ask companion… (e.g. show running jobs)"
+              placeholder="Ask Companion… (e.g. show running jobs)"
               className="h-11 border-0 bg-transparent shadow-none focus-visible:ring-0"
               aria-label="Command query"
             />
@@ -108,7 +108,7 @@ export function CommandPalette() {
             )}
           >
             {interpret.isError
-              ? "companion could not interpret that query."
+              ? "Companion could not interpret that query."
               : result?.message}
           </div>
         )}

@@ -103,7 +103,7 @@ def test_comment_summary_table_orders_apps_alphabetically():
     hub_idx = out.find("apps/hub")
     lane_idx = out.find("apps/lane")
     companion_idx = out.find("apps/companion")
-    assert hub_idx < lane_idx < companion_idx
+    assert companion_idx < hub_idx < lane_idx
 
 
 def test_comment_infra_error_distinguishable():

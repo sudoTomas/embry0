@@ -1,9 +1,9 @@
 import axios from "axios";
 
-// The companion agent is a separate backend from the orchestrator, served behind
+// The Companion agent is a separate backend from the orchestrator, served behind
 // the nginx reverse-proxy prefix `/agent`. Keeping a dedicated axios instance
 // avoids the orchestrator client's `/api/v1` baseURL and any orchestrator-only
-// auth header from leaking onto companion requests.
+// auth header from leaking onto Companion requests.
 export const agentApi = axios.create({
   baseURL: "/agent",
   timeout: 30_000,
@@ -204,7 +204,7 @@ export interface AgentMemory {
   body?: string;
 }
 
-// Scanner proposals — companion-pattern repo-scan output the operator triages and
+// Scanner proposals — Companion-pattern repo-scan output the operator triages and
 // ships as issue-to-PR jobs. Severity is a 1-10 scalar; urgency tiers (Critical
 // 8-10 / High 6-7 / Medium 4-5 / Low 1-3) are derived client-side.
 export interface AgentProposal {
@@ -414,7 +414,7 @@ export async function interpretCommand(q: string): Promise<InterpretResult> {
   return data;
 }
 
-// Posts the Phase-5 feedback FAB payload to the companion agent. Body is
+// Posts the Phase-5 feedback FAB payload to the Companion agent. Body is
 // multipart/form-data because `screenshot` is a Blob. We deliberately do NOT
 // set a Content-Type header here: axios + the browser must set it themselves
 // so the multipart boundary is correct. Passing `"multipart/form-data"`

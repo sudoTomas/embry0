@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// agent.ts owns a sibling axios instance scoped to the companion-proxy prefix
+// agent.ts owns a sibling axios instance scoped to the Companion-proxy prefix
 // (`/agent`), separate from the orchestrator's `/api/v1` client. These tests
 // pin the boundary: every public function's URL + HTTP method is part of the
 // contract the rest of the app relies on.

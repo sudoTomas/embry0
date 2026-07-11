@@ -320,7 +320,7 @@ async def test_orchestrator_node_happy_path_two_apps(monkeypatch, tmp_path):
     out = await qa_orchestrator_node(state, config)
     qa = out["qa"]
     assert qa["outcome"]["overall_status"] == "passed"
-    assert sorted(qa["apps_to_qa"]) == ["hub", "companion"]
+    assert sorted(qa["apps_to_qa"]) == ["companion", "hub"]
     # Phase 5A: orchestrator routes through upsert_with_boot_phase so the
     # boot_phase JSONB column is populated. Each call carries boot_phase=None
     # for the passed-boot path here (sub-tasks above are mocked PASSED).
@@ -1254,12 +1254,12 @@ async def test_orchestrator_persists_run_metadata_with_force_all_apps(monkeypatc
     }
 
     out = await qa_orchestrator_node(state, config)
-    assert sorted(out["qa"]["apps_to_qa"]) == ["hub", "companion"]
+    assert sorted(out["qa"]["apps_to_qa"]) == ["companion", "hub"]
 
     md_repo.upsert.assert_awaited_once()
     kwargs = md_repo.upsert.await_args.kwargs
     assert kwargs["force_all_apps"] is True
-    assert sorted(kwargs["apps_to_qa"]) == ["hub", "companion"]
+    assert sorted(kwargs["apps_to_qa"]) == ["companion", "hub"]
     assert kwargs["apps_skipped"] == []
     assert kwargs["changed_files"] == []
     assert kwargs["base_branch"] == "main"

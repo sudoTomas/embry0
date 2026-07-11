@@ -3,7 +3,7 @@ import type { AgentTaskStatus } from "@/api/agent";
 
 type BlockedStatus = AgentTaskStatus | string | "selected";
 
-// companion-status palette — kept local so the node is a self-contained read of
+// Companion-status palette — kept local so the node is a self-contained read of
 // `{ label, status }` data. Mirrors the table row colors below.
 const STATUS_COLOR: Record<string, string> = {
   selected: "var(--color-primary)",

@@ -16,7 +16,7 @@ def test_discover_finds_three_apps(toy_repo: Path):
     provider = NpmWorkspacesTurboProvider(toy_repo, {})
     apps, _packages = provider.discover()
     names = sorted(a.name for a in apps)
-    assert names == ["hub", "lane", "companion"]
+    assert names == ["companion", "hub", "lane"]
 
 
 def test_discover_app_package_name_matches_package_json(toy_repo: Path):

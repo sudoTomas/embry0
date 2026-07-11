@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
-/** Poll-freshness thresholds (the companion dashboard heartbeat idiom): the jobs
+/** Poll-freshness thresholds (the Companion dashboard heartbeat idiom): the jobs
  * poll runs every 5s, so ~3 missed polls reads STALE and ~9 reads OFFLINE. */
 const STALE_AFTER_MS = 15_000;
 const OFFLINE_AFTER_MS = 45_000;

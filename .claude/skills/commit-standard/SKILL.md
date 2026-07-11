@@ -86,9 +86,9 @@ Skip the scope only when the change is genuinely repo-wide (e.g. `chore: bump de
 |---|---|---|
 | `feat` | New behavior, capability, or surface visible to a user/caller | `feat(stats): live state + per-repo + top-expensive + recent_issues` |
 | `fix` | Bug fix — observable wrong behavior is now right | `fix(qa): destroy sandbox before cleanup_qa_resources removes the qa-net` |
-| `refactor` | Internal restructure with **no behavior change** | `refactor(dashboard): rewrite DashboardPage with companion-style density` |
+| `refactor` | Internal restructure with **no behavior change** | `refactor(dashboard): rewrite DashboardPage with Companion-style density` |
 | `perf` | Performance improvement | `perf(triage): cache pipeline_template lookups` |
-| `docs` | Documentation only | `docs: add companion-pattern-import umbrella + pipeline auto-arrange spec/plan` |
+| `docs` | Documentation only | `docs: add Companion-pattern-import umbrella + pipeline auto-arrange spec/plan` |
 | `test` | Test additions/fixes only | `test(integration): Phase 5 — QA gate routing smoke` |
 | `style` | Formatting/whitespace, no logic change | `style: ruff --fix` |
 | `chore` | Maintenance, deps, tooling | `chore: add high-standard PR template for the contribution loop` |
@@ -120,7 +120,7 @@ docs: enterprise-scale roadmap note
 chore: add high-standard PR template for the contribution loop
 feat(pipeline-editor): auto-arrange via dagre
 feat(badge,divine,layout): badge primitive + divine identity layer + density opt-in
-feat(dashboard,stats): companion-style dense dashboard with per-repo + top-expensive aggregations
+feat(dashboard,stats): Companion-style dense dashboard with per-repo + top-expensive aggregations
 ```
 
 Multi-scope commits (comma-separated) are valid when the change inherently spans related areas — e.g. `feat(badge,divine,layout)` because the change ships a new primitive AND wires it into existing layout/divine surfaces.

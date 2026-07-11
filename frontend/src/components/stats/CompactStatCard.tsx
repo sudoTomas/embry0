@@ -14,7 +14,7 @@ interface CompactStatCardProps {
 }
 
 /**
- * Dense stat card variant for the companion-style 6-up dashboard strip.
+ * Dense stat card variant for the Companion-style 6-up dashboard strip.
  * Smaller padding + smaller font than `StatCard` so six fit at md breakpoint.
  */
 export function CompactStatCard({

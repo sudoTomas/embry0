@@ -9,7 +9,7 @@ import { captureScreen } from "@/lib/capture-screen";
 import { cn } from "@/lib/utils";
 
 // Phase-5 global FAB. Mounted once at AppLayout. Self-contained — opens a
-// modal that posts to the companion agent's `/feedback` intake.
+// modal that posts to the Companion agent's `/feedback` intake.
 
 const CATEGORIES: ReadonlyArray<{ value: FeedbackCategory; label: string }> = [
   { value: "bug", label: "Bug report" },

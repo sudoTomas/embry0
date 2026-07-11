@@ -47,7 +47,7 @@ export interface StatsResponse {
   monthly_cost_usd: number;
   queue_depth: number;
   recent_issues: RecentIssue[];
-  /** Extended 2026-05-03 — companion-style dashboard density. Optional for back-compat. */
+  /** Extended 2026-05-03 — Companion-style dashboard density. Optional for back-compat. */
   top_expensive_issues?: ExpensiveIssue[];
   cost_by_repo?: RepoCost[];
 }
