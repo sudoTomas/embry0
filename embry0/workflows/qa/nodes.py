@@ -135,6 +135,7 @@ async def init_qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
             job_id,
             profile=profile,
             env=env,
+            repo=repo,
         )
 
         # 4–5. Network attach, git creds, clone, capture HEAD sha.

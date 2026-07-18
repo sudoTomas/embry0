@@ -181,6 +181,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
             env=env,
             volumes=sandbox_volumes,
             tmpfs_mounts=sandbox_tmpfs,
+            repo=state["repo"],
         )
     except Exception as exc:  # noqa: BLE001
         return {

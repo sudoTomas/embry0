@@ -944,7 +944,7 @@ async def test_acquire_sandbox_uses_image_tag_when_provided(monkeypatch):
 
     captured_profile: dict = {}
 
-    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None):
+    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None, repo=None):
         captured_profile.update(profile)
         return ("cid-prebaked", "tok-prebaked")
 
@@ -984,7 +984,7 @@ async def test_acquire_sandbox_falls_back_to_base_when_no_tag(monkeypatch):
 
     captured_profile: dict = {}
 
-    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None):
+    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None, repo=None):
         captured_profile.update(profile)
         return ("cid-base", "tok-base")
 
@@ -1033,7 +1033,7 @@ async def test_acquire_sandbox_uses_shared_volume_when_provided(monkeypatch):
     captured_clone_kwargs: dict = {}
     volume_name = "embry0-qa-vol-job-42"
 
-    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None):
+    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None, repo=None):
         captured_create_kwargs["volumes"] = volumes
         captured_create_kwargs["tmpfs_mounts"] = tmpfs_mounts
         return ("cid-shared-vol", "tok-sv")
@@ -1105,7 +1105,7 @@ async def test_acquire_sandbox_no_shared_volume_when_name_absent(monkeypatch):
     captured_create_kwargs: dict = {}
     captured_clone_kwargs: dict = {}
 
-    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None):
+    async def fake_create(job_id, *, profile, env, volumes=None, tmpfs_mounts=None, repo=None):
         captured_create_kwargs["volumes"] = volumes
         captured_create_kwargs["tmpfs_mounts"] = tmpfs_mounts
         return ("cid-no-vol", "tok-nv")
