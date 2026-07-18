@@ -169,3 +169,94 @@ def test_ready_check_expect_status_out_of_range_rejected():
 def test_ready_check_expect_status_default_is_200():
     cfg = parse_qa_yaml_v2(_yaml_with_ready_check(""))  # no expect_status
     assert cfg.defaults.ready_checks[0].expect_status == 200
+
+
+# -------- target: deployed (EMB-27) --------
+
+DEPLOYED_V2 = """
+version: 2
+qa_required: always
+defaults:
+  sandbox_profile: qa-external
+apps:
+  web:
+    target: deployed
+    frontend_url: "http://app.internal.example:8080/"
+    ready_checks:
+      - http: "http://app.internal.example:8080/health"
+        expect_status: [200, 302, 401]
+"""
+
+
+def test_deployed_app_parses_without_provider_or_boot_command():
+    cfg = parse_qa_yaml_v2(DEPLOYED_V2)
+    assert cfg.workspace_provider is None
+    assert cfg.apps["web"].target == "deployed"
+    assert cfg.apps["web"].boot_command is None
+    assert cfg.deployed_app_names() == ["web"]
+    assert cfg.managed_app_names() == []
+
+
+def test_target_defaults_to_managed():
+    cfg = parse_qa_yaml_v2(MINIMAL_V2)
+    assert cfg.apps["hub"].target == "managed"
+
+
+def test_managed_app_requires_boot_command():
+    bad = MINIMAL_V2.replace('    boot_command: "npm run start"\n', "")
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(bad)
+    assert "boot_command is required" in str(exc.value)
+
+
+def test_deployed_app_rejects_boot_command():
+    bad = DEPLOYED_V2.replace("    target: deployed\n", '    target: deployed\n    boot_command: "npm start"\n')
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(bad)
+    assert "boot_command must not be set" in str(exc.value)
+
+
+def test_deployed_app_rejects_seed_command():
+    bad = DEPLOYED_V2.replace("    target: deployed\n", '    target: deployed\n    seed_command: "make seed"\n')
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(bad)
+    assert "seed_command must not be set" in str(exc.value)
+
+
+def test_deployed_app_rejects_loopback_frontend_url():
+    bad = DEPLOYED_V2.replace("http://app.internal.example:8080/", "http://localhost:8080/")
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(bad)
+    assert "loopback" in str(exc.value)
+
+
+def test_deployed_app_rejects_loopback_ready_check():
+    bad = DEPLOYED_V2.replace(
+        'http: "http://app.internal.example:8080/health"',
+        'http: "http://127.0.0.1:8080/health"',
+    )
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(bad)
+    assert "loopback" in str(exc.value)
+
+
+def test_provider_omission_rejected_when_any_app_is_managed():
+    bad = MINIMAL_V2.replace("workspace_provider:\n  type: npm-workspaces-turbo\n", "")
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(bad)
+    assert "workspace_provider is required" in str(exc.value)
+
+
+def test_provider_omission_rejected_when_no_apps():
+    raw = "version: 2\ndefaults:\n  sandbox_profile: slim\napps: {}\n"
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(raw)
+    assert "workspace_provider is required" in str(exc.value)
+
+
+def test_deployed_corpus_fixture_parses():
+    from pathlib import Path
+
+    fixture = Path(__file__).parents[3] / "fixtures" / "qa-yaml-corpus" / "v2" / "deployed-target.yaml"
+    cfg = parse_qa_yaml_v2(fixture.read_text())
+    assert cfg.apps["web"].target == "deployed"

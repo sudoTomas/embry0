@@ -1,0 +1,15 @@
+# All-deployed config (EMB-27): QA an externally running instance.
+# No workspace_provider — legal because every app is target: deployed.
+version: 2
+qa_required: always
+defaults:
+  sandbox_profile: qa-external
+  acceptance_criteria_template:
+    - "The landing page renders without console errors"
+apps:
+  web:
+    target: deployed
+    frontend_url: "http://app.internal.example:8080/"
+    ready_checks:
+      - http: "http://app.internal.example:8080/health"
+        expect_status: [200, 302, 401]

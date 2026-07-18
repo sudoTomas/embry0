@@ -1608,3 +1608,138 @@ async def test_orchestrator_handles_override_lookup_failure(monkeypatch):
     assert out["qa"]["outcome"]["overall_status"] == "passed"
     # Fell through to qa.yaml's fake provider.
     assert captured["name"] == "fake"
+
+
+# -------- target: deployed (EMB-27) --------
+
+_QA_YAML_ALL_DEPLOYED = """
+version: 2
+qa_required: always
+defaults:
+  sandbox_profile: qa-external
+apps:
+  web:
+    target: deployed
+    frontend_url: "http://app.internal.example:8080/"
+    ready_checks:
+      - http: "http://app.internal.example:8080/health"
+        expect_status: [200, 302]
+"""
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_all_deployed_runs_without_provider(monkeypatch):
+    """No workspace_provider at all: the orchestrator must not try to load
+    one and must fan out every declared deployed app."""
+    from embry0.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    def _boom(name, root, config):
+        raise AssertionError("load_provider must not be called for all-deployed configs")
+
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator.load_provider", _boom)
+
+    async def fake_run_subtask(resolved, **kw):
+        assert resolved.target == "deployed"
+        assert resolved.boot_command is None
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+
+    state = {
+        "job_id": "22222222-2222-2222-2222-222222222222",
+        "repo": "org/deployed-repo",
+        "branch_name": "main",
+        "qa": {"qa_yaml_v2_raw": _QA_YAML_ALL_DEPLOYED, "changed_files": []},
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    qa = out["qa"]
+    assert qa["apps_to_qa"] == ["web"]
+    assert qa["outcome"]["overall_status"] == "passed"
+    assert qa["final_status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_mixed_deployed_always_included_in_affected_run(monkeypatch):
+    """qa_required: auto — managed apps follow the affected-set; deployed
+    apps are unioned in unconditionally."""
+    from pathlib import Path
+
+    from embry0.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
+
+    # Insert the deployed app under apps: (NOT appended at the end, which
+    # would nest it under the trailing packages: block).
+    mixed_yaml = _QA_YAML_V2.replace(
+        "packages:",
+        """  live:
+    target: deployed
+    frontend_url: "http://app.internal.example:8080/"
+    ready_checks:
+      - http: "http://app.internal.example:8080/health"
+packages:""",
+    )
+
+    # Only hub is affected; companion (managed) should be skipped; live
+    # (deployed) must run regardless.
+    fake_provider = FakeWorkspaceProvider(
+        apps=[
+            WorkspaceApp("hub", Path("apps/hub"), "@x/hub"),
+            WorkspaceApp("companion", Path("apps/companion"), "@x/companion"),
+        ],
+        packages=[],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        ),
+    )
+    validated_names: list[list[str]] = []
+    original_validate = fake_provider.validate
+
+    def _spy_validate(app_names):
+        validated_names.append(list(app_names))
+        return original_validate(app_names)
+
+    fake_provider.validate = _spy_validate
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    async def fake_run_subtask(resolved, **kw):
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+
+    state = {
+        "job_id": "33333333-3333-3333-3333-333333333333",
+        "repo": "org/mixed-repo",
+        "branch_name": "main",
+        "qa": {"qa_yaml_v2_raw": mixed_yaml, "changed_files": ["apps/hub/app/page.tsx"]},
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    qa = out["qa"]
+    assert sorted(qa["apps_to_qa"]) == ["hub", "live"]
+    # The provider was only asked to validate MANAGED apps — the deployed
+    # app is not a workspace package and must not be rejected by it.
+    assert validated_names and all("live" not in names for names in validated_names)
+    assert qa["final_status"] == "passed"

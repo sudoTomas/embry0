@@ -73,14 +73,19 @@ def resolve_apps_to_qa(
 def validate_against_qa_config(
     provider: WorkspaceProvider,
     config: QAYamlConfigV2,
+    app_names: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Return (errors, warnings).
 
     Errors block the orchestrator from fanning out (run becomes infra_error
     with a clear message). Warnings are surfaced in the PR comment but do
     not gate.
+
+    ``app_names`` restricts validation to a subset of declared apps — the
+    orchestrator passes only ``target: managed`` apps, since deployed apps
+    are not workspace packages (EMB-27). Default (None) validates all.
     """
-    messages = provider.validate(list(config.apps.keys()))
+    messages = provider.validate(list(config.apps.keys()) if app_names is None else list(app_names))
     errors = [m for m in messages if m.lower().startswith("error:")]
     warnings = [m for m in messages if m.lower().startswith("warning:")]
     return errors, warnings

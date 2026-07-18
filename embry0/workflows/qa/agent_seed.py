@@ -25,8 +25,17 @@ start, `state.qa.boot_outcome == "passed"` is your precondition. Do NOT attempt
 to run the startup command, poll ready_checks, or otherwise re-boot the app —
 that's the orchestrator's job and any attempt would conflict.
 
+When job.json has `target: "deployed"`, the app is an EXTERNALLY RUNNING
+deployment that lives outside your sandbox (often a shared live instance).
+There is no boot command at all. Drive it strictly through the browser at
+frontend_url: never try to start, stop, rebuild, or reconfigure it, and be
+conservative with actions that could mutate shared data — when an acceptance
+criterion only requires verifying a control exists, assert its presence
+without activating it.
+
 Inputs (provided in /workspace/.qa/job.json):
   - mode (process | dind)
+  - target (managed | deployed): deployed = externally running app, no boot
   - .embry0/qa.yaml (already validated)
   - acceptance_criteria: list of strings to verify
   - changed_files: list of paths touched by the developer (PR-flow only; may be empty)

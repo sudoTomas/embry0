@@ -135,3 +135,64 @@ def test_app_can_disable_ready_checks_with_explicit_empty_list():
 
     resolved = resolve_app_config("worker", cfg, app_local=None)
     assert resolved.ready_checks == []
+
+
+# -------- target: deployed (EMB-27) --------
+
+_DEPLOYED_ROOT_YAML = """
+version: 2
+qa_required: always
+defaults:
+  mode: dind
+  sandbox_profile: qa-external
+  seed_command: "make seed"
+apps:
+  web:
+    target: deployed
+    frontend_url: "http://app.internal.example:8080/"
+    ready_checks:
+      - http: "http://app.internal.example:8080/health"
+        expect_status: [200, 302]
+"""
+
+
+def test_deployed_resolves_target_and_null_boot_command():
+    cfg = parse_qa_yaml_v2(_DEPLOYED_ROOT_YAML)
+    resolved = resolve_app_config("web", cfg, app_local=None)
+    assert resolved.target == "deployed"
+    assert resolved.boot_command is None
+
+
+def test_deployed_forces_process_mode():
+    """defaults.mode: dind must not leak into a deployed app — nothing boots
+    in-sandbox, so a per-subtask qa-net would be pure waste."""
+    cfg = parse_qa_yaml_v2(_DEPLOYED_ROOT_YAML)
+    resolved = resolve_app_config("web", cfg, app_local=None)
+    assert resolved.mode == "process"
+
+
+def test_deployed_clears_defaults_level_seed_command():
+    cfg = parse_qa_yaml_v2(_DEPLOYED_ROOT_YAML)
+    resolved = resolve_app_config("web", cfg, app_local=None)
+    assert resolved.seed_command is None
+
+
+def test_deployed_with_empty_merged_ready_checks_raises():
+    raw = _DEPLOYED_ROOT_YAML.replace(
+        """    ready_checks:
+      - http: "http://app.internal.example:8080/health"
+        expect_status: [200, 302]
+""",
+        "    ready_checks: []\n",
+    )
+    cfg = parse_qa_yaml_v2(raw)
+    with pytest.raises(ValueError, match="no ready_checks"):
+        resolve_app_config("web", cfg, app_local=None)
+
+
+def test_managed_resolution_unchanged_by_target_field():
+    cfg = parse_qa_yaml_v2(_ROOT_YAML)
+    resolved = resolve_app_config("hub", cfg, app_local=None)
+    assert resolved.target == "managed"
+    assert resolved.boot_command == "PORT=3000 npm run start"
+    assert resolved.mode == "process"

@@ -340,7 +340,11 @@ async def boot_app_node(state: SubTaskState, config: RunnableConfig) -> dict[str
             "boot_outcome": "timeout",
             "boot_duration_ms": result.duration_ms,
             "boot_result": result,
-            "failure_summary": (f"boot_command did not become ready within {resolved.boot_timeout_seconds}s"),
+            "failure_summary": (
+                f"deployed target did not answer ready_checks within {resolved.boot_timeout_seconds}s"
+                if resolved.target == "deployed"
+                else f"boot_command did not become ready within {resolved.boot_timeout_seconds}s"
+            ),
             "completed_at": time.monotonic(),
             "cache_hits_partial": {
                 **(state.get("cache_hits_partial") or {}),
@@ -576,7 +580,7 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
                 )
             ]
         agent_dump["boot"] = QABootResult(
-            command=resolved.boot_command,
+            command=resolved.boot_command or "<deployed-target: no boot command>",
             duration_ms=int(state.get("boot_duration_ms") or 0),
             ready_checks=ready_check_results,
         ).model_dump()

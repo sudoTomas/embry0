@@ -130,10 +130,13 @@ def _synth_v1_qa_yaml(resolved: ResolvedAppConfig) -> dict[str, Any]:
     qa_yaml: dict[str, Any] = {
         "version": 1,
         "mode": resolved.mode,
+        "target": resolved.target,
         "sandbox_profile": resolved.sandbox_profile,
         "frontend_url": resolved.frontend_url,
         "startup": {
-            "command": resolved.boot_command,
+            # Deployed targets have no boot_command (EMB-27); the empty
+            # string makes run_boot_phase skip straight to ready_checks.
+            "command": resolved.boot_command or "",
             "ready_checks": [rc.model_dump() for rc in resolved.ready_checks],
             "boot_timeout_seconds": resolved.boot_timeout_seconds,
         },
@@ -174,6 +177,7 @@ def _build_job_json_payload(
         "job_id": sub_job_id,
         "attempt_n": attempt_n,
         "mode": qa_yaml["mode"],
+        "target": qa_yaml.get("target", "managed"),
         "frontend_url": qa_yaml["frontend_url"],
         "qa_yaml": qa_yaml,
         "acceptance_criteria": list(resolved.acceptance_criteria),

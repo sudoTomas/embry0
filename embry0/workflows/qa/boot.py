@@ -143,6 +143,20 @@ async def run_boot_phase(
     started_at = time.monotonic()
 
     boot_stdout = ""
+    if not command:
+        # Deployed-target apps (EMB-27) have no boot command — the app runs
+        # outside the sandbox. Skip the background launch and go straight to
+        # polling ready_checks as a liveness gate on the external URL.
+        logger.info("boot_command_empty_skipping_launch", container=container_id)
+        return await _poll_ready_checks(
+            ready_checks=ready_checks,
+            budget=budget,
+            started_at=started_at,
+            boot_stdout=boot_stdout,
+            docker=docker,
+            container_id=container_id,
+            sleep_seconds=sleep_seconds,
+        )
     try:
         # Boot command is typically a long-running dev server (e.g. `next dev`,
         # `vite --port`). We can NOT wait for it to exit — it never will. So
@@ -175,6 +189,30 @@ async def run_boot_phase(
             error_message=str(exc) or "boot command background-launch failed",
         )
 
+    return await _poll_ready_checks(
+        ready_checks=ready_checks,
+        budget=budget,
+        started_at=started_at,
+        boot_stdout=boot_stdout,
+        docker=docker,
+        container_id=container_id,
+        sleep_seconds=sleep_seconds,
+    )
+
+
+async def _poll_ready_checks(
+    *,
+    ready_checks: list[dict[str, Any]],
+    budget: float,
+    started_at: float,
+    boot_stdout: str,
+    docker: Any,
+    container_id: str,
+    sleep_seconds: float,
+) -> BootResult:
+    """Poll every ready_check from inside the sandbox until all pass or
+    ``budget`` seconds elapse from ``started_at``. Shared by the boot-command
+    path and the deployed-target (no-command) path."""
     attempts = 0
     failed_checks: list[str] = []
 
