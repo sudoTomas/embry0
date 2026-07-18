@@ -18,6 +18,7 @@ export interface SandboxProfile {
   idle_timeout_seconds: number;
   extra_networks: string[];
   env_defaults: Record<string, string>;
+  extra_hosts: Record<string, string>;
   is_builtin: boolean;
   created_at?: string;
   updated_at?: string;

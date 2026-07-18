@@ -137,6 +137,42 @@ async def test_create_with_custom_profile(manager: SandboxManager):
 
 
 @pytest.mark.asyncio
+async def test_create_passes_profile_extra_hosts_to_docker_run(manager: SandboxManager):
+    """EMB-28: profile extra_hosts become --add-host entries."""
+    profile = {"extra_hosts": {"ai-quoting-dev.raven-cargo.app": "192.168.200.51"}}
+    await manager.create(job_id="job-eh", profile=profile)
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    assert kwargs["extra_hosts"] == {"ai-quoting-dev.raven-cargo.app": "192.168.200.51"}
+
+
+@pytest.mark.asyncio
+async def test_create_drops_invalid_profile_extra_hosts(manager: SandboxManager):
+    """Bad hostnames and non-IP values are dropped, valid entries kept."""
+    profile = {
+        "extra_hosts": {
+            "good.example.com": "10.0.0.5",
+            "bad host!": "10.0.0.6",
+            "no-ip.example.com": "not-an-ip",
+        }
+    }
+    await manager.create(job_id="job-eh2", profile=profile)
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    assert kwargs["extra_hosts"] == {"good.example.com": "10.0.0.5"}
+
+
+@pytest.mark.asyncio
+async def test_profile_extra_hosts_cannot_override_dind_alias(manager: SandboxManager, monkeypatch):
+    """The 'dind' alias is orchestrator-owned; a profile entry is dropped and
+    the resolved gateway IP wins when dind is enabled."""
+    monkeypatch.setattr(manager, "_resolve_dind_gateway_ip", lambda: "172.30.0.2")
+    profile = {"dind_enabled": True, "extra_hosts": {"dind": "6.6.6.6", "app.local": "10.0.0.9"}}
+    await manager.create(job_id="job-eh3", profile=profile)
+    kwargs = manager._docker.build_run_cmd.call_args.kwargs
+    assert kwargs["extra_hosts"]["dind"] == "172.30.0.2"
+    assert kwargs["extra_hosts"]["app.local"] == "10.0.0.9"
+
+
+@pytest.mark.asyncio
 async def test_create_rolls_back_on_enrollment_failure():
     """If enroll_sandbox fails, the container is removed and SandboxInitError raised."""
     from embry0.execution.sandbox_manager import SandboxInitError

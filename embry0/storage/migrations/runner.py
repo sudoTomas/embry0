@@ -838,6 +838,20 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'Latest workflow current_stage observed by the executor stream (e.g. triage_complete, review_passed). NULL for rows that predate this column.';
         """,
     ),
+    (
+        36,
+        "sandbox_profiles — extra_hosts for deployed-target QA (EMB-28)",
+        # extra_hosts: hostname -> IP map emitted as --add-host flags at sandbox
+        # create. Lets a browser-capable sandbox on sandbox-internet reach an
+        # externally deployed app by its real vhost name (DinD NAT is by-IP
+        # only; Docker DNS cannot resolve host/LAN names from nested
+        # sandboxes). The 'dind' alias stays orchestrator-owned and cannot be
+        # overridden from a profile.
+        """
+        ALTER TABLE sandbox_profiles
+            ADD COLUMN IF NOT EXISTS extra_hosts JSONB NOT NULL DEFAULT '{}'::jsonb;
+        """,
+    ),
 ]
 
 

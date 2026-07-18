@@ -21,6 +21,20 @@ def test_builtin_seeds_define_slim_and_qa_jvm():
     assert qa["extra_networks"] == []
 
 
+def test_builtin_seeds_define_qa_external():
+    assert "qa-external" in BUILTIN_SANDBOX_PROFILES
+    qa = BUILTIN_SANDBOX_PROFILES["qa-external"]
+    # Browser + egress in ONE profile — the combination qa-jvm (browser, no
+    # egress) and slim (egress, no browser) each lack. EMB-28.
+    assert qa["base_image"] == "embry0-sandbox-qa:latest"
+    assert qa["extra_networks"] == ["sandbox-internet"]
+    # The app under test runs OUTSIDE the sandbox — no DinD.
+    assert qa["dind_enabled"] is False
+    # Builtin seeds always overwrite at startup, so the builtin row cannot
+    # carry deployment-specific aliases; clones set extra_hosts.
+    assert qa["extra_hosts"] == {}
+
+
 def test_builtin_seeds_define_dev_python():
     assert "dev-python" in BUILTIN_SANDBOX_PROFILES
     dev = BUILTIN_SANDBOX_PROFILES["dev-python"]
