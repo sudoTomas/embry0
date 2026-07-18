@@ -99,13 +99,56 @@ only — heavy overrides go in `apps/<name>/.embry0/app.yaml` (below).
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `boot_command` | str | ✅ | Command that starts the app. |
+| `target` | `managed` \| `deployed` | | Default `managed`. `deployed` = the app is **already running outside the sandbox** — see below. |
+| `boot_command` | str | ✅ for `managed` | Command that starts the app. **Forbidden for `deployed`** — the app is already running. |
 | `frontend_url` | str (http/https) | ✅ | URL the QA agent's headless browser hits. Must be reachable **from inside the sandbox** (in `dind`, a container hostname — not `localhost:<host_port>`). |
 | `sandbox_profile` | str | | Overrides `defaults`. |
 | `ready_checks` | list | | Replaces `defaults` (not merged). |
 | `boot_timeout_seconds` | int 1..3600 | | |
-| `seed_command` | str | | |
+| `seed_command` | str | | **Forbidden for `deployed`** — never seed an externally running instance. |
 | `e2e` | e2e block | | |
+
+### `target: deployed` — QA against an already-running deployment
+
+For a `deployed` app the pipeline skips boot and seed entirely; `ready_checks`
+become a **liveness gate on the external URL** (probed from inside the sandbox,
+same as always) before any agent time is spent. Rules and behavior:
+
+- `boot_command` and `seed_command` are schema errors; `mode` is forced to
+  `process` (no DinD, no per-subtask network).
+- `frontend_url` and every declared ready_check must NOT point at
+  `localhost`/`127.0.0.1` — inside the sandbox that's the sandbox's own
+  loopback, where nothing listens. Use the host's LAN IP, or a vhost name
+  mapped via a cloned `qa-external` sandbox profile's `extra_hosts`.
+- At least one ready_check must survive the merge (schema/resolution error
+  otherwise) — an unreachable external instance should fail fast, not burn an
+  agent run.
+- Deployed apps **always run** when QA runs: a git diff cannot be mapped onto
+  an externally running instance, so the affected-set never filters them. Note
+  the semantics: in a PR-gate run the live deployment does *not* include the
+  PR's changes — deployed-target QA verifies the running instance (liveness +
+  regression), which is most valuable in a post-merge/post-deploy pipeline.
+- `workspace_provider` may be omitted entirely when **all** declared apps are
+  `deployed` (there is no workspace topology to map). One `managed` app makes
+  it required again.
+- Use the `qa-external` sandbox profile (browser + LAN egress) or a clone of
+  it with `extra_hosts` set for Host-header-routed vhosts.
+
+Minimal all-deployed example:
+
+```yaml
+version: 2
+qa_required: always
+defaults:
+  sandbox_profile: qa-external-corvin   # clone of qa-external with extra_hosts
+apps:
+  quoting:
+    target: deployed
+    frontend_url: "http://ai-quoting-dev.raven-cargo.app/"
+    ready_checks:
+      - http: "http://ai-quoting-dev.raven-cargo.app/"
+        expect_status: [200, 302]
+```
 
 ### `ready_checks` entry
 

@@ -169,9 +169,11 @@ async def init_orchestrator_node(
         # local git tree is faster + free vs the GitHub PR API.
         try:
             cfg_for_filter = parse_qa_yaml_v2(yaml_text)
+            # workspace_provider may be None for all-deployed configs (EMB-27).
             affected_filter_text = (
                 cfg_for_filter.workspace_provider.config.get("affected_filter")
-                if isinstance(cfg_for_filter.workspace_provider.config, dict)
+                if cfg_for_filter.workspace_provider is not None
+                and isinstance(cfg_for_filter.workspace_provider.config, dict)
                 else None
             )
         except Exception:
@@ -468,8 +470,9 @@ async def _qa_orchestrator_node_impl(
                 # log line carries the full pre/post diff — operators can
                 # reconstruct exactly what changed without cross-referencing
                 # the committed qa.yaml at run time.
-                qa_yaml_provider_type = cfg.workspace_provider.type
-                qa_yaml_provider_config = dict(cfg.workspace_provider.config)
+                # workspace_provider may be None for all-deployed configs.
+                qa_yaml_provider_type = cfg.workspace_provider.type if cfg.workspace_provider else None
+                qa_yaml_provider_config = dict(cfg.workspace_provider.config) if cfg.workspace_provider else {}
 
                 cfg = cfg.model_copy(
                     update={
@@ -488,26 +491,36 @@ async def _qa_orchestrator_node_impl(
                     override_provider_config=dict(override.config),
                 )
 
-    # 1. Load workspace provider.
+    # 1. Load workspace provider. None is permitted when every declared app
+    #    is target: deployed (schema-enforced, EMB-27) — nothing boots
+    #    in-sandbox, so there is no workspace topology to map.
+    deployed_apps = cfg.deployed_app_names()
     repo_root = Path(state.get("repo_root") or "/workspace")
-    try:
-        provider = load_provider(
-            cfg.workspace_provider.type,
-            repo_root,
-            cfg.workspace_provider.config,
-        )
-    except Exception as exc:  # noqa: BLE001
-        outcome = OrchestratorOutcome(
-            overall_status="infra_error",
-            apps_to_qa=[],
-            failure_summary=f"workspace_provider load failed: {exc}",
-        )
-        qa_state["outcome"] = _outcome_to_dict(outcome)
-        qa_state["final_status"] = "failed"
-        return {"qa": qa_state}
+    provider = None
+    if cfg.workspace_provider is not None:
+        try:
+            provider = load_provider(
+                cfg.workspace_provider.type,
+                repo_root,
+                cfg.workspace_provider.config,
+            )
+        except Exception as exc:  # noqa: BLE001
+            outcome = OrchestratorOutcome(
+                overall_status="infra_error",
+                apps_to_qa=[],
+                failure_summary=f"workspace_provider load failed: {exc}",
+            )
+            qa_state["outcome"] = _outcome_to_dict(outcome)
+            qa_state["final_status"] = "failed"
+            return {"qa": qa_state}
 
-    # 2. Validate qa.yaml apps: vs workspace.
-    errors, warnings = validate_against_qa_config(provider, cfg)
+    # 2. Validate qa.yaml apps: vs workspace — managed apps only. Deployed
+    #    apps are not workspace packages by definition (they run outside
+    #    the sandbox), so the provider must not reject them.
+    if provider is not None:
+        errors, warnings = validate_against_qa_config(provider, cfg, app_names=cfg.managed_app_names())
+    else:
+        errors, warnings = [], []
     if errors:
         outcome = OrchestratorOutcome(
             overall_status="infra_error",
@@ -537,7 +550,12 @@ async def _qa_orchestrator_node_impl(
             reason="qa_required=always" if cfg.qa_required == "always" else "force_all_apps=true",
         )
     else:
-        apps = resolve_apps_to_qa(provider, cfg, changed_files=changed_files)
+        # Managed apps follow the provider's affected-set; deployed apps
+        # always run when QA runs — a diff cannot be mapped onto an
+        # externally running instance, and the run's value there is
+        # liveness + regression against the live deployment (EMB-27).
+        affected_managed = resolve_apps_to_qa(provider, cfg, changed_files=changed_files) if provider else []
+        apps = sorted(set(affected_managed) | set(deployed_apps))
     qa_state["apps_to_qa"] = list(apps)
     qa_state["validation_warnings"] = warnings
 
@@ -589,7 +607,23 @@ async def _qa_orchestrator_node_impl(
         return {"qa": qa_state}
 
     # 4. Resolve per-app configs. Phase 1: app-local files default to None.
-    resolved_configs = [resolve_app_config(name, cfg, app_local=None) for name in apps]
+    # resolve_app_config raises ValueError for semantically invalid merges
+    # (e.g. a deployed app whose merged ready_checks are empty) — surface
+    # that as a validation failure, not a node crash.
+    try:
+        resolved_configs = [resolve_app_config(name, cfg, app_local=None) for name in apps]
+    except ValueError as exc:
+        outcome = OrchestratorOutcome(
+            overall_status="infra_error",
+            apps_to_qa=list(apps),
+            failure_summary=f"app config resolution failed: {exc}",
+            validation_errors=[str(exc)],
+            validation_warnings=warnings,
+        )
+        qa_state["outcome"] = _outcome_to_dict(outcome)
+        qa_state["validation_errors"] = [str(exc)]
+        qa_state["final_status"] = "failed"
+        return {"qa": qa_state}
 
     # 4a. Look up prebaked image tag if cache layer is enabled.
     image_repo = configurable.get("qa_image_tags_repo")

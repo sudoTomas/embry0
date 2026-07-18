@@ -308,3 +308,47 @@ async def test_expect_status_list_rejects_unlisted_code():
     assert result.outcome == "timeout"
     assert "got 500" in result.failed_checks[0]
     assert "[200, 401, 403]" in result.failed_checks[0]
+
+
+# -------- target: deployed — empty boot command (EMB-27) --------
+
+
+@pytest.mark.asyncio
+async def test_empty_command_skips_launch_and_polls_checks():
+    """Deployed-target apps have no boot command: run_boot_phase must not
+    exec a nohup launch, only the ready_check probes against the external
+    URL. (No _make_docker here — that helper models the boot-ack first
+    call, which this path must never make.)"""
+    docker = MagicMock()
+    docker.run_cmd = AsyncMock(return_value=_probe_response(200, "OK"))
+
+    qa_yaml = _make_qa_yaml()
+    qa_yaml["startup"]["command"] = ""
+    result = await run_boot_phase(
+        qa_yaml=qa_yaml,
+        container_id="C",
+        docker=docker,
+        sleep_seconds=0,
+    )
+    assert result.outcome == "passed"
+    # ONLY the probe call — no boot-launch exec.
+    assert docker.run_cmd.await_count == 1
+    probe_cmd = docker.run_cmd.await_args_list[0]
+    assert "nohup" not in str(probe_cmd)
+
+
+@pytest.mark.asyncio
+async def test_empty_command_times_out_when_external_target_down():
+    docker = MagicMock()
+    docker.run_cmd = AsyncMock(return_value=_probe_response(0, "ERR:URLError:Connection refused"))
+
+    qa_yaml = _make_qa_yaml(boot_timeout=0)
+    qa_yaml["startup"]["command"] = ""
+    result = await run_boot_phase(
+        qa_yaml=qa_yaml,
+        container_id="C",
+        docker=docker,
+        sleep_seconds=0,
+    )
+    assert result.outcome == "timeout"
+    assert result.failed_checks

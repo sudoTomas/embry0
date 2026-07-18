@@ -9,9 +9,21 @@ migrator now.
 from __future__ import annotations
 
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# Hosts that resolve to the SANDBOX itself, not an external deployment.
+# A deployed-target frontend_url pointing here is always a config error —
+# probes and the browser run inside the sandbox, whose loopback has nothing
+# listening (the deployed app lives outside).
+_SANDBOX_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"})
+
+
+def _is_sandbox_loopback(url: str) -> bool:
+    host = urlparse(url).hostname or ""
+    return host.lower() in _SANDBOX_LOOPBACK_HOSTS
 
 # -------- Shared building blocks --------
 
@@ -113,10 +125,18 @@ class AppEntry(BaseModel):
     """Per-app entry under root `apps:`. Lightweight overrides only.
 
     Heavy overrides go in apps/<name>/.embry0/app.yaml (parsed separately).
+
+    ``target`` selects the lifecycle (EMB-27):
+      - ``managed`` (default): the pipeline boots the app in-sandbox —
+        ``boot_command`` is required, exactly the pre-existing behavior.
+      - ``deployed``: the app is ALREADY RUNNING outside the sandbox
+        (e.g. a live compose stack on the host). No boot, no seed —
+        ``ready_checks`` become a liveness gate on the external URL.
     """
 
     model_config = ConfigDict(extra="forbid")
-    boot_command: str = Field(min_length=1)
+    target: Literal["managed", "deployed"] = "managed"
+    boot_command: str | None = Field(default=None, min_length=1)
     frontend_url: str = Field(min_length=1)
     sandbox_profile: str | None = None
     ready_checks: list[QAReadyCheck] | None = None
@@ -131,6 +151,32 @@ class AppEntry(BaseModel):
             raise ValueError(f"frontend_url must be http(s), got {v!r}")
         return v
 
+    @model_validator(mode="after")
+    def _validate_target_shape(self) -> AppEntry:
+        if self.target == "managed":
+            if not self.boot_command:
+                raise ValueError("boot_command is required for target: managed apps")
+            return self
+        # target == "deployed"
+        if self.boot_command is not None:
+            raise ValueError("boot_command must not be set for target: deployed apps — the app is already running")
+        if self.seed_command is not None:
+            raise ValueError(
+                "seed_command must not be set for target: deployed apps — never seed an externally running instance"
+            )
+        if _is_sandbox_loopback(self.frontend_url):
+            raise ValueError(
+                f"frontend_url {self.frontend_url!r} points at the sandbox's own loopback; "
+                "a deployed target must be an external URL (LAN IP or an extra_hosts alias)"
+            )
+        for rc in self.ready_checks or []:
+            if _is_sandbox_loopback(rc.http):
+                raise ValueError(
+                    f"ready_check {rc.http!r} points at the sandbox's own loopback; "
+                    "deployed-target checks must probe the external URL"
+                )
+        return self
+
 
 class PackageEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -138,18 +184,44 @@ class PackageEntry(BaseModel):
 
 
 class QAYamlConfigV2(BaseModel):
-    """Top-level .embry0/qa.yaml v2 contract."""
+    """Top-level .embry0/qa.yaml v2 contract.
+
+    ``workspace_provider`` may be omitted ONLY when every declared app is
+    ``target: deployed`` (EMB-27) — there is no workspace topology to map
+    when nothing boots in-sandbox. Any managed app requires a provider.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     version: Literal[2]
-    workspace_provider: WorkspaceProviderRef
+    workspace_provider: WorkspaceProviderRef | None = None
     defaults: DefaultsBlock = Field(default_factory=DefaultsBlock)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     qa_required: Literal["auto", "always", "never"] = "auto"
     parallelism: ParallelismConfig = Field(default_factory=ParallelismConfig)
     apps: dict[str, AppEntry] = Field(default_factory=dict)
     packages: dict[str, PackageEntry] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _provider_required_unless_all_deployed(self) -> QAYamlConfigV2:
+        if self.workspace_provider is None:
+            if not self.apps:
+                raise ValueError("workspace_provider is required when no apps are declared")
+            managed = [n for n, a in self.apps.items() if a.target == "managed"]
+            if managed:
+                raise ValueError(
+                    "workspace_provider is required — these apps are target: managed "
+                    f"and need workspace topology: {sorted(managed)}"
+                )
+        return self
+
+    def deployed_app_names(self) -> list[str]:
+        """Names of apps with ``target: deployed``, sorted."""
+        return sorted(n for n, a in self.apps.items() if a.target == "deployed")
+
+    def managed_app_names(self) -> list[str]:
+        """Names of apps with ``target: managed``, sorted."""
+        return sorted(n for n, a in self.apps.items() if a.target == "managed")
 
 
 # -------- App-local override file --------

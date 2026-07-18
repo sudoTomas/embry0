@@ -24,10 +24,15 @@ from embry0.workflows.qa.qa_yaml_v2 import (
 
 @dataclass(frozen=True, slots=True)
 class ResolvedAppConfig:
-    """Fully merged config for one app — what the sub-task subgraph sees."""
+    """Fully merged config for one app — what the sub-task subgraph sees.
+
+    ``target`` is ``managed`` (pipeline boots the app; ``boot_command`` set)
+    or ``deployed`` (app already running externally; ``boot_command`` None,
+    ready_checks act as a liveness gate on the external URL). EMB-27.
+    """
 
     app_name: str
-    boot_command: str
+    boot_command: str | None
     frontend_url: str
     mode: str
     sandbox_profile: str
@@ -36,6 +41,7 @@ class ResolvedAppConfig:
     seed_command: str | None
     e2e: QAE2E | None
     acceptance_criteria: list[str]
+    target: str = "managed"
 
 
 def resolve_app_config(
@@ -93,15 +99,31 @@ def resolve_app_config(
     else:
         acceptance_criteria = list(defaults.acceptance_criteria_template)
 
+    if app_entry.target == "deployed":
+        # Deployed targets never seed (AppEntry forbids its own seed_command;
+        # a defaults-level one must not leak in either) and never run DinD —
+        # nothing boots in-sandbox, so mode is forced to "process" to keep
+        # acquire_sandbox from creating a per-subtask qa-net.
+        seed_command = None
+        mode = "process"
+        if not ready_checks:
+            raise ValueError(
+                f"app {app_name!r} is target: deployed but has no ready_checks after merge — "
+                "an external instance must be liveness-gated before spending agent time on it"
+            )
+    else:
+        mode = defaults.mode
+
     return ResolvedAppConfig(
         app_name=app_name,
         boot_command=app_entry.boot_command,
         frontend_url=app_entry.frontend_url,
-        mode=defaults.mode,
+        mode=mode,
         sandbox_profile=sandbox_profile,
         ready_checks=list(ready_checks),
         boot_timeout_seconds=boot_timeout_seconds,
         seed_command=seed_command,
         e2e=e2e,
         acceptance_criteria=acceptance_criteria,
+        target=app_entry.target,
     )
