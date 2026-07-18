@@ -15,6 +15,7 @@
 
 ## Deployment
 
+- **Two `.env` files — know which one you're editing.** Container runtime env comes from the **repo-root `.env`** (`env_file: ../.env` on the orchestrator service): all secrets and tokens (`GITHUB_TOKEN`, `GITHUB_TOKEN__<OWNER>`, `CLAUDE_CODE_OAUTH_TOKEN`, `PROXY_ADMIN_TOKEN`, `API_KEY`, tunnel tokens) must be edited there. `infra/.env` feeds only docker-compose `${…}` interpolation (`POSTGRES_*`, `PROD_PORT`, resource caps) and is not loaded into any container — its historical copies of the secrets are dead weight. When another doc says "`.env`" for a secret, it means the root file.
 - embry0 runs in Docker via `infra/docker-compose.yml`. After any code changes, you **must** rebuild and restart the affected containers:
   - Backend changes: `cd infra && docker compose build orchestrator && docker compose up -d orchestrator --force-recreate`
   - Frontend changes: `cd infra && docker compose build frontend && docker compose up -d frontend --force-recreate`
