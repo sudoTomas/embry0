@@ -89,3 +89,13 @@ cd infra && docker compose up -d --force-recreate orchestrator postgres-backup
 ```
 
 Note: The `backup-data` volume persists across redeployments. Rotate backup credentials by updating `POSTGRES_PASSWORD` (above) — the backup container reads it from the environment.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in Linear (team `EMB`), not GitHub Issues — the public GitHub repo is a PR-only surface. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
