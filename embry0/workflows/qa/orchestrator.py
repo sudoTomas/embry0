@@ -125,7 +125,7 @@ async def init_orchestrator_node(
     changed_files: list[str] = []
     staging_path_str: str | None = None
     try:
-        container_id, sandbox_token = await sandbox_mgr.create(bootstrap_job_id, profile=profile, env=env)
+        container_id, sandbox_token = await sandbox_mgr.create(bootstrap_job_id, profile=profile, env=env, repo=repo)
         cloned = await prep_qa_sandbox_clone(
             docker=docker,
             proxy_mgr=proxy_mgr,

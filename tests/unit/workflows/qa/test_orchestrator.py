@@ -414,7 +414,7 @@ async def test_init_orchestrator_node_writes_yaml_to_state(monkeypatch):
         def __init__(self):
             self.last_env: dict = {}
 
-        async def create(self, job_id, profile, env):
+        async def create(self, job_id, profile, env, repo=None):
             self.last_env = dict(env)
             return f"sb-{job_id}", "tok-" + "A" * 40
 
@@ -767,7 +767,7 @@ async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch):
     )
 
     class _Sb:
-        async def create(self, job_id, profile, env):
+        async def create(self, job_id, profile, env, repo=None):
             return f"sb-{job_id}", "tok-" + "A" * 40
 
         async def destroy(self, cid):
