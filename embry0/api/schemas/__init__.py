@@ -1,5 +1,6 @@
 """Pydantic request/response models for the API."""
 
+import ipaddress
 import re
 from datetime import datetime
 from enum import StrEnum
@@ -12,6 +13,9 @@ _REPO_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
 # Slash-separated alnum + . _ - : segments. Colon allowed for ISO timestamps in
 # filenames. No leading/trailing slash. No '..' segments. No double slashes.
 _SAFE_QA_PATH = re.compile(r"^[A-Za-z0-9._:\-]+(/[A-Za-z0-9._:\-]+)*$")
+
+# RFC-1123-ish hostname: dot-separated labels, alnum with inner hyphens.
+_HOSTNAME_PATTERN = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*$")
 
 
 class QAJobOverrides(BaseModel):
@@ -224,6 +228,24 @@ class SandboxProfileRequest(BaseModel):
     idle_timeout_seconds: int = Field(default=600, gt=0)
     extra_networks: list[str] = Field(default_factory=list)
     env_defaults: dict[str, str] = Field(default_factory=dict)
+    # hostname -> IP map emitted as --add-host flags at sandbox create
+    # (EMB-28: lets browser-capable sandboxes reach an externally deployed
+    # app by its real vhost name). The 'dind' alias is orchestrator-owned.
+    extra_hosts: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("extra_hosts")
+    @classmethod
+    def _validate_extra_hosts(cls, v: dict[str, str]) -> dict[str, str]:
+        for host, ip in v.items():
+            if not _HOSTNAME_PATTERN.match(host):
+                raise ValueError(f"extra_hosts: invalid hostname {host!r}")
+            if host == "dind":
+                raise ValueError("extra_hosts: 'dind' is reserved for the orchestrator")
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError as exc:
+                raise ValueError(f"extra_hosts: value for {host!r} must be an IP literal, got {ip!r}") from exc
+        return v
 
 
 class ContextConfigRequest(BaseModel):

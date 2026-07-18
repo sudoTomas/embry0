@@ -34,6 +34,7 @@ class SandboxProfilesRepository:
         idle_timeout_seconds: int = 600,
         extra_networks: list[str] | None = None,
         env_defaults: dict[str, str] | None = None,
+        extra_hosts: dict[str, str] | None = None,
         is_builtin: bool = False,
         _allow_builtin_overwrite: bool = False,
     ) -> None:
@@ -59,9 +60,9 @@ class SandboxProfilesRepository:
                 memory, cpus, pids_limit, cap_drop, cap_add, security_opt,
                 agent_timeout_seconds, container_timeout_seconds,
                 description, dind_enabled, idle_timeout_seconds,
-                extra_networks, env_defaults, is_builtin, updated_at
+                extra_networks, env_defaults, extra_hosts, is_builtin, updated_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                      $13, $14, $15, $16, $17, $18, NOW())
+                      $13, $14, $15, $16, $17, $18, $19, NOW())
             ON CONFLICT (name) DO UPDATE SET
                 base_image = EXCLUDED.base_image,
                 additional_packages = EXCLUDED.additional_packages,
@@ -79,6 +80,7 @@ class SandboxProfilesRepository:
                 idle_timeout_seconds = EXCLUDED.idle_timeout_seconds,
                 extra_networks = EXCLUDED.extra_networks,
                 env_defaults = EXCLUDED.env_defaults,
+                extra_hosts = EXCLUDED.extra_hosts,
                 is_builtin = EXCLUDED.is_builtin,
                 updated_at = NOW()
             """,
@@ -99,6 +101,7 @@ class SandboxProfilesRepository:
             idle_timeout_seconds,
             extra_networks or [],
             env_defaults or {},
+            extra_hosts or {},
             is_builtin,
         )
         logger.info("sandbox_profile_upserted", name=name)

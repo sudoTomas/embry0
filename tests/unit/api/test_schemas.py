@@ -74,6 +74,29 @@ def test_sandbox_profile_request():
     assert req.name == "python-3.12"
 
 
+def test_sandbox_profile_request_accepts_valid_extra_hosts():
+    req = SandboxProfileRequest(
+        name="qa-external-corvin",
+        extra_hosts={"ai-quoting-dev.raven-cargo.app": "192.168.200.51", "ipv6.local": "::1"},
+    )
+    assert req.extra_hosts["ai-quoting-dev.raven-cargo.app"] == "192.168.200.51"
+
+
+def test_sandbox_profile_request_rejects_non_ip_extra_host_value():
+    with pytest.raises(ValidationError):
+        SandboxProfileRequest(name="p", extra_hosts={"app.local": "not-an-ip"})
+
+
+def test_sandbox_profile_request_rejects_invalid_extra_host_name():
+    with pytest.raises(ValidationError):
+        SandboxProfileRequest(name="p", extra_hosts={"bad host!": "10.0.0.1"})
+
+
+def test_sandbox_profile_request_rejects_reserved_dind_alias():
+    with pytest.raises(ValidationError):
+        SandboxProfileRequest(name="p", extra_hosts={"dind": "10.0.0.1"})
+
+
 def test_budget_config_response():
     resp = BudgetConfigResponse(
         max_budget_per_job_usd=10.0,

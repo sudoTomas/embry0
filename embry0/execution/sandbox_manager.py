@@ -6,6 +6,8 @@ No customer code on the host — sandbox clones repo internally.
 
 from __future__ import annotations
 
+import ipaddress
+import re
 import socket
 from typing import TYPE_CHECKING, Any
 
@@ -33,6 +35,12 @@ class SandboxInitError(RuntimeError):
     def __init__(self, message: str, *, error_code: object) -> None:
         super().__init__(message)
         self.error_code = error_code
+
+
+# RFC-1123-ish hostname for profile extra_hosts keys. Kept local rather than
+# imported from api.schemas — the execution layer must not depend on the API
+# layer (same rule mirrored in SandboxProfileRequest._validate_extra_hosts).
+_HOSTNAME_PATTERN = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*$")
 
 
 def _sanitize_docker_name_component(s: str) -> str:
@@ -63,6 +71,7 @@ _DEFAULT_PROFILE: dict[str, Any] = {
     # ALL, no-new-privileges, Ring-3 PreToolUse hook, no static credentials in
     # env (only the per-job OAuth token + git credential proxy bearer).
     "extra_networks": ["sandbox-internet"],
+    "extra_hosts": {},
     "container_timeout_seconds": 3600,
 }
 
@@ -166,7 +175,24 @@ class SandboxManager:
         # surfaces the real certs to the sandbox.
         dind_enabled = bool(p.get("dind_enabled", False))
         extra_volumes: list[str] = []
+        # Profile-level host aliases (EMB-28): emitted as --add-host flags so a
+        # sandbox on sandbox-internet can reach an externally deployed app by
+        # its real vhost name (DinD NAT is by-IP only; Docker DNS cannot
+        # resolve host/LAN names from nested sandboxes). Validated here as
+        # defense-in-depth — profiles can enter the DB without passing the API
+        # schema (seeds, direct SQL). The 'dind' alias is orchestrator-owned
+        # and assigned after this merge, so a profile can never override it.
         extra_hosts: dict[str, str] = {}
+        for host, ip in (p.get("extra_hosts") or {}).items():
+            if host == "dind" or not _HOSTNAME_PATTERN.match(host):
+                logger.warning("profile_extra_host_invalid_name_dropped", host=host)
+                continue
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError:
+                logger.warning("profile_extra_host_invalid_ip_dropped", host=host, ip=ip)
+                continue
+            extra_hosts[host] = ip
         if dind_enabled:
             extra_volumes.append("/certs/client:/certs/client:ro")
             env.setdefault("DOCKER_HOST", "tcp://dind:2376")

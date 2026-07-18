@@ -76,6 +76,32 @@ BUILTIN_SANDBOX_PROFILES: dict[str, dict[str, Any]] = {
         "extra_networks": [],
         "env_defaults": {"LANG": "C.UTF-8"},
     },
+    "qa-external": {
+        "base_image": "embry0-sandbox-qa:latest",
+        "description": (
+            "Deployed-target QA runtime: Playwright browser + LAN egress for "
+            "driving an externally running app. No DinD — the app under test "
+            "is not booted in the sandbox."
+        ),
+        "memory": "8g",
+        "cpus": "4",
+        "pids_limit": 512,
+        "agent_timeout_seconds": 600,
+        "container_timeout_seconds": 7200,
+        "idle_timeout_seconds": 600,
+        "dind_enabled": False,
+        # sandbox-internet provides NAT egress so headless Chromium can reach
+        # the deployed instance (and the Claude CLI can reach
+        # api.anthropic.com). Egress is by IP only — Docker DNS cannot resolve
+        # host/LAN names from nested sandboxes — so deployments that need a
+        # vhost name (Host-header routing) clone this profile and set
+        # extra_hosts to map each hostname to the target's LAN IP. The
+        # builtin row keeps extra_hosts empty because seeds always overwrite
+        # at startup and alias values are deployment-specific.
+        "extra_networks": ["sandbox-internet"],
+        "extra_hosts": {},
+        "env_defaults": {"LANG": "C.UTF-8"},
+    },
 }
 
 

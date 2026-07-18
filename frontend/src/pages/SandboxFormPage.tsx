@@ -37,6 +37,7 @@ const DEFAULT_PROFILE: ProfileForm = {
   idle_timeout_seconds: 600,
   extra_networks: [],
   env_defaults: {},
+  extra_hosts: {},
 };
 
 export function SandboxFormPage() {
@@ -57,6 +58,11 @@ export function SandboxFormPage() {
     JSON.stringify(DEFAULT_PROFILE.env_defaults, null, 2)
   );
   const [envDefaultsValid, setEnvDefaultsValid] = useState<boolean>(true);
+  // Same raw-text pattern for extra_hosts (hostname -> IP map).
+  const [extraHostsText, setExtraHostsText] = useState<string>(
+    JSON.stringify(DEFAULT_PROFILE.extra_hosts, null, 2)
+  );
+  const [extraHostsValid, setExtraHostsValid] = useState<boolean>(true);
 
   const isBuiltin = isEditMode && !!existing?.is_builtin;
 
@@ -67,6 +73,8 @@ export function SandboxFormPage() {
       setForm(rest);
       setEnvDefaultsText(JSON.stringify(rest.env_defaults ?? {}, null, 2));
       setEnvDefaultsValid(true);
+      setExtraHostsText(JSON.stringify(rest.extra_hosts ?? {}, null, 2));
+      setExtraHostsValid(true);
     }
   }, [isEditMode, existing]);
 
@@ -103,6 +111,32 @@ export function SandboxFormPage() {
     }
   };
 
+  const handleExtraHostsChange = (text: string) => {
+    setExtraHostsText(text);
+    const trimmed = text.trim();
+    if (trimmed === "") {
+      setField("extra_hosts", {});
+      setExtraHostsValid(true);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        !Array.isArray(parsed) &&
+        Object.values(parsed).every((v) => typeof v === "string")
+      ) {
+        setField("extra_hosts", parsed as Record<string, string>);
+        setExtraHostsValid(true);
+      } else {
+        setExtraHostsValid(false);
+      }
+    } catch {
+      setExtraHostsValid(false);
+    }
+  };
+
   const handleSave = () => {
     if (!form.name.trim()) {
       toast.error("Profile name is required");
@@ -110,6 +144,10 @@ export function SandboxFormPage() {
     }
     if (!envDefaultsValid) {
       toast.error("Env Defaults must be a valid JSON object of string values");
+      return;
+    }
+    if (!extraHostsValid) {
+      toast.error("Extra Hosts must be a valid JSON object of hostname → IP strings");
       return;
     }
 
@@ -458,6 +496,28 @@ export function SandboxFormPage() {
             {!envDefaultsValid && (
               <p className="text-xs text-red-400 mt-1">
                 Invalid JSON — must be a flat object of string values, e.g. {`{"KEY": "value"}`}.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <Label htmlFor="extra_hosts_json">Extra Hosts (JSON)</Label>
+            <textarea
+              id="extra_hosts_json"
+              value={extraHostsText}
+              onChange={(e) => handleExtraHostsChange(e.target.value)}
+              disabled={isBuiltin}
+              rows={4}
+              className="mt-1 w-full font-mono text-xs bg-white/5 border border-white/10 rounded px-2 py-1.5 disabled:opacity-50"
+              placeholder='{"app.example.com": "192.168.1.10"}'
+            />
+            <p className="text-xs text-white/30 mt-1">
+              Hostname → IP aliases emitted as --add-host at sandbox create, for reaching an
+              externally deployed app by its vhost name. The "dind" alias is reserved.
+            </p>
+            {!extraHostsValid && (
+              <p className="text-xs text-red-400 mt-1">
+                Invalid JSON — must be a flat object mapping hostnames to IP strings.
               </p>
             )}
           </div>

@@ -39,6 +39,7 @@ async def create_profile(
         idle_timeout_seconds=req.idle_timeout_seconds,
         extra_networks=req.extra_networks,
         env_defaults=req.env_defaults,
+        extra_hosts=req.extra_hosts,
         # is_builtin NOT exposed — it's server-controlled
     )
     return {"name": req.name, "status": "created"}
@@ -83,6 +84,7 @@ async def update_profile(
         idle_timeout_seconds=req.idle_timeout_seconds,
         extra_networks=req.extra_networks,
         env_defaults=req.env_defaults,
+        extra_hosts=req.extra_hosts,
         # is_builtin NOT exposed — it's server-controlled
     )
     return {"name": name, "status": "updated"}

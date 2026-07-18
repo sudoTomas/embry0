@@ -84,7 +84,7 @@ hard validation error**, not a silent ignore.
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `mode` | `process` \| `dind` | `process` | **Repo-wide** — there is no per-app `mode`. `process` for plain dev servers; `dind` when boot needs Docker. |
-| `sandbox_profile` | str | `slim` | e.g. `slim`, `qa-node`, `qa-jvm`. |
+| `sandbox_profile` | str | `slim` | e.g. `slim`, `qa-node`, `qa-jvm`, `qa-external` (browser + LAN egress, no DinD — for QA against an externally deployed instance; clone it to set `extra_hosts` vhost aliases). |
 | `ready_checks` | list of check | `[]` | See below. Empty ⇒ boot "passes" right after the boot command with no verification (logged as a warning). |
 | `boot_timeout_seconds` | int 1..3600 | `600` | |
 | `seed_command` | str \| null | none | Optional data seed after boot. |
