@@ -56,6 +56,7 @@ def test_reserved_env_keys_export_expected_set() -> None:
         # storageState pre-authentication (EMB-40):
         "QA_STORAGE_STATE_PATH",
         "PLAYWRIGHT_MCP_STORAGE_STATE",
+        "PLAYWRIGHT_MCP_ISOLATED",
         # DinD certs are mounted by the orchestrator for dind_enabled profiles:
         "DOCKER_HOST",
         "DOCKER_TLS_VERIFY",

@@ -83,6 +83,7 @@ def test_build_qa_sandbox_env_no_storage_state_by_default():
     )
     assert "PLAYWRIGHT_MCP_STORAGE_STATE" not in env
     assert "QA_STORAGE_STATE_PATH" not in env
+    assert "PLAYWRIGHT_MCP_ISOLATED" not in env
 
 
 def test_build_qa_sandbox_env_storage_state_vars_when_enabled():
@@ -98,6 +99,9 @@ def test_build_qa_sandbox_env_storage_state_vars_when_enabled():
     )
     assert env["PLAYWRIGHT_MCP_STORAGE_STATE"] == QA_STORAGE_STATE_PATH
     assert env["QA_STORAGE_STATE_PATH"] == QA_STORAGE_STATE_PATH
+    # storageState only applies to isolated contexts — without this the
+    # MCP's persistent-profile default silently ignores the state file.
+    assert env["PLAYWRIGHT_MCP_ISOLATED"] == "1"
 
 
 def test_user_cannot_override_storage_state_env():

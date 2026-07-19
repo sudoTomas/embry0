@@ -194,3 +194,50 @@ def test_system_prompt_documents_pre_authenticated_contract():
     assert "pre_authenticated" in SYSTEM_PROMPT
     # the agent must be told NOT to drive login forms when pre-authenticated
     assert "log in" in SYSTEM_PROMPT.lower() or "login" in SYSTEM_PROMPT.lower()
+
+
+async def test_collect_artifacts_preserves_auth_setup_marker():
+    """collect_artifacts merges the agent's result.json over the accumulated
+    raw_result instead of replacing it — the auth_setup marker (and
+    seed/e2e stdout) must survive into the persisted result."""
+    from embry0.workflows.qa.subtask_nodes import collect_artifacts_node
+
+    result_json = json.dumps(
+        {
+            "schema_version": 1,
+            "job_id": "run-1__web",
+            "attempt_n": 1,
+            "phase_reached": "report",
+            "overall": "passed",
+            "boot": None,
+            "seed": None,
+            "e2e": None,
+            "acceptance_results": [
+                {
+                    "criterion": "dashboard renders",
+                    "status": "passed",
+                    "evidence": [],
+                    "notes": "ok",
+                    "console_errors": [],
+                    "network_failures": [],
+                    "log_excerpts": [],
+                }
+            ],
+            "anomalies": [],
+        }
+    )
+    docker = MagicMock()
+    docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
+    docker.run_cmd = AsyncMock(return_value=result_json)
+
+    state = {
+        "status": None,
+        "resolved": _resolved_app(auth=_secret_auth()),
+        "sandbox_id": "cid",
+        "boot_outcome": None,
+        "boot_duration_ms": None,
+        "raw_result": {"auth_setup": {"source": "secret", "cookies": 5, "origins": 0}},
+    }
+    out = await collect_artifacts_node(state, {"configurable": {"docker": docker}})
+    assert out["raw_result"]["auth_setup"] == {"source": "secret", "cookies": 5, "origins": 0}
+    assert out["raw_result"]["overall"] == "passed"
