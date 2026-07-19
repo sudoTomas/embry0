@@ -170,6 +170,11 @@ class JobState(TypedDict, total=False):
     task: str
     issue_number: int | None
     issue_id: str | None
+    # EMB-39: labels from the originating issue (empty for standalone QA
+    # jobs). Feeds conditional-criteria `labels:` predicates in the QA
+    # orchestrator. Top-level key — MUST stay declared here or LangGraph's
+    # state-merge reducer silently drops it (see repo_root note below).
+    issue_labels: list[str]
     sandbox_container_id: str | None
     pipeline_config: PipelineConfig  # always the flat inner PipelineConfig dict (never TriageDecision)
     triage_decision: TriageDecision  # full triage output including action/reasoning/questions
@@ -299,3 +304,10 @@ class QAStateBlock(TypedDict, total=False):
     # cfg.qa_required == "always" produces the same effect (per-repo vs
     # per-job knob). Defaults to False.
     force_all_apps: bool
+    # EMB-39: conditional-criteria group names forced ON for this run via
+    # QAJobOverrides.force_conditional_groups (["*"] = all groups).
+    force_conditional_groups: list[str]
+    # Repo-relative changed files from init_orchestrator_node's git diff.
+    # Was previously written by key without a declaration (survived only
+    # because nodes replace the whole qa dict); declared for typing hygiene.
+    changed_files: list[str] | None

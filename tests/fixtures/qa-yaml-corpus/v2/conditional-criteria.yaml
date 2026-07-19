@@ -1,0 +1,32 @@
+# Conditional (relevance-gated) acceptance criteria — EMB-39.
+# Two groups: one predicate-gated on pricing paths, one app-scoped and
+# gated on the affected set + a label.
+version: 2
+workspace_provider:
+  type: npm-workspaces-turbo
+defaults:
+  acceptance_criteria_template:
+    - "App loads without console errors"
+apps:
+  quoting:
+    boot_command: "npm run dev --workspace apps/quoting"
+    frontend_url: "http://localhost:3000"
+  hub:
+    boot_command: "npm run dev --workspace apps/hub"
+    frontend_url: "http://localhost:3001"
+conditional_acceptance_criteria:
+  - name: pricing
+    when:
+      changed_paths:
+        - "platform/api/**/pricing/**"
+        - "apps/quoting/**/pricing*/**"
+    criteria:
+      - "Exercise Price Now on a NET-NEW lane (the sanctioned mutation)"
+  - name: hub-deep
+    when:
+      affected_apps: ["hub"]
+      labels: ["qa:deep"]
+    apps: ["hub"]
+    criteria:
+      - "Walk every hub list view and assert row counts render"
+      - "Open the hub settings panel and assert all toggles are present"

@@ -125,6 +125,41 @@ export function AffectedSetView({ runId }: Props) {
         />
       </div>
 
+      {data.conditional_groups.length > 0 && (
+        <section
+          className="rounded-md border bg-card p-4"
+          data-testid="conditional-groups-section"
+        >
+          <header className="mb-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
+              Conditional criteria groups ({data.conditional_groups.length})
+            </h2>
+          </header>
+          <ul className="space-y-1 text-sm">
+            {data.conditional_groups.map((g) => (
+              <li
+                key={g.name}
+                className="flex flex-wrap items-center gap-2 rounded-sm bg-white/5 px-2 py-1"
+              >
+                <span className="font-mono text-white/80">{g.name}</span>
+                <span
+                  className={
+                    g.source === "forced"
+                      ? "rounded-sm bg-amber-500/20 px-1.5 py-0.5 text-xs uppercase text-amber-300"
+                      : "rounded-sm bg-emerald-500/20 px-1.5 py-0.5 text-xs uppercase text-emerald-300"
+                  }
+                >
+                  {g.source}
+                </span>
+                <span className="font-mono text-xs text-white/50">
+                  {g.apps.join(", ") || "no apps in run"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section
         className="rounded-md border bg-card p-4"
         data-testid="dep-graph-section"

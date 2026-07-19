@@ -54,6 +54,7 @@ parallelism:
 
 apps: { ... }                    # the apps embry0 may boot (the core section)
 packages: { ... }                # shared packages + cascade behaviour
+conditional_acceptance_criteria: [ ... ]   # relevance-gated criteria groups (EMB-39)
 ```
 
 Every block uses Pydantic `extra="forbid"` — **an unknown/misspelled key is a
@@ -217,6 +218,57 @@ By default a change to a shared package **cascades** — every app that depends 
 it gets QA'd. Set `no_cascade: true` for low-risk packages (config, manifests)
 so their churn doesn't re-QA the whole repo.
 
+### `conditional_acceptance_criteria` — relevance-gated criteria (EMB-39)
+
+Costly or side-effectful criteria (a flow that spends real API credits or GPU
+inference) should not run on every QA. Declare them in named groups guarded by
+a `when:` predicate over the run's change context; the orchestrator evaluates
+the predicates at pipeline build and **appends** matching groups' criteria to
+the resolved per-app set.
+
+```yaml
+conditional_acceptance_criteria:
+  - name: pricing                       # unique; the force-knob handle
+    when:
+      changed_paths:                    # globs vs the run's changed files
+        - "platform/api/**/pricing/**"
+        - "apps/quoting/**/pricing*/**"
+    criteria:
+      - "Exercise Price Now on a NET-NEW lane … (the sanctioned mutation)"
+  - name: hub-deep
+    when:
+      affected_apps: ["hub"]            # diff-derived MANAGED affected set
+      labels: ["qa:deep"]               # issue labels (issue→PR runs)
+    apps: ["hub"]                       # append only to these apps ([] = all)
+    criteria:
+      - "Walk every hub list view"
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | str, required | Unique per file, `[A-Za-z0-9][A-Za-z0-9._- ]{0,99}`. Used by the per-job force knob and shown in the affected-set view. `*` is reserved. |
+| `when.changed_paths` | list of glob | Matched against repo-relative changed files. `*`/`?` stay within one path segment; `**` is zero-or-more whole segments (`a/**/b` matches `a/b`); a trailing `/**` requires at least one segment under the prefix. Bad globs are parse errors. |
+| `when.affected_apps` | list of app names | Matches the **diff-derived managed** affected set. Deployed apps are never diff-affected — naming one here is a parse error. |
+| `when.labels` | list of str | Case-insensitive exact match against the originating issue's labels. Empty on standalone runs. |
+| `apps` | list of app names | Which apps get the appended criteria when the group fires. `[]` = every app in the run. |
+| `criteria` | list of str, ≥1 | Appended (deduped) to each target app's resolved criteria. |
+
+Semantics: within one list **OR**; between non-empty `when` fields **AND**;
+groups are independent (union of appends). At least one predicate list must be
+non-empty.
+
+**Deployed/standalone runs default OFF.** A standalone `pipeline:"qa"` run on
+the default branch (and any deployed-target run) has an empty diff, so
+`changed_paths`/`affected_apps` can never match. Only two things fire a group
+there: a `labels:` match (issue→PR path) or the per-job force knob —
+`POST /jobs {"qa": {"force_conditional_groups": ["pricing"]}}` (`["*"]` forces
+every group). An unknown forced name fails the run (`infra_error`) before
+fan-out rather than silently ignoring a typo.
+
+Which groups fired (and whether by match or force) is persisted per run and
+shown in the dashboard's affected-set view
+(`GET /qa/runs/{run_id}/affected_set` → `conditional_groups`).
+
 ### `qa_required`
 
 - `auto` (default) — QA only the affected apps.
@@ -264,6 +316,11 @@ acceptance_criteria:               # REPLACES defaults.acceptance_criteria_templ
 2. Root `defaults:`
 3. Root `apps.<name>:`
 4. App-local `apps/<name>/.embry0/app.yaml`
+5. Per-job `acceptance_criteria` override (whole-list **replace**, see below)
+6. Fired `conditional_acceptance_criteria` groups **append** last — after
+   everything, including the per-job replace. On issue→PR runs triage supplies
+   its criteria through that same replace path, so appending any earlier would
+   mean conditional groups never fire on the primary use case.
 
 `acceptance_criteria` in the app-local file **replaces** (does not extend)
 `acceptance_criteria_template`. `ready_checks` likewise replace rather than
@@ -272,9 +329,14 @@ merge. `mode` is taken from `defaults` only.
 ### Per-job API overrides
 
 `POST /jobs` accepts a `qa` override object (`QAJobOverrides`) that layers over
-the file at run time — e.g. `force_all_apps` (≈ `qa_required: always` for one
-job), a `sandbox_profile`, or `qa_timeout_seconds`. The file is the durable
-contract; these are one-off.
+the file at run time. The file is the durable contract; these are one-off:
+
+- `acceptance_criteria` — non-empty ⇒ **replaces** every app's resolved
+  criteria for this run (fired conditional groups still append on top).
+- `force_conditional_groups` — force named conditional groups ON regardless of
+  diff relevance; `["*"]` forces all. Unknown names fail the run.
+- `force_all_apps` — ≈ `qa_required: always` for one job.
+- `base_branch`, `sandbox_profile`, `qa_timeout_seconds`.
 
 ---
 
@@ -340,6 +402,14 @@ packages:
     no_cascade: true         # config churn shouldn't re-QA all apps
   "@acme/app-manifest":
     no_cascade: true
+
+conditional_acceptance_criteria:
+  - name: billing-mutation
+    when:
+      changed_paths: ["apps/billing/**", "packages/db/**/invoices/**"]
+    apps: ["billing"]
+    criteria:
+      - "Create a draft invoice for the QA-owned test account and assert totals render (do NOT send it)"
 ```
 
 **Why each choice:** `npm-workspaces-turbo` because the repo *is* npm workspaces
@@ -362,3 +432,10 @@ config noise doesn't.
   the full list when overriding.
 - **Empty `ready_checks` ⇒ no boot verification** — boot "passes" right after the
   command. Fine for fire-and-forget; risky if the server can crash on startup.
+- **Conditional groups never fire on deployed/standalone runs by default.** An
+  empty diff means `changed_paths`/`affected_apps` can't match — that's the
+  point (cost-gated criteria stay off). Fire them explicitly via an issue label
+  or `qa.force_conditional_groups` on the job request.
+- **Conditional appends survive the per-job criteria replace.** A job-level
+  `acceptance_criteria` override (including triage's, on issue→PR runs)
+  replaces the base list first; fired conditional groups append after.

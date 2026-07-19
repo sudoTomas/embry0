@@ -137,6 +137,16 @@ class DepEdge(BaseModel):
     target: str
 
 
+class ConditionalGroupApplied(BaseModel):
+    """EMB-39: one conditional acceptance-criteria group that fired on a run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    source: Literal["matched", "forced"]
+    apps: list[str] = Field(default_factory=list)
+
+
 class AffectedSetResponse(BaseModel):
     """GET /api/v1/qa/runs/{run_id}/affected_set payload.
 
@@ -155,6 +165,7 @@ class AffectedSetResponse(BaseModel):
     changed_files: list[str]
     base_branch: str
     dep_graph: list[DepEdge] = Field(default_factory=list)
+    conditional_groups: list[ConditionalGroupApplied] = Field(default_factory=list)
 
 
 class CacheLayerStats(BaseModel):

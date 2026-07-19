@@ -351,3 +351,155 @@ def test_auth_corpus_fixture_parses():
     auth = cfg.apps["web"].auth
     assert auth is not None
     assert auth.storage_state_from.secret == "QA_STORAGE_STATE"
+
+
+# -------- Conditional acceptance criteria (EMB-39) --------
+
+_COND_BASE = (
+    "version: 2\n"
+    "workspace_provider:\n  type: npm-workspaces-turbo\n"
+    "defaults:\n  mode: process\n  sandbox_profile: slim\n"
+    "  ready_checks: [{http: 'http://x'}]\n"
+    "apps:\n"
+    "  quoting:\n    boot_command: 'npm start'\n    frontend_url: 'http://localhost:3000'\n"
+    "  live:\n    target: deployed\n    frontend_url: 'https://live.example.com'\n"
+    "    ready_checks: [{http: 'https://live.example.com'}]\n"
+)
+
+
+def test_conditional_groups_parse():
+    raw = _COND_BASE + (
+        "conditional_acceptance_criteria:\n"
+        "  - name: pricing\n"
+        "    when:\n"
+        "      changed_paths: ['platform/api/**/pricing/**', 'apps/quoting/**/pricing*/**']\n"
+        "    criteria:\n"
+        "      - 'Exercise Price Now on a NET-NEW lane'\n"
+    )
+    cfg = parse_qa_yaml_v2(raw)
+    assert len(cfg.conditional_acceptance_criteria) == 1
+    group = cfg.conditional_acceptance_criteria[0]
+    assert group.name == "pricing"
+    assert group.when.changed_paths[0] == "platform/api/**/pricing/**"
+    assert group.apps == []
+    assert group.criteria == ["Exercise Price Now on a NET-NEW lane"]
+
+
+def test_conditional_absent_defaults_to_empty():
+    cfg = parse_qa_yaml_v2(_COND_BASE)
+    assert cfg.conditional_acceptance_criteria == []
+
+
+def test_conditional_group_extra_field_rejected():
+    raw = _COND_BASE + (
+        "conditional_acceptance_criteria:\n"
+        "  - name: g\n"
+        "    when: {changed_paths: ['a/**']}\n"
+        "    criteria: ['c']\n"
+        "    bogus: 1\n"
+    )
+    with pytest.raises(ValidationError):
+        parse_qa_yaml_v2(raw)
+
+
+def test_conditional_when_extra_field_rejected():
+    raw = _COND_BASE + (
+        "conditional_acceptance_criteria:\n"
+        "  - name: g\n"
+        "    when: {changed_paths: ['a/**'], bogus: 1}\n"
+        "    criteria: ['c']\n"
+    )
+    with pytest.raises(ValidationError):
+        parse_qa_yaml_v2(raw)
+
+
+def test_conditional_empty_when_rejected():
+    raw = _COND_BASE + ("conditional_acceptance_criteria:\n  - name: g\n    when: {}\n    criteria: ['c']\n")
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(raw)
+    assert "at least one predicate" in str(exc.value)
+
+
+def test_conditional_empty_criteria_rejected():
+    raw = _COND_BASE + (
+        "conditional_acceptance_criteria:\n  - name: g\n    when: {changed_paths: ['a/**']}\n    criteria: []\n"
+    )
+    with pytest.raises(ValidationError):
+        parse_qa_yaml_v2(raw)
+
+
+def test_conditional_blank_criterion_rejected():
+    raw = _COND_BASE + (
+        "conditional_acceptance_criteria:\n  - name: g\n    when: {changed_paths: ['a/**']}\n    criteria: ['  ']\n"
+    )
+    with pytest.raises(ValidationError):
+        parse_qa_yaml_v2(raw)
+
+
+def test_conditional_duplicate_names_rejected():
+    raw = _COND_BASE + (
+        "conditional_acceptance_criteria:\n"
+        "  - name: g\n    when: {changed_paths: ['a/**']}\n    criteria: ['c']\n"
+        "  - name: g\n    when: {changed_paths: ['b/**']}\n    criteria: ['d']\n"
+    )
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(raw)
+    assert "duplicate" in str(exc.value)
+
+
+def test_conditional_star_name_rejected():
+    raw = _COND_BASE + (
+        "conditional_acceptance_criteria:\n  - name: '*'\n    when: {changed_paths: ['a/**']}\n    criteria: ['c']\n"
+    )
+    with pytest.raises(ValidationError):
+        parse_qa_yaml_v2(raw)
+
+
+def test_conditional_unknown_scoped_app_rejected():
+    raw = _COND_BASE + (
+        "conditional_acceptance_criteria:\n"
+        "  - name: g\n    when: {changed_paths: ['a/**']}\n    criteria: ['c']\n"
+        "    apps: ['nope']\n"
+    )
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(raw)
+    assert "unknown apps" in str(exc.value)
+
+
+def test_conditional_unknown_affected_app_rejected():
+    raw = _COND_BASE + (
+        "conditional_acceptance_criteria:\n  - name: g\n    when: {affected_apps: ['nope']}\n    criteria: ['c']\n"
+    )
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(raw)
+    assert "unknown app" in str(exc.value)
+
+
+def test_conditional_deployed_affected_app_rejected():
+    raw = _COND_BASE + (
+        "conditional_acceptance_criteria:\n  - name: g\n    when: {affected_apps: ['live']}\n    criteria: ['c']\n"
+    )
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(raw)
+    assert "deployed app" in str(exc.value)
+
+
+def test_conditional_bad_glob_rejected():
+    raw = _COND_BASE + (
+        "conditional_acceptance_criteria:\n  - name: g\n    when: {changed_paths: ['/abs/**']}\n    criteria: ['c']\n"
+    )
+    with pytest.raises(ValidationError):
+        parse_qa_yaml_v2(raw)
+
+
+def test_conditional_corpus_fixture_parses():
+    from pathlib import Path
+
+    fixture = Path(__file__).parents[3] / "fixtures" / "qa-yaml-corpus" / "v2" / "conditional-criteria.yaml"
+    cfg = parse_qa_yaml_v2(fixture.read_text())
+    names = [g.name for g in cfg.conditional_acceptance_criteria]
+    assert names == ["pricing", "hub-deep"]
+    hub_deep = cfg.conditional_acceptance_criteria[1]
+    assert hub_deep.apps == ["hub"]
+    assert hub_deep.when.affected_apps == ["hub"]
+    assert hub_deep.when.labels == ["qa:deep"]

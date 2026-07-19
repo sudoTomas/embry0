@@ -387,6 +387,7 @@ async def _qa_orchestrator_node_impl(
     from dataclasses import replace
     from pathlib import Path
 
+    from embry0.workflows.qa.conditional_criteria import evaluate_conditional_criteria
     from embry0.workflows.qa.qa_yaml_resolve import resolve_app_config
     from embry0.workflows.qa.qa_yaml_v2 import QAYamlConfigV2, parse_qa_yaml_v2
     from embry0.workflows.qa.subtask_result_schema import overall_status as compute_overall
@@ -560,6 +561,39 @@ async def _qa_orchestrator_node_impl(
     qa_state["apps_to_qa"] = list(apps)
     qa_state["validation_warnings"] = warnings
 
+    # 3b. EMB-39: evaluate conditional acceptance criteria against the run's
+    # change context. Deployed/standalone runs arrive with an empty diff, so
+    # changed_paths/affected_apps predicates never match there — only issue
+    # labels or the job-level force knob fire groups on such runs (default-OFF
+    # rule for costly criteria).
+    forced_group_names = list(qa_state.get("force_conditional_groups") or [])
+    issue_labels = list(state.get("issue_labels") or [])
+    if force_all_apps:
+        # The affected-set computation was skipped above; recompute it only
+        # if some group actually predicates on affected_apps.
+        needs_affected = any(g.when.affected_apps for g in cfg.conditional_acceptance_criteria)
+        affected_for_predicates: set[str] = (
+            set(resolve_apps_to_qa(provider, cfg, changed_files=changed_files))
+            if (needs_affected and provider is not None and changed_files)
+            else set()
+        )
+    else:
+        # Diff-derived MANAGED affected set — deliberately NOT apps_to_qa:
+        # deployed apps always join apps_to_qa and would trivially satisfy
+        # an affected_apps predicate on every run. Gated on a non-empty diff
+        # so the default-OFF rule is structural, not provider-dependent (a
+        # provider that returns a non-empty affected set for an empty diff
+        # must not fire cost-gated criteria).
+        affected_for_predicates = set(affected_managed) if changed_files else set()
+    cond = evaluate_conditional_criteria(
+        cfg,
+        changed_files=list(changed_files_str),
+        apps_to_qa=apps,
+        affected_apps_from_diff=affected_for_predicates,
+        labels=issue_labels,
+        forced_group_names=forced_group_names,
+    )
+
     # Phase 5D: persist the affected-set decision so the dashboard can show
     # which apps ran vs were skipped, what diff drove selection, and the
     # dep graph. Best-effort — failure is logged but never blocks the run.
@@ -588,6 +622,8 @@ async def _qa_orchestrator_node_impl(
                 # Empty string when init_orchestrator didn't run (older test
                 # paths inject qa_yaml_v2_raw directly without cloning).
                 head_sha=str(qa_state.get("head_sha") or ""),
+                # EMB-39: which conditional-criteria groups fired and why.
+                conditional_groups=cond.groups_persisted(),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -595,6 +631,28 @@ async def _qa_orchestrator_node_impl(
                 job_id=state.get("job_id"),
                 error=str(exc),
             )
+
+    # EMB-39: an unknown forced group name fails the run before fan-out. The
+    # operator explicitly requested a (typically costly) check — silently
+    # ignoring a typo is the worst failure mode. Checked after the metadata
+    # upsert so the run's row still records the decision context.
+    if cond.unknown_forced_groups:
+        known = sorted(g.name for g in cfg.conditional_acceptance_criteria)
+        msg = (
+            "unknown conditional-criteria group(s) in force_conditional_groups: "
+            f"{cond.unknown_forced_groups} — known groups: {known}"
+        )
+        outcome = OrchestratorOutcome(
+            overall_status="infra_error",
+            apps_to_qa=list(apps),
+            failure_summary=msg,
+            validation_errors=[msg],
+            validation_warnings=warnings,
+        )
+        qa_state["outcome"] = _outcome_to_dict(outcome)
+        qa_state["validation_errors"] = [msg]
+        qa_state["final_status"] = "failed"
+        return {"qa": qa_state}
 
     if not apps:
         outcome = OrchestratorOutcome(
@@ -637,6 +695,28 @@ async def _qa_orchestrator_node_impl(
             "qa_acceptance_criteria_overridden",
             job_id=state.get("job_id"),
             n_criteria=len(override_criteria),
+        )
+
+    # 4c. EMB-39: append fired conditional criteria AFTER the 4b replace.
+    # The relevance gate is the orchestrator's decision, not the caller's —
+    # and on issue→PR runs triage's criteria arrive through the very same
+    # replace path, so appending before it would mean conditional groups
+    # never fire on the feature's primary use case.
+    if cond.criteria_by_app:
+        resolved_configs = [
+            replace(
+                rc,
+                acceptance_criteria=rc.acceptance_criteria
+                + [c for c in cond.criteria_by_app.get(rc.app_name, []) if c not in rc.acceptance_criteria],
+            )
+            for rc in resolved_configs
+        ]
+        logger.info(
+            "qa_conditional_criteria_applied",
+            job_id=state.get("job_id"),
+            matched=cond.matched_groups,
+            forced=cond.forced_groups,
+            n_apps=len(cond.criteria_by_app),
         )
 
     # 4a. Look up prebaked image tag if cache layer is enabled.

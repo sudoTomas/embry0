@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from embry0.workflows.qa._glob_match import GlobPatternError, compile_glob
+
 # Hosts that resolve to the SANDBOX itself, not an external deployment.
 # A deployed-target frontend_url pointing here is always a config error —
 # probes and the browser run inside the sandbox, whose loopback has nothing
@@ -238,6 +240,75 @@ class PackageEntry(BaseModel):
     no_cascade: bool = False
 
 
+# -------- Conditional acceptance criteria (EMB-39) --------
+
+# Group names are force-knob handles (QAJobOverrides.force_conditional_groups)
+# and observability keys — keep them identifier-ish. "*" is deliberately
+# unrepresentable: it is reserved as the force-everything wildcard.
+_CONDITIONAL_GROUP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\- ]{0,99}$")
+
+
+class ConditionalWhen(BaseModel):
+    """Relevance predicate for one conditional criteria group.
+
+    Within one list: OR. Between non-empty fields: AND. A group with an
+    empty diff (deployed/standalone runs) can therefore never match via
+    ``changed_paths``/``affected_apps`` — only ``labels`` or the job-level
+    force knob fire it there.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    changed_paths: list[str] = Field(default_factory=list)
+    """Glob patterns (see _glob_match grammar) vs repo-relative changed files."""
+    affected_apps: list[str] = Field(default_factory=list)
+    """qa.yaml app names vs the diff-derived MANAGED affected set."""
+    labels: list[str] = Field(default_factory=list)
+    """Issue labels (case-insensitive exact match). Empty on standalone runs."""
+
+    @field_validator("changed_paths")
+    @classmethod
+    def _globs_compile(cls, v: list[str]) -> list[str]:
+        for pattern in v:
+            try:
+                compile_glob(pattern)
+            except GlobPatternError as exc:
+                raise ValueError(str(exc)) from exc
+        return v
+
+    @model_validator(mode="after")
+    def _at_least_one_predicate(self) -> ConditionalWhen:
+        if not (self.changed_paths or self.affected_apps or self.labels):
+            raise ValueError(
+                "conditional `when` must declare at least one predicate (changed_paths, affected_apps, or labels)"
+            )
+        return self
+
+
+class ConditionalCriteriaGroup(BaseModel):
+    """A named criteria group appended to the resolved set when `when` matches."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    when: ConditionalWhen
+    criteria: list[str] = Field(min_length=1)
+    apps: list[str] = Field(default_factory=list)
+    """Apps to append to when fired; empty = every app in the run."""
+
+    @field_validator("name")
+    @classmethod
+    def _name_shape(cls, v: str) -> str:
+        if not _CONDITIONAL_GROUP_NAME_RE.match(v):
+            raise ValueError(f"conditional group name {v!r} must match [A-Za-z0-9][A-Za-z0-9._- ]{{0,99}}")
+        return v
+
+    @field_validator("criteria")
+    @classmethod
+    def _criteria_non_empty(cls, v: list[str]) -> list[str]:
+        if any(not c.strip() for c in v):
+            raise ValueError("conditional criteria entries must be non-empty strings")
+        return v
+
+
 class QAYamlConfigV2(BaseModel):
     """Top-level .embry0/qa.yaml v2 contract.
 
@@ -256,6 +327,32 @@ class QAYamlConfigV2(BaseModel):
     parallelism: ParallelismConfig = Field(default_factory=ParallelismConfig)
     apps: dict[str, AppEntry] = Field(default_factory=dict)
     packages: dict[str, PackageEntry] = Field(default_factory=dict)
+    conditional_acceptance_criteria: list[ConditionalCriteriaGroup] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_conditional_groups(self) -> QAYamlConfigV2:
+        seen: set[str] = set()
+        for group in self.conditional_acceptance_criteria:
+            if group.name in seen:
+                raise ValueError(f"duplicate conditional group name {group.name!r}")
+            seen.add(group.name)
+            unknown_apps = [a for a in group.apps if a not in self.apps]
+            if unknown_apps:
+                raise ValueError(f"conditional group {group.name!r} scopes unknown apps: {sorted(unknown_apps)}")
+            for app_name in group.when.affected_apps:
+                entry = self.apps.get(app_name)
+                if entry is None:
+                    raise ValueError(f"conditional group {group.name!r} predicate references unknown app {app_name!r}")
+                if entry.target != "managed":
+                    # A deployed app never enters the diff-derived affected set,
+                    # so this predicate could never fire — config error, not a
+                    # silently dead gate.
+                    raise ValueError(
+                        f"conditional group {group.name!r} predicate references "
+                        f"deployed app {app_name!r} — affected_apps only matches "
+                        "managed apps (deployed apps are never diff-affected)"
+                    )
+        return self
 
     @model_validator(mode="after")
     def _provider_required_unless_all_deployed(self) -> QAYamlConfigV2:

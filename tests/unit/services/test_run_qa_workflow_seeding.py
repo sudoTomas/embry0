@@ -294,3 +294,48 @@ async def test_qa_workflow_omits_user_env_vars_when_none_seeded():
         )
 
     assert "user_env_vars" not in captured
+
+
+@pytest.mark.asyncio
+async def test_force_conditional_groups_seeded_into_qa_state():
+    """EMB-39: qa_overrides.force_conditional_groups lands at
+    state['qa']['force_conditional_groups']."""
+    captured: dict = {}
+
+    async def fake_execute(initial_state, *args, **kwargs):
+        captured.update(initial_state)
+        return None, False, None
+
+    executor = _make_executor()
+
+    with patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute):
+        await executor._run_qa_workflow(
+            job_id="job-cc",
+            repo="org/r",
+            branch="main",
+            qa_overrides={"force_conditional_groups": ["pricing"]},
+        )
+
+    assert captured.get("qa", {}).get("force_conditional_groups") == ["pricing"]
+
+
+@pytest.mark.asyncio
+async def test_force_conditional_groups_absent_when_not_set():
+    """EMB-39: no force_conditional_groups override -> key absent from qa_block."""
+    captured: dict = {}
+
+    async def fake_execute(initial_state, *args, **kwargs):
+        captured.update(initial_state)
+        return None, False, None
+
+    executor = _make_executor()
+
+    with patch.object(executor, "_execute_workflow_stream", side_effect=fake_execute):
+        await executor._run_qa_workflow(
+            job_id="job-cc2",
+            repo="org/r",
+            branch="main",
+            qa_overrides={},
+        )
+
+    assert "force_conditional_groups" not in captured.get("qa", {})

@@ -1813,3 +1813,292 @@ async def test_orchestrator_node_job_level_criteria_override_replaces_resolved(m
     out = await qa_orchestrator_node(state, {"configurable": {}})
     assert out["qa"]["final_status"] == "passed"
     assert seen_criteria == [[]]
+
+
+# -------- Conditional acceptance criteria (EMB-39) --------
+
+_QA_YAML_V2_CONDITIONAL = (
+    _QA_YAML_V2
+    + """
+conditional_acceptance_criteria:
+  - name: pricing
+    when:
+      changed_paths: ["apps/hub/**/pricing/**"]
+    criteria:
+      - "Exercise Price Now"
+  - name: hub-only
+    when:
+      affected_apps: ["hub"]
+    apps: ["hub"]
+    criteria:
+      - "Hub deep check"
+  - name: deep
+    when:
+      labels: ["qa:deep"]
+    criteria:
+      - "Label-gated check"
+"""
+)
+
+
+def _fake_hub_companion_provider():
+    from pathlib import Path
+
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
+
+    return FakeWorkspaceProvider(
+        apps=[
+            WorkspaceApp("hub", Path("apps/hub"), "@x/hub"),
+            WorkspaceApp("companion", Path("apps/companion"), "@x/companion"),
+        ],
+        packages=[],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        ),
+    )
+
+
+def _capture_subtasks(monkeypatch):
+    from embry0.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+
+    seen: dict[str, list[str]] = {}
+
+    async def fake_run_subtask(resolved, **kw):
+        seen[resolved.app_name] = list(resolved.acceptance_criteria)
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_conditional_group_appends_on_changed_paths(monkeypatch):
+    """A changed_paths-matched group's criteria are appended to the resolved set."""
+    fake_provider = _fake_hub_companion_provider()
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    seen = _capture_subtasks(monkeypatch)
+
+    state = {
+        "job_id": "aaaa1111-1111-1111-1111-111111111111",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2_CONDITIONAL,
+            "changed_files": ["apps/hub/src/pricing/calc.ts"],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    assert out["qa"]["final_status"] == "passed"
+    # pricing (changed_paths) fires for all apps in run; hub-only (affected
+    # AND scoped to hub) fires for hub only; deep (labels) does not fire.
+    assert seen["hub"] == ["Exercise Price Now", "Hub deep check"]
+    assert "Label-gated check" not in seen["hub"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_conditional_append_survives_job_override_replace(monkeypatch):
+    """4c composition: the job-level whole-list replace happens FIRST, then
+    fired conditional criteria are appended on top. On issue→PR runs triage
+    supplies criteria via the same replace path — appending before it would
+    dead-letter the feature."""
+    fake_provider = _fake_hub_companion_provider()
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    seen = _capture_subtasks(monkeypatch)
+
+    state = {
+        "job_id": "aaaa2222-2222-2222-2222-222222222222",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2_CONDITIONAL,
+            "changed_files": ["apps/hub/src/pricing/calc.ts"],
+            "acceptance_criteria": ["triage criterion"],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    assert out["qa"]["final_status"] == "passed"
+    assert seen["hub"] == ["triage criterion", "Exercise Price Now", "Hub deep check"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_conditional_off_on_empty_diff(monkeypatch):
+    """Default-OFF rule: empty diff (deployed/standalone) + no labels + no
+    force -> predicate groups never fire. Empty diff also means the affected
+    set is empty, so every app runs (fall-back-to-all-apps)."""
+    from embry0.workspace_providers import AffectedSet
+
+    fake_provider = _fake_hub_companion_provider()
+    fake_provider.affected_result = AffectedSet(
+        directly_changed=frozenset(),
+        cascade_closure=frozenset(),
+        apps_to_qa=frozenset({"@x/hub", "@x/companion"}),
+    )
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    seen = _capture_subtasks(monkeypatch)
+
+    state = {
+        "job_id": "aaaa3333-3333-3333-3333-333333333333",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2_CONDITIONAL,
+            "changed_files": [],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    assert out["qa"]["final_status"] == "passed"
+    for app, criteria in seen.items():
+        assert "Exercise Price Now" not in criteria, app
+        assert "Hub deep check" not in criteria, app
+        assert "Label-gated check" not in criteria, app
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_conditional_forced_fires_on_empty_diff(monkeypatch):
+    """qa.force_conditional_groups fires a group with no diff at all."""
+    from embry0.workspace_providers import AffectedSet
+
+    fake_provider = _fake_hub_companion_provider()
+    fake_provider.affected_result = AffectedSet(
+        directly_changed=frozenset(),
+        cascade_closure=frozenset(),
+        apps_to_qa=frozenset({"@x/hub", "@x/companion"}),
+    )
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    seen = _capture_subtasks(monkeypatch)
+
+    state = {
+        "job_id": "aaaa4444-4444-4444-4444-444444444444",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2_CONDITIONAL,
+            "changed_files": [],
+            "force_conditional_groups": ["pricing"],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    assert out["qa"]["final_status"] == "passed"
+    assert "Exercise Price Now" in seen["hub"]
+    assert "Exercise Price Now" in seen["companion"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_conditional_labels_fire_from_state(monkeypatch):
+    """A labels-only group fires from JobState.issue_labels even with an
+    empty diff — the issue-path escape hatch."""
+    from embry0.workspace_providers import AffectedSet
+
+    fake_provider = _fake_hub_companion_provider()
+    fake_provider.affected_result = AffectedSet(
+        directly_changed=frozenset(),
+        cascade_closure=frozenset(),
+        apps_to_qa=frozenset({"@x/hub", "@x/companion"}),
+    )
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    seen = _capture_subtasks(monkeypatch)
+
+    state = {
+        "job_id": "aaaa5555-5555-5555-5555-555555555555",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "issue_labels": ["QA:DEEP"],
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2_CONDITIONAL,
+            "changed_files": [],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    assert out["qa"]["final_status"] == "passed"
+    assert "Label-gated check" in seen["hub"]
+    assert "Exercise Price Now" not in seen["hub"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_unknown_forced_group_is_infra_error(monkeypatch):
+    """A typo'd force_conditional_groups name fails the run before fan-out —
+    the operator explicitly requested a costly check."""
+    fake_provider = _fake_hub_companion_provider()
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    seen = _capture_subtasks(monkeypatch)
+
+    state = {
+        "job_id": "aaaa6666-6666-6666-6666-666666666666",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2_CONDITIONAL,
+            "changed_files": ["apps/hub/app/page.tsx"],
+            "force_conditional_groups": ["pricign"],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    qa = out["qa"]
+    assert qa["final_status"] == "failed"
+    assert qa["outcome"]["overall_status"] == "infra_error"
+    assert "pricign" in qa["validation_errors"][0]
+    assert seen == {}  # no fan-out
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_conditional_groups_persisted_to_metadata(monkeypatch):
+    """The metadata upsert carries which groups fired and why."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    fake_provider = _fake_hub_companion_provider()
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    _capture_subtasks(monkeypatch)
+
+    metadata_repo = MagicMock()
+    metadata_repo.upsert = AsyncMock()
+
+    state = {
+        "job_id": "aaaa7777-7777-7777-7777-777777777777",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2_CONDITIONAL,
+            "changed_files": ["apps/hub/src/pricing/calc.ts"],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {"qa_run_metadata_repo": metadata_repo}})
+    assert out["qa"]["final_status"] == "passed"
+    kwargs = metadata_repo.upsert.await_args.kwargs
+    groups = kwargs["conditional_groups"]
+    assert {g["name"] for g in groups} == {"pricing", "hub-only"}
+    by_name = {g["name"]: g for g in groups}
+    assert by_name["pricing"]["source"] == "matched"
+    assert by_name["hub-only"]["apps"] == ["hub"]

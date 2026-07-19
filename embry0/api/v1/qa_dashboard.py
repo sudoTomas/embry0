@@ -12,6 +12,7 @@ from embry0.api.schemas.qa_dashboard import (
     BootPhaseDetail,
     CacheAnalyticsResponse,
     CacheHitsModel,
+    ConditionalGroupApplied,
     DepEdge,
     FlakeResponse,
     FlakeRow,
@@ -217,6 +218,8 @@ async def get_run_affected_set(
         changed_files=md.changed_files,
         base_branch=md.base_branch,
         dep_graph=[DepEdge(**e) for e in md.dep_graph],
+        # EMB-39: which conditional-criteria groups fired and why.
+        conditional_groups=[ConditionalGroupApplied(**g) for g in md.conditional_groups],
     )
 
 
