@@ -513,6 +513,7 @@ async def _qa_orchestrator_node_impl(
                 failure_summary=f"workspace_provider load failed: {exc}",
             )
             qa_state["outcome"] = _outcome_to_dict(outcome)
+            qa_state["error_message"] = outcome.failure_summary
             qa_state["final_status"] = "failed"
             return {"qa": qa_state}
 
@@ -534,6 +535,7 @@ async def _qa_orchestrator_node_impl(
         qa_state["outcome"] = _outcome_to_dict(outcome)
         qa_state["validation_errors"] = errors
         qa_state["validation_warnings"] = warnings
+        qa_state["error_message"] = f"{outcome.failure_summary}: {'; '.join(errors)}"
         qa_state["final_status"] = "failed"
         return {"qa": qa_state}
 
@@ -651,6 +653,7 @@ async def _qa_orchestrator_node_impl(
         )
         qa_state["outcome"] = _outcome_to_dict(outcome)
         qa_state["validation_errors"] = [msg]
+        qa_state["error_message"] = msg
         qa_state["final_status"] = "failed"
         return {"qa": qa_state}
 
@@ -681,6 +684,7 @@ async def _qa_orchestrator_node_impl(
         )
         qa_state["outcome"] = _outcome_to_dict(outcome)
         qa_state["validation_errors"] = [str(exc)]
+        qa_state["error_message"] = outcome.failure_summary
         qa_state["final_status"] = "failed"
         return {"qa": qa_state}
 

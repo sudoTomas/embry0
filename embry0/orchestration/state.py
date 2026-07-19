@@ -307,6 +307,11 @@ class QAStateBlock(TypedDict, total=False):
     # EMB-39: conditional-criteria group names forced ON for this run via
     # QAJobOverrides.force_conditional_groups (["*"] = all groups).
     force_conditional_groups: list[str]
+    # Structured failure reason for early orchestrator aborts (validation
+    # errors, unknown forced conditional group, app-config resolution
+    # failure). Surfaced verbatim on the jobs row by issue_executor when the
+    # run fails before any per-app breakdown exists.
+    error_message: str | None
     # Repo-relative changed files from init_orchestrator_node's git diff.
     # Was previously written by key without a declaration (survived only
     # because nodes replace the whole qa dict); declared for typing hygiene.

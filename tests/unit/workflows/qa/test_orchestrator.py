@@ -2102,3 +2102,33 @@ async def test_orchestrator_conditional_groups_persisted_to_metadata(monkeypatch
     by_name = {g["name"]: g for g in groups}
     assert by_name["pricing"]["source"] == "matched"
     assert by_name["hub-only"]["apps"] == ["hub"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_early_failures_set_error_message(monkeypatch):
+    """Early infra_error aborts must set qa["error_message"] so the jobs row
+    surfaces the structured reason instead of the generic
+    "QA final_status=failed" (issue_executor falls back to it only when the
+    key is absent)."""
+    fake_provider = _fake_hub_companion_provider()
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    seen = _capture_subtasks(monkeypatch)
+
+    state = {
+        "job_id": "aaaa8888-8888-8888-8888-888888888888",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2_CONDITIONAL,
+            "changed_files": [],
+            "force_conditional_groups": ["not-a-real-group"],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    qa = out["qa"]
+    assert qa["final_status"] == "failed"
+    assert "not-a-real-group" in qa["error_message"]
+    assert seen == {}
