@@ -263,6 +263,13 @@ services:
       dockerfile: infra/Dockerfile.sandbox
       target: dev-python
 
+  qa-image-builder:
+    profiles: ["images"]
+    image: embry0-sandbox-qa:latest
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.sandbox.qa
+
   proxy-image-builder:
     profiles: ["images"]
     image: embry0-proxy:latest

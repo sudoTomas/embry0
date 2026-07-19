@@ -21,7 +21,6 @@ import re
 import sys
 import time
 from dataclasses import dataclass
-from typing import List
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
@@ -61,7 +60,7 @@ def try_check(c: Check) -> tuple[bool, str]:
         return False, f"exception={type(e).__name__}: {e}"
 
 
-def main(argv: List[str]) -> int:
+def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--timeout", type=int, required=True, help="Total budget in seconds")
     p.add_argument("--check", action="append", required=True, help="URL[,STATUS[,REGEX]]")
@@ -77,13 +76,19 @@ def main(argv: List[str]) -> int:
         last_failures = []
         for c in checks:
             ok, reason = try_check(c)
-            print(json.dumps({
-                "type": "qa.boot_progress",
-                "attempt": attempt,
-                "url": c.url,
-                "status": "passing" if ok else "failing",
-                "reason": reason,
-            }), file=sys.stderr, flush=True)
+            print(
+                json.dumps(
+                    {
+                        "type": "qa.boot_progress",
+                        "attempt": attempt,
+                        "url": c.url,
+                        "status": "passing" if ok else "failing",
+                        "reason": reason,
+                    }
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
             if not ok:
                 last_failures.append({"url": c.url, "reason": reason})
         if not last_failures:

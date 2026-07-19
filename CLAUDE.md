@@ -27,20 +27,20 @@
 
 ## Sandbox
 
-- The `embry0-sandbox` and `embry0-proxy` images are pushed to the in-stack `registry:5000` sidecar at bootstrap by the `init-push-images` compose service; DinD pulls them on first reference. The `IMAGE_REGISTRY` env var (defaults to `registry:5000`) controls the prefix at orchestrator-launch time — leave at default for compose, set to your registry URL on K8s.
+- The `embry0-sandbox`, `embry0-sandbox-dev-python`, `embry0-sandbox-qa`, and `embry0-proxy` images are pushed to the in-stack `registry:5000` sidecar at bootstrap by the `init-push-images` compose service; DinD pulls them on first reference. The `IMAGE_REGISTRY` env var (defaults to `registry:5000`) controls the prefix at orchestrator-launch time — leave at default for compose, set to your registry URL on K8s.
 - **First-time bootstrap (fresh deploy).** From `infra/`:
   ```bash
   cd infra
-  docker compose --profile images build   # builds frontend, orchestrator, sandbox, proxy
+  docker compose --profile images build   # builds frontend, orchestrator, sandbox, dev-python, qa, proxy
   docker compose up -d                    # registry → init-push-images → dind → orchestrator → frontend
   ```
 - **After code changes to `embry0/sandbox/` or `embry0/safety/`** (rebuild + repush + restart orchestrator):
   ```bash
   cd infra
-  docker compose --profile images build sandbox-image-builder dev-python-image-builder
+  docker compose --profile images build sandbox-image-builder dev-python-image-builder qa-image-builder
   docker compose up -d --force-recreate init-push-images orchestrator
   ```
-  `dev-python-image-builder` must build alongside the base sandbox: `init-push-images` pushes `embry0-sandbox-dev-python:latest` too, and fails startup if the tag is missing from the host daemon.
+  `dev-python-image-builder` and `qa-image-builder` must build alongside the base sandbox: `init-push-images` pushes `embry0-sandbox-dev-python:latest` and `embry0-sandbox-qa:latest` too, and fails startup if either tag is missing from the host daemon. (`qa-image-builder` bakes in `embry0/sandbox/`, `embry0/safety/`, `embry0/agents/`, and part of `embry0/execution/` — changes there go stale in the QA image if it isn't rebuilt.)
 - **After code changes to `embry0/execution/proxy/`**:
   ```bash
   cd infra

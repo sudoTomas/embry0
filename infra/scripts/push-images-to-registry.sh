@@ -1,6 +1,6 @@
 #!/bin/sh
-# Tag and push the host-built embry0-proxy + embry0-sandbox images to the
-# sidecar registry so DinD (and a future K8s cluster) can pull them by name.
+# Tag and push the host-built sandbox/proxy images to the sidecar registry
+# so DinD (and a future K8s cluster) can pull them by name.
 # Idempotent — re-running with the same images is a no-op.
 #
 # Network shape: this script runs in a sidecar container with the host's
@@ -11,7 +11,7 @@
 set -eu
 
 REGISTRY="${REGISTRY:-127.0.0.1:5001}"
-IMAGES="${IMAGES:-embry0-proxy embry0-sandbox embry0-sandbox-dev-python}"
+IMAGES="${IMAGES:-embry0-proxy embry0-sandbox embry0-sandbox-dev-python embry0-sandbox-qa}"
 TAG="${TAG:-latest}"
 
 for image in $IMAGES; do
