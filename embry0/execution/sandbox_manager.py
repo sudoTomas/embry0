@@ -40,7 +40,9 @@ class SandboxInitError(RuntimeError):
 # RFC-1123-ish hostname for profile extra_hosts keys. Kept local rather than
 # imported from api.schemas — the execution layer must not depend on the API
 # layer (same rule mirrored in SandboxProfileRequest._validate_extra_hosts).
-_HOSTNAME_PATTERN = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*$")
+_HOSTNAME_PATTERN = re.compile(
+    r"^[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*$"
+)
 
 
 def _sanitize_docker_name_component(s: str) -> str:
