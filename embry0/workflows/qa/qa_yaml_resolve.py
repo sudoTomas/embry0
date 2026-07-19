@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from embry0.workflows.qa.qa_yaml_v2 import (
     QAE2E,
     AppLocalConfig,
+    QAAuth,
     QAReadyCheck,
     QAYamlConfigV2,
 )
@@ -42,6 +43,7 @@ class ResolvedAppConfig:
     e2e: QAE2E | None
     acceptance_criteria: list[str]
     target: str = "managed"
+    auth: QAAuth | None = None
 
 
 def resolve_app_config(
@@ -94,6 +96,14 @@ def resolve_app_config(
     else:
         e2e = defaults.e2e
 
+    auth: QAAuth | None
+    if app_local is not None and app_local.auth is not None:
+        auth = app_local.auth
+    elif app_entry.auth is not None:
+        auth = app_entry.auth
+    else:
+        auth = defaults.auth
+
     if app_local is not None and app_local.acceptance_criteria is not None:
         acceptance_criteria = list(app_local.acceptance_criteria)
     else:
@@ -104,6 +114,9 @@ def resolve_app_config(
         # a defaults-level one must not leak in either) and never run DinD —
         # nothing boots in-sandbox, so mode is forced to "process" to keep
         # acquire_sandbox from creating a per-subtask qa-net.
+        # `auth` deliberately SURVIVES this branch: pre-authenticating the
+        # browser against an external deployment is EMB-40's primary use case,
+        # and the login command runs in-sandbox against the external URL.
         seed_command = None
         mode = "process"
         if not ready_checks:
@@ -126,4 +139,5 @@ def resolve_app_config(
         e2e=e2e,
         acceptance_criteria=acceptance_criteria,
         target=app_entry.target,
+        auth=auth,
     )

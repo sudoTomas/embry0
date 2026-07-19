@@ -1,0 +1,19 @@
+# Deployed-target app behind an auth wall (EMB-40): the orchestrator seeds the
+# QA browser context with a Playwright storageState so the agent starts
+# pre-authenticated. `secret` names a qa-scoped env var (set via /environments
+# with scope=qa) whose value is the storageState JSON captured by a scripted
+# login; refresh it when the session expires.
+version: 2
+qa_required: always
+defaults:
+  sandbox_profile: qa-external
+apps:
+  web:
+    target: deployed
+    frontend_url: "http://app.internal.example:8080/"
+    auth:
+      storage_state_from:
+        secret: QA_STORAGE_STATE
+    ready_checks:
+      - http: "http://app.internal.example:8080/health"
+        expect_status: [200, 302, 401]

@@ -33,9 +33,20 @@ conservative with actions that could mutate shared data — when an acceptance
 criterion only requires verifying a control exists, assert its presence
 without activating it.
 
+When job.json has `pre_authenticated: true`, the orchestrator has already
+seeded your browser context with a Playwright storageState — you start
+ALREADY LOGGED IN. Navigate straight to frontend_url and verify the
+acceptance criteria. Do NOT drive any login form, visit login routes, or
+enter credentials. If you nonetheless land on a login/consent screen, the
+injected session is invalid or expired: take a screenshot, record the
+affected criteria as status=inconclusive noting the session was rejected,
+and move on — never improvise credentials or attempt a manual login.
+
 Inputs (provided in /workspace/.qa/job.json):
   - mode (process | dind)
   - target (managed | deployed): deployed = externally running app, no boot
+  - pre_authenticated: true when the browser context is pre-seeded with an
+    authenticated session (see above)
   - .embry0/qa.yaml (already validated)
   - acceptance_criteria: list of strings to verify
   - changed_files: list of paths touched by the developer (PR-flow only; may be empty)

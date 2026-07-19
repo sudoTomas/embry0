@@ -18,6 +18,7 @@ from langgraph.graph import END, START, StateGraph
 from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
 from embry0.workflows.qa.subtask_nodes import (
     acquire_sandbox_node,
+    auth_setup_node,
     boot_app_node,
     collect_artifacts_node,
     e2e_node,
@@ -33,7 +34,7 @@ from embry0.workflows.qa.subtask_state import SubTaskState, initial_state_for_ap
 def build_subtask_graph() -> Any:
     """Compile the sub-task subgraph.
 
-    All 8 nodes wired in linear order. Each node short-circuits internally
+    All 9 nodes wired in linear order. Each node short-circuits internally
     when a previous step set state["status"] (so release_sandbox can still
     clean up after a failed boot, and emit_result still emits a result).
     """
@@ -41,6 +42,7 @@ def build_subtask_graph() -> Any:
     builder.add_node("acquire_sandbox", acquire_sandbox_node)
     builder.add_node("boot_app", boot_app_node)
     builder.add_node("seed", seed_node)
+    builder.add_node("auth_setup", auth_setup_node)
     builder.add_node("e2e", e2e_node)
     builder.add_node("exploratory_qa", exploratory_qa_node)
     builder.add_node("collect_artifacts", collect_artifacts_node)
@@ -50,7 +52,8 @@ def build_subtask_graph() -> Any:
     builder.add_edge(START, "acquire_sandbox")
     builder.add_edge("acquire_sandbox", "boot_app")
     builder.add_edge("boot_app", "seed")
-    builder.add_edge("seed", "e2e")
+    builder.add_edge("seed", "auth_setup")
+    builder.add_edge("auth_setup", "e2e")
     builder.add_edge("e2e", "exploratory_qa")
     builder.add_edge("exploratory_qa", "collect_artifacts")
     builder.add_edge("collect_artifacts", "release_sandbox")

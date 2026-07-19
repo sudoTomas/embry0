@@ -8,6 +8,7 @@ migrator now.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -24,6 +25,7 @@ _SANDBOX_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1",
 def _is_sandbox_loopback(url: str) -> bool:
     host = urlparse(url).hostname or ""
     return host.lower() in _SANDBOX_LOOPBACK_HOSTS
+
 
 # -------- Shared building blocks --------
 
@@ -67,6 +69,57 @@ class QAE2E(BaseModel):
     model_config = ConfigDict(extra="forbid")
     command: str = Field(min_length=1)
     timeout_seconds: int = Field(default=600, gt=0, le=3600)
+
+
+_ENV_VAR_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+
+class QAAuthStorageState(BaseModel):
+    """Source of the Playwright storageState (cookies + localStorage) JSON
+    that pre-authenticates the QA browser context (EMB-40).
+
+    Exactly one of:
+      - ``command``: a repo-provided script run inside the sandbox (after
+        boot/seed, before e2e/exploratory) that performs a login and writes
+        the storageState JSON to ``$QA_STORAGE_STATE_PATH``.
+      - ``secret``: the name of a qa-scoped env var (``QA_``-prefixed, set
+        via /environments with scope=qa) whose VALUE is the storageState
+        JSON — the "mint once via scripted login, reuse until expiry" route.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    command: str | None = Field(default=None, min_length=1)
+    secret: str | None = Field(default=None, min_length=1)
+    timeout_seconds: int = Field(default=300, gt=0, le=1800)
+
+    @field_validator("secret")
+    @classmethod
+    def _secret_is_qa_scoped_env_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not _ENV_VAR_NAME_RE.fullmatch(v):
+            raise ValueError(f"secret {v!r} is not a valid env var name (uppercase A-Z, 0-9, _)")
+        if not v.startswith("QA_"):
+            raise ValueError(
+                f"secret {v!r} must start with QA_ — storageState secrets are qa-scoped env vars, "
+                "and qa scope requires the QA_ key prefix"
+            )
+        from embry0.execution.auth_provider import RESERVED_ENV_KEYS, RESERVED_ENV_PREFIXES
+
+        if v in RESERVED_ENV_KEYS or any(v.startswith(p) for p in RESERVED_ENV_PREFIXES):
+            raise ValueError(f"secret {v!r} is a reserved infrastructure env var and can never hold a user value")
+        return v
+
+    @model_validator(mode="after")
+    def _exactly_one_source(self) -> QAAuthStorageState:
+        if (self.command is None) == (self.secret is None):
+            raise ValueError("storage_state_from requires exactly one of `command` or `secret`")
+        return self
+
+
+class QAAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    storage_state_from: QAAuthStorageState
 
 
 # -------- Top-level v2 sections --------
@@ -118,6 +171,7 @@ class DefaultsBlock(BaseModel):
     seed_command: str | None = None
     seed_timeout_seconds: int = Field(default=120, gt=0, le=1800)
     e2e: QAE2E | None = None
+    auth: QAAuth | None = None
     acceptance_criteria_template: list[str] = Field(default_factory=list)
 
 
@@ -143,6 +197,7 @@ class AppEntry(BaseModel):
     boot_timeout_seconds: int | None = Field(default=None, gt=0, le=3600)
     seed_command: str | None = None
     e2e: QAE2E | None = None
+    auth: QAAuth | None = None
 
     @field_validator("frontend_url")
     @classmethod
@@ -237,6 +292,7 @@ class AppLocalConfig(BaseModel):
     boot_timeout_seconds: int | None = Field(default=None, gt=0, le=3600)
     seed_command: str | None = None
     e2e: QAE2E | None = None
+    auth: QAAuth | None = None
     acceptance_criteria: list[str] | None = None
     """If non-None, REPLACES (does not extend) defaults.acceptance_criteria_template."""
 
