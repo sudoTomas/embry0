@@ -66,3 +66,12 @@ def test_build_sdk_options_setting_sources_always_project() -> None:
     # Even without skills, settings.json (Ring 2) must be loaded.
     opts = build_sdk_options(_inv(skills=[]))
     assert "project" in opts.setting_sources
+
+
+def test_build_sdk_options_disallows_tool_search() -> None:
+    """EMB-37: ToolSearch (server-side deferred-tool loader) is how the QA
+    agent escaped its allowlist. Belt-and-suspenders alongside the Ring-3
+    name deny; unknown names are a harmless no-op on older CLIs."""
+    opts = build_sdk_options(_inv())
+    assert "tool_search_tool_regex" in opts.disallowed_tools
+    assert "tool_search_tool_bm25" in opts.disallowed_tools

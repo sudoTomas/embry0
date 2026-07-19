@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Final
 
 
 @dataclass(frozen=True)
@@ -89,18 +89,36 @@ def _stringify_input(tool_input: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+# Harness-internal tools the Claude CLI drives itself (todo tracking, skill
+# and slash-command invocation). Agent tool lists never enumerate them, so
+# the EMB-37 name check must exempt them — denying them burns agent turns
+# for zero safety value (they touch no external surface).
+_INFRA_ALLOWED_TOOLS: Final[frozenset[str]] = frozenset({"TodoWrite", "Skill", "SlashCommand"})
+
+
 def evaluate_policy(
     policy: SafetyPolicy,
     tool_name: str,
     tool_input: dict[str, Any],
 ) -> Verdict:
-    """Evaluate a single tool call against Ring-3 content checks.
+    """Evaluate a single tool call against the tool-name allowlist and the
+    Ring-3 content checks.
+
+    Name check (EMB-37): when ``policy.allowed_tools`` is non-empty, any
+    tool name outside it (and outside ``_INFRA_ALLOWED_TOOLS``) is denied.
+    This is the enforcement layer that survives runtime tool loading
+    (ToolSearch/deferred tools) — the SDK's ``allowed_tools`` option is an
+    auto-approve list, not an availability gate, so without this check an
+    agent can call tools it discovered at runtime. An empty
+    ``allowed_tools`` skips name enforcement (content checks only).
 
     Returns Verdict.allow() if no rule fires. Returns Verdict.deny(reason)
     if any matching rule hits. On any internal exception, returns
     Verdict.deny("safety hook failed: ...") — fail-closed.
     """
     try:
+        if policy.allowed_tools and tool_name not in policy.allowed_tools and tool_name not in _INFRA_ALLOWED_TOOLS:
+            return Verdict.deny(f"tool {tool_name!r} is not in this agent's allowlist")
         haystack = _normalize(_stringify_input(tool_input))
         for rule in policy.content_checks:
             if rule.tools and tool_name not in rule.tools:
