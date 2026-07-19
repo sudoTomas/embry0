@@ -31,6 +31,7 @@ RESERVED_ENV_KEYS: Final[frozenset[str]] = frozenset(
         # (login command + playwright-mcp) at the orchestrator-chosen path.
         "QA_STORAGE_STATE_PATH",
         "PLAYWRIGHT_MCP_STORAGE_STATE",
+        "PLAYWRIGHT_MCP_ISOLATED",
         # DinD certs are mounted by the orchestrator for dind_enabled profiles:
         "DOCKER_HOST",
         "DOCKER_TLS_VERIFY",

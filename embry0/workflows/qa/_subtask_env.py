@@ -71,4 +71,12 @@ def build_qa_sandbox_env(
     if storage_state:
         env["QA_STORAGE_STATE_PATH"] = QA_STORAGE_STATE_PATH
         env["PLAYWRIGHT_MCP_STORAGE_STATE"] = QA_STORAGE_STATE_PATH
+        # playwright-mcp only applies storageState to ISOLATED browser
+        # contexts (the default persistent-profile mode uses
+        # launchPersistentContext, which cannot accept storageState — the
+        # env var is silently ignored, verified against @playwright/mcp
+        # 0.0.78 on job-ca502fac2ed4). Isolated mode keeps the profile
+        # in memory, which is equivalent for QA: the persistent profile
+        # was per-launch-temporary anyway.
+        env["PLAYWRIGHT_MCP_ISOLATED"] = "1"
     return env

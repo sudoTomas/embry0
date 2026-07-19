@@ -718,7 +718,12 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
     return {
         "status": sub_status,
         "failure_summary": failure_summary,
-        "raw_result": validated.model_dump(),
+        # Merge over the accumulated raw_result rather than replacing it:
+        # earlier nodes stash orchestrator-side markers there (seed_stdout,
+        # e2e_stdout, auth_setup) and a plain replace silently discards
+        # them from the persisted result (noticed diagnosing
+        # job-ca502fac2ed4, where auth_setup evidence was lost).
+        "raw_result": {**state.get("raw_result", {}), **validated.model_dump()},
         "completed_at": time.monotonic(),
     }
 
