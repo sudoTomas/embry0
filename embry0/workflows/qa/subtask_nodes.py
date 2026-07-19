@@ -599,6 +599,60 @@ async def exploratory_qa_node(state: SubTaskState, config: RunnableConfig) -> di
     return {"agent_outputs": out.get("agent_outputs", []) or []}
 
 
+def _synthesize_inconclusive_result(state: SubTaskState, reason: str) -> dict[str, Any]:
+    """Verdict guarantee for stuck runs (EMB-37).
+
+    The agent ran but left no usable result.json — turn cap, wall-clock
+    timeout, idle kill, or a malformed report. Build a schema-valid partial
+    QAResult with every criterion inconclusive so the run reports a QA
+    verdict (INCONCLUSIVE) instead of INFRA_FAILURE with nothing to show.
+    The last agent error (e.g. "Agent timed out after 1800s") is folded into
+    the notes for diagnosability.
+    """
+    from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
+    from embry0.workflows.qa.result_schema import QAAcceptanceResult, QAResult
+
+    resolved: ResolvedAppConfig = state["resolved"]
+    note = f"agent ended without reporting: {reason}"
+    last_error = next(
+        (
+            o.get("error_message")
+            for o in reversed(state.get("agent_outputs") or [])
+            if isinstance(o, dict) and o.get("error_message")
+        ),
+        None,
+    )
+    if last_error:
+        note = f"{note}; last agent error: {last_error}"
+
+    synthesized = QAResult(
+        job_id=f"{state.get('parent_run_id', 'unknown')}__{resolved.app_name}",
+        attempt_n=1,
+        phase_reached="exploratory",
+        overall="inconclusive",
+        acceptance_results=[
+            QAAcceptanceResult(criterion=c, status="inconclusive", notes=note) for c in resolved.acceptance_criteria
+        ],
+        anomalies=[],
+    )
+    logger.warning(
+        "qa_result_synthesized_for_stuck_run",
+        app_name=resolved.app_name,
+        reason=reason,
+        last_agent_error=last_error,
+    )
+    return {
+        "status": SubTaskStatus.INCONCLUSIVE,
+        "failure_summary": note,
+        "raw_result": {**state.get("raw_result", {}), **synthesized.model_dump()},
+        "completed_at": time.monotonic(),
+    }
+
+
+def _agent_ran(state: SubTaskState) -> bool:
+    return bool(state.get("agent_outputs"))
+
+
 async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) -> dict[str, Any]:
     """Read /workspace/.qa/result.json from the sandbox; produce SubTaskStatus.
 
@@ -649,6 +703,11 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
             timeout=10,
         )
     except Exception as exc:  # noqa: BLE001
+        # File-absence with the agent having run = a stuck run (turn cap /
+        # timeout / idle kill) → synthesize a verdict. Any other cat failure
+        # (e.g. docker daemon down) is genuinely infra.
+        if "No such file" in str(exc) and _agent_ran(state):
+            return _synthesize_inconclusive_result(state, "result.json was never written")
         return {
             "status": SubTaskStatus.INFRA_FAILURE,
             "failure_summary": f"result.json not readable: {exc}",
@@ -658,6 +717,8 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
     try:
         agent_dump = json.loads(result_json_str)
     except json.JSONDecodeError as exc:
+        if _agent_ran(state):
+            return _synthesize_inconclusive_result(state, f"result.json is not valid JSON ({exc})")
         return {
             "status": SubTaskStatus.INFRA_FAILURE,
             "failure_summary": f"result.json not valid JSON: {exc}",
@@ -694,6 +755,8 @@ async def collect_artifacts_node(state: SubTaskState, config: RunnableConfig) ->
     try:
         validated = QAResult.model_validate(agent_dump)
     except Exception as exc:  # noqa: BLE001  — pydantic.ValidationError or similar
+        if _agent_ran(state):
+            return _synthesize_inconclusive_result(state, f"result.json failed schema validation ({exc})")
         return {
             "status": SubTaskStatus.INFRA_FAILURE,
             "failure_summary": f"result.json failed schema validation: {exc}",
