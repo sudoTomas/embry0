@@ -363,6 +363,19 @@ async def qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, An
     qa = state["qa"]
     last = qa["attempts"][-1]
 
+    # Scale the agent's turn budget with the acceptance-criteria count. The
+    # old flat cap of 100 was sized for a managed app's boot investigation
+    # (Compose introspection, log tailing) followed by a handful of criteria.
+    # A deployed-target run skips boot but adds a multi-step login gate and
+    # one-or-more browser turns per criterion, so a 7-criterion run with an
+    # Auth0 login blew straight through 100 and never wrote result.json.
+    # Budget ~30 turns/criterion on top of a 100 floor, capped at 400 (the
+    # 7200s wall-clock timeout below is the real runaway backstop).
+    n_criteria = len(
+        qa.get("acceptance_criteria") or (qa.get("qa_yaml_parsed") or {}).get("acceptance_criteria_template") or []
+    )
+    max_turns = min(400, max(100, 40 + 30 * n_criteria))
+
     # Includes the EXACT result.json schema. Without this the agent invents
     # field names (overall_status vs overall, phases.* vs flat) and status
     # values (warning, partial) that fail Pydantic validation, making every
@@ -461,11 +474,10 @@ async def qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, An
         agent_type="qa",
         prompt=prompt,
         agent_definition=agent_definition,
-        # QA agents do a lot of infra investigation up front (Compose
-        # introspection, log tailing, network debugging) before the
-        # exploratory phase even begins. The default 40 turns gets eaten
-        # by boot phase alone on non-trivial stacks; bump to 100.
-        max_turns=100,
+        # Scaled with the acceptance-criteria count (see above): 100 floor
+        # for managed/boot-heavy runs, +30/criterion for criteria-rich
+        # deployed runs with a login gate, capped at 400.
+        max_turns=max_turns,
         timeout_seconds=qa.get("budget_seconds", 7200),
         on_event=writer,
         credentials=credentials,
