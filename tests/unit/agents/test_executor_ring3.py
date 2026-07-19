@@ -42,3 +42,43 @@ def test_raises_when_sdk_missing(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", block_sdk)
     with pytest.raises(RuntimeError, match="not importable"):
         _assert_sdk_supports_hooks()
+
+
+# ---------------------------------------------------------------------------
+# EMB-37 hotfix: hook-input tool_name extraction
+# ---------------------------------------------------------------------------
+
+
+def test_extract_hook_call_from_dict_input():
+    """The SDK's PreToolUseHookInput is a TypedDict — a plain dict at runtime.
+    getattr() on it always returned None, so tool_name arrived as '' at
+    evaluate_policy: tool-scoped content rules never matched, and the EMB-37
+    name check denied EVERY call ('tool '' is not in this agent's allowlist',
+    observed on job-616393868ba6)."""
+    from embry0.agents.executor import _extract_hook_call
+
+    name, tool_input = _extract_hook_call(
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": "t1"}
+    )
+    assert name == "Bash"
+    assert tool_input == {"command": "ls"}
+
+
+def test_extract_hook_call_from_object_input():
+    from embry0.agents.executor import _extract_hook_call
+
+    class _Obj:
+        tool_name = "Read"
+        tool_input = {"file_path": "/x"}
+
+    name, tool_input = _extract_hook_call(_Obj())
+    assert name == "Read"
+    assert tool_input == {"file_path": "/x"}
+
+
+def test_extract_hook_call_defends_malformed_input():
+    from embry0.agents.executor import _extract_hook_call
+
+    name, tool_input = _extract_hook_call({"tool_input": "not-a-dict"})
+    assert name == ""
+    assert tool_input == {}
