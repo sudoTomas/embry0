@@ -139,8 +139,7 @@ def test_empty_diff_predicate_groups_off():
 
 def test_labels_only_group_fires_on_empty_diff():
     cfg = _cfg(
-        "conditional_acceptance_criteria:\n"
-        "  - name: deep\n    when: {labels: ['qa:deep']}\n    criteria: ['c1']\n"
+        "conditional_acceptance_criteria:\n  - name: deep\n    when: {labels: ['qa:deep']}\n    criteria: ['c1']\n"
     )
     ev = evaluate_conditional_criteria(
         cfg,
@@ -155,8 +154,7 @@ def test_labels_only_group_fires_on_empty_diff():
 
 def test_affected_apps_predicate():
     cfg = _cfg(
-        "conditional_acceptance_criteria:\n"
-        "  - name: g\n    when: {affected_apps: ['hub']}\n    criteria: ['c1']\n"
+        "conditional_acceptance_criteria:\n  - name: g\n    when: {affected_apps: ['hub']}\n    criteria: ['c1']\n"
     )
     ev = evaluate_conditional_criteria(
         cfg,

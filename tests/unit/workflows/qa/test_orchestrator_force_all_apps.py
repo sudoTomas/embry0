@@ -190,7 +190,9 @@ async def test_qa_required_auto_with_no_diff_still_short_circuits(monkeypatch, f
 
 # -------- Conditional criteria under force_all_apps (EMB-39) --------
 
-_QA_YAML_ALWAYS_CONDITIONAL = _QA_YAML_ALWAYS + """
+_QA_YAML_ALWAYS_CONDITIONAL = (
+    _QA_YAML_ALWAYS
+    + """
 conditional_acceptance_criteria:
   - name: hub-affected
     when:
@@ -198,6 +200,7 @@ conditional_acceptance_criteria:
     criteria:
       - "Hub affected check"
 """
+)
 
 
 def _capture(monkeypatch):

@@ -414,10 +414,7 @@ def test_conditional_when_extra_field_rejected():
 
 
 def test_conditional_empty_when_rejected():
-    raw = _COND_BASE + (
-        "conditional_acceptance_criteria:\n"
-        "  - name: g\n    when: {}\n    criteria: ['c']\n"
-    )
+    raw = _COND_BASE + ("conditional_acceptance_criteria:\n  - name: g\n    when: {}\n    criteria: ['c']\n")
     with pytest.raises(ValidationError) as exc:
         parse_qa_yaml_v2(raw)
     assert "at least one predicate" in str(exc.value)
@@ -425,8 +422,7 @@ def test_conditional_empty_when_rejected():
 
 def test_conditional_empty_criteria_rejected():
     raw = _COND_BASE + (
-        "conditional_acceptance_criteria:\n"
-        "  - name: g\n    when: {changed_paths: ['a/**']}\n    criteria: []\n"
+        "conditional_acceptance_criteria:\n  - name: g\n    when: {changed_paths: ['a/**']}\n    criteria: []\n"
     )
     with pytest.raises(ValidationError):
         parse_qa_yaml_v2(raw)
@@ -434,8 +430,7 @@ def test_conditional_empty_criteria_rejected():
 
 def test_conditional_blank_criterion_rejected():
     raw = _COND_BASE + (
-        "conditional_acceptance_criteria:\n"
-        "  - name: g\n    when: {changed_paths: ['a/**']}\n    criteria: ['  ']\n"
+        "conditional_acceptance_criteria:\n  - name: g\n    when: {changed_paths: ['a/**']}\n    criteria: ['  ']\n"
     )
     with pytest.raises(ValidationError):
         parse_qa_yaml_v2(raw)
@@ -454,8 +449,7 @@ def test_conditional_duplicate_names_rejected():
 
 def test_conditional_star_name_rejected():
     raw = _COND_BASE + (
-        "conditional_acceptance_criteria:\n"
-        "  - name: '*'\n    when: {changed_paths: ['a/**']}\n    criteria: ['c']\n"
+        "conditional_acceptance_criteria:\n  - name: '*'\n    when: {changed_paths: ['a/**']}\n    criteria: ['c']\n"
     )
     with pytest.raises(ValidationError):
         parse_qa_yaml_v2(raw)
@@ -474,8 +468,7 @@ def test_conditional_unknown_scoped_app_rejected():
 
 def test_conditional_unknown_affected_app_rejected():
     raw = _COND_BASE + (
-        "conditional_acceptance_criteria:\n"
-        "  - name: g\n    when: {affected_apps: ['nope']}\n    criteria: ['c']\n"
+        "conditional_acceptance_criteria:\n  - name: g\n    when: {affected_apps: ['nope']}\n    criteria: ['c']\n"
     )
     with pytest.raises(ValidationError) as exc:
         parse_qa_yaml_v2(raw)
@@ -484,8 +477,7 @@ def test_conditional_unknown_affected_app_rejected():
 
 def test_conditional_deployed_affected_app_rejected():
     raw = _COND_BASE + (
-        "conditional_acceptance_criteria:\n"
-        "  - name: g\n    when: {affected_apps: ['live']}\n    criteria: ['c']\n"
+        "conditional_acceptance_criteria:\n  - name: g\n    when: {affected_apps: ['live']}\n    criteria: ['c']\n"
     )
     with pytest.raises(ValidationError) as exc:
         parse_qa_yaml_v2(raw)
@@ -494,8 +486,7 @@ def test_conditional_deployed_affected_app_rejected():
 
 def test_conditional_bad_glob_rejected():
     raw = _COND_BASE + (
-        "conditional_acceptance_criteria:\n"
-        "  - name: g\n    when: {changed_paths: ['/abs/**']}\n    criteria: ['c']\n"
+        "conditional_acceptance_criteria:\n  - name: g\n    when: {changed_paths: ['/abs/**']}\n    criteria: ['c']\n"
     )
     with pytest.raises(ValidationError):
         parse_qa_yaml_v2(raw)

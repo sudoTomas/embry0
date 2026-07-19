@@ -1817,7 +1817,9 @@ async def test_orchestrator_node_job_level_criteria_override_replaces_resolved(m
 
 # -------- Conditional acceptance criteria (EMB-39) --------
 
-_QA_YAML_V2_CONDITIONAL = _QA_YAML_V2 + """
+_QA_YAML_V2_CONDITIONAL = (
+    _QA_YAML_V2
+    + """
 conditional_acceptance_criteria:
   - name: pricing
     when:
@@ -1836,6 +1838,7 @@ conditional_acceptance_criteria:
     criteria:
       - "Label-gated check"
 """
+)
 
 
 def _fake_hub_companion_provider():
@@ -2091,9 +2094,7 @@ async def test_orchestrator_conditional_groups_persisted_to_metadata(monkeypatch
             "changed_files": ["apps/hub/src/pricing/calc.ts"],
         },
     }
-    out = await qa_orchestrator_node(
-        state, {"configurable": {"qa_run_metadata_repo": metadata_repo}}
-    )
+    out = await qa_orchestrator_node(state, {"configurable": {"qa_run_metadata_repo": metadata_repo}})
     assert out["qa"]["final_status"] == "passed"
     kwargs = metadata_repo.upsert.await_args.kwargs
     groups = kwargs["conditional_groups"]

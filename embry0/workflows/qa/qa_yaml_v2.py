@@ -279,8 +279,7 @@ class ConditionalWhen(BaseModel):
     def _at_least_one_predicate(self) -> ConditionalWhen:
         if not (self.changed_paths or self.affected_apps or self.labels):
             raise ValueError(
-                "conditional `when` must declare at least one predicate "
-                "(changed_paths, affected_apps, or labels)"
+                "conditional `when` must declare at least one predicate (changed_paths, affected_apps, or labels)"
             )
         return self
 
@@ -299,10 +298,7 @@ class ConditionalCriteriaGroup(BaseModel):
     @classmethod
     def _name_shape(cls, v: str) -> str:
         if not _CONDITIONAL_GROUP_NAME_RE.match(v):
-            raise ValueError(
-                f"conditional group name {v!r} must match "
-                "[A-Za-z0-9][A-Za-z0-9._- ]{0,99}"
-            )
+            raise ValueError(f"conditional group name {v!r} must match [A-Za-z0-9][A-Za-z0-9._- ]{{0,99}}")
         return v
 
     @field_validator("criteria")
@@ -342,16 +338,11 @@ class QAYamlConfigV2(BaseModel):
             seen.add(group.name)
             unknown_apps = [a for a in group.apps if a not in self.apps]
             if unknown_apps:
-                raise ValueError(
-                    f"conditional group {group.name!r} scopes unknown apps: {sorted(unknown_apps)}"
-                )
+                raise ValueError(f"conditional group {group.name!r} scopes unknown apps: {sorted(unknown_apps)}")
             for app_name in group.when.affected_apps:
                 entry = self.apps.get(app_name)
                 if entry is None:
-                    raise ValueError(
-                        f"conditional group {group.name!r} predicate references "
-                        f"unknown app {app_name!r}"
-                    )
+                    raise ValueError(f"conditional group {group.name!r} predicate references unknown app {app_name!r}")
                 if entry.target != "managed":
                     # A deployed app never enters the diff-derived affected set,
                     # so this predicate could never fire — config error, not a
