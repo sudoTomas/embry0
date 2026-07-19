@@ -68,6 +68,30 @@ def _summarize_tool_input(tool_name: str, tool_input: dict[str, Any]) -> str:
     return str(tool_input)[:200]
 
 
+def _extract_hook_call(hook_input: Any) -> tuple[str, dict[str, Any]]:
+    """Pull (tool_name, tool_input) out of a PreToolUse hook payload.
+
+    The SDK's PreToolUseHookInput is a TypedDict — a plain dict at runtime —
+    so the previous getattr()-based extraction ALWAYS returned ''/{}: the
+    tool-scoped content rules never matched, and once EMB-37's name check
+    landed, every call was denied with "tool '' is not in this agent's
+    allowlist" (job-616393868ba6). Handle dict first; keep the attribute
+    path for any object-shaped input a future SDK might pass. Malformed
+    input degrades to ''/{} — with a non-empty allowlist that fails CLOSED
+    (the name check denies ''), which is the correct failure direction for
+    a safety hook.
+    """
+    if isinstance(hook_input, dict):
+        raw_name = hook_input.get("tool_name")
+        raw_input = hook_input.get("tool_input")
+    else:
+        raw_name = getattr(hook_input, "tool_name", None)
+        raw_input = getattr(hook_input, "tool_input", None)
+    name = raw_name if isinstance(raw_name, str) else ""
+    tool_input = raw_input if isinstance(raw_input, dict) else {}
+    return name, tool_input
+
+
 async def _evaluate_hook(
     policy: SafetyPolicy,
     tool_name: str,
@@ -214,9 +238,7 @@ class SdkAgentExecutor:
             tool_use_id: str | None,  # noqa: ARG001
             context: HookContext,  # noqa: ARG001
         ) -> HookJSONOutput:
-            tool_name = getattr(hook_input, "tool_name", None) or ""
-            raw_tool_input = getattr(hook_input, "tool_input", None)
-            hook_tool_input: dict[str, Any] = raw_tool_input if isinstance(raw_tool_input, dict) else {}
+            tool_name, hook_tool_input = _extract_hook_call(hook_input)
             # NOTE: tools_called is incremented on ToolUseBlock emission (after
             # hook allows) — not here — so denied tools don't inflate the counter.
             # Denial telemetry lives in the "error" event emitted below.
