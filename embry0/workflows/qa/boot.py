@@ -56,6 +56,15 @@ class BootResult:
 _PROBE_SCRIPT = """
 import sys, urllib.request, urllib.error
 url = sys.argv[1]
+# Send a browser-like User-Agent. urllib's default ("Python-urllib/3.x")
+# is 403'd by Cloudflare / WAF bot rules, so a deployed target fronted by
+# Cloudflare (e.g. every *.raven-cargo.app app) fails the liveness gate
+# even though the app is up (verified 2026-07-19: urllib default UA -> 403
+# server:cloudflare; same request with a browser UA -> 200). This matches
+# what the QA agent's real Chromium sends in the exploratory phase, so the
+# probe and the browser see the same response.
+UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 # urllib follows 3xx redirects by default. Most Next.js apps redirect /
 # to a public landing page that returns 200, so following redirects is
 # the right thing for the common case. (Earlier 2026-05-06 attempt to
@@ -63,8 +72,9 @@ url = sys.argv[1]
 # resolving to a 200 page; reverted.) Apps whose redirect chain ends
 # at a non-200 status (e.g. companion → /login → 400) should list that
 # terminal status in qa.yaml expect_status: [200, 400, 401, 403].
+req = urllib.request.Request(url, headers={"User-Agent": UA})
 try:
-    r = urllib.request.urlopen(url, timeout=5)
+    r = urllib.request.urlopen(req, timeout=5)
     body = r.read(8192).decode("utf-8", errors="replace")
     sys.stdout.write(f"STATUS={r.status}\\n---\\n{body}")
 except urllib.error.HTTPError as e:
