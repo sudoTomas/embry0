@@ -45,6 +45,12 @@ class QAJobOverrides(BaseModel):
     # declared under apps: in qa.yaml. Equivalent to setting
     # `qa_required: always` in qa.yaml — but per-job rather than per-repo.
     force_all_apps: bool = False
+    # EMB-39: force named conditional_acceptance_criteria groups ON for this
+    # run regardless of diff relevance. ["*"] forces every group. Required
+    # for deployed-target/standalone runs where an empty diff means the
+    # changed_paths/affected_apps predicates never match. An unknown name
+    # fails the run before fan-out (never silently ignored).
+    force_conditional_groups: list[str] = Field(default_factory=list)
 
 
 class ContextType(StrEnum):

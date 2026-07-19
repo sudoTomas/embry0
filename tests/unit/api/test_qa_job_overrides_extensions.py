@@ -49,3 +49,17 @@ def test_qa_overrides_base_branch_max_length():
     QAJobOverrides(base_branch="x" * 255)
     with pytest.raises(Exception):
         QAJobOverrides(base_branch="x" * 256)
+
+
+def test_qa_overrides_accepts_force_conditional_groups():
+    from embry0.api.schemas import QAJobOverrides
+
+    o = QAJobOverrides(force_conditional_groups=["pricing", "*"])
+    assert o.force_conditional_groups == ["pricing", "*"]
+
+
+def test_qa_overrides_default_force_conditional_groups_is_empty():
+    from embry0.api.schemas import QAJobOverrides
+
+    o = QAJobOverrides()
+    assert o.force_conditional_groups == []

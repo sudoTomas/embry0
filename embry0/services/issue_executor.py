@@ -714,6 +714,9 @@ class IssueExecutor:
                 "repo": issue.get("repo") or "",
                 "task": issue["title"] + ("\n\n" + issue["body"] if issue.get("body") else ""),
                 "issue_number": issue.get("github_number"),
+                # EMB-39: issue labels feed conditional-criteria `labels:`
+                # predicates in the QA orchestrator.
+                "issue_labels": list(issue.get("labels") or []),
                 "current_stage": "init",
                 "agent_outputs": [],
                 "errors": [],
@@ -870,6 +873,11 @@ class IssueExecutor:
             # and runs every declared app.
             if qa_overrides.get("force_all_apps"):
                 qa_block["force_all_apps"] = True
+            # EMB-39: force named conditional-criteria groups ON for this run.
+            # Standalone runs have an empty diff, so this knob (or a label on
+            # the issue path) is the only way conditional groups fire here.
+            if qa_overrides.get("force_conditional_groups"):
+                qa_block["force_conditional_groups"] = list(qa_overrides["force_conditional_groups"])
 
             initial_state: dict[str, Any] = {
                 "job_id": job_id,
