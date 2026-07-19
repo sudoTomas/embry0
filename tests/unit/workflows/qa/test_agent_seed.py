@@ -1,7 +1,7 @@
 import pytest
 
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED, AgentDefinitionsRepository
-from embry0.workflows.qa.agent_seed import QA_AGENT_SEED, seed_qa_agent
+from embry0.workflows.qa.agent_seed import QA_AGENT_SEED, SYSTEM_PROMPT, seed_qa_agent
 
 
 def test_seed_definition_shape():
@@ -59,3 +59,12 @@ async def test_seed_idempotent(db_with_migrations):
     assert row is not None
     # Idempotency must preserve mcp_servers across re-seeds
     assert row["mcp_servers"]["playwright"]["command"] == "playwright-mcp"
+
+
+def test_system_prompt_has_stuck_protocol():
+    """EMB-37: the soft time-box guidance is replaced by a mandatory stuck
+    protocol with a concrete self-abort command."""
+    assert "Stuck protocol" in SYSTEM_PROMPT
+    assert "python -m embry0.sandbox.qa_abort" in SYSTEM_PROMPT
+    # result.json creation guidance points at Bash/Edit, not the unlisted Write tool
+    assert "via a Bash heredoc or Edit" in SYSTEM_PROMPT

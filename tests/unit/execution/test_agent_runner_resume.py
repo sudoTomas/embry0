@@ -89,7 +89,7 @@ def _make_runner(stream_payload: dict[str, Any]) -> tuple[AgentRunner, AsyncMock
 
     captured_commands: list[list[str]] = []
 
-    async def _stream_exec(*, container: str, command: list[str], workdir: str | None = None) -> _FakeProc:
+    async def _stream_exec(*, container, command, workdir=None, env=None) -> _FakeProc:
         captured_commands.append(list(command))
         return _FakeProc(stream_payload)
 

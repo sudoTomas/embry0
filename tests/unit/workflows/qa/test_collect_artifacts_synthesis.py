@@ -118,3 +118,55 @@ async def test_synthesis_preserves_accumulated_raw_result_markers():
     state = _state(agent_outputs=_AGENT_RAN, raw_result={"auth_setup": {"source": "command", "cookies": 5}})
     out = await collect_artifacts_node(state, config)
     assert out["raw_result"]["auth_setup"] == {"source": "command", "cookies": 5}
+
+
+# ---------------------------------------------------------------------------
+# EMB-37 workstream D: deployed-target agent budget
+# ---------------------------------------------------------------------------
+
+
+def _resolved_managed():
+    from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
+
+    return ResolvedAppConfig(
+        app_name="hub",
+        boot_command="npm run start",
+        frontend_url="http://localhost:3000",
+        mode="process",
+        sandbox_profile="slim",
+        ready_checks=[QAReadyCheck(http="http://localhost:3000/health")],
+        boot_timeout_seconds=120,
+        seed_command=None,
+        e2e=None,
+        acceptance_criteria=["page loads"],
+        target="managed",
+    )
+
+
+async def _run_exploratory_capture_budget(monkeypatch, resolved):
+    from embry0.workflows.qa.subtask_nodes import exploratory_qa_node
+
+    captured = {}
+
+    async def fake_qa_node(state, config):
+        captured["budget"] = state["qa"]["budget_seconds"]
+        return {"agent_outputs": []}
+
+    monkeypatch.setattr("embry0.workflows.qa.nodes.qa_node", fake_qa_node)
+    state = {
+        "status": None,
+        "resolved": resolved,
+        "sandbox_id": "cid",
+        "parent_run_id": "job-1",
+        "repo": "o/r",
+    }
+    await exploratory_qa_node(state, {"configurable": {}})
+    return captured["budget"]
+
+
+async def test_deployed_target_gets_reduced_agent_budget(monkeypatch):
+    assert await _run_exploratory_capture_budget(monkeypatch, _resolved()) == 1800
+
+
+async def test_managed_target_keeps_full_agent_budget(monkeypatch):
+    assert await _run_exploratory_capture_budget(monkeypatch, _resolved_managed()) == 7200

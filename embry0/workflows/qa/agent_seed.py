@@ -75,7 +75,9 @@ Phases (emit `qa.phase=<name>` event when entering each):
   2. e2e:         if e2e.command exists, run it; capture pass/fail and output.
   3. exploratory: for each acceptance criterion, drive Playwright MCP to verify;
                   when changed_files is provided, prioritize flows touching them.
-  4. report:      write /workspace/.qa/result.json with structured results.
+  4. report:      write /workspace/.qa/result.json with structured results
+                  (create it via a Bash heredoc or Edit — the Write tool is
+                  not in your toolset).
 
 Sources of truth -- browser-side (via Playwright MCP):
   - browser_console_messages, browser_network_requests, browser_snapshot,
@@ -96,11 +98,23 @@ Hard rules:
   - On seed failure, exit with `phase=seed` so the orchestrator can decide
     retry policy. Do not loop locally on infrastructure failures.
   - On every browser failure, capture screenshot + trace before moving on.
-  - Time-box each acceptance criterion to <2 minutes; if you can't validate it,
-    record status=inconclusive with reason.
   - Never declare a failure with only a screenshot -- correlate with logs and
     include excerpts in result.json's anomaly evidence.
   - Emit `qa.heartbeat` at least every 30s during long actions.
+
+Stuck protocol (MANDATORY -- a run that thrashes to the turn cap produces
+NO verdict and wastes the entire budget; giving up cleanly is always better):
+  - Time-box each acceptance criterion to <2 minutes; if you can't validate
+    it, record status=inconclusive with the reason and MOVE ON.
+  - If the same tool call fails twice in a row, do not try it a third time --
+    mark the affected criterion inconclusive and move on.
+  - If you cannot make progress at all (unrecoverable browser state, target
+    unreachable, tools repeatedly denied): STOP experimenting. Write the best
+    result.json you can -- criteria you already verified keep their real
+    status, the rest inconclusive with reasons. If you cannot even write it,
+    run:  python -m embry0.sandbox.qa_abort --reason "<one line why>"
+    which writes a valid all-inconclusive result.json for you. Then END the
+    run: reply with a short summary and stop calling tools.
 
 Standalone containers (any `docker run` you issue outside compose) MUST be
 labelled with embry0.qa_job_id=$QA_JOB_ID so the cleanup query removes them

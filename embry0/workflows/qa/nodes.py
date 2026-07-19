@@ -369,8 +369,9 @@ async def qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, An
     # A deployed-target run skips boot but adds a multi-step login gate and
     # one-or-more browser turns per criterion, so a 7-criterion run with an
     # Auth0 login blew straight through 100 and never wrote result.json.
-    # Budget ~30 turns/criterion on top of a 100 floor, capped at 400 (the
-    # 7200s wall-clock timeout below is the real runaway backstop).
+    # Budget ~30 turns/criterion on top of a 100 floor, capped at 400. The
+    # budget_seconds wall-clock (1800s deployed / 7200s managed since EMB-37)
+    # plus AgentRunner's idle watchdog are the runaway backstops.
     n_criteria = len(
         qa.get("acceptance_criteria") or (qa.get("qa_yaml_parsed") or {}).get("acceptance_criteria_template") or []
     )

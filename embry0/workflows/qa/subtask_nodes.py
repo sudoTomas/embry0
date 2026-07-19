@@ -580,7 +580,11 @@ async def exploratory_qa_node(state: SubTaskState, config: RunnableConfig) -> di
                 }
             ],
             "qa_yaml_parsed": _synth_v1_qa_yaml(resolved),
-            "budget_seconds": 7200,
+            # EMB-37: deployed targets are read-only UI QA against an
+            # already-running instance — nothing builds or boots, so 2h of
+            # wall-clock is pure runaway budget (green runs finish in
+            # ~10 min). Managed targets keep 2h for slow in-sandbox boots.
+            "budget_seconds": 1800 if resolved.target == "deployed" else 7200,
         },
         "repo": state["repo"],
         "branch_name": state.get("branch_name") or "main",
