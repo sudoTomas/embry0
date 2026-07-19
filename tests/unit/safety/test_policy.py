@@ -179,3 +179,46 @@ def test_baseline_denies_glob_grep_for_host_paths():
     for path in ("/etc/**", "/root/**", "~/.claude/**", "~/.ssh/**", "~/.aws/**", "~/.gnupg/**", "/proc/**"):
         assert f"Glob({path})" in pol.deny_rules
         assert f"Grep({path})" in pol.deny_rules
+
+
+# ---------------------------------------------------------------------------
+# EMB-37: default-deny tool-name enforcement
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_policy_denies_tool_not_in_allowlist() -> None:
+    policy = SafetyPolicy(allowed_tools=["Read", "Bash"])
+    v = evaluate_policy(policy, "mcp__playwright__browser_run_code_unsafe", {"code": "1"})
+    assert v.allowed is False
+    assert "allowlist" in v.reason
+
+
+def test_evaluate_policy_allows_tool_in_allowlist() -> None:
+    policy = SafetyPolicy(allowed_tools=["Read", "mcp__playwright__browser_navigate"])
+    v = evaluate_policy(policy, "mcp__playwright__browser_navigate", {"url": "http://x"})
+    assert v.allowed is True
+
+
+def test_evaluate_policy_exempts_harness_internal_tools() -> None:
+    """TodoWrite/Skill/SlashCommand are CLI-harness tools agent tool lists
+    never enumerate — denying them burns turns for zero safety value."""
+    policy = SafetyPolicy(allowed_tools=["Read"])
+    for name in ("TodoWrite", "Skill", "SlashCommand"):
+        assert evaluate_policy(policy, name, {}).allowed is True
+
+
+def test_evaluate_policy_empty_allowlist_skips_name_check() -> None:
+    """No allowlist configured -> name enforcement off (content checks only)."""
+    policy = SafetyPolicy(allowed_tools=[])
+    v = evaluate_policy(policy, "AnythingGoes", {})
+    assert v.allowed is True
+
+
+def test_evaluate_policy_content_checks_still_fire_for_allowed_names() -> None:
+    policy = SafetyPolicy(
+        allowed_tools=["Bash"],
+        content_checks=[ContentRule(pattern=r"rm\s+-rf\s+/", tools=["Bash"], reason="destructive rm")],
+    )
+    v = evaluate_policy(policy, "Bash", {"command": "rm -rf /"})
+    assert v.allowed is False
+    assert "destructive rm" in v.reason

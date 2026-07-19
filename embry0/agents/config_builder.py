@@ -39,6 +39,13 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         model=invocation.model,
         allowed_tools=list(invocation.tools),
+        # EMB-37: ToolSearch loads deferred tools into context at runtime,
+        # which is how the QA agent reached browser_run_code_unsafe despite
+        # its tools list. Denying the two ToolSearch server-tool names is
+        # belt-and-suspenders (unknown names are a no-op on older CLIs);
+        # the enforcing layer is the Ring-3 tool-name check in
+        # embry0.safety.policy.evaluate_policy.
+        disallowed_tools=["tool_search_tool_regex", "tool_search_tool_bm25"],
         permission_mode="bypassPermissions",
         max_turns=invocation.max_turns,
         cwd="/workspace",

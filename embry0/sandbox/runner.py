@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import sys
 from datetime import UTC, datetime
@@ -39,6 +40,16 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
     `system_context`) are still accepted in the flat shape.
     """
     agent_type = cfg.get("agent_type", "agent")
+    # EMB-37: sync the Ring-3 policy allowlist with the invocation's real
+    # tools. evaluate_policy default-denies tool names outside
+    # policy.allowed_tools, and the per-agent-type default map has no entry
+    # for MCP-heavy agents like "qa" — without this sync every
+    # mcp__playwright__* call would be denied. Empty/missing cfg tools keeps
+    # the agent-type default (and thus its name enforcement) unchanged.
+    policy = default_policy_for_agent(agent_type)
+    cfg_tools = cfg.get("tools") or []
+    if cfg_tools:
+        policy = dataclasses.replace(policy, allowed_tools=list(cfg_tools))
     return AgentInvocation(
         agent_type=agent_type,
         prompt=cfg["prompt"],
@@ -52,7 +63,7 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
         timeout_seconds=cfg.get("timeout_seconds", 300),
         execution_mode=cfg.get("execution_mode", "sdk"),
         auth_mode=cfg.get("auth_mode", "oauth"),
-        safety_policy=default_policy_for_agent(agent_type),
+        safety_policy=policy,
         channel_config=None,
     )
 

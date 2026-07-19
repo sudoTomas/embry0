@@ -138,3 +138,21 @@ async def test_run_agent_delegates_to_executor() -> None:
     assert invocation_arg.agent_type == "developer"
     assert invocation_arg.prompt == "go"
     assert "_test_writer" in config_arg
+
+
+def test_invocation_syncs_policy_allowlist_with_config_tools() -> None:
+    """EMB-37: the Ring-3 name check enforces policy.allowed_tools, so the
+    policy MUST carry the invocation's real tools (the per-agent-type default
+    map has no 'qa' entry and would brick MCP-heavy agents)."""
+    cfg = {
+        "agent_type": "qa",
+        "prompt": "hi",
+        "tools": ["Read", "Bash", "mcp__playwright__browser_navigate"],
+    }
+    inv = _invocation_from_config(cfg)
+    assert inv.safety_policy.allowed_tools == ["Read", "Bash", "mcp__playwright__browser_navigate"]
+
+
+def test_invocation_without_tools_keeps_agent_type_default_policy() -> None:
+    inv = _invocation_from_config({"prompt": "ping", "agent_type": "review"})
+    assert inv.safety_policy.allowed_tools == ["Read", "Glob", "Grep", "Bash"]
