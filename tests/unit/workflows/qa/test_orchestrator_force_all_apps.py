@@ -186,3 +186,102 @@ async def test_qa_required_auto_with_no_diff_still_short_circuits(monkeypatch, f
     qa = out["qa"]
     assert qa["apps_to_qa"] == []
     assert qa["outcome"]["overall_status"] == "passed"
+
+
+# -------- Conditional criteria under force_all_apps (EMB-39) --------
+
+_QA_YAML_ALWAYS_CONDITIONAL = _QA_YAML_ALWAYS + """
+conditional_acceptance_criteria:
+  - name: hub-affected
+    when:
+      affected_apps: ["hub"]
+    criteria:
+      - "Hub affected check"
+"""
+
+
+def _capture(monkeypatch):
+    seen: dict[str, list[str]] = {}
+
+    async def fake_run_subtask(resolved, **kw):
+        seen[resolved.app_name] = list(resolved.acceptance_criteria)
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator_helpers.run_subtask",
+        fake_run_subtask,
+    )
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_force_all_apps_recomputes_affected_for_predicates(monkeypatch):
+    """force_all_apps skips affected-set computation for app selection, but a
+    group predicating on affected_apps triggers an on-demand recompute of the
+    diff-derived set."""
+    provider = FakeWorkspaceProvider(
+        apps=[
+            WorkspaceApp("hub", Path("apps/hub"), "@x/hub"),
+            WorkspaceApp("companion", Path("apps/companion"), "@x/companion"),
+            WorkspaceApp("lane", Path("apps/lane"), "@x/lane"),
+        ],
+        packages=[],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        ),
+    )
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: provider,
+    )
+    seen = _capture(monkeypatch)
+
+    state = {
+        "job_id": "force-cond-1",
+        "repo": "org/r",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_ALWAYS_CONDITIONAL,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    qa = out["qa"]
+    # All apps ran (qa_required: always)...
+    assert sorted(qa["apps_to_qa"]) == ["companion", "hub", "lane"]
+    # ...and the affected-predicate group fired via the on-demand recompute.
+    assert "Hub affected check" in seen["hub"]
+    assert "Hub affected check" in seen["companion"]  # group has no apps: scope
+
+
+@pytest.mark.asyncio
+async def test_force_all_apps_empty_diff_predicate_groups_off(monkeypatch, fake_provider):
+    """force_all_apps + empty diff: every app runs but predicate-gated
+    groups stay OFF (default-OFF rule holds under force_all_apps too)."""
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    seen = _capture(monkeypatch)
+
+    state = {
+        "job_id": "force-cond-2",
+        "repo": "org/r",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_ALWAYS_CONDITIONAL,
+            "changed_files": [],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    qa = out["qa"]
+    assert sorted(qa["apps_to_qa"]) == ["companion", "hub", "lane"]
+    for app, criteria in seen.items():
+        assert "Hub affected check" not in criteria, app
