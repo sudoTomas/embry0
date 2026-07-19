@@ -384,6 +384,7 @@ async def _qa_orchestrator_node_impl(
     existing early-return short-circuit working without per-branch publish
     plumbing.
     """
+    from dataclasses import replace
     from pathlib import Path
 
     from embry0.workflows.qa.qa_yaml_resolve import resolve_app_config
@@ -624,6 +625,19 @@ async def _qa_orchestrator_node_impl(
         qa_state["validation_errors"] = [str(exc)]
         qa_state["final_status"] = "failed"
         return {"qa": qa_state}
+
+    # 4b. Job-level acceptance-criteria override (QAJobOverrides). A caller
+    # that supplies a non-empty list on POST /jobs replaces every app's
+    # resolved criteria for this one run — the qa.yaml stays the durable
+    # contract. issue_executor stashes the list at qa["acceptance_criteria"].
+    override_criteria = list(qa_state.get("acceptance_criteria") or [])
+    if override_criteria:
+        resolved_configs = [replace(rc, acceptance_criteria=override_criteria) for rc in resolved_configs]
+        logger.info(
+            "qa_acceptance_criteria_overridden",
+            job_id=state.get("job_id"),
+            n_criteria=len(override_criteria),
+        )
 
     # 4a. Look up prebaked image tag if cache layer is enabled.
     image_repo = configurable.get("qa_image_tags_repo")

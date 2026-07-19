@@ -1743,3 +1743,73 @@ packages:""",
     # app is not a workspace package and must not be rejected by it.
     assert validated_names and all("live" not in names for names in validated_names)
     assert qa["final_status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_node_job_level_criteria_override_replaces_resolved(monkeypatch):
+    """A non-empty QAJobOverrides.acceptance_criteria (stashed by
+    issue_executor at qa["acceptance_criteria"]) must replace every app's
+    resolved criteria for the run; empty/absent leaves qa.yaml's resolution
+    untouched."""
+    from pathlib import Path
+
+    from embry0.workflows.qa.subtask_result_schema import (
+        CacheHits,
+        SubTaskResult,
+        SubTaskStatus,
+    )
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
+
+    fake_provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        packages=[],
+        affected_result=AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        ),
+    )
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+
+    seen_criteria: list[list[str]] = []
+
+    async def fake_run_subtask(resolved, **kw):
+        seen_criteria.append(list(resolved.acceptance_criteria))
+        return SubTaskResult(
+            app_name=resolved.app_name,
+            status=SubTaskStatus.PASSED,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+        )
+
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+
+    override = ["only criterion: page loads"]
+    state = {
+        "job_id": "22222222-2222-2222-2222-222222222222",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": ["apps/hub/app/page.tsx"],
+            "acceptance_criteria": override,
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    assert out["qa"]["final_status"] == "passed"
+    assert seen_criteria == [override]
+
+    # Control: without the override the resolved criteria come from qa.yaml
+    # (empty template in this fixture).
+    seen_criteria.clear()
+    state["qa"] = {
+        "qa_yaml_v2_raw": _QA_YAML_V2,
+        "changed_files": ["apps/hub/app/page.tsx"],
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    assert out["qa"]["final_status"] == "passed"
+    assert seen_criteria == [[]]
