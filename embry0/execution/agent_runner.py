@@ -208,9 +208,7 @@ class AgentRunner:
                     return AgentOutput(
                         agent_type=config.get("agent_type", "unknown"),
                         is_error=True,
-                        error_message=(
-                            f"agent produced no events for {idle_grace:.0f}s (idle watchdog); run killed"
-                        ),
+                        error_message=(f"agent produced no events for {idle_grace:.0f}s (idle watchdog); run killed"),
                     )
 
                 logger.info(
