@@ -678,3 +678,56 @@ def test_flake_route_auth_required():
     resp = client.get("/api/v1/qa/repos/org%2Fr1/flake")
     assert resp.status_code == 401
     qa_repo.flake_window.assert_not_called()
+
+
+# ─── affected_set conditional_groups (EMB-39) ────────────────────────────────
+
+
+def test_get_affected_set_includes_conditional_groups():
+    md_repo = AsyncMock()
+    md_repo.get = AsyncMock(
+        return_value=QARunMetadata(
+            job_id="run-md-cc",
+            apps_to_qa=["hub"],
+            apps_skipped=[],
+            force_all_apps=False,
+            changed_files=["apps/hub/src/pricing/calc.ts"],
+            base_branch="main",
+            dep_graph=[],
+            conditional_groups=[
+                {"name": "pricing", "source": "matched", "apps": ["hub"]},
+                {"name": "deep", "source": "forced", "apps": ["hub"]},
+            ],
+        )
+    )
+    _, client = _make_app(run_md_repo=md_repo)
+
+    resp = client.get("/api/v1/qa/runs/run-md-cc/affected_set", headers=_AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["conditional_groups"] == [
+        {"name": "pricing", "source": "matched", "apps": ["hub"]},
+        {"name": "deep", "source": "forced", "apps": ["hub"]},
+    ]
+
+
+def test_get_affected_set_legacy_row_empty_conditional_groups():
+    """A row from before migration 37 deserializes with [] and the API
+    returns it as an empty list."""
+    md_repo = AsyncMock()
+    md_repo.get = AsyncMock(
+        return_value=QARunMetadata(
+            job_id="run-md-legacy",
+            apps_to_qa=["hub"],
+            apps_skipped=[],
+            force_all_apps=False,
+            changed_files=[],
+            base_branch="main",
+            dep_graph=[],
+        )
+    )
+    _, client = _make_app(run_md_repo=md_repo)
+
+    resp = client.get("/api/v1/qa/runs/run-md-legacy/affected_set", headers=_AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["conditional_groups"] == []

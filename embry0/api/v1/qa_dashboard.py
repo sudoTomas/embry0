@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from embry0.api.schemas.qa_dashboard import (
     _OVERALL,
     AffectedSetResponse,
+    ConditionalGroupApplied,
     AppHistoryItem,
     AppResult,
     BootPhaseDetail,
@@ -217,6 +218,8 @@ async def get_run_affected_set(
         changed_files=md.changed_files,
         base_branch=md.base_branch,
         dep_graph=[DepEdge(**e) for e in md.dep_graph],
+        # EMB-39: which conditional-criteria groups fired and why.
+        conditional_groups=[ConditionalGroupApplied(**g) for g in md.conditional_groups],
     )
 
 

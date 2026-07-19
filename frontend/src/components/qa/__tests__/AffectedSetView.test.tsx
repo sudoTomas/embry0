@@ -22,6 +22,7 @@ const FULL: AffectedSetResponse = {
   ],
   base_branch: "main",
   dep_graph: [],
+  conditional_groups: [],
 };
 
 beforeEach(() => {
@@ -153,5 +154,42 @@ describe("AffectedSetView", () => {
     expect(
       screen.getByText(/Failed to load affected-set/i),
     ).toBeInTheDocument();
+  });
+
+  it("renders conditional-criteria groups with source badges when present", () => {
+    mockUseAffectedSet.mockReturnValue({
+      data: {
+        ...FULL,
+        conditional_groups: [
+          { name: "pricing", source: "matched", apps: ["hub"] },
+          { name: "deep", source: "forced", apps: [] },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<AffectedSetView runId="run-md-1" />);
+    expect(
+      screen.getByTestId("conditional-groups-section"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("pricing")).toBeInTheDocument();
+    expect(screen.getByText("matched")).toBeInTheDocument();
+    expect(screen.getByText("forced")).toBeInTheDocument();
+  });
+
+  it("omits the conditional-groups section when none fired", () => {
+    mockUseAffectedSet.mockReturnValue({
+      data: FULL,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<AffectedSetView runId="run-md-1" />);
+    expect(
+      screen.queryByTestId("conditional-groups-section"),
+    ).not.toBeInTheDocument();
   });
 });

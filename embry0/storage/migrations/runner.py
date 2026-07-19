@@ -852,6 +852,20 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ADD COLUMN IF NOT EXISTS extra_hosts JSONB NOT NULL DEFAULT '{}'::jsonb;
         """,
     ),
+    (
+        37,
+        "qa_run_metadata — conditional_groups for relevance-gated criteria (EMB-39)",
+        # Which conditional acceptance-criteria groups fired on this run and
+        # why, so the dashboard's affected-set view can show the relevance
+        # decision alongside the diff that drove it. Default [] keeps legacy
+        # rows valid.
+        """
+        ALTER TABLE qa_run_metadata
+            ADD COLUMN IF NOT EXISTS conditional_groups JSONB NOT NULL DEFAULT '[]'::jsonb;
+        COMMENT ON COLUMN qa_run_metadata.conditional_groups IS
+            'EMB-39: [{"name": str, "source": "matched"|"forced", "apps": [str]}] conditional acceptance-criteria groups applied to the run. [] for legacy rows and runs with no fired groups.';
+        """,
+    ),
 ]
 
 

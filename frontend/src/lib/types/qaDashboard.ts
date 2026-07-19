@@ -94,6 +94,13 @@ export interface DepEdge {
  * (`changed_files` + `base_branch`) shows what drove selection;
  * `force_all_apps` flags qa_required=always / explicit override paths.
  */
+/** EMB-39: one conditional acceptance-criteria group that fired on a run. */
+export interface ConditionalGroupApplied {
+  name: string;
+  source: "matched" | "forced";
+  apps: string[];
+}
+
 export interface AffectedSetResponse {
   job_id: string;
   apps_to_qa: string[];
@@ -102,6 +109,7 @@ export interface AffectedSetResponse {
   changed_files: string[];
   base_branch: string;
   dep_graph: DepEdge[];
+  conditional_groups: ConditionalGroupApplied[];
 }
 
 /**

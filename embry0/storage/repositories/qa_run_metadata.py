@@ -17,6 +17,7 @@ resolves. Surfaces the run-level diff decision to the dashboard's
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field as dataclasses_field
 
 from embry0.storage.database import DatabasePool
 
@@ -42,6 +43,10 @@ class QARunMetadata:
     base_branch: str
     dep_graph: list[dict[str, str]]
     head_sha: str = ""
+    conditional_groups: list[dict[str, object]] = dataclasses_field(default_factory=list)
+    """EMB-39: [{"name", "source": "matched"|"forced", "apps": [...]}] —
+    conditional acceptance-criteria groups applied to the run. Empty for
+    legacy rows and runs with no fired groups."""
 
 
 class QARunMetadataRepository:
@@ -59,6 +64,7 @@ class QARunMetadataRepository:
         base_branch: str,
         dep_graph: list[dict[str, str]],
         head_sha: str = "",
+        conditional_groups: list[dict[str, object]] | None = None,
     ) -> None:
         """Insert or replace the row for ``job_id``.
 
@@ -73,8 +79,10 @@ class QARunMetadataRepository:
         sql = """
         INSERT INTO qa_run_metadata
             (job_id, apps_to_qa, apps_skipped, force_all_apps,
-             changed_files, base_branch, dep_graph, head_sha)
-        VALUES ($1, $2::text[], $3::text[], $4, $5::text[], $6, $7::jsonb, $8)
+             changed_files, base_branch, dep_graph, head_sha,
+             conditional_groups)
+        VALUES ($1, $2::text[], $3::text[], $4, $5::text[], $6, $7::jsonb, $8,
+                $9::jsonb)
         ON CONFLICT (job_id) DO UPDATE SET
             apps_to_qa = EXCLUDED.apps_to_qa,
             apps_skipped = EXCLUDED.apps_skipped,
@@ -82,11 +90,12 @@ class QARunMetadataRepository:
             changed_files = EXCLUDED.changed_files,
             base_branch = EXCLUDED.base_branch,
             dep_graph = EXCLUDED.dep_graph,
-            head_sha = EXCLUDED.head_sha
+            head_sha = EXCLUDED.head_sha,
+            conditional_groups = EXCLUDED.conditional_groups
         """
-        # dep_graph is JSONB — pass the Python list directly; the asyncpg
-        # JSONB codec encodes once. Pre-encoding with json.dumps would
-        # double-wrap as a JSON-string-scalar.
+        # dep_graph / conditional_groups are JSONB — pass the Python list
+        # directly; the asyncpg JSONB codec encodes once. Pre-encoding with
+        # json.dumps would double-wrap as a JSON-string-scalar.
         await self._db.execute(
             sql,
             job_id,
@@ -97,13 +106,15 @@ class QARunMetadataRepository:
             base_branch,
             list(dep_graph),
             str(head_sha or ""),
+            list(conditional_groups or []),
         )
 
     async def get(self, job_id: str) -> QARunMetadata | None:
         """Fetch the metadata row for ``job_id``, or ``None`` if missing."""
         sql = """
         SELECT job_id, apps_to_qa, apps_skipped, force_all_apps,
-               changed_files, base_branch, dep_graph, head_sha
+               changed_files, base_branch, dep_graph, head_sha,
+               conditional_groups
         FROM qa_run_metadata
         WHERE job_id = $1
         """
@@ -128,4 +139,6 @@ class QARunMetadataRepository:
             # column populated by the DEFAULT '', but extra-defensive in
             # case some test seeds the column to NULL via raw SQL.
             head_sha=row["head_sha"] or "",
+            # JSONB via codec, same as dep_graph; [] for legacy/NULL rows.
+            conditional_groups=list(row["conditional_groups"]) if row["conditional_groups"] else [],
         )
