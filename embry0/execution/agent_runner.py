@@ -116,9 +116,54 @@ class AgentRunner:
                 container=container,
                 command=command,
                 workdir="/workspace",
+                # EMB-37: per-tool-call caps. The Claude CLI child inherits
+                # the exec env and imposes these itself — one hung MCP call
+                # (observed: 15+ min on a dead host) or runaway Bash command
+                # can no longer eat the whole run budget; it errors back to
+                # the agent, which can react.
+                env={
+                    "MCP_TOOL_TIMEOUT": "120000",
+                    "BASH_DEFAULT_TIMEOUT_MS": "120000",
+                    "BASH_MAX_TIMEOUT_MS": "240000",
+                },
             )
 
             timeout_seconds: float = config.get("timeout_seconds", 300)
+            # EMB-37: no-progress backstop. Hung tool calls don't advance
+            # turns, so max_turns can't fire and the wall-clock kill (up to
+            # 2h) was the only way out. Every stdout line from the runner is
+            # a liveness heartbeat; grace must exceed the longest legal
+            # silent gap (BASH_MAX 240s + model thinking), hence 360s.
+            idle_grace: float = config.get("idle_grace_seconds", 360)
+            idle_fired: list[bool] = []
+
+            async def _on_idle() -> None:
+                idle_fired.append(True)
+                logger.error(
+                    "agent_runner_idle_watchdog_fired",
+                    agent_type=config.get("agent_type"),
+                    container=container,
+                    idle_grace_seconds=idle_grace,
+                )
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                # proc.kill() only kills the host-side docker client — the
+                # in-container runner (and its CLI/browser children) keeps
+                # running until the sandbox is destroyed. Best-effort pkill
+                # so a stuck agent stops burning tokens immediately.
+                try:
+                    await self._docker.run_cmd(
+                        self._docker.build_exec_cmd(container, ["pkill", "-f", "embry0.sandbox.runner"]),
+                        timeout=10,
+                    )
+                except Exception:
+                    logger.warning("agent_runner_idle_pkill_failed", container=container)
+
+            from embry0.workflows.qa.watchdogs import IdleWatchdog  # noqa: PLC0415 — leaf module, no cycle
+
+            watchdog = IdleWatchdog(grace_seconds=idle_grace, on_timeout=_on_idle)
 
             async def _read_and_wait() -> AgentOutput:
                 final_result: dict[str, Any] | None = None
@@ -139,6 +184,9 @@ class AgentRunner:
 
                 if proc.stdout is not None:
                     async for raw_line in proc.stdout:
+                        # Every raw line is liveness — heartbeat before any
+                        # parsing so non-event output still counts.
+                        watchdog.heartbeat()
                         line = raw_line.decode("utf-8", errors="replace").strip()
                         if not line:
                             continue
@@ -155,6 +203,15 @@ class AgentRunner:
                 await stderr_task
 
                 stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace")
+
+                if idle_fired:
+                    return AgentOutput(
+                        agent_type=config.get("agent_type", "unknown"),
+                        is_error=True,
+                        error_message=(
+                            f"agent produced no events for {idle_grace:.0f}s (idle watchdog); run killed"
+                        ),
+                    )
 
                 logger.info(
                     "agent_stdout_captured",
@@ -217,6 +274,7 @@ class AgentRunner:
                     error_message=msg,
                 )
 
+            watchdog.start()
             try:
                 result = await asyncio.wait_for(_read_and_wait(), timeout=timeout_seconds)
             except TimeoutError:
@@ -229,6 +287,8 @@ class AgentRunner:
                     is_error=True,
                     error_message=f"Agent timed out after {timeout_seconds}s",
                 )
+            finally:
+                watchdog.stop()
 
             return result
 
