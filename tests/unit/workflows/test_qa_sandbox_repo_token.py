@@ -106,6 +106,7 @@ async def test_acquire_sandbox_node_passes_repo_to_create():
         e2e=None,
         acceptance_criteria=[],
         target="deployed",
+        auth=None,
     )
     state = {
         "parent_run_id": "job-1",

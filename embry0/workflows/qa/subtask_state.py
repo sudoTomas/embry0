@@ -184,4 +184,7 @@ def _build_job_json_payload(
         "changed_files": list(changed_files or []),
         "sandbox_token": sandbox_token,
         "presign_refresh_url": presign_refresh_url,
+        # EMB-40: True when an auth: block is configured — the browser context
+        # is seeded with a storageState and the agent must NOT drive login.
+        "pre_authenticated": resolved.auth is not None,
     }

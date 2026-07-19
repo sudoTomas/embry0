@@ -90,6 +90,7 @@ hard validation error**, not a silent ignore.
 | `seed_command` | str \| null | none | Optional data seed after boot. |
 | `seed_timeout_seconds` | int 1..1800 | `120` | |
 | `e2e` | e2e block \| null | none | See below. |
+| `auth` | auth block \| null | none | Pre-authenticate the QA browser via a Playwright storageState — see the `auth:` section below. |
 | `acceptance_criteria_template` | list of str | `[]` | Default criteria the QA agent drives per app. |
 
 ### `apps:` — `{ <app_name>: AppEntry }`
@@ -107,6 +108,7 @@ only — heavy overrides go in `apps/<name>/.embry0/app.yaml` (below).
 | `boot_timeout_seconds` | int 1..3600 | | |
 | `seed_command` | str | | **Forbidden for `deployed`** — never seed an externally running instance. |
 | `e2e` | e2e block | | |
+| `auth` | auth block | | Overrides `defaults`. **Allowed for `deployed`** — pre-authenticating against an external instance is the primary use case. |
 
 ### `target: deployed` — QA against an already-running deployment
 
@@ -165,6 +167,50 @@ apps:
 | `command` | str (non-empty) | required |
 | `timeout_seconds` | int 1..3600 | `600` |
 
+### `auth:` — pre-authenticated QA via Playwright storageState
+
+For apps behind a real login (Auth0, OIDC, session cookies), driving the login
+form with the QA agent is slow and fragile. Declare an `auth:` block instead
+and the orchestrator materializes a Playwright **storageState** (cookies +
+localStorage JSON) at `/workspace/.qa/storage-state.json` before the agent
+starts; the sandbox's `playwright-mcp` server loads it at browser-context
+creation (via `PLAYWRIGHT_MCP_STORAGE_STATE`), so the agent begins **already
+logged in** and `job.json` carries `pre_authenticated: true` telling it never
+to drive a login form.
+
+```yaml
+auth:
+  storage_state_from:
+    # exactly ONE of:
+    secret: QA_STORAGE_STATE               # name of a qa-scoped env var holding the storageState JSON
+    command: "node scripts/qa-login.mjs"   # in-sandbox login script that writes $QA_STORAGE_STATE_PATH
+    timeout_seconds: 300                   # 1..1800 (default 300) — budget for the command/secret step
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `storage_state_from.secret` | str | — | Name (not value!) of a **qa-scoped** env var set via `/environments` with `scope=qa`. Must match `QA_[A-Z0-9_]*` and not be a reserved infra key. Its value is the storageState JSON — capture it once with a scripted login (e.g. `npx playwright open --save-storage`) and refresh it when the session expires. |
+| `storage_state_from.command` | str | — | Repo-provided script run **inside the sandbox** (after boot/seed, before e2e/exploratory) that performs the login itself and writes the JSON to `$QA_STORAGE_STATE_PATH`. Any deps it needs must already be in the sandbox profile or vendored in the repo. |
+| `storage_state_from.timeout_seconds` | int 1..1800 | `300` | |
+
+Rules and behavior:
+
+- Declared on `defaults:` (applies to every app), per-app, or in
+  `apps/<name>/.embry0/app.yaml` — standard last-wins resolution.
+- Exactly one of `secret` / `command` (schema error otherwise).
+- **Survives `target: deployed`** (unlike `seed_command`) — pre-authenticating
+  against an external deployment is the primary use case. The login command
+  runs in-sandbox against the external URL.
+- The produced file is validated as JSON with `cookies`/`origins`; a missing
+  secret, failing login script, or malformed file marks the app
+  **`inconclusive`** ("couldn't authenticate, so couldn't verify") with an
+  `auth setup failed: …` summary — never `failed` and never an infra error.
+- `QA_STORAGE_STATE_PATH` and `PLAYWRIGHT_MCP_STORAGE_STATE` are reserved,
+  orchestrator-owned env vars — user rows with those keys are dropped.
+
+See `tests/fixtures/qa-yaml-corpus/v2/deployed-with-auth.yaml` for a worked
+example.
+
 ### `packages:` — `{ <package_name>: { no_cascade: bool } }`
 
 By default a change to a shared package **cascades** — every app that depends on
@@ -205,6 +251,9 @@ seed_command: "npm run seed:e2e"
 e2e:
   command: "npm run e2e"
   timeout_seconds: 1800
+auth:
+  storage_state_from:
+    secret: QA_STORAGE_STATE
 acceptance_criteria:               # REPLACES defaults.acceptance_criteria_template
   - "orders table paginates"
 ```

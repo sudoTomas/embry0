@@ -260,3 +260,94 @@ def test_deployed_corpus_fixture_parses():
     fixture = Path(__file__).parents[3] / "fixtures" / "qa-yaml-corpus" / "v2" / "deployed-target.yaml"
     cfg = parse_qa_yaml_v2(fixture.read_text())
     assert cfg.apps["web"].target == "deployed"
+
+
+# -------- auth: storage_state_from (EMB-40) --------
+
+
+def _deployed_with_auth(auth_yaml: str) -> str:
+    return DEPLOYED_V2.replace(
+        "    target: deployed\n",
+        f"    target: deployed\n{auth_yaml}",
+    )
+
+
+def test_auth_secret_source_parses_on_app_entry():
+    raw = _deployed_with_auth("    auth:\n      storage_state_from:\n        secret: QA_STORAGE_STATE\n")
+    cfg = parse_qa_yaml_v2(raw)
+    auth = cfg.apps["web"].auth
+    assert auth is not None
+    assert auth.storage_state_from.secret == "QA_STORAGE_STATE"
+    assert auth.storage_state_from.command is None
+
+
+def test_auth_command_source_parses_on_defaults():
+    raw = DEPLOYED_V2.replace(
+        "defaults:\n",
+        "defaults:\n  auth:\n    storage_state_from:\n      command: 'node scripts/qa-login.mjs'\n",
+    )
+    cfg = parse_qa_yaml_v2(raw)
+    auth = cfg.defaults.auth
+    assert auth is not None
+    assert auth.storage_state_from.command == "node scripts/qa-login.mjs"
+    assert auth.storage_state_from.timeout_seconds == 300
+
+
+def test_auth_requires_exactly_one_source_neither():
+    raw = _deployed_with_auth("    auth:\n      storage_state_from: {}\n")
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(raw)
+    assert "exactly one" in str(exc.value)
+
+
+def test_auth_requires_exactly_one_source_both():
+    raw = _deployed_with_auth(
+        "    auth:\n      storage_state_from:\n        secret: QA_STORAGE_STATE\n        command: 'node login.mjs'\n"
+    )
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(raw)
+    assert "exactly one" in str(exc.value)
+
+
+def test_auth_secret_must_have_qa_prefix():
+    raw = _deployed_with_auth("    auth:\n      storage_state_from:\n        secret: STORAGE_STATE\n")
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(raw)
+    assert "QA_" in str(exc.value)
+
+
+def test_auth_secret_rejects_reserved_key():
+    raw = _deployed_with_auth("    auth:\n      storage_state_from:\n        secret: QA_JOB_ID\n")
+    with pytest.raises(ValidationError) as exc:
+        parse_qa_yaml_v2(raw)
+    assert "reserved" in str(exc.value)
+
+
+def test_auth_secret_rejects_invalid_env_var_name():
+    raw = _deployed_with_auth("    auth:\n      storage_state_from:\n        secret: 'QA_bad name'\n")
+    with pytest.raises(ValidationError):
+        parse_qa_yaml_v2(raw)
+
+
+def test_auth_extra_field_rejected():
+    raw = _deployed_with_auth(
+        "    auth:\n      storage_state_from:\n        secret: QA_STORAGE_STATE\n      inject_into: [web]\n"
+    )
+    with pytest.raises(ValidationError):
+        parse_qa_yaml_v2(raw)
+
+
+def test_auth_allowed_on_app_local_file():
+    cfg = parse_app_local_yaml("auth:\n  storage_state_from:\n    secret: QA_STORAGE_STATE\n")
+    assert cfg.auth is not None
+    assert cfg.auth.storage_state_from.secret == "QA_STORAGE_STATE"
+
+
+def test_auth_corpus_fixture_parses():
+    from pathlib import Path
+
+    fixture = Path(__file__).parents[3] / "fixtures" / "qa-yaml-corpus" / "v2" / "deployed-with-auth.yaml"
+    cfg = parse_qa_yaml_v2(fixture.read_text())
+    auth = cfg.apps["web"].auth
+    assert auth is not None
+    assert auth.storage_state_from.secret == "QA_STORAGE_STATE"

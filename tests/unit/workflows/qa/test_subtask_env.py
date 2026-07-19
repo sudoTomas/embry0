@@ -71,3 +71,47 @@ def test_build_qa_sandbox_env_includes_turbo_when_configured():
     )
     assert env["TURBO_API"] == "https://t"
     assert env["TURBO_TOKEN"] == "y"
+
+
+def test_build_qa_sandbox_env_no_storage_state_by_default():
+    env = build_qa_sandbox_env(
+        user_env_vars=None,
+        git_proxy_url=None,
+        qa_job_id="run-1",
+        attempt_n=1,
+        qa_network_name="",
+    )
+    assert "PLAYWRIGHT_MCP_STORAGE_STATE" not in env
+    assert "QA_STORAGE_STATE_PATH" not in env
+
+
+def test_build_qa_sandbox_env_storage_state_vars_when_enabled():
+    from embry0.workflows.qa._subtask_env import QA_STORAGE_STATE_PATH
+
+    env = build_qa_sandbox_env(
+        user_env_vars=None,
+        git_proxy_url=None,
+        qa_job_id="run-1",
+        attempt_n=1,
+        qa_network_name="",
+        storage_state=True,
+    )
+    assert env["PLAYWRIGHT_MCP_STORAGE_STATE"] == QA_STORAGE_STATE_PATH
+    assert env["QA_STORAGE_STATE_PATH"] == QA_STORAGE_STATE_PATH
+
+
+def test_user_cannot_override_storage_state_env():
+    """PLAYWRIGHT_MCP_STORAGE_STATE / QA_STORAGE_STATE_PATH are reserved —
+    a user-supplied row must be dropped by the sandbox env filter."""
+    env = build_qa_sandbox_env(
+        user_env_vars=[
+            {"key": "PLAYWRIGHT_MCP_STORAGE_STATE", "value": "/tmp/evil.json", "scope": "qa"},
+            {"key": "QA_STORAGE_STATE_PATH", "value": "/tmp/evil.json", "scope": "qa"},
+        ],
+        git_proxy_url=None,
+        qa_job_id="run-1",
+        attempt_n=1,
+        qa_network_name="",
+    )
+    assert "PLAYWRIGHT_MCP_STORAGE_STATE" not in env
+    assert "QA_STORAGE_STATE_PATH" not in env

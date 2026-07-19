@@ -13,6 +13,13 @@ from __future__ import annotations
 
 from typing import Any
 
+# Where the storageState JSON lives inside the sandbox (EMB-40). Under
+# /workspace/.qa so shared-volume fan-outs keep it per-subtask (tmpfs overlay)
+# and the QA agent's Edit whitelist covers it. Exported to the sandbox as
+# QA_STORAGE_STATE_PATH (login-command contract) and PLAYWRIGHT_MCP_STORAGE_STATE
+# (read natively by the playwright-mcp stdio server at browser-context creation).
+QA_STORAGE_STATE_PATH = "/workspace/.qa/storage-state.json"
+
 
 def build_qa_sandbox_env(
     *,
@@ -22,6 +29,7 @@ def build_qa_sandbox_env(
     attempt_n: int,
     qa_network_name: str,
     turbo_remote_config: Any = None,
+    storage_state: bool = False,
 ) -> dict[str, str]:
     """Build the env dict passed to SandboxManager.create() for QA sandboxes.
 
@@ -37,6 +45,11 @@ def build_qa_sandbox_env(
 
     `turbo_remote_config` (TurboRemoteConfig | None) — if provided, adds
     TURBO_API/TURBO_TEAM/TURBO_TOKEN env vars for Turbo remote cache.
+
+    `storage_state` — True when the resolved app config declares an `auth:`
+    block (EMB-40); adds QA_STORAGE_STATE_PATH + PLAYWRIGHT_MCP_STORAGE_STATE
+    so the login step knows where to write and playwright-mcp seeds the
+    browser context from that file.
     """
     from embry0.cache.turbo_remote import turbo_env_vars
     from embry0.workflows.issue_to_pr.nodes import _filter_user_env_for_sandbox
@@ -55,4 +68,7 @@ def build_qa_sandbox_env(
         }
     )
     env.update(turbo_env_vars(turbo_remote_config))
+    if storage_state:
+        env["QA_STORAGE_STATE_PATH"] = QA_STORAGE_STATE_PATH
+        env["PLAYWRIGHT_MCP_STORAGE_STATE"] = QA_STORAGE_STATE_PATH
     return env

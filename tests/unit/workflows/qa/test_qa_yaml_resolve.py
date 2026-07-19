@@ -196,3 +196,65 @@ def test_managed_resolution_unchanged_by_target_field():
     assert resolved.target == "managed"
     assert resolved.boot_command == "PORT=3000 npm run start"
     assert resolved.mode == "process"
+
+
+# -------- auth: storage_state_from merge (EMB-40) --------
+
+
+def test_auth_none_when_undeclared():
+    cfg = parse_qa_yaml_v2(_ROOT_YAML)
+    resolved = resolve_app_config("hub", cfg, app_local=None)
+    assert resolved.auth is None
+
+
+def test_auth_inherited_from_defaults():
+    raw = _ROOT_YAML.replace(
+        "defaults:\n",
+        "defaults:\n  auth:\n    storage_state_from:\n      command: 'node scripts/qa-login.mjs'\n",
+    )
+    cfg = parse_qa_yaml_v2(raw)
+    resolved = resolve_app_config("hub", cfg, app_local=None)
+    assert resolved.auth is not None
+    assert resolved.auth.storage_state_from.command == "node scripts/qa-login.mjs"
+
+
+def test_auth_app_entry_overrides_defaults():
+    raw = _ROOT_YAML.replace(
+        "defaults:\n",
+        "defaults:\n  auth:\n    storage_state_from:\n      command: 'node scripts/qa-login.mjs'\n",
+    ).replace(
+        "  hub:\n",
+        "  hub:\n    auth:\n      storage_state_from:\n        secret: QA_HUB_STORAGE_STATE\n",
+    )
+    cfg = parse_qa_yaml_v2(raw)
+    resolved = resolve_app_config("hub", cfg, app_local=None)
+    assert resolved.auth.storage_state_from.secret == "QA_HUB_STORAGE_STATE"
+    assert resolved.auth.storage_state_from.command is None
+    # companion has no app-level auth — inherits the defaults-level one
+    companion = resolve_app_config("companion", cfg, app_local=None)
+    assert companion.auth.storage_state_from.command == "node scripts/qa-login.mjs"
+
+
+def test_auth_app_local_overrides_all():
+    raw = _ROOT_YAML.replace(
+        "  hub:\n",
+        "  hub:\n    auth:\n      storage_state_from:\n        secret: QA_HUB_STORAGE_STATE\n",
+    )
+    cfg = parse_qa_yaml_v2(raw)
+    local = parse_app_local_yaml("auth:\n  storage_state_from:\n    secret: QA_LOCAL_STORAGE_STATE\n")
+    resolved = resolve_app_config("hub", cfg, app_local=local)
+    assert resolved.auth.storage_state_from.secret == "QA_LOCAL_STORAGE_STATE"
+
+
+def test_deployed_keeps_auth():
+    """Unlike seed_command, auth survives the deployed-target branch — the
+    login/session-injection step is the whole point for deployed apps."""
+    raw = _DEPLOYED_ROOT_YAML.replace(
+        "    target: deployed\n",
+        "    target: deployed\n    auth:\n      storage_state_from:\n        secret: QA_STORAGE_STATE\n",
+    )
+    cfg = parse_qa_yaml_v2(raw)
+    resolved = resolve_app_config("web", cfg, app_local=None)
+    assert resolved.seed_command is None
+    assert resolved.auth is not None
+    assert resolved.auth.storage_state_from.secret == "QA_STORAGE_STATE"

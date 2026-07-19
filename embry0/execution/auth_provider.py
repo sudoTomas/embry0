@@ -27,6 +27,10 @@ RESERVED_ENV_KEYS: Final[frozenset[str]] = frozenset(
         "QA_JOB_ID",
         "QA_ATTEMPT_N",
         "QA_NETWORK_NAME",
+        # storageState pre-authentication (EMB-40): both point the sandbox
+        # (login command + playwright-mcp) at the orchestrator-chosen path.
+        "QA_STORAGE_STATE_PATH",
+        "PLAYWRIGHT_MCP_STORAGE_STATE",
         # DinD certs are mounted by the orchestrator for dind_enabled profiles:
         "DOCKER_HOST",
         "DOCKER_TLS_VERIFY",

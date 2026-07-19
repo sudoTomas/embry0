@@ -3,11 +3,12 @@
 Each sub-task runs as its own LangGraph subgraph against an isolated
 sandbox container. Steps:
 
-  acquire_sandbox → boot_app → seed (optional) → e2e (optional) →
-  exploratory_qa → collect_artifacts → release_sandbox → emit_result
+  acquire_sandbox → boot_app → seed (optional) → auth_setup (optional) →
+  e2e (optional) → exploratory_qa → collect_artifacts → release_sandbox →
+  emit_result
 
 The integration is wired in subtask_graph.py (Task 17). This file defines:
-  - The 8 node functions.
+  - The 9 node functions.
 
 State shape and helpers live in subtask_state.py.
 """
@@ -159,6 +160,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
         attempt_n=1,
         qa_network_name=qa_net,
         turbo_remote_config=turbo_remote_config,
+        storage_state=resolved.auth is not None,
     )
 
     # Allocate sandbox.  When the shared-volume cache layer is active, mount
@@ -398,6 +400,109 @@ async def seed_node(state: SubTaskState, config: RunnableConfig) -> dict[str, An
         }
 
     return {"raw_result": {**state.get("raw_result", {}), "seed_stdout": out}}
+
+
+async def auth_setup_node(state: SubTaskState, config: RunnableConfig) -> dict[str, Any]:
+    """Produce /workspace/.qa/storage-state.json for pre-authenticated QA (EMB-40).
+
+    Skipped unless the resolved config declares an ``auth:`` block. Two source
+    modes (schema-enforced exactly-one):
+
+      - ``secret``: a qa-scoped env var (already injected into the sandbox by
+        build_qa_sandbox_env) holds the storageState JSON; write it to the
+        canonical path.
+      - ``command``: run the repo-provided login script in-sandbox with
+        QA_STORAGE_STATE_PATH in its env; the script writes the file itself.
+
+    Either way the file is then read back and sanity-checked as Playwright
+    storageState (JSON object with cookies/origins). Failures report as
+    INCONCLUSIVE — "couldn't authenticate, so couldn't verify" — never as
+    QA_FAILURE (the app didn't fail) and never as INFRA_FAILURE (the login
+    script / stored session is repo-owned, not embry0's fault).
+    """
+    if state.get("status") is not None:
+        return {}
+    from embry0.workflows.qa._subtask_env import QA_STORAGE_STATE_PATH
+    from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
+
+    resolved: ResolvedAppConfig = state["resolved"]
+    if resolved.auth is None:
+        return {}
+
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    docker = configurable.get("docker")
+    sandbox_id = state.get("sandbox_id")
+    if docker is None or sandbox_id is None:
+        return {
+            "status": SubTaskStatus.INFRA_FAILURE,
+            "failure_summary": "auth_setup missing docker or sandbox_id",
+            "completed_at": time.monotonic(),
+        }
+
+    src = resolved.auth.storage_state_from
+
+    def _inconclusive(reason: str) -> dict[str, Any]:
+        return {
+            "status": SubTaskStatus.INCONCLUSIVE,
+            "failure_summary": f"auth setup failed: {reason}",
+            "completed_at": time.monotonic(),
+        }
+
+    if src.secret is not None:
+        source = "secret"
+        script = (
+            f'if [ -z "${{{src.secret}:-}}" ]; then '
+            f'echo "storageState secret {src.secret} is empty or not injected into the sandbox '
+            f'(is it set with scope=qa in /environments?)" >&2; exit 1; fi; '
+            f"printf '%s' \"${{{src.secret}}}\" > {QA_STORAGE_STATE_PATH}"
+        )
+        exec_cmd = docker.build_exec_cmd(sandbox_id, ["bash", "-c", script])
+    else:
+        source = "command"
+        exec_cmd = docker.build_exec_cmd(
+            sandbox_id,
+            ["bash", "-c", src.command],
+            env={"QA_STORAGE_STATE_PATH": QA_STORAGE_STATE_PATH},
+        )
+
+    try:
+        await docker.run_cmd(exec_cmd, timeout=src.timeout_seconds)
+    except Exception as exc:  # noqa: BLE001
+        return _inconclusive(f"{source} step failed: {exc}")
+
+    try:
+        raw = await docker.run_cmd(
+            docker.build_exec_cmd(sandbox_id, ["cat", QA_STORAGE_STATE_PATH]),
+            timeout=10,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _inconclusive(f"storage-state file not readable after {source} step: {exc}")
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return _inconclusive(f"storage-state file is not valid JSON: {exc}")
+
+    if not isinstance(data, dict) or ("cookies" not in data and "origins" not in data):
+        return _inconclusive("storage-state JSON has neither `cookies` nor `origins` — not a Playwright storageState")
+
+    logger.info(
+        "qa_auth_setup_complete",
+        app_name=resolved.app_name,
+        source=source,
+        cookies=len(data.get("cookies") or []),
+        origins=len(data.get("origins") or []),
+    )
+    return {
+        "raw_result": {
+            **state.get("raw_result", {}),
+            "auth_setup": {
+                "source": source,
+                "cookies": len(data.get("cookies") or []),
+                "origins": len(data.get("origins") or []),
+            },
+        }
+    }
 
 
 async def e2e_node(state: SubTaskState, config: RunnableConfig) -> dict[str, Any]:
