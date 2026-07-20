@@ -38,6 +38,7 @@ embry0 = "embry0.cli.__main__:main"
 
 [project.entry-points."embry0.workspace_providers"]
 npm-workspaces-turbo = "embry0.workspace_providers.npm_workspaces_turbo.provider:NpmWorkspacesTurboProvider"
+static-apps = "embry0.workspace_providers.static_apps:StaticAppsProvider"
 
 [project.optional-dependencies]
 dev = [

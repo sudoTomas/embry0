@@ -2209,3 +2209,51 @@ async def test_orchestrator_qa_image_profile_passes_capability_check(monkeypatch
     out = await qa_orchestrator_node(state, {"configurable": {"profiles_repo": profiles_repo}})
     assert out["qa"]["final_status"] == "passed"
     assert "hub" in seen
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_provider_root_subdirectory(monkeypatch):
+    """EMB-32: `workspace_provider.config.root` constructs the provider on
+    repo_root/<root> with the key stripped, wrapped in RootScopedProvider."""
+    from embry0.workspace_providers import AffectedSet
+
+    captured = {}
+
+    def _fake_load(name, root, config):
+        captured["name"] = name
+        captured["root"] = root
+        captured["config"] = config
+        provider = _fake_hub_companion_provider()
+        provider.affected_result = AffectedSet(
+            directly_changed=frozenset({"@x/hub"}),
+            cascade_closure=frozenset({"@x/hub"}),
+            apps_to_qa=frozenset({"@x/hub"}),
+        )
+        captured["provider"] = provider
+        return provider
+
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator.load_provider", _fake_load)
+    _capture_subtasks(monkeypatch)
+
+    yaml_with_root = _QA_YAML_V2.replace(
+        "workspace_provider:\n  type: fake\n",
+        'workspace_provider:\n  type: fake\n  config:\n    root: "frontend"\n',
+    )
+    assert 'root: "frontend"' in yaml_with_root, "fixture substitution failed"
+
+    state = {
+        "job_id": "dddd7777-7777-7777-7777-777777777777",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": yaml_with_root,
+            "changed_files": ["frontend/apps/hub/app/page.tsx"],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    assert out["qa"]["final_status"] == "passed"
+    assert str(captured["root"]).endswith("/frontend")
+    assert "root" not in captured["config"]
+    # The wrapper rebased the changed file before the inner provider saw it.
+    rebased = [str(c.changed_files[0]) for c in captured["provider"].affected_calls]
+    assert rebased and rebased[0] == "apps/hub/app/page.tsx"

@@ -501,11 +501,22 @@ async def _qa_orchestrator_node_impl(
     provider = None
     if cfg.workspace_provider is not None:
         try:
+            # EMB-32: `config.root` runs any provider on a repo subdirectory
+            # (e.g. a turbo workspace under frontend/). The key is stripped
+            # before the inner provider sees it (provider configs are
+            # extra="forbid") and changed-file paths are rebased by the
+            # wrapper so prefix matching stays consistent.
+            provider_config = dict(cfg.workspace_provider.config or {})
+            provider_subdir = str(provider_config.pop("root", "") or "").strip("/")
             provider = load_provider(
                 cfg.workspace_provider.type,
-                repo_root,
-                cfg.workspace_provider.config,
+                repo_root / provider_subdir if provider_subdir else repo_root,
+                provider_config,
             )
+            if provider_subdir:
+                from embry0.workspace_providers.root_scoped import RootScopedProvider
+
+                provider = RootScopedProvider(provider, root=provider_subdir)
         except Exception as exc:  # noqa: BLE001
             outcome = OrchestratorOutcome(
                 overall_status="infra_error",
