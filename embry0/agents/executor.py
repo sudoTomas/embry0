@@ -471,6 +471,27 @@ class SdkAgentExecutor:
                             "node": invocation.agent_type,
                         }
                     )
+                elif hasattr(message, "content"):
+                    # EMB-44 follow-up: tool RESULTS ride UserMessage objects
+                    # (Anthropic protocol — tool_result blocks are user-turn
+                    # content), which this loop previously ignored entirely,
+                    # so the AssistantMessage ToolResultBlock branch above
+                    # never fires in production. Scan user-message content
+                    # for ask_user events the Bash tool captured; emit
+                    # nothing else here to keep the event stream unchanged.
+                    user_content = getattr(message, "content", None)
+                    scan_texts: list[str] = []
+                    if isinstance(user_content, str):
+                        scan_texts.append(user_content)
+                    elif isinstance(user_content, list):
+                        for block in user_content:
+                            block_content = getattr(block, "content", None)
+                            if block_content is not None:
+                                scan_texts.append(str(block_content))
+                    for text_chunk in scan_texts:
+                        for embedded in _extract_embedded_ask_user_events(text_chunk):
+                            embedded["node"] = invocation.agent_type
+                            writer(embedded)
 
         try:
             await asyncio.wait_for(execute(), timeout=max(invocation.timeout_seconds, 0.001))
