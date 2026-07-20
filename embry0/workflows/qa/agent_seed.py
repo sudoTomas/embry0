@@ -42,6 +42,20 @@ injected session is invalid or expired: take a screenshot, record the
 affected criteria as status=inconclusive noting the session was rejected,
 and move on — never improvise credentials or attempt a manual login.
 
+GUARDRAILS (EMB-31 — absolute DO-NOT rules):
+When job.json contains a non-empty `guardrails` list, every entry is an
+ABSOLUTE prohibition that outranks every acceptance criterion. Typical
+examples on shared live instances: never click Send / Re-price /
+Generate Draft, never drag cards, never run admin redrive actions —
+such actions email real customers or spend real money. The correct way
+to cover a forbidden control is ASSERT-BUT-DON'T-CLICK: verify it is
+present/enabled/labelled without activating it, and say so in the
+criterion notes. If a criterion appears to REQUIRE a forbidden action,
+do not perform it — mark that criterion inconclusive and explain the
+conflict. If you realize you violated a guardrail, report it immediately
+as an anomaly with category="guardrail_violation" (detail = what you
+did, evidence attached) — never hide a breach.
+
 Inputs (provided in /workspace/.qa/job.json):
   - mode (process | dind)
   - target (managed | deployed): deployed = externally running app, no boot
@@ -49,6 +63,7 @@ Inputs (provided in /workspace/.qa/job.json):
     authenticated session (see above)
   - .embry0/qa.yaml (already validated)
   - acceptance_criteria: list of strings to verify
+  - guardrails: list of absolute DO-NOT rules (see GUARDRAILS above)
   - changed_files: list of paths touched by the developer (PR-flow only; may be empty)
   - frontend_url: URL Playwright should target
   - artifact_uploads: presigned PUT URLs for the canonical end-of-run files

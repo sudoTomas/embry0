@@ -322,3 +322,53 @@ apps:
     )
     resolved = resolve_app_config("web", root, app_local=None)
     assert len(resolved.ready_checks) == 1
+
+
+def test_guardrails_merge_as_union_across_layers():
+    """EMB-31: guardrails are additive (defaults + app + app-local, deduped)
+    — a narrower layer can never remove inherited safety rules."""
+    root = parse_qa_yaml_v2(
+        """
+version: 2
+workspace_provider:
+  type: npm-workspaces-turbo
+defaults:
+  mode: process
+  ready_checks:
+    - http: "http://localhost:3000/"
+  guardrails:
+    - "Never click Send"
+apps:
+  web:
+    boot_command: "npm start"
+    frontend_url: "http://localhost:3000"
+    guardrails:
+      - "Never click Re-price"
+      - "Never click Send"
+"""
+    )
+    resolved = resolve_app_config("web", root, app_local=None)
+    assert resolved.guardrails == ["Never click Send", "Never click Re-price"]
+
+    local = parse_app_local_yaml('guardrails: ["Never drag cards"]')
+    resolved2 = resolve_app_config("web", root, app_local=local)
+    assert resolved2.guardrails == ["Never click Send", "Never click Re-price", "Never drag cards"]
+
+
+def test_guardrails_default_empty():
+    root = parse_qa_yaml_v2(
+        """
+version: 2
+workspace_provider:
+  type: npm-workspaces-turbo
+defaults:
+  mode: process
+  ready_checks:
+    - http: "http://localhost:3000/"
+apps:
+  web:
+    boot_command: "npm start"
+    frontend_url: "http://localhost:3000"
+"""
+    )
+    assert resolve_app_config("web", root, app_local=None).guardrails == []

@@ -58,7 +58,7 @@ class QAAcceptanceResult(BaseModel):
 
 class QAAnomaly(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    category: Literal["console_error", "network_error", "unexpected_state", "crash"]
+    category: Literal["console_error", "network_error", "unexpected_state", "crash", "guardrail_violation"]
     detail: str
     evidence_paths: list[str] = Field(default_factory=list)
     ts: str | None = None

@@ -39,7 +39,7 @@ export interface QAAcceptanceResult {
 }
 
 export interface QAAnomaly {
-  category: "console_error" | "network_error" | "unexpected_state" | "crash";
+  category: "console_error" | "network_error" | "unexpected_state" | "crash" | "guardrail_violation";
   detail: string;
   evidence_paths: string[];
   ts?: string;
