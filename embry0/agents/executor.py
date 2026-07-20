@@ -243,6 +243,38 @@ class SdkAgentExecutor:
         # --- Build SDK options
         options = build_sdk_options(invocation)
 
+        # --- EMB-36: non-Anthropic provider overlay. The CLI honors
+        # ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY, so a compat backend (xAI
+        # grok) is per-agent env configuration on the CLI subprocess. The
+        # provider key rides the sandbox container env (never argv); a
+        # missing key fails closed before any tokens are spent.
+        if invocation.provider:
+            from embry0.agents.providers import PROVIDERS
+
+            prov = next((pr for pr in PROVIDERS if pr.name == invocation.provider), None)
+            if prov is None:
+                return AgentOutput(
+                    agent_type=invocation.agent_type,
+                    is_error=True,
+                    error_message=f"unknown model provider: {invocation.provider!r}",
+                )
+            provider_key = os.environ.get(prov.api_key_env, "")
+            if not provider_key:
+                return AgentOutput(
+                    agent_type=invocation.agent_type,
+                    is_error=True,
+                    error_message=(
+                        f"model {invocation.model!r} requires {prov.api_key_env} in the "
+                        "orchestrator environment (injected into the sandbox at create)"
+                    ),
+                )
+            options.env = {
+                "ANTHROPIC_BASE_URL": prov.base_url,
+                "ANTHROPIC_API_KEY": provider_key,
+                "ANTHROPIC_AUTH_TOKEN": "",
+                "CLAUDE_CODE_OAUTH_TOKEN": "",
+            }
+
         # --- EMB-35 session resume, in precedence order:
         # 1. ``resume_session_id`` → the CLI's own file-based resume. The
         #    session JSONL was staged to the canonical path by AgentRunner

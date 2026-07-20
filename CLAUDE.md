@@ -10,7 +10,7 @@
 
 - `ENVIRONMENT_SECRET_KEY` drives Fernet encryption for per-repo env var secrets. In production the orchestrator refuses to start without it; in dev mode a default is tolerated with a loud warning. Rotating the key makes prior secrets undecryptable.
 - Agents can pause the pipeline to ask the user questions (`embry0.sandbox.ask_user`). Capped at 5 rounds per job to prevent runaway loops; after the cap the job fails with `ERR_MAX_AGENT_QUESTIONS`.
-- Reserved env var keys (`EMBRY0_GIT_PROXY_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `GITHUB_TOKEN`) are blocked as user-settable env vars both at the API and at sandbox injection — don't attempt to override infrastructure variables via the environment UI.
+- Reserved env var keys (`EMBRY0_GIT_PROXY_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `XAI_API_KEY`, `GITHUB_TOKEN`) are blocked as user-settable env vars both at the API and at sandbox injection — don't attempt to override infrastructure variables via the environment UI.
 - **API Auth flags.** `AUTH_DEV_MODE` and `WEBHOOK_DEV_MODE` are independent dev-mode flags; both default to `false`. Do not enable in production — startup logs `CRITICAL` and writes a `dev_mode_enabled` audit row when either is true. `AUTH_DEV_MODE=true` bypasses API key authentication; `WEBHOOK_DEV_MODE=true` bypasses webhook HMAC verification and is required for the smee.io relay flow.
 
 ## Deployment
@@ -48,6 +48,7 @@
   docker compose up -d --force-recreate init-push-images orchestrator
   ```
 - Proxies (`git-proxy`, `github-proxy`, `auth-proxy`) run as DinD containers on the `sandbox-restricted` network. Sandboxes reach them by Docker DNS (`http://git-proxy:9101`, etc.), not via `host.docker.internal`. Restart the orchestrator after changing `GITHUB_TOKEN` or `ANTHROPIC_API_KEY` in `.env` — the proxies are recreated on each `proxy_mgr.start()`.
+- Non-Anthropic model providers (xAI grok via the Anthropic-compat API) are routed per-agent by model id — set `XAI_API_KEY` in the root `.env` and select `grok-4.5` via `agent_models`; see `docs/providers.md`.
 - The sandbox uses OAuth via the `CLAUDE_CODE_OAUTH_TOKEN` env var (set it in `.env`; generate with `claude setup-token`).
 - Git auth flows via the credential proxy: a `git-proxy` container running in DinD on the `sandbox-restricted` network injects the orchestrator's `GITHUB_TOKEN` when the sandbox's git credential helper curls `$EMBRY0_GIT_PROXY_URL/git-credentials` (which resolves to `http://git-proxy:9101` via Docker DNS). `GITHUB_TOKEN` never enters the sandbox env. The proxy is managed by `ProxyManager` in `embry0/execution/proxy/manager.py`.
 - Read-only rootfs is disabled (`read_only_root: False`) because Claude CLI needs writable fs.

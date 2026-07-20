@@ -189,6 +189,7 @@ async def run_agent_node(
         "timeout_seconds": invocation.timeout_seconds,
         "execution_mode": invocation.execution_mode,
         "auth_mode": invocation.auth_mode,
+        "provider": invocation.provider,
     }
 
     container = state.get("sandbox_container_id", "")

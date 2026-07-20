@@ -48,6 +48,9 @@ def test_reserved_env_keys_export_expected_set() -> None:
         "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        # EMB-36: non-Anthropic provider keys are orchestrator-owned too.
+        "XAI_API_KEY",
         "GITHUB_TOKEN",
         # QA-injected infrastructure (orchestrator owns these):
         "QA_JOB_ID",

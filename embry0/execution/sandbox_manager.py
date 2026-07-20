@@ -143,6 +143,19 @@ class SandboxManager:
         if oauth_token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
 
+        # EMB-36: non-Anthropic provider keys (e.g. XAI_API_KEY) ride the
+        # container env so the in-sandbox executor can overlay them on the
+        # CLI subprocess for provider-routed agents. Reserved keys — user
+        # env can never set them (auth_provider.RESERVED_ENV_KEYS).
+        import os as _os
+
+        from embry0.agents.providers import PROVIDERS as _PROVIDERS
+
+        for _prov in _PROVIDERS:
+            _key = _os.environ.get(_prov.api_key_env, "")
+            if _key:
+                env[_prov.api_key_env] = _key
+
         # Merge profile-level env_defaults (stored in DB but previously
         # never wired into the env passed to create).  Use setdefault so
         # caller-provided values win — env_defaults are profile baselines.
