@@ -104,3 +104,85 @@ async def test_qa_loads_prior_session_and_persists_new_one():
     assert upsert_kwargs["agent_type"] == "qa"
     assert upsert_kwargs["mode"] == "anthropic_api"
     assert upsert_kwargs["messages"][-1]["content"] == "now"
+
+
+@pytest.mark.asyncio
+async def test_qa_subtask_job_skips_session_load_and_persist():
+    """EMB-41: a synthetic sub-task job_id (<parent>__<app>) has no row in
+    `jobs` — persisting a session for it violates the agent_sessions FK, and
+    nothing ever resumes a sub-task. Both load and persist must be skipped."""
+    from embry0.workflows.qa.nodes import qa_node
+
+    sessions_repo = AsyncMock()
+    sessions_repo.get = AsyncMock(return_value=None)
+    sessions_repo.upsert = AsyncMock()
+
+    fake_result = {
+        "agent_outputs": [
+            {
+                "agent_type": "qa",
+                "is_error": False,
+                "output": "ok",
+                "messages": [{"role": "user", "content": "hi"}],
+                "session_id": "sess-1",
+                "mode": "anthropic_api",
+                "cost_usd": 0.1,
+                "duration_ms": 5000,
+            }
+        ],
+    }
+
+    async def _run(*args, **kwargs):
+        assert kwargs.get("resume_session") is None
+        return fake_result
+
+    state = {
+        "job_id": "JOB1__quoting",
+        "repo": "x/y",
+        "qa": {
+            "attempts": [
+                {
+                    "attempt_n": 1,
+                    "sandbox_id": "container-id-xyz",
+                    "artifact_prefix": "JOB1/1/",
+                }
+            ],
+            "qa_yaml_parsed": {"mode": "dind"},
+            "acceptance_criteria": ["home loads"],
+            "sandbox_token": "tok",
+        },
+    }
+
+    fake_agent_def_repo = MagicMock()
+    fake_agent_def_repo.get = AsyncMock(
+        return_value={
+            "model": "claude-sonnet-4-6",
+            "tools": [],
+            "skills": [],
+            "system_prompt": "sp",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        }
+    )
+
+    with (
+        patch(
+            "embry0.storage.repositories.agent_definitions.AgentDefinitionsRepository",
+            return_value=fake_agent_def_repo,
+        ),
+        patch("embry0.orchestration.nodes.agent.run_agent_node", new=AsyncMock(side_effect=_run)),
+    ):
+        await qa_node(
+            state,
+            {
+                "configurable": {
+                    "agent_runner": MagicMock(),
+                    "db": MagicMock(),
+                    "agent_sessions_repo": sessions_repo,
+                }
+            },
+        )
+
+    sessions_repo.get.assert_not_awaited()
+    sessions_repo.upsert.assert_not_awaited()

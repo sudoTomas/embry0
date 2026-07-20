@@ -445,6 +445,16 @@ async def qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, An
     # failures must NEVER block the agent run — fall back to a fresh session.
     from embry0.agents.session import AgentSession, merged_resume_messages
 
+    # EMB-41: deployed-target sub-tasks run under a synthetic job_id
+    # ("<parent>__<app>") that has no row in `jobs` — persisting a session
+    # for it violates the agent_sessions FK (a logged traceback on every
+    # deployed run), and nothing ever resumes a sub-task: retry rounds
+    # launch fresh sub-task jobs. Skip session load AND persist for
+    # synthetic ids. (Keying on the parent instead would collide across
+    # the per-app QA agents, which all share agent_type="qa".)
+    if "__" in (state.get("job_id") or ""):
+        agent_sessions_repo = None
+
     resume_session: AgentSession | None = None
     if agent_sessions_repo is not None:
         try:
