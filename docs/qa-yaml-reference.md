@@ -64,8 +64,22 @@ hard validation error**, not a silent ignore.
 
 | Field | Type | Notes |
 |---|---|---|
-| `type` | str, required | `npm-workspaces-turbo` is the first/only impl. |
-| `config` | dict | Provider-specific. |
+| `type` | str, required | `npm-workspaces-turbo` or `static-apps` (EMB-32). |
+| `config` | dict | Provider-specific. `config.root` (any provider) runs it on a repo **subdirectory** — e.g. a turbo workspace under `frontend/`; changed-file paths are rebased automatically. |
+
+`static-apps` (EMB-32) — declared apps, no discovery, for repos where
+workspace discovery doesn't map (mixed-language monorepos, non-npm stacks):
+
+```yaml
+workspace_provider:
+  type: static-apps
+  config:
+    apps:
+      hub: { prefixes: ["apps/hub/", "shared/"] }   # affected when a changed file matches
+      leads: {}                                     # no prefixes -> always affected
+# or the short form (every app always affected):
+#   config: { apps: [hub, leads] }
+```
 
 `npm-workspaces-turbo` `config` keys (see the toy-monorepo fixture):
 
