@@ -201,6 +201,10 @@ class SdkAgentExecutor:
         tools_called: dict[str, int] = {}
         output_text = ""
         cost_usd = 0.0
+        input_tokens = 0
+        output_tokens = 0
+        cache_read_tokens = 0
+        cache_creation_tokens = 0
         is_error = False
         error_message = ""
 
@@ -264,6 +268,7 @@ class SdkAgentExecutor:
 
         async def execute() -> None:
             nonlocal output_text, cost_usd, captured_session_id
+            nonlocal input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
             turn_number = 0
             async for message in query(prompt=prompt, options=options):
                 # Snapshot session_id from any message that carries one.
@@ -350,14 +355,20 @@ class SdkAgentExecutor:
                         output_text = str(getattr(message, "result", ""))
                     cost_usd = getattr(message, "total_cost_usd", 0.0) or 0.0
                     usage = getattr(message, "usage", {}) or {}
+                    input_tokens = int(usage.get("input_tokens", 0) or 0)
+                    output_tokens = int(usage.get("output_tokens", 0) or 0)
+                    cache_read_tokens = int(usage.get("cache_read_input_tokens", 0) or 0)
+                    cache_creation_tokens = int(usage.get("cache_creation_input_tokens", 0) or 0)
                     writer(
                         {
                             "type": "cost_update",
                             "cost_usd": cost_usd,
                             "duration_ms": getattr(message, "duration_ms", 0),
                             "num_turns": getattr(message, "num_turns", 0),
-                            "tokens_in": usage.get("input_tokens", 0),
-                            "tokens_out": usage.get("output_tokens", 0),
+                            "tokens_in": input_tokens,
+                            "tokens_out": output_tokens,
+                            "cache_read_tokens": cache_read_tokens,
+                            "cache_creation_tokens": cache_creation_tokens,
                             "node": invocation.agent_type,
                         }
                     )
@@ -417,6 +428,10 @@ class SdkAgentExecutor:
             cost_usd=cost_usd,
             duration_ms=elapsed_ms,
             tools_called=tools_called,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
             messages=out_messages,
             session_id=out_session_id,
             session_blob_path=out_session_blob_path,
@@ -432,6 +447,10 @@ class SdkAgentExecutor:
                     "cost_usd": cost_usd,
                     "duration_ms": elapsed_ms,
                     "tools_called": tools_called,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cache_read_tokens": cache_read_tokens,
+                    "cache_creation_tokens": cache_creation_tokens,
                 },
                 "cost_usd": cost_usd,
                 "duration_ms": elapsed_ms,

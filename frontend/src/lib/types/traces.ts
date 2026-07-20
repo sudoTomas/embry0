@@ -5,7 +5,7 @@ import type { TraceResult } from "./jobs";
  *
  * Mirrors the columns of the `traces` table (see embry0/storage/migrations/runner.py).
  * The embry0 schema is intentionally narrower than coding-lab's — fields like
- * issue_number, repo, tier, role, tokens, validation, etc. are not persisted here.
+ * issue_number, repo, tier, role, validation, etc. are not persisted here.
  */
 export interface TraceResponse {
   trace_id: string;
@@ -18,6 +18,11 @@ export interface TraceResponse {
   tools_called: Record<string, number>;
   result_summary: string;
   created_at: string;
+  /** EMB-35 token columns — 0 on rows that predate migration 38. */
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
 }
 
 export interface TraceListResponse {

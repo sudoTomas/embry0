@@ -47,12 +47,12 @@ class _FakeAssistantMessage:
 
 
 class _FakeResultMessage:
-    def __init__(self, result: str, cost: float) -> None:
+    def __init__(self, result: str, cost: float, usage: dict | None = "unset") -> None:  # type: ignore[assignment]
         self.result = result
         self.total_cost_usd = cost
         self.duration_ms = 1000
         self.num_turns = 1
-        self.usage = {"input_tokens": 10, "output_tokens": 5}
+        self.usage = {"input_tokens": 10, "output_tokens": 5} if usage == "unset" else usage
 
 
 async def _scripted_query(messages: list[Any]):
@@ -90,6 +90,70 @@ async def test_sdk_executor_returns_output(tmp_path, monkeypatch) -> None:
     types = [e["type"] for e in captured_events]
     assert "text" in types
     assert "agent_completed" in types
+
+
+@pytest.mark.asyncio
+async def test_sdk_executor_extracts_token_usage(tmp_path, monkeypatch) -> None:
+    """EMB-35: all four usage token fields land on AgentOutput and the
+    cost_update / agent_completed events."""
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
+
+    usage = {
+        "input_tokens": 1200,
+        "output_tokens": 340,
+        "cache_read_input_tokens": 98000,
+        "cache_creation_input_tokens": 4500,
+    }
+    captured_events: list[dict] = []
+
+    with patch(
+        "claude_agent_sdk.query",
+        return_value=_scripted_query([_FakeResultMessage("done", 0.02, usage=usage)]),
+    ):
+        executor = SdkAgentExecutor()
+        out = await executor.run(
+            _inv(),
+            config={"configurable": {}, "_test_writer": captured_events.append},
+        )
+
+    assert out.input_tokens == 1200
+    assert out.output_tokens == 340
+    assert out.cache_read_tokens == 98000
+    assert out.cache_creation_tokens == 4500
+
+    cost_update = next(e for e in captured_events if e["type"] == "cost_update")
+    assert cost_update["tokens_in"] == 1200
+    assert cost_update["tokens_out"] == 340
+    assert cost_update["cache_read_tokens"] == 98000
+    assert cost_update["cache_creation_tokens"] == 4500
+
+    completed = next(e for e in captured_events if e["type"] == "agent_completed")
+    assert completed["result"]["input_tokens"] == 1200
+    assert completed["result"]["output_tokens"] == 340
+    assert completed["result"]["cache_read_tokens"] == 98000
+    assert completed["result"]["cache_creation_tokens"] == 4500
+
+
+@pytest.mark.asyncio
+async def test_sdk_executor_token_usage_none_defaults_zero(tmp_path, monkeypatch) -> None:
+    """A ResultMessage with usage=None yields zero token counts, not an error."""
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
+
+    with patch(
+        "claude_agent_sdk.query",
+        return_value=_scripted_query([_FakeResultMessage("done", 0.001, usage=None)]),
+    ):
+        executor = SdkAgentExecutor()
+        out = await executor.run(
+            _inv(),
+            config={"configurable": {}, "_test_writer": lambda e: None},
+        )
+
+    assert out.is_error is False
+    assert out.input_tokens == 0
+    assert out.output_tokens == 0
+    assert out.cache_read_tokens == 0
+    assert out.cache_creation_tokens == 0
 
 
 @pytest.mark.asyncio

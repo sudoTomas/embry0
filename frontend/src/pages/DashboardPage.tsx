@@ -40,7 +40,7 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
         <SingleSourceTile
           label="Running"
           query={selectQuery(agent, (s) => s.running)}
@@ -70,6 +70,11 @@ export function DashboardPage() {
           label="Cost Today"
           query={selectQuery(orchestrator, (s) => s.daily_cost_usd)}
           format={formatUsd}
+        />
+        <SingleSourceTile
+          label="Cache Hit Rate"
+          query={selectQuery(orchestrator, (s) => s.token_totals?.cache_hit_rate ?? 0)}
+          format={formatPercent}
         />
       </div>
 

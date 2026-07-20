@@ -17,6 +17,7 @@ import { useAgentStates } from "@/hooks/useAgentStates";
 import { AgentCard } from "@/components/jobs/AgentCard";
 import { PausedBanner } from "@/components/jobs/PausedBanner";
 import { TracesTable } from "@/components/traces/TracesTable";
+import { CostBreakdownTable } from "@/components/jobs/CostBreakdownTable";
 import { QATab } from "@/components/qa/QATab";
 import { resumeJob, discardJob } from "@/api/jobs";
 
@@ -288,6 +289,11 @@ export function JobDetailPage() {
         </TabsContent>
 
         <TabsContent value="traces">
+          {job.cost_breakdown && job.cost_breakdown.length > 0 && (
+            <div className="mb-4">
+              <CostBreakdownTable breakdown={job.cost_breakdown} />
+            </div>
+          )}
           <TracesTable
             traces={tracesData?.traces ?? []}
             total={tracesData?.total ?? 0}

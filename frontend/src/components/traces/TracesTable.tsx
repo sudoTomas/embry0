@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { FilterSelect } from "@/components/ui/FilterSelect";
 import { Pagination } from "@/components/ui/Pagination";
 import { RESULT_COLORS } from "@/lib/constants";
-import { formatCost, formatDate } from "@/lib/utils";
+import { formatCost, formatDate, formatTokens } from "@/lib/utils";
 import { TraceDetailPanel } from "@/components/traces/TraceDetailPanel";
 import type { TraceResponse } from "@/lib/types";
 
@@ -68,6 +68,7 @@ export function TracesTable({
                 <th scope="col" className="text-left px-4 py-3">Model</th>
                 <th scope="col" className="text-left px-4 py-3">Result</th>
                 <th scope="col" className="text-right px-4 py-3">Cost</th>
+                <th scope="col" className="text-right px-4 py-3">Tokens</th>
                 <th scope="col" className="text-right px-4 py-3">Duration</th>
                 <th scope="col" className="text-right px-4 py-3">Tools</th>
                 <th scope="col" className="text-right px-4 py-3">Timestamp</th>
@@ -88,7 +89,7 @@ export function TracesTable({
               })}
               {traces.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
                     No traces found
                   </td>
                 </tr>
@@ -153,6 +154,14 @@ function TraceRow({
         </td>
         <td className="px-4 py-3 text-right tabular-nums">
           {trace.cost_usd != null ? formatCost(trace.cost_usd) : "\u2014"}
+        </td>
+        <td
+          className="px-4 py-3 text-right tabular-nums"
+          title={`in ${trace.input_tokens ?? 0} / out ${trace.output_tokens ?? 0} / cache read ${trace.cache_read_tokens ?? 0}`}
+        >
+          {(trace.input_tokens ?? 0) + (trace.output_tokens ?? 0) > 0
+            ? `${formatTokens(trace.input_tokens)} / ${formatTokens(trace.output_tokens)}`
+            : "\u2014"}
         </td>
         <td className="px-4 py-3 text-right tabular-nums">
           {durationSeconds != null ? `${durationSeconds.toFixed(1)}s` : "\u2014"}

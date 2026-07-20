@@ -132,6 +132,11 @@ async def test_run_agent_delegates_to_executor() -> None:
     assert out["cost_usd"] == pytest.approx(0.05)
     assert out["duration_ms"] == 42
     assert out["tools_called"] == {"Read": 1}
+    # EMB-35: token fields always present on the wire dict (0 when unset).
+    assert out["input_tokens"] == 0
+    assert out["output_tokens"] == 0
+    assert out["cache_read_tokens"] == 0
+    assert out["cache_creation_tokens"] == 0
     # Executor received the deserialized invocation and a writer-bearing config.
     call = mock_executor.run.await_args
     invocation_arg, config_arg = call.args

@@ -26,6 +26,27 @@ export interface RepoCost {
   job_count: number;
 }
 
+/** EMB-35: per-agent-phase token rollup from traces. */
+export interface AgentTokenStats {
+  agent_type: string;
+  runs: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cost_usd: number;
+  cache_hit_rate: number;
+}
+
+/** EMB-35: lifetime token totals across all traces. */
+export interface TokenTotals {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cache_hit_rate: number;
+}
+
 export interface StatsResponse {
   total_issues: number;
   total_jobs: number;
@@ -50,4 +71,7 @@ export interface StatsResponse {
   /** Extended 2026-05-03 — Companion-style dashboard density. Optional for back-compat. */
   top_expensive_issues?: ExpensiveIssue[];
   cost_by_repo?: RepoCost[];
+  /** EMB-35 — token observability. Optional for back-compat. */
+  tokens_by_agent?: AgentTokenStats[];
+  token_totals?: TokenTotals;
 }

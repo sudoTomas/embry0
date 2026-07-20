@@ -193,6 +193,10 @@ async def run_agent_node(
         cost_usd=result.cost_usd,
         duration_ms=result.duration_ms,
         tools_called=result.tools_called,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cache_read_tokens=result.cache_read_tokens,
+        cache_creation_tokens=result.cache_creation_tokens,
     )
     # Plan C closeout: forward post-run conversation state so workflow nodes
     # (triage/developer/review) can persist via AgentSessionsRepository. The
@@ -223,6 +227,10 @@ async def run_agent_node(
                 duration_ms=result.duration_ms,
                 tools_called=result.tools_called or {},
                 result_summary=(result.error_message or result.output or "")[:500],
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                cache_read_tokens=result.cache_read_tokens,
+                cache_creation_tokens=result.cache_creation_tokens,
             )
         except Exception:
             logger.warning("trace_persist_failed", agent_type=result.agent_type, exc_info=True)

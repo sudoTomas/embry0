@@ -28,6 +28,10 @@ class TracesRepository:
         duration_ms: int = 0,
         tools_called: dict[str, int] | None = None,
         result_summary: str = "",
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
     ) -> str:
         """Create a trace record and return its ID."""
         trace_id = f"trc-{uuid.uuid4().hex[:12]}"
@@ -35,9 +39,10 @@ class TracesRepository:
             """
             INSERT INTO traces (
                 trace_id, job_id, agent_type, model, result,
-                cost_usd, duration_ms, tools_called, result_summary
+                cost_usd, duration_ms, tools_called, result_summary,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             """,
             trace_id,
             job_id,
@@ -48,6 +53,10 @@ class TracesRepository:
             duration_ms,
             tools_called or {},
             result_summary,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
         )
         logger.info("trace_created", trace_id=trace_id, job_id=job_id, agent_type=agent_type)
         return trace_id
@@ -126,12 +135,39 @@ class TracesRepository:
             SELECT agent_type, model,
                    COUNT(*) as runs,
                    COALESCE(SUM(cost_usd), 0.0) as cost_usd,
-                   COALESCE(SUM(duration_ms), 0) as duration_ms
+                   COALESCE(SUM(duration_ms), 0) as duration_ms,
+                   COALESCE(SUM(input_tokens), 0) as input_tokens,
+                   COALESCE(SUM(output_tokens), 0) as output_tokens,
+                   COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                   COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens
             FROM traces
             WHERE job_id = $1
             GROUP BY agent_type, model
             ORDER BY cost_usd DESC
             """,
             job_id,
+        )
+        return [dict(r) for r in rows]
+
+    async def token_stats(self) -> list[dict[str, Any]]:
+        """Aggregate token usage by agent_type across all traces.
+
+        Powers the /stats token breakdown. cache_hit_rate is derived by the
+        API layer (cache_read / (input + cache_read)) so the SQL stays a
+        plain rollup.
+        """
+        rows = await self._db.fetch(
+            """
+            SELECT agent_type,
+                   COUNT(*) as runs,
+                   COALESCE(SUM(input_tokens), 0) as input_tokens,
+                   COALESCE(SUM(output_tokens), 0) as output_tokens,
+                   COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                   COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+                   COALESCE(SUM(cost_usd), 0.0) as cost_usd
+            FROM traces
+            GROUP BY agent_type
+            ORDER BY cost_usd DESC
+            """
         )
         return [dict(r) for r in rows]

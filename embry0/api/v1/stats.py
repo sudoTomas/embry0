@@ -137,6 +137,48 @@ async def get_stats(db: DatabasePool = Depends(get_db)) -> dict[str, object]:
         for r in repo_rows
     ]
 
+    # EMB-35: token usage + cache-hit rate by agent phase, from traces.
+    token_rows = await db.fetch(
+        """
+        SELECT
+            agent_type,
+            COUNT(*) AS runs,
+            COALESCE(SUM(input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+            COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+            COALESCE(SUM(cost_usd), 0.0) AS cost_usd
+        FROM traces
+        GROUP BY agent_type
+        ORDER BY cost_usd DESC
+        """
+    )
+
+    def _cache_hit_rate(cache_read: int, uncached_input: int) -> float:
+        denom = cache_read + uncached_input
+        return cache_read / denom if denom > 0 else 0.0
+
+    tokens_by_agent = [
+        {
+            "agent_type": r["agent_type"],
+            "runs": r["runs"],
+            "input_tokens": int(r["input_tokens"]),
+            "output_tokens": int(r["output_tokens"]),
+            "cache_read_tokens": int(r["cache_read_tokens"]),
+            "cache_creation_tokens": int(r["cache_creation_tokens"]),
+            "cost_usd": float(r["cost_usd"]),
+            "cache_hit_rate": _cache_hit_rate(int(r["cache_read_tokens"]), int(r["input_tokens"])),
+        }
+        for r in token_rows
+    ]
+    token_totals = {
+        "input_tokens": sum(t["input_tokens"] for t in tokens_by_agent),
+        "output_tokens": sum(t["output_tokens"] for t in tokens_by_agent),
+        "cache_read_tokens": sum(t["cache_read_tokens"] for t in tokens_by_agent),
+        "cache_creation_tokens": sum(t["cache_creation_tokens"] for t in tokens_by_agent),
+    }
+    token_totals["cache_hit_rate"] = _cache_hit_rate(token_totals["cache_read_tokens"], token_totals["input_tokens"])
+
     return {
         "total_issues": total_issues,
         "total_jobs": total_jobs,
@@ -160,4 +202,6 @@ async def get_stats(db: DatabasePool = Depends(get_db)) -> dict[str, object]:
         "recent_issues": recent_issues,
         "top_expensive_issues": top_expensive_issues,
         "cost_by_repo": cost_by_repo,
+        "tokens_by_agent": tokens_by_agent,
+        "token_totals": token_totals,
     }

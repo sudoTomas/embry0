@@ -1,6 +1,6 @@
 import { X, Wrench, Terminal, FileText } from "lucide-react";
 import { RESULT_COLORS } from "@/lib/constants";
-import { formatCost, formatDate } from "@/lib/utils";
+import { formatCost, formatDate, formatTokens } from "@/lib/utils";
 import type { TraceResponse } from "@/lib/types";
 
 interface TraceDetailPanelProps {
@@ -131,6 +131,18 @@ export function TraceDetailPanel({ trace, onClose }: TraceDetailPanelProps) {
                     <span className="font-mono text-xs">{trace.model}</span>
                   </InfoItem>
                   <InfoItem label="Created">{formatDate(trace.created_at)}</InfoItem>
+                  <InfoItem label="Tokens in / out">
+                    <span className="tabular-nums">
+                      {formatTokens(trace.input_tokens ?? 0)} /{" "}
+                      {formatTokens(trace.output_tokens ?? 0)}
+                    </span>
+                  </InfoItem>
+                  <InfoItem label="Cache read / write">
+                    <span className="tabular-nums">
+                      {formatTokens(trace.cache_read_tokens ?? 0)} /{" "}
+                      {formatTokens(trace.cache_creation_tokens ?? 0)}
+                    </span>
+                  </InfoItem>
                 </dl>
               </div>
 

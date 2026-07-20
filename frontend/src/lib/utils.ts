@@ -24,6 +24,16 @@ export function formatPercent(rate: number): string {
   return `${(rate * 100).toFixed(1)}%`;
 }
 
+/**
+ * Compact token-count formatting for table cells and stat tiles:
+ * 812 -> "812", 34_120 -> "34.1k", 5_600_000 -> "5.6M".
+ */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return `${n}`;
+}
+
 export function getCostColor(used: number, budget: number): string {
   const ratio = budget > 0 ? used / budget : 0;
   if (ratio < 0.5) return "text-success";
