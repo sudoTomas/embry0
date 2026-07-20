@@ -409,3 +409,83 @@ async def test_create_drops_reserved_keys_from_profile_env_defaults(manager: San
     assert "DOCKER_HOST" not in env_passed
     assert "QA_ARTIFACT_URL" not in env_passed
     assert env_passed.get("LANG") == "C.UTF-8"
+
+
+@pytest.mark.asyncio
+async def test_create_with_egress_allowlist_applies_rules(manager: SandboxManager, monkeypatch):
+    """EMB-29: an allowlisted sandbox on sandbox-internet gets DOCKER-USER
+    rules keyed on its network IP."""
+    from embry0.execution import egress as egress_mod
+
+    fake_enforcer = MagicMock()
+    fake_enforcer.container_ip = AsyncMock(return_value="172.20.0.9")
+    fake_enforcer.ensure_helper_image = AsyncMock()
+    fake_enforcer.apply = AsyncMock()
+    monkeypatch.setattr(egress_mod, "EgressEnforcer", MagicMock(return_value=fake_enforcer))
+
+    container_id, _tok = await manager.create(
+        job_id="job-egress1",
+        profile={"extra_networks": ["sandbox-internet"]},
+        egress_allowlist=["192.168.200.51", "api.anthropic.com"],
+    )
+    assert container_id == "container-abc123"
+    fake_enforcer.apply.assert_awaited_once_with("172.20.0.9", ["192.168.200.51", "api.anthropic.com"])
+
+
+@pytest.mark.asyncio
+async def test_create_egress_failure_fails_closed(manager: SandboxManager, monkeypatch):
+    """Rule-install failure destroys the sandbox instead of running open."""
+    from embry0.execution import egress as egress_mod
+    from embry0.execution.sandbox_manager import SandboxInitError
+
+    fake_enforcer = MagicMock()
+    fake_enforcer.container_ip = AsyncMock(return_value="172.20.0.9")
+    fake_enforcer.ensure_helper_image = AsyncMock()
+    fake_enforcer.apply = AsyncMock(side_effect=RuntimeError("iptables exploded"))
+    monkeypatch.setattr(egress_mod, "EgressEnforcer", MagicMock(return_value=fake_enforcer))
+
+    with pytest.raises(SandboxInitError, match="egress enforcement failed"):
+        await manager.create(
+            job_id="job-egress2",
+            profile={"extra_networks": ["sandbox-internet"]},
+            egress_allowlist=["192.168.200.51"],
+        )
+    manager._proxy_manager.unenroll_sandbox.assert_awaited()
+    manager._docker.build_rm_cmd.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_create_without_internet_network_skips_enforcement(manager: SandboxManager, monkeypatch):
+    """Allowlist on a restricted-only sandbox is a no-op (nothing to fence)."""
+    from embry0.execution import egress as egress_mod
+
+    enforcer_cls = MagicMock()
+    monkeypatch.setattr(egress_mod, "EgressEnforcer", enforcer_cls)
+    # NOTE: the DEFAULT profile includes sandbox-internet, so the no-egress
+    # case must opt out explicitly.
+    await manager.create(
+        job_id="job-egress3",
+        profile={"extra_networks": []},
+        egress_allowlist=["192.168.200.51"],
+    )
+    enforcer_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_destroy_clears_rules_for_enforced_sandbox(manager: SandboxManager, monkeypatch):
+    from embry0.execution import egress as egress_mod
+
+    fake_enforcer = MagicMock()
+    fake_enforcer.container_ip = AsyncMock(return_value="172.20.0.9")
+    fake_enforcer.ensure_helper_image = AsyncMock()
+    fake_enforcer.apply = AsyncMock()
+    fake_enforcer.clear = AsyncMock()
+    monkeypatch.setattr(egress_mod, "EgressEnforcer", MagicMock(return_value=fake_enforcer))
+
+    container_id, _tok = await manager.create(
+        job_id="job-egress4",
+        profile={"extra_networks": ["sandbox-internet"]},
+        egress_allowlist=["192.168.200.51"],
+    )
+    await manager.destroy(container_id)
+    fake_enforcer.clear.assert_awaited_once_with("172.20.0.9")

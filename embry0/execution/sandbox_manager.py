@@ -93,6 +93,10 @@ class SandboxManager:
         self._proxy_manager = proxy_manager
         self._image_registry = image_registry
         self._github_token = github_token
+        # EMB-29: container_ids whose sandbox got DOCKER-USER egress rules —
+        # lets destroy() distinguish "must clean rules" (warn on failure)
+        # from the ordinary no-rules case (quiet best-effort).
+        self._egress_enforced: set[str] = set()
 
     def _resolve_token_for_repo(self, repo: str | None) -> str:
         from embry0.execution.github_tokens import resolve_for_repo
@@ -107,6 +111,7 @@ class SandboxManager:
         volumes: list[tuple[str, str]] | None = None,
         tmpfs_mounts: list[str] | None = None,
         repo: str | None = None,
+        egress_allowlist: list[str] | None = None,
     ) -> tuple[str, str]:
         """Create a persistent sandbox container. Returns (container_id, sandbox_token).
 
@@ -275,6 +280,36 @@ class SandboxManager:
                     error_code=ErrorCode.SANDBOX_INIT,
                 ) from exc
 
+        # EMB-29: per-sandbox egress allowlist. Only meaningful for sandboxes
+        # on the NAT-egress network; fail CLOSED — a rule-install failure
+        # destroys the sandbox rather than letting it run unrestricted.
+        if egress_allowlist and "sandbox-internet" in extra_networks:
+            from embry0.execution.egress import EgressEnforcer
+
+            enforcer = EgressEnforcer(self._docker)
+            try:
+                source_ip = await enforcer.container_ip(container_id, "sandbox-internet")
+                if not source_ip:
+                    raise RuntimeError("no sandbox-internet IP on container")
+                await enforcer.ensure_helper_image()
+                await enforcer.apply(source_ip, egress_allowlist)
+                self._egress_enforced.add(container_id)
+            except Exception as exc:  # noqa: BLE001 — any failure here must fail closed
+                logger.error(
+                    "sandbox_egress_enforcement_failed_rolling_back",
+                    container=name,
+                    error=str(exc),
+                )
+                await self._proxy_manager.unenroll_sandbox(container_id)
+                try:
+                    await self._docker.run_cmd(self._docker.build_rm_cmd(name))
+                except RuntimeError:
+                    logger.warning("sandbox_rollback_rm_failed", container=name)
+                raise SandboxInitError(
+                    f"Sandbox egress enforcement failed: {exc}",
+                    error_code=ErrorCode.SANDBOX_INIT,
+                ) from exc
+
         logger.info(
             "sandbox_created",
             job_id=job_id,
@@ -283,6 +318,7 @@ class SandboxManager:
             dind_enabled=dind_enabled,
             extra_networks=extra_networks,
             named_volumes=[(v, m) for v, m in (volumes or [])],
+            egress_allowlist=egress_allowlist or [],
         )
         return container_id, sandbox_token
 
@@ -360,6 +396,30 @@ class SandboxManager:
             await self._proxy_manager.unenroll_sandbox(container)
         except Exception:
             logger.warning("sandbox_unenroll_threw", container=container, exc_info=True)
+
+        # EMB-29: remove any per-sandbox egress rules BEFORE rm, while the
+        # container's sandbox-internet IP is still resolvable. Best-effort —
+        # rules live in DinD's DOCKER-USER chain, so `docker rm` alone would
+        # orphan them (and the IP could later be reused by another sandbox).
+        from embry0.execution.egress import EgressEnforcer
+
+        was_enforced = container in self._egress_enforced
+        self._egress_enforced.discard(container)
+        enforcer = EgressEnforcer(self._docker)
+        try:
+            source_ip = await enforcer.container_ip(container, "sandbox-internet")
+        except Exception:  # noqa: BLE001 — already-removed / never-networked containers
+            source_ip = None
+        if source_ip:
+            try:
+                await enforcer.clear(source_ip)
+            except Exception:  # noqa: BLE001 — teardown is best-effort, never blocks destroy
+                # Orchestrator-restart orphans lose the in-memory marker; a
+                # clear failure only matters when rules were known to exist.
+                if was_enforced:
+                    logger.warning("sandbox_egress_clear_failed", container=container, exc_info=True)
+                else:
+                    logger.debug("sandbox_egress_clear_skipped", container=container)
 
         try:
             stop_cmd = self._docker.build_stop_cmd(container, timeout=timeout)

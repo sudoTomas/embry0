@@ -60,7 +60,10 @@ class SafetyPolicy:
     --allowedTools (CLI). allow/deny rules are rendered into a settings.json.
     content_checks are evaluated via evaluate_policy() at hook time.
     network_egress_allowlist is not enforced by this module — it is produced
-    for consumption by sandbox container setup.
+    for consumption by sandbox container setup. EMB-29 enforces it for
+    egress-enabled QA sandboxes via per-sandbox DOCKER-USER rules in DinD
+    (see embry0/execution/egress.py); deployed-target QA derives its
+    allowlist automatically from frontend_url + profile extra_hosts.
     """
 
     allowed_tools: list[str] = field(default_factory=list)
