@@ -1075,6 +1075,13 @@ def _build_developer_full_prompt(state: dict[str, Any], branch_name: str) -> str
     prompt_parts.append(
         f"6. Create a PR with 'Closes #{issue_number}' in the body" if issue_number else "6. Create a PR"
     )
+    prompt_parts.append(
+        "\nIf you need information only the user can provide, ask with:\n"
+        "  python -c \"from embry0.sandbox.ask_user import ask_user; ask_user('your question')\"\n"
+        "then finish your turn cleanly (commit work in progress first) — the "
+        "pipeline pauses, collects the answer, and re-invokes you with it. "
+        "Questions asked as plain response text never reach the user."
+    )
     prompt_parts.append("\nReturn a JSON object at the end with: pr_url, branch, summary, files_changed")
     return "\n".join(prompt_parts)
 
@@ -1096,6 +1103,13 @@ def _build_developer_delta_prompt(state: dict[str, Any], branch_name: str) -> st
     prompt_parts.append(
         f"\nContinue the work: address the above, commit, push to branch {branch_name}, "
         "and update the PR (create one if none exists)."
+    )
+    prompt_parts.append(
+        "\nIf you need information only the user can provide, ask with:\n"
+        "  python -c \"from embry0.sandbox.ask_user import ask_user; ask_user('your question')\"\n"
+        "then finish your turn cleanly (commit work in progress first) — the "
+        "pipeline pauses, collects the answer, and re-invokes you with it. "
+        "Questions asked as plain response text never reach the user."
     )
     prompt_parts.append("\nReturn a JSON object at the end with: pr_url, branch, summary, files_changed")
     return "\n".join(prompt_parts)
@@ -1483,6 +1497,11 @@ You are reviewing code changes made by the developer agent. Your job:
 6. Check if documentation needs updating: read README.md, CLAUDE.md, docs/architecture.md,
    and any other docs files. If the code changes affect documented features, APIs, project
    structure, configuration, or architecture, flag the specific docs that need updating.
+
+If a review decision genuinely requires information only the user can provide, ask with:
+  python -c "from embry0.sandbox.ask_user import ask_user; ask_user('your question')"
+then finish your turn (still returning the JSON below) — the pipeline pauses for the answer.
+Questions asked as plain response text never reach the user.
 
 Return ONLY a JSON object:
 {{
