@@ -858,6 +858,7 @@ def _register_routers(app: FastAPI) -> None:
         qa_artifacts,
         qa_dashboard,
         qa_events,
+        qa_images,
         queue,
         repo_preferences,
         sandbox_profiles,
@@ -879,6 +880,9 @@ def _register_routers(app: FastAPI) -> None:
     # Phase 5G: dashboard admin surface for per-repo workspace_provider
     # overrides. Same Bearer auth as the rest of /qa/...
     app.include_router(qa_admin.router, prefix="/api/v1", tags=["qa-admin"], dependencies=auth_deps)
+    # EMB-42: per-repo pre-baked QA cache-image builds. Synchronous and
+    # minutes-long on a fresh build — callers use a long HTTP timeout.
+    app.include_router(qa_images.router, prefix="/api/v1", tags=["qa-images"], dependencies=auth_deps)
     # Phase 5C: SSE liveness for /qa/runs/{run_id}/events. Same auth posture
     # as qa_dashboard — the EventSource browser API can carry cookies but not
     # custom Authorization headers, so production-Bearer deploys 401 here and

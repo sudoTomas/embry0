@@ -431,26 +431,78 @@ def cmd_build_qa_image(args: argparse.Namespace) -> None:
 
         POST /api/v1/qa/images/build  {"repo": "...", "branch": "...", "force": false}
     """
-    import asyncio
+    outcome = run_build_qa_image_via_api(
+        repo=args.repo,
+        branch=args.branch,
+        force=args.force,
+        api_url=args.api_url,
+        api_key=args.api_key,
+    )
+    _info(f"build-qa-image {args.repo}@{args.branch}: {outcome}")
 
-    from embry0.cache.image_builder_cli import run_build_qa_image  # noqa: F401
 
-    async def _run() -> None:
-        # Full wiring requires: DatabasePool, run_migrations, DockerClient,
-        # SandboxManager, SandboxProfilesRepository, QAImageTagsRepository,
-        # and a proxy_mgr — all of which are tightly coupled to the running
-        # compose stack.  Wire them here once the compose-bootstrap helpers
-        # are extracted into a shared module (Phase-3 candidate).
-        raise NotImplementedError(
-            "CLI dependency wiring for build-qa-image is not yet implemented.\n"
-            "Use the API endpoint instead:\n"
-            "  POST /api/v1/qa/images/build\n"
-            '  Body: {"repo": "<owner/name>", "branch": "<branch>", "force": false}\n'
-            "Or call run_build_qa_image() directly from application code after\n"
-            "constructing the deps dict (see cmd_build_qa_image docstring)."
+def _resolve_api_key(explicit: str | None) -> str | None:
+    """CLI API-key resolution: --api-key > EMBRY0_API_KEY > API_KEY env >
+    the project root .env (the operator runs this next to the stack)."""
+    if explicit:
+        return explicit
+    for var in ("EMBRY0_API_KEY", "API_KEY"):
+        val = os.environ.get(var)
+        if val:
+            return val
+    env_file = Path.cwd() / ".env"
+    if env_file.is_file():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("API_KEY="):
+                return line.split("=", 1)[1].strip() or None
+    return None
+
+
+def run_build_qa_image_via_api(
+    *,
+    repo: str,
+    branch: str,
+    force: bool,
+    api_url: str | None = None,
+    api_key: str | None = None,
+) -> str:
+    """POST /api/v1/qa/images/build on the running orchestrator.
+
+    The build's dependencies (DinD daemon + certs, Postgres, git-proxy)
+    only exist inside the running compose stack, so the orchestrator is
+    the sole sane executor — the CLI is a thin, long-timeout client of
+    the EMB-42 endpoint. Exits non-zero with a clear message when the
+    stack is down or auth is missing.
+    """
+    import httpx
+
+    base = (api_url or os.environ.get("EMBRY0_API_URL") or "http://localhost:8200").rstrip("/")
+    key = _resolve_api_key(api_key)
+    headers = {"X-Requested-With": "XMLHttpRequest"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+
+    try:
+        resp = httpx.post(
+            f"{base}/api/v1/qa/images/build",
+            json={"repo": repo, "branch": branch, "force": force},
+            headers=headers,
+            # A fresh build (clone + npm ci + turbo build + docker commit)
+            # takes minutes; the skip path returns in seconds.
+            timeout=httpx.Timeout(1800.0, connect=10.0),
         )
+    except httpx.ConnectError:
+        _err(f"cannot reach the orchestrator at {base} — is the stack running? (embry0 start)")
+        sys.exit(2)
 
-    asyncio.run(_run())
+    if resp.status_code == 401:
+        _err("orchestrator rejected the request (401) — set EMBRY0_API_KEY or pass --api-key")
+        sys.exit(2)
+    if resp.status_code >= 400:
+        _err(f"build failed ({resp.status_code}): {resp.text[:500]}")
+        sys.exit(2)
+
+    return str(resp.json().get("status", "unknown"))
 
 
 # ── Argparse ─────────────────────────────────────────────────────────────────
@@ -530,6 +582,16 @@ def main() -> None:
         "--force",
         action="store_true",
         help="Rebuild even if active tag's lockfile_sha matches current",
+    )
+    bqi.add_argument(
+        "--api-url",
+        default=None,
+        help="Orchestrator base URL (default: EMBRY0_API_URL or http://localhost:8200)",
+    )
+    bqi.add_argument(
+        "--api-key",
+        default=None,
+        help="Bearer key (default: EMBRY0_API_KEY / API_KEY env, then ./.env)",
     )
 
     args = parser.parse_args()
