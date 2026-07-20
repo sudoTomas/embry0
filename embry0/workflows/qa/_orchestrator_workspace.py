@@ -1,90 +1,29 @@
-"""Orchestrator-side workspace-staging and diff helpers.
+"""Orchestrator-side workspace-staging helpers.
 
-Used by `init_orchestrator_node` to:
-  1. Extract every package.json + the lockfile from the bootstrap sandbox
-     into a local /tmp directory the workspace_provider can read.
-  2. Compute `changed_files` via `git diff --name-only origin/<base>..HEAD`
-     inside the bootstrap sandbox.
+Used by `init_orchestrator_node` to extract every package.json + the
+lockfile from the bootstrap sandbox into a local /tmp directory the
+workspace_provider can read.
 
-Both helpers are crash-tolerant: per-file read failures degrade gracefully
-to a warning + skip, so a flaky monorepo doesn't block the whole QA run.
+Crash-tolerant: per-file read failures degrade gracefully to a warning +
+skip, so a flaky monorepo doesn't block the whole QA run.
+
+``compute_changed_files_via_diff`` moved to
+``embry0.execution.workspace_diff`` (EMB-35 — the review node uses it
+too); re-exported here for existing QA callers.
 """
 
 from __future__ import annotations
 
-import shlex
 from pathlib import Path
 from typing import Any
 
 import structlog
 
+from embry0.execution.workspace_diff import compute_changed_files_via_diff
+
+__all__ = ["compute_changed_files_via_diff", "stage_workspace_for_provider"]
+
 logger = structlog.get_logger(__name__)
-
-
-async def compute_changed_files_via_diff(
-    *,
-    docker: Any,
-    container_id: str,
-    base_branch: str,
-) -> list[str]:
-    """Run `git diff --name-only origin/<base_branch>..HEAD` in the sandbox.
-
-    Returns repo-root-relative paths as strings. Empty list on any failure
-    (logged at WARNING) — caller treats empty as "every app affected" via
-    the existing fallback.
-
-    The base branch must exist remotely. We `git fetch origin <base_branch>
-    --depth=50` first (depth covers most short-lived PRs).
-    """
-    # Step 1: fetch base ref (best-effort; failures fall through to empty diff).
-    fetch_cmd = [
-        "bash",
-        "-c",
-        f"cd /workspace && git fetch origin {shlex.quote(base_branch)}:refs/remotes/origin/{shlex.quote(base_branch)} --depth=50",
-    ]
-    try:
-        await docker.run_cmd(
-            docker.build_exec_cmd(container_id, fetch_cmd),
-            timeout=60,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "qa_orchestrator_diff_fetch_failed",
-            base_branch=base_branch,
-            error=str(exc),
-            msg="git fetch failed; skipping diff (falls back to all-apps)",
-        )
-        return []
-
-    # Step 2: actual diff.
-    diff_cmd = [
-        "bash",
-        "-c",
-        f"cd /workspace && git diff --name-only origin/{shlex.quote(base_branch)}..HEAD || true",
-    ]
-    try:
-        raw = await docker.run_cmd(
-            docker.build_exec_cmd(container_id, diff_cmd),
-            timeout=30,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "qa_orchestrator_diff_failed",
-            base_branch=base_branch,
-            error=str(exc),
-        )
-        return []
-
-    if not raw:
-        return []
-
-    files = [line.strip() for line in raw.splitlines() if line.strip()]
-    logger.info(
-        "qa_orchestrator_diff_computed",
-        base_branch=base_branch,
-        n_files=len(files),
-    )
-    return files
 
 
 async def stage_workspace_for_provider(

@@ -211,7 +211,10 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     writer = get_stream_writer()
     writer({"type": "node_started", "node": "triage", "agent": "triage"})
 
-    model = os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-6")
+    # EMB-35: TRIAGE_MODEL lets triage tier independently of the pipeline
+    # default (it's a bounded classification pass — a haiku-class experiment
+    # only needs an env flip, no deploy-coupled code change).
+    model = os.environ.get("TRIAGE_MODEL") or os.environ.get("DEFAULT_MODEL", "claude-sonnet-4-6")
     agent_runner = config["configurable"].get("agent_runner")
     credentials = config["configurable"].get("credentials") or {}
     agent_sessions_repo = config["configurable"].get("agent_sessions_repo")
@@ -258,8 +261,20 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     if qa_failure_block:
         prompt += f"\n\n{qa_failure_block}"
 
-    # Prepend system prompt since sandbox runner doesn't receive it separately
-    prompt = _TRIAGE_SYSTEM_PROMPT + "\n\n" + prompt
+    # EMB-35: the triage instructions ride as a real system prompt (appended
+    # to the CLI's preset system block, which its prompt caching covers)
+    # instead of being prepended into the user turn and re-billed uncached
+    # on every run. Plumbing: agent_definition.system_prompt →
+    # invocation.system_prompt → sandbox runner → config_builder.
+    triage_agent_definition: dict[str, Any] = {
+        "model": model,
+        "tools": ["Read", "Glob", "Grep"],
+        "skills": [],
+        "system_prompt": _TRIAGE_SYSTEM_PROMPT,
+        "mcp_servers": {},
+        "execution_mode": None,
+        "auth_mode": None,
+    }
 
     # Collect agent events locally so we can scan for agent_ask_user events
     # after the agent finishes. We still forward every event to the graph
@@ -320,8 +335,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         agent_runner=agent_runner,
         agent_type="triage",
         prompt=prompt,
-        model=model,
-        tools=["Read", "Glob", "Grep"],
+        agent_definition=triage_agent_definition,
         timeout_seconds=180,
         on_event=_forward_event,
         credentials=credentials,
@@ -542,8 +556,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             agent_runner=agent_runner,
             agent_type="triage",
             prompt=rerun_prompt,
-            model=model,
-            tools=["Read", "Glob", "Grep"],
+            agent_definition=triage_agent_definition,
             timeout_seconds=180,
             on_event=_forward_event,
             credentials=credentials,
@@ -1422,17 +1435,50 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[
     repo = state.get("repo", "")
     pr_url = state.get("pr_url", "")
     branch = state.get("branch_name", "")
+    base_branch = state.get("base_branch") or "main"
+
+    # EMB-35: scope the review input by the branch's changed-file set instead
+    # of pointing the agent at an unscoped `git diff main...HEAD`. Best-effort
+    # — an empty/failed diff keeps today's unscoped prompt.
+    from embry0.execution.workspace_diff import compute_changed_files_via_diff
+
+    changed_files: list[str] = []
+    docker = configurable.get("docker")
+    container_id = state.get("sandbox_container_id")
+    if docker is not None and container_id:
+        try:
+            changed_files = await compute_changed_files_via_diff(
+                docker=docker,
+                container_id=container_id,
+                base_branch=base_branch,
+            )
+        except Exception:
+            logger.warning("review_changed_files_diff_failed", job_id=state.get("job_id"), exc_info=True)
+            changed_files = []
+
+    if changed_files:
+        scope_block = (
+            f"Changed files in this branch ({len(changed_files)}):\n"
+            + "\n".join(f"- {f}" for f in changed_files)
+            + "\n\nFocus your review on these files. The full diff remains available via "
+            f"`git diff {base_branch}...HEAD` when context demands it."
+        )
+        diff_step = f"4. Review the changes to the files listed above (`git diff {base_branch}...HEAD -- <path>`)"
+    else:
+        scope_block = ""
+        diff_step = f"4. Review the git diff: `git diff {base_branch}...HEAD`"
 
     prompt = f"""Repository: {repo}
 Branch: {branch}
 PR: {pr_url or "N/A"}
+{scope_block}
 
 You are reviewing code changes made by the developer agent. Your job:
 
 1. Run the test suite (if tests exist): find and run pytest, npm test, or equivalent
 2. Run linting (if configured): ruff, eslint, or equivalent
 3. Run type checking (if configured): mypy, tsc, or equivalent
-4. Review the git diff: `git diff main...HEAD`
+{diff_step}
 5. Assess code quality, correctness, and completeness
 6. Check if documentation needs updating: read README.md, CLAUDE.md, docs/architecture.md,
    and any other docs files. If the code changes affect documented features, APIs, project
@@ -1565,6 +1611,10 @@ Return ONLY a JSON object:
     writer({"type": "node_completed", "node": "review"})
 
     updates: dict[str, Any] = {**result, "current_stage": "review_complete"}
+    if changed_files:
+        # EMB-35: persist the computed change set so later phases can reuse
+        # it without re-diffing. Top-level JobState key (reducer constraint).
+        updates["changed_files"] = changed_files
 
     # Scan the agent's event stream for `agent_ask_user` events and enforce
     # the job-wide cap before routing.

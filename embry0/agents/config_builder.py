@@ -22,8 +22,11 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
     - permission_mode: always 'bypassPermissions' (sandbox is the real boundary;
       Ring 2 permissions.deny and Ring 3 hook still run).
     - max_turns / cwd: fixed to embry0's sandbox conventions.
-    - system_prompt: invocation.system_prompt (None when empty to let the SDK
-      apply its default rather than an empty string that shadows it).
+    - system_prompt: invocation.system_prompt wrapped as a claude_code
+      preset-APPEND (None when empty to let the SDK apply its default). A
+      plain string would REPLACE the CLI's default system prompt and strip
+      its tool-use guidance; append preserves it, and the combined system
+      block participates in the CLI's prompt caching (EMB-35).
     - setting_sources: ["project"] so the SDK loads /workspace/.claude/settings.json
       for Ring 2 permissions and /workspace/.claude/skills/** for skill files.
     - mcp_servers: passed through as-is from invocation.mcp_servers.
@@ -49,7 +52,11 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
         permission_mode="bypassPermissions",
         max_turns=invocation.max_turns,
         cwd="/workspace",
-        system_prompt=invocation.system_prompt if invocation.system_prompt else None,
+        system_prompt=(
+            {"type": "preset", "preset": "claude_code", "append": invocation.system_prompt}
+            if invocation.system_prompt
+            else None
+        ),
         setting_sources=["project"],
         mcp_servers=dict(invocation.mcp_servers),
     )

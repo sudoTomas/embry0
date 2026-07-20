@@ -44,6 +44,9 @@ class PipelineConfig(TypedDict, total=False):
     auth_modes: dict[str, str]
     system_prompts: dict[str, str]
     mcp_servers: dict[str, dict[str, Any]]
+    # EMB-35: per-agent turn budgets, e.g. {"developer": 60}. Missing agents
+    # fall back to DEFAULT_AGENT_MAX_TURNS in orchestration/nodes/agent.py.
+    agent_max_turns: dict[str, int]
 
 
 _PIPELINE_DEFAULTS: dict[str, Any] = {
@@ -114,6 +117,9 @@ class PipelineConfigModel(BaseModel):
     auth_modes: dict[str, str] = Field(default_factory=dict)
     system_prompts: dict[str, str] = Field(default_factory=dict)
     mcp_servers: dict[str, Any] = Field(default_factory=dict)
+    # EMB-35: per-agent turn budgets (extra="forbid" would reject the key
+    # if triage emitted it without this declaration).
+    agent_max_turns: dict[str, int] = Field(default_factory=dict)
 
 
 class TriageDecisionModel(BaseModel):
@@ -238,6 +244,12 @@ class JobState(TypedDict, total=False):
     # MUST stay declared here or LangGraph's state-merge reducer silently
     # drops it.
     user_retry_guidance: str | None
+    # EMB-35: changed-file set computed by review_node (git diff vs the base
+    # branch inside the dev sandbox) to scope the review prompt. Top-level so
+    # later phases can reuse it without re-diffing. Distinct from
+    # state["qa"]["changed_files"], which the QA orchestrator computes in its
+    # own bootstrap sandbox against the merged PR branch.
+    changed_files: list[str] | None
     # User-defined env vars merged into sandbox at init_node. List-of-dicts shape
     # (key/value/scope); scope is 'app' or 'qa'. The legacy plain-dict shape is
     # still accepted by _filter_user_env_for_sandbox for backwards compatibility.

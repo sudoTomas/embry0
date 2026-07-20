@@ -35,9 +35,16 @@ def test_build_sdk_options_sets_core_fields() -> None:
     assert opts.cwd == "/workspace"
 
 
-def test_build_sdk_options_wires_system_prompt() -> None:
+def test_build_sdk_options_wires_system_prompt_as_preset_append() -> None:
+    """EMB-35: a plain string would REPLACE the CLI's default system prompt
+    (stripping its tool-use guidance); the preset-append form preserves it
+    and keeps the combined system block cacheable."""
     opts = build_sdk_options(_inv(system_prompt="You are a reviewer"))
-    assert opts.system_prompt == "You are a reviewer"
+    assert opts.system_prompt == {
+        "type": "preset",
+        "preset": "claude_code",
+        "append": "You are a reviewer",
+    }
 
 
 def test_build_sdk_options_skips_empty_system_prompt() -> None:
