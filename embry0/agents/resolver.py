@@ -178,12 +178,17 @@ def resolve_agent_invocation(
     if pipeline_mcp is not None:
         mcp_servers = pipeline_mcp
 
+    from embry0.agents.providers import provider_for_model
+
+    final_model = resolved.model or "claude-sonnet-4-6"
+    provider = provider_for_model(final_model)
+
     return AgentInvocation(
         agent_type=agent_type,
         prompt=prompt,
         system_prompt=system_prompt,
         system_context=system_context,
-        model=resolved.model or "claude-sonnet-4-6",
+        model=final_model,
         tools=list(resolved.tools),
         skills=list(skills),
         mcp_servers=dict(mcp_servers),
@@ -193,4 +198,5 @@ def resolve_agent_invocation(
         auth_mode=auth_mode,
         safety_policy=default_policy_for_agent(agent_type),
         channel_config=None,  # Phase 3
+        provider=provider.name if provider else None,
     )

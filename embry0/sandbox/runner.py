@@ -65,6 +65,7 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
         auth_mode=cfg.get("auth_mode", "oauth"),
         safety_policy=policy,
         channel_config=None,
+        provider=cfg.get("provider"),
     )
 
 

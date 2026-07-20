@@ -51,3 +51,7 @@ class AgentInvocation:
     auth_mode: Literal["api_key", "oauth"]
     safety_policy: SafetyPolicy
     channel_config: ChannelConfig | None
+    # EMB-36: non-Anthropic provider name serving this model ("xai"), or
+    # None for Anthropic. The executor overlays the provider's base_url +
+    # container-env API key on the CLI subprocess for this agent only.
+    provider: str | None = None

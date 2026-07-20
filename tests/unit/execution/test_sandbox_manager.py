@@ -489,3 +489,20 @@ async def test_destroy_clears_rules_for_enforced_sandbox(manager: SandboxManager
     )
     await manager.destroy(container_id)
     fake_enforcer.clear.assert_awaited_once_with("172.20.0.9")
+
+
+@pytest.mark.asyncio
+async def test_create_injects_provider_keys_from_orchestrator_env(manager: SandboxManager, monkeypatch):
+    """EMB-36: provider keys (XAI_API_KEY) ride the sandbox env when set."""
+    monkeypatch.setenv("XAI_API_KEY", "xai-sekrit")
+    await manager.create(job_id="job-prov1")
+    env_arg = manager._docker.build_run_cmd.call_args.kwargs["env"]
+    assert env_arg["XAI_API_KEY"] == "xai-sekrit"
+
+
+@pytest.mark.asyncio
+async def test_create_omits_provider_keys_when_unset(manager: SandboxManager, monkeypatch):
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    await manager.create(job_id="job-prov2")
+    env_arg = manager._docker.build_run_cmd.call_args.kwargs["env"]
+    assert "XAI_API_KEY" not in env_arg

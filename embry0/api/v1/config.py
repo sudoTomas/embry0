@@ -25,16 +25,41 @@ router = APIRouter()
 @router.get("/config/models")
 async def get_model_config(
     config: Embry0Config = Depends(get_config),
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Return the current model family configuration.
 
     Returns the three tier model IDs configured in Embry0Config.
     Used by the frontend to populate the model selector in AgentFormPage.
     """
+    import os
+
+    from embry0.agents.providers import PROVIDERS
+
+    # EMB-36: additive provider catalog. `available` reflects whether the
+    # provider's key is configured — the UI can gray out unavailable models.
+    providers = [
+        {
+            "name": p.name,
+            "base_url": p.base_url,
+            "available": bool(os.environ.get(p.api_key_env)),
+            "models": [
+                {
+                    "model": m,
+                    "pricing_usd_per_mtok": {
+                        "input": p.pricing_usd_per_mtok.get(m, (None, None))[0],
+                        "output": p.pricing_usd_per_mtok.get(m, (None, None))[1],
+                    },
+                }
+                for m in p.models
+            ],
+        }
+        for p in PROVIDERS
+    ]
     return {
         "heavy": config.model_heavy,
         "medium": config.model_medium,
         "light": config.model_light,
+        "providers": providers,
     }
 
 
