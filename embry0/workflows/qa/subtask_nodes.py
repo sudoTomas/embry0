@@ -178,12 +178,11 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
     # losing the shared read-cache for `node_modules` and the cloned repo.
     sandbox_tmpfs = ["/workspace/.qa"] if shared_volume_name else None
 
-    # EMB-29: deployed-target sandboxes on the NAT-egress network get a
-    # derived egress allowlist — the app's own frontend_url host, the
-    # profile's extra_hosts targets (LAN vhost aliases), and the Anthropic
-    # API endpoints the Claude CLI needs. Everything else on egress is
-    # dropped in DinD's DOCKER-USER chain (managed apps boot in-sandbox on
-    # restricted networks and are unaffected).
+    # EMB-29: deployed-target sandboxes on the NAT-egress network get their
+    # declared LAN targets (profile extra_hosts IPs / a private
+    # frontend_url) allowlisted; every OTHER private-range destination is
+    # dropped in DinD's DOCKER-USER chain. Public egress stays open (clone,
+    # Auth0, CDN frontends, Anthropic API). Managed apps are unaffected.
     egress_allowlist: list[str] | None = None
     if resolved.target == "deployed" and "sandbox-internet" in (profile.get("extra_networks") or []):
         egress_allowlist = derive_deployed_egress_allowlist(

@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from embry0.execution.egress import (
+    BLOCKED_PRIVATE_RANGES,
     LOG_PREFIX,
     EgressEnforcer,
     derive_deployed_egress_allowlist,
@@ -24,7 +25,8 @@ from embry0.execution.egress import (
 # ---------------------------------------------------------------------------
 
 
-def test_derive_deployed_allowlist():
+def test_derive_declares_lan_targets_only():
+    """Only PRIVATE destinations need declaring — public egress stays open."""
     out = derive_deployed_egress_allowlist(
         frontend_url="https://ai-quoting-dev.qa.test/",
         extra_hosts={
@@ -32,20 +34,25 @@ def test_derive_deployed_allowlist():
             "hub.qa.test": "192.168.200.51",
         },
     )
-    assert out[0] == "ai-quoting-dev.qa.test"
-    assert "192.168.200.51" in out
-    assert out.count("192.168.200.51") == 1  # deduped
-    assert "api.anthropic.com" in out
-    assert "statsig.anthropic.com" in out
+    assert out == ["192.168.200.51"]  # deduped, no public hosts
 
 
-def test_derive_handles_public_url_without_extra_hosts():
+def test_derive_public_frontend_yields_no_declarations():
+    """A CDN-fronted public frontend needs nothing declared (its rotating
+    public IPs are unaffected by the private-range blocklist)."""
     out = derive_deployed_egress_allowlist(
-        frontend_url="https://app.example.com/login",
+        frontend_url="https://definitely-not-a-real-host.invalid/login",
         extra_hosts={},
     )
-    assert out[0] == "app.example.com"
-    assert "api.anthropic.com" in out
+    assert out == []
+
+
+def test_derive_private_ip_frontend_is_declared():
+    out = derive_deployed_egress_allowlist(
+        frontend_url="http://192.168.200.51/",
+        extra_hosts={},
+    )
+    assert out == ["192.168.200.51"]
 
 
 def test_resolve_passes_ips_and_cidrs_through():
@@ -81,21 +88,27 @@ def _helper_script(docker: MagicMock, call_idx: int = 0) -> str:
 
 
 @pytest.mark.asyncio
-async def test_apply_builds_ordered_rule_block():
+async def test_apply_builds_private_range_blocklist():
     docker = _docker()
     enforcer = EgressEnforcer(docker)
     await enforcer.apply("172.20.0.5", ["192.168.200.51", "10.1.2.3"])
 
     script = _helper_script(docker)
     # Every rule is keyed on the sandbox source IP.
-    assert script.count("-s 172.20.0.5") >= 6
+    assert "-s 172.20.0.5" in script
+    # Declared LAN exceptions.
     assert "-d 192.168.200.51 -j RETURN" in script
     assert "-d 10.1.2.3 -j RETURN" in script
-    assert "-j DROP" in script
+    # Every private range gets LOG + DROP; nothing is a blanket DROP.
+    for blocked in BLOCKED_PRIVATE_RANGES:
+        assert f"-d {blocked} -j DROP" in script
+        assert f"-d {blocked} " in script
+    assert "-s 172.20.0.5 -j DROP" not in script  # public egress stays open
     assert LOG_PREFIX in script
     assert "--ctstate ESTABLISHED,RELATED" in script
-    # DROP is inserted first (ends up last after the position-1 inserts).
+    # DROPs inserted first (end up below the allows after position-1 inserts).
     assert script.index("-j DROP") < script.index("LOG")
+    assert script.index("LOG") < script.index("-j RETURN")
 
 
 @pytest.mark.asyncio
