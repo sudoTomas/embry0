@@ -15,6 +15,7 @@ import structlog
 from embry0.agents.claude_cli_session import find_session_file
 from embry0.agents.config_builder import build_sdk_options
 from embry0.agents.invocation import AgentInvocation
+from embry0.agents.session import render_transcript_block
 from embry0.execution.agent_runner import AgentOutput
 from embry0.safety.policy import SafetyPolicy, evaluate_policy, render_settings_json
 
@@ -29,6 +30,9 @@ class AgentExecutor(Protocol):
         self,
         invocation: AgentInvocation,
         config: RunnableConfig,
+        *,
+        resume_session_id: str | None = None,
+        resume_messages: list[dict[str, Any]] | None = None,
     ) -> AgentOutput: ...
 
 
@@ -152,6 +156,9 @@ class SdkAgentExecutor:
         self,
         invocation: AgentInvocation,
         config: RunnableConfig | dict[str, Any] | None = None,
+        *,
+        resume_session_id: str | None = None,
+        resume_messages: list[dict[str, Any]] | None = None,
     ) -> AgentOutput:
         from claude_agent_sdk import (  # local import; SDK is optional in some contexts
             AssistantMessage,
@@ -236,6 +243,20 @@ class SdkAgentExecutor:
         # --- Build SDK options
         options = build_sdk_options(invocation)
 
+        # --- EMB-35 session resume, in precedence order:
+        # 1. ``resume_session_id`` → the CLI's own file-based resume. The
+        #    session JSONL was staged to the canonical path by AgentRunner
+        #    before this process started; the CLI reloads the full prior
+        #    conversation (tool_use/thinking included) and its internal
+        #    prompt caching applies. Works in BOTH auth modes — the session
+        #    file is a CLI artifact, independent of how auth is provided.
+        # 2. ``resume_messages`` → text-transcript replay fallback for
+        #    sessions that only have a messages list (legacy rows, oversized
+        #    or missing blob). The bounded transcript is prepended to the
+        #    prompt; lossier and re-billed as input, hence fallback-only.
+        if resume_session_id:
+            options.resume = resume_session_id
+
         # --- Ring 3: PreToolUse hook as Python callable
         async def pre_tool_use_hook(  # noqa: ARG001 — tool_use_id/context unused by design
             hook_input: HookInput,
@@ -258,6 +279,8 @@ class SdkAgentExecutor:
         prompt = invocation.prompt
         if invocation.system_context:
             prompt = f"{invocation.system_context}\n\n{prompt}"
+        if resume_messages and not resume_session_id:
+            prompt = f"{render_transcript_block(resume_messages)}\n\n{prompt}"
 
         writer({"type": "agent_started", "agent": invocation.agent_type})
 
@@ -387,22 +410,21 @@ class SdkAgentExecutor:
         elapsed_ms = int((time.time() - now) * 1000)
         output = output_text[-10000:] if len(output_text) > 10000 else output_text
 
-        # --- Plan C closeout: per-mode session-state population.
-        # api_key (anthropic_api) mode → return the captured messages list
-        # so AgentRunner / run_agent_node forward it onto AgentOutputEntry
-        # for AgentSessionsRepository.upsert(messages=...).
-        # oauth (claude_max) mode → return session_id and the canonical
-        # in-sandbox jsonl path; AgentRunner.copy_bytes_from() pulls the
-        # bytes out before the sandbox is destroyed.
+        # --- Session-state population (EMB-35: mode-agnostic).
+        # The CLI writes a session JSONL regardless of auth mode, so capture
+        # session_id + the canonical in-sandbox path for BOTH modes —
+        # AgentRunner.copy_bytes_from() pulls the bytes out before the
+        # sandbox is destroyed, and the next run resumes via ``--session-id``.
+        # The captured messages list rides along as the replay-fallback data
+        # source (used when the blob is missing or oversized).
         # On error we deliberately omit both: there's no useful state to
         # resume from a half-failed turn.
         out_messages: list[dict[str, Any]] | None = None
         out_session_id: str | None = None
         out_session_blob_path: str | None = None
         if not is_error:
-            if invocation.auth_mode == "api_key":
-                out_messages = list(captured_messages)
-            elif invocation.auth_mode == "oauth" and captured_session_id:
+            out_messages = list(captured_messages)
+            if captured_session_id:
                 out_session_id = captured_session_id
                 # Use claude_cli_session as single source of truth for the
                 # CLI's on-disk session file location. Returns None if the
