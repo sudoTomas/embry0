@@ -231,6 +231,13 @@ class JobState(TypedDict, total=False):
     agent_questions_exhausted: bool  # set True when agent_question_rounds cap hit; routes to terminal failure
     triage_question_rounds: int  # cycle guard for triage interrupt/resume loops, capped at 5
     user_retry_rounds: int  # cycle guard — capped at 3 continue_retrying clicks in max_retries_node
+    # EMB-35: one-shot copy of the user's continue_retrying guidance. The
+    # developer delta prompt sends only this on a resumed session (the
+    # accumulated additional_context lives in the resumed conversation
+    # already); cleared by developer_node after consumption. Top-level key —
+    # MUST stay declared here or LangGraph's state-merge reducer silently
+    # drops it.
+    user_retry_guidance: str | None
     # User-defined env vars merged into sandbox at init_node. List-of-dicts shape
     # (key/value/scope); scope is 'app' or 'qa'. The legacy plain-dict shape is
     # still accepted by _filter_user_env_for_sandbox for backwards compatibility.
