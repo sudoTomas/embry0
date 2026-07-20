@@ -4,6 +4,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from embry0.api.deps import get_jobs_repo
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
@@ -12,6 +13,10 @@ from embry0.audit.helpers import emit_audit
 from embry0.storage.repositories.jobs import JobsRepository
 
 router = APIRouter()
+
+
+class AnswerJobInputRequest(BaseModel):
+    answer: str
 
 
 @router.post("/jobs", status_code=201)
@@ -151,6 +156,56 @@ async def get_job_log_events(job_id: str, jobs: JobsRepository = Depends(get_job
         if isinstance(payload, dict):
             result.append(payload)
     return {"events": result}
+
+
+@router.post("/jobs/{job_id}/inputs/{input_id}/answer")
+async def answer_job_input(
+    job_id: str,
+    input_id: str,
+    req: AnswerJobInputRequest,
+    request: Request,
+    jobs: JobsRepository = Depends(get_jobs_repo),
+) -> dict[str, Any]:
+    """Answer an agent question on a job — issue-less-job path (EMB-43).
+
+    Direct POST /jobs runs have no issue row, so the issue-scoped answer
+    endpoint cannot serve them. Mirrors its contract: records the answer,
+    and when no blocking questions remain pending for the job, resumes the
+    workflow from its checkpoint with the accumulated Q&A as context.
+    Issue-backed inputs should keep using the issues endpoint (its resume
+    path also updates the issue row), but this one tolerates them.
+    """
+    job = await jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    inputs_repo = request.app.state.inputs_repo
+    inp = await inputs_repo.get(input_id)
+    if not inp or inp["job_id"] != job_id:
+        raise HTTPException(status_code=404, detail="Input not found")
+    if inp["status"] in ("answered", "auto_answered"):
+        raise HTTPException(status_code=409, detail="Input has already been answered")
+
+    await inputs_repo.answer(input_id, answer=req.answer, answered_by="user")
+
+    pending = await inputs_repo.count_pending_blocking_for_job(job_id)
+    if pending == 0:
+        fresh = await jobs.get(job_id)
+        if fresh and fresh["status"] == "awaiting_input":
+            answered = await inputs_repo.list_all_answered_for_job(job_id)
+            context_lines = [
+                f"Q: {a['question']}\nA: {a.get('answer') or a.get('auto_answer') or ''}" for a in answered
+            ]
+            executor = request.app.state.issue_executor
+            executor._track_task(
+                executor.resume(inp.get("issue_id") or None, job_id, "\n\n".join(context_lines)),
+                kind="resume_via_job_answer",
+                job_id=job_id,
+                issue_id=inp.get("issue_id") or None,
+            )
+
+    updated = await inputs_repo.get(input_id)
+    return dict(updated or {})
 
 
 @router.post("/jobs/{job_id}/resume")

@@ -891,6 +891,16 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'EMB-35: prompt-cache creation tokens (usage.cache_creation_input_tokens). 0 for rows that predate this column.';
         """,
     ),
+    (
+        39,
+        "issue_inputs — nullable issue_id for issue-less jobs (EMB-43)",
+        # Direct POST /jobs runs dispatch with issue_id=None by design, but
+        # any agent question crashed the whole workflow on this NOT NULL.
+        # Rows keep job_id (already indexed); NULL issue_id = issue-less job.
+        """
+        ALTER TABLE issue_inputs ALTER COLUMN issue_id DROP NOT NULL;
+        """,
+    ),
 ]
 
 
