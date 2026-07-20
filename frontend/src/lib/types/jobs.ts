@@ -34,6 +34,20 @@ export interface JobResponse {
   pipeline_source?: string | null;
   pipeline_template?: string | null;
   template_id?: string | null;
+  /** Per-(agent, model) rollup from traces (GET /jobs/{id} only). EMB-35 adds token sums. */
+  cost_breakdown?: CostBreakdownEntry[];
+}
+
+export interface CostBreakdownEntry {
+  agent_type: string;
+  model: string;
+  runs: number;
+  cost_usd: number;
+  duration_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
 }
 
 export interface JobListResponse {

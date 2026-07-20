@@ -866,6 +866,31 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'EMB-39: [{"name": str, "source": "matched"|"forced", "apps": [str]}] conditional acceptance-criteria groups applied to the run. [] for legacy rows and runs with no fired groups.';
         """,
     ),
+    (
+        38,
+        "traces — per-run token usage columns (EMB-35)",
+        # Token-level observability: the CLI's ResultMessage.usage exposes
+        # input/output plus cache read/creation token counts, which the
+        # executor previously dropped after emitting a transient cost_update
+        # stream event. Persisting them per trace makes per-phase token cost
+        # and cache-hit rate measurable (the EMB-35 success metric). DEFAULT 0
+        # keeps legacy rows valid; 0 on a legacy row means "not recorded",
+        # not "free".
+        """
+        ALTER TABLE traces ADD COLUMN IF NOT EXISTS input_tokens BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE traces ADD COLUMN IF NOT EXISTS output_tokens BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE traces ADD COLUMN IF NOT EXISTS cache_read_tokens BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE traces ADD COLUMN IF NOT EXISTS cache_creation_tokens BIGINT NOT NULL DEFAULT 0;
+        COMMENT ON COLUMN traces.input_tokens IS
+            'EMB-35: non-cached input tokens from ResultMessage.usage.input_tokens. 0 for rows that predate this column.';
+        COMMENT ON COLUMN traces.output_tokens IS
+            'EMB-35: output tokens from ResultMessage.usage.output_tokens. 0 for rows that predate this column.';
+        COMMENT ON COLUMN traces.cache_read_tokens IS
+            'EMB-35: prompt-cache read tokens (usage.cache_read_input_tokens). 0 for rows that predate this column.';
+        COMMENT ON COLUMN traces.cache_creation_tokens IS
+            'EMB-35: prompt-cache creation tokens (usage.cache_creation_input_tokens). 0 for rows that predate this column.';
+        """,
+    ),
 ]
 
 

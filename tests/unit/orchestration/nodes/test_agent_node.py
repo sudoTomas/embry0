@@ -406,6 +406,63 @@ async def test_run_agent_node_persists_trace_on_success() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_agent_node_persists_token_counts_on_trace_and_state() -> None:
+    """EMB-35: token fields flow from AgentOutput into traces_repo.create kwargs
+    and onto the agent_outputs state entry."""
+    fake_out = AgentOutput(
+        agent_type="developer",
+        is_error=False,
+        output="ok",
+        cost_usd=0.9,
+        duration_ms=1000,
+        input_tokens=1500,
+        output_tokens=250,
+        cache_read_tokens=88000,
+        cache_creation_tokens=3000,
+    )
+    traces_repo = AsyncMock()
+    traces_repo.create = AsyncMock(return_value="trc-token")
+
+    runner = AsyncMock()
+    runner.run = AsyncMock(return_value=fake_out)
+
+    state: dict[str, Any] = {
+        "sandbox_container_id": "c1",
+        "total_cost_usd": 0.0,
+        "pipeline_config": {},
+    }
+    updates = await run_agent_node(
+        state=state,
+        agent_runner=runner,
+        agent_type="developer",
+        prompt="do it",
+        agent_definition={
+            "model": "claude-opus-4-7",
+            "tools": ["Read"],
+            "skills": [],
+            "system_prompt": "",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        },
+        credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+        config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+    )
+
+    call_kwargs = traces_repo.create.call_args.kwargs
+    assert call_kwargs["input_tokens"] == 1500
+    assert call_kwargs["output_tokens"] == 250
+    assert call_kwargs["cache_read_tokens"] == 88000
+    assert call_kwargs["cache_creation_tokens"] == 3000
+
+    entry = updates["agent_outputs"][0]
+    assert entry["input_tokens"] == 1500
+    assert entry["output_tokens"] == 250
+    assert entry["cache_read_tokens"] == 88000
+    assert entry["cache_creation_tokens"] == 3000
+
+
+@pytest.mark.asyncio
 async def test_run_agent_node_trace_persist_failure_does_not_fail_run() -> None:
     """If traces_repo.create raises, the agent run still returns a valid updates dict."""
     fake_out = AgentOutput(

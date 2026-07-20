@@ -78,6 +78,11 @@ class AgentOutputEntry(TypedDict, total=False):
     cost_usd: float
     duration_ms: int
     tools_called: dict[str, int]
+    # EMB-35: per-run token usage from the executor's ResultMessage.usage.
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
     # Plan C: post-run conversation state forwarded by run_agent_node so
     # workflow nodes (developer/triage/review) can persist via
     # AgentSessionsRepository. ``messages`` for api_key mode;

@@ -54,6 +54,12 @@ class AgentOutput:
     cost_usd: float = 0.0
     duration_ms: int = 0
     tools_called: dict[str, int] = field(default_factory=dict)
+    # EMB-35: per-run token usage from ResultMessage.usage. 0 when the run
+    # errored before a result message or on legacy wire payloads.
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
     # Post-run conversation state (populated by the runner so Plan C Task 6
     # can persist via AgentSessionsRepository). All optional — omitted by
     # legacy code paths and by error returns.
@@ -235,6 +241,10 @@ class AgentRunner:
                         cost_usd=final_result.get("cost_usd", 0.0),
                         duration_ms=final_result.get("duration_ms", 0),
                         tools_called=final_result.get("tools_called", {}),
+                        input_tokens=int(final_result.get("input_tokens", 0) or 0),
+                        output_tokens=int(final_result.get("output_tokens", 0) or 0),
+                        cache_read_tokens=int(final_result.get("cache_read_tokens", 0) or 0),
+                        cache_creation_tokens=int(final_result.get("cache_creation_tokens", 0) or 0),
                         messages=final_result.get("messages"),
                         session_id=final_result.get("session_id"),
                         session_blob_path=final_result.get("session_blob_path"),

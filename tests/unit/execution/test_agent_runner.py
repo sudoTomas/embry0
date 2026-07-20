@@ -11,6 +11,7 @@ opaque "No final result received from sandbox".
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -234,3 +235,79 @@ async def test_runner_heartbeats_suppress_idle_watchdog() -> None:
     )
     assert out.is_error is False
     assert out.output == "done"
+
+
+@pytest.mark.asyncio
+async def test_runner_reconstructs_token_fields_from_final_result() -> None:
+    """EMB-35: token counts in the final_result wire payload land on AgentOutput."""
+    line = (
+        json.dumps(
+            {
+                "type": "final_result",
+                "agent_type": "developer",
+                "is_error": False,
+                "output": "done",
+                "cost_usd": 0.03,
+                "duration_ms": 1200,
+                "input_tokens": 1500,
+                "output_tokens": 250,
+                "cache_read_tokens": 88000,
+                "cache_creation_tokens": 3000,
+            }
+        ).encode()
+        + b"\n"
+    )
+
+    class _OneLineStdout:
+        def __init__(self) -> None:
+            self._lines = [line]
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self) -> bytes:
+            if not self._lines:
+                raise StopAsyncIteration
+            return self._lines.pop(0)
+
+    proc = _FakeProc(returncode=0, stderr_chunks=[])
+    proc.stdout = _OneLineStdout()
+    runner = _runner_with_proc(proc)
+
+    out = await runner.run(
+        container="c",
+        config={"agent_type": "developer", "timeout_seconds": 30},
+    )
+    assert out.input_tokens == 1500
+    assert out.output_tokens == 250
+    assert out.cache_read_tokens == 88000
+    assert out.cache_creation_tokens == 3000
+
+
+@pytest.mark.asyncio
+async def test_runner_token_fields_default_zero_on_legacy_payload() -> None:
+    """A final_result without token keys (pre-EMB-35 sandbox image) yields zeros."""
+    line = b'{"type": "final_result", "agent_type": "qa", "is_error": false, "output": "ok"}\n'
+
+    class _OneLineStdout:
+        def __init__(self) -> None:
+            self._lines = [line]
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self) -> bytes:
+            if not self._lines:
+                raise StopAsyncIteration
+            return self._lines.pop(0)
+
+    proc = _FakeProc(returncode=0, stderr_chunks=[])
+    proc.stdout = _OneLineStdout()
+    runner = _runner_with_proc(proc)
+
+    out = await runner.run(container="c", config={"agent_type": "qa", "timeout_seconds": 30})
+    assert out.is_error is False
+    assert out.input_tokens == 0
+    assert out.output_tokens == 0
+    assert out.cache_read_tokens == 0
+    assert out.cache_creation_tokens == 0
