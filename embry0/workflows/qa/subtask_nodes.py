@@ -22,6 +22,7 @@ from typing import Any
 import structlog
 from langchain_core.runnables import RunnableConfig
 
+from embry0.execution.egress import derive_deployed_egress_allowlist
 from embry0.workflows.qa._subtask_boot_phase import (
     _boot_phase_from_state,
     _read_boot_log_tail,
@@ -176,6 +177,20 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
     # `/workspace/.qa` so each sub-task has its own ephemeral state without
     # losing the shared read-cache for `node_modules` and the cloned repo.
     sandbox_tmpfs = ["/workspace/.qa"] if shared_volume_name else None
+
+    # EMB-29: deployed-target sandboxes on the NAT-egress network get a
+    # derived egress allowlist — the app's own frontend_url host, the
+    # profile's extra_hosts targets (LAN vhost aliases), and the Anthropic
+    # API endpoints the Claude CLI needs. Everything else on egress is
+    # dropped in DinD's DOCKER-USER chain (managed apps boot in-sandbox on
+    # restricted networks and are unaffected).
+    egress_allowlist: list[str] | None = None
+    if resolved.target == "deployed" and "sandbox-internet" in (profile.get("extra_networks") or []):
+        egress_allowlist = derive_deployed_egress_allowlist(
+            frontend_url=resolved.frontend_url,
+            extra_hosts=profile.get("extra_hosts") or {},
+        )
+
     try:
         container_id, sandbox_token = await sandbox_mgr.create(
             sub_job_id,
@@ -184,6 +199,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
             volumes=sandbox_volumes,
             tmpfs_mounts=sandbox_tmpfs,
             repo=state["repo"],
+            egress_allowlist=egress_allowlist,
         )
     except Exception as exc:  # noqa: BLE001
         return {

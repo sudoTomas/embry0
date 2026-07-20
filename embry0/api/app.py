@@ -613,6 +613,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # at stack start. If it didn't run (or its output was clobbered), refuse to boot.
     await docker.assert_sandbox_networks_or_die()
 
+    # EMB-29: probe DOCKER-USER egress enforcement (helper image + iptables
+    # in DinD's netns). Non-fatal by design — enforcement itself fails
+    # CLOSED per-sandbox at create time, so an unavailable helper at boot
+    # only means an early operator warning instead of a bricked deploy.
+    from embry0.execution.egress import EgressEnforcer
+
+    await EgressEnforcer(docker).verify_ready()
+
     from embry0.agents.executor import _assert_sdk_supports_hooks
 
     _assert_sdk_supports_hooks()
