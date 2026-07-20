@@ -44,15 +44,21 @@ Model selection (CRITICAL):
 - The developer agent itself can dispatch sub-agents (via the Agent tool) for
   parallel work. You DO NOT control the sub-agent models from triage; the
   developer chooses per-task. Don't try to set them here.
-- For the review agent, "claude-sonnet-4-6" is the default. Haiku is
-  acceptable only for one-line cosmetic reviews (typos, log message edits,
-  comment fixes). Reach for Opus on review only for security-sensitive diffs.
+- For the review agent, "claude-sonnet-4-6" is the default. For ROUTINE
+  changes (docs-only, typos, config edits, log messages, comment fixes) tier
+  the review down to "claude-haiku-4-5" — a routine diff does not need a
+  Sonnet judge. Reach for Opus on review only for security-sensitive diffs.
 - For the triage agent (yourself), the model is fixed at the orchestrator
   level — don't try to override it.
 - When in doubt, prefer the more capable model.
 
 Set the chosen models in `pipeline_config.agent_models`:
   {"developer": "claude-opus-4-6", "review": "claude-sonnet-4-6"}
+
+Turn budgets (optional): `pipeline_config.agent_max_turns` overrides the
+per-agent turn caps (defaults: triage 15, developer 40, review 25, qa 40).
+Raise the developer's only for genuinely large multi-file work, e.g.
+  {"developer": 60}
 
 Skill selection for the developer (CRITICAL):
 Decide whether the issue needs an upfront DESIGN pass or can jump straight to

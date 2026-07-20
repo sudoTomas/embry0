@@ -20,6 +20,18 @@ logger = structlog.get_logger(__name__)
 DEFAULT_ASK_USER_CAP = 5
 BRAINSTORMING_ASK_USER_CAP = 15
 
+# EMB-35: per-role turn budgets. The flat 40 was sized for the developer
+# (repo exploration + implementation); triage is a bounded classification
+# pass and review a bounded check-and-judge pass — neither should be able
+# to burn a developer-sized budget when stuck. Overridable per job via
+# pipeline_config.agent_max_turns; unknown agent types fall back to 40.
+DEFAULT_AGENT_MAX_TURNS: dict[str, int] = {
+    "triage": 15,
+    "developer": 40,
+    "review": 25,
+    "qa": 40,
+}
+
 
 class SandboxRequiredError(RuntimeError):
     """Raised when run_agent_node is invoked without an agent_runner.
@@ -68,7 +80,7 @@ async def run_agent_node(
     prompt: str,
     model: str = "claude-sonnet-4-6",
     tools: list[str] | None = None,
-    max_turns: int = 40,
+    max_turns: int | None = None,
     timeout_seconds: int = 300,
     network: str | None = None,
     on_event: Any | None = None,
@@ -123,6 +135,16 @@ async def run_agent_node(
     # pipeline_config on state is always the flat PipelineConfig dict (never a
     # TriageDecision wrapper) — triage_node writes the flat inner dict since D4.
     pipeline_config = state.get("pipeline_config") or {}
+
+    # EMB-35: per-agent turn budget. Precedence: explicit caller kwarg (QA
+    # scales its own with the criteria count) → triage-emitted
+    # pipeline_config.agent_max_turns → role default → 40.
+    if max_turns is None:
+        configured = (pipeline_config.get("agent_max_turns") or {}).get(agent_type)
+        if isinstance(configured, int) and configured > 0:
+            max_turns = configured
+        else:
+            max_turns = DEFAULT_AGENT_MAX_TURNS.get(agent_type, 40)
 
     # Per-job agent_models override (JobCreateRequest.agent_models) — surfaced
     # onto state by IssueExecutor. It wins over template/definition precedence,
