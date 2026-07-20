@@ -66,12 +66,22 @@ def resolve_app_config(
         (app_local.sandbox_profile if app_local else None) or app_entry.sandbox_profile or defaults.sandbox_profile
     )
 
+    # Tri-state merge: None = absent (fall through), [] = EXPLICIT opt-out.
+    # ready_checks_explicit records whether some layer deliberately set a
+    # value — EMB-34 fix #1 keys on it: an empty set nobody chose is a
+    # config error (boot would "pass" with zero verification), while an
+    # explicit `ready_checks: []` is an acknowledged opt-out.
     if app_local is not None and app_local.ready_checks is not None:
         ready_checks = app_local.ready_checks
+        ready_checks_explicit = True
     elif app_entry.ready_checks is not None:
         ready_checks = app_entry.ready_checks
+        ready_checks_explicit = True
     else:
         ready_checks = defaults.ready_checks
+        # DefaultsBlock.ready_checks defaults to [] (never None), so a
+        # non-empty defaults list is a real choice; empty means absent.
+        ready_checks_explicit = bool(defaults.ready_checks)
 
     if app_local is not None and app_local.boot_timeout_seconds is not None:
         boot_timeout_seconds = app_local.boot_timeout_seconds
@@ -126,6 +136,16 @@ def resolve_app_config(
             )
     else:
         mode = defaults.mode
+        # EMB-34 fix #1: a managed app whose merged ready_checks is empty by
+        # OMISSION would let boot "pass" with zero verification (boot.py
+        # warn-only path). Require either real checks or the explicit
+        # `ready_checks: []` opt-out acknowledgement.
+        if not ready_checks and not ready_checks_explicit:
+            raise ValueError(
+                f"app {app_name!r} has no ready_checks after merge — boot would pass with "
+                "zero verification. Declare ready_checks, or acknowledge the opt-out "
+                "explicitly with `ready_checks: []` on the app or its app-local config."
+            )
 
     return ResolvedAppConfig(
         app_name=app_name,

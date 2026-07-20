@@ -688,6 +688,46 @@ async def _qa_orchestrator_node_impl(
         qa_state["final_status"] = "failed"
         return {"qa": qa_state}
 
+    # 4a. EMB-34 fix #3: config-time capability check — the QA agent always
+    # drives a browser (Playwright MCP is in its static seed), so a resolved
+    # sandbox profile whose image has no browser guarantees a mid-run
+    # failure after boot spend. Browser capability is inferred from the
+    # base_image (the qa image family bundles Playwright+Chromium); custom
+    # profiles derived from it pass automatically. Missing profiles are NOT
+    # failed here — acquire_sandbox already reports those with a clearer
+    # per-app INFRA_FAILURE.
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    profiles_repo = configurable.get("profiles_repo")
+    if profiles_repo is not None:
+        browserless: list[str] = []
+        for rc in resolved_configs:
+            try:
+                profile = await profiles_repo.get(rc.sandbox_profile)
+            except Exception:  # noqa: BLE001 — capability check is advisory-fatal, not crash-worthy
+                profile = None
+            if profile is None:
+                continue
+            base_image = str(profile.get("base_image") or "")
+            if "embry0-sandbox-qa" not in base_image:
+                browserless.append(
+                    f"app {rc.app_name!r}: profile {rc.sandbox_profile!r} "
+                    f"(base_image {base_image!r}) has no browser, but the QA agent "
+                    "requires Playwright — use a profile built on embry0-sandbox-qa"
+                )
+        if browserless:
+            outcome = OrchestratorOutcome(
+                overall_status="infra_error",
+                apps_to_qa=list(apps),
+                failure_summary=f"sandbox profile capability check failed: {'; '.join(browserless)}",
+                validation_errors=browserless,
+                validation_warnings=warnings,
+            )
+            qa_state["outcome"] = _outcome_to_dict(outcome)
+            qa_state["validation_errors"] = browserless
+            qa_state["error_message"] = outcome.failure_summary
+            qa_state["final_status"] = "failed"
+            return {"qa": qa_state}
+
     # 4b. Job-level acceptance-criteria override (QAJobOverrides). A caller
     # that supplies a non-empty list on POST /jobs replaces every app's
     # resolved criteria for this one run — the qa.yaml stays the durable

@@ -86,7 +86,7 @@ hard validation error**, not a silent ignore.
 |---|---|---|---|
 | `mode` | `process` \| `dind` | `process` | **Repo-wide** — there is no per-app `mode`. `process` for plain dev servers; `dind` when boot needs Docker. |
 | `sandbox_profile` | str | `slim` | e.g. `slim`, `qa-node`, `qa-jvm`, `qa-external` (browser + LAN egress, no DinD — for QA against an externally deployed instance; clone it to set `extra_hosts` vhost aliases). |
-| `ready_checks` | list of check | `[]` | See below. Empty ⇒ boot "passes" right after the boot command with no verification (logged as a warning). |
+| `ready_checks` | list of check | `[]` | See below. An app whose merged ready_checks end up empty **by omission** fails validation (`infra_error` — boot would "pass" with zero verification). To deliberately skip verification, set `ready_checks: []` explicitly on the app or its app-local config (acknowledged opt-out). `deployed` apps always require non-empty checks. |
 | `boot_timeout_seconds` | int 1..3600 | `600` | |
 | `seed_command` | str \| null | none | Optional data seed after boot. |
 | `seed_timeout_seconds` | int 1..1800 | `120` | |
@@ -105,7 +105,7 @@ only — heavy overrides go in `apps/<name>/.embry0/app.yaml` (below).
 | `boot_command` | str | ✅ for `managed` | Command that starts the app. **Forbidden for `deployed`** — the app is already running. |
 | `frontend_url` | str (http/https) | ✅ | URL the QA agent's headless browser hits. Must be reachable **from inside the sandbox** (in `dind`, a container hostname — not `localhost:<host_port>`). |
 | `sandbox_profile` | str | | Overrides `defaults`. |
-| `ready_checks` | list | | Replaces `defaults` (not merged). |
+| `ready_checks` | list | | Replaces `defaults` (not merged). `[]` here is an explicit opt-out of boot verification. |
 | `boot_timeout_seconds` | int 1..3600 | | |
 | `seed_command` | str | | **Forbidden for `deployed`** — never seed an externally running instance. |
 | `e2e` | e2e block | | |

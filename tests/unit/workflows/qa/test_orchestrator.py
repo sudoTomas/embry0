@@ -2132,3 +2132,80 @@ async def test_orchestrator_early_failures_set_error_message(monkeypatch):
     assert qa["final_status"] == "failed"
     assert "not-a-real-group" in qa["error_message"]
     assert seen == {}
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_browserless_profile_fails_capability_check(monkeypatch):
+    """EMB-34 fix #3: a resolved sandbox profile whose base_image has no
+    browser fails pre-fan-out with infra_error instead of burning boot spend
+    on a run the Playwright-requiring QA agent cannot complete."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from embry0.workspace_providers import AffectedSet
+
+    fake_provider = _fake_hub_companion_provider()
+    fake_provider.affected_result = AffectedSet(
+        directly_changed=frozenset({"@x/hub"}),
+        cascade_closure=frozenset({"@x/hub"}),
+        apps_to_qa=frozenset({"@x/hub"}),
+    )
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    _capture_subtasks(monkeypatch)
+
+    profiles_repo = MagicMock()
+    profiles_repo.get = AsyncMock(return_value={"name": "slim", "base_image": "embry0-sandbox:latest"})
+
+    state = {
+        "job_id": "bbbb5555-5555-5555-5555-555555555555",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {"profiles_repo": profiles_repo}})
+    assert out["qa"]["final_status"] == "failed"
+    assert out["qa"]["outcome"]["overall_status"] == "infra_error"
+    assert any("has no browser" in e for e in out["qa"]["validation_errors"])
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_qa_image_profile_passes_capability_check(monkeypatch):
+    """A profile built on the qa image family passes the check."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from embry0.workspace_providers import AffectedSet
+
+    fake_provider = _fake_hub_companion_provider()
+    fake_provider.affected_result = AffectedSet(
+        directly_changed=frozenset({"@x/hub"}),
+        cascade_closure=frozenset({"@x/hub"}),
+        apps_to_qa=frozenset({"@x/hub"}),
+    )
+    monkeypatch.setattr(
+        "embry0.workflows.qa.orchestrator.load_provider",
+        lambda name, root, config: fake_provider,
+    )
+    seen = _capture_subtasks(monkeypatch)
+
+    profiles_repo = MagicMock()
+    profiles_repo.get = AsyncMock(
+        return_value={"name": "qa-external", "base_image": "registry:5000/embry0-sandbox-qa:latest"}
+    )
+
+    state = {
+        "job_id": "cccc6666-6666-6666-6666-666666666666",
+        "repo": "org/repo",
+        "branch_name": "main",
+        "qa": {
+            "qa_yaml_v2_raw": _QA_YAML_V2,
+            "changed_files": ["apps/hub/app/page.tsx"],
+        },
+    }
+    out = await qa_orchestrator_node(state, {"configurable": {"profiles_repo": profiles_repo}})
+    assert out["qa"]["final_status"] == "passed"
+    assert "hub" in seen
