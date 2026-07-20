@@ -75,3 +75,30 @@ async def test_passed_routes_to_END():
     }
     result = await retry_node(state, {})
     assert result.goto == END
+
+
+@pytest.mark.asyncio
+async def test_agent_transient_gets_one_retry():
+    """EMB-34: a classified-transient agent failure retries exactly once."""
+    state = _mk_state(exit_reason="agent_transient: connection reset by peer", attempts=1)
+    result = await retry_node(state, {})
+    assert isinstance(result, Command)
+    assert result.goto == "init_qa"
+
+
+@pytest.mark.asyncio
+async def test_agent_transient_second_occurrence_terminates():
+    state = _mk_state(exit_reason="agent_transient: connection reset by peer", attempts=2)
+    result = await retry_node(state, {})
+    assert result.goto == END
+    assert result.update["qa"]["final_status"] == "exhausted"
+    assert result.update["qa"]["error_code"] == "ERR_QA_BUDGET_EXHAUSTED"
+
+
+@pytest.mark.asyncio
+async def test_agent_error_stays_terminal():
+    """A non-transient agent failure is NOT retried."""
+    state = _mk_state(exit_reason="agent_error: tool misuse", attempts=1)
+    result = await retry_node(state, {})
+    assert result.goto == END
+    assert result.update["qa"]["final_status"] == "exhausted"

@@ -30,6 +30,39 @@ from embry0.workflows.qa.screenshot import take_diagnostic_screenshot
 
 logger = structlog.get_logger(__name__)
 
+# EMB-34 fix #2: error-message signatures that mark an agent-phase failure
+# as environmental rather than behavioral. Conservative by design — only
+# unambiguous transport/infrastructure phrases; anything else stays a
+# terminal agent_error.
+_TRANSIENT_AGENT_ERROR_SIGNATURES = (
+    "connection reset",
+    "connection refused",
+    "connection aborted",
+    "connection error",
+    "timed out",
+    "timeout",
+    "temporarily unavailable",
+    "mcp disconnect",
+    "transport closed",
+    "websocket closed",
+    "network is unreachable",
+    "name resolution",
+    "econnreset",
+    "epipe",
+    "socket hang up",
+    "overloaded_error",
+    "server disconnected",
+    "502",
+    "503",
+    "529",
+)
+
+
+def _is_transient_agent_error(error_message: str) -> bool:
+    """True when an agent failure looks environmental (network/MCP/API blip)."""
+    msg = (error_message or "").lower()
+    return any(sig in msg for sig in _TRANSIENT_AGENT_ERROR_SIGNATURES)
+
 
 async def init_qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Initialize a QA attempt: resolve profile, start sandbox, clone repo,
@@ -533,7 +566,12 @@ async def qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, An
         last_output = agent_outputs[-1]
         if last_output.get("is_error"):
             last["last_phase"] = None
-            last["exit_reason"] = f"agent_error: {last_output.get('error_message', 'unknown')[:200]}"
+            err_msg = last_output.get("error_message", "unknown")
+            # EMB-34 fix #2: classify obviously-environmental agent failures
+            # as transient so retry_node can grant ONE bounded re-attempt
+            # instead of terminating the run outright.
+            reason_prefix = "agent_transient" if _is_transient_agent_error(err_msg) else "agent_error"
+            last["exit_reason"] = f"{reason_prefix}: {err_msg[:200]}"
         else:
             # Agent completed cleanly. report_node will read /workspace/.qa/result.json
             # to get the actual phase_reached + overall.
@@ -684,6 +722,8 @@ async def retry_node(state: dict[str, Any], config: RunnableConfig) -> Command[A
     """Decide whether to retry the QA attempt or end (Section 6.2).
 
     - boot_timeout / seed_timeout / infra_error -> auto-retry (bounded)
+    - agent_transient: ...                      -> ONE bounded retry (EMB-34)
+    - agent_error: ...                          -> END (terminal)
     - idle_timeout                              -> hard-fail (ERR_QA_IDLE)
     - validation_failed                         -> standalone: END (Phase 5 routes to triage)
     - total_budget_exceeded                     -> END (Phase 5 routes to triage)
@@ -702,6 +742,24 @@ async def retry_node(state: dict[str, Any], config: RunnableConfig) -> Command[A
 
     # Success path — no retry, just end.
     if reason is None:
+        return Command(goto=END, update={"qa": qa})
+
+    # EMB-34 fix #2: one-shot bounded retry for classified-transient agent
+    # failures (network blip, MCP disconnect, API 5xx). Exactly ONE retry
+    # regardless of max_qa_retries — a second transient in the same run is
+    # treated as a real failure, not bad luck.
+    if isinstance(reason, str) and reason.startswith("agent_transient"):
+        transient_attempts = sum(1 for a in attempts if str(a.get("exit_reason") or "").startswith("agent_transient"))
+        if transient_attempts <= 1 and n <= max_retries:
+            logger.warning(
+                "qa_agent_transient_retry",
+                job_id=state.get("job_id"),
+                exit_reason=reason[:120],
+                attempt_n=n,
+            )
+            return Command(goto="init_qa", update={"qa": qa})
+        qa["final_status"] = "exhausted"
+        qa["error_code"] = "ERR_QA_BUDGET_EXHAUSTED"
         return Command(goto=END, update={"qa": qa})
 
     auto_retry_reasons = {"boot_timeout", "seed_timeout", "infra_error"}

@@ -126,7 +126,9 @@ async def test_qa_node_records_agent_error():
 
     last = new_state["qa"]["attempts"][-1]
     assert last["last_phase"] is None
-    assert "agent_error" in last["exit_reason"]
+    # EMB-34: "connection refused" is a transient signature — classified
+    # agent_transient so retry_node grants one bounded retry.
+    assert last["exit_reason"].startswith("agent_transient")
     assert "connection refused" in last["exit_reason"]
 
 

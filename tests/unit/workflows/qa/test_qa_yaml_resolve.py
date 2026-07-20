@@ -258,3 +258,67 @@ def test_deployed_keeps_auth():
     assert resolved.seed_command is None
     assert resolved.auth is not None
     assert resolved.auth.storage_state_from.secret == "QA_STORAGE_STATE"
+
+
+def test_managed_app_empty_ready_checks_by_omission_raises():
+    """EMB-34: a managed app with no ready_checks anywhere is a config
+    error — boot would pass with zero verification."""
+    root = parse_qa_yaml_v2(
+        """
+version: 2
+workspace_provider:
+  type: npm-workspaces-turbo
+defaults:
+  mode: process
+  boot_timeout_seconds: 60
+apps:
+  web:
+    boot_command: "npm start"
+    frontend_url: "http://localhost:3000"
+"""
+    )
+    with pytest.raises(ValueError, match="no ready_checks after merge"):
+        resolve_app_config("web", root, app_local=None)
+
+
+def test_managed_app_explicit_empty_ready_checks_is_allowed():
+    """An explicit `ready_checks: []` is an acknowledged opt-out."""
+    root = parse_qa_yaml_v2(
+        """
+version: 2
+workspace_provider:
+  type: npm-workspaces-turbo
+defaults:
+  mode: process
+  boot_timeout_seconds: 60
+apps:
+  web:
+    boot_command: "npm start"
+    frontend_url: "http://localhost:3000"
+    ready_checks: []
+"""
+    )
+    resolved = resolve_app_config("web", root, app_local=None)
+    assert resolved.ready_checks == []
+
+
+def test_managed_app_defaults_ready_checks_still_flow():
+    root = parse_qa_yaml_v2(
+        """
+version: 2
+workspace_provider:
+  type: npm-workspaces-turbo
+defaults:
+  mode: process
+  boot_timeout_seconds: 60
+  ready_checks:
+    - http: "http://localhost:3000/"
+      expect_status: 200
+apps:
+  web:
+    boot_command: "npm start"
+    frontend_url: "http://localhost:3000"
+"""
+    )
+    resolved = resolve_app_config("web", root, app_local=None)
+    assert len(resolved.ready_checks) == 1
