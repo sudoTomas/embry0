@@ -71,3 +71,19 @@ async def test_build_rejects_malformed_repo(api_client):
         json={"repo": "not-a-repo"},
     )
     assert r.status_code == 422
+
+
+async def test_build_502_on_unexpected_build_exception(api_client):
+    """Docker-layer faults raise plain RuntimeError — still a 502 with the
+    message surfaced, never a raw 500."""
+    _wire_fake_deps(api_client.app)
+    with patch(
+        "embry0.cache.image_builder_cli.run_build_qa_image",
+        new=AsyncMock(side_effect=RuntimeError("Docker command failed: clone")),
+    ):
+        r = await api_client.post(
+            "/api/v1/qa/images/build",
+            json={"repo": "org/repo"},
+        )
+    assert r.status_code == 502
+    assert "Docker command failed" in r.json()["detail"]
