@@ -59,6 +59,10 @@ async def build_qa_cache_image(req: QAImageBuildRequest, request: Request) -> di
         )
     except ImageBuildError as exc:
         raise HTTPException(status_code=502, detail=f"image build failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — build infra faults (bad repo, docker/clone
+        # failures) raise plain RuntimeError from the docker layer; a raw 500
+        # tells the operator nothing. Same 502 mapping, message surfaced.
+        raise HTTPException(status_code=502, detail=f"image build failed: {exc}") from exc
 
     config = state.config
     await emit_audit(
