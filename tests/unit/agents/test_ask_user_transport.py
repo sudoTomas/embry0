@@ -164,3 +164,54 @@ def test_developer_prompts_document_ask_user():
     ):
         assert "from embry0.sandbox.ask_user import ask_user" in prompt
         assert "never reach the user" in prompt
+
+
+class _UserMessage:
+    """Duck-typed UserMessage — content, no model, no total_cost_usd."""
+
+    def __init__(self, content):
+        self.content = content
+        self.uuid = "u-2"
+
+
+@pytest.mark.asyncio
+async def test_executor_reemits_ask_user_from_user_message_tool_result(tmp_path, monkeypatch):
+    """EMB-44 follow-up: in production, tool results arrive as USER messages
+    (Anthropic protocol) — the assistant-branch ToolResultBlock path never
+    fires. The user-message branch must recover embedded ask_user events."""
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
+    captured = []
+
+    messages = [
+        _UserMessage([_ToolResultBlock("out\n" + _helper_output(question="From user msg?"))]),
+        _ResultMessage(),
+    ]
+
+    with patch("claude_agent_sdk.query", return_value=_scripted(messages)):
+        out = await SdkAgentExecutor().run(
+            _inv(),
+            config={"configurable": {}, "_test_writer": captured.append},
+        )
+
+    assert out.is_error is False
+    asks = [e for e in captured if e.get("type") == "agent_ask_user"]
+    assert len(asks) == 1
+    assert asks[0]["question"] == "From user msg?"
+    assert asks[0]["node"] == "developer"
+
+
+@pytest.mark.asyncio
+async def test_executor_user_message_string_content(tmp_path, monkeypatch):
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
+    captured = []
+    messages = [
+        _UserMessage("plain " + _helper_output(question="String content?")),
+        _ResultMessage(),
+    ]
+    with patch("claude_agent_sdk.query", return_value=_scripted(messages)):
+        await SdkAgentExecutor().run(
+            _inv(),
+            config={"configurable": {}, "_test_writer": captured.append},
+        )
+    asks = [e for e in captured if e.get("type") == "agent_ask_user"]
+    assert len(asks) == 1
