@@ -175,6 +175,11 @@ class DefaultsBlock(BaseModel):
     e2e: QAE2E | None = None
     auth: QAAuth | None = None
     acceptance_criteria_template: list[str] = Field(default_factory=list)
+    guardrails: list[str] = Field(default_factory=list)
+    """EMB-31: forbidden-action rules injected as a DO-NOT section of the QA
+    agent prompt. Merged as a UNION with per-app/app-local guardrails —
+    unlike acceptance criteria, safety rules are additive and cannot be
+    removed by a narrower layer."""
 
 
 class AppEntry(BaseModel):
@@ -198,6 +203,8 @@ class AppEntry(BaseModel):
     ready_checks: list[QAReadyCheck] | None = None
     boot_timeout_seconds: int | None = Field(default=None, gt=0, le=3600)
     seed_command: str | None = None
+    guardrails: list[str] | None = None
+    """EMB-31: EXTENDS defaults.guardrails (union), never replaces."""
     e2e: QAE2E | None = None
     auth: QAAuth | None = None
 
@@ -392,6 +399,8 @@ class AppLocalConfig(BaseModel):
     auth: QAAuth | None = None
     acceptance_criteria: list[str] | None = None
     """If non-None, REPLACES (does not extend) defaults.acceptance_criteria_template."""
+    guardrails: list[str] | None = None
+    """EMB-31: EXTENDS defaults + app-entry guardrails (union), never replaces."""
 
 
 # -------- Parsers --------

@@ -444,7 +444,7 @@ async def qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, An
         "  ],\n"
         '  "anomalies": [\n'
         "    {\n"
-        '      "category": "console_error" | "network_error" | "unexpected_state" | "crash",\n'
+        '      "category": "console_error" | "network_error" | "unexpected_state" | "crash" | "guardrail_violation",\n'
         '      "detail": "<short>",\n'
         '      "evidence_paths": ["..."]\n'
         "    }, ...\n"
@@ -459,6 +459,10 @@ async def qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, An
         "  such status.\n"
         "- overall=passed iff every acceptance_results[].status is passed.\n"
         "  overall=failed iff any is failed. Else inconclusive.\n"
+        "- GUARDRAILS: if job.json has a non-empty guardrails list, obey it as\n"
+        "  absolute DO-NOT rules (see your system prompt). If you realize you\n"
+        "  violated one, report it as an anomaly with\n"
+        '  category="guardrail_violation" — never hide it.\n'
     )
 
     # Forward every event the sandbox runner emits to the LangGraph stream

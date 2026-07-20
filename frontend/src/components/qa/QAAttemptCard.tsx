@@ -55,6 +55,18 @@ export function QAAttemptCard({ jobId, attempt }: Props): JSX.Element {
               <span>Boot: {Math.round(result.boot.duration_ms / 1000)}s</span>
               <span>Anomalies: {result.anomalies.length}</span>
             </div>
+            {result.anomalies.some((a) => a.category === "guardrail_violation") && (
+              <div className="rounded border border-red-500/60 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                <span className="font-semibold uppercase tracking-wide">Guardrail breach</span>
+                <ul className="mt-1 list-disc pl-4">
+                  {result.anomalies
+                    .filter((a) => a.category === "guardrail_violation")
+                    .map((a, i) => (
+                      <li key={i}>{a.detail}</li>
+                    ))}
+                </ul>
+              </div>
+            )}
             <QAAcceptanceResults jobId={jobId} results={result.acceptance_results} />
           </div>
         ) : null}

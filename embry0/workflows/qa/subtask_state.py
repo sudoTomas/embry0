@@ -181,6 +181,7 @@ def _build_job_json_payload(
         "frontend_url": qa_yaml["frontend_url"],
         "qa_yaml": qa_yaml,
         "acceptance_criteria": list(resolved.acceptance_criteria),
+        "guardrails": list(resolved.guardrails),
         "changed_files": list(changed_files or []),
         "sandbox_token": sandbox_token,
         "presign_refresh_url": presign_refresh_url,

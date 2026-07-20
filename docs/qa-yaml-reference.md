@@ -107,6 +107,7 @@ workspace_provider:
 | `e2e` | e2e block \| null | none | See below. |
 | `auth` | auth block \| null | none | Pre-authenticate the QA browser via a Playwright storageState — see the `auth:` section below. |
 | `acceptance_criteria_template` | list of str | `[]` | Default criteria the QA agent drives per app. |
+| `guardrails` | list of str | `[]` | EMB-31: absolute DO-NOT rules for the QA agent (e.g. "never click Send"). Injected into `job.json` and enforced by the agent's system prompt; violations are reported as `anomalies[]` with `category: guardrail_violation` and surfaced prominently on the dashboard. **Merged as a UNION** with per-app/app-local guardrails — a narrower layer can add rules but never remove inherited ones (unlike acceptance criteria, which replace). |
 
 ### `apps:` — `{ <app_name>: AppEntry }`
 
@@ -123,6 +124,7 @@ only — heavy overrides go in `apps/<name>/.embry0/app.yaml` (below).
 | `boot_timeout_seconds` | int 1..3600 | | |
 | `seed_command` | str | | **Forbidden for `deployed`** — never seed an externally running instance. |
 | `e2e` | e2e block | | |
+| `guardrails` | list of str | | EXTENDS `defaults.guardrails` (union) — never replaces. |
 | `auth` | auth block | | Overrides `defaults`. **Allowed for `deployed`** — pre-authenticating against an external instance is the primary use case. |
 
 ### `target: deployed` — QA against an already-running deployment
@@ -166,6 +168,22 @@ apps:
       - http: "http://ai-quoting-dev.raven-cargo.app/"
         expect_status: [200, 302]
 ```
+
+### Guardrails & the assert-but-don't-click pattern
+
+QA against a shared live instance with real customer data needs enforceable
+"don't touch" rules: buttons that email customers, spend paid API credits, or
+mutate records. Declare them in `guardrails:`; the agent treats each entry as
+an absolute prohibition that outranks every acceptance criterion.
+
+The first-class way to still *cover* a forbidden control is
+**assert-but-don't-click**: a criterion verifies the control exists, is
+enabled, and is labelled correctly — without activating it. Example criterion:
+"The Re-price button is present and enabled on a deal card (do NOT click it)."
+If a criterion appears to require a forbidden action, the agent marks it
+`inconclusive` and explains the conflict rather than acting. Violations the
+agent commits are self-reported as `anomalies[]` entries with
+`category: guardrail_violation` — never hidden.
 
 ### `ready_checks` entry
 

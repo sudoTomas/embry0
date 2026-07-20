@@ -12,7 +12,7 @@ Order (last wins):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from embry0.workflows.qa.qa_yaml_v2 import (
     QAE2E,
@@ -44,6 +44,7 @@ class ResolvedAppConfig:
     acceptance_criteria: list[str]
     target: str = "managed"
     auth: QAAuth | None = None
+    guardrails: list[str] = field(default_factory=list)
 
 
 def resolve_app_config(
@@ -119,6 +120,15 @@ def resolve_app_config(
     else:
         acceptance_criteria = list(defaults.acceptance_criteria_template)
 
+    # EMB-31: guardrails merge as a UNION (defaults + app + app-local, in
+    # order, de-duplicated) — safety rules are additive; a narrower layer
+    # can add rules but never remove inherited ones.
+    guardrails: list[str] = []
+    for layer in (defaults.guardrails, app_entry.guardrails or [], (app_local.guardrails if app_local else None) or []):
+        for rule in layer:
+            if rule not in guardrails:
+                guardrails.append(rule)
+
     if app_entry.target == "deployed":
         # Deployed targets never seed (AppEntry forbids its own seed_command;
         # a defaults-level one must not leak in either) and never run DinD —
@@ -158,6 +168,7 @@ def resolve_app_config(
         seed_command=seed_command,
         e2e=e2e,
         acceptance_criteria=acceptance_criteria,
+        guardrails=guardrails,
         target=app_entry.target,
         auth=auth,
     )
