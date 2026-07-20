@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from embry0.agents.claude_cli_session import canonical_session_path_for
+from embry0.agents.session import MAX_RESUME_BLOB_BYTES
 from embry0.execution.docker_client import DockerClient
 from embry0.execution.events import parse_event
 
@@ -32,8 +33,8 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-# Sandbox-side path where the orchestrator stages the resume blob for
-# anthropic_api mode. Tmpfs-backed and disposed with the sandbox.
+# Sandbox-side path where the orchestrator stages the prior message list
+# for the text-replay fallback. Tmpfs-backed and disposed with the sandbox.
 RESUME_BLOB_SANDBOX_PATH = "/tmp/.embry0-resume-blob"
 
 # Sandbox-side cwd for agent processes. Pinned to /workspace via the
@@ -314,20 +315,43 @@ class AgentRunner:
     ) -> list[str]:
         """Copy the prior session into ``container`` and return runner CLI args.
 
-        Returns an empty list when ``resume_session`` is None (legacy path).
-        For ``anthropic_api`` mode: dumps ``resume_session.messages`` to a host
-        tempfile, ``docker cp``s it to ``RESUME_BLOB_SANDBOX_PATH`` inside the
-        sandbox, and returns ``["--session-blob", <path>]``. For ``claude_max``
-        mode: streams ``resume_session.session_blob`` bytes into the CLI's
-        canonical session-file path and returns ``["--session-id", <id>]``.
-        Modes with insufficient data (e.g. session_blob is None) become no-ops.
+        Mode-agnostic precedence (EMB-35 — the CLI's session file works under
+        either auth mode):
+
+        1. ``session_id`` + ``session_blob`` (within :data:`MAX_RESUME_BLOB_BYTES`)
+           → stream the JSONL bytes to the CLI's canonical session path and
+           return ``["--session-id", <id>]``; the executor sets
+           ``options.resume`` and the CLI reloads the full conversation.
+        2. ``messages`` → dump to a host tempfile, ``docker cp`` to
+           ``RESUME_BLOB_SANDBOX_PATH``, return ``["--session-blob", <path>]``;
+           the executor prepends a bounded text-transcript replay.
+        3. Neither (or ``resume_session is None``) → ``[]``, fresh run.
         """
         if resume_session is None:
             return []
 
-        if resume_session.mode == "anthropic_api":
-            if resume_session.messages is None:
-                return []
+        if resume_session.session_blob and resume_session.session_id:
+            if len(resume_session.session_blob) > MAX_RESUME_BLOB_BYTES:
+                logger.warning(
+                    "resume_skipped_blob_too_large",
+                    session_id=resume_session.session_id,
+                    agent_type=resume_session.agent_type,
+                    blob_bytes=len(resume_session.session_blob),
+                    max_bytes=MAX_RESUME_BLOB_BYTES,
+                )
+            else:
+                sandbox_target = canonical_session_path_for(
+                    home_dir=SANDBOX_HOME,
+                    session_id=resume_session.session_id,
+                    project_cwd=SANDBOX_PROJECT_CWD,
+                )
+                # docker cp does not auto-mkdir parent — ensure it exists first.
+                mkdir_cmd = self._docker.build_exec_cmd(container, ["mkdir", "-p", str(sandbox_target.parent)])
+                await self._docker.run_cmd(mkdir_cmd, timeout=10)
+                await self._docker.copy_bytes_into(container, resume_session.session_blob, str(sandbox_target))
+                return ["--session-id", resume_session.session_id]
+
+        if resume_session.messages:
             fd, tmp_path = tempfile.mkstemp(prefix="embry0-resume-", suffix=".json")
             try:
                 with os.fdopen(fd, "w") as f:
@@ -340,20 +364,4 @@ class AgentRunner:
                     pass
             return ["--session-blob", RESUME_BLOB_SANDBOX_PATH]
 
-        if resume_session.mode == "claude_max":
-            if not resume_session.session_blob or not resume_session.session_id:
-                return []
-            sandbox_target = canonical_session_path_for(
-                home_dir=SANDBOX_HOME,
-                session_id=resume_session.session_id,
-                project_cwd=SANDBOX_PROJECT_CWD,
-            )
-            # docker cp does not auto-mkdir parent — ensure it exists first.
-            mkdir_cmd = self._docker.build_exec_cmd(container, ["mkdir", "-p", str(sandbox_target.parent)])
-            await self._docker.run_cmd(mkdir_cmd, timeout=10)
-            await self._docker.copy_bytes_into(container, resume_session.session_blob, str(sandbox_target))
-            return ["--session-id", resume_session.session_id]
-
-        # Defensive: future modes should be wired explicitly.
-        logger.warning("agent_runner_unknown_session_mode", mode=resume_session.mode)
         return []

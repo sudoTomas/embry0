@@ -4,19 +4,19 @@ Verifies that ``SdkAgentExecutor.run()`` populates the post-run session
 fields on the returned ``AgentOutput`` so AgentRunner / run_agent_node /
 the workflow nodes can persist them via ``AgentSessionsRepository``:
 
-- api_key (anthropic_api) mode → ``messages`` carries the full
-  [{role, content}, ...] history. The user prompt is the first turn,
+EMB-35: capture is mode-agnostic —
+
+- ``messages`` carries the full [{role, content}, ...] history in ANY
+  auth mode (replay-fallback data). The user prompt is the first turn,
   followed by one assistant turn per ``AssistantMessage`` (text blocks
-  collapsed; tool_use / thinking blocks dropped — the Messages-API
-  resume only consumes textual content).
-- oauth (claude_max) mode → ``session_id`` is captured from any
-  message that carries one (AssistantMessage.session_id or
-  ResultMessage.session_id), and ``session_blob_path`` is the canonical
-  in-sandbox JSONL path the AgentRunner will ``docker cp`` from.
+  collapsed; tool_use / thinking blocks dropped).
+- ``session_id`` is captured from any message that carries one
+  (AssistantMessage.session_id or ResultMessage.session_id), and
+  ``session_blob_path`` is the canonical in-sandbox JSONL path the
+  AgentRunner will ``docker cp`` from — in ANY auth mode.
 
 Also verifies the negative cases: error/timeout paths must NOT emit a
-half-formed session (there's no useful state to resume from), and the
-``api_key`` path does NOT populate session_id/session_blob_path.
+half-formed session (there's no useful state to resume from).
 
 Tests mock ``claude_agent_sdk.query()`` with simple namespaces — no
 real SDK install needed beyond the import surface.
@@ -136,9 +136,44 @@ async def test_api_key_mode_captures_full_message_history(tmp_path: Any, monkeyp
         {"role": "assistant", "content": "first reply"},
         {"role": "assistant", "content": "second reply"},
     ]
-    # api_key mode does NOT populate session_id / session_blob_path.
+    # No message carried a session_id, so none was captured.
     assert out.session_id is None
     assert out.session_blob_path is None
+
+
+@pytest.mark.asyncio
+async def test_api_key_mode_captures_session_id_and_blob_path(tmp_path: Any, monkeypatch: Any) -> None:
+    """EMB-35: capture is mode-agnostic — api_key mode also snapshots
+    session_id + the CLI session file path (file-based resume works under
+    either auth mode)."""
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+
+    sid = "99999999-8888-7777-6666-555555555555"
+    from embry0.agents.claude_cli_session import sanitize_cwd_for_session_dir
+
+    session_dir = tmp_path / ".claude" / "projects" / sanitize_cwd_for_session_dir(str(workspace))
+    session_dir.mkdir(parents=True)
+    session_file = session_dir / f"{sid}.jsonl"
+    session_file.write_text("{}")
+
+    messages = [
+        _AssistantMessage([_TextBlock("ok")], session_id=sid),
+        _ResultMessage("ok", cost=0.001, session_id=sid),
+    ]
+
+    with patch("claude_agent_sdk.query", return_value=_scripted_query(messages)):
+        out = await SdkAgentExecutor().run(
+            _inv(auth_mode="api_key"),
+            config={"configurable": {}, "_test_writer": lambda _e: None},
+        )
+
+    assert out.is_error is False
+    assert out.session_id == sid
+    assert out.session_blob_path == str(session_file)
 
 
 @pytest.mark.asyncio
@@ -220,9 +255,12 @@ async def test_oauth_mode_captures_session_id_and_blob_path(tmp_path: Any, monke
     assert out.is_error is False
     assert out.session_id == sid
     assert out.session_blob_path == str(session_file)
-    # oauth mode does NOT populate the messages list — that's the api_key
-    # resume path; oauth resumes via the CLI's --resume <id> instead.
-    assert out.messages is None
+    # EMB-35: capture is mode-agnostic — the messages list rides along in
+    # oauth mode too, as the replay-fallback data source.
+    assert out.messages == [
+        {"role": "user", "content": "say hello"},
+        {"role": "assistant", "content": "ok"},
+    ]
 
 
 @pytest.mark.asyncio

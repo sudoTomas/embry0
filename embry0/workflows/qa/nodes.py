@@ -443,7 +443,7 @@ async def qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, An
     # Plan C Task 7: load any prior AgentSession for this (job, agent) so the
     # in-sandbox executor can resume the same Claude conversation. Restore
     # failures must NEVER block the agent run — fall back to a fresh session.
-    from embry0.agents.session import AgentSession
+    from embry0.agents.session import AgentSession, merged_resume_messages
 
     resume_session: AgentSession | None = None
     if agent_sessions_repo is not None:
@@ -493,7 +493,7 @@ async def qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, An
     if agent_sessions_repo is not None:
         last_output = (result.get("agent_outputs") or [None])[-1]
         if last_output and not last_output.get("is_error"):
-            new_messages = last_output.get("messages")
+            new_messages = merged_resume_messages(resume_session, last_output.get("messages"))
             new_session_id = last_output.get("session_id")
             new_session_blob = last_output.get("session_blob")
             if new_messages or new_session_id:

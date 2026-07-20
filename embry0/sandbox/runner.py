@@ -76,18 +76,18 @@ def _build_run_kwargs(
 ) -> dict[str, Any]:
     """Build the kwargs passed to ``run_agent`` based on resume CLI args.
 
-    For ``auth_mode == "api_key"`` the blob is a JSON file containing the
-    prior message list, which we deserialize and forward as
-    ``resume_messages``. For ``auth_mode == "oauth"`` (claude-max), the
-    session bytes are already on disk inside the sandbox at the canonical
-    CLI session path; we only forward the ``session_id`` so the executor
-    can pass ``--resume <id>`` to the CLI.
+    Mode-agnostic (EMB-35): the CLI's session file works under either auth
+    mode, so ``--session-id`` always forwards as ``resume_session_id`` (the
+    session bytes are already staged at the canonical CLI path by
+    AgentRunner), and ``--session-blob`` — a JSON file with the prior
+    message list — always forwards as ``resume_messages`` (the text-replay
+    fallback). The staging side passes at most one of the two.
     """
     kwargs: dict[str, Any] = {"config": config}
-    if session_blob_path and config.get("auth_mode") == "api_key":
+    if session_blob_path:
         with open(session_blob_path) as f:
             kwargs["resume_messages"] = json.load(f)
-    if session_id and config.get("auth_mode") == "oauth":
+    if session_id:
         kwargs["resume_session_id"] = session_id
     return kwargs
 
@@ -98,16 +98,16 @@ async def run_agent(
     resume_messages: list[dict[str, Any]] | None = None,
     resume_session_id: str | None = None,
 ) -> dict[str, Any]:
-    # NOTE: ``resume_messages`` and ``resume_session_id`` are accepted here
-    # for forward-compat with Task 5/6, which will thread them into
-    # ``SdkAgentExecutor.run()``. For now they are inert pass-throughs so
-    # the sandbox runner CLI surface is stable from this task forward.
-    del resume_messages, resume_session_id
     invocation = _invocation_from_config(config)
     executor = select_executor(invocation)
     # Inject a writer that serializes events to stdout (embry0's wire format).
     test_cfg = cast(RunnableConfig, {"configurable": {}, "_test_writer": _emit})
-    result = await executor.run(invocation, test_cfg)
+    result = await executor.run(
+        invocation,
+        test_cfg,
+        resume_session_id=resume_session_id,
+        resume_messages=resume_messages,
+    )
     # Plan C Task 5: forward post-run conversation state so the orchestrator
     # can persist it via AgentSessionsRepository (Task 6). For now the
     # executor leaves these as None — Task 6 wires the SDK-side extraction

@@ -232,12 +232,31 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     issue_number = state.get("issue_number")
     additional = state.get("additional_context", "")
 
+    # QA-failure re-entry context: when the QA loop routed back to triage,
+    # the agent must see WHAT failed to choose a qa_failure_action. Included
+    # in both the full prompt and the resumed-session delta prompt.
+    qa_state_pre = state.get("qa") or {}
+    qa_failure_block = ""
+    if qa_state_pre.get("final_status") == "failed":
+        outcome = qa_state_pre.get("outcome") or {}
+        failure_summary = outcome.get("failure_summary") or "no failure summary recorded"
+        rounds = qa_state_pre.get("failure_rounds", 0)
+        max_rounds = qa_state_pre.get("max_qa_failure_rounds", 2)
+        qa_failure_block = (
+            f"QA FAILED (failure round {rounds} of max {max_rounds}).\n"
+            f"Failure summary:\n{failure_summary}\n\n"
+            "Decide and emit exactly one qa_failure_action "
+            "(retry_developer | rerun_qa | ask_user) as instructed."
+        )
+
     prompt = f"Repository: {repo}\n"
     if issue_number:
         prompt += f"Issue #{issue_number}\n"
     prompt += f"\nTask:\n{task}"
     if additional:
         prompt += f"\n\nPrevious Q&A:\n{additional}"
+    if qa_failure_block:
+        prompt += f"\n\n{qa_failure_block}"
 
     # Prepend system prompt since sandbox runner doesn't receive it separately
     prompt = _TRIAGE_SYSTEM_PROMPT + "\n\n" + prompt
@@ -254,7 +273,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # Plan C Task 7: load any prior AgentSession for this (job, agent) so the
     # in-sandbox executor can resume the same Claude conversation. Restore
     # failures must NEVER block the agent run — fall back to a fresh session.
-    from embry0.agents.session import AgentSession
+    from embry0.agents.session import AgentSession, merged_resume_messages, session_resumable
 
     resume_session: AgentSession | None = None
     if agent_sessions_repo is not None:
@@ -280,6 +299,22 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             )
             resume_session = None
 
+    # EMB-35: resumed session ⇒ delta-only prompt. Two ways to get here with
+    # a prior session: (a) QA-failure re-entry — send the failure block only;
+    # (b) LangGraph replaying this node after an interrupt resume — the
+    # conversation already holds the full context, so just ask for the
+    # decision again (the answers themselves ride the post-interrupt re-run
+    # below).
+    if session_resumable(resume_session):
+        if qa_failure_block:
+            prompt = (
+                "You are re-invoked after a QA failure on this job.\n\n"
+                f"{qa_failure_block}\n\n"
+                "Re-emit your full triage decision JSON with the qa_failure_action included."
+            )
+        else:
+            prompt = "Re-emit your full triage decision JSON exactly as instructed previously."
+
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
@@ -303,7 +338,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     if agent_sessions_repo is not None:
         last_output = (result.get("agent_outputs") or [None])[-1]
         if last_output and not last_output.get("is_error"):
-            new_messages = last_output.get("messages")
+            new_messages = merged_resume_messages(resume_session, last_output.get("messages"))
             new_session_id = last_output.get("session_id")
             new_session_blob = last_output.get("session_blob")
             if new_messages or new_session_id:
@@ -443,22 +478,26 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             }
         )
 
-        # Resumed — add answers to context and re-run
-        additional = state.get("additional_context", "") or ""
+        # Resumed — format the NEW answers, fold them into the accumulated
+        # context, and re-run.
+        answers_text = ""
         if isinstance(answers, str):
-            additional += f"\n\n{answers}"
+            answers_text = answers
         elif isinstance(answers, dict):
-            for q, a in answers.items():
-                additional += f"\n\nQ: {q}\nA: {a}"
+            answers_text = "\n\n".join(f"Q: {q}\nA: {a}" for q, a in answers.items())
         elif isinstance(answers, list):
-            for item in answers:
-                if isinstance(item, dict):
-                    additional += f"\n\nQ: {item.get('question', '')}\nA: {item.get('answer', '')}"
+            answers_text = "\n\n".join(
+                f"Q: {item.get('question', '')}\nA: {item.get('answer', '')}"
+                for item in answers
+                if isinstance(item, dict)
+            )
+
+        additional = state.get("additional_context", "") or ""
+        if answers_text:
+            additional += f"\n\n{answers_text}"
 
         updated = {**state, "additional_context": additional}
         writer({"type": "progress", "message": "Re-running triage with answers"})
-
-        prompt += f"\n\nPrevious Q&A:\n{additional}"
 
         # Plan C Task 7: reload the session before the resume re-run — it may
         # have been persisted by the initial pass above. Persist again after.
@@ -486,11 +525,23 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 )
                 resume_session = None
 
+        # EMB-35: resumed session ⇒ send only the new answers; fresh session
+        # ⇒ rebuild the full prompt (system prompt + task + all context).
+        if session_resumable(resume_session):
+            rerun_prompt = (
+                "The user has answered your questions:\n\n"
+                f"{answers_text or additional}\n\n"
+                "Re-evaluate with this new information and re-emit your full "
+                "triage decision JSON exactly as instructed previously."
+            )
+        else:
+            rerun_prompt = prompt + f"\n\nPrevious Q&A:\n{additional}"
+
         result = await run_agent_node(
             state=updated,
             agent_runner=agent_runner,
             agent_type="triage",
-            prompt=prompt,
+            prompt=rerun_prompt,
             model=model,
             tools=["Read", "Glob", "Grep"],
             timeout_seconds=180,
@@ -503,7 +554,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         if agent_sessions_repo is not None:
             last_output = (result.get("agent_outputs") or [None])[-1]
             if last_output and not last_output.get("is_error"):
-                new_messages = last_output.get("messages")
+                new_messages = merged_resume_messages(resume_session, last_output.get("messages"))
                 new_session_id = last_output.get("session_id")
                 new_session_blob = last_output.get("session_blob")
                 if new_messages or new_session_id:
@@ -940,6 +991,103 @@ def _format_user_answers_block(user_answers: Any) -> str:
     return "The user has answered your prior questions as follows:\n" + "\n\n".join(lines)
 
 
+def _developer_branch_name(state: dict[str, Any]) -> str:
+    """Compute the developer's git-ref-safe working branch for this job.
+
+    git rejects refs containing .., ~, ^, :, ?, *, [, \\, control chars,
+    or names ending in .lock. re.sub strips all non-safe chars in one pass.
+    """
+    import re as _re
+
+    issue_id = state.get("issue_id", "")
+    task = state.get("task", "")
+    short_id = issue_id[:12] if issue_id else "unknown"
+    slug = _re.sub(r"[^a-z0-9-]+", "-", task[:30].lower()).strip("-") or "task"
+    return f"embry0/{short_id}-{slug}"
+
+
+def _developer_delta_sections(state: dict[str, Any]) -> list[str]:
+    """The one-shot context blocks that are NEW since the developer's last
+    turn: user answers, review feedback, user retry guidance, and the QA
+    failure addendum. Shared by the full prompt (where they extend the
+    task context) and the delta prompt (where they ARE the prompt).
+    """
+    parts: list[str] = []
+    answers_block = _format_user_answers_block(state.get("user_answers"))
+    if answers_block:
+        parts.append(f"\n{answers_block}")
+    feedback_context = state.get("feedback_context", "")
+    if feedback_context:
+        parts.append(f"\nReview Feedback (address these issues):\n{feedback_context}")
+    user_retry_guidance = state.get("user_retry_guidance")
+    if user_retry_guidance:
+        parts.append(f"\nUser guidance:\n{user_retry_guidance}")
+    qa_addendum = state.get("developer_prompt_addendum")
+    if qa_addendum:
+        parts.append(f"\nQA follow-up (from the QA failure analysis):\n{qa_addendum}")
+    focus_files = state.get("developer_focus_files") or []
+    if focus_files:
+        parts.append("\nFocus files:\n" + "\n".join(f"- {f}" for f in focus_files))
+    return parts
+
+
+def _build_developer_full_prompt(state: dict[str, Any], branch_name: str) -> str:
+    """Complete task prompt for a FRESH developer conversation."""
+    repo = state.get("repo", "")
+    task = state.get("task", "")
+    issue_number = state.get("issue_number")
+    triage_decision = state.get("triage_decision", {})
+    additional_context = state.get("additional_context", "")
+
+    prompt_parts = [f"Repository: {repo}"]
+    if issue_number:
+        prompt_parts.append(f"GitHub Issue: #{issue_number}")
+    prompt_parts.append(f"\nTask:\n{task}")
+
+    if additional_context:
+        prompt_parts.append(f"\nAdditional Context:\n{additional_context}")
+
+    prompt_parts.extend(_developer_delta_sections(state))
+
+    reasoning = triage_decision.get("reasoning", "")
+    if reasoning:
+        prompt_parts.append(f"\nTriage Analysis:\n{reasoning}")
+
+    prompt_parts.append("\nInstructions:")
+    prompt_parts.append(f"1. Create branch: {branch_name}")
+    prompt_parts.append("2. Implement the changes")
+    prompt_parts.append("3. Write or update tests")
+    prompt_parts.append("4. Commit your changes")
+    prompt_parts.append("5. Push the branch")
+    prompt_parts.append(
+        f"6. Create a PR with 'Closes #{issue_number}' in the body" if issue_number else "6. Create a PR"
+    )
+    prompt_parts.append("\nReturn a JSON object at the end with: pr_url, branch, summary, files_changed")
+    return "\n".join(prompt_parts)
+
+
+def _build_developer_delta_prompt(state: dict[str, Any], branch_name: str) -> str:
+    """Delta-only prompt for a RESUMED developer conversation (EMB-35).
+
+    The prior session already carries the repo, task, and all earlier
+    context — re-sending them re-bills the whole prompt as input and
+    invalidates the CLI's cache. Send only what is new, plus a short
+    closing contract so the response shape stays parseable.
+    """
+    prompt_parts = ["You are resuming your previous session on this task. New information since your last turn:"]
+    delta = _developer_delta_sections(state)
+    if delta:
+        prompt_parts.extend(delta)
+    else:
+        prompt_parts.append("\n(no new information — continue where you left off)")
+    prompt_parts.append(
+        f"\nContinue the work: address the above, commit, push to branch {branch_name}, "
+        "and update the PR (create one if none exists)."
+    )
+    prompt_parts.append("\nReturn a JSON object at the end with: pr_url, branch, summary, files_changed")
+    return "\n".join(prompt_parts)
+
+
 async def _verify_branch_pushed(
     *,
     docker: Any,
@@ -1001,58 +1149,8 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     credentials = configurable.get("credentials") or {}
     agent_sessions_repo = configurable.get("agent_sessions_repo")
 
-    # Build the developer prompt
-    repo = state.get("repo", "")
-    task = state.get("task", "")
-    issue_number = state.get("issue_number")
-    issue_id = state.get("issue_id", "")
-    triage_decision = state.get("triage_decision", {})
-    additional_context = state.get("additional_context", "")
-    feedback_context = state.get("feedback_context", "")
     user_answers = state.get("user_answers")
-
-    prompt_parts = [f"Repository: {repo}"]
-    if issue_number:
-        prompt_parts.append(f"GitHub Issue: #{issue_number}")
-    prompt_parts.append(f"\nTask:\n{task}")
-
-    # If the user just answered prior agent questions, prepend the Q&A block so
-    # the agent sees the answers in its freshly-built context.
-    answers_block = _format_user_answers_block(user_answers)
-    if answers_block:
-        prompt_parts.append(f"\n{answers_block}")
-
-    if additional_context:
-        prompt_parts.append(f"\nAdditional Context:\n{additional_context}")
-
-    if feedback_context:
-        prompt_parts.append(f"\nReview Feedback (address these issues):\n{feedback_context}")
-
-    reasoning = triage_decision.get("reasoning", "")
-    if reasoning:
-        prompt_parts.append(f"\nTriage Analysis:\n{reasoning}")
-
-    # Branch naming — slug must be git-ref-safe: only [a-z0-9-] characters.
-    # git rejects refs containing .., ~, ^, :, ?, *, [, \, control chars,
-    # or names ending in .lock. re.sub strips all non-safe chars in one pass.
-    import re as _re
-
-    short_id = issue_id[:12] if issue_id else "unknown"
-    slug = _re.sub(r"[^a-z0-9-]+", "-", task[:30].lower()).strip("-") or "task"
-    branch_name = f"embry0/{short_id}-{slug}"
-
-    prompt_parts.append("\nInstructions:")
-    prompt_parts.append(f"1. Create branch: {branch_name}")
-    prompt_parts.append("2. Implement the changes")
-    prompt_parts.append("3. Write or update tests")
-    prompt_parts.append("4. Commit your changes")
-    prompt_parts.append("5. Push the branch")
-    prompt_parts.append(
-        f"6. Create a PR with 'Closes #{issue_number}' in the body" if issue_number else "6. Create a PR"
-    )
-    prompt_parts.append("\nReturn a JSON object at the end with: pr_url, branch, summary, files_changed")
-
-    prompt = "\n".join(prompt_parts)
+    branch_name = _developer_branch_name(state)
 
     # Collect agent events locally so we can scan for agent_ask_user events
     # after the agent finishes. We still forward every event to the graph
@@ -1066,7 +1164,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     # Plan C Task 6: load any prior AgentSession for this (job, agent) so the
     # in-sandbox executor can resume the same Claude conversation. Restore
     # failures must NEVER block the agent run — fall back to a fresh session.
-    from embry0.agents.session import AgentSession
+    from embry0.agents.session import AgentSession, merged_resume_messages, session_resumable
 
     resume_session: AgentSession | None = None
     if agent_sessions_repo is not None:
@@ -1092,6 +1190,13 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
             )
             resume_session = None
 
+    # EMB-35: resume engaged ⇒ send only the delta (the resumed session
+    # already carries the task + earlier context); fresh run ⇒ full prompt.
+    if session_resumable(resume_session):
+        prompt = _build_developer_delta_prompt(state, branch_name)
+    else:
+        prompt = _build_developer_full_prompt(state, branch_name)
+
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
@@ -1115,7 +1220,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     if agent_sessions_repo is not None:
         last_output = (result.get("agent_outputs") or [None])[-1]
         if last_output and not last_output.get("is_error"):
-            new_messages = last_output.get("messages")
+            new_messages = merged_resume_messages(resume_session, last_output.get("messages"))
             new_session_id = last_output.get("session_id")
             new_session_blob = last_output.get("session_blob")
             if new_messages or new_session_id:
@@ -1216,9 +1321,19 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 job_id=state.get("job_id"),
             )
 
-    # Clear consumed user answers so they don't bleed into future runs.
+    # Clear consumed one-shot context so it doesn't bleed into future runs —
+    # with delta prompts (EMB-35) a stale block would be re-sent verbatim on
+    # every subsequent resumed re-entry.
     if user_answers:
         updates["user_answers"] = None
+    if state.get("feedback_context"):
+        updates["feedback_context"] = ""
+    if state.get("user_retry_guidance"):
+        updates["user_retry_guidance"] = None
+    if state.get("developer_prompt_addendum"):
+        updates["developer_prompt_addendum"] = None
+    if state.get("developer_focus_files"):
+        updates["developer_focus_files"] = []
 
     # Self-routing: decide the next node based on the updates we just produced
     # and the state we were handed. Priority:
@@ -1354,7 +1469,7 @@ Return ONLY a JSON object:
     # Plan C Task 7: load any prior AgentSession for this (job, agent) so the
     # in-sandbox executor can resume the same Claude conversation. Restore
     # failures must NEVER block the agent run — fall back to a fresh session.
-    from embry0.agents.session import AgentSession
+    from embry0.agents.session import AgentSession, merged_resume_messages, session_resumable
 
     resume_session: AgentSession | None = None
     if agent_sessions_repo is not None:
@@ -1380,6 +1495,17 @@ Return ONLY a JSON object:
             )
             resume_session = None
 
+    # EMB-35: resumed session (re-review after the developer addressed
+    # feedback) ⇒ delta prompt. The response-shape contract is re-sent in
+    # full — it's cheap and guarantees the output stays parseable.
+    if session_resumable(resume_session):
+        schema_start = prompt.index("Return ONLY a JSON object:")
+        prompt = (
+            "The developer pushed a new revision addressing your review "
+            "feedback. Re-run the checks (tests, lint, typecheck), re-review "
+            "the updated diff, and decide again.\n\n" + prompt[schema_start:]
+        )
+
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
@@ -1401,7 +1527,7 @@ Return ONLY a JSON object:
     if agent_sessions_repo is not None:
         last_output = (result.get("agent_outputs") or [None])[-1]
         if last_output and not last_output.get("is_error"):
-            new_messages = last_output.get("messages")
+            new_messages = merged_resume_messages(resume_session, last_output.get("messages"))
             new_session_id = last_output.get("session_id")
             new_session_blob = last_output.get("session_blob")
             if new_messages or new_session_id:
@@ -1585,6 +1711,10 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         if guidance:
             existing = state.get("additional_context", "") or ""
             updates["additional_context"] = existing + f"\n\nUser guidance:\n{guidance}"
+            # EMB-35: also carry the guidance as a one-shot field — the
+            # delta prompt sends just this on a resumed session instead of
+            # re-parsing it out of the accumulated additional_context.
+            updates["user_retry_guidance"] = guidance
         return updates
     elif choice == "merge_as_is":
         return {"current_stage": "completed"}
