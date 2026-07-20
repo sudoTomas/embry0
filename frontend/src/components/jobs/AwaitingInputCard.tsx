@@ -83,7 +83,7 @@ export function AwaitingInputCard({ pendingInputs, jobInputs, jobId }: AwaitingI
           inputs={formInputs}
           onAnswer={async (inputId, answer) => {
             const issueId = issueIdByInput[inputId];
-            await answerInput(issueId, inputId, answer);
+            await answerInput(issueId, inputId, answer, jobId);
             await queryClient.invalidateQueries({ queryKey: ["job-inputs", jobId] });
           }}
         />

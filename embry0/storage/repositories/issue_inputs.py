@@ -20,7 +20,7 @@ class IssueInputsRepository:
 
     async def create(
         self,
-        issue_id: str,
+        issue_id: str | None,
         job_id: str,
         question: str,
         asking_node: str = "triage",
@@ -163,6 +163,30 @@ class IssueInputsRepository:
         if row is None:
             return None
         return dict(row)
+
+    async def count_pending_blocking_for_job(self, job_id: str) -> int:
+        """Pending blocking questions for a JOB — the issue-less-job answer
+        path (EMB-43) gates resume on this instead of the issue-scoped count."""
+        val = await self._db.fetchval(
+            """
+            SELECT COUNT(*) FROM issue_inputs
+            WHERE job_id = $1 AND status = 'pending' AND importance = 'blocking'
+            """,
+            job_id,
+        )
+        return int(val or 0)
+
+    async def list_all_answered_for_job(self, job_id: str) -> list[dict[str, Any]]:
+        """Answered/auto-answered inputs for a JOB, oldest first (EMB-43)."""
+        rows = await self._db.fetch(
+            """
+            SELECT * FROM issue_inputs
+            WHERE job_id = $1 AND status IN ('answered', 'auto_answered')
+            ORDER BY created_at ASC
+            """,
+            job_id,
+        )
+        return [dict(r) for r in rows]
 
     async def count_pending_blocking(self, issue_id: str) -> int:
         """Return the count of blocking inputs still in pending status."""

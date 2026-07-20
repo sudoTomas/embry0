@@ -14,7 +14,6 @@ def test_migration_38_present_and_ordered() -> None:
     versions = [v for v, _, _ in MIGRATIONS]
     assert 38 in versions
     assert versions == sorted(versions), "MIGRATIONS must stay version-ordered"
-    assert versions[-1] == 38, "38 is the latest migration"
 
 
 def test_migration_38_adds_four_token_columns_with_default_zero() -> None:
