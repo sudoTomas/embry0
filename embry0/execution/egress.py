@@ -9,13 +9,21 @@ Enforcement model
 All sandbox egress is bridge-forwarded inside the **DinD daemon's**
 network namespace, where Docker's ``DOCKER-USER`` filter chain applies
 to every forwarded packet (and is never flushed by the daemon). Rules
-are keyed on the sandbox's stable ``sandbox-internet`` source IP:
+are keyed on the sandbox's stable ``sandbox-internet`` source IP and
+implement a **private-range blocklist with declared exceptions**:
 
-    [allow dst1] [allow dst2] ... [allow DNS] [allow ESTABLISHED] [LOG] [DROP]
+    [allow LAN dst1] ... [allow ESTABLISHED] [LOG+DROP RFC1918/link-local]
 
-so a sandbox can reach only its declared destinations. Traffic on
-``sandbox-restricted`` (git-proxy, minio-proxy, …) uses a different
-source IP and is untouched.
+Public-internet egress stays open (the clone to github.com, Auth0
+login, CDN-fronted frontend URLs, Anthropic API all resolve to rotating
+public IPs — L3-pinning them is DNS-fragile and was observed breaking
+the clone on the first live run). The threat model this enforces is the
+issue's: an agent-driven browser must NOT roam the host's LAN — every
+RFC1918/CGN/link-local destination is dropped unless it is a declared
+target (profile ``extra_hosts`` IPs / a private ``frontend_url``).
+Cross-sandbox traffic on the egress bridge falls in the dropped ranges
+too. Traffic on ``sandbox-restricted`` (git-proxy, minio-proxy, …) uses
+a different source IP and is untouched.
 
 The iptables binary must run **in DinD's netns** — the Docker API can't
 program iptables — so every operation runs a short-lived helper
@@ -46,12 +54,16 @@ _HELPER_DOCKERFILE = "FROM alpine:3.20\nRUN apk add --no-cache iptables\n"
 
 LOG_PREFIX = "embry0-egress-block: "
 
-# Endpoints the Claude Code CLI itself needs from inside a sandbox. Kept
-# deliberately tight: the API surface plus statsig feature flags (the CLI
-# retries around telemetry, but flag fetches block startup paths).
-CLI_REQUIRED_HOSTS = (
-    "api.anthropic.com",
-    "statsig.anthropic.com",
+# Private / non-routable ranges a sandbox must not reach unless declared.
+# RFC1918 + carrier-grade NAT + link-local. Covers the host LAN
+# (192.168.200.0/24 on corvin-server), every docker bridge, and the
+# sandbox-internet bridge itself (blocking cross-sandbox traffic).
+BLOCKED_PRIVATE_RANGES = (
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "100.64.0.0/10",
+    "169.254.0.0/16",
 )
 
 
@@ -60,26 +72,26 @@ def derive_deployed_egress_allowlist(
     frontend_url: str,
     extra_hosts: dict[str, str],
 ) -> list[str]:
-    """Allowlist for a deployed-target QA sandbox (EMB-29).
+    """Declared LAN targets for a deployed-target QA sandbox (EMB-29).
 
-    - the app's own ``frontend_url`` host (hostname → resolved at rule
-      install; already an IP for LAN targets),
+    Only PRIVATE destinations need declaring — public egress stays open
+    (see module docstring). The declared set is:
+
     - every ``extra_hosts`` target IP (the profile's vhost→LAN-IP aliases —
-      these are exactly the deployment's declared reachable surfaces),
-    - the Anthropic endpoints the in-sandbox Claude CLI requires.
+      exactly the deployment's reachable surfaces),
+    - the ``frontend_url`` host when it is (or resolves to) a private IP.
     """
     from urllib.parse import urlparse
 
     out: list[str] = []
-    host = urlparse(frontend_url).hostname or ""
-    if host:
-        out.append(host)
     for ip in extra_hosts.values():
         if ip and ip not in out:
             out.append(ip)
-    for cli_host in CLI_REQUIRED_HOSTS:
-        if cli_host not in out:
-            out.append(cli_host)
+    host = urlparse(frontend_url).hostname or ""
+    if host:
+        for ip in resolve_allowlist_to_ips([host]):
+            if ipaddress.ip_address(ip.split("/")[0]).is_private and ip not in out:
+                out.append(ip)
     return out
 
 
@@ -184,18 +196,23 @@ class EgressEnforcer:
     async def apply(self, source_ip: str, allowed_destinations: list[str]) -> None:
         """Install the rule block for ``source_ip``.
 
-        Insert order (each at position 1) produces top-down:
-        allows → DNS → ESTABLISHED/RELATED → LOG → DROP.
+        Private-range blocklist with declared exceptions (see module
+        docstring). Insert order (each at position 1) produces top-down:
+        LAN allows → ESTABLISHED/RELATED → per-range LOG → per-range DROP.
+        Public destinations never match and fall through to Docker's own
+        chains (normal NAT egress).
         """
         ipaddress.ip_address(source_ip)  # refuse garbage before it reaches a shell
         dests = resolve_allowlist_to_ips(allowed_destinations)
-        lines = [
-            f"iptables -I DOCKER-USER 1 -s {source_ip} -j DROP",
-            (f"iptables -I DOCKER-USER 1 -s {source_ip} -m limit --limit 6/min -j LOG --log-prefix '{LOG_PREFIX}'"),
-            (f"iptables -I DOCKER-USER 1 -s {source_ip} -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN"),
-            f"iptables -I DOCKER-USER 1 -s {source_ip} -p udp --dport 53 -j RETURN",
-            f"iptables -I DOCKER-USER 1 -s {source_ip} -p tcp --dport 53 -j RETURN",
-        ]
+        lines: list[str] = []
+        for blocked in BLOCKED_PRIVATE_RANGES:
+            lines.append(f"iptables -I DOCKER-USER 1 -s {source_ip} -d {blocked} -j DROP")
+        for blocked in BLOCKED_PRIVATE_RANGES:
+            lines.append(
+                f"iptables -I DOCKER-USER 1 -s {source_ip} -d {blocked} "
+                f"-m limit --limit 6/min -j LOG --log-prefix '{LOG_PREFIX}'"
+            )
+        lines.append(f"iptables -I DOCKER-USER 1 -s {source_ip} -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN")
         for dst in dests:
             ipaddress.ip_network(dst, strict=False)
             lines.append(f"iptables -I DOCKER-USER 1 -s {source_ip} -d {dst} -j RETURN")
@@ -205,6 +222,7 @@ class EgressEnforcer:
             source_ip=source_ip,
             allowed=allowed_destinations,
             resolved=dests,
+            blocked_ranges=list(BLOCKED_PRIVATE_RANGES),
         )
 
     async def clear(self, source_ip: str) -> None:
