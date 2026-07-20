@@ -36,6 +36,38 @@ class AgentExecutor(Protocol):
     ) -> AgentOutput: ...
 
 
+_ASK_USER_MARKER = '{"type": "agent_ask_user"'
+_MAX_EMBEDDED_ASK_EVENTS = 5
+
+
+def _extract_embedded_ask_user_events(text: str) -> list[dict[str, Any]]:
+    """Recover agent_ask_user events embedded in a tool result (EMB-44).
+
+    The in-sandbox ask_user helper prints one compact-JSON event per call to
+    the Bash tool's stdout; by the time it reaches us it is a substring of
+    the tool-result content (possibly inside a repr'd block list), so decode
+    from each marker with a raw JSON decoder rather than splitting lines.
+    Capped defensively — one tool call asking dozens of questions is noise,
+    and the ask-user round cap governs the real limit downstream.
+    """
+    events: list[dict[str, Any]] = []
+    idx = 0
+    decoder = json.JSONDecoder()
+    while len(events) < _MAX_EMBEDDED_ASK_EVENTS:
+        pos = text.find(_ASK_USER_MARKER, idx)
+        if pos == -1:
+            break
+        try:
+            obj, consumed = decoder.raw_decode(text[pos:])
+        except ValueError:
+            idx = pos + 1
+            continue
+        if isinstance(obj, dict) and obj.get("question"):
+            events.append(obj)
+        idx = pos + consumed
+    return events
+
+
 def _workspace_root() -> Path:
     """Return the workspace root. Respects EMBRY0_WORKSPACE_ROOT for tests."""
     return Path(os.environ.get("EMBRY0_WORKSPACE_ROOT", "/workspace"))
@@ -390,11 +422,23 @@ class SdkAgentExecutor:
                                 }
                             )
                         elif ToolResultBlock is not None and isinstance(block, ToolResultBlock):
+                            result_text = str(getattr(block, "content", ""))
+                            # EMB-44: the embry0.sandbox.ask_user helper emits
+                            # its agent_ask_user JSON to the BASH TOOL's
+                            # stdout, which the CLI captures as this tool
+                            # result — it never reaches the runner's stdout
+                            # event stream on its own. Re-emit any embedded
+                            # ask_user events so _extract_ask_user_events can
+                            # pause the pipeline for developer/review asks the
+                            # same way it does for triage.
+                            for embedded in _extract_embedded_ask_user_events(result_text):
+                                embedded["node"] = invocation.agent_type
+                                writer(embedded)
                             writer(
                                 {
                                     "type": "tool_result",
                                     "tool_use_id": getattr(block, "tool_use_id", ""),
-                                    "content": str(getattr(block, "content", ""))[:1000],
+                                    "content": result_text[:1000],
                                     "is_error": getattr(block, "is_error", False),
                                     "node": invocation.agent_type,
                                 }
