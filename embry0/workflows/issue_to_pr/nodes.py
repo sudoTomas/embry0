@@ -128,16 +128,12 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
         # token never rides the sandbox env; this mirrors the git credential helper.
         xai_proxy_url = getattr(proxy_mgr, "xai_proxy_url", "") if proxy_mgr else ""
         if xai_proxy_url and docker:
-            import shlex
+            from embry0.sandbox.xai_token import build_xai_token_write_cmd
 
-            token_cmd = [
-                "bash",
-                "-c",
-                'mkdir -p "$HOME/.embry0" && '
-                f'printf %s {shlex.quote(sandbox_token)} > "$HOME/.embry0/xai_proxy_token" && '
-                'chmod 600 "$HOME/.embry0/xai_proxy_token"',
-            ]
-            await docker.run_cmd(docker.build_exec_cmd(container_id, token_cmd), timeout=10)
+            await docker.run_cmd(
+                docker.build_exec_cmd(container_id, build_xai_token_write_cmd(sandbox_token)),
+                timeout=10,
+            )
 
         # Clone repo inside container. Git auth flows via credential proxy — the
         # helper curls $EMBRY0_GIT_PROXY_URL/git-credentials with the per-sandbox

@@ -106,6 +106,19 @@ async def prep_qa_sandbox_clone(
             msg="No git proxy URL — clone may fail for private repos",
         )
 
+    # 2b. xAI proxy bearer (EMB-45 Phase C): when the xai-proxy is up, deliver the
+    # per-sandbox bearer to the 0600 file the DirectXaiExecutor reads — same
+    # delivery the issue_to_pr init node does for dev/review sandboxes. Without
+    # this, a QA agent routed to grok has a proxy URL but no credential.
+    xai_proxy_url = getattr(proxy_mgr, "xai_proxy_url", "") if proxy_mgr else ""
+    if xai_proxy_url:
+        from embry0.sandbox.xai_token import build_xai_token_write_cmd
+
+        await docker.run_cmd(
+            docker.build_exec_cmd(container_id, build_xai_token_write_cmd(sandbox_token)),
+            timeout=10,
+        )
+
     if cached_volume:
         # 3a. Volume path: workspace already present from warmer.  Skip clone;
         # ensure .qa dirs exist (idempotent mkdir -p is safe if already there).
