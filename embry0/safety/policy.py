@@ -16,6 +16,7 @@ security bug.
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -214,6 +215,144 @@ def default_policy_for_agent(agent_type: str) -> SafetyPolicy:
         content_checks=content_checks,
         network_egress_allowlist=[],
     )
+
+
+# ---- Ring-2 path enforcement as a Python predicate (EMB-45) ----
+#
+# The SDK/CLI executor writes deny_rules/allow_rules into settings.json and
+# Claude Code enforces them before dispatching a tool. A direct-API executor
+# (DirectXaiExecutor) has no CLI to read settings.json, so it must enforce the
+# same path denials itself. evaluate_ring2_paths() reproduces the deny-glob
+# semantics as a pure predicate the direct loop calls before every filesystem
+# tool dispatch. It is deliberately deny-only: allow_rules are auto-approve
+# hints in bypassPermissions mode, so the security boundary is the deny set.
+
+# tool_input keys that carry a filesystem path, per tool.
+_PATH_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    "Read": ("file_path", "path"),
+    "Write": ("file_path", "path"),
+    "Edit": ("file_path", "path"),
+    "Glob": ("path", "pattern"),
+    "Grep": ("path", "pattern"),
+}
+
+_RULE_RE: Final[re.Pattern[str]] = re.compile(r"^(\w+)\((.*)\)$")
+
+
+def _glob_to_regex(glob: str) -> str:
+    """Translate a Claude-Code permission glob to an anchored regex.
+
+    ``**`` matches across path separators; ``*`` matches within a segment. A
+    trailing ``/**`` also matches the directory itself (so ``/etc/**`` denies
+    both ``/etc`` and ``/etc/passwd``).
+    """
+    if glob.endswith("/**"):
+        base = glob[: -len("/**")]
+        return f"{_glob_to_regex(base)}(?:/.*)?"
+    out: list[str] = []
+    i = 0
+    while i < len(glob):
+        c = glob[i]
+        if c == "*":
+            if i + 1 < len(glob) and glob[i + 1] == "*":
+                out.append(".*")
+                i += 2
+                continue
+            out.append("[^/]*")
+        elif c == "/":
+            out.append("/")
+        else:
+            out.append(re.escape(c))
+        i += 1
+    return "".join(out)
+
+
+def _candidate_paths(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    *,
+    cwd: str,
+    home: str,
+) -> list[str]:
+    """Absolute, ~-expanded, lexically-normalized candidate paths for a tool call."""
+    keys = _PATH_KEYS.get(tool_name, ())
+    paths: list[str] = []
+    for key in keys:
+        raw = tool_input.get(key)
+        if not isinstance(raw, str) or not raw:
+            continue
+        # For Glob/Grep the pattern is only a filesystem target when absolute or
+        # ~-rooted; a bare glob like "**/*.py" is relative to the search root.
+        if key == "pattern" and not (raw.startswith("/") or raw.startswith("~")):
+            continue
+        expanded = raw
+        if expanded.startswith("~"):
+            expanded = home + expanded[1:]
+        if not expanded.startswith("/"):
+            expanded = os.path.join(cwd, expanded)
+        # Lexical normalization collapses ".." so /workspace/../etc/passwd
+        # resolves to /etc/passwd and is caught by the /etc deny glob.
+        paths.append(os.path.normpath(expanded))
+    return paths
+
+
+def evaluate_ring2_paths(
+    policy: SafetyPolicy,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    *,
+    cwd: str = "/workspace",
+    home: str | None = None,
+) -> Verdict:
+    """Deny a filesystem tool call whose path matches a Ring-2 deny glob.
+
+    Reproduces the settings.json deny-rule enforcement for executors that don't
+    run Claude Code. Fail-closed: any internal error denies the call.
+    """
+    try:
+        if home is None:
+            home = os.path.expanduser("~")
+        candidates = _candidate_paths(tool_name, tool_input, cwd=cwd, home=home)
+        if not candidates:
+            return Verdict.allow()
+        for rule in policy.deny_rules:
+            m = _RULE_RE.match(rule)
+            if not m:
+                continue
+            rule_tool, rule_glob = m.group(1), m.group(2)
+            if rule_tool != tool_name:
+                continue
+            if rule_glob.startswith("~"):
+                rule_glob = home + rule_glob[1:]
+            pattern = f"^{_glob_to_regex(rule_glob)}$"
+            for path in candidates:
+                if re.match(pattern, path):
+                    return Verdict.deny(
+                        f"Blocked by safety policy: {tool_name} path {path!r} matches deny rule {rule!r}"
+                    )
+        return Verdict.allow()
+    except Exception as exc:
+        return Verdict.deny(f"ring-2 path check failed: {exc!r}")
+
+
+def gate_tool_call(
+    policy: SafetyPolicy,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    *,
+    cwd: str = "/workspace",
+    home: str | None = None,
+) -> Verdict:
+    """Full pre-dispatch gate for a direct-API executor: name + Ring-3 content + Ring-2 paths.
+
+    Runs :func:`evaluate_policy` (tool-name allowlist + content checks) then
+    :func:`evaluate_ring2_paths` (filesystem deny globs). First denial wins;
+    both are fail-closed.
+    """
+    verdict = evaluate_policy(policy, tool_name, tool_input)
+    if not verdict.allowed:
+        return verdict
+    return evaluate_ring2_paths(policy, tool_name, tool_input, cwd=cwd, home=home)
 
 
 def render_settings_json(policy: SafetyPolicy) -> dict[str, Any]:
