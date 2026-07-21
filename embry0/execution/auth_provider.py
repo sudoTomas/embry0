@@ -19,6 +19,9 @@ from embry0.safety.error_codes import ErrorCode
 RESERVED_ENV_KEYS: Final[frozenset[str]] = frozenset(
     {
         "EMBRY0_GIT_PROXY_URL",
+        # EMB-45: base_url the direct-xAI executor points its Anthropic SDK client at;
+        # orchestrator-owned, never user-settable.
+        "EMBRY0_XAI_PROXY_URL",
         "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",

@@ -4,6 +4,7 @@ Dispatches to one of the stateless proxy apps based on PROXY_TYPE env:
 - git     -> git_proxy.create_git_proxy_app(GITHUB_TOKEN, PROXY_ADMIN_TOKEN)
 - github  -> github_proxy.create_github_proxy_app(GITHUB_TOKEN, PROXY_ADMIN_TOKEN)
 - auth    -> auth_proxy.create_auth_proxy_app(ANTHROPIC_API_KEY, PROXY_ADMIN_TOKEN)
+- xai     -> xai_proxy.create_xai_proxy_app(PROXY_ADMIN_TOKEN)  # access token pushed at runtime
 - minio   -> minio_proxy.create_minio_proxy_app(UPSTREAM_URL)
 - presign -> presign_proxy.create_presign_proxy_app(UPSTREAM_URL)
 
@@ -24,6 +25,7 @@ from embry0.execution.proxy.git_proxy import create_git_proxy_app
 from embry0.execution.proxy.github_proxy import create_github_proxy_app
 from embry0.execution.proxy.minio_proxy import create_minio_proxy_app
 from embry0.execution.proxy.presign_proxy import create_presign_proxy_app
+from embry0.execution.proxy.xai_proxy import create_xai_proxy_app
 
 logger = structlog.get_logger(__name__)
 
@@ -31,6 +33,7 @@ DEFAULT_PORTS = {
     "git": 9101,
     "github": 9103,
     "auth": 9100,
+    "xai": 9106,
     "minio": 9100,
     "presign": 9104,
 }
@@ -67,6 +70,10 @@ def build_app_from_env() -> web.Application:
         return create_github_proxy_app(_require_env("GITHUB_TOKEN"), admin_token)
     if proxy_type == "auth":
         return create_auth_proxy_app(_require_env("ANTHROPIC_API_KEY"), admin_token)
+    if proxy_type == "xai":
+        # No static credential: the SuperGrok access token is pushed at runtime via
+        # /admin/token by the orchestrator's refresher.
+        return create_xai_proxy_app(admin_token)
 
     msg = f"Unknown PROXY_TYPE: {proxy_type!r}"
     raise ValueError(msg)

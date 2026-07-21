@@ -107,6 +107,16 @@ class Embry0Config(BaseSettings):
     # unnecessary attack surface.
     auth_proxy_enabled: bool = False
 
+    # xAI direct-API OAuth path (EMB-45). When enabled, the orchestrator launches
+    # the xai-proxy sidecar and owns the rotating SuperGrok refresh token. The
+    # durable, Fernet-encrypted credential store is seeded once from the Grok CLI
+    # store (``xai_grok_cli_store``, default ~/.grok/auth.json) and then owned by
+    # embry0. Requires ENVIRONMENT_SECRET_KEY. Defaults False (opt-in) — leaving it
+    # off keeps grok on the EMB-36 CLI/console-key path.
+    xai_proxy_enabled: bool = False
+    xai_credential_path: str = "/data/embry0/xai_credential.enc"
+    xai_grok_cli_store: str = ""
+
     # Pluggable agent execution modes (Phase 1).
     # Both dimensions are orthogonal. Defaults preserve today's runtime
     # behavior (SDK path + OAuth from ~/.claude/.credentials.json).
