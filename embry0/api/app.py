@@ -192,6 +192,30 @@ def _warn_and_audit_dev_mode(flag_name: str, audit_log_path: object) -> None:
         logger.warning("dev_mode_audit_emit_failed", flag=flag_name, exc_info=True)
 
 
+# EMB-45: how often the orchestrator refreshes + re-pushes the SuperGrok access
+# token to the xai-proxy. Must be shorter than the refresher's expiry margin
+# (REFRESH_MARGIN_SECONDS = 30m) so the proxy always holds a comfortably-valid
+# token across rotations; ensure_fresh() is cheap when the cached token is current.
+_XAI_TOKEN_PUSH_INTERVAL_SECONDS = 600
+
+
+async def _xai_token_refresh_loop(refresher: object, proxy_mgr: object) -> None:
+    """Periodically refresh the SuperGrok access token and push it to the xai-proxy.
+
+    Runs until cancelled at shutdown. Failures are logged and retried on the next
+    tick — a transient refresh/push error must not kill the loop.
+    """
+    while True:
+        await asyncio.sleep(_XAI_TOKEN_PUSH_INTERVAL_SECONDS)
+        try:
+            token = await refresher.ensure_fresh()  # type: ignore[attr-defined]
+            await proxy_mgr.push_xai_token(token)  # type: ignore[attr-defined]
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("xai_token_refresh_loop_error", error=str(exc))
+
+
 async def _init_app_state(
     app: FastAPI,
     db: DatabasePool,
@@ -625,12 +649,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     _assert_sdk_supports_hooks()
 
+    # EMB-45: build the SuperGrok credential refresher BEFORE starting proxies so a
+    # misconfigured credential disables the xai-proxy (grok falls back to the CLI
+    # path) rather than launching an un-provisioned proxy that 503s every request.
+    app.state.xai_refresher = None
+    xai_enabled = config.xai_proxy_enabled
+    if xai_enabled:
+        try:
+            from embry0.execution.xai_credential import DEFAULT_GROK_CLI_STORE, build_refresher
+
+            grok_store = config.xai_grok_cli_store or DEFAULT_GROK_CLI_STORE
+            app.state.xai_refresher = await build_refresher(
+                store_path=config.xai_credential_path,
+                secret_key=config.environment_secret_key,
+                grok_cli_store=grok_store,
+            )
+            logger.info("xai_refresher_ready")
+        except Exception as exc:
+            logger.error("xai_proxy_disabled_credential_error", error=str(exc))
+            xai_enabled = False
+            app.state.xai_refresher = None
+
     # Start proxy services
     await proxy_mgr.start(
         anthropic_api_key=config.anthropic_api_key,
         github_token=config.github_token,
         enable_auth_proxy=config.auth_proxy_enabled,
+        enable_xai_proxy=xai_enabled,
     )
+
+    # Provision the xai-proxy with an initial access token so the first grok request
+    # doesn't race the background refresh loop.
+    if app.state.xai_refresher is not None:
+        try:
+            token = await app.state.xai_refresher.ensure_fresh()
+            await proxy_mgr.push_xai_token(token)
+        except Exception as exc:
+            logger.error("xai_proxy_initial_token_push_failed", error=str(exc))
 
     # Clean up orphaned sandbox containers from previous lifecycle
     try:
@@ -664,6 +719,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("orphaned_container_scan_failed", exc_info=True)
 
     app.state.background_tasks = set()
+
+    # EMB-45: keep the xai-proxy's access token fresh across 6h rotations.
+    if app.state.xai_refresher is not None:
+        _xai_task = asyncio.create_task(_xai_token_refresh_loop(app.state.xai_refresher, proxy_mgr))
+        app.state.background_tasks.add(_xai_task)
+        _xai_task.add_done_callback(app.state.background_tasks.discard)
 
     # GitHub-comment outbound channel — used by ask-user fan-out when an issue
     # is GitHub-synced and "github" is in its notification_channels. The HTTP
@@ -790,6 +851,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 remaining=len([t for t in tasks if not t.done()]),
             )
     await reaper.stop()
+    # EMB-45: the refresh loop was cancelled with the other background tasks above;
+    # close the refresher's HTTP client now.
+    xai_refresher = getattr(app.state, "xai_refresher", None)
+    if xai_refresher is not None:
+        try:
+            await xai_refresher.aclose()
+        except Exception:
+            logger.warning("xai_refresher_close_failed", exc_info=True)
     await proxy_mgr.stop()
     # Close the long-lived GitHub HTTP client used by the github-comment channel.
     gh_client = getattr(app.state, "github_http_client", None)

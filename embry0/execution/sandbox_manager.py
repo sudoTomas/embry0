@@ -156,6 +156,14 @@ class SandboxManager:
             if _key:
                 env[_prov.api_key_env] = _key
 
+        # EMB-45: the direct-xAI executor points its Anthropic SDK client at the
+        # xai-proxy (which injects the rotating SuperGrok bearer at egress). The URL
+        # is stable; the per-sandbox bearer is delivered post-create alongside the
+        # git credential helper. Reserved key — user env can never set it.
+        _xai_proxy_url = getattr(self._proxy_manager, "xai_proxy_url", "")
+        if _xai_proxy_url:
+            env["EMBRY0_XAI_PROXY_URL"] = _xai_proxy_url
+
         # Merge profile-level env_defaults (stored in DB but previously
         # never wired into the env passed to create).  Use setdefault so
         # caller-provided values win — env_defaults are profile baselines.

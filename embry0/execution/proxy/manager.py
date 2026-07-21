@@ -82,6 +82,7 @@ class ProxyManager:
         self._image = qualify_image(_BASE_IMAGE, image_registry)
         self._http: aiohttp.ClientSession | None = None
         self.auth_proxy_url: str = ""
+        self.xai_proxy_url: str = ""
         self.git_proxy_url: str = ""
         self.github_proxy_url: str = ""
         self.minio_proxy_url: str = ""
@@ -92,6 +93,7 @@ class ProxyManager:
         anthropic_api_key: str = "",
         github_token: str = "",
         enable_auth_proxy: bool = False,
+        enable_xai_proxy: bool = False,
     ) -> None:
         """Start the credential proxies as DinD containers.
 
@@ -106,7 +108,7 @@ class ProxyManager:
             self._http = aiohttp.ClientSession()
 
         # Clean up stragglers from a prior orchestrator run.
-        for name in ("git-proxy", "github-proxy", "auth-proxy", "minio-proxy", "presign-proxy"):
+        for name in ("git-proxy", "github-proxy", "auth-proxy", "xai-proxy", "minio-proxy", "presign-proxy"):
             try:
                 await self._docker.run_cmd(self._docker.build_rm_cmd(name))
             except RuntimeError:
@@ -185,6 +187,22 @@ class ProxyManager:
         elif anthropic_api_key and not enable_auth_proxy:
             logger.info("auth_proxy_skipped", reason="AUTH_PROXY_ENABLED=false")
 
+        # EMB-45: xai-proxy holds no static credential — the SuperGrok access token
+        # is pushed at runtime via push_xai_token(). Attaches to sandbox-internet to
+        # reach api.x.ai. The refresh-token lineage lives orchestrator-side.
+        if enable_xai_proxy:
+            await self._launch(
+                name="xai-proxy",
+                env={
+                    "PROXY_TYPE": "xai",
+                    "LISTEN_PORT": "9106",
+                    "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
+                },
+                attach_internet=True,
+            )
+            self.xai_proxy_url = "http://xai-proxy:9106"
+            logger.info("xai_proxy_started")
+
         logger.info("proxy_manager_started", launched=list(self._launched))
 
     async def _launch(self, *, name: str, env: dict[str, str], attach_internet: bool) -> None:
@@ -247,6 +265,8 @@ class ProxyManager:
             targets.append(("github-proxy", 9103))
         if self.auth_proxy_url:
             targets.append(("auth-proxy", 9100))
+        if self.xai_proxy_url:
+            targets.append(("xai-proxy", 9106))
 
         for name, port in targets:
             await self._exec_admin_request(
@@ -275,6 +295,8 @@ class ProxyManager:
             targets.append(("github-proxy", 9103))
         if self.auth_proxy_url:
             targets.append(("auth-proxy", 9100))
+        if self.xai_proxy_url:
+            targets.append(("xai-proxy", 9106))
 
         for name, port in targets:
             try:
@@ -288,6 +310,26 @@ class ProxyManager:
                 )
             except RuntimeError as exc:
                 logger.warning("sandbox_unenroll_failed", proxy=name, error=str(exc))
+
+    async def push_xai_token(self, access_token: str) -> None:
+        """Push the current SuperGrok access token to the xai-proxy (EMB-45).
+
+        No-op if the xai-proxy isn't running. Uses the same in-DinD ``docker exec``
+        admin transport as enrollment. Raises RuntimeError if the push fails so the
+        caller's background loop can log and retry.
+        """
+        if not self.xai_proxy_url:
+            return
+        if not access_token:
+            raise RuntimeError("push_xai_token called with an empty access token")
+        await self._exec_admin_request(
+            container="xai-proxy",
+            method="POST",
+            path="/admin/token",
+            port=9106,
+            body={"access_token": access_token},
+        )
+        logger.info("xai_proxy_token_pushed")
 
     async def _exec_admin_request(
         self,
@@ -371,6 +413,7 @@ class ProxyManager:
         self.git_proxy_url = ""
         self.github_proxy_url = ""
         self.auth_proxy_url = ""
+        self.xai_proxy_url = ""
         self.minio_proxy_url = ""
         self.presign_proxy_url = ""
         if self._http is not None:
