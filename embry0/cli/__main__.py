@@ -574,6 +574,63 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_init(args: argparse.Namespace) -> None:
+    """Handle ``embry0 init`` (EMB-49) — one-command new-project bootstrap.
+
+    Thin API client of POST /api/v1/repos/bootstrap (token routing + the
+    config store live in the orchestrator).
+    """
+    import httpx
+
+    base = (args.api_url or os.environ.get("EMBRY0_API_URL") or "http://localhost:8200").rstrip("/")
+    key = _resolve_api_key(args.api_key)
+    headers = {"X-Requested-With": "XMLHttpRequest"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+
+    payload: dict[str, Any] = {"repo": args.repo, "force": args.force}
+    for field in ("app", "boot_command", "frontend_url", "ready_check_url", "sandbox_profile"):
+        val = getattr(args, field)
+        if val:
+            payload[field] = val
+
+    try:
+        resp = httpx.post(
+            f"{base}/api/v1/repos/bootstrap",
+            json=payload,
+            headers=headers,
+            timeout=httpx.Timeout(60.0, connect=10.0),
+        )
+    except httpx.ConnectError:
+        _err(f"cannot reach the orchestrator at {base} — is the stack running? (embry0 start)")
+        sys.exit(2)
+    if resp.status_code == 401:
+        _err("orchestrator rejected the request (401) — set EMBRY0_API_KEY or pass --api-key")
+        sys.exit(2)
+    if resp.status_code >= 400:
+        detail = resp.text[:500]
+        try:
+            detail = resp.json().get("detail", detail)
+        except Exception:  # noqa: BLE001
+            pass
+        _err(f"bootstrap failed ({resp.status_code}): {detail}")
+        sys.exit(1)
+
+    result = resp.json()
+    _info(f"bootstrapped {result['repo']}:")
+    for step in result.get("steps", []):
+        _info(f"  - {step}")
+    _info("")
+    _info("Next steps:")
+    if result.get("qa_required") == "never":
+        _info("  - QA is set to `never` (empty repo). Once there is an app to boot,")
+        _info(f"    edit the stored config (PUT /api/v1/repos/{result['repo']}/qa-config)")
+        _info("    or run `embry0 onboard` to regenerate it, and flip qa_required to auto.")
+    _info("  - File the first issue: label it `embry0` in Linear (team EMB), or")
+    _info(f'    POST /api/v1/issues {{repo: "{result["repo"]}", auto_triage: true}} —')
+    _info("    the pipeline picks it up from there.")
+
+
 # ── Argparse ─────────────────────────────────────────────────────────────────
 
 
@@ -663,6 +720,25 @@ def main() -> None:
         help="Bearer key (default: EMBRY0_API_KEY / API_KEY env, then ./.env)",
     )
 
+    # init (EMB-49)
+    init_p = subparsers.add_parser(
+        "init",
+        help="One-command bootstrap: verify GitHub access + register a starter QA config for a new repo.",
+    )
+    init_p.add_argument("repo", help="GitHub repo in owner/name form")
+    init_p.add_argument("--app", default=None, help="Declare an app skeleton (lowercase slug)")
+    init_p.add_argument("--boot-command", default=None, help="App boot command (default: npm ci && npm run dev)")
+    init_p.add_argument("--frontend-url", default=None, help="App URL in-sandbox (default: http://localhost:3000)")
+    init_p.add_argument("--ready-check-url", default=None, help="Ready-check URL (default: frontend URL)")
+    init_p.add_argument("--sandbox-profile", default=None, help="Seed repo_preferences with this sandbox profile")
+    init_p.add_argument("--force", action="store_true", help="Overwrite an existing stored config")
+    init_p.add_argument(
+        "--api-url", default=None, help="Orchestrator base URL (default: EMBRY0_API_URL or http://localhost:8200)"
+    )
+    init_p.add_argument(
+        "--api-key", default=None, help="Bearer key (default: EMBRY0_API_KEY / API_KEY env, then ./.env)"
+    )
+
     # onboard (EMB-50)
     onboard = subparsers.add_parser(
         "onboard",
@@ -699,6 +775,7 @@ def main() -> None:
         "migrate-qa-config": cmd_migrate_qa_config,
         "build-qa-image": cmd_build_qa_image,
         "onboard": cmd_onboard,
+        "init": cmd_init,
     }
     commands[args.command](args)
 
