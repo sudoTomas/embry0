@@ -275,13 +275,22 @@ class SdkAgentExecutor:
         # --- Build SDK options
         options = build_sdk_options(invocation)
 
-        # --- EMB-36: non-Anthropic provider overlay. The CLI honors
-        # ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY, so a compat backend (xAI
-        # grok) is per-agent env configuration on the CLI subprocess. The
-        # provider key rides the sandbox container env (never argv); a
-        # missing key fails closed before any tokens are spent.
+        # --- EMB-36/EMB-46: non-Anthropic provider overlay. The CLI honors
+        # ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY, so a
+        # compat backend (xAI grok) is per-agent env configuration on the CLI
+        # subprocess. Precedence:
+        #   1. EMB-46 subscription path — the xai-proxy is live and the
+        #      per-sandbox bearer file is present: point the CLI at the proxy
+        #      with Bearer auth. The proxy swaps in the rotating SuperGrok
+        #      token at egress; no Max OAuth, no console key on this path.
+        #   2. EMB-36 console-key fallback — proxy down: base_url straight to
+        #      the provider with its API key from the sandbox container env.
+        # Both strip CLAUDE_CODE_OAUTH_TOKEN so the grok agent can never ride
+        # the Anthropic subscription. Missing credentials fail closed before
+        # any tokens are spent.
         if invocation.provider:
             from embry0.agents.providers import PROVIDERS
+            from embry0.sandbox.xai_token import read_xai_proxy_token
 
             prov = next((pr for pr in PROVIDERS if pr.name == invocation.provider), None)
             if prov is None:
@@ -290,22 +299,37 @@ class SdkAgentExecutor:
                     is_error=True,
                     error_message=f"unknown model provider: {invocation.provider!r}",
                 )
-            provider_key = os.environ.get(prov.api_key_env, "")
-            if not provider_key:
-                return AgentOutput(
-                    agent_type=invocation.agent_type,
-                    is_error=True,
-                    error_message=(
-                        f"model {invocation.model!r} requires {prov.api_key_env} in the "
-                        "orchestrator environment (injected into the sandbox at create)"
-                    ),
-                )
-            options.env = {
-                "ANTHROPIC_BASE_URL": prov.base_url,
-                "ANTHROPIC_API_KEY": provider_key,
-                "ANTHROPIC_AUTH_TOKEN": "",
-                "CLAUDE_CODE_OAUTH_TOKEN": "",
-            }
+            proxy_url = os.environ.get("EMBRY0_XAI_PROXY_URL", "") if invocation.provider == "xai" else ""
+            proxy_token = read_xai_proxy_token() if proxy_url else ""
+            if proxy_url and proxy_token:
+                options.env = {
+                    "ANTHROPIC_BASE_URL": proxy_url,
+                    "ANTHROPIC_AUTH_TOKEN": proxy_token,
+                    "ANTHROPIC_API_KEY": "",
+                    "CLAUDE_CODE_OAUTH_TOKEN": "",
+                }
+            else:
+                provider_key = os.environ.get(prov.api_key_env, "")
+                if not provider_key:
+                    cred_hint = (
+                        f"the xai-proxy (bearer file + EMBRY0_XAI_PROXY_URL) or {prov.api_key_env}"
+                        if invocation.provider == "xai"
+                        else prov.api_key_env
+                    )
+                    return AgentOutput(
+                        agent_type=invocation.agent_type,
+                        is_error=True,
+                        error_message=(
+                            f"model {invocation.model!r} requires {cred_hint} in the "
+                            "orchestrator environment (injected into the sandbox at create)"
+                        ),
+                    )
+                options.env = {
+                    "ANTHROPIC_BASE_URL": prov.base_url,
+                    "ANTHROPIC_API_KEY": provider_key,
+                    "ANTHROPIC_AUTH_TOKEN": "",
+                    "CLAUDE_CODE_OAUTH_TOKEN": "",
+                }
 
         # --- EMB-35 session resume, in precedence order:
         # 1. ``resume_session_id`` → the CLI's own file-based resume. The
