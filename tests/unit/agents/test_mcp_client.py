@@ -207,13 +207,29 @@ def test_anthropic_tool_defs_filters_and_orders_by_allowlist():
     allowed = ["Read", "mcp__playwright__browser_navigate", "mcp__playwright__browser_click"]
     defs = anthropic_tool_defs("playwright", mcp_tools, allowed)
     assert [d["name"] for d in defs] == ["mcp__playwright__browser_navigate", "mcp__playwright__browser_click"]
-    assert all(d["input_schema"] == {"type": "object"} for d in defs)
+    assert all(d["input_schema"] == {"type": "object", "required": []} for d in defs)
     # browser_run_code_unsafe is not in the allowlist → never exposed (EMB-37).
 
 
 def test_anthropic_tool_defs_defaults_missing_schema():
     defs = anthropic_tool_defs("s", [{"name": "t"}], ["mcp__s__t"])
-    assert defs[0]["input_schema"] == {"type": "object", "properties": {}}
+    assert defs[0]["input_schema"] == {"type": "object", "properties": {}, "required": []}
+
+
+def test_anthropic_tool_defs_normalizes_required():
+    """xAI's compat validator 400s when `required` is absent or null — it must
+    always come out as a list (playwright-mcp omits it for all-optional tools)."""
+    mcp_tools = [
+        {"name": "absent", "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "null", "inputSchema": {"type": "object", "properties": {}, "required": None}},
+        {"name": "kept", "inputSchema": {"type": "object", "properties": {"u": {"type": "string"}}, "required": ["u"]}},
+    ]
+    defs = anthropic_tool_defs("s", mcp_tools, ["mcp__s__absent", "mcp__s__null", "mcp__s__kept"])
+    assert defs[0]["input_schema"]["required"] == []
+    assert defs[1]["input_schema"]["required"] == []
+    assert defs[2]["input_schema"]["required"] == ["u"]
+    # Normalization must not mutate the caller's schema dicts.
+    assert "required" not in mcp_tools[0]["inputSchema"]
 
 
 def test_summarize_content():

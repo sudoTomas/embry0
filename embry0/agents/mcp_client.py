@@ -72,10 +72,17 @@ def anthropic_tool_defs(
         if not tool_name:
             continue
         full_name = f"{MCP_TOOL_PREFIX}{server_name}__{tool_name}"
+        schema = dict(tool.get("inputSchema") or {"type": "object", "properties": {}})
+        # xAI's Anthropic-compat validator rejects an input_schema whose
+        # `required` key is absent ("/required: null is not of type 'array'").
+        # Anthropic tolerates the omission; playwright-mcp omits it for tools
+        # with no mandatory params. Normalize so both providers accept it.
+        if not isinstance(schema.get("required"), list):
+            schema["required"] = []
         by_name[full_name] = {
             "name": full_name,
             "description": str(tool.get("description", "")),
-            "input_schema": tool.get("inputSchema") or {"type": "object", "properties": {}},
+            "input_schema": schema,
         }
     return [by_name[name] for name in allowed if name in by_name]
 
