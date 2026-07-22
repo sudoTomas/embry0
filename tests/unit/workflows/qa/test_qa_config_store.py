@@ -8,6 +8,7 @@ from embry0.workflows.qa.qa_config_store import (
     QA_CONFIG_DIR_ENV,
     external_qa_config_path,
     load_external_qa_yaml,
+    save_external_qa_yaml,
 )
 
 
@@ -53,6 +54,32 @@ def test_path_uses_double_underscore_layout(store):
 def test_unsafe_repo_shapes_are_refused(store, repo):
     assert external_qa_config_path(repo) is None
     assert load_external_qa_yaml(repo) is None
+
+
+def test_save_round_trips_and_creates_dirs(store):
+    path = save_external_qa_yaml("acme/widgets", "version: 2\n")
+    assert path == store / "acme__widgets" / "qa.yaml"
+    assert load_external_qa_yaml("acme/widgets") == "version: 2\n"
+    # atomic write leaves no tmp droppings
+    assert list((store / "acme__widgets").iterdir()) == [path]
+
+
+def test_save_overwrites_existing(store):
+    save_external_qa_yaml("acme/widgets", "version: 2\n# v1\n")
+    save_external_qa_yaml("acme/widgets", "version: 2\n# v2\n")
+    assert "# v2" in load_external_qa_yaml("acme/widgets")
+
+
+def test_save_raises_when_disabled(monkeypatch):
+    monkeypatch.delenv(QA_CONFIG_DIR_ENV, raising=False)
+    with pytest.raises(ValueError, match="disabled"):
+        save_external_qa_yaml("acme/widgets", "version: 2\n")
+
+
+@pytest.mark.parametrize("repo", ["../etc", "a/b/c", "acme", ".hidden/repo"])
+def test_save_raises_on_unsafe_repo(store, repo):
+    with pytest.raises(ValueError):
+        save_external_qa_yaml(repo, "version: 2\n")
 
 
 def test_unreadable_existing_file_propagates(store):

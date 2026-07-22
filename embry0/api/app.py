@@ -398,6 +398,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await seed_qa_agent(AgentDefinitionsRepository(db))
 
+    # Seed the onboarding agent definition (EMB-50), same idempotent pattern.
+    from embry0.workflows.onboard.agent_seed import seed_onboarding_agent
+
+    await seed_onboarding_agent(AgentDefinitionsRepository(db))
+
     # MinIO — QA artifact storage.
     #
     # Two clients because the orchestrator and the sandbox see MinIO via
@@ -971,6 +976,7 @@ def _register_routers(app: FastAPI) -> None:
         pipeline_templates,
         qa_admin,
         qa_artifacts,
+        qa_config,
         qa_dashboard,
         qa_events,
         qa_images,
@@ -1012,6 +1018,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(pipeline_templates.router, prefix="/api/v1", tags=["pipeline-templates"], dependencies=auth_deps)
     app.include_router(environment.router, prefix="/api/v1", tags=["environment"], dependencies=auth_deps)
     app.include_router(repo_preferences.router, prefix="/api/v1", tags=["repo-preferences"], dependencies=auth_deps)
+    app.include_router(qa_config.router, prefix="/api/v1", tags=["qa-config"], dependencies=auth_deps)
     app.include_router(github.router, prefix="/api/v1", tags=["github"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
     app.include_router(telegram.router, prefix="/api/v1", tags=["telegram"])

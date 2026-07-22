@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -505,6 +506,74 @@ def run_build_qa_image_via_api(
     return str(resp.json().get("status", "unknown"))
 
 
+def cmd_onboard(args: argparse.Namespace) -> None:
+    """Handle ``embry0 onboard`` (EMB-50).
+
+    Thin API client: POST /api/v1/jobs {pipeline: "onboard"} on the running
+    orchestrator (the analysis sandbox + smoke boots only exist inside the
+    stack), then poll the job until it finishes and print the outcome.
+    """
+    import time as _time
+
+    import httpx
+
+    base = (args.api_url or os.environ.get("EMBRY0_API_URL") or "http://localhost:8200").rstrip("/")
+    key = _resolve_api_key(args.api_key)
+    headers = {"X-Requested-With": "XMLHttpRequest"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+
+    try:
+        resp = httpx.post(
+            f"{base}/api/v1/jobs",
+            json={
+                "pipeline": "onboard",
+                "repo": args.repo,
+                "branch": args.branch,
+                "skip_smoke": args.no_smoke,
+            },
+            headers=headers,
+            timeout=httpx.Timeout(60.0, connect=10.0),
+        )
+    except httpx.ConnectError:
+        _err(f"cannot reach the orchestrator at {base} — is the stack running? (embry0 start)")
+        sys.exit(2)
+    if resp.status_code == 401:
+        _err("orchestrator rejected the request (401) — set EMBRY0_API_KEY or pass --api-key")
+        sys.exit(2)
+    if resp.status_code >= 400:
+        _err(f"onboard job creation failed ({resp.status_code}): {resp.text[:500]}")
+        sys.exit(2)
+
+    job_id = resp.json().get("job_id")
+    _info(f"onboard job {job_id} started for {args.repo}@{args.branch} — analyzing…")
+
+    # Poll until terminal. Analysis + up-to-3 rounds + smoke boots can take
+    # a while; cap at 1h wall-clock.
+    deadline = _time.monotonic() + 3600
+    status = "running"
+    job: dict[str, Any] = {}
+    while _time.monotonic() < deadline:
+        _time.sleep(10)
+        try:
+            job = httpx.get(f"{base}/api/v1/jobs/{job_id}", headers=headers, timeout=30.0).json()
+        except Exception:  # noqa: BLE001
+            continue
+        status = job.get("status", "unknown")
+        if status in ("completed", "failed", "cancelled"):
+            break
+
+    if status == "completed":
+        _info(
+            f"onboard completed — qa.yaml for {args.repo} is active in the config store "
+            f"(repo-configs/{args.repo.replace('/', '__')}/qa.yaml). "
+            f"Inspect: GET {base}/api/v1/repos/{args.repo}/qa-config"
+        )
+    else:
+        _err(f"onboard {status}: {(job.get('error_message') or 'no detail')[:1000]}")
+        sys.exit(1)
+
+
 # ── Argparse ─────────────────────────────────────────────────────────────────
 
 
@@ -594,6 +663,29 @@ def main() -> None:
         help="Bearer key (default: EMBRY0_API_KEY / API_KEY env, then ./.env)",
     )
 
+    # onboard (EMB-50)
+    onboard = subparsers.add_parser(
+        "onboard",
+        help="Analyze an existing repo and generate its qa.yaml into the external config store.",
+    )
+    onboard.add_argument("repo", help="GitHub repo in owner/name form")
+    onboard.add_argument("--branch", default="main", help="Branch to analyze (default: main)")
+    onboard.add_argument(
+        "--no-smoke",
+        action="store_true",
+        help="Skip the boot/ready-check smoke phase (schema validation still applies)",
+    )
+    onboard.add_argument(
+        "--api-url",
+        default=None,
+        help="Orchestrator base URL (default: EMBRY0_API_URL or http://localhost:8200)",
+    )
+    onboard.add_argument(
+        "--api-key",
+        default=None,
+        help="Bearer key (default: EMBRY0_API_KEY / API_KEY env, then ./.env)",
+    )
+
     args = parser.parse_args()
 
     commands = {
@@ -606,6 +698,7 @@ def main() -> None:
         "purge": cmd_purge,
         "migrate-qa-config": cmd_migrate_qa_config,
         "build-qa-image": cmd_build_qa_image,
+        "onboard": cmd_onboard,
     }
     commands[args.command](args)
 

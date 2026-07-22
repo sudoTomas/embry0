@@ -22,6 +22,7 @@ from embry0.storage.repositories.jobs import JobsRepository, StatusTransitionCon
 from embry0.storage.repositories.sandbox_profiles import SandboxProfilesRepository
 from embry0.storage.repositories.traces import TracesRepository
 from embry0.workflows.issue_to_pr.graph import IssueToprWorkflow
+from embry0.workflows.onboard.graph import OnboardWorkflow
 from embry0.workflows.qa.graph import QAWorkflow
 from embry0.workflows.registry import WorkflowRegistry
 
@@ -148,6 +149,8 @@ class IssueExecutor:
         """
         if pipeline == "qa":
             return QAWorkflow()
+        if pipeline == "onboard":
+            return OnboardWorkflow()
         return IssueToprWorkflow()
 
     def _build_graph_config(self, job_id: str) -> dict[str, Any]:
@@ -417,6 +420,160 @@ class IssueExecutor:
         )
 
         return job_id
+
+    async def start_onboard_job(
+        self,
+        repo: str,
+        branch: str,
+        skip_smoke: bool = False,
+        agent_models: dict[str, str] | None = None,
+    ) -> str:
+        """EMB-50: issue-less onboard job — analyze ``repo`` and generate its
+        qa.yaml v2 into the external config store. Returns the new job id."""
+        import uuid
+
+        trace_id = f"trc-{uuid.uuid4().hex[:12]}"
+        pipeline_config: dict[str, Any] = {
+            "pipeline": "onboard",
+            "branch": branch,
+            "skip_smoke": skip_smoke,
+        }
+        if agent_models:
+            pipeline_config["agent_models_override"] = dict(agent_models)
+
+        job_id = await self._jobs.create(
+            repo=repo,
+            task=f"Onboard {repo}@{branch} — generate qa.yaml into the config store",
+            pipeline_template="onboard",
+            pipeline_config=pipeline_config,
+            sandbox_profile="slim",
+            trace_id=trace_id,
+        )
+
+        await emit_audit(
+            self._db,
+            "onboard.job_created",
+            actor="system",
+            details={"job_id": job_id, "repo": repo, "branch": branch},
+            audit_log_path=self._audit_log_path,
+        )
+        logger.info("onboard_job_created", job_id=job_id, repo=repo, branch=branch)
+
+        self._track_task(
+            self._run_onboard_workflow(
+                job_id,
+                repo=repo,
+                branch=branch,
+                skip_smoke=skip_smoke,
+                agent_models=agent_models,
+            ),
+            kind="onboard_workflow_execute",
+            job_id=job_id,
+        )
+        return job_id
+
+    async def _run_onboard_workflow(
+        self,
+        job_id: str,
+        *,
+        repo: str,
+        branch: str,
+        skip_smoke: bool,
+        agent_models: dict[str, str] | None = None,
+    ) -> None:
+        """Background runner for onboard jobs — mirrors ``_run_qa_workflow``'s
+        lifecycle (trace binding, status transitions) minus QA verdict logic:
+        the onboard graph's own nodes decide success (config written to the
+        store) vs failure (rounds exhausted / infra error)."""
+        from datetime import UTC, datetime
+
+        import structlog.contextvars as cv
+
+        trace_id_bound = False
+        try:
+            job_row = await self._jobs.get(job_id)
+            trace_id = (job_row or {}).get("trace_id")
+            if trace_id:
+                cv.bind_contextvars(trace_id=trace_id)
+                trace_id_bound = True
+        except Exception:
+            logger.warning("trace_id_bind_failed", job_id=job_id, exc_info=True)
+
+        final_state: dict[str, Any] | None = None
+        try:
+            await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
+
+            initial_state: dict[str, Any] = {
+                "job_id": job_id,
+                "repo": repo,
+                "branch_name": branch,
+                "task": f"Onboard {repo}@{branch}",
+                "current_stage": "init",
+                "agent_outputs": [],
+                "errors": [],
+                "retry_count": 0,
+                "total_cost_usd": 0.0,
+                "budget_overrun_usd": 0.0,
+                # qa_active gates scope='qa' env vars into sandboxes — the
+                # smoke phase boots apps exactly like a QA sub-task would.
+                "qa_active": True,
+                "skip_smoke": skip_smoke,
+                "onboard": {},
+            }
+            if agent_models:
+                initial_state["agent_models_override"] = dict(agent_models)
+
+            env_vars = await self._load_merged_env_vars(repo, job_id)
+            if env_vars:
+                initial_state["user_env_vars"] = env_vars
+
+            final_state, interrupted, _ = await self._execute_workflow_stream(
+                initial_state,
+                issue_id="",
+                job_id=job_id,
+                pipeline="onboard",
+            )
+
+            if interrupted:
+                logger.warning("onboard_workflow_unexpected_interrupt", job_id=job_id)
+                await self._jobs.update(
+                    job_id,
+                    status="failed",
+                    error_message="onboard workflow interrupted unexpectedly",
+                    finished_at=datetime.now(UTC),
+                )
+                return
+
+            ob = (final_state or {}).get("onboard") or {}
+            if ob.get("final_status") == "completed":
+                await self._jobs.update(
+                    job_id,
+                    status="completed",
+                    finished_at=datetime.now(UTC),
+                )
+            else:
+                await self._jobs.update(
+                    job_id,
+                    status="failed",
+                    error_message=(ob.get("failure_summary") or ob.get("last_error") or "onboard did not complete")[
+                        :4000
+                    ],
+                    finished_at=datetime.now(UTC),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("onboard_workflow_crashed", job_id=job_id, error=str(exc), exc_info=True)
+            try:
+                await self._jobs.update(
+                    job_id,
+                    status="failed",
+                    error_message=f"onboard workflow crashed: {exc}"[:4000],
+                    finished_at=datetime.now(UTC),
+                )
+            except StatusTransitionConflict:
+                pass
+        finally:
+            if trace_id_bound:
+                cv.unbind_contextvars("trace_id")
 
     def _track_task(
         self,

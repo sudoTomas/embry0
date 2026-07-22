@@ -53,6 +53,33 @@ async def create_job(
         job = await jobs.get(job_id)
         return job or {"job_id": job_id}
 
+    # EMB-50: onboard pipeline — analyze the repo + generate its qa.yaml into
+    # the external config store. Issue-less, like qa; branch defaults to main.
+    if req.pipeline == "onboard":
+        executor = getattr(request.app.state, "issue_executor", None)
+        if executor is None:
+            raise HTTPException(status_code=503, detail="executor not initialized")
+        branch = req.branch or "main"
+        try:
+            job_id = await executor.start_onboard_job(
+                repo=req.repo,
+                branch=branch,
+                skip_smoke=req.skip_smoke,
+                agent_models=req.agent_models,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        config = request.app.state.config
+        await emit_audit(
+            getattr(request.app.state, "db", None),
+            "onboard_job_created",
+            actor=request.client.host if request.client else "api",
+            details={"job_id": job_id, "repo": req.repo, "branch": branch},
+            audit_log_path=config.audit_log_path,
+        )
+        job = await jobs.get(job_id)
+        return job or {"job_id": job_id}
+
     # Legacy issue-to-pr path. ``task`` non-empty is enforced at the schema
     # layer (JobCreateRequest._enforce_task_for_non_qa) — assertion below is a
     # safety net for type checkers.
