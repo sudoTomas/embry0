@@ -50,8 +50,12 @@ async def resolve_git_identity(prefs_repo: Any | None, repo: str) -> GitIdentity
         return identity
     if not pref:
         return identity
-    name = pref.get("git_author_name") or identity.name
-    email = pref.get("git_author_email") or identity.email
+    # Only non-empty strings override — a malformed row (or a non-dict-like
+    # stub in tests) must degrade to the default, never into the git config.
+    raw_name = pref.get("git_author_name")
+    raw_email = pref.get("git_author_email")
+    name = raw_name if isinstance(raw_name, str) and raw_name.strip() else identity.name
+    email = raw_email if isinstance(raw_email, str) and raw_email.strip() else identity.email
     if (name, email) != (identity.name, identity.email):
         logger.info("git_identity_overridden_by_prefs", repo=repo, name=name, email=email)
     return GitIdentity(name=name, email=email)

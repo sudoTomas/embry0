@@ -50,6 +50,12 @@ async def test_fetch_failure_falls_back_to_default():
     assert identity == default_git_identity()
 
 
+async def test_non_string_and_blank_values_degrade_to_default():
+    prefs = _FakePrefsRepo({"git_author_name": 42, "git_author_email": "   "})
+    identity = await resolve_git_identity(prefs, "owner/repo")
+    assert identity == default_git_identity()
+
+
 async def test_empty_repo_skips_lookup():
     prefs = _FakePrefsRepo({"git_author_email": "bot@raven-cargo.com"})
     identity = await resolve_git_identity(prefs, "")
