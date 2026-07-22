@@ -19,6 +19,12 @@ how to know they're up, and what "passing" means.
 > [`repo-configs/README.md`](../repo-configs/README.md). Per-app
 > `apps/<name>/.embry0/app.yaml` overrides still come from the repo tree in
 > both cases.
+>
+> **Onboarding an existing repo (EMB-50):** `embry0 onboard <owner/repo>`
+> runs the onboarding agent — it analyzes the repo, drafts this file,
+> validates it (schema + a boot/ready-check smoke run), and writes it into
+> the store. Manual store writes: `PUT /api/v1/repos/{owner}/{repo}/qa-config`
+> (schema-validated).
 
 > **v1 is dead.** The old single-app schema (`version: 1`, top-level `mode` /
 > `startup:` / `frontend_url`) is read **only** by the migrator. Convert with

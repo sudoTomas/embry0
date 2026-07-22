@@ -30,5 +30,17 @@ Compose mounts this directory read-only into the orchestrator at
 restart needed. Outside compose, set `EMBRY0_QA_CONFIG_DIR` yourself; unset
 means the store is disabled.
 
+## Writing configs
+
+Three ways a config lands here:
+
+1. **Onboarding agent (EMB-50):** `embry0 onboard <owner/repo>` — analyzes
+   the repo, drafts qa.yaml v2, validates it (schema + boot/ready smoke),
+   and writes it here on success.
+2. **API:** `PUT /api/v1/repos/{owner}/{repo}/qa-config` with the raw YAML
+   body — schema-validated before the write. `GET`/`DELETE` round it out.
+3. **By hand:** drop the file in the layout above. No validation until the
+   next QA run — prefer the API.
+
 Phase 2 (planned) moves the store into Postgres with a dashboard editor;
 this directory then becomes seed/backup.

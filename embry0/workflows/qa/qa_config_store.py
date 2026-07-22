@@ -3,7 +3,7 @@
 Per-repo qa.yaml v2 files can live on the embry0 side instead of in the
 target repo: ``<store>/<owner>__<repo>/qa.yaml``, where ``<store>`` is the
 directory named by ``EMBRY0_QA_CONFIG_DIR`` (compose mounts the repo-root
-``repo-configs/`` there, read-only). When a file exists for the repo it
+``repo-configs/`` there). When a file exists for the repo it
 REPLACES the in-repo ``.embry0/qa.yaml`` — no merge, exactly one source of
 truth per repo. Absent, the in-repo file remains the source, so existing
 integrations are unchanged.
@@ -24,9 +24,10 @@ logger = structlog.get_logger(__name__)
 
 QA_CONFIG_DIR_ENV = "EMBRY0_QA_CONFIG_DIR"
 
-# owner/name, each segment a plain GitHub-ish slug. Anything else (path
-# separators, "..") must not be able to steer the filesystem lookup.
-_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+# owner/name, each segment a plain GitHub-ish slug starting alphanumeric —
+# path separators and dot-leading segments ("..") must not be able to steer
+# the filesystem lookup.
+_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
 def external_qa_config_path(repo: str) -> Path | None:
@@ -55,3 +56,24 @@ def load_external_qa_yaml(repo: str) -> str | None:
     text = path.read_text(encoding="utf-8")
     logger.info("qa_config_external_store_hit", repo=repo, path=str(path))
     return text
+
+
+def save_external_qa_yaml(repo: str, text: str) -> Path:
+    """Write ``text`` as the repo's external config (EMB-50 onboarding).
+
+    Atomic (tmp file + rename) so a concurrently-starting QA run never reads
+    a half-written config. Raises ValueError when the store is disabled or
+    ``repo`` is unsafe — callers gate activation on this succeeding, so a
+    silent no-op would report a config as active that was never stored.
+    """
+    path = external_qa_config_path(repo)
+    if path is None:
+        raise ValueError(
+            f"external QA config store is disabled ({QA_CONFIG_DIR_ENV} unset) or repo {repo!r} is not owner/name"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".yaml.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+    logger.info("qa_config_external_store_write", repo=repo, path=str(path))
+    return path

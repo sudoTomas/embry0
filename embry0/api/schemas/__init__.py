@@ -113,7 +113,7 @@ class JobCreateRequest(BaseModel):
     # in the handler when pipeline != 'qa'.
     task: str | None = Field(default=None, max_length=50000)
     issue_number: int | None = None
-    pipeline: Literal["issue-to-pr", "qa"] | None = None
+    pipeline: Literal["issue-to-pr", "qa", "onboard"] | None = None
     branch: str | None = Field(default=None, max_length=255)
     qa: QAJobOverrides | None = None
     context: JobContext | None = None
@@ -132,6 +132,9 @@ class JobCreateRequest(BaseModel):
     )
     execution_mode_override: str | None = None
     auth_mode_override: str | None = None
+    # EMB-50, onboard pipeline only: skip the boot/ready-check smoke phase
+    # (schema validation still gates the store write).
+    skip_smoke: bool = False
 
     @field_validator("repo")
     @classmethod
@@ -151,7 +154,7 @@ class JobCreateRequest(BaseModel):
         handler synthesizes a placeholder. All other pipelines (issue-to-pr, custom
         templates) still need a task to drive triage / dispatch.
         """
-        if self.pipeline != "qa":
+        if self.pipeline not in ("qa", "onboard"):
             if self.task is None or not self.task.strip():
                 raise ValueError("task is required and must be non-empty for non-qa pipelines")
         return self
@@ -166,9 +169,9 @@ class JobCreateRequest(BaseModel):
         - both             -> must be git + matching repo, else reject
         - neither          -> context = {none}
         """
-        if self.pipeline == "qa":
+        if self.pipeline in ("qa", "onboard"):
             if self.repo is None:
-                raise ValueError("repo is required for pipeline=qa")
+                raise ValueError(f"repo is required for pipeline={self.pipeline}")
             return self
         if self.context is not None and self.repo is not None:
             if self.context.type != ContextType.git or self.context.repo != self.repo:

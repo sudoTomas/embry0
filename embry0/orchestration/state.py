@@ -278,6 +278,12 @@ class JobState(TypedDict, total=False):
     developer_focus_files: list[str]
     qa_rerun_reason: str | None
     pending_user_question: str | None
+    # EMB-50 onboard pipeline: analysis sandbox id, round counter, draft
+    # qa.yaml text/parsed, smoke results, final_status. Owned entirely by
+    # embry0/workflows/onboard/nodes.py; absent on other pipelines.
+    onboard: dict[str, Any] | None
+    # EMB-50: skip the boot/ready smoke phase (onboard jobs, --no-smoke).
+    skip_smoke: bool
 
 
 class QAAttempt(TypedDict, total=False):

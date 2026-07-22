@@ -5,6 +5,7 @@ from typing import Any
 import structlog
 
 from embry0.storage.database import DatabasePool
+from embry0.workflows.onboard.agent_seed import SYSTEM_PROMPT as _ONBOARDING_SYSTEM_PROMPT
 from embry0.workflows.qa.agent_seed import SYSTEM_PROMPT as _QA_SYSTEM_PROMPT
 
 logger = structlog.get_logger(__name__)
@@ -114,6 +115,25 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
                 "args": ["--headless", "--browser", "chromium"],
             }
         },
+    },
+    "onboarding": {
+        # MUST stay in sync with embry0/workflows/onboard/agent_seed.py::
+        # ONBOARDING_AGENT_SEED (test_onboarding_seed_in_sync enforces this).
+        # is_builtin is set by seed_onboarding_agent's trailing direct SQL.
+        "description": (
+            "Analyzes an existing repository (read-only clone) and drafts the "
+            "schema-v2 qa.yaml that ports it into the QA pipeline: workspace "
+            "layout, boot commands, ports, ready checks, acceptance criteria. "
+            "Output is validated + smoke-tested by the onboard workflow and "
+            "written to the external config store."
+        ),
+        "model": "claude-sonnet-4-6",
+        "tools": ["Read", "Glob", "Grep", "Bash", "Write"],
+        "skills": [],
+        "system_prompt": _ONBOARDING_SYSTEM_PROMPT,
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
     },
 }
 

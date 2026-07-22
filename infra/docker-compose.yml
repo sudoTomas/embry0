@@ -49,7 +49,8 @@ services:
     volumes:
       - dind-certs-client:/certs/client:ro
       - orchestrator-data:/data
-      - ../repo-configs:/data/repo-configs:ro
+      # rw: the EMB-50 onboarding pipeline writes generated configs here.
+      - ../repo-configs:/data/repo-configs
     depends_on:
       postgres:
         condition: service_healthy
