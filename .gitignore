@@ -46,3 +46,7 @@ Thumbs.db
 snapshot.md
 snap*.md
 .env.qa-seed
+
+# EMB-48: external per-repo QA config store — real configs never enter git
+repo-configs/*
+!repo-configs/README.md

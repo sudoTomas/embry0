@@ -10,6 +10,16 @@ how to know they're up, and what "passing" means.
 - **Worked examples:** `tests/fixtures/qa-yaml-corpus/v2/` and
   `tests/fixtures/toy-monorepo/.embry0/qa.yaml`.
 
+> **External config store (EMB-48).** The file does not have to live in the
+> target repo: an embry0-side `repo-configs/<owner>__<repo>/qa.yaml` (same v2
+> schema, gitignored, mounted into the orchestrator via
+> `EMBRY0_QA_CONFIG_DIR`) **replaces** the in-repo file entirely when present
+> — no merge, exactly one source of truth per repo. Absent, the in-repo file
+> is used, so existing integrations run unchanged. See
+> [`repo-configs/README.md`](../repo-configs/README.md). Per-app
+> `apps/<name>/.embry0/app.yaml` overrides still come from the repo tree in
+> both cases.
+
 > **v1 is dead.** The old single-app schema (`version: 1`, top-level `mode` /
 > `startup:` / `frontend_url`) is read **only** by the migrator. Convert with
 > `embry0 migrate-qa-config` (`--write` backs the old file up to
@@ -22,9 +32,12 @@ how to know they're up, and what "passing" means.
 1. You create a QA job: `POST /api/v1/jobs` with `{repo, pipeline:"qa", branch}`
    (or QA runs automatically as the verify stage of an issue→PR job when triage
    sets `needs_qa=true`).
-2. The orchestrator boots a bootstrap sandbox, clones the repo at `branch`,
-   `cat`s `/workspace/.embry0/qa.yaml`, and validates it against the v2 schema.
-   A schema error fails the run with `qa.yaml v2 parse failed: …`.
+2. The orchestrator boots a bootstrap sandbox and clones the repo at `branch`.
+   The config comes from the external store when one exists for the repo
+   (`$EMBRY0_QA_CONFIG_DIR/<owner>__<repo>/qa.yaml` — replaces the in-repo
+   file); otherwise it `cat`s `/workspace/.embry0/qa.yaml`. Either way the
+   text is validated against the v2 schema; a schema error fails the run
+   with `qa.yaml v2 parse failed: …`.
 3. The **workspace provider** diffs the branch against its `affected_filter`
    base and computes the **affected set** — which declared apps changed, directly
    or via a changed shared package.
