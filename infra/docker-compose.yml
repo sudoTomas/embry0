@@ -60,6 +60,8 @@ services:
         condition: service_completed_successfully
       init-push-images:
         condition: service_completed_successfully
+      init-repo-configs:
+        condition: service_completed_successfully
       minio:
         condition: service_started
     deploy:
@@ -197,6 +199,18 @@ services:
         max-size: "50m"
         max-file: "5"
     restart: unless-stopped
+
+  # One-shot: the repo-configs bind mount is created host-side (owner = the
+  # operator's uid) but written by the orchestrator container (uid 1000, the
+  # Dockerfile.orchestrator useradd). Chown it at stack start so the EMB-50
+  # onboard pipeline can write generated configs on any fresh deploy.
+  init-repo-configs:
+    image: busybox:1.36
+    container_name: embry0-init-repo-configs
+    command: ["sh", "-c", "chown 1000 /data/repo-configs && chmod u+rwx /data/repo-configs"]
+    volumes:
+      - ../repo-configs:/data/repo-configs
+    restart: "no"
 
   init-sandbox-networks:
     image: docker:27-cli
