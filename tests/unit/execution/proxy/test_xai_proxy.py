@@ -106,3 +106,53 @@ async def test_unenroll_revokes_bearer(xai_client: TestClient):
         headers={"Authorization": f"Bearer {_SANDBOX_TOKEN}"},
     )
     assert resp.status == 401
+
+
+# ---------------------------------------------------------------------------
+# EMB-46: outbound tool-schema normalization — xAI rejects input_schema
+# without a `required` array, and the Claude CLI's builtin schemas omit it.
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_adds_required_when_absent_or_null():
+    import json
+
+    from embry0.execution.proxy.xai_proxy import _normalize_tool_schemas
+
+    body = json.dumps(
+        {
+            "model": "grok-4.5",
+            "tools": [
+                {"name": "a", "input_schema": {"type": "object", "properties": {}}},
+                {"name": "b", "input_schema": {"type": "object", "required": None}},
+                {"name": "c", "input_schema": {"type": "object", "required": ["x"]}},
+                {"type": "web_search_20250305", "name": "web_search"},
+                "not-a-dict",
+            ],
+            "messages": [],
+        }
+    ).encode()
+    out = json.loads(_normalize_tool_schemas(body))
+    assert out["tools"][0]["input_schema"]["required"] == []
+    assert out["tools"][1]["input_schema"]["required"] == []
+    assert out["tools"][2]["input_schema"]["required"] == ["x"]
+    assert "input_schema" not in out["tools"][3]  # server tools untouched
+    assert out["messages"] == []
+
+
+def test_normalize_returns_same_object_when_clean():
+    import json
+
+    from embry0.execution.proxy.xai_proxy import _normalize_tool_schemas
+
+    body = json.dumps(
+        {"model": "grok-4.5", "tools": [{"name": "a", "input_schema": {"type": "object", "required": []}}]}
+    ).encode()
+    assert _normalize_tool_schemas(body) is body
+
+
+def test_normalize_passes_through_non_json_and_toolless_bodies():
+    from embry0.execution.proxy.xai_proxy import _normalize_tool_schemas
+
+    for body in (b"\x00\x01binary", b'{"model": "grok-4.5", "messages": []}', b'["list"]'):
+        assert _normalize_tool_schemas(body) is body
