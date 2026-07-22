@@ -27,6 +27,7 @@ COPY embry0/execution/proxy/git_proxy.py          /app/embry0/execution/proxy/gi
 COPY embry0/execution/proxy/github_proxy.py       /app/embry0/execution/proxy/github_proxy.py
 COPY embry0/execution/proxy/minio_proxy.py        /app/embry0/execution/proxy/minio_proxy.py
 COPY embry0/execution/proxy/presign_proxy.py      /app/embry0/execution/proxy/presign_proxy.py
+COPY embry0/execution/proxy/xai_proxy.py          /app/embry0/execution/proxy/xai_proxy.py
 COPY embry0/execution/proxy/server.py             /app/embry0/execution/proxy/server.py
 
 # Health check via the proxy's own /health endpoint. Use Python's urllib since
