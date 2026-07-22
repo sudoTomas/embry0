@@ -17,7 +17,11 @@ This executor re-supplies everything the CLI gave for free and must match its se
 - Messages-list conversation capture for the resume fallback (no CLI JSONL session for grok).
 - ask_user parity via the existing Bash-helper + embedded-event recovery.
 
-QA / Playwright MCP is Phase C — this executor offers only the builtin filesystem tools.
+MCP (Phase C): when the invocation declares ``mcp_servers``, each stdio server is
+spawned via :mod:`embry0.agents.mcp_client`, its tools are exposed to the model as
+``mcp__<server>__<tool>`` (filtered to the agent allowlist), and matching tool_use
+blocks are routed to the server — gated by the same ``gate_tool_call`` first. This
+is what lets grok QA agents drive Playwright.
 """
 
 from __future__ import annotations
@@ -37,10 +41,19 @@ from embry0.agents.executor import (
     _workspace_root,
 )
 from embry0.agents.invocation import AgentInvocation
+from embry0.agents.mcp_client import (
+    MCP_TOOL_PREFIX,
+    McpClientError,
+    McpStdioClient,
+    anthropic_tool_defs,
+    call_mcp_tool,
+    summarize_content,
+)
 from embry0.agents.providers import provider_for_model
 from embry0.agents.xai_tools import BUILTIN_TOOL_NAMES, execute_tool, tool_defs
 from embry0.execution.agent_runner import AgentOutput
 from embry0.safety.policy import gate_tool_call
+from embry0.sandbox.xai_token import XAI_PROXY_TOKEN_REL as _PROXY_TOKEN_REL
 
 if TYPE_CHECKING:
     from langchain_core.runnables.config import RunnableConfig
@@ -48,9 +61,6 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _MAX_TOKENS_PER_TURN = 8192
-# In-sandbox path the init node writes the per-sandbox proxy bearer to. Home-relative
-# so it agrees with the writer regardless of the container's default user.
-_PROXY_TOKEN_REL = ".embry0/xai_proxy_token"
 
 _SYSTEM_PROMPT_BASE = """You are an autonomous software engineering agent operating inside \
 an isolated sandbox. Your working directory is /workspace. Use the provided tools to inspect \
@@ -77,6 +87,27 @@ def _make_client(base_url: str, auth_token: str) -> Any:
     from anthropic import AsyncAnthropic
 
     return AsyncAnthropic(base_url=base_url, auth_token=auth_token, max_retries=2)
+
+
+def _make_mcp_client(server_name: str, server_cfg: Any) -> McpStdioClient:
+    """Build (not start) the stdio client for one ``mcp_servers`` entry.
+
+    Module-level seam tests monkeypatch to inject a fake. Only stdio transport is
+    supported — the per-sandbox server lifecycle is tied to this process.
+    """
+    cfg = server_cfg if isinstance(server_cfg, dict) else {}
+    transport = str(cfg.get("type", "stdio"))
+    if transport != "stdio":
+        raise McpClientError(f"mcp server {server_name!r}: unsupported transport {transport!r} (only stdio)")
+    command = str(cfg.get("command", ""))
+    if not command:
+        raise McpClientError(f"mcp server {server_name!r}: no command configured")
+    return McpStdioClient(
+        server_name,
+        command,
+        args=[str(a) for a in cfg.get("args") or []],
+        env={str(k): str(v) for k, v in (cfg.get("env") or {}).items()},
+    )
 
 
 def _read_proxy_token() -> str:
@@ -133,6 +164,23 @@ class DirectXaiExecutor:
 
         allowed = [t for t in invocation.tools if t in BUILTIN_TOOL_NAMES]
         defs = tool_defs(allowed)
+
+        # Phase C: spawn declared MCP stdio servers and expose their tools. Fail
+        # loud — an agent whose config declares MCP (the QA agent) cannot do its
+        # job without it, so a broken server is a job error, not a degraded run.
+        mcp_clients: dict[str, McpStdioClient] = {}
+        if invocation.mcp_servers:
+            try:
+                for server_name, server_cfg in invocation.mcp_servers.items():
+                    mcp = _make_mcp_client(server_name, server_cfg)
+                    mcp_clients[server_name] = mcp
+                    await mcp.start()
+                    defs.extend(anthropic_tool_defs(server_name, await mcp.list_tools(), invocation.tools))
+            except Exception as exc:
+                await _close_mcp_clients(mcp_clients)
+                message = f"MCP server startup failed: {exc}"
+                writer({"type": "error", "error": message})
+                return _error_output(agent_type, message)
 
         system = _SYSTEM_PROMPT_BASE
         if invocation.system_prompt:
@@ -246,15 +294,21 @@ class DirectXaiExecutor:
                         )
                         continue
 
-                    result_text, tool_err = execute_tool(name, tool_input, cwd=cwd)
-                    # ask_user parity: the Bash ask_user helper prints its event to stdout,
-                    # which lands in this tool result — recover + re-emit it (EMB-44).
-                    if name == "Bash":
-                        for embedded in _extract_embedded_ask_user_events(result_text):
-                            embedded["node"] = agent_type
-                            writer(embedded)
+                    result_content: str | list[dict[str, Any]]
+                    if name.startswith(MCP_TOOL_PREFIX):
+                        result_content, tool_err = await call_mcp_tool(mcp_clients, name, tool_input)
+                        result_text = summarize_content(result_content)
+                    else:
+                        result_text, tool_err = execute_tool(name, tool_input, cwd=cwd)
+                        result_content = result_text
+                        # ask_user parity: the Bash ask_user helper prints its event to stdout,
+                        # which lands in this tool result — recover + re-emit it (EMB-44).
+                        if name == "Bash":
+                            for embedded in _extract_embedded_ask_user_events(result_text):
+                                embedded["node"] = agent_type
+                                writer(embedded)
                     results.append(
-                        {"type": "tool_result", "tool_use_id": tool_id, "content": result_text, "is_error": tool_err}
+                        {"type": "tool_result", "tool_use_id": tool_id, "content": result_content, "is_error": tool_err}
                     )
                     writer(
                         {
@@ -282,6 +336,7 @@ class DirectXaiExecutor:
             writer({"type": "error", "error": error_message})
         finally:
             await client.close()
+            await _close_mcp_clients(mcp_clients)
 
         elapsed_ms = int((time.time() - started) * 1000)
         cost = _compute_cost(invocation.model, totals["in"], totals["out"])
@@ -339,6 +394,15 @@ class DirectXaiExecutor:
             }
         )
         return result
+
+
+async def _close_mcp_clients(clients: dict[str, McpStdioClient]) -> None:
+    """Best-effort teardown — a close failure must not mask the run's outcome."""
+    for server_name, mcp in clients.items():
+        try:
+            await mcp.close()
+        except Exception:
+            logger.warning("mcp_client_close_failed", server=server_name, exc_info=True)
 
 
 def _error_output(agent_type: str, message: str) -> AgentOutput:

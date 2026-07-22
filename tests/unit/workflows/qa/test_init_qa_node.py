@@ -83,6 +83,7 @@ async def test_init_qa_validates_qa_yaml_and_creates_network():
 
     proxy_mgr = MagicMock()
     proxy_mgr.git_proxy_url = "http://git-proxy:9101"
+    proxy_mgr.xai_proxy_url = ""  # xai-proxy off — no bearer-file write in the call sequence
 
     state = {
         "job_id": "JOB1",
@@ -205,6 +206,7 @@ async def test_init_qa_process_mode_skips_qa_net():
     # (and we don't need a regex-valid sandbox token).
     proxy_mgr = MagicMock()
     proxy_mgr.git_proxy_url = ""
+    proxy_mgr.xai_proxy_url = ""
 
     state = {
         "job_id": "JOB2",
