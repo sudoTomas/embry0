@@ -791,6 +791,7 @@ async def _qa_orchestrator_node_impl(
         repo=state.get("repo") or "",
         branch_name=state.get("branch_name"),
         user_env_vars=state.get("user_env_vars"),
+        agent_models_override=state.get("agent_models_override"),
         image_tag=image_tag,
         shared_volume_name=shared_volume_name,
         turbo_remote_enabled=cfg.cache.turbo_remote.enabled,

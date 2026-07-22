@@ -36,6 +36,10 @@ class SubTaskState(TypedDict, total=False):
     repo: str
     branch_name: str | None
     user_env_vars: list[dict[str, str]] | dict[str, str] | None
+    # Per-agent model override from job creation (JobCreateRequest.agent_models).
+    # Sub-task states are built fresh per app, so the parent's override must be
+    # threaded explicitly for run_agent_node to see it.
+    agent_models_override: dict[str, str] | None
     prebaked_image_tag: str | None
     # Phase-2 C3: shared-volume cache layer.  Set by qa_orchestrator_node when
     # cfg.cache.shared_volume.enabled and the volume has been warmed.  When set,
@@ -92,6 +96,7 @@ def initial_state_for_app(
     repo: str,
     branch_name: str | None = None,
     user_env_vars: Any = None,
+    agent_models_override: dict[str, str] | None = None,
     prebaked_image_tag: str | None = None,
     shared_volume_name: str | None = None,
     turbo_remote_enabled: bool = False,
@@ -103,6 +108,7 @@ def initial_state_for_app(
         "repo": repo,
         "branch_name": branch_name,
         "user_env_vars": user_env_vars,
+        "agent_models_override": agent_models_override,
         "prebaked_image_tag": prebaked_image_tag,
         "shared_volume_name": shared_volume_name,
         "turbo_remote_enabled": turbo_remote_enabled,

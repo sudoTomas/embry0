@@ -38,6 +38,7 @@ async def create_job(
                 branch=req.branch,
                 pipeline="qa",
                 qa_overrides=qa_overrides,
+                agent_models=req.agent_models,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

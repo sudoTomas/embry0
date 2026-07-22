@@ -254,6 +254,11 @@ class JobState(TypedDict, total=False):
     # (key/value/scope); scope is 'app' or 'qa'. The legacy plain-dict shape is
     # still accepted by _filter_user_env_for_sandbox for backwards compatibility.
     user_env_vars: list[dict[str, str]] | dict[str, str]
+    # Per-job agent model override (JobCreateRequest.agent_models), surfaced on
+    # state by IssueExecutor and read by run_agent_node. Top-level key — MUST
+    # stay declared here or LangGraph's state-merge reducer silently drops it
+    # (it did exactly that until this declaration was added).
+    agent_models_override: dict[str, str]
     # Set True by Phase 2's QA pipeline when running QA jobs; gates injection
     # of scope='qa' user env vars at the sandbox boundary. Defaults to False.
     qa_active: bool

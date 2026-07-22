@@ -1204,3 +1204,48 @@ async def test_boot_app_node_empty_stdout_yields_empty_turbo_lists():
     partial = out["cache_hits_partial"]
     assert partial["turbo_remote_hits"] == []
     assert partial["turbo_remote_misses"] == []
+
+
+# ---------------------------------------------------------------------------
+# agent_models_override threading (EMB-45): job-level model override must
+# reach the sub-task's qa agent — sub-task states are fresh dicts per app.
+# ---------------------------------------------------------------------------
+
+
+def test_initial_state_for_app_carries_agent_models_override():
+    from embry0.workflows.qa.subtask_state import initial_state_for_app
+
+    state = initial_state_for_app(
+        resolved=_resolved_app("hub"),
+        parent_run_id="job-1",
+        repo="o/r",
+        agent_models_override={"qa": "grok-4.5"},
+    )
+    assert state["agent_models_override"] == {"qa": "grok-4.5"}
+
+
+@pytest.mark.asyncio
+async def test_exploratory_qa_node_forwards_agent_models_override():
+    """The pseudo_state handed to legacy qa_node must carry the override —
+    run_agent_node reads it off the state it is given."""
+    from embry0.workflows.qa.subtask_nodes import exploratory_qa_node
+
+    captured: dict = {}
+
+    async def fake_qa_node(state, config):
+        captured.update(state)
+        return {"agent_outputs": []}
+
+    state = {
+        "status": None,
+        "resolved": _resolved_app("hub"),
+        "parent_run_id": "job-77",
+        "repo": "o/r",
+        "branch_name": "main",
+        "sandbox_id": "cid-x",
+        "agent_models_override": {"qa": "grok-4.5"},
+    }
+    with patch("embry0.workflows.qa.nodes.qa_node", fake_qa_node):
+        await exploratory_qa_node(state, {})
+
+    assert captured["agent_models_override"] == {"qa": "grok-4.5"}

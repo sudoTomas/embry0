@@ -580,7 +580,7 @@ async def exploratory_qa_node(state: SubTaskState, config: RunnableConfig) -> di
             "completed_at": time.monotonic(),
         }
 
-    pseudo_state = {
+    pseudo_state: dict[str, Any] = {
         "job_id": sub_job_id,
         "sandbox_container_id": sandbox_id,
         "qa": {
@@ -603,6 +603,9 @@ async def exploratory_qa_node(state: SubTaskState, config: RunnableConfig) -> di
         },
         "repo": state["repo"],
         "branch_name": state.get("branch_name") or "main",
+        # run_agent_node reads the per-job model override off the state it is
+        # handed — forward it or grok-QA jobs silently run the seed model.
+        "agent_models_override": state.get("agent_models_override"),
         "agent_outputs": [],
     }
 
