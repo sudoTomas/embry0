@@ -199,6 +199,34 @@ def _warn_and_audit_dev_mode(flag_name: str, audit_log_path: object) -> None:
 _XAI_TOKEN_PUSH_INTERVAL_SECONDS = 600
 
 
+async def _push_initial_xai_token(
+    refresher: object,
+    proxy_mgr: object,
+    *,
+    attempts: int = 5,
+    delay_seconds: float = 2.0,
+) -> None:
+    """Push the first access token to the just-(re)created xai-proxy, with retries.
+
+    The proxy container's listener can lag the docker-run return by a moment, so a
+    single immediate push races it (observed: connection-refused ~200ms after
+    start on 2 of 3 boots). A failed initial push isn't fatal — the 10-minute
+    refresh loop self-heals — but it leaves grok 503ing until that first tick,
+    so retry briefly instead.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            token = await refresher.ensure_fresh()  # type: ignore[attr-defined]
+            await proxy_mgr.push_xai_token(token)  # type: ignore[attr-defined]
+            return
+        except Exception as exc:
+            if attempt == attempts:
+                logger.error("xai_proxy_initial_token_push_failed", error=str(exc), attempts=attempts)
+                return
+            logger.warning("xai_proxy_initial_token_push_retry", attempt=attempt, error=str(exc))
+            await asyncio.sleep(delay_seconds)
+
+
 async def _xai_token_refresh_loop(refresher: object, proxy_mgr: object) -> None:
     """Periodically refresh the SuperGrok access token and push it to the xai-proxy.
 
@@ -681,11 +709,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Provision the xai-proxy with an initial access token so the first grok request
     # doesn't race the background refresh loop.
     if app.state.xai_refresher is not None:
-        try:
-            token = await app.state.xai_refresher.ensure_fresh()
-            await proxy_mgr.push_xai_token(token)
-        except Exception as exc:
-            logger.error("xai_proxy_initial_token_push_failed", error=str(exc))
+        await _push_initial_xai_token(app.state.xai_refresher, proxy_mgr)
 
     # Clean up orphaned sandbox containers from previous lifecycle
     try:
