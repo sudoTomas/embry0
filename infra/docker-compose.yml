@@ -36,6 +36,10 @@ services:
       DOCKER_CERT_PATH: /certs/client
       AUDIT_LOG_PATH: /data/audit.jsonl
       TZ: "${TZ:-America/New_York}"
+      # EMB-48: external per-repo QA config store (repo-root repo-configs/,
+      # gitignored). A <owner>__<repo>/qa.yaml there replaces the target
+      # repo's in-tree .embry0/qa.yaml.
+      EMBRY0_QA_CONFIG_DIR: /data/repo-configs
     env_file: ../.env
     expose:
       - "8000"
@@ -45,6 +49,7 @@ services:
     volumes:
       - dind-certs-client:/certs/client:ro
       - orchestrator-data:/data
+      - ../repo-configs:/data/repo-configs:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -138,10 +138,17 @@ async def init_orchestrator_node(
             qa_net="",
             base=base,
         )
-        yaml_text = await docker.run_cmd(
-            docker.build_exec_cmd(container_id, ["cat", "/workspace/.embry0/qa.yaml"]),
-            timeout=10,
-        )
+        # EMB-48: an external embry0-side config REPLACES the in-repo file
+        # (no merge — one source of truth per repo). In-repo stays the
+        # fallback so existing integrations run unchanged.
+        from embry0.workflows.qa.qa_config_store import load_external_qa_yaml
+
+        yaml_text = load_external_qa_yaml(repo)
+        if yaml_text is None:
+            yaml_text = await docker.run_cmd(
+                docker.build_exec_cmd(container_id, ["cat", "/workspace/.embry0/qa.yaml"]),
+                timeout=10,
+            )
         # Phase-2 C3: read lockfile while bootstrap container is still alive.
         # We compute the sha here so the warmer can use it without a second
         # clone.  Failures are non-fatal — lockfile_text stays "" and the

@@ -467,6 +467,62 @@ async def test_init_orchestrator_node_writes_yaml_to_state(monkeypatch):
     assert sb.last_env.get("QA_ATTEMPT_N") == "1"
 
 
+async def test_init_orchestrator_node_prefers_external_store(monkeypatch, tmp_path):
+    """EMB-48: an external repo-configs entry replaces the in-repo qa.yaml —
+    the sandbox cat must not even run."""
+    from embry0.workflows.qa.qa_config_store import QA_CONFIG_DIR_ENV
+
+    external_yaml = _QA_YAML_V2.replace("version: 2", "version: 2  # external")
+    cfg_dir = tmp_path / "acme__ext"
+    cfg_dir.mkdir()
+    (cfg_dir / "qa.yaml").write_text(external_yaml, encoding="utf-8")
+    monkeypatch.setenv(QA_CONFIG_DIR_ENV, str(tmp_path))
+
+    class _Sb:
+        async def create(self, job_id, profile, env, repo=None):
+            return f"sb-{job_id}", "tok-" + "A" * 40
+
+        async def destroy(self, container_id):
+            return None
+
+    class _Profiles:
+        async def get(self, name):
+            return {"name": "slim", "extra_networks": []}
+
+    class _Docker:
+        def __init__(self):
+            self.calls = []
+
+        def _build_base_cmd(self):
+            return ["docker"]
+
+        def build_exec_cmd(self, cid, cmd):
+            return ["docker", "exec", cid, *cmd]
+
+        async def run_cmd(self, cmd, timeout=None):
+            self.calls.append(cmd)
+            joined = " ".join(cmd)
+            if "rev-parse HEAD" in joined:
+                return "abc123\n"
+            assert "/workspace/.embry0/qa.yaml" not in joined, "in-repo cat must be skipped on a store hit"
+            return ""
+
+    docker = _Docker()
+    state = {"job_id": "run-ext", "repo": "acme/ext", "branch_name": "main", "qa": {}}
+    config = {
+        "configurable": {
+            "docker": docker,
+            "sandbox_manager": _Sb(),
+            "profiles_repo": _Profiles(),
+            "proxy_manager": None,
+        }
+    }
+    out = await init_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["qa_yaml_v2_raw"] == external_yaml
+    assert qa["qa_yaml_v2_parsed"]["version"] == 2
+
+
 @pytest.mark.asyncio
 async def test_qa_orchestrator_short_circuits_on_init_failure(monkeypatch):
     """If init_orchestrator_node already wrote outcome=infra_error, the
