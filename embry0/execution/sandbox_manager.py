@@ -163,6 +163,12 @@ class SandboxManager:
         _xai_proxy_url = getattr(self._proxy_manager, "xai_proxy_url", "")
         if _xai_proxy_url:
             env["EMBRY0_XAI_PROXY_URL"] = _xai_proxy_url
+            # EMB-46: opt-in fallback switch — routes grok to the CLI-free
+            # DirectXaiExecutor instead of the default SDK-over-proxy path.
+            # Orchestrator-env driven (XAI_DIRECT_EXECUTOR=true in .env),
+            # reserved key at the sandbox boundary.
+            if _os.environ.get("XAI_DIRECT_EXECUTOR", "").lower() in ("1", "true", "yes"):
+                env["EMBRY0_XAI_DIRECT_EXECUTOR"] = "true"
 
         # Merge profile-level env_defaults (stored in DB but previously
         # never wired into the env passed to create).  Use setdefault so

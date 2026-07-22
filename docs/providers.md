@@ -48,22 +48,31 @@ lists providers with an `available` flag (key configured or not).
   dev→review loop + one QA run on grok to confirm tool-use fidelity.
   Requires `XAI_API_KEY` in the orchestrator `.env`.
 
-## Direct-xAI executor (EMB-45)
+## SuperGrok OAuth path (EMB-45/EMB-46)
 
-The OAuth-subscription path replaces the CLI subprocess for grok agents:
-when `xai_proxy_enabled=true` the orchestrator runs an `xai-proxy` sidecar
-that injects the rotating SuperGrok bearer at egress (Phase A), and any
-agent resolved to `provider == "xai"` in a sandbox that has
-`EMBRY0_XAI_PROXY_URL` routes to `DirectXaiExecutor`
-(`embry0/agents/executor_xai.py`) — an embry0-owned tool-use loop with its
-own Read/Write/Edit/Bash/Glob/Grep tools, per-call `gate_tool_call`
-enforcement, and token-based cost (Phase B). When the agent's definition
-declares `mcp_servers` (the QA agent's playwright-mcp stdio server), the
-executor spawns them via `embry0/agents/mcp_client.py`, exposes their
-tools as `mcp__<server>__<tool>` filtered to the agent allowlist, and
-routes matching tool calls over MCP — giving grok QA agents Playwright
-parity with the CLI path (Phase C). The executor authenticates to the
-proxy with the per-sandbox bearer delivered to
-`~/.embry0/xai_proxy_token` (`embry0/sandbox/xai_token.py`); with the
-proxy down, grok agents fall back to the EMB-36 CLI + `XAI_API_KEY`
-path above.
+When `xai_proxy_enabled=true` the orchestrator runs an `xai-proxy`
+sidecar that injects the rotating SuperGrok subscription bearer at
+egress; the orchestrator owns the rotating refresh token in a
+Fernet-encrypted store (seeded once from the Grok CLI's auth.json).
+Sandboxes authenticate to the proxy with a per-sandbox bearer delivered
+to `~/.embry0/xai_proxy_token` (`embry0/sandbox/xai_token.py`).
+
+**Default grok runtime (EMB-46): the Agent SDK over the proxy.** When
+the proxy is live, provider-routed grok agents run through the normal
+`SdkAgentExecutor` with a per-agent env overlay on the CLI subprocess:
+`ANTHROPIC_BASE_URL` = the proxy, `ANTHROPIC_AUTH_TOKEN` = the sandbox
+bearer, and `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` stripped — no
+Anthropic-subscription OAuth and no console key anywhere on the grok
+path, while MCP (Playwright QA), session resume, and the Ring-3 hook
+stay native.
+
+**Opt-in fallback: `XAI_DIRECT_EXECUTOR=true`** (orchestrator `.env`)
+routes grok to `DirectXaiExecutor` (`embry0/agents/executor_xai.py`)
+instead — an embry0-owned, CLI-free Messages-API tool loop with its own
+builtin tools, `gate_tool_call` enforcement, token-based cost, and an
+MCP stdio client (`embry0/agents/mcp_client.py`) for Playwright parity.
+Verified green E2E on 2026-07-22; kept as insurance against a CLI
+release breaking on xAI's compat endpoint.
+
+With the proxy down, grok agents fall back to the EMB-36 CLI +
+`XAI_API_KEY` path above.

@@ -22,6 +22,10 @@ RESERVED_ENV_KEYS: Final[frozenset[str]] = frozenset(
         # EMB-45: base_url the direct-xAI executor points its Anthropic SDK client at;
         # orchestrator-owned, never user-settable.
         "EMBRY0_XAI_PROXY_URL",
+        # EMB-46: opt-in switch routing grok to the CLI-free DirectXaiExecutor
+        # fallback instead of the default SDK-over-proxy path. Executor choice
+        # is infrastructure policy — never user-settable.
+        "EMBRY0_XAI_DIRECT_EXECUTOR",
         "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",

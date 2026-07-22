@@ -29,7 +29,6 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -53,7 +52,7 @@ from embry0.agents.providers import provider_for_model
 from embry0.agents.xai_tools import BUILTIN_TOOL_NAMES, execute_tool, tool_defs
 from embry0.execution.agent_runner import AgentOutput
 from embry0.safety.policy import gate_tool_call
-from embry0.sandbox.xai_token import XAI_PROXY_TOKEN_REL as _PROXY_TOKEN_REL
+from embry0.sandbox.xai_token import read_xai_proxy_token as _read_proxy_token
 
 if TYPE_CHECKING:
     from langchain_core.runnables.config import RunnableConfig
@@ -108,18 +107,6 @@ def _make_mcp_client(server_name: str, server_cfg: Any) -> McpStdioClient:
         args=[str(a) for a in cfg.get("args") or []],
         env={str(k): str(v) for k, v in (cfg.get("env") or {}).items()},
     )
-
-
-def _read_proxy_token() -> str:
-    """Read the per-sandbox proxy bearer (env override wins, for tests)."""
-    env = os.environ.get("EMBRY0_XAI_PROXY_TOKEN", "")
-    if env:
-        return env
-    path = os.environ.get("EMBRY0_XAI_PROXY_TOKEN_PATH") or os.path.expanduser(f"~/{_PROXY_TOKEN_REL}")
-    try:
-        return Path(path).read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
 
 
 def _compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:

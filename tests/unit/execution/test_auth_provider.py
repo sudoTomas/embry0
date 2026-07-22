@@ -47,6 +47,8 @@ def test_reserved_env_keys_export_expected_set() -> None:
         "EMBRY0_GIT_PROXY_URL",
         # EMB-45: base_url for the direct-xAI executor's proxy.
         "EMBRY0_XAI_PROXY_URL",
+        # EMB-46: opt-in switch for the CLI-free direct-executor fallback.
+        "EMBRY0_XAI_DIRECT_EXECUTOR",
         "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",

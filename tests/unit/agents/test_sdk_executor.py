@@ -694,3 +694,87 @@ async def test_sdk_executor_system_context_prepended(tmp_path, monkeypatch) -> N
 
     assert captured_prompts[0].startswith("Be careful.")
     assert "do work" in captured_prompts[0]
+
+
+# ---------------------------------------------------------------------------
+# EMB-46: provider env overlay — SDK over the xai-proxy with the SuperGrok
+# bearer by default; EMB-36 console-key fallback; fail-closed otherwise.
+# ---------------------------------------------------------------------------
+
+
+def _grok_inv(**kw):  # noqa: ANN003, ANN202
+    kw.setdefault("model", "grok-4.5")
+    kw.setdefault("provider", "xai")
+    return _inv(**kw)
+
+
+async def _run_capturing_options(inv):  # noqa: ANN001, ANN202
+    captured: dict[str, Any] = {}
+
+    def fake_query(*, prompt, options):  # noqa: ANN001, ANN202
+        captured["options"] = options
+        return _scripted_query([_FakeResultMessage("done", 0.0)])
+
+    with patch("claude_agent_sdk.query", side_effect=fake_query):
+        out = await SdkAgentExecutor().run(inv, config={"configurable": {}, "_test_writer": lambda e: None})
+    return out, captured.get("options")
+
+
+@pytest.mark.asyncio
+async def test_grok_overlay_prefers_xai_proxy_bearer(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("EMBRY0_XAI_PROXY_URL", "http://xai-proxy:9106")
+    monkeypatch.setenv("EMBRY0_XAI_PROXY_TOKEN", "sandbox-bearer")
+    monkeypatch.setenv("XAI_API_KEY", "console-key-should-be-ignored")
+
+    out, options = await _run_capturing_options(_grok_inv())
+    assert out.is_error is False
+    assert options.env == {
+        "ANTHROPIC_BASE_URL": "http://xai-proxy:9106",
+        "ANTHROPIC_AUTH_TOKEN": "sandbox-bearer",
+        "ANTHROPIC_API_KEY": "",
+        "CLAUDE_CODE_OAUTH_TOKEN": "",
+    }
+
+
+@pytest.mark.asyncio
+async def test_grok_overlay_console_key_fallback_when_proxy_down(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.delenv("EMBRY0_XAI_PROXY_URL", raising=False)
+    monkeypatch.delenv("EMBRY0_XAI_PROXY_TOKEN", raising=False)
+    monkeypatch.setenv("XAI_API_KEY", "console-key")
+
+    out, options = await _run_capturing_options(_grok_inv())
+    assert out.is_error is False
+    assert options.env["ANTHROPIC_BASE_URL"] == "https://api.x.ai"
+    assert options.env["ANTHROPIC_API_KEY"] == "console-key"
+    assert options.env["ANTHROPIC_AUTH_TOKEN"] == ""
+    assert options.env["CLAUDE_CODE_OAUTH_TOKEN"] == ""
+
+
+@pytest.mark.asyncio
+async def test_grok_overlay_fails_closed_without_any_credential(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.delenv("EMBRY0_XAI_PROXY_URL", raising=False)
+    monkeypatch.delenv("EMBRY0_XAI_PROXY_TOKEN", raising=False)
+    monkeypatch.setenv("EMBRY0_XAI_PROXY_TOKEN_PATH", str(tmp_path / "absent"))
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+
+    out, options = await _run_capturing_options(_grok_inv())
+    assert out.is_error is True
+    assert "XAI_API_KEY" in out.error_message and "xai-proxy" in out.error_message
+    assert options is None  # failed closed before any SDK call
+
+
+@pytest.mark.asyncio
+async def test_grok_overlay_ignores_stale_bearer_without_proxy_url(tmp_path, monkeypatch) -> None:
+    """A bearer without a proxy URL must not hijack the base_url — fall back to console key."""
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.delenv("EMBRY0_XAI_PROXY_URL", raising=False)
+    monkeypatch.setenv("EMBRY0_XAI_PROXY_TOKEN", "stale-bearer")
+    monkeypatch.setenv("XAI_API_KEY", "console-key")
+
+    out, options = await _run_capturing_options(_grok_inv())
+    assert out.is_error is False
+    assert options.env["ANTHROPIC_BASE_URL"] == "https://api.x.ai"
+    assert options.env["ANTHROPIC_API_KEY"] == "console-key"
