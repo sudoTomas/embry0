@@ -72,3 +72,17 @@ async def test_upsert_with_nullable_fields(prefs_repo: RepoPreferencesRepository
     assert row["sandbox_profile"] is None
     assert row["language_hint"] is None
     assert row["notes"] == ""
+    assert row["git_author_name"] is None
+    assert row["git_author_email"] is None
+
+
+@pytest.mark.asyncio
+async def test_git_identity_round_trips(prefs_repo: RepoPreferencesRepository):
+    """git_author_name/email (EMB-51, migration 41) persist and read back."""
+    row = await prefs_repo.upsert(
+        repo="acme/crm",
+        git_author_name="Raven Bot",
+        git_author_email="bot@raven-cargo.com",
+    )
+    assert row["git_author_name"] == "Raven Bot"
+    assert row["git_author_email"] == "bot@raven-cargo.com"

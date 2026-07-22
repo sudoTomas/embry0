@@ -19,7 +19,16 @@ def app():
     mock_prefs = MagicMock()
     mock_prefs.get = AsyncMock(return_value=None)
 
-    async def _upsert(repo, sandbox_profile=None, language_hint=None, notes="", execution_mode=None, auth_mode=None):
+    async def _upsert(
+        repo,
+        sandbox_profile=None,
+        language_hint=None,
+        notes="",
+        execution_mode=None,
+        auth_mode=None,
+        git_author_name=None,
+        git_author_email=None,
+    ):
         return {
             "repo": repo,
             "sandbox_profile": sandbox_profile,
@@ -27,6 +36,8 @@ def app():
             "notes": notes,
             "execution_mode": execution_mode,
             "auth_mode": auth_mode,
+            "git_author_name": git_author_name,
+            "git_author_email": git_author_email,
             "updated_at": datetime.now(UTC),
         }
 
@@ -134,3 +145,31 @@ async def test_upsert_passes_execution_and_auth_modes(app) -> None:
     kwargs = mock_prefs.upsert.call_args.kwargs
     assert kwargs["execution_mode"] == "sdk"
     assert kwargs["auth_mode"] == "api_key"
+
+
+@pytest.mark.asyncio
+async def test_git_identity_round_trips(app) -> None:
+    """git_author_name/email (EMB-51) round-trip through the API."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widget/preferences",
+            json={"git_author_name": "Raven Bot", "git_author_email": "bot@raven-cargo.com"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["git_author_name"] == "Raven Bot"
+    assert body["git_author_email"] == "bot@raven-cargo.com"
+
+
+@pytest.mark.asyncio
+async def test_git_author_email_rejects_implausible_address(app) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widget/preferences",
+            json={"git_author_email": "not-an-email"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 422

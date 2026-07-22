@@ -137,6 +137,7 @@ async def init_orchestrator_node(
             is_dind=False,
             qa_net="",
             base=base,
+            prefs_repo=configurable.get("repo_preferences_repo"),
         )
         yaml_text = await docker.run_cmd(
             docker.build_exec_cmd(container_id, ["cat", "/workspace/.embry0/qa.yaml"]),

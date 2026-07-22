@@ -5,6 +5,10 @@ export interface RepoPreferences {
   sandbox_profile: string | null;
   language_hint: string | null;
   notes: string;
+  execution_mode: string | null;
+  auth_mode: string | null;
+  git_author_name: string | null;
+  git_author_email: string | null;
   updated_at: string;
 }
 
@@ -12,6 +16,10 @@ export interface RepoPreferencesUpdate {
   sandbox_profile?: string | null;
   language_hint?: string | null;
   notes?: string;
+  execution_mode?: string | null;
+  auth_mode?: string | null;
+  git_author_name?: string | null;
+  git_author_email?: string | null;
 }
 
 export async function fetchRepoPreferences(

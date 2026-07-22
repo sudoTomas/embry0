@@ -225,6 +225,7 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
             qa_net=qa_net,
             base=base,
             cached_volume=shared_volume_name,
+            prefs_repo=configurable.get("repo_preferences_repo"),
         )
     except Exception as exc:  # noqa: BLE001
         try:
