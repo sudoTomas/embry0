@@ -338,6 +338,7 @@ class IssueExecutor:
         branch: str,
         pipeline: str,
         qa_overrides: dict[str, Any] | None = None,
+        agent_models: dict[str, str] | None = None,
     ) -> str:
         """Issue-less job entry point — used by ``POST /api/v1/jobs`` for
         standalone pipelines (currently ``pipeline='qa'``).
@@ -362,6 +363,10 @@ class IssueExecutor:
             "branch": branch,
             "qa": {k: v for k, v in qa_overrides.items() if v is not None},
         }
+        # Per-agent model override (JobCreateRequest.agent_models). Same key the
+        # issue path stores, so the job row surfaces it identically.
+        if agent_models:
+            pipeline_config["agent_models_override"] = dict(agent_models)
         sandbox_profile = qa_overrides.get("sandbox_profile") or "qa-jvm"
         # `task` is required on the jobs row; synthesize a human-readable
         # placeholder so the dashboard has something to display.
@@ -387,7 +392,13 @@ class IssueExecutor:
         logger.info("qa_job_created", job_id=job_id, repo=repo, branch=branch)
 
         self._track_task(
-            self._run_qa_workflow(job_id, repo=repo, branch=branch, qa_overrides=qa_overrides),
+            self._run_qa_workflow(
+                job_id,
+                repo=repo,
+                branch=branch,
+                qa_overrides=qa_overrides,
+                agent_models=agent_models,
+            ),
             kind="qa_workflow_execute",
             job_id=job_id,
         )
@@ -832,6 +843,7 @@ class IssueExecutor:
         repo: str,
         branch: str,
         qa_overrides: dict[str, Any],
+        agent_models: dict[str, str] | None = None,
     ) -> None:
         """Background runner for issue-less QA jobs (started via ``start_job``).
 
@@ -896,6 +908,12 @@ class IssueExecutor:
                 "qa_active": True,
                 "qa": qa_block,
             }
+
+            # Per-agent model override — run_agent_node folds it into the
+            # resolver's pipeline_config.agent_models, and the QA orchestrator
+            # threads it into each sub-task's state (fresh dicts per app).
+            if agent_models:
+                initial_state["agent_models_override"] = dict(agent_models)
 
             # Inject per-repo env vars into the QA sandboxes. The standalone
             # QA path historically skipped this (only the issue→PR path did
