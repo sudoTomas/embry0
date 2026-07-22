@@ -59,3 +59,49 @@ async def test_health_endpoint():
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# EMB-46: initial xai-proxy token push retries the listener-startup race.
+# ---------------------------------------------------------------------------
+
+
+async def test_push_initial_xai_token_retries_then_succeeds():
+    from embry0.api.app import _push_initial_xai_token
+
+    class _Refresher:
+        async def ensure_fresh(self):
+            return "tok"
+
+    class _ProxyMgr:
+        def __init__(self):
+            self.calls = 0
+
+        async def push_xai_token(self, token):
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError("Connection refused")
+
+    mgr = _ProxyMgr()
+    await _push_initial_xai_token(_Refresher(), mgr, attempts=5, delay_seconds=0)
+    assert mgr.calls == 3
+
+
+async def test_push_initial_xai_token_gives_up_after_attempts():
+    from embry0.api.app import _push_initial_xai_token
+
+    class _Refresher:
+        async def ensure_fresh(self):
+            return "tok"
+
+    class _ProxyMgr:
+        def __init__(self):
+            self.calls = 0
+
+        async def push_xai_token(self, token):
+            self.calls += 1
+            raise RuntimeError("still down")
+
+    mgr = _ProxyMgr()
+    await _push_initial_xai_token(_Refresher(), mgr, attempts=3, delay_seconds=0)
+    assert mgr.calls == 3  # bounded — never raises
