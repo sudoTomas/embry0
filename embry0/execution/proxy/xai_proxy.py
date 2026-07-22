@@ -38,6 +38,42 @@ def _sha256(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+def _normalize_tool_schemas(body: bytes) -> bytes:
+    """Make outbound tool defs acceptable to xAI's stricter schema validator.
+
+    xAI's Anthropic-compat endpoint rejects any tool whose ``input_schema``
+    omits the ``required`` key ("/required: null is not of type 'array'").
+    Anthropic-family clients legitimately omit it for all-optional tools —
+    including the Claude Code CLI's own builtin tools, whose schemas embry0
+    cannot patch — so the proxy normalizes every outbound request at the one
+    choke point all grok traffic shares (EMB-46; sibling of the client-side
+    fix in agents/mcp_client.anthropic_tool_defs, #35).
+
+    Returns the original bytes unless a fix was actually needed; any parse
+    failure forwards the body untouched.
+    """
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return body
+    if not isinstance(payload, dict):
+        return body
+    tools = payload.get("tools")
+    if not isinstance(tools, list):
+        return body
+    changed = False
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        schema = tool.get("input_schema")
+        if isinstance(schema, dict) and not isinstance(schema.get("required"), list):
+            schema["required"] = []
+            changed = True
+    if not changed:
+        return body
+    return json.dumps(payload).encode("utf-8")
+
+
 def create_xai_proxy_app(admin_token: str) -> web.Application:
     """Create the xAI proxy ASGI app.
 
@@ -194,6 +230,13 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     headers["Authorization"] = f"Bearer {access_token}"
 
     body = await request.read()
+    if body:
+        normalized = _normalize_tool_schemas(body)
+        if normalized is not body:
+            body = normalized
+            # Length changed — let httpx recompute from the new content.
+            headers.pop("Content-Length", None)
+            headers.pop("content-length", None)
     client: httpx.AsyncClient = request.app["http_client"]
 
     logger.info("xai_credentials_used", sandbox_id=sandbox_id)
