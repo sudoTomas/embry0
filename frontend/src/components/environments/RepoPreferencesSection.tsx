@@ -27,6 +27,8 @@ export function RepoPreferencesSection({ owner, repo }: RepoPreferencesSectionPr
   const [sandboxProfile, setSandboxProfile] = useState<string>("");
   const [languageHint, setLanguageHint] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
+  const [gitAuthorName, setGitAuthorName] = useState<string>("");
+  const [gitAuthorEmail, setGitAuthorEmail] = useState<string>("");
   const [dirty, setDirty] = useState(false);
 
   // Sync local form with server state whenever the preferences row changes.
@@ -34,6 +36,8 @@ export function RepoPreferencesSection({ owner, repo }: RepoPreferencesSectionPr
     setSandboxProfile(prefs?.sandbox_profile ?? "");
     setLanguageHint(prefs?.language_hint ?? "");
     setNotes(prefs?.notes ?? "");
+    setGitAuthorName(prefs?.git_author_name ?? "");
+    setGitAuthorEmail(prefs?.git_author_email ?? "");
     setDirty(false);
   }, [prefs]);
 
@@ -46,6 +50,12 @@ export function RepoPreferencesSection({ owner, repo }: RepoPreferencesSectionPr
           sandbox_profile: sandboxProfile || null,
           language_hint: languageHint || null,
           notes,
+          git_author_name: gitAuthorName || null,
+          git_author_email: gitAuthorEmail || null,
+          // PUT replaces the whole row — carry fields this form doesn't edit
+          // so saving here can't wipe them.
+          execution_mode: prefs?.execution_mode ?? null,
+          auth_mode: prefs?.auth_mode ?? null,
         },
       },
       {
@@ -67,6 +77,8 @@ export function RepoPreferencesSection({ owner, repo }: RepoPreferencesSectionPr
           setSandboxProfile("");
           setLanguageHint("");
           setNotes("");
+          setGitAuthorName("");
+          setGitAuthorEmail("");
           setDirty(false);
         },
         onError: (e: Error) => toast.error(`Failed: ${e.message}`),
@@ -123,6 +135,36 @@ export function RepoPreferencesSection({ owner, repo }: RepoPreferencesSectionPr
           <p className="text-xs text-muted-foreground">
             Informational only today; used to help operators identify repos at a glance.
           </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label htmlFor="repo-prefs-git-name">Git author name</Label>
+            <Input
+              id="repo-prefs-git-name"
+              value={gitAuthorName}
+              placeholder="embry0 (default)"
+              onChange={(e) => {
+                setGitAuthorName(e.target.value);
+                setDirty(true);
+              }}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="repo-prefs-git-email">Git author email</Label>
+            <Input
+              id="repo-prefs-git-email"
+              value={gitAuthorEmail}
+              placeholder="embry0-bot@users.noreply.github.com (default)"
+              onChange={(e) => {
+                setGitAuthorEmail(e.target.value);
+                setDirty(true);
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              Set when the target org&apos;s push rules reject the default identity&apos;s email.
+            </p>
+          </div>
         </div>
 
         <div className="space-y-1">

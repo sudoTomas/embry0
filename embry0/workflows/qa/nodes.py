@@ -188,6 +188,7 @@ async def init_qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
             is_dind=is_dind,
             qa_net=qa_net,
             base=base,
+            prefs_repo=configurable.get("repo_preferences_repo"),
         )
 
         # 6. Read + parse .embry0/qa.yaml from inside the sandbox.

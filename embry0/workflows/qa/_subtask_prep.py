@@ -49,6 +49,7 @@ async def prep_qa_sandbox_clone(
     qa_net: str,
     base: list[str],
     cached_volume: str | None = None,
+    prefs_repo: Any | None = None,
 ) -> ClonedSandbox:
     """Phase 1 of sandbox prep.
 
@@ -72,6 +73,10 @@ async def prep_qa_sandbox_clone(
     Git credential setup still runs so any in-sandbox git operations (e.g.
     differential-checkout) can authenticate.
 
+    ``prefs_repo``: optional RepoPreferencesRepository — enables the per-repo
+    git author identity override (EMB-51). Absent, the branding default
+    (env-overridable, valid noreply address) applies.
+
     Raises whatever ``docker.run_cmd`` raises on failure; caller is responsible
     for cleanup via ``sandbox_mgr.destroy(container_id)``.
     """
@@ -85,15 +90,15 @@ async def prep_qa_sandbox_clone(
     # 2. Git creds
     git_proxy_url = getattr(proxy_mgr, "git_proxy_url", "") if proxy_mgr else ""
     if git_proxy_url:
+        from embry0.sandbox.git_identity import build_git_identity_cmd, resolve_git_identity
         from embry0.sandbox.github.git_ops import build_sandbox_credential_config_cmd
 
+        identity = await resolve_git_identity(prefs_repo, repo)
         cred_cmd = build_sandbox_credential_config_cmd(git_proxy_url, sandbox_token)
         setup_cmd = [
             "bash",
             "-c",
-            f"{cred_cmd} && "
-            'git config --global user.email "qa-agent@embry0.local" && '
-            'git config --global user.name "embry0 QA"',
+            f"{cred_cmd} && {build_git_identity_cmd(identity)}",
         ]
         await docker.run_cmd(
             docker.build_exec_cmd(container_id, setup_cmd),

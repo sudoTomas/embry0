@@ -916,6 +916,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON issues (linear_identifier) WHERE linear_identifier IS NOT NULL;
         """,
     ),
+    (
+        41,
+        "repo_preferences — per-repo git author identity override (EMB-51)",
+        # NULL = fall back to the branding default (env-overridable). Set when
+        # a target org's push rules reject the default identity's email.
+        """
+        ALTER TABLE repo_preferences
+            ADD COLUMN IF NOT EXISTS git_author_name TEXT,
+            ADD COLUMN IF NOT EXISTS git_author_email TEXT;
+        """,
+    ),
 ]
 
 

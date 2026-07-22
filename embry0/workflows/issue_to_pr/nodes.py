@@ -141,18 +141,17 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
         # ever being visible to agent code.
         if repo and docker:
             if git_proxy_url:
-                import shlex
-
-                from embry0.branding import GIT_AUTHOR_EMAIL, GIT_AUTHOR_NAME
+                from embry0.sandbox.git_identity import build_git_identity_cmd, resolve_git_identity
                 from embry0.sandbox.github.git_ops import build_sandbox_credential_config_cmd
 
+                identity = await resolve_git_identity(
+                    config["configurable"].get("repo_preferences_repo"), repo
+                )
                 cred_cmd = build_sandbox_credential_config_cmd(git_proxy_url, sandbox_token)
                 setup_cmd = [
                     "bash",
                     "-c",
-                    f"{cred_cmd} && "
-                    f"git config --global user.email {shlex.quote(GIT_AUTHOR_EMAIL)} && "
-                    f"git config --global user.name {shlex.quote(GIT_AUTHOR_NAME)}",
+                    f"{cred_cmd} && {build_git_identity_cmd(identity)}",
                 ]
                 await docker.run_cmd(
                     docker.build_exec_cmd(container_id, setup_cmd),

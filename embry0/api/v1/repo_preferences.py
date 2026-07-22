@@ -45,6 +45,8 @@ async def put_repo_preferences(
         notes=req.notes,
         execution_mode=req.execution_mode,
         auth_mode=req.auth_mode,
+        git_author_name=req.git_author_name,
+        git_author_email=req.git_author_email,
     )
     return RepoPreferencesResponse(**saved)
 
