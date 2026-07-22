@@ -144,9 +144,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                 from embry0.sandbox.git_identity import build_git_identity_cmd, resolve_git_identity
                 from embry0.sandbox.github.git_ops import build_sandbox_credential_config_cmd
 
-                identity = await resolve_git_identity(
-                    config["configurable"].get("repo_preferences_repo"), repo
-                )
+                identity = await resolve_git_identity(config["configurable"].get("repo_preferences_repo"), repo)
                 cred_cmd = build_sandbox_credential_config_cmd(git_proxy_url, sandbox_token)
                 setup_cmd = [
                     "bash",
