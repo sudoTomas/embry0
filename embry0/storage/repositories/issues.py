@@ -26,6 +26,8 @@ _ALLOWED_UPDATE_FIELDS = frozenset(
         "github_url",
         "github_sync_enabled",
         "github_synced_at",
+        "linear_identifier",
+        "linear_issue_id",
         # Per-issue ask-user fan-out channels (jsonb list of strings).
         "notification_channels",
     }
@@ -353,6 +355,14 @@ class IssuesRepository:
             parent_issue_id,
         )
         return [dict(r) for r in rows]
+
+    async def get_by_linear(self, linear_identifier: str) -> dict[str, Any] | None:
+        """Fetch an issue by its Linear identifier (e.g. ``EMB-48``) — EMB-47 dedupe key."""
+        row = await self._db.fetchrow(
+            "SELECT * FROM issues WHERE linear_identifier = $1",
+            linear_identifier,
+        )
+        return dict(row) if row is not None else None
 
     async def get_by_github(self, repo: str, github_number: int) -> dict[str, Any] | None:
         """Fetch an issue by its GitHub repo and issue number."""

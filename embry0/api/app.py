@@ -251,6 +251,7 @@ async def _init_app_state(
     database_url: str,
     github_token: str | None = None,
     github_comment_channel: object = None,
+    linear_sync: object = None,
     **executor_kwargs: object,
 ) -> None:
     """Initialize app.state.* with repositories and services.
@@ -304,6 +305,9 @@ async def _init_app_state(
     app.state.inputs_repo = IssueInputsRepository(db)
     app.state.agent_sessions_repo = AgentSessionsRepository(db)
     app.state.github_sync = GitHubSyncService(github_token=github_token)
+    # EMB-47: Linear trigger + write-back — None when the integration is off;
+    # the /webhook/linear route answers "not configured" in that case.
+    app.state.linear_sync = linear_sync
 
     registry = WorkflowRegistry()
     registry.register(IssueToprWorkflow())
@@ -348,6 +352,7 @@ async def _init_app_state(
         qa_workspace_provider_overrides_repo=(app.state.qa_workspace_provider_overrides_repo),
         github_token=github_token,
         github_comment_channel=github_comment_channel,
+        linear_sync=linear_sync,
         **executor_kwargs,
     )
 
@@ -795,12 +800,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.github_comment_channel = github_comment_channel
 
+    # EMB-47: Linear trigger + write-back — constructed only when configured.
+    linear_sync = None
+    if config.linear_api_key:
+        from embry0.services.linear_sync import LinearSyncService, parse_repo_map
+
+        linear_sync = LinearSyncService(config.linear_api_key, parse_repo_map(config.linear_repo_map))
+        logger.info("linear_sync_enabled", repo_map=parse_repo_map(config.linear_repo_map))
+
     await _init_app_state(
         app,
         db,
         database_url=config.database_url,
         github_token=config.github_token if hasattr(config, "github_token") else None,
         github_comment_channel=github_comment_channel,
+        linear_sync=linear_sync,
         audit_log_path=config.audit_log_path,
         config=config,
         sandbox_manager=sandbox_mgr,

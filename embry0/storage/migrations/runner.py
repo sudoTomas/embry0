@@ -901,6 +901,21 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE issue_inputs ALTER COLUMN issue_id DROP NOT NULL;
         """,
     ),
+    (
+        40,
+        "issues — linear_identifier + linear_issue_id for the Linear trigger (EMB-47)",
+        # Linear-webhook-dispatched issues carry their source ticket so
+        # redelivered/label-churn webhooks dedupe (partial unique index) and
+        # the write-back channel knows which Linear issue to comment on.
+        # linear_issue_id is Linear's UUID (needed by the commentCreate
+        # mutation); linear_identifier is the human key (EMB-48).
+        """
+        ALTER TABLE issues ADD COLUMN IF NOT EXISTS linear_identifier TEXT;
+        ALTER TABLE issues ADD COLUMN IF NOT EXISTS linear_issue_id TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_issues_linear_identifier
+            ON issues (linear_identifier) WHERE linear_identifier IS NOT NULL;
+        """,
+    ),
 ]
 
 
