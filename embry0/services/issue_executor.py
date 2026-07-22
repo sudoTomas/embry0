@@ -93,7 +93,11 @@ class IssueExecutor:
         qa_workspace_provider_overrides_repo: Any = None,
         github_token: str | None = None,
         github_comment_channel: Any = None,
+        # EMB-47: LinearSyncService for terminal-outcome write-back on issues
+        # dispatched from Linear. None in tests / legacy callers.
+        linear_sync: Any = None,
     ) -> None:
+        self._linear_sync = linear_sync
         self._issues = issues_repo
         self._jobs = jobs_repo
         self._traces = traces_repo
@@ -275,12 +279,20 @@ class IssueExecutor:
 
         return final_state, False, None
 
-    async def execute(self, issue_id: str, additional_context: str = "") -> str:
+    async def execute(
+        self,
+        issue_id: str,
+        additional_context: str = "",
+        agent_models: dict[str, str] | None = None,
+    ) -> str:
         """Create a job for the issue and execute the workflow in the background.
 
         Returns the job_id. The workflow runs asynchronously.
         ``additional_context`` is threaded into ``initial_state`` so the triage
         agent can see prior Q&A answers (e.g. from an auto-answerable retriage).
+        ``agent_models`` is a per-agent model override (EMB-47 label-driven
+        dispatch), persisted as ``pipeline_config.agent_models_override`` — the
+        same key POST /jobs stores and ``_run_workflow`` surfaces on state.
         """
         import uuid
 
@@ -310,6 +322,7 @@ class IssueExecutor:
             issue_number=issue.get("github_number"),
             issue_id=issue_id,
             trace_id=trace_id,
+            pipeline_config={"agent_models_override": dict(agent_models)} if agent_models else None,
         )
 
         await emit_audit(
@@ -830,11 +843,34 @@ class IssueExecutor:
             # Cleanup sandbox on error
             await self._cleanup_sandbox(final_state, job_id)
         finally:
+            await self._post_linear_outcome(issue_id, job_id)
             if trace_id_bound:
                 try:
                     cv.unbind_contextvars("trace_id")
                 except Exception:
                     logger.warning("trace_id_unbind_failed", job_id=job_id, exc_info=True)
+
+    async def _post_linear_outcome(self, issue_id: str | None, job_id: str) -> None:
+        """EMB-47 write-back: comment the terminal job outcome on the source
+        Linear issue. No-op unless the integration is wired AND the issue was
+        dispatched from Linear AND the job reached a terminal status (paused /
+        awaiting-input runs get their comment when they eventually finish).
+
+        getattr: several unit tests build the executor via ``__new__`` and set
+        only the attributes their path touches — this hook must not add a new
+        construction requirement to that pattern."""
+        if getattr(self, "_linear_sync", None) is None or not issue_id:
+            return
+        try:
+            issue = await self._issues.get(issue_id)
+            if not issue or not issue.get("linear_issue_id"):
+                return
+            job = await self._jobs.get(job_id)
+            if not job or job.get("status") in ("running", "pending", "paused", "awaiting_input"):
+                return
+            await self._linear_sync.post_job_outcome(issue, job)
+        except Exception:
+            logger.warning("linear_outcome_post_failed", job_id=job_id, exc_info=True)
 
     async def _run_qa_workflow(
         self,

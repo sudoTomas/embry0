@@ -22,6 +22,14 @@ class Embry0Config(BaseSettings):
     github_token: str = ""
     github_webhook_secret: str = ""
 
+    # Linear integration (EMB-47). All empty = integration off (the webhook
+    # route answers "not configured"). linear_repo_map is a JSON object mapping
+    # Linear project name (or team key) → GitHub owner/repo the pipeline runs
+    # against, e.g. {"Raven AI Quoting Platform": "raven-cargo/ai-quoting"}.
+    linear_api_key: str = ""
+    linear_webhook_secret: str = ""
+    linear_repo_map: str = ""
+
     # API authentication
     api_key: str = ""
     # Per-surface dev-mode flags. Each independently bypasses the corresponding

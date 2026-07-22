@@ -1,5 +1,7 @@
-"""GitHub webhook handler."""
+"""GitHub + Linear webhook handlers."""
 
+import hashlib
+import hmac
 import json as json_module
 from typing import Any
 
@@ -12,6 +14,55 @@ from embry0.notifications.inbound_parser import parse_answer_directives
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+
+@router.post("/webhook/linear")
+async def linear_webhook(
+    request: Request,
+    linear_signature: str = Header(default="", alias="Linear-Signature"),
+) -> dict[str, Any]:
+    """Linear webhook → embry0 pipeline trigger (EMB-47).
+
+    Linear signs deliveries with ``Linear-Signature``: hex HMAC-SHA256 of the
+    raw body under the webhook's signing secret (no ``sha256=`` prefix —
+    that's GitHub's convention). ``WEBHOOK_DEV_MODE=true`` bypasses
+    verification for smee-relay development, same rules as the GitHub hook.
+    """
+    config = request.app.state.config
+    body = await request.body()
+
+    if not config.webhook_dev_mode:
+        secret = config.linear_webhook_secret
+        if not secret:
+            raise HTTPException(status_code=503, detail="LINEAR_WEBHOOK_SECRET is not configured")
+        expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        if not linear_signature or not hmac.compare_digest(expected, linear_signature):
+            raise HTTPException(status_code=401, detail="Invalid Linear webhook signature")
+
+    try:
+        payload = json_module.loads(body)
+    except (json_module.JSONDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    # Unwrap a smee.io relay envelope (dev flow) — no-op for direct deliveries.
+    if "payload" in payload and isinstance(payload["payload"], str):
+        try:
+            payload = json_module.loads(payload["payload"])
+        except (json_module.JSONDecodeError, ValueError):
+            pass
+
+    linear_sync = getattr(request.app.state, "linear_sync", None)
+    if linear_sync is None:
+        return {"status": "ignored", "reason": "linear integration not configured"}
+
+    logger.info("linear_webhook_received", type=payload.get("type"), action=payload.get("action"))
+    result = await linear_sync.handle_webhook_event(
+        payload,
+        issues_repo=request.app.state.issues_repo,
+        issue_executor=request.app.state.issue_executor,
+        dashboard_base_url=getattr(config, "dashboard_public_url", "") or "http://localhost:8200",
+    )
+    return dict(result)
 
 
 @router.post("/webhook")
