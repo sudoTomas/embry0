@@ -181,3 +181,33 @@ async def test_write_config_rejects_unsafe_repo(tmp_path, monkeypatch, bad_repo)
     state = {"repo": bad_repo, "onboard": {"validated": True, "qa_yaml_text": _VALID_QA_YAML}}
     out = await write_config_node(state, {"configurable": {}})
     assert out["onboard"]["final_status"] == "failed"
+
+
+async def test_smoke_rejects_browserless_profile():
+    """A config resolving to a non-QA-image profile must fail smoke BEFORE
+    any boot spend, with the pipeline's own capability wording."""
+    from embry0.workflows.onboard.nodes import smoke_node
+    from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
+
+    cfg = parse_qa_yaml_v2(_VALID_QA_YAML)
+
+    class _Profiles:
+        async def get(self, name):
+            return {"name": name, "base_image": "embry0-sandbox:latest"}
+
+    class _NoBoot:
+        async def create(self, *a, **kw):
+            raise AssertionError("no sandbox may be created for a browserless config")
+
+    state = {
+        "job_id": "job-x",
+        "repo": "acme/widgets",
+        "onboard": {"validated": True, "qa_yaml_parsed": cfg.model_dump(mode="json"), "round": 1, "sandbox_id": "sb"},
+    }
+    out = await smoke_node(
+        state,
+        {"configurable": {"docker": object(), "sandbox_manager": _NoBoot(), "profiles_repo": _Profiles()}},
+    )
+    ob = out["onboard"]
+    assert ob["validated"] is False
+    assert "has no browser" in ob["last_error"]

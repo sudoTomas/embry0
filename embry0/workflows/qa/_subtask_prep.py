@@ -150,7 +150,11 @@ async def prep_qa_sandbox_clone(
                 "cd /workspace && mkdir -p .qa/logs .qa/pids"
             ),
         ]
-        await docker.run_cmd(docker.build_exec_cmd(container_id, clone_cmd), timeout=120)
+        # 300s (was 120s): matches the issue-path init clone budget — a large
+        # repo via the git-proxy can exceed two minutes (raven-march-training
+        # timed out at exactly 120s on job-06f63d7ba031, 2026-07-23), and the
+        # issue path was bumped for the identical failure.
+        await docker.run_cmd(docker.build_exec_cmd(container_id, clone_cmd), timeout=300)
 
     # 4. Capture head sha (works for both paths — volume has a real git repo)
     head_sha_raw = await docker.run_cmd(

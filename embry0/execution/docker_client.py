@@ -335,7 +335,10 @@ class DockerClient:
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except TimeoutError:
                 logger.error("docker_cmd_kill_stuck", cmd=scrubbed, pid=proc.pid)
-            raise
+            # A bare TimeoutError has an empty str() — every caller folding
+            # {exc} into a failure_summary then reports "failed: " with no
+            # cause (observed: "sandbox clone failed: " on job-06f63d7ba031).
+            raise TimeoutError(f"docker command timed out after {timeout}s") from None
 
         if proc.returncode != 0:
             err = stderr.decode().strip()
