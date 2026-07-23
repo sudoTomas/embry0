@@ -159,19 +159,17 @@ class TriageParseError(ValueError):
 
 
 class UnsupportedContextError(Exception):
-    """Raised when a job's context type has no init strategy yet.
+    """Raised when a job's context type has no workspace-init strategy.
 
-    Non-git contexts (http/local/none) validate and persist fine but are not
-    executable until init strategies and routing for them land. The guard in
-    init_node raises this before any sandbox is created; issue_executor maps
-    it to ErrorCode.UNSUPPORTED_CONTEXT.
+    All four builtin context types (git/http/local/none) ship strategies in
+    embry0/workspace_init/ (RAV-600); this now fires only for unknown types
+    with no registered entry point. Raised before any sandbox is created;
+    issue_executor maps it to ErrorCode.UNSUPPORTED_CONTEXT.
     """
 
     def __init__(self, context_type: str) -> None:
         self.context_type = context_type
-        super().__init__(
-            f"Context type {context_type!r} isn't executable yet — only git contexts have an init strategy"
-        )
+        super().__init__(f"Context type {context_type!r} has no workspace-init strategy registered")
 
 
 class JobState(TypedDict, total=False):

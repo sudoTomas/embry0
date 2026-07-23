@@ -72,6 +72,18 @@ class Embry0Config(BaseSettings):
     sandbox_memory: str = "8g"
     sandbox_cpus: str = "4"
 
+    # Workspace init contexts (RAV-600). `local` contexts stage orchestrator-
+    # visible paths into sandboxes — a real exfiltration surface, so the
+    # allowlist fails closed: empty = local contexts disabled.
+    local_context_allowlist: str = ""  # comma-separated absolute roots
+    local_context_max_bytes: int = 209_715_200  # 200 MiB
+    local_context_max_files: int = 50_000
+    http_context_max_bytes: int = 52_428_800  # 50 MiB
+    http_context_timeout_seconds: int = 60
+    # http contexts are fetched by the ORCHESTRATOR; private/loopback targets
+    # are refused (SSRF) unless a LAN deployment opts in.
+    http_context_allow_private: bool = False
+
     # Container image registry prefix applied to embry0-* images at DinD-launch
     # time (see embry0.execution.image_registry.qualify_image). Empty disables
     # qualification — useful for tests and for environments that load images

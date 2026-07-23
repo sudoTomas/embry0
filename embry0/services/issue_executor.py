@@ -186,6 +186,9 @@ class IssueExecutor:
                 "repo_preferences_repo": self._repo_prefs,
                 "traces_repo": self._traces,
                 "credentials": credentials,
+                # Workspace-init strategies read allowlist/bounds off the app
+                # config (RAV-600).
+                "embry0_config": self._config,
                 # QA-specific deps. Read by embry0.workflows.qa.nodes.{init_qa,
                 # qa, report, retry}; harmless for non-QA workflows because they
                 # never look these keys up.

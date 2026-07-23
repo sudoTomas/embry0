@@ -28,7 +28,9 @@ class ErrorCode(StrEnum):
     DOCKER_TIMEOUT = "ERR_DOCKER_TIMEOUT"  # Underlying docker command timed out
     MAX_AGENT_QUESTIONS = "ERR_MAX_AGENT_QUESTIONS"  # Agent exceeded the ask_user round cap
     MAX_TRIAGE_QUESTIONS = "ERR_MAX_TRIAGE_QUESTIONS"  # Triage interrupt/resume loop exceeded the 5-round cap
-    UNSUPPORTED_CONTEXT = "ERR_UNSUPPORTED_CONTEXT"  # Non-git job context not executable yet
+    UNSUPPORTED_CONTEXT = "ERR_UNSUPPORTED_CONTEXT"  # Unknown context type — no workspace-init strategy registered
+    LOCAL_CONTEXT_DENIED = "ERR_LOCAL_CONTEXT_DENIED"  # local context path outside LOCAL_CONTEXT_ALLOWLIST or over caps
+    HTTP_FETCH_FAILED = "ERR_HTTP_FETCH_FAILED"  # http context source unreachable, private-address, or over size cap
     UNKNOWN = "ERR_UNKNOWN"  # Uncategorised — should diminish over time
 
     # Phase 1 — pluggable agent execution modes
@@ -55,9 +57,16 @@ def error_code_for_exception(exc: Exception) -> ErrorCode:
     import cycles with the orchestration layer."""
     from embry0.orchestration.nodes.agent import SandboxRequiredError
     from embry0.orchestration.state import TriageParseError, UnsupportedContextError
+    from embry0.workspace_init.base import HttpFetchError, LocalContextDeniedError, WorkspaceInitError
 
     if isinstance(exc, UnsupportedContextError):
         return ErrorCode.UNSUPPORTED_CONTEXT
+    if isinstance(exc, LocalContextDeniedError):
+        return ErrorCode.LOCAL_CONTEXT_DENIED
+    if isinstance(exc, HttpFetchError):
+        return ErrorCode.HTTP_FETCH_FAILED
+    if isinstance(exc, WorkspaceInitError):
+        return ErrorCode.SANDBOX_INIT
     if isinstance(exc, SandboxRequiredError):
         return ErrorCode.SANDBOX_REQUIRED
     if isinstance(exc, TriageParseError):

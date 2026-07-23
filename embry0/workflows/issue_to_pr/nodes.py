@@ -61,39 +61,30 @@ def _filter_user_env_for_sandbox(user_env: list[dict[str, str]] | dict[str, str]
     return out
 
 
-def _build_clone_shell(repo: str) -> str:
-    """Shell for the init clone; ONLY the main:main fetch is best-effort.
-
-    The ``|| true`` must be brace-scoped to the fetch: ``a && b || true``
-    rescues the WHOLE chain, which let a failed clone exit 0 and report
-    "Repository cloned" over an empty /workspace (2026-07-06 access
-    smoke). The fetch stays best-effort because it fails benignly
-    when the clone already checked out main.
-    """
-    return (
-        f"git clone --depth=50 https://github.com/{repo}.git /workspace"
-        f" && {{ git -C /workspace fetch origin main:main --depth=50 || true; }}"
-    )
-
-
 async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-    """Create sandbox container and clone the repo."""
-    # Context guard: only git contexts have an init strategy today. Non-git
-    # jobs (http/local/none) validate + persist but are not executable until
-    # init strategies for the other branches of this switch land. Raise BEFORE
-    # touching the stream writer or sandbox manager so no sandbox is created.
+    """Create the sandbox container and populate /workspace for the job context.
+
+    Workspace population is delegated to the per-context-type initializer
+    (embry0/workspace_init/); this node keeps the container lifecycle.
+    """
     context = state.get("context") or {"type": "git", "repo": state.get("repo", "")}
     ctx_type = context.get("type", "git")
-    if ctx_type != "git":
-        from embry0.orchestration.state import UnsupportedContextError
 
-        raise UnsupportedContextError(ctx_type)
+    # Strategy resolution + validation run BEFORE the stream writer and the
+    # sandbox manager: an unknown context type or a denied context (path
+    # outside the allowlist, malformed URL) must fail with no container
+    # created — the invariant test_non_git_job_guard enforces.
+    from embry0.workspace_init import InitContext, load_initializer
+
+    initializer = load_initializer(ctx_type)
+    embry0_config = config["configurable"].get("embry0_config")
+    initializer.validate(context, embry0_config)
 
     writer = get_stream_writer()
     writer({"type": "node_started", "node": "init"})
 
     job_id = state.get("job_id", "")
-    repo = state.get("repo", "")
+    repo = context.get("repo") or state.get("repo", "")
 
     sandbox_mgr = config["configurable"].get("sandbox_manager")
     docker = config["configurable"].get("docker")
@@ -118,7 +109,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
             state.get("user_env_vars") or [],
             qa_active=bool(state.get("qa_active", False)),
         )
-        if git_proxy_url:
+        if git_proxy_url and ctx_type == "git":
             env["EMBRY0_GIT_PROXY_URL"] = git_proxy_url
         container_id, sandbox_token = await sandbox_mgr.create(job_id, env=env, repo=repo)
         logger.info("sandbox_created", job_id=job_id, container_id=container_id)
@@ -136,53 +127,19 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                 timeout=10,
             )
 
-        # Clone repo inside container. Git auth flows via credential proxy — the
-        # helper curls $EMBRY0_GIT_PROXY_URL/git-credentials with the per-sandbox
-        # bearer token, which returns the orchestrator's token without the token
-        # ever being visible to agent code.
-        if repo and docker:
-            if git_proxy_url:
-                from embry0.sandbox.git_identity import build_git_identity_cmd, resolve_git_identity
-                from embry0.sandbox.github.git_ops import build_sandbox_credential_config_cmd
-
-                identity = await resolve_git_identity(config["configurable"].get("repo_preferences_repo"), repo)
-                cred_cmd = build_sandbox_credential_config_cmd(git_proxy_url, sandbox_token)
-                setup_cmd = [
-                    "bash",
-                    "-c",
-                    f"{cred_cmd} && {build_git_identity_cmd(identity)}",
-                ]
-                await docker.run_cmd(
-                    docker.build_exec_cmd(container_id, setup_cmd),
-                    timeout=10,
-                )
-            else:
-                logger.warning(
-                    "git_proxy_unavailable",
-                    job_id=job_id,
-                    msg="No git proxy URL — skipping credential helper setup; "
-                    "clone and push to private repos will fail.",
-                )
-
-            # Fail loudly on clone error — if /workspace isn't a git repo, every
-            # downstream agent call silently misbehaves. A non-zero exit from
-            # `git clone` makes DockerClient.run_cmd raise RuntimeError.
-            clone_cmd = ["bash", "-c", _build_clone_shell(repo)]
-            try:
-                # 300s (was 120s): large monorepos cloned via the git-proxy at
-                # --depth=50 can exceed two minutes when the proxy adds latency
-                # or the repo has many large files. Verified against a large repo
-                # which timed out at exactly 120s on first attempt.
-                await docker.run_cmd(
-                    docker.build_exec_cmd(container_id, clone_cmd),
-                    timeout=300,
-                )
-            except RuntimeError as exc:
-                logger.error("repo_clone_failed", job_id=job_id, repo=repo, error=str(exc))
-                writer({"type": "error", "message": f"Repository clone failed for {repo}: {exc}"})
-                raise RuntimeError(f"Repository clone failed for {repo}: {exc}") from exc
-            writer({"type": "progress", "message": f"Repository {repo} cloned"})
-            logger.info("repo_cloned", job_id=job_id, repo=repo)
+        init_update = await initializer.initialize(
+            InitContext(
+                job_id=job_id,
+                context=context,
+                container_id=container_id,
+                sandbox_token=sandbox_token,
+                docker=docker,
+                git_proxy_url=git_proxy_url,
+                repo_preferences_repo=config["configurable"].get("repo_preferences_repo"),
+                config=embry0_config,
+                emit=writer,
+            )
+        )
     except Exception as exc:
         logger.error("sandbox_init_failed", job_id=job_id, error=str(exc))
         writer({"type": "error", "message": f"Sandbox init failed: {exc}"})
@@ -192,6 +149,12 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
                 await sandbox_mgr.destroy(container_id)
             except Exception:
                 logger.warning("sandbox_cleanup_failed", container_id=container_id)
+        from embry0.workspace_init import WorkspaceInitError
+
+        if isinstance(exc, WorkspaceInitError):
+            # Re-raise unwrapped so error_code_for_exception maps the
+            # specific code (local-denied / http-fetch) instead of SANDBOX_INIT.
+            raise
         raise RuntimeError(f"Sandbox initialization failed: {exc}") from exc
 
     writer({"type": "node_completed", "node": "init"})
@@ -199,6 +162,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
         "sandbox_container_id": container_id,
         "current_stage": "initialized",
         "retry_count": 0,
+        **(init_update or {}),
     }
 
 
