@@ -966,6 +966,7 @@ def _register_routers(app: FastAPI) -> None:
     from embry0.api.deps import require_auth
     from embry0.api.v1 import (
         agents,
+        bootstrap,
         config,
         environment,
         github,
@@ -1019,6 +1020,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(environment.router, prefix="/api/v1", tags=["environment"], dependencies=auth_deps)
     app.include_router(repo_preferences.router, prefix="/api/v1", tags=["repo-preferences"], dependencies=auth_deps)
     app.include_router(qa_config.router, prefix="/api/v1", tags=["qa-config"], dependencies=auth_deps)
+    app.include_router(bootstrap.router, prefix="/api/v1", tags=["bootstrap"], dependencies=auth_deps)
     app.include_router(github.router, prefix="/api/v1", tags=["github"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
     app.include_router(telegram.router, prefix="/api/v1", tags=["telegram"])
