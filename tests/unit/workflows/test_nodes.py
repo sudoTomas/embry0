@@ -35,9 +35,9 @@ def test_branch_slug_is_git_safe(task: str, expected_safe: bool) -> None:
 
 def test_clone_command_depth_is_50() -> None:
     """Clone command must use --depth=50 and fetch main:main at --depth=50."""
-    from embry0.workflows.issue_to_pr.nodes import _build_clone_shell
+    from embry0.workspace_init.git import build_clone_shell
 
-    clone_cmd = _build_clone_shell("owner/repo")
+    clone_cmd = build_clone_shell("owner/repo")
     assert clone_cmd.count("--depth=50") == 2  # clone AND the main:main fetch
     assert "git clone --depth=50 https://github.com/owner/repo.git /workspace" in clone_cmd
     assert "fetch origin main:main" in clone_cmd

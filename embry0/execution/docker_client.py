@@ -228,10 +228,13 @@ class DockerClient:
         command: list[str],
         workdir: str | None = None,
         env: dict[str, str] | None = None,
+        interactive: bool = False,
     ) -> list[str]:
-        """Build `docker exec` command."""
+        """Build `docker exec` command. ``interactive`` adds ``-i`` (stdin attached)."""
         cmd = self._build_base_cmd()
         cmd.append("exec")
+        if interactive:
+            cmd.append("-i")
         if workdir:
             cmd.extend(["-w", workdir])
         for key, value in (env or {}).items():
@@ -364,6 +367,38 @@ class DockerClient:
             stderr=asyncio.subprocess.PIPE,
         )
         return proc
+
+    async def exec_with_stdin(
+        self,
+        container: str,
+        command: list[str],
+        stdin_bytes_path: str,
+        timeout: int = 300,
+    ) -> None:
+        """Run `docker exec -i` feeding a host-side file to the command's stdin.
+
+        Sibling of stream_exec for the write direction — used to stream tar
+        archives into a sandbox (local workspace-init contexts) without a
+        host bind mount. Raises RuntimeError on non-zero exit.
+        """
+        cmd = self.build_exec_cmd(container, command, interactive=True)
+        logger.debug("docker_exec_with_stdin", cmd=_scrub_cmd_for_log(cmd), stdin=stdin_bytes_path)
+        with open(stdin_bytes_path, "rb") as stdin_file:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=stdin_file,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except TimeoutError:
+                proc.kill()
+                raise RuntimeError(f"Docker exec-with-stdin timed out after {timeout}s")
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace").strip()
+            logger.error("docker_cmd_failed", cmd=_scrub_cmd_for_log(cmd), stderr=err, returncode=proc.returncode)
+            raise RuntimeError(f"Docker command failed: {err}")
 
     async def commit_container(self, container_id: str, image_tag: str) -> str:
         """Commit a running container as a new image; returns the tag.
