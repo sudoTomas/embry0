@@ -59,7 +59,7 @@ _DEFAULT_PROFILE: dict[str, Any] = {
     "base_image": "embry0-sandbox:latest",
     "memory": "8g",
     "cpus": "4",
-    "pids_limit": 256,
+    "pids_limit": 512,
     "read_only_root": False,  # Claude CLI needs writable rootfs for Node.js cache
     "cap_drop": ["ALL"],
     "cap_add": [],
@@ -74,7 +74,7 @@ _DEFAULT_PROFILE: dict[str, Any] = {
     # env (only the per-job OAuth token + git credential proxy bearer).
     "extra_networks": ["sandbox-internet"],
     "extra_hosts": {},
-    "container_timeout_seconds": 3600,
+    "container_timeout_seconds": 7200,
 }
 
 

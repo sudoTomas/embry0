@@ -80,7 +80,7 @@ defaults:                        # all optional
   acceptance_criteria_template: [ "<criterion>", ... ]
   guardrails: [ "<absolute DO-NOT rule>", ... ]
 qa_required: auto | always | never   # default auto
-parallelism: { max_concurrent_apps: 4 }   # 1..64
+parallelism: { max_concurrent_apps: 8 }   # 1..64
 apps:
   <app-name>:
     target: managed | deployed   # default managed
