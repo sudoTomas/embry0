@@ -155,13 +155,30 @@ async def analyze_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
             for row in rows:
                 base = str(row.get("base_image") or "")
                 qa_ok = "QA-capable (has browser)" if "embry0-sandbox-qa" in base else "boot-only, NO browser"
-                lines.append(f"- {row.get('name')}: {qa_ok}")
+                # Network fit matters as much as the browser: a mode:process
+                # app clones + boots inside the sandbox itself, which needs
+                # direct internet (the sandbox-internet network). dind-only
+                # profiles get egress through nested Docker instead — pairing
+                # one with mode:process hangs the clone (observed on
+                # job-66f603a7730d: qa-jvm + process → github.com unreachable).
+                nets = row.get("extra_networks") or []
+                if isinstance(nets, str):
+                    nets = [nets]
+                if "sandbox-internet" in nets:
+                    net_fit = "internet egress (fits mode: process)"
+                elif row.get("dind_enabled"):
+                    net_fit = "dind-only egress (fits mode: dind ONLY)"
+                else:
+                    net_fit = "NO internet egress"
+                lines.append(f"- {row.get('name')}: {qa_ok}; {net_fit}")
             prompt += (
                 "\n\nSandbox profiles available on this deployment:\n"
                 + "\n".join(lines)
                 + "\nEvery profile the config resolves for an app MUST be QA-capable "
                 "(built on embry0-sandbox-qa) — the QA agent drives a browser, and the "
-                "pipeline rejects browserless profiles before spending any boot time."
+                "pipeline rejects browserless profiles before spending any boot time. "
+                "Match the profile's egress to the app's mode: process-mode apps need a "
+                "profile with internet egress; dind-only profiles pair with mode: dind."
             )
 
     feedback = ob.get("last_error")
