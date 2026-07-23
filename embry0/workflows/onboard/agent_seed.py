@@ -70,7 +70,10 @@ workspace_provider:              # required unless every app is target: deployed
   config: {}                     # provider-specific, see above
 defaults:                        # all optional
   mode: process | dind           # default process
-  sandbox_profile: <profile>     # default "slim"; use "dev-python" for python repos
+  sandbox_profile: <profile>     # MUST be a QA-capable profile (built on the
+                                 # embry0-sandbox-qa image — the QA agent drives a
+                                 # browser). Your task prompt lists this
+                                 # deployment's profiles and which are QA-capable.
   ready_checks: []               # list of {http, expect_status, expect_body_regex}
   boot_timeout_seconds: 600      # 1..3600
   seed_command: <cmd> | null

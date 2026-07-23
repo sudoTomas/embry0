@@ -140,6 +140,30 @@ async def analyze_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
         "and draft its qa.yaml v2 per your system prompt. Write "
         "/workspace/.onboard/qa.yaml and /workspace/.onboard/notes.md."
     )
+
+    # This deployment's actual profiles — the agent cannot know them, and the
+    # QA agent needs a browser, so any profile not built on embry0-sandbox-qa
+    # fails the pipeline's capability check (orchestrator.py, EMB-34 fix #3).
+    profiles_repo = configurable.get("profiles_repo")
+    if profiles_repo is not None:
+        try:
+            rows = await profiles_repo.list_all()
+        except Exception:  # noqa: BLE001
+            rows = []
+        if rows:
+            lines = []
+            for row in rows:
+                base = str(row.get("base_image") or "")
+                qa_ok = "QA-capable (has browser)" if "embry0-sandbox-qa" in base else "boot-only, NO browser"
+                lines.append(f"- {row.get('name')}: {qa_ok}")
+            prompt += (
+                "\n\nSandbox profiles available on this deployment:\n"
+                + "\n".join(lines)
+                + "\nEvery profile the config resolves for an app MUST be QA-capable "
+                "(built on embry0-sandbox-qa) — the QA agent drives a browser, and the "
+                "pipeline rejects browserless profiles before spending any boot time."
+            )
+
     feedback = ob.get("last_error")
     if feedback:
         prompt += (
@@ -270,6 +294,34 @@ async def smoke_node(state: dict[str, Any], config: RunnableConfig) -> dict[str,
 
     failures: list[str] = []
     results: dict[str, str] = {}
+
+    # Same capability rule the QA orchestrator enforces (EMB-34 fix #3): the
+    # QA agent drives a browser, so a config resolving to a profile not built
+    # on embry0-sandbox-qa would pass boot smoke here and then fail every real
+    # QA run. Reject it now, with the pipeline's own wording, so the agent's
+    # retry round fixes the profile.
+    for app_name in cfg.apps:
+        try:
+            resolved = resolve_app_config(app_name, cfg, None)
+        except (ValueError, KeyError):
+            continue  # the boot loop below reports resolve errors
+        profile = await profiles_repo.get(resolved.sandbox_profile)
+        if profile is None:
+            continue  # boot loop reports missing profiles
+        base_image = str(profile.get("base_image") or "")
+        if "embry0-sandbox-qa" not in base_image:
+            results[app_name] = "profile_browserless"
+            failures.append(
+                f"app {app_name!r}: profile {resolved.sandbox_profile!r} "
+                f"(base_image {base_image!r}) has no browser, but the QA agent "
+                "requires Playwright — use a profile built on embry0-sandbox-qa"
+            )
+    if failures:
+        ob["smoke"] = {"results": results, "failures": failures}
+        ob["last_error"] = "smoke run rejected the config before boot:\n- " + "\n- ".join(failures)
+        ob["validated"] = False
+        writer({"type": "node_completed", "node": "smoke", "ok": False})
+        return {"onboard": ob}
 
     for app_name in cfg.apps:
         try:
