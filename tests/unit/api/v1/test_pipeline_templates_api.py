@@ -6,7 +6,17 @@ from httpx import ASGITransport, AsyncClient
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
 
-SAMPLE_GRAPH = {"graph_id": "g1", "name": "Test", "nodes": [], "edges": []}
+# A minimal EXECUTABLE graph — since RAV-601, templates must pass
+# validate_graph_definition (linear chain of known agent types) to save.
+SAMPLE_GRAPH = {
+    "graph_id": "g1",
+    "name": "Test",
+    "nodes": [
+        {"node_id": "t", "agent_type": "triage"},
+        {"node_id": "d", "agent_type": "developer"},
+    ],
+    "edges": [{"edge_id": "e1", "source": "t", "target": "d", "edge_type": "flow"}],
+}
 
 SAMPLE_TEMPLATE = {
     "id": "tmpl-1",

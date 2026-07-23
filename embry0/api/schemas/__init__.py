@@ -209,6 +209,10 @@ class JobResponse(BaseModel):
     pipeline_config: dict[str, Any] | None = None
     trace_id: str | None = None
     error_code: str | None = None
+    # RAV-601: triage's kind classification + the non-code result text
+    # (finalize_output's interim deliverable until RAV-603).
+    job_kind: str | None = None
+    result_summary: str | None = None
     cost_breakdown: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -319,6 +323,9 @@ class TemplateCreateRequest(BaseModel):
     graph_definition: dict[str, Any]
     agent_models: dict[str, str] = Field(default_factory=dict)
     sandbox_profile: str | None = None
+    # RAV-601: at most one template per kind is that kind's default route
+    # (DB partial unique index enforces the at-most-one).
+    default_for_kind: str | None = Field(default=None, pattern="^(code|research|analysis|ops)$")
 
 
 class TemplateUpdateRequest(BaseModel):
@@ -327,6 +334,7 @@ class TemplateUpdateRequest(BaseModel):
     graph_definition: dict[str, Any] | None = None
     agent_models: dict[str, str] | None = None
     sandbox_profile: str | None = None
+    default_for_kind: str | None = Field(default=None, pattern="^(code|research|analysis|ops)$")
 
 
 class TemplateDuplicateRequest(BaseModel):

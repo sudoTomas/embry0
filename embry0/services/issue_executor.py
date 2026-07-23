@@ -172,6 +172,14 @@ class IssueExecutor:
         if profiles_repo is None and self._db is not None:
             profiles_repo = SandboxProfilesRepository(self._db)
 
+        # RAV-601: plan_route needs templates (route resolution) and the jobs
+        # repo (job_kind mirror); lazy-constructed like profiles_repo.
+        templates_repo: Any = None
+        if self._db is not None:
+            from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
+
+            templates_repo = PipelineTemplatesRepository(self._db)
+
         return {
             "configurable": {
                 "thread_id": job_id,
@@ -182,6 +190,10 @@ class IssueExecutor:
                 "docker": getattr(self._sandbox, "_docker", None) if self._sandbox else None,
                 "issues_repo": self._issues,
                 "inputs_repo": self._inputs,
+                # getattr: several unit tests build the executor via __new__
+                # and set only the attributes their path touches.
+                "jobs_repo": getattr(self, "_jobs", None),
+                "pipeline_templates_repo": templates_repo,
                 "db": self._db,
                 "repo_preferences_repo": self._repo_prefs,
                 "traces_repo": self._traces,
@@ -1306,6 +1318,11 @@ class IssueExecutor:
                 pr_url=result.get("pr_url"),
                 error_message=error_message,
                 error_code=error_code,
+                # RAV-601 interim non-code deliverable: finalize_output writes
+                # the last agent output here; the completion comment surfaces
+                # it when the job produced no PR (RAV-603 replaces this with a
+                # real deliverable model).
+                result_summary=(result.get("result_summary") if final_status == "completed" else None),
                 total_cost_usd=result.get("total_cost_usd", 0.0),
                 finished_at=datetime.now(UTC),
             )

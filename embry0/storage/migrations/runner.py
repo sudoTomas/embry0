@@ -927,6 +927,21 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ADD COLUMN IF NOT EXISTS git_author_email TEXT;
         """,
     ),
+    (
+        42,
+        "jobs.job_kind + pipeline_templates.default_for_kind (RAV-601)",
+        # job_kind: triage's classification (code/research/analysis/ops),
+        # mirrored from state for dashboard filtering. default_for_kind: at
+        # most one template per kind serves as that kind's default route
+        # (partial unique index enforces the at-most-one).
+        """
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS job_kind TEXT;
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS result_summary TEXT;
+        ALTER TABLE pipeline_templates ADD COLUMN IF NOT EXISTS default_for_kind TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_templates_default_kind
+            ON pipeline_templates (default_for_kind) WHERE default_for_kind IS NOT NULL;
+        """,
+    ),
 ]
 
 

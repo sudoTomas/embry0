@@ -59,6 +59,8 @@ from embry0.workflows.issue_to_pr.nodes import (
     review_node,
     triage_node,
 )
+from embry0.workflows.issue_to_pr.plan_route import finalize_output_node, plan_route_node
+from embry0.workflows.issue_to_pr.route_plan import next_route
 from embry0.workflows.issue_to_pr.routing import (
     route_after_qa_report,
     route_after_review,
@@ -86,6 +88,13 @@ async def _qa_failure_bookkeeping_node(state: dict[str, Any]) -> dict[str, Any]:
     if qa.get("final_status") == "failed":
         qa["failure_rounds"] = qa.get("failure_rounds", 0) + 1
         state["qa"] = qa
+    elif qa.get("final_status") == "passed" and state.get("route_plan"):
+        # RAV-601: the qa template step is done — advance the cursor so
+        # route_after_qa_report's next_route dispatch reads the post-QA
+        # position (e.g. a trailing "output" step).
+        from embry0.workflows.issue_to_pr.route_plan import advance
+
+        state.update(advance(state))
     return state
 
 
@@ -113,6 +122,11 @@ class IssueToprWorkflow:
 
         builder.add_node("init", init_node)  # type: ignore[type-var]
         builder.add_node("triage", triage_node)  # type: ignore[type-var]
+        # RAV-601: templates are interpreted over this fixed node superset —
+        # plan_route snapshots the selected template into state and the
+        # next_route dispatcher picks the next physical node at each seam.
+        builder.add_node("plan_route", plan_route_node)  # type: ignore[type-var]
+        builder.add_node("finalize_output", finalize_output_node)  # type: ignore[type-var]
         builder.add_node("developer", developer_node)  # type: ignore[type-var]
         builder.add_node("review", review_node)  # type: ignore[type-var]
         builder.add_node("retry", retry_node)  # type: ignore[type-var]
@@ -133,8 +147,23 @@ class IssueToprWorkflow:
         builder.add_conditional_edges(
             "triage",
             route_after_triage,
-            {"proceed": "developer", "split": END},
+            {"proceed": "plan_route", "split": END},
         )
+
+        # plan_route's update (route_plan + cursor 0) is merged before the
+        # dispatcher runs, so next_route reads the fresh plan.
+        builder.add_conditional_edges(
+            "plan_route",
+            next_route,
+            {
+                "developer": "developer",
+                "review": "review",
+                "qa": "init_orchestrator",
+                "output": "finalize_output",
+                "end": END,
+            },
+        )
+        builder.add_edge("finalize_output", END)
 
         # `developer` self-routes via Command(goto=..., update=...) returned
         # from the node body. `review` self-routes for control-flow exits but
@@ -143,7 +172,13 @@ class IssueToprWorkflow:
         builder.add_conditional_edges(
             "review",
             route_after_review,
-            {"developer": "retry", "qa": "init_orchestrator", "end": END},
+            {
+                "developer": "retry",
+                "qa": "init_orchestrator",
+                "review": "review",
+                "output": "finalize_output",
+                "end": END,
+            },
         )
 
         # Multi-app QA subpath wiring: init_orchestrator loads qa.yaml v2 from a
@@ -158,7 +193,16 @@ class IssueToprWorkflow:
         builder.add_conditional_edges(
             "qa_failure_bookkeeping",
             route_after_qa_report,
-            {"triage": "triage", "end": END, "exhausted": "qa_exhausted"},
+            {
+                "triage": "triage",
+                "end": END,
+                "exhausted": "qa_exhausted",
+                # RAV-601: template steps may continue past a passed QA run.
+                "developer": "developer",
+                "review": "review",
+                "qa": "init_orchestrator",
+                "output": "finalize_output",
+            },
         )
         builder.add_edge("qa_exhausted", END)
 

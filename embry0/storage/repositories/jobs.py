@@ -70,6 +70,8 @@ _UPDATABLE_FIELDS = frozenset(
         "finished_at",
         "trace_id",
         "current_stage",
+        "job_kind",
+        "result_summary",
     }
 )
 
