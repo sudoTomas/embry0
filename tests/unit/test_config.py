@@ -11,7 +11,7 @@ def test_config_defaults():
             _env_file=None,  # type: ignore[call-arg]
         )
     assert config.database_url == "postgresql://embry0:embry0@localhost:5432/embry0"
-    assert config.max_budget_usd == 10.0
+    assert config.max_budget_usd == 20.0
     assert config.daily_budget_cap_usd == 100.0
     assert config.monthly_budget_cap_usd == 500.0
     assert config.sandbox_memory == "8g"

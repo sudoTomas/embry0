@@ -9,7 +9,7 @@
 ## Environment
 
 - `ENVIRONMENT_SECRET_KEY` drives Fernet encryption for per-repo env var secrets. In production the orchestrator refuses to start without it; in dev mode a default is tolerated with a loud warning. Rotating the key makes prior secrets undecryptable.
-- Agents can pause the pipeline to ask the user questions (`embry0.sandbox.ask_user`). Capped at 5 rounds per job to prevent runaway loops; after the cap the job fails with `ERR_MAX_AGENT_QUESTIONS`.
+- Agents can pause the pipeline to ask the user questions (`embry0.sandbox.ask_user`). Capped per job to prevent runaway loops (default 10 rounds, env-tunable via `ASK_USER_ROUNDS_CAP`); after the cap the job fails with `ERR_MAX_AGENT_QUESTIONS`.
 - Reserved env var keys (`EMBRY0_GIT_PROXY_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `XAI_API_KEY`, `GITHUB_TOKEN`) are blocked as user-settable env vars both at the API and at sandbox injection — don't attempt to override infrastructure variables via the environment UI.
 - **API Auth flags.** `AUTH_DEV_MODE` and `WEBHOOK_DEV_MODE` are independent dev-mode flags; both default to `false`. Do not enable in production — startup logs `CRITICAL` and writes a `dev_mode_enabled` audit row when either is true. `AUTH_DEV_MODE=true` bypasses API key authentication; `WEBHOOK_DEV_MODE=true` bypasses webhook HMAC verification and is required for the smee.io relay flow.
 

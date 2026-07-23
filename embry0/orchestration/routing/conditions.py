@@ -68,7 +68,7 @@ def check_review_decision(state: dict[str, Any]) -> Literal["approved", "changes
     if decision == "changes_requested":
         retry_count = state.get("retry_count", 0)
         config = state.get("pipeline_config", {})
-        max_loops = config.get("max_feedback_loops", 3) if isinstance(config, dict) else 3
+        max_loops = config.get("max_feedback_loops", 5) if isinstance(config, dict) else 5
         if retry_count >= max_loops:
             return "max_retries"
         return "changes_requested"

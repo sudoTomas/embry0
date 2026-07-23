@@ -100,7 +100,7 @@ class DockerClient:
         network: str = "sandbox-restricted",
         memory: str = "8g",
         cpus: str = "4",
-        pids_limit: int = 256,
+        pids_limit: int = 512,
         cap_drop: list[str] | None = None,
         cap_add: list[str] | None = None,
         security_opt: list[str] | None = None,

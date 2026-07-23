@@ -159,7 +159,7 @@ class CacheConfig(BaseModel):
 
 class ParallelismConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    max_concurrent_apps: int = Field(default=4, gt=0, le=64)
+    max_concurrent_apps: int = Field(default=8, gt=0, le=64)
 
 
 class DefaultsBlock(BaseModel):

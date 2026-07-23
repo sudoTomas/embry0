@@ -74,7 +74,7 @@ def test_packages_no_cascade_true():
 
 def test_parallelism_defaults_apply():
     cfg = parse_qa_yaml_v2(MINIMAL_V2)
-    assert cfg.parallelism.max_concurrent_apps == 4
+    assert cfg.parallelism.max_concurrent_apps == 8
 
 
 def test_parallelism_explicit_value():

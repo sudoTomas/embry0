@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from langgraph.types import Command
 
+from embry0.orchestration.nodes.agent import DEFAULT_ASK_USER_CAP
 from embry0.workflows.issue_to_pr.nodes import developer_node, review_node, triage_node
 
 
@@ -333,7 +334,7 @@ def _triage_config(agent_runner: object) -> dict:
 @pytest.mark.asyncio
 async def test_triage_node_enforces_ask_user_cap() -> None:
     """triage_node must call _enforce_ask_user_cap and self-route to max_retries
-    when the job-wide cap (agent_question_rounds >= 5) is already exhausted."""
+    when the job-wide agent_question_rounds cap is already exhausted."""
     ask_event = {"type": "agent_ask_user", "question": "clarify?", "category": "general"}
     mock_runner = object()  # non-None so the sandbox branch runs
     mock_run_agent = _make_run_agent_node_with_event(ask_event)
@@ -346,7 +347,7 @@ async def test_triage_node_enforces_ask_user_cap() -> None:
         ):
             state = _state(
                 sandbox_container_id="c1",
-                agent_question_rounds=5,  # cap already reached
+                agent_question_rounds=DEFAULT_ASK_USER_CAP,  # cap already reached
                 agent_questions_exhausted=False,
             )
             result = await triage_node(state, config=_triage_config(mock_runner))
@@ -406,7 +407,7 @@ async def test_review_node_uses_per_agent_model_from_pipeline_config() -> None:
 @pytest.mark.asyncio
 async def test_review_node_enforces_ask_user_cap() -> None:
     """review_node must call _enforce_ask_user_cap and self-route to max_retries
-    when the job-wide cap (agent_question_rounds >= 5) is already exhausted."""
+    when the job-wide agent_question_rounds cap is already exhausted."""
     ask_event = {"type": "agent_ask_user", "question": "is this safe?", "category": "general"}
     mock_runner = object()  # non-None so review_node doesn't short-circuit
     mock_run_agent = _make_run_agent_node_with_event(ask_event)
@@ -414,7 +415,7 @@ async def test_review_node_enforces_ask_user_cap() -> None:
     with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=mock_run_agent):
         state = _state(
             agent_outputs=[],
-            agent_question_rounds=5,  # cap already reached
+            agent_question_rounds=DEFAULT_ASK_USER_CAP,  # cap already reached
             agent_questions_exhausted=False,
             pr_url="http://x",
         )

@@ -14,10 +14,15 @@ embry0 uses environment variables for infrastructure config and API endpoints fo
 | `AUTH_DEV_MODE` | `false` | Bypass API key authentication. NEVER use in production. |
 | `WEBHOOK_DEV_MODE` | `false` | Bypass webhook HMAC verification. Required for smee.io relay. NEVER use in production. |
 | `DATABASE_URL` | `postgresql://embry0:embry0@postgres:5432/embry0` | PostgreSQL connection |
-| `MAX_BUDGET_USD` | `10.0` | Default per-job budget |
+| `MAX_BUDGET_USD` | `20.0` | Default per-job budget |
 | `DAILY_BUDGET_CAP_USD` | `100.0` | Daily spending cap |
 | `MONTHLY_BUDGET_CAP_USD` | `500.0` | Monthly spending cap |
 | `BUDGET_OVERRUN_MODE` | `soft` | `soft` (allow finish) or `hard` (stop immediately) |
+| `RATE_LIMIT_PER_AUTHOR_PER_HOUR` | `20` | Issue-author rate limit |
+| `API_RATE_LIMIT_PER_MINUTE` | `300` | API request rate limit |
+| `MAX_WEBHOOK_BODY_BYTES` | `5242880` | Webhook request-body ceiling (bytes) |
+| `ASK_USER_ROUNDS_CAP` | `10` | Agent ask-user rounds per job before `ERR_MAX_AGENT_QUESTIONS` |
+| `USER_RETRY_ROUNDS_CAP` | `5` | User "continue retrying" rounds per job |
 | `PROD_PORT` | `8200` | Frontend port (nginx) |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot token for notifications |
 | `TELEGRAM_CHAT_ID` | — | Telegram chat ID for notifications |
