@@ -1,5 +1,6 @@
 """Integration test fixtures — requires running PostgreSQL."""
 
+import asyncio
 import os
 import shutil
 import subprocess
@@ -73,8 +74,22 @@ def _make_test_lifespan(database_url: str):
 
         await _init_app_state(app, db, database_url=database_url)
 
+        # _init_app_state leaves app.state.background_tasks to the caller (see
+        # its docstring). Without this wiring the executor keeps its private
+        # task set, teardown never cancels fire-and-forget dispatch tasks, and
+        # tests that dispatch jobs leak pending tasks that surface as
+        # PytestUnraisableExceptionWarning at interpreter shutdown (RAV-639).
+        app.state.background_tasks = set()
+        app.state.issue_executor._background_tasks = app.state.background_tasks
+
         yield
 
+        # Snapshot before cancelling — done-callbacks discard from the set.
+        tasks = list(app.state.background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         await db.close()
 
     return test_lifespan
