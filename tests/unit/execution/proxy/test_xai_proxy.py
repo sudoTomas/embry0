@@ -156,3 +156,60 @@ def test_normalize_passes_through_non_json_and_toolless_bodies():
 
     for body in (b"\x00\x01binary", b'{"model": "grok-4.5", "messages": []}', b'["list"]'):
         assert _normalize_tool_schemas(body) is body
+
+
+async def test_forward_injects_conv_id_from_sandbox_identity(xai_client: TestClient):
+    """EMB-54: the proxy stamps x-grok-conv-id with the enrolled sandbox id
+    (per-job sticky cache routing) unless the caller sent its own."""
+    await xai_client.post(
+        "/admin/enroll",
+        json={"sandbox_id": "job-cache-test", "sandbox_token": _SANDBOX_TOKEN},
+        headers={"X-Admin-Token": _ADMIN},
+    )
+    await xai_client.post("/admin/token", json={"access_token": "at-1"}, headers={"X-Admin-Token": _ADMIN})
+
+    captured: dict = {}
+
+    class _FakeStream:
+        def __init__(self, **kw):
+            captured.update(kw)
+            self.status_code = 200
+            self.headers = {"content-type": "application/json"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def aiter_bytes(self):
+            yield b"{}"
+
+    class _FakeClient:
+        def stream(self, **kw):
+            return _FakeStream(**kw)
+
+        async def aclose(self):  # app cleanup calls this on teardown
+            return None
+
+    xai_client.app["http_client"] = _FakeClient()
+
+    resp = await xai_client.post(
+        "/v1/messages",
+        json={"model": "grok-4.5"},
+        headers={"Authorization": f"Bearer {_SANDBOX_TOKEN}"},
+    )
+    assert resp.status == 200
+    assert captured["headers"]["x-grok-conv-id"] == "job-cache-test"
+    assert captured["headers"]["Authorization"] == "Bearer at-1"
+
+    # A caller-supplied conv-id must win.
+    captured.clear()
+    resp2 = await xai_client.post(
+        "/v1/messages",
+        json={"model": "grok-4.5"},
+        headers={"Authorization": f"Bearer {_SANDBOX_TOKEN}", "x-grok-conv-id": "caller-owns-this"},
+    )
+    assert resp2.status == 200
+    assert captured["headers"]["x-grok-conv-id"] == "caller-owns-this"
+    assert "X-Grok-Conv-Id" not in captured["headers"]
