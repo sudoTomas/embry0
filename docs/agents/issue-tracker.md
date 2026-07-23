@@ -7,8 +7,9 @@ The public GitHub repo (`sudoTomas/embry0`) is a PR-only surface; do not open Gi
 > **Tracker moved 2026-07-23.** Historical issues (EMB-1…EMB-54) live in the personal
 > workspace (`tomas-mcmonigal`, team `EMB`) and stay there read-only for reference; the
 > `linear-embry0` MCP still reaches them. Do NOT file new work in the old workspace.
-> Note: the Linear label-trigger webhook (EMB-47) still watches the OLD workspace until
-> it is rewired — see the migration issue in the new project.
+> The label-trigger webhook (EMB-47) was rewired to the RavenCargo workspace on
+> 2026-07-23 (RAV-1023): labeling an issue `embry0` in a mapped project triggers the
+> pipeline. Currently mapped: "Raven AI Quoting Platform" → `raven-cargo/ai-quoting`.
 
 ## Access
 
