@@ -4,6 +4,10 @@
 
 FROM python:3.12.7-slim-bookworm
 
+# Upgrade OS packages first — the pinned base tag ships a CRITICAL OpenSSL
+# (CVE-2026-31789) whose fix is already in the Debian repos.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 # System dependencies — superset of embry0-sandbox plus tooling needed
 # for browser automation and JVM apps. JDK 21 isn't in Debian bookworm
 # (main ships JDK 17, backports has nothing newer), so we use Eclipse
@@ -25,11 +29,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # JVM apps (macro-lab style):
         temurin-21-jdk \
     # Docker CLI only — no daemon. Talks to DinD over TCP+TLS.
-    && curl -fsSL https://download.docker.com/linux/static/stable/$(uname -m)/docker-27.3.1.tgz \
+    && curl -fsSL https://download.docker.com/linux/static/stable/$(uname -m)/docker-29.6.2.tgz \
        | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
     && chmod +x /usr/local/bin/docker \
     && mkdir -p /usr/local/lib/docker/cli-plugins \
-    && curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-$(uname -m) \
+    && curl -fsSL https://github.com/docker/compose/releases/download/v5.3.1/docker-compose-linux-$(uname -m) \
        -o /usr/local/lib/docker/cli-plugins/docker-compose \
     && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose \
     && ln -s /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose \
@@ -44,6 +48,9 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
+    # npm self-upgrade — nodesource bundles an npm whose vendored tar carries
+    # CRITICAL CVE-2026-59873 (fixed in tar >= 7.5.19).
+    && npm install -g npm@latest \
     && npm install -g @anthropic-ai/claude-code@2.1.92 @playwright/mcp@latest playwright@latest
 
 # Pre-fetch Chromium so the QA agent doesn't pay download cost at job start.

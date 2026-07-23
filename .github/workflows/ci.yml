@@ -253,32 +253,48 @@ jobs:
         with:
           image-ref: embry0-orchestrator:ci
           format: table
-          exit-code: "0"
-          severity: CRITICAL,HIGH
+          # Gate on fixable CRITICALs only: ignore-unfixed drops distro
+          # will-not-fix CVEs (perl, zlib1g); fixable HIGHs are dependency
+          # bumps handled as their own work, not merge blockers.
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL
 
       - name: Trivy — sandbox
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: embry0-sandbox:ci
           format: table
-          exit-code: "0"
-          severity: CRITICAL,HIGH
+          # Gate on fixable CRITICALs only: ignore-unfixed drops distro
+          # will-not-fix CVEs (perl, zlib1g); fixable HIGHs are dependency
+          # bumps handled as their own work, not merge blockers.
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL
 
       - name: Trivy — proxy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: embry0-proxy:ci
           format: table
-          exit-code: "0"
-          severity: CRITICAL,HIGH
+          # Gate on fixable CRITICALs only: ignore-unfixed drops distro
+          # will-not-fix CVEs (perl, zlib1g); fixable HIGHs are dependency
+          # bumps handled as their own work, not merge blockers.
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL
 
       - name: Trivy — frontend
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: embry0-frontend:ci
           format: table
-          exit-code: "0"
-          severity: CRITICAL,HIGH
+          # Gate on fixable CRITICALs only: ignore-unfixed drops distro
+          # will-not-fix CVEs (perl, zlib1g); fixable HIGHs are dependency
+          # bumps handled as their own work, not merge blockers.
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL
 
       # gitleaks/gitleaks-action@v2 requires a paid license for org accounts.
       # Run the open-source CLI directly instead — same scanner, no license.
