@@ -96,7 +96,7 @@ Note: The `backup-data` volume persists across redeployments. Rotate backup cred
 
 ### Issue tracker
 
-Issues are tracked in Linear (team `EMB`), not GitHub Issues — the public GitHub repo is a PR-only surface. See `docs/agents/issue-tracker.md`.
+Issues are tracked in Linear — RavenCargo workspace, project "Embry0 Platform — Non-Code Agents & Guardrails" (moved 2026-07-23; EMB-1…54 history stays in the old personal workspace, read-only). Not GitHub Issues — the public repo is a PR-only surface. See `docs/agents/issue-tracker.md`.
 
 ### Domain docs
 
