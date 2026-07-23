@@ -19,6 +19,7 @@ from langgraph.types import Command, interrupt
 from embry0.orchestration.nodes.agent import (
     BRAINSTORMING_ASK_USER_CAP,
     DEFAULT_ASK_USER_CAP,
+    USER_RETRY_ROUNDS_CAP,
     run_agent_node,
 )
 
@@ -466,9 +467,9 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
 
     if action == "needs_info":
         # Cycle guard: prevent infinite triage interrupt loops.
-        # Mirror the 5-round cap used by agent_question_rounds / ask_user.
+        # Mirrors the ask_user round cap (env-tunable via ASK_USER_ROUNDS_CAP).
         _triage_rounds = int(state.get("triage_question_rounds", 0) or 0)
-        if _triage_rounds >= 5:
+        if _triage_rounds >= DEFAULT_ASK_USER_CAP:
             from embry0.safety.error_codes import ErrorCode
 
             logger.warning(
@@ -1774,7 +1775,7 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
 
     if choice == "continue_retrying":
         user_rounds = int(state.get("user_retry_rounds", 0) or 0)
-        max_user_retries = 3
+        max_user_retries = USER_RETRY_ROUNDS_CAP
         if user_rounds >= max_user_retries:
             logger.warning("user_retry_rounds_exceeded", job_id=state.get("job_id"))
             return {

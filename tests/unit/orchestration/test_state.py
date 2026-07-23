@@ -21,7 +21,7 @@ def test_pipeline_config_defaults():
         budget_usd=10.0,
     )
     assert config["reviewer_enabled"] is True
-    assert config["max_feedback_loops"] == 3
+    assert config["max_feedback_loops"] == 5
     assert config["validator_modes"] == ["test", "lint", "typecheck"]
 
 

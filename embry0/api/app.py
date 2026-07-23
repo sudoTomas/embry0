@@ -934,7 +934,7 @@ def create_app(
     )
     app.add_middleware(RateLimitMiddleware, requests_per_minute=config.api_rate_limit_per_minute)
     app.add_middleware(CSRFMiddleware)
-    app.add_middleware(BodySizeMiddleware)
+    app.add_middleware(BodySizeMiddleware, max_bytes=config.max_webhook_body_bytes)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

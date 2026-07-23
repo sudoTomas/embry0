@@ -259,11 +259,12 @@ async def test_triage_node_writes_flat_pipeline_config_to_state() -> None:
 
 
 @pytest.mark.asyncio
-async def test_triage_cycle_guard_terminates_at_round_5() -> None:
-    """After 5 triage_question_rounds, triage_node must return Command(goto=END)."""
+async def test_triage_cycle_guard_terminates_at_cap() -> None:
+    """At the triage round cap, triage_node must return Command(goto=END)."""
     from langgraph.graph import END
     from langgraph.types import Command
 
+    from embry0.orchestration.nodes.agent import DEFAULT_ASK_USER_CAP
     from embry0.workflows.issue_to_pr.nodes import triage_node
 
     state = {
@@ -273,7 +274,7 @@ async def test_triage_cycle_guard_terminates_at_round_5() -> None:
         "sandbox_container_id": "container-abc",
         "agent_outputs": [],
         "errors": [],
-        "triage_question_rounds": 5,  # already at cap
+        "triage_question_rounds": DEFAULT_ASK_USER_CAP,  # already at cap
         "total_cost_usd": 0.0,
     }
     config = {
@@ -298,7 +299,7 @@ async def test_triage_cycle_guard_terminates_at_round_5() -> None:
     }
 
     # The cycle guard fires BEFORE the interrupt() call, so interrupt should
-    # not be called at all when rounds >= 5.
+    # not be called at all when rounds >= the cap.
     with (
         patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=needs_info_output)),
         patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),

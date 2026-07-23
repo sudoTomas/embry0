@@ -59,8 +59,9 @@ async def test_developer_with_brainstorming_skill_uses_cap_15():
 
 
 @pytest.mark.asyncio
-async def test_developer_without_brainstorming_skill_uses_cap_5():
-    """Default cap of 5 still applies when brainstorming isn't loaded."""
+async def test_developer_without_brainstorming_skill_uses_default_cap():
+    """The default cap still applies when brainstorming isn't loaded."""
+    from embry0.orchestration.nodes.agent import DEFAULT_ASK_USER_CAP
     from embry0.workflows.issue_to_pr.nodes import developer_node
 
     state = {
@@ -71,7 +72,7 @@ async def test_developer_without_brainstorming_skill_uses_cap_5():
         "sandbox_container_id": "C",
         "agent_outputs": [],
         "errors": [],
-        "agent_question_rounds": 5,
+        "agent_question_rounds": DEFAULT_ASK_USER_CAP,
         "pipeline_config": {
             "agent_skills": {"developer": ["superpowers:writing-plans"]},
             "budget_usd": 50.0,

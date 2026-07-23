@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import structlog
@@ -14,11 +15,23 @@ from embry0.orchestration.state import AgentOutputEntry
 logger = structlog.get_logger(__name__)
 
 
-# Default cap on agent ask-user rounds per job. Brainstorming overrides
-# to a higher value (see BRAINSTORMING_ASK_USER_CAP) because design
-# conversations legitimately need more turns.
-DEFAULT_ASK_USER_CAP = 5
-BRAINSTORMING_ASK_USER_CAP = 15
+def _env_cap(name: str, default: int) -> int:
+    """Integer cap from the environment, falling back on missing/invalid."""
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+# Cap on agent ask-user rounds per job. Env-tunable (RAV-605) because the
+# right ceiling differs between untrusted SaaS and a trusted self-hosted
+# box. Brainstorming floors at a higher value because design conversations
+# legitimately need more turns.
+DEFAULT_ASK_USER_CAP = _env_cap("ASK_USER_ROUNDS_CAP", 10)
+BRAINSTORMING_ASK_USER_CAP = max(15, DEFAULT_ASK_USER_CAP)
+# User-initiated retry rounds after max_retries (consumed by the
+# issue_to_pr max_retries node).
+USER_RETRY_ROUNDS_CAP = _env_cap("USER_RETRY_ROUNDS_CAP", 5)
 
 # EMB-35: per-role turn budgets. The flat 40 was sized for the developer
 # (repo exploration + implementation); triage is a bounded classification
@@ -81,7 +94,7 @@ async def run_agent_node(
     model: str = "claude-sonnet-4-6",
     tools: list[str] | None = None,
     max_turns: int | None = None,
-    timeout_seconds: int = 300,
+    timeout_seconds: int = 600,
     network: str | None = None,
     on_event: Any | None = None,
     agent_definition: dict[str, Any] | None = None,

@@ -60,7 +60,7 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
         skills=cfg.get("skills", []),
         mcp_servers=cfg.get("mcp_servers", {}),
         max_turns=cfg.get("max_turns", 40),
-        timeout_seconds=cfg.get("timeout_seconds", 300),
+        timeout_seconds=cfg.get("timeout_seconds", 600),
         execution_mode=cfg.get("execution_mode", "sdk"),
         auth_mode=cfg.get("auth_mode", "oauth"),
         safety_policy=policy,

@@ -39,9 +39,14 @@ class Embry0Config(BaseSettings):
     allowed_cors_origins: str = ""
     trigger_labels: str = "embry0"
 
-    # Rate limiting
-    rate_limit_per_author_per_hour: int = 5
-    api_rate_limit_per_minute: int = 60
+    # Rate limiting — defaults sized for trusted self-hosted operation
+    # (RAV-605); tighten via env for anything internet-facing.
+    rate_limit_per_author_per_hour: int = 20
+    api_rate_limit_per_minute: int = 300
+
+    # Webhook request-body ceiling (bytes). Large monorepo push payloads can
+    # exceed 1 MiB; 5 MiB keeps DoS exposure bounded on a LAN-only API.
+    max_webhook_body_bytes: int = Field(default=5_242_880, gt=0)
 
     # Agent provider (anthropic_api | claude_max | ollama)
     provider_mode: str = "anthropic_api"
@@ -57,7 +62,7 @@ class Embry0Config(BaseSettings):
     model_light: str = "claude-haiku-4-5"
 
     # Budget
-    max_budget_usd: float = 10.0
+    max_budget_usd: float = 20.0
     daily_budget_cap_usd: float = 100.0
     monthly_budget_cap_usd: float = 500.0
     budget_overrun_mode: str = "soft"  # "soft" | "hard"
