@@ -9,7 +9,9 @@ from embry0.storage.database import DatabasePool
 
 logger = structlog.get_logger(__name__)
 
-_UPDATABLE_FIELDS = frozenset({"name", "description", "graph_definition", "agent_models", "sandbox_profile"})
+_UPDATABLE_FIELDS = frozenset(
+    {"name", "description", "graph_definition", "agent_models", "sandbox_profile", "default_for_kind"}
+)
 
 
 class PipelineTemplatesRepository:
@@ -21,7 +23,7 @@ class PipelineTemplatesRepository:
     async def list_all(self) -> list[dict[str, Any]]:
         """List all pipeline templates (summary only, no graph_definition)."""
         rows = await self._db.fetch(
-            "SELECT id, name, description, sandbox_profile, is_builtin, created_at, updated_at "
+            "SELECT id, name, description, sandbox_profile, is_builtin, default_for_kind, created_at, updated_at "
             "FROM pipeline_templates ORDER BY is_builtin DESC, name"
         )
         return [dict(r) for r in rows]
@@ -40,13 +42,16 @@ class PipelineTemplatesRepository:
         description: str = "",
         agent_models: dict[str, Any] | None = None,
         sandbox_profile: str | None = None,
+        default_for_kind: str | None = None,
     ) -> dict[str, Any]:
         """Insert a new pipeline template and return the created record."""
         template_id = str(uuid.uuid4())
         await self._db.execute(
             """
-            INSERT INTO pipeline_templates (id, name, description, graph_definition, agent_models, sandbox_profile)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO pipeline_templates (
+                id, name, description, graph_definition, agent_models, sandbox_profile, default_for_kind
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             """,
             template_id,
             name,
@@ -54,6 +59,7 @@ class PipelineTemplatesRepository:
             graph_definition,
             agent_models or {},
             sandbox_profile,
+            default_for_kind,
         )
         logger.info("pipeline_template_created", template_id=template_id, name=name)
         row = await self.get(template_id)
@@ -91,6 +97,7 @@ class PipelineTemplatesRepository:
         description: str = "",
         agent_models: dict[str, Any] | None = None,
         sandbox_profile: str | None = None,
+        default_for_kind: str | None = None,
     ) -> dict[str, Any]:
         """Idempotent upsert for seed-time builtin pipeline templates.
 
@@ -108,14 +115,15 @@ class PipelineTemplatesRepository:
             """
             INSERT INTO pipeline_templates (
                 id, name, description, graph_definition, agent_models,
-                sandbox_profile, is_builtin, updated_at
+                sandbox_profile, default_for_kind, is_builtin, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, NOW())
             ON CONFLICT (name) DO UPDATE SET
                 description = EXCLUDED.description,
                 graph_definition = EXCLUDED.graph_definition,
                 agent_models = EXCLUDED.agent_models,
                 sandbox_profile = EXCLUDED.sandbox_profile,
+                default_for_kind = EXCLUDED.default_for_kind,
                 is_builtin = TRUE,
                 updated_at = NOW()
             """,
@@ -125,6 +133,7 @@ class PipelineTemplatesRepository:
             graph_definition,
             agent_models or {},
             sandbox_profile,
+            default_for_kind,
         )
         logger.info("pipeline_template_seeded", template_id=template_id, name=name)
         row = await self.get(template_id)

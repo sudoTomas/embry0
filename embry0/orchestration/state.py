@@ -15,6 +15,22 @@ class TriageAction(StrEnum):
     SPLIT = "split"
 
 
+class JobKind(StrEnum):
+    """Fixed job-kind vocabulary emitted by triage (RAV-601).
+
+    Deliberately a closed enum validated at the triage-parse boundary — a
+    free-form kind could route to nonexistent pipeline nodes. Extend by
+    adding a member AND a route mapping (route_plan.AGENT_TYPE_TO_NODE
+    covers agent types; kinds resolve to templates via
+    pipeline_templates.default_for_kind).
+    """
+
+    CODE = "code"  # changes to a repository
+    RESEARCH = "research"  # information gathering / synthesis
+    ANALYSIS = "analysis"  # examining provided material
+    OPS = "ops"  # operational / environment tasks
+
+
 class AskUserChannel(StrEnum):
     """Outbound channels for agent ask-user questions.
 
@@ -66,6 +82,7 @@ def make_pipeline_config(**kwargs: Any) -> PipelineConfig:
 class TriageDecision(TypedDict, total=False):
     action: str
     confidence: float
+    job_kind: str  # JobKind value; defaults to "code"
     pipeline_template: str
     pipeline_config: PipelineConfig
     questions: list[Any]  # list of strings or dicts with question/importance/suggested_answer
@@ -129,7 +146,12 @@ class TriageDecisionModel(BaseModel):
 
     action: str = Field(pattern="^(proceed|needs_info|split)$")
     confidence: float = Field(ge=0.0, le=1.0)
-    pipeline_template: str = "standard"
+    # RAV-601: closed vocabulary — the enum type IS the parse-boundary
+    # validation the owner decided on.
+    job_kind: JobKind = JobKind.CODE
+    # Empty = "use the default_for_kind template" (plan_route_node also
+    # treats the legacy free-form values "standard"/"routine" as empty).
+    pipeline_template: str = ""
     pipeline_config: PipelineConfigModel = Field(default_factory=PipelineConfigModel)
     questions: list[dict[str, Any]] = Field(default_factory=list)
     sub_tasks: list[dict[str, Any]] = Field(default_factory=list)
@@ -217,6 +239,15 @@ class JobState(TypedDict, total=False):
     repo_root: str | None
     pr_url: str | None
     result_summary: str | None
+    # RAV-601 template routing. MUST stay declared here — LangGraph's merge
+    # reducer silently drops undeclared keys (see repo_root note above).
+    # job_kind mirrors jobs.job_kind; route_plan is the linearized template
+    # snapshot (a mid-run template edit cannot re-route a planned job);
+    # route_cursor indexes the NEXT step to execute.
+    job_kind: str
+    route_plan: list[dict[str, Any]]
+    route_cursor: int
+    route_template_name: str | None
     pending_agent_questions: list[dict[str, Any]]
     # Agent ask-user events with importance="auto_answerable" carry a
     # suggested_answer that the orchestrator records as the answer instead of

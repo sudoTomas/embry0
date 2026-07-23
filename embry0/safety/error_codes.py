@@ -31,6 +31,7 @@ class ErrorCode(StrEnum):
     UNSUPPORTED_CONTEXT = "ERR_UNSUPPORTED_CONTEXT"  # Unknown context type — no workspace-init strategy registered
     LOCAL_CONTEXT_DENIED = "ERR_LOCAL_CONTEXT_DENIED"  # local context path outside LOCAL_CONTEXT_ALLOWLIST or over caps
     HTTP_FETCH_FAILED = "ERR_HTTP_FETCH_FAILED"  # http context source unreachable, private-address, or over size cap
+    TEMPLATE_INVALID = "ERR_TEMPLATE_INVALID"  # Explicitly requested pipeline template invalid, no fallback (RAV-601)
     UNKNOWN = "ERR_UNKNOWN"  # Uncategorised — should diminish over time
 
     # Phase 1 — pluggable agent execution modes
@@ -57,10 +58,13 @@ def error_code_for_exception(exc: Exception) -> ErrorCode:
     import cycles with the orchestration layer."""
     from embry0.orchestration.nodes.agent import SandboxRequiredError
     from embry0.orchestration.state import TriageParseError, UnsupportedContextError
+    from embry0.workflows.issue_to_pr.plan_route import TemplateInvalidError
     from embry0.workspace_init.base import HttpFetchError, LocalContextDeniedError, WorkspaceInitError
 
     if isinstance(exc, UnsupportedContextError):
         return ErrorCode.UNSUPPORTED_CONTEXT
+    if isinstance(exc, TemplateInvalidError):
+        return ErrorCode.TEMPLATE_INVALID
     if isinstance(exc, LocalContextDeniedError):
         return ErrorCode.LOCAL_CONTEXT_DENIED
     if isinstance(exc, HttpFetchError):

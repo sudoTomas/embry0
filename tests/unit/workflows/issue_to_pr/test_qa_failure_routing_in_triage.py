@@ -164,7 +164,10 @@ async def test_triage_routes_rerun_qa_after_qa_failure() -> None:
         result = await triage_node(_make_qa_failed_state(), _make_config())
 
     assert isinstance(result, Command)
-    assert result.goto == "init_qa"
+    # RAV-601 fix: the issue-to-pr graph's QA chain head is init_orchestrator
+    # (the old "init_qa" target exists only in the QA sub-task graph, so the
+    # rerun path could never actually dispatch).
+    assert result.goto == "init_orchestrator"
     update = result.update or {}
     assert update.get("qa_rerun_reason") == (
         "Boot timed out and prior attempt had partial success — likely flaky DinD startup."

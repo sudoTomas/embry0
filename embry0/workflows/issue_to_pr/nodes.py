@@ -235,6 +235,27 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     if qa_failure_block:
         prompt += f"\n\n{qa_failure_block}"
 
+    # RAV-601: list available templates so triage can pick one by NAME. Rides
+    # the user prompt — the system prompt stays a static module constant so
+    # CLI prompt caching keeps covering it (EMB-35).
+    templates_repo = config["configurable"].get("pipeline_templates_repo")
+    if templates_repo is not None:
+        try:
+            template_rows = await templates_repo.list_all()
+        except Exception:
+            logger.warning("triage_template_list_failed", exc_info=True)
+            template_rows = []
+        template_lines = []
+        for row in template_rows:
+            entry = f"- {row['name']}"
+            if row.get("default_for_kind"):
+                entry += f" [default for job_kind={row['default_for_kind']}]"
+            if row.get("description"):
+                entry += f": {row['description']}"
+            template_lines.append(entry)
+        if template_lines:
+            prompt += "\n\nAvailable pipeline templates:\n" + "\n".join(template_lines)
+
     # EMB-35: the triage instructions ride as a real system prompt (appended
     # to the CLI's preset system block, which its prompt caching covers)
     # instead of being prepended into the user turn and re-billed uncached
@@ -772,6 +793,12 @@ def _route_qa_failure_action(
     payload = {k: v for k, v in raw_action.items() if k != "kind"}
 
     try:
+        # RAV-601: these jumps bypass plan_route, so the route cursor must be
+        # pointed back AT the step being re-entered — otherwise forward
+        # progression would resume from the stale post-QA position and skip
+        # the rest of the plan.
+        from embry0.workflows.issue_to_pr.route_plan import cursor_at
+
         if kind == "retry_developer":
             action = RetryDeveloper.model_validate(payload)
             writer({"type": "node_completed", "node": "triage", "action": "qa_retry_developer"})
@@ -782,17 +809,22 @@ def _route_qa_failure_action(
                     "developer_prompt_addendum": action.prompt,
                     "developer_focus_files": list(action.focus_files),
                     "current_stage": "qa_retry_developer",
+                    "route_cursor": cursor_at(state, "developer"),
                 },
             )
         if kind == "rerun_qa":
             action_rerun = RerunQA.model_validate(payload)
             writer({"type": "node_completed", "node": "triage", "action": "qa_rerun"})
+            # goto targets the issue-to-pr graph's QA chain head. (This was
+            # "init_qa" — a node that exists only in the QA sub-task graph —
+            # so the rerun path could never actually dispatch.)
             return Command(
-                goto="init_qa",
+                goto="init_orchestrator",
                 update={
                     **result,
                     "qa_rerun_reason": action_rerun.reason,
                     "current_stage": "qa_rerun",
+                    "route_cursor": cursor_at(state, "qa"),
                 },
             )
         # kind == "ask_user"
@@ -1380,7 +1412,17 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
             updates["current_stage"] = "dev_branch_missing"
             goto = "max_retries"
         else:
-            goto = "review"
+            # RAV-601: forward progression follows the route plan. Jobs
+            # without one (pre-RAV-601 checkpoints resumed mid-flight) keep
+            # the legacy fixed hop to review.
+            if state.get("route_plan"):
+                from embry0.workflows.issue_to_pr.route_plan import ROUTE_TARGETS, advance, next_route
+
+                updates.update(advance(state))
+                target = next_route({**state, **updates})
+                goto = END if target == "end" else ROUTE_TARGETS[target]
+            else:
+                goto = "review"
 
     return Command(goto=goto, update=updates)
 
@@ -1651,6 +1693,14 @@ Return ONLY a JSON object:
     # consults and return a plain dict so the conditional edge can dispatch.
     if decision == "approved":
         updates["current_stage"] = "review_passed"
+        # RAV-601: the reviewer step is done — advance the route cursor so
+        # route_after_review's next_route() dispatch reads the post-review
+        # position. review_failed keeps the cursor (internal retry loop,
+        # not a template edge).
+        if state.get("route_plan"):
+            from embry0.workflows.issue_to_pr.route_plan import advance
+
+            updates.update(advance(state))
     else:
         # decision == "changes_requested" (or anything else that maps to retry)
         updates["current_stage"] = "review_failed"

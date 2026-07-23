@@ -21,7 +21,13 @@ Analyze the given task and determine the optimal pipeline configuration.
 Respond with a JSON object containing:
 - action: "proceed" | "needs_info" | "split"
 - confidence: 0.0-1.0 (how confident you are in the implementation approach)
-- pipeline_template: "routine" | "standard" (when action=proceed)
+- job_kind: "code" | "research" | "analysis" | "ops" (when action=proceed).
+  code = changes to a repository; research = information gathering/synthesis;
+  analysis = examining material provided in the workspace; ops = operational /
+  environment tasks. Default to "code" when the task modifies a repo.
+- pipeline_template: optional; the NAME of one of the available pipeline
+  templates listed in the task context. Omit (or leave empty) to use the
+  default route for the job_kind.
 - pipeline_config: object with sandbox_profile, agent_models, max_feedback_loops,
   reviewer_enabled, validator_modes, budget_usd
 - questions: list of objects (when action=needs_info). Each object has:
@@ -32,8 +38,8 @@ Respond with a JSON object containing:
 - reasoning: explanation of your decision
 
 Guidelines:
-- Use "routine" for simple, well-defined changes (typos, small fixes, config changes)
-- Use "standard" for features, refactors, multi-file changes
+- Pick a lighter template (e.g. quick-fix) for simple, well-defined changes
+  (typos, small fixes, config changes); the kind default covers everything else
 - Set confidence < 0.5 and action="needs_info" when the task is ambiguous
 - Set action="split" when the task involves multiple independent changes
 - Always include reasoning

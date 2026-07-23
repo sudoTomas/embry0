@@ -82,7 +82,19 @@ def test_parse_triage_response_accepts_valid_minimal():
     result = parse_triage_response('{"action": "proceed", "confidence": 0.9}')
     assert result["action"] == "proceed"
     assert result["confidence"] == 0.9
-    assert result["pipeline_template"] == "standard"
+    # RAV-601: empty = "use the job_kind's default template".
+    assert result["pipeline_template"] == ""
+    assert result["job_kind"] == "code"
+
+
+def test_parse_triage_response_job_kind_enum():
+    """job_kind is a closed vocabulary validated at the parse boundary."""
+    from embry0.orchestration.state import TriageParseError
+
+    ok = parse_triage_response('{"action": "proceed", "confidence": 0.9, "job_kind": "research"}')
+    assert ok["job_kind"] == "research"
+    with pytest.raises(TriageParseError):
+        parse_triage_response('{"action": "proceed", "confidence": 0.9, "job_kind": "deploy"}')
 
 
 @dataclass

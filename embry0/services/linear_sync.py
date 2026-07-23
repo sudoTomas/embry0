@@ -245,6 +245,10 @@ class LinearSyncService:
         lines = [f"**embry0 job `{job.get('job_id', '?')}` finished: {status}**"]
         if job.get("pr_url"):
             lines.append(f"Pull request: {job['pr_url']}")
+        elif job.get("result_summary"):
+            # RAV-601: non-code jobs deliver text, not a PR — surface the
+            # finalize_output summary as the outcome.
+            lines.append(f"Result:\n\n{str(job['result_summary'])[:4000]}")
         if job.get("error_message"):
             lines.append(f"Error: {job['error_message']}")
         if job.get("total_cost_usd") is not None:

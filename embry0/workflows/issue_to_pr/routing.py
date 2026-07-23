@@ -30,14 +30,16 @@ def route_after_triage(state: dict[str, Any]) -> Literal["proceed", "split"]:
     return check_triage_action(state)
 
 
-def route_after_review(state: dict[str, Any]) -> Literal["developer", "qa", "end"]:
+def route_after_review(state: dict[str, Any]) -> Literal["developer", "qa", "output", "end"]:
     """Decide the next node after a successful review.
 
     - ``review_failed`` → ``developer`` (resolved to ``retry`` by the
-      conditional edge mapping; preserves the existing review-fail loop).
-    - Otherwise, when triage set ``state["qa"]["needs_qa"] = True``, route
-      to the QA subpath (``qa`` → mapped to ``init_qa``).
-    - Otherwise terminate the graph (``end`` → ``END``).
+      conditional edge mapping; preserves the existing review-fail loop —
+      an internal loop, not a template edge, so the cursor is untouched).
+    - Otherwise the route plan decides (RAV-601): review_node already
+      advanced the cursor on approval, so ``next_route`` reads the
+      post-review position. Jobs without a plan (pre-RAV-601 checkpoints)
+      keep the legacy needs_qa/end behavior.
 
     Phase 1 fix: ``needs_qa`` lives on the nested QA state block at
     ``state["qa"]["needs_qa"]``, not at the top level. Absence of either
@@ -45,6 +47,11 @@ def route_after_review(state: dict[str, Any]) -> Literal["developer", "qa", "end
     """
     if state.get("current_stage") == "review_failed":
         return "developer"
+    if state.get("route_plan"):
+        from embry0.workflows.issue_to_pr.route_plan import next_route
+
+        target = next_route(state)
+        return "end" if target == "end" else target  # type: ignore[return-value]
     qa_block = state.get("qa") or {}
     if qa_block.get("needs_qa", False):
         return "qa"
@@ -57,12 +64,16 @@ def route_after_review(state: dict[str, Any]) -> Literal["developer", "qa", "end
 DEFAULT_MAX_QA_FAILURE_ROUNDS = 2
 
 
-def route_after_qa_report(state: dict[str, Any]) -> Literal["triage", "end", "exhausted"]:
+def route_after_qa_report(
+    state: dict[str, Any],
+) -> Literal["triage", "end", "exhausted", "developer", "review", "qa", "output"]:
     """Decide the next node after ``qa_report`` in the issue→PR pipeline.
 
     Reads ``state["qa"]["final_status"]``:
 
-    - ``"passed"``    → ``"end"``  (success — wrap up the job)
+    - ``"passed"``    → the route plan's next step (RAV-601; the
+      bookkeeping node advanced the cursor on pass) — ``"end"`` when the
+      plan is exhausted or absent
     - ``"exhausted"`` → ``"end"``  (QA's internal retry loop gave up; don't
       bounce back to triage, surface the failure)
     - ``"failed"``    → ``"triage"`` if ``state["qa"]["failure_rounds"]`` is
@@ -86,6 +97,11 @@ def route_after_qa_report(state: dict[str, Any]) -> Literal["triage", "end", "ex
     max_rounds = qa.get("max_qa_failure_rounds", DEFAULT_MAX_QA_FAILURE_ROUNDS)
 
     if status == "passed":
+        if state.get("route_plan"):
+            from embry0.workflows.issue_to_pr.route_plan import next_route
+
+            target = next_route(state)
+            return "end" if target == "end" else target  # type: ignore[return-value]
         return "end"
     if status == "exhausted":
         return "end"
