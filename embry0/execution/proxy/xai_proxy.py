@@ -229,6 +229,17 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     headers.pop("X-Api-Key", None)
     headers["Authorization"] = f"Bearer {access_token}"
 
+    # EMB-54: xAI prompt caching depends on sticky per-server routing via the
+    # x-grok-conv-id header (cache entries are per-server; without it,
+    # consecutive requests land on different servers and miss cache even with
+    # identical prefixes). Nothing upstream sends it on the Anthropic-compat
+    # path — the suspected cause of the weak caching discount on grok runs.
+    # The enrolled sandbox identity is constant across a job's whole agent
+    # session, which is exactly the granularity caching wants. A caller that
+    # sets its own conv-id wins; the header is harmless if upstream ignores it.
+    if "x-grok-conv-id" not in headers and "X-Grok-Conv-Id" not in headers:
+        headers["x-grok-conv-id"] = sandbox_id
+
     body = await request.read()
     if body:
         normalized = _normalize_tool_schemas(body)
