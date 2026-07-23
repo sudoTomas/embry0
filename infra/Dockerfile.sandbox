@@ -1,5 +1,9 @@
 FROM python:3.12.7-slim-bookworm AS base
 
+# Upgrade OS packages first — the pinned base tag ships a CRITICAL OpenSSL
+# (CVE-2026-31789) whose fix is already in the Debian repos.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 # System dependencies — base + Playwright/Chromium runtime libraries.
 #
 # Without the libnss3/libgbm1/libxkbcommon0/libdrm2/etc. set, every QA
@@ -27,6 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
+    # npm self-upgrade — nodesource bundles an npm whose vendored tar carries
+    # CRITICAL CVE-2026-59873 (fixed in tar >= 7.5.19).
+    && npm install -g npm@latest \
     && npm install -g @anthropic-ai/claude-code@2.1.92
 
 # Python dependencies for sandbox

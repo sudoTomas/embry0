@@ -9,6 +9,10 @@
 
 FROM python:3.12.7-slim-bookworm
 
+# Upgrade OS packages first — the pinned base tag ships a CRITICAL OpenSSL
+# (CVE-2026-31789) whose fix is already in the Debian repos.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Only need aiohttp + httpx + structlog. Pinned to match the orchestrator's runtime.

@@ -1,6 +1,10 @@
 # Stage 1: Build the React SPA
 FROM node:20.18-alpine AS build
 
+# Upgrade OS packages first — the pinned base tags ship a CRITICAL OpenSSL
+# (CVE-2026-31789) whose fix is already in the Alpine repos.
+RUN apk upgrade --no-cache
+
 # VITE_* values are inlined into the JS bundle by Vite at build time. The
 # compose stack passes this from `${VITE_API_KEY:-${API_KEY:-}}` so a single
 # API_KEY in the root .env covers both backend auth and frontend bundling
@@ -17,6 +21,9 @@ RUN npm run build
 
 # Stage 2: Serve with nginx
 FROM nginx:1.27-alpine
+
+# Upgrade OS packages first — see the build stage note (CVE-2026-31789).
+RUN apk upgrade --no-cache
 
 # Replace default nginx config with ours
 COPY nginx.conf /etc/nginx/conf.d/default.conf
