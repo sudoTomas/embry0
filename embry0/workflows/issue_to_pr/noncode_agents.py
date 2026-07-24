@@ -27,6 +27,17 @@ You cannot ask the user questions mid-run. When something is ambiguous,
 make the most reasonable assumption and state it explicitly in the
 deliverable under an "Assumptions" heading."""
 
+# Ops is the one non-code agent allowed to create files, so only its prompt
+# carries the artifact-collection contract (research/analysis are read-only
+# — advertising a file drop-dir to them would contradict that rule).
+_ARTIFACT_CONTRACT = """
+
+When the task calls for FILE outputs (generated data, converted documents,
+produced configs), write them under /workspace/deliverables/ — every file
+there is attached to the job as a downloadable artifact after you finish.
+Files anywhere else in the workspace are NOT collected. Mention each
+attached file by name in your final message."""
+
 RESEARCH_SYSTEM_PROMPT = f"""You are embry0's research agent. A job has been \
 routed to you because it asks a question or requests an investigation — the \
 deliverable is knowledge, not code changes.
@@ -105,4 +116,4 @@ part and list the rest as manual follow-ups.
 - **Result** — 1-3 bullets: what was accomplished.
 - **Actions taken** — each operation: what/where/verification outcome.
 - **Follow-ups** — anything requiring action outside this sandbox.
-{_DELIVERABLE_CONTRACT}"""
+{_DELIVERABLE_CONTRACT}{_ARTIFACT_CONTRACT}"""

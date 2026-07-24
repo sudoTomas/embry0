@@ -942,6 +942,37 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON pipeline_templates (default_for_kind) WHERE default_for_kind IS NOT NULL;
         """,
     ),
+    (
+        43,
+        "deliverables — typed job outputs beyond the PR (RAV-603)",
+        # One row per deliverable a job produced. type vocabulary:
+        #   pr       → url points at the pull request (code kinds)
+        #   report   → content holds the markdown deliverable (research/
+        #              analysis/ops via finalize_output)
+        #   artifact → storage_bucket/storage_key locate the file in MinIO
+        #              (files the agent left in /workspace/deliverables/)
+        #   message  → content holds a short free-text answer
+        # jobs.result_summary stays as a denormalized convenience for list
+        # views / completion comments; this table is the real model.
+        # ON DELETE CASCADE so deliverables die with their parent job.
+        """
+        CREATE TABLE IF NOT EXISTS deliverables (
+            id             TEXT PRIMARY KEY,
+            job_id         TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+            type           TEXT NOT NULL CHECK (type IN ('pr', 'report', 'artifact', 'message')),
+            title          TEXT NOT NULL DEFAULT '',
+            content        TEXT,
+            url            TEXT,
+            storage_bucket TEXT,
+            storage_key    TEXT,
+            media_type     TEXT,
+            size_bytes     BIGINT,
+            metadata       JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_deliverables_job ON deliverables (job_id);
+        """,
+    ),
 ]
 
 

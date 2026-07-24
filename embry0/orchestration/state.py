@@ -239,6 +239,12 @@ class JobState(TypedDict, total=False):
     repo_root: str | None
     pr_url: str | None
     result_summary: str | None
+    # RAV-603: typed deliverables collected by finalize_output_node
+    # ({type, title, content, url, storage_bucket, storage_key, media_type,
+    # size_bytes, metadata} dicts). Persisted as deliverables rows by
+    # IssueExecutor._handle_workflow_result. MUST stay declared here —
+    # LangGraph's merge reducer silently drops undeclared keys.
+    deliverables: list[dict[str, Any]]
     # RAV-601 template routing. MUST stay declared here — LangGraph's merge
     # reducer silently drops undeclared keys (see repo_root note above).
     # job_kind mirrors jobs.job_kind; route_plan is the linearized template

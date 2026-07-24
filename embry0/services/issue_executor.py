@@ -1264,6 +1264,55 @@ class IssueExecutor:
                 except Exception:
                     logger.warning("trace_id_unbind_failed", job_id=job_id, exc_info=True)
 
+    async def _persist_deliverables(self, job_id: str, result: dict[str, Any]) -> None:
+        """Write deliverables rows for a completed job (RAV-603).
+
+        ``state["deliverables"]`` (built by finalize_output_node) is the
+        primary source. Uniform synthesis on top: a ``pr`` row from
+        ``pr_url`` (code kinds usually end without an ``output`` step, so
+        the workflow never builds one), and — when the workflow produced
+        nothing at all — a ``report`` row from ``result_summary`` so
+        pre-RAV-603-template jobs still get a deliverable.
+        """
+        if self._db is None:
+            return
+        from embry0.storage.repositories.deliverables import DeliverablesRepository
+
+        rows = [dict(d) for d in (result.get("deliverables") or []) if isinstance(d, dict)]
+        pr_url = result.get("pr_url")
+        if pr_url and not any(r.get("type") == "pr" for r in rows):
+            rows.insert(0, {"type": "pr", "title": "Pull request", "url": str(pr_url)})
+        summary = str(result.get("result_summary") or "").strip()
+        if not rows and summary:
+            rows.append({"type": "report", "title": f"{result.get('job_kind') or 'job'} report", "content": summary})
+        if not rows:
+            return
+
+        repo = DeliverablesRepository(self._db)
+        allowed = {
+            "type",
+            "title",
+            "content",
+            "url",
+            "storage_bucket",
+            "storage_key",
+            "media_type",
+            "size_bytes",
+            "metadata",
+        }
+        for row in rows:
+            fields = {k: v for k, v in row.items() if k in allowed}
+            try:
+                await repo.create(job_id=job_id, **fields)
+            except Exception:
+                # Per-row isolation: one malformed entry must not drop the rest.
+                logger.warning(
+                    "deliverable_row_persist_failed",
+                    job_id=job_id,
+                    type=row.get("type"),
+                    exc_info=True,
+                )
+
     async def _handle_workflow_result(self, issue_id: str | None, job_id: str, result: dict[str, Any]) -> None:
         """Process the workflow result and update issue/job status."""
         # action lives in triage_decision (D4: state["pipeline_config"] is now the
@@ -1318,14 +1367,20 @@ class IssueExecutor:
                 pr_url=result.get("pr_url"),
                 error_message=error_message,
                 error_code=error_code,
-                # RAV-601 interim non-code deliverable: finalize_output writes
-                # the last agent output here; the completion comment surfaces
-                # it when the job produced no PR (RAV-603 replaces this with a
-                # real deliverable model).
+                # Denormalized convenience copy for list views + completion
+                # comments; the deliverables table (RAV-603) is the real model.
                 result_summary=(result.get("result_summary") if final_status == "completed" else None),
                 total_cost_usd=result.get("total_cost_usd", 0.0),
                 finished_at=datetime.now(UTC),
             )
+            # RAV-603: persist the job's deliverables. Best-effort — the job
+            # status is already written; a persistence failure must not flip
+            # a completed job to failed.
+            if final_status == "completed":
+                try:
+                    await self._persist_deliverables(job_id, result)
+                except Exception:
+                    logger.warning("deliverables_persist_failed", job_id=job_id, exc_info=True)
             # Purge LangGraph checkpoint state for completed/failed jobs.
             # Best-effort: job status is already written; failure here does not
             # affect the job outcome.

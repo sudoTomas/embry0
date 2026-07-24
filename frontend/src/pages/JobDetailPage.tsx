@@ -18,6 +18,7 @@ import { AgentCard } from "@/components/jobs/AgentCard";
 import { PausedBanner } from "@/components/jobs/PausedBanner";
 import { TracesTable } from "@/components/traces/TracesTable";
 import { CostBreakdownTable } from "@/components/jobs/CostBreakdownTable";
+import { DeliverablesCard } from "@/components/jobs/DeliverablesCard";
 import { QATab } from "@/components/qa/QATab";
 import { resumeJob, discardJob } from "@/api/jobs";
 
@@ -205,6 +206,11 @@ export function JobDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Deliverables (RAV-603): what the job actually produced — PR link,
+          report text, downloadable artifacts. Rows exist only for completed
+          jobs; the card renders nothing while the list is empty. */}
+      {job.status === "completed" && <DeliverablesCard jobId={job.job_id} />}
 
       {/* Error banner */}
       {job.status === "failed" && job.error_message && (

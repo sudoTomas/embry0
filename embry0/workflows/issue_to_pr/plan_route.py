@@ -1,15 +1,20 @@
-"""plan_route + finalize_output nodes (RAV-601).
+"""plan_route + finalize_output nodes (RAV-601/603).
 
 ``plan_route_node`` runs right after triage: it resolves the pipeline
 template, validates it, linearizes it into the ``route_plan`` snapshot on
 state, and mirrors ``job_kind``/``pipeline_template`` onto the job row.
-``finalize_output_node`` is the terminal ``output`` template step: it
-surfaces the last agent output as ``result_summary`` (the interim non-code
-deliverable until RAV-603 lands a real deliverable model).
+``finalize_output_node`` is the terminal ``output`` template step and the
+deliverable collection point (RAV-603): the last agent output becomes a
+``report`` deliverable (mirrored into ``result_summary`` for list views and
+completion comments), and files the agent left in /workspace/deliverables/
+are uploaded to MinIO as ``artifact`` deliverables. The executor persists
+``state["deliverables"]`` as rows at job completion.
 """
 
 from __future__ import annotations
 
+import mimetypes
+import posixpath
 from typing import Any
 
 import structlog
@@ -26,6 +31,15 @@ logger = structlog.get_logger(__name__)
 _LEGACY_TEMPLATE_VALUES = {"", "standard", "routine"}
 
 RESULT_SUMMARY_MAX_CHARS = 10_000
+
+# RAV-603 artifact collection. Files the agent placed under this sandbox dir
+# become artifact deliverables. Separate bucket from qa-artifacts: that one
+# carries a lifecycle expiry and an attempt-numbered key layout; deliverables
+# are the job's product and keep indefinitely under {job_id}/{relpath}.
+DELIVERABLES_DIR = "/workspace/deliverables"
+DELIVERABLES_BUCKET = "job-deliverables"
+MAX_ARTIFACT_COUNT = 20
+MAX_ARTIFACT_BYTES = 10 * 1024 * 1024  # per file
 
 
 class TemplateInvalidError(RuntimeError):
@@ -139,12 +153,98 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     }
 
 
-async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-    """Terminal ``output`` step: surface the last agent output as the result.
+async def _collect_artifacts(state: dict[str, Any], config: RunnableConfig) -> list[dict[str, Any]]:
+    """Upload /workspace/deliverables/* files to MinIO as artifact deliverables.
 
-    Interim placement pre-RAV-603: no new tables — the truncated text lands
-    in ``result_summary`` (already declared on JobState) and flows to the
-    completion comment when the job has no PR.
+    Best-effort by design: no docker/minio/container (tests, minimal
+    deploys, sandbox already gone) or any per-file failure returns/skips
+    with a WARNING — artifact collection must never fail the job. Caps:
+    :data:`MAX_ARTIFACT_COUNT` files, :data:`MAX_ARTIFACT_BYTES` each;
+    files beyond the caps are logged and skipped, not silently dropped.
+    """
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    docker = configurable.get("docker")
+    minio = configurable.get("qa_minio")
+    container = state.get("sandbox_container_id")
+    job_id = str(state.get("job_id") or "")
+    if docker is None or minio is None or not container or not job_id:
+        return []
+
+    list_cmd = [
+        "bash",
+        "-c",
+        f"test -d {DELIVERABLES_DIR} && find {DELIVERABLES_DIR} -type f -printf '%s\\t%p\\n' || true",
+    ]
+    try:
+        raw = await docker.run_cmd(docker.build_exec_cmd(container, list_cmd), timeout=30)
+    except Exception:
+        logger.warning("deliverables_list_failed", job_id=job_id, exc_info=True)
+        return []
+
+    entries: list[tuple[int, str]] = []
+    for line in (raw or "").splitlines():
+        size_str, _, path = line.partition("\t")
+        if not path:
+            continue
+        try:
+            entries.append((int(size_str), path))
+        except ValueError:
+            continue
+    if not entries:
+        return []
+
+    try:
+        await minio.ensure_bucket(DELIVERABLES_BUCKET)
+    except Exception:
+        logger.warning("deliverables_bucket_failed", job_id=job_id, exc_info=True)
+        return []
+
+    if len(entries) > MAX_ARTIFACT_COUNT:
+        logger.warning(
+            "deliverables_count_capped",
+            job_id=job_id,
+            found=len(entries),
+            kept=MAX_ARTIFACT_COUNT,
+        )
+    artifacts: list[dict[str, Any]] = []
+    for size, path in sorted(entries, key=lambda e: e[1])[:MAX_ARTIFACT_COUNT]:
+        rel = posixpath.relpath(path, DELIVERABLES_DIR)
+        if size > MAX_ARTIFACT_BYTES:
+            logger.warning("deliverable_too_large", job_id=job_id, path=rel, size=size)
+            continue
+        try:
+            data = await docker.copy_bytes_from(container, path)
+            media_type = mimetypes.guess_type(rel)[0] or "application/octet-stream"
+            key = f"{job_id}/{rel}"
+            await minio.put_object(DELIVERABLES_BUCKET, key, data, content_type=media_type)
+        except Exception:
+            logger.warning("deliverable_upload_failed", job_id=job_id, path=rel, exc_info=True)
+            continue
+        artifacts.append(
+            {
+                "type": "artifact",
+                "title": rel,
+                "storage_bucket": DELIVERABLES_BUCKET,
+                "storage_key": key,
+                "media_type": media_type,
+                "size_bytes": len(data),
+            }
+        )
+    return artifacts
+
+
+async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
+    """Terminal ``output`` step: collect the job's deliverables (RAV-603).
+
+    - The last non-error agent output becomes a ``report`` deliverable and
+      is mirrored (truncated) into ``result_summary`` — list views and the
+      Linear/GitHub completion comments keep reading the denormalized copy.
+    - Files under /workspace/deliverables/ become ``artifact`` deliverables
+      in MinIO (best-effort; see :func:`_collect_artifacts`).
+
+    The ``pr`` deliverable is NOT built here: code-kind jobs usually end
+    without an ``output`` step, so the executor synthesizes it from
+    ``pr_url`` at completion for every job uniformly.
     """
     writer = get_stream_writer()
     writer({"type": "node_started", "node": "finalize_output"})
@@ -155,5 +255,20 @@ async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) ->
             summary = str(entry["output"]).strip()[:RESULT_SUMMARY_MAX_CHARS]
             break
 
-    writer({"type": "node_completed", "node": "finalize_output"})
-    return {"result_summary": summary, "current_stage": "output_finalized"}
+    deliverables: list[dict[str, Any]] = []
+    if summary:
+        deliverables.append(
+            {
+                "type": "report",
+                "title": f"{state.get('job_kind') or 'job'} report",
+                "content": summary,
+            }
+        )
+    deliverables.extend(await _collect_artifacts(state, config))
+
+    writer({"type": "node_completed", "node": "finalize_output", "deliverables": len(deliverables)})
+    return {
+        "result_summary": summary,
+        "deliverables": deliverables,
+        "current_stage": "output_finalized",
+    }

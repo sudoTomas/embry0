@@ -44,6 +44,11 @@ def get_traces_repo(request: Request) -> Any:
     return request.app.state.traces_repo
 
 
+def get_deliverables_repo(request: Request) -> Any:
+    """Return the DeliverablesRepository from request state."""
+    return request.app.state.deliverables_repo
+
+
 def get_profiles_repo(request: Request) -> Any:
     """Return the SandboxProfilesRepository from request state."""
     return request.app.state.profiles_repo
