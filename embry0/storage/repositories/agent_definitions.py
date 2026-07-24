@@ -14,7 +14,9 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
     "triage": {
         "description": "Analyzes the issue and configures the optimal pipeline. Assesses complexity, determines confidence, and can request more information or split oversized tasks.",
         "model": "claude-sonnet-4-6",
-        "tools": [],
+        # Matches what triage_node actually runs with (RAV-602 made the row
+        # authoritative; the old [] predates the DB-driven path).
+        "tools": ["Read", "Glob", "Grep"],
         "skills": [
             # Triage authors a structured plan for the developer to execute.
             "superpowers:writing-plans",

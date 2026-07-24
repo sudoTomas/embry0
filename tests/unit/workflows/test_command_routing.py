@@ -361,18 +361,20 @@ async def test_triage_node_enforces_ask_user_cap() -> None:
 
 @pytest.mark.asyncio
 async def test_review_node_uses_per_agent_model_from_pipeline_config() -> None:
-    """review_node passes agent_models['review'] from the flat pipeline_config to run_agent_node.
+    """pipeline_config.agent_models['review'] must reach the resolved invocation.
 
-    Regression for the bug where review_node used the old TriageDecision-wrapper chain
-    triage_decision.get("pipeline_config", {}).get("agent_models", ...) after Task 6
-    standardised on the flat PipelineConfig shape. The chain silently returned {} and
-    review always fell back to claude-sonnet-4-6 regardless of the configured model.
+    Historical regression: review_node once read the old TriageDecision-wrapper
+    chain, silently got {}, and always fell back to claude-sonnet-4-6. Since
+    RAV-602 the node passes an agent_definition (DB row or code fallback) and
+    run_agent_node's resolver applies pipeline_config on top — so the
+    assertion resolves the captured kwargs the same way run_agent_node does.
     """
+    from embry0.agents.resolver import resolve_agent_config
+
     captured: dict[str, Any] = {}
 
     async def fake_run_agent_node(**kwargs: Any) -> dict[str, Any]:
-        captured["model"] = kwargs.get("model")
-        captured["agent_type"] = kwargs.get("agent_type")
+        captured.update(kwargs)
         return {
             "agent_outputs": [
                 {
@@ -397,10 +399,15 @@ async def test_review_node_uses_per_agent_model_from_pipeline_config() -> None:
         await review_node(state, config=_make_review_config(object()))
 
     assert captured.get("agent_type") == "review"
-    assert captured.get("model") == "claude-opus-4-7", (
-        f"Expected claude-opus-4-7 from pipeline_config, got {captured.get('model')!r}. "
-        "The old wrapper chain `triage_decision.get('pipeline_config', {}).get('agent_models', ...)` "
-        "would have returned the fallback 'claude-sonnet-4-6' instead."
+    resolved = resolve_agent_config(
+        agent_type="review",
+        agent_definition=captured["agent_definition"],
+        template_config=captured.get("template_config"),
+        pipeline_config=captured["state"].get("pipeline_config"),
+    )
+    assert resolved.model == "claude-opus-4-7", (
+        f"Expected claude-opus-4-7 from pipeline_config, got {resolved.model!r} — "
+        "pipeline_config.agent_models must win over the agent_definition model."
     )
 
 

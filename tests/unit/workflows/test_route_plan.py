@@ -102,3 +102,35 @@ def test_cursor_at_finds_first_step_of_type():
     assert cursor_at(s, "developer") == 0
     assert cursor_at(s, "qa") == 2
     assert cursor_at(s, "missing") == 0
+
+
+# ---- step_template_config (RAV-602) ---------------------------------------
+
+
+def test_step_template_config_maps_current_step():
+    from embry0.workflows.issue_to_pr.route_plan import step_template_config
+
+    state = {
+        "route_plan": [
+            {"agent_type": "developer", "node_id": "d", "config": {"tools": ["Read"], "model": "claude-haiku-4-5"}},
+            {"agent_type": "reviewer", "node_id": "r", "config": {"skills": ["s1"]}},
+        ],
+        "route_cursor": 0,
+    }
+    cfg = step_template_config(state, "developer")
+    assert cfg == {"agent_models": {"developer": "claude-haiku-4-5"}, "agent_tools": {"developer": ["Read"]}}
+    # Wrong agent for the current step → None
+    assert step_template_config(state, "review") is None
+    # Reviewer step maps template type "reviewer" → runtime type "review"
+    state["route_cursor"] = 1
+    assert step_template_config(state, "review") == {"agent_skills": {"review": ["s1"]}}
+
+
+def test_step_template_config_empty_or_out_of_range():
+    from embry0.workflows.issue_to_pr.route_plan import step_template_config
+
+    assert step_template_config({}, "developer") is None
+    state = {"route_plan": [{"agent_type": "developer", "node_id": "d", "config": {}}], "route_cursor": 5}
+    assert step_template_config(state, "developer") is None
+    state["route_cursor"] = 0
+    assert step_template_config(state, "developer") is None  # empty config → None
