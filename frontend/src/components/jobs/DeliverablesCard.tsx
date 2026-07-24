@@ -3,7 +3,7 @@ import { Download, ExternalLink, FileText, GitPullRequest, MessageSquare, Packag
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { useDeliverables } from "@/hooks/useDeliverables";
-import { fetchDeliverableDownloadUrl, type Deliverable } from "@/api/deliverables";
+import { downloadDeliverable, type Deliverable } from "@/api/deliverables";
 
 function formatBytes(n: number | null): string {
   if (n === null || n === undefined) return "";
@@ -36,10 +36,9 @@ function ReportBody({ content }: { content: string }) {
 function DeliverableRow({ deliverable }: { deliverable: Deliverable }) {
   const handleDownload = async () => {
     try {
-      const url = await fetchDeliverableDownloadUrl(deliverable.job_id, deliverable.id);
-      window.open(url, "_blank", "noopener");
+      await downloadDeliverable(deliverable);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to resolve download URL");
+      toast.error(err instanceof Error ? err.message : "Failed to download artifact");
     }
   };
 
