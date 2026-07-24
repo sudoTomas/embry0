@@ -50,6 +50,10 @@ from langgraph.graph import END, START, StateGraph
 
 from embry0.orchestration.state import JobState
 from embry0.safety.error_codes import ErrorCode
+from embry0.workflows.issue_to_pr.generic_agent import (
+    generic_agent_node,
+    route_after_generic_agent,
+)
 from embry0.workflows.issue_to_pr.nodes import (
     ask_user_interrupt,
     developer_node,
@@ -129,6 +133,10 @@ class IssueToprWorkflow:
         builder.add_node("finalize_output", finalize_output_node)  # type: ignore[type-var]
         builder.add_node("developer", developer_node)  # type: ignore[type-var]
         builder.add_node("review", review_node)  # type: ignore[type-var]
+        # RAV-604: one physical node serves every non-code agent type
+        # (research/analysis/ops) — it reads the current route step to know
+        # which agent definition to run.
+        builder.add_node("generic_agent", generic_agent_node)  # type: ignore[type-var]
         builder.add_node("retry", retry_node)  # type: ignore[type-var]
         builder.add_node("max_retries", max_retries_node)  # type: ignore[type-var]
         builder.add_node("ask_user_interrupt", ask_user_interrupt)  # type: ignore[type-var]
@@ -160,10 +168,27 @@ class IssueToprWorkflow:
                 "review": "review",
                 "qa": "init_orchestrator",
                 "output": "finalize_output",
+                "agent": "generic_agent",
                 "end": END,
             },
         )
         builder.add_edge("finalize_output", END)
+
+        # RAV-604: a generic step advanced the cursor on success — dispatch
+        # the next template step (possibly another generic step); failures
+        # terminate via route_after_generic_agent's "end".
+        builder.add_conditional_edges(
+            "generic_agent",
+            route_after_generic_agent,
+            {
+                "developer": "developer",
+                "review": "review",
+                "qa": "init_orchestrator",
+                "output": "finalize_output",
+                "agent": "generic_agent",
+                "end": END,
+            },
+        )
 
         # `developer` self-routes via Command(goto=..., update=...) returned
         # from the node body. `review` self-routes for control-flow exits but
@@ -177,6 +202,7 @@ class IssueToprWorkflow:
                 "qa": "init_orchestrator",
                 "review": "review",
                 "output": "finalize_output",
+                "agent": "generic_agent",
                 "end": END,
             },
         )
@@ -202,6 +228,7 @@ class IssueToprWorkflow:
                 "review": "review",
                 "qa": "init_orchestrator",
                 "output": "finalize_output",
+                "agent": "generic_agent",
             },
         )
         builder.add_edge("qa_exhausted", END)

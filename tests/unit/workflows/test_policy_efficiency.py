@@ -61,7 +61,16 @@ async def test_max_turns_precedence(agent_type, explicit, pipeline_cfg, expected
 
 
 def test_default_map_covers_pipeline_roles():
-    assert set(DEFAULT_AGENT_MAX_TURNS) == {"triage", "developer", "review", "qa"}
+    # RAV-604 added the non-code roles (research/analysis/ops).
+    assert set(DEFAULT_AGENT_MAX_TURNS) == {
+        "triage",
+        "developer",
+        "review",
+        "qa",
+        "research",
+        "analysis",
+        "ops",
+    }
     assert DEFAULT_AGENT_MAX_TURNS["developer"] == 40  # unchanged from flat era
 
 

@@ -64,6 +64,9 @@ describe("agentTypeToOperation", () => {
     ["qa", "conjoin"],
     ["output", "coagulate"],
     ["publish", "coagulate"],
+    ["research", "separate"],
+    ["analysis", "distill"],
+    ["ops", "ferment"],
   ])("maps %s → %s", (agentType, expected) => {
     expect(agentTypeToOperation(agentType)).toBe(expected);
   });

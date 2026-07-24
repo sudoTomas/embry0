@@ -21,11 +21,16 @@ logger = structlog.get_logger(__name__)
 # Template agent_type → physical LangGraph node. ``qa`` maps to the head of
 # the whole QA chain (init_orchestrator → orchestrate_qa → qa_report →
 # qa_failure_bookkeeping) — one template step, internal edges untouched.
+# The non-code agents (RAV-604) share one generic node that reads the
+# current route step to know which agent definition to run.
 AGENT_TYPE_TO_NODE: dict[str, str] = {
     "developer": "developer",
     "reviewer": "review",
     "qa": "init_orchestrator",
     "output": "finalize_output",
+    "research": "generic_agent",
+    "analysis": "generic_agent",
+    "ops": "generic_agent",
 }
 
 # The dispatcher's return vocabulary; graph.py maps these to nodes.
@@ -34,6 +39,7 @@ ROUTE_TARGETS: dict[str, str] = {
     "review": "review",
     "qa": "init_orchestrator",
     "output": "finalize_output",
+    "agent": "generic_agent",
 }
 
 # The legacy chain, byte-for-byte today's behavior — used when no template
@@ -76,8 +82,16 @@ def build_route_plan(graph_definition: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _step_target(step: dict[str, Any]) -> str:
-    """Dispatcher key for a step ('developer' | 'review' | 'qa' | 'output')."""
-    mapping = {"developer": "developer", "reviewer": "review", "qa": "qa", "output": "output"}
+    """Dispatcher key for a step ('developer' | 'review' | 'qa' | 'output' | 'agent')."""
+    mapping = {
+        "developer": "developer",
+        "reviewer": "review",
+        "qa": "qa",
+        "output": "output",
+        "research": "agent",
+        "analysis": "agent",
+        "ops": "agent",
+    }
     return mapping[step["agent_type"]]
 
 
@@ -119,7 +133,16 @@ def step_template_config(state: dict[str, Any], run_agent_type: str) -> dict[str
     if not 0 <= cursor < len(plan):
         return None
     step = plan[cursor]
-    step_to_runtime = {"developer": "developer", "reviewer": "review", "qa": "qa", "output": "output"}
+    step_to_runtime = {
+        "developer": "developer",
+        "reviewer": "review",
+        "qa": "qa",
+        "output": "output",
+        # Non-code agents (RAV-604): template agent_type IS the runtime type.
+        "research": "research",
+        "analysis": "analysis",
+        "ops": "ops",
+    }
     if step_to_runtime.get(step.get("agent_type", "")) != run_agent_type:
         return None
     cfg = step.get("config") or {}

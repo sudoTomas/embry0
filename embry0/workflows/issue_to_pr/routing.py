@@ -30,7 +30,7 @@ def route_after_triage(state: dict[str, Any]) -> Literal["proceed", "split"]:
     return check_triage_action(state)
 
 
-def route_after_review(state: dict[str, Any]) -> Literal["developer", "qa", "output", "end"]:
+def route_after_review(state: dict[str, Any]) -> Literal["developer", "qa", "output", "agent", "end"]:
     """Decide the next node after a successful review.
 
     - ``review_failed`` → ``developer`` (resolved to ``retry`` by the
@@ -66,7 +66,7 @@ DEFAULT_MAX_QA_FAILURE_ROUNDS = 2
 
 def route_after_qa_report(
     state: dict[str, Any],
-) -> Literal["triage", "end", "exhausted", "developer", "review", "qa", "output"]:
+) -> Literal["triage", "end", "exhausted", "developer", "review", "qa", "output", "agent"]:
     """Decide the next node after ``qa_report`` in the issue→PR pipeline.
 
     Reads ``state["qa"]["final_status"]``:

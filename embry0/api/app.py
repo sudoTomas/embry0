@@ -403,6 +403,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await seed_onboarding_agent(AgentDefinitionsRepository(db))
 
+    # Insert any BUILTIN_SEED agents missing from the DB (RAV-604: agents
+    # added after a deployment's first migration run — research/analysis/ops).
+    # Insert-if-missing only; POST /agents/{type}/reset is the restore path.
+    from embry0.storage.seeds.agents_builtin import seed_missing_builtin_agents
+
+    await seed_missing_builtin_agents(AgentDefinitionsRepository(db))
+
     # MinIO — QA artifact storage.
     #
     # Two clients because the orchestrator and the sandbox see MinIO via

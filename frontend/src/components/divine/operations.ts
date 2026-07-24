@@ -133,6 +133,9 @@ export const OPERATION_FOR_ROUTE: Partial<Record<string, Operation>> = {
  *   visual-validator    → conjoin
  *   qa                  → conjoin    (proves the union)
  *   output / publish    → coagulate  (seals the gold)
+ *   research            → separate   (sorts signal from noise)
+ *   analysis            → distill    (refines raw material to findings)
+ *   ops                 → ferment    (transforms the workspace)
  *
  * Anything outside the map (custom agents) returns undefined and the
  * caller renders no glyph.
@@ -141,9 +144,9 @@ export function agentTypeToOperation(agentType: string | undefined | null): Oper
   if (!agentType) return undefined;
   const t = agentType.toLowerCase();
   if (t === "triage") return "calcinate";
-  if (t === "developer" || t === "code-gen" || t === "docs-writer") return "ferment";
-  if (t === "explorer" || t === "frontend-explorer") return "separate";
-  if (t === "reviewer" || t === "security-reviewer" || t === "review") return "distill";
+  if (t === "developer" || t === "code-gen" || t === "docs-writer" || t === "ops") return "ferment";
+  if (t === "explorer" || t === "frontend-explorer" || t === "research") return "separate";
+  if (t === "reviewer" || t === "security-reviewer" || t === "review" || t === "analysis") return "distill";
   if (
     t === "validator" ||
     t === "lint-checker" ||

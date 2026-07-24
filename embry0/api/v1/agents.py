@@ -37,6 +37,9 @@ async def create_agent(
             tools=req.tools,
             skills=req.skills,
             system_prompt=req.system_prompt,
+            execution_mode=req.execution_mode,
+            auth_mode=req.auth_mode,
+            mcp_servers=req.mcp_servers,
         )
     except Exception as exc:
         if "duplicate" in str(exc).lower() or "unique" in str(exc).lower():

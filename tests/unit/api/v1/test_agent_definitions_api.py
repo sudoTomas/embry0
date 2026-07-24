@@ -86,6 +86,60 @@ async def test_create_agent(app):
 
 
 @pytest.mark.asyncio
+async def test_create_agent_full_surface(app):
+    """RAV-604: execution_mode/auth_mode/mcp_servers reach the repo."""
+    transport = ASGITransport(app=app)
+    mcp = {"playwright": {"type": "stdio", "command": "playwright-mcp"}}
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/agents",
+            json={
+                "type": "custom",
+                "description": "A custom agent",
+                "model": "claude-sonnet-4-6",
+                "execution_mode": "sdk",
+                "auth_mode": "oauth",
+                "mcp_servers": mcp,
+            },
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 201
+    kwargs = app.state.agent_defs_repo.create.call_args.kwargs
+    assert kwargs["execution_mode"] == "sdk"
+    assert kwargs["auth_mode"] == "oauth"
+    assert kwargs["mcp_servers"] == mcp
+
+
+@pytest.mark.asyncio
+async def test_create_agent_rejects_bad_modes(app):
+    transport = ASGITransport(app=app)
+    base = {"type": "custom", "description": "d", "model": "m"}
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for bad in ({"execution_mode": "carrier-pigeon"}, {"auth_mode": "vibes"}):
+            resp = await client.post(
+                "/api/v1/agents",
+                json={**base, **bad},
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+            assert resp.status_code == 422, bad
+
+
+@pytest.mark.asyncio
+async def test_update_agent_accepts_new_fields(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/agents/developer",
+            json={"execution_mode": "cli", "mcp_servers": {"x": {"type": "stdio", "command": "x"}}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200
+    kwargs = app.state.agent_defs_repo.update.call_args.kwargs
+    assert kwargs["execution_mode"] == "cli"
+    assert kwargs["mcp_servers"] == {"x": {"type": "stdio", "command": "x"}}
+
+
+@pytest.mark.asyncio
 async def test_update_agent(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

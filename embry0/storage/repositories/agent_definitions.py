@@ -5,6 +5,15 @@ from typing import Any
 import structlog
 
 from embry0.storage.database import DatabasePool
+from embry0.workflows.issue_to_pr.noncode_agents import (
+    ANALYSIS_SYSTEM_PROMPT as _ANALYSIS_SYSTEM_PROMPT,
+)
+from embry0.workflows.issue_to_pr.noncode_agents import (
+    OPS_SYSTEM_PROMPT as _OPS_SYSTEM_PROMPT,
+)
+from embry0.workflows.issue_to_pr.noncode_agents import (
+    RESEARCH_SYSTEM_PROMPT as _RESEARCH_SYSTEM_PROMPT,
+)
 from embry0.workflows.onboard.agent_seed import SYSTEM_PROMPT as _ONBOARDING_SYSTEM_PROMPT
 from embry0.workflows.qa.agent_seed import SYSTEM_PROMPT as _QA_SYSTEM_PROMPT
 
@@ -137,6 +146,54 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "auth_mode": None,
         "mcp_servers": {},
     },
+    # RAV-604: non-code agents. These run on the generic agent node
+    # (workflows/issue_to_pr/generic_agent.py) — behavior lives in the
+    # system prompt, not in node code. research/analysis are read-only by
+    # design (no Write/Edit; Bash is for inspection/measurement per the
+    # prompts); ops performs workspace mutations.
+    "research": {
+        "description": (
+            "Investigates source material staged in the workspace and answers "
+            "the questions the job asks. Read-only: produces a cited findings "
+            "report as the job deliverable, never modifies files."
+        ),
+        "model": "claude-sonnet-4-6",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _RESEARCH_SYSTEM_PROMPT,
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "analysis": {
+        "description": (
+            "Performs structured, evidence-backed analysis of a codebase, "
+            "dataset, or document set in the workspace. Read-only: delivers "
+            "quantified findings and ranked recommendations, never modifies "
+            "files."
+        ),
+        "model": "claude-sonnet-4-6",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _ANALYSIS_SYSTEM_PROMPT,
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "ops": {
+        "description": (
+            "Executes operational tasks over the workspace — batch file "
+            "transformations, config generation, scripted maintenance — and "
+            "delivers a verified report of actions taken. No PR is produced."
+        ),
+        "model": "claude-sonnet-4-6",
+        "tools": ["Read", "Glob", "Grep", "Bash", "Write", "Edit"],
+        "skills": ["superpowers:verification-before-completion"],
+        "system_prompt": _OPS_SYSTEM_PROMPT,
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
 }
 
 _ALLOWED_UPDATE_FIELDS = {
@@ -179,13 +236,15 @@ class AgentDefinitionsRepository:
         system_prompt: str = "",
         execution_mode: str | None = None,
         auth_mode: str | None = None,
+        mcp_servers: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Insert a new custom agent definition."""
         row = await self._db.fetchrow(
             """
             INSERT INTO agent_definitions
-                (type, description, model, tools, skills, system_prompt, is_builtin, execution_mode, auth_mode)
-            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8)
+                (type, description, model, tools, skills, system_prompt, is_builtin, execution_mode, auth_mode,
+                 mcp_servers)
+            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9)
             RETURNING *
             """,
             agent_type,
@@ -196,6 +255,7 @@ class AgentDefinitionsRepository:
             system_prompt,
             execution_mode,
             auth_mode,
+            mcp_servers or {},
         )
         logger.info("agent_definition_created", agent_type=agent_type)
         assert row is not None, "INSERT ... RETURNING must return a row"
