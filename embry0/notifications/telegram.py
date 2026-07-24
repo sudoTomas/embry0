@@ -10,6 +10,25 @@ logger = structlog.get_logger(__name__)
 _TELEGRAM_API = "https://api.telegram.org"
 
 
+async def send_message(bot_token: str, chat_id: str, text: str) -> bool:
+    """Send a plain Telegram message. Best-effort — returns False, never raises.
+
+    RAV-657: the watcher's human ping. Text is sent without parse_mode so
+    agent-derived content can't break on Markdown entities.
+    """
+    payload = {"chat_id": chat_id, "text": text[:4000]}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{_TELEGRAM_API}/bot{bot_token}/sendMessage", json=payload)
+        ok = resp.status_code == 200 and bool(resp.json().get("ok"))
+        if not ok:
+            logger.warning("telegram_send_failed", status=resp.status_code, body=resp.text[:200])
+        return ok
+    except Exception as exc:
+        logger.warning("telegram_send_error", error=str(exc))
+        return False
+
+
 async def edit_message_answered(
     bot_token: str,
     chat_id: str,

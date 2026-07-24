@@ -30,6 +30,21 @@ class Embry0Config(BaseSettings):
     linear_webhook_secret: str = ""
     linear_repo_map: str = ""
 
+    # Watcher/proposer (RAV-657, W1d): scheduled log-scan → analysis job →
+    # DRAFT Linear ticket → human ping. Disabled by default; the human gate
+    # is structural — the watcher never applies the `embry0` trigger label,
+    # a human does that on the draft ticket to accept the proposal.
+    watcher_enabled: bool = False
+    watcher_interval_seconds: int = 3600
+    watcher_loki_url: str = "http://192.168.200.51:3100"
+    watcher_logql: str = '{compose_project="ai-quoting"} |~ "(?i)(error|exception|traceback)"'
+    watcher_min_log_lines: int = 5  # fewer matching lines than this → skip the tick
+    watcher_max_log_lines: int = 200  # excerpt cap fed to the analysis agent
+    watcher_max_open_proposals: int = 3  # skip when this many drafts await review
+    watcher_job_timeout_seconds: int = 1800
+    watcher_linear_team_id: str = ""  # required to file draft tickets
+    watcher_linear_project_id: str = ""  # optional project for drafts
+
     # API authentication
     api_key: str = ""
     # Per-surface dev-mode flags. Each independently bypasses the corresponding

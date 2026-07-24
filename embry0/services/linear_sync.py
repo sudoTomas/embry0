@@ -126,6 +126,44 @@ class LinearSyncService:
             team_key=((issue.get("team") or {}).get("key")) or "",
         )
 
+    async def create_issue(
+        self,
+        team_id: str,
+        title: str,
+        description: str,
+        project_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Create a Linear issue and return {id, identifier, url}, or None.
+
+        RAV-657: used by the watcher to file DRAFT proposals. Deliberately
+        never sets labels — applying the trigger label is the human
+        acceptance step, and keeping this method label-free makes the
+        watcher's human gate structural rather than behavioral.
+        """
+        mutation = """
+        mutation($input: IssueCreateInput!) {
+          issueCreate(input: $input) {
+            success
+            issue { id identifier url }
+          }
+        }
+        """
+        issue_input: dict[str, Any] = {"teamId": team_id, "title": title, "description": description}
+        if project_id:
+            issue_input["projectId"] = project_id
+        try:
+            resp = await self._graphql(mutation, {"input": issue_input})
+            payload = (resp.get("data") or {}).get("issueCreate") or {}
+            if not payload.get("success"):
+                logger.warning("linear_issue_create_rejected", title=title[:80], response=json.dumps(resp)[:300])
+                return None
+            issue: dict[str, Any] = payload["issue"]
+            logger.info("linear_issue_created", identifier=issue.get("identifier"), title=title[:80])
+            return issue
+        except Exception as exc:
+            logger.warning("linear_issue_create_failed", title=title[:80], error=str(exc))
+            return None
+
     async def post_comment(self, linear_issue_id: str, body: str) -> bool:
         """Post a markdown comment on a Linear issue. Best-effort — never raises."""
         try:

@@ -973,6 +973,36 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_deliverables_job ON deliverables (job_id);
         """,
     ),
+    (
+        44,
+        "watcher_runs — audit trail for the log-watcher/proposer (RAV-657)",
+        # One row per watcher tick. action vocabulary:
+        #   skipped_quiet     → matching log volume below the minimum
+        #   skipped_backlog   → open-proposal cap reached, tick not run
+        #   skipped_duplicate → analysis produced a proposal we already filed
+        #   no_issue          → analysis ran, agent found nothing ticket-worthy
+        #   proposed          → draft Linear ticket filed + human pinged
+        #   error             → the tick itself failed (detail column)
+        # fingerprint dedups proposals across ticks (normalized title hash);
+        # linear_issue_identifier records the filed draft (e.g. RAV-1099).
+        """
+        CREATE TABLE IF NOT EXISTS watcher_runs (
+            id                       TEXT PRIMARY KEY,
+            window_start             TIMESTAMPTZ NOT NULL,
+            window_end               TIMESTAMPTZ NOT NULL,
+            log_lines                INTEGER NOT NULL DEFAULT 0,
+            action                   TEXT NOT NULL,
+            detail                   TEXT,
+            job_id                   TEXT,
+            fingerprint              TEXT,
+            linear_issue_identifier  TEXT,
+            created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_watcher_runs_created ON watcher_runs (created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_watcher_runs_fingerprint ON watcher_runs (fingerprint)
+            WHERE fingerprint IS NOT NULL;
+        """,
+    ),
 ]
 
 
