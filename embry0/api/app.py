@@ -867,6 +867,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(sweep_task)
     sweep_task.add_done_callback(app.state.background_tasks.discard)
 
+    # RAV-657 (W1d): log-watcher/proposer. The service is always constructed
+    # (POST /watcher/run works for deliberate operator runs); the scheduled
+    # loop only starts when WATCHER_ENABLED=true.
+    from embry0.services.watcher import WatcherService
+    from embry0.storage.repositories.watcher_runs import WatcherRunsRepository
+
+    app.state.watcher_runs_repo = WatcherRunsRepository(db)
+    app.state.watcher_service = WatcherService(
+        config=config,
+        jobs_repo=app.state.jobs_repo,
+        watcher_runs_repo=app.state.watcher_runs_repo,
+        integration_repo=app.state.integration_repo,
+        executor=app.state.issue_executor,
+        linear_sync=linear_sync,
+    )
+    if config.watcher_enabled:
+        watcher_task = asyncio.create_task(app.state.watcher_service.start())
+        app.state.background_tasks.add(watcher_task)
+        watcher_task.add_done_callback(app.state.background_tasks.discard)
+
     if config.telegram_bot_token and getattr(config, "telegram_webhook_url", ""):
         import secrets
 
@@ -998,6 +1018,7 @@ def _register_routers(app: FastAPI) -> None:
         stats,
         telegram,
         traces,
+        watcher,
         webhooks,
     )
     from embry0.api.ws import streaming
@@ -1027,6 +1048,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(config.router, prefix="/api/v1", tags=["config"], dependencies=auth_deps)
     app.include_router(stats.router, prefix="/api/v1", tags=["stats"], dependencies=auth_deps)
     app.include_router(traces.router, prefix="/api/v1", tags=["traces"], dependencies=auth_deps)
+    # RAV-657: watcher audit trail + manual tick trigger.
+    app.include_router(watcher.router, prefix="/api/v1", tags=["watcher"], dependencies=auth_deps)
     app.include_router(queue.router, prefix="/api/v1", tags=["queue"], dependencies=auth_deps)
     app.include_router(pipeline_templates.router, prefix="/api/v1", tags=["pipeline-templates"], dependencies=auth_deps)
     app.include_router(environment.router, prefix="/api/v1", tags=["environment"], dependencies=auth_deps)

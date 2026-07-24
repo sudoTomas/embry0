@@ -155,3 +155,39 @@ def test_parse_repo_map() -> None:
         parse_repo_map("not-json")
     with pytest.raises(ValueError):
         parse_repo_map('{"P": 1}')
+
+
+@pytest.mark.asyncio
+async def test_create_issue_returns_identifier(monkeypatch) -> None:
+    """RAV-657: watcher drafts ride issueCreate — label-free by design."""
+    svc = _service()
+    captured: dict[str, Any] = {}
+
+    async def _fake_graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        captured["query"] = query
+        captured["variables"] = variables
+        return {
+            "data": {
+                "issueCreate": {
+                    "success": True,
+                    "issue": {"id": "lin-1", "identifier": "RAV-2001", "url": "https://linear.app/x/RAV-2001"},
+                }
+            }
+        }
+
+    monkeypatch.setattr(svc, "_graphql", _fake_graphql)
+    issue = await svc.create_issue(team_id="team-1", title="[watcher] t", description="d")
+    assert issue == {"id": "lin-1", "identifier": "RAV-2001", "url": "https://linear.app/x/RAV-2001"}
+    assert captured["variables"]["input"] == {"teamId": "team-1", "title": "[watcher] t", "description": "d"}
+    assert "label" not in captured["query"].lower()
+
+
+@pytest.mark.asyncio
+async def test_create_issue_failure_returns_none(monkeypatch) -> None:
+    svc = _service()
+
+    async def _fake_graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        return {"data": {"issueCreate": {"success": False}}}
+
+    monkeypatch.setattr(svc, "_graphql", _fake_graphql)
+    assert await svc.create_issue(team_id="t", title="x", description="y") is None
