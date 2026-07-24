@@ -1344,8 +1344,27 @@ class IssueExecutor:
 
             # Pipeline ends at review_complete (approved) or abandoned (user gave up)
             failed_stages = {"abandoned", "failed", "developer_retry"}
-            has_errors = bool(result.get("errors"))
-            final_status = "failed" if current_stage in failed_stages or has_errors else "completed"
+            # RAV-1035: judge the run by its TERMINAL state, not by history.
+            # state["errors"] is a reducer-append list, so an error from a
+            # RECOVERED attempt (developer retry after max-turns, resumed
+            # runs) persists for the job's whole life — a bare
+            # bool(result["errors"]) misclassified fully-recovered pilots as
+            # failed. A run ends in error when its stage is a failed stage, a
+            # node set a terminal error_code, its last agent output errored,
+            # or errors were appended without any agent ever running.
+            outputs = result.get("agent_outputs") or []
+            if outputs:
+                ends_in_error = bool(outputs[-1].get("is_error"))
+            else:
+                ends_in_error = bool(result.get("errors"))
+            final_status = (
+                "failed"
+                if current_stage in failed_stages
+                or current_stage.endswith("_failed")
+                or bool(result.get("error_code"))
+                or ends_in_error
+                else "completed"
+            )
             # Classify the failure: graph nodes may have set a specific error_code
             # in state (e.g. ERR_TRIAGE_MALFORMED); otherwise bucket as UNKNOWN.
             error_code: str | None = None
