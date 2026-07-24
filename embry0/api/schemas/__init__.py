@@ -187,7 +187,10 @@ class JobCreateRequest(BaseModel):
 class JobResponse(BaseModel):
     job_id: str
     status: str
-    repo: str
+    # NULL for non-git jobs (http/local/none contexts, RAV-600/604) — a
+    # required str made /api/v1/jobs 500 once the first repo-less job row
+    # existed.
+    repo: str | None = None
     task: str
     issue_number: int | None = None
     # Internal issues-table FK. NULL means the job did not originate from an

@@ -49,7 +49,7 @@ export function JobsPage() {
 
   const statusOptions: JobStatus[] = ["pending", "running", "completed", "partial", "failed", "cancelled"];
   const repoOptions: string[] = data
-    ? Array.from(new Set(data.jobs.map((j) => j.repo).filter(Boolean)))
+    ? Array.from(new Set(data.jobs.flatMap((j) => (j.repo ? [j.repo] : []))))
     : [];
 
   return (
