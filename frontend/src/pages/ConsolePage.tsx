@@ -138,7 +138,7 @@ export function ConsolePage() {
   const boardEmpty = !isLoading && !isError && totalCards === 0 && !hasFilters;
 
   const repoOptions = useMemo(() => {
-    const seen = new Set((data?.jobs ?? []).map((j) => j.repo).filter(Boolean));
+    const seen = new Set((data?.jobs ?? []).flatMap((j) => (j.repo ? [j.repo] : [])));
     if (repoFilter) seen.add(repoFilter);
     return Array.from(seen).sort();
   }, [data, repoFilter]);

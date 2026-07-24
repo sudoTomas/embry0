@@ -6,7 +6,8 @@ export type TraceResult = "pass" | "fail" | "partial" | "error" | "timeout" | "b
 export interface JobResponse {
   job_id: string;
   status: JobStatus;
-  repo: string;
+  /** Null for non-git jobs (http/local/none contexts). */
+  repo: string | null;
   task: string;
   created_at: string;
   started_at: string | null;

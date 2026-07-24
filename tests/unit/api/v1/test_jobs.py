@@ -109,6 +109,34 @@ async def test_list_jobs_surfaces_issue_id_and_current_stage(app):
 
 
 @pytest.mark.asyncio
+async def test_list_jobs_tolerates_null_repo(app):
+    """Non-git jobs (http/local/none contexts) persist repo=NULL — the list
+    endpoint must serialize them instead of 500ing on JobResponse validation
+    (RAV-604 regression: the first research job broke GET /jobs)."""
+    app.state.jobs_repo.list_all = AsyncMock(
+        return_value=(
+            [
+                {
+                    "job_id": "job-research",
+                    "status": "completed",
+                    "repo": None,
+                    "task": "Summarize RFC 2324",
+                    "job_kind": "research",
+                }
+            ],
+            1,
+        )
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/v1/jobs")
+    assert resp.status_code == 200
+    job = resp.json()["jobs"][0]
+    assert job["repo"] is None
+    assert job["job_kind"] == "research"
+
+
+@pytest.mark.asyncio
 async def test_get_job(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
