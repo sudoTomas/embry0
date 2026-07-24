@@ -13,7 +13,8 @@ _DEFERRED_TOOLS = frozenset({"CreateIssue", "RequestInput", "UpdateStatus"})
 
 # The template-node vocabulary the route-plan interpreter can execute
 # (embry0/workflows/issue_to_pr/route_plan.py AGENT_TYPE_TO_NODE + triage).
-_EXECUTABLE_AGENT_TYPES = frozenset({"triage", "developer", "reviewer", "qa", "output"})
+# research/analysis/ops (RAV-604) all execute on the generic agent node.
+_EXECUTABLE_AGENT_TYPES = frozenset({"triage", "developer", "reviewer", "qa", "output", "research", "analysis", "ops"})
 
 
 def validate_graph_definition(name: str, graph: dict[str, Any]) -> list[str]:

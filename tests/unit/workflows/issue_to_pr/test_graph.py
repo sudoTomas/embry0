@@ -26,6 +26,22 @@ def test_workflow_graph_has_expected_nodes():
     assert "max_retries" in node_names
 
 
+def test_generic_agent_node_wired():
+    """RAV-604: the generic node exists and every dispatch seam can reach it."""
+    wf = IssueToprWorkflow()
+    graph = wf.compile()
+    g = graph.get_graph()
+    assert "generic_agent" in set(g.nodes)
+    edges = {(e.source, e.target) for e in g.edges}
+    # Reachable from plan_route, from its own chaining seam, and onward to
+    # finalize_output (the research-default shape: triage→research→output).
+    assert ("plan_route", "generic_agent") in edges
+    assert ("generic_agent", "generic_agent") in edges
+    assert ("generic_agent", "finalize_output") in edges
+    assert ("review", "generic_agent") in edges
+    assert ("qa_failure_bookkeeping", "generic_agent") in edges
+
+
 def test_issue_to_pr_graph_uses_multi_app_qa():
     wf = IssueToprWorkflow()
     graph = wf.compile()

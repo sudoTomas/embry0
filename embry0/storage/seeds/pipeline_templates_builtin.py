@@ -106,6 +106,73 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
             ],
         ),
         "sandbox_profile": "slim",
+        "default_for_kind": "code",
+    },
+    # RAV-604: one default route per non-code job kind. Each runs its
+    # kind's agent on the generic agent node, then finalize_output captures
+    # the agent's final message as the job deliverable.
+    "research-default": {
+        "description": (
+            "Default route for job_kind=research: triage → research agent → output. "
+            "Investigates the staged source material and delivers a cited findings report."
+        ),
+        "graph_definition": _graph(
+            name="research-default",
+            description="Triage → research → output.",
+            nodes=[
+                _node("triage", "triage", 0, 0),
+                _node("research", "research", 240, 0),
+                _node("output", "output", 480, 0),
+            ],
+            edges=[
+                _edge("e1", "triage", "research"),
+                _edge("e2", "research", "output"),
+            ],
+        ),
+        "sandbox_profile": "slim",
+        "default_for_kind": "research",
+    },
+    "analysis-default": {
+        "description": (
+            "Default route for job_kind=analysis: triage → analysis agent → output. "
+            "Delivers evidence-backed findings and recommendations over the workspace."
+        ),
+        "graph_definition": _graph(
+            name="analysis-default",
+            description="Triage → analysis → output.",
+            nodes=[
+                _node("triage", "triage", 0, 0),
+                _node("analysis", "analysis", 240, 0),
+                _node("output", "output", 480, 0),
+            ],
+            edges=[
+                _edge("e1", "triage", "analysis"),
+                _edge("e2", "analysis", "output"),
+            ],
+        ),
+        "sandbox_profile": "slim",
+        "default_for_kind": "analysis",
+    },
+    "ops-default": {
+        "description": (
+            "Default route for job_kind=ops: triage → ops agent → output. "
+            "Performs the operational task in the workspace and delivers a verified action report."
+        ),
+        "graph_definition": _graph(
+            name="ops-default",
+            description="Triage → ops → output.",
+            nodes=[
+                _node("triage", "triage", 0, 0),
+                _node("ops", "ops", 240, 0),
+                _node("output", "output", 480, 0),
+            ],
+            edges=[
+                _edge("e1", "triage", "ops"),
+                _edge("e2", "ops", "output"),
+            ],
+        ),
+        "sandbox_profile": "slim",
+        "default_for_kind": "ops",
     },
 }
 

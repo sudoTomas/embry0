@@ -43,6 +43,11 @@ DEFAULT_AGENT_MAX_TURNS: dict[str, int] = {
     "developer": 40,
     "review": 25,
     "qa": 40,
+    # RAV-604 non-code agents: research/analysis are bounded read-and-report
+    # passes; ops performs workspace mutations and gets the developer budget.
+    "research": 25,
+    "analysis": 25,
+    "ops": 40,
 }
 
 

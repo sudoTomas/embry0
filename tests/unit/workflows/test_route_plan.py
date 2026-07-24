@@ -24,6 +24,18 @@ def test_builtin_seeds_linearize():
     assert [s["agent_type"] for s in _plan("quick-fix")] == ["developer"]
     assert [s["agent_type"] for s in _plan("review-only")] == ["reviewer"]
     assert [s["agent_type"] for s in _plan("full-magnum-opus")] == ["developer", "reviewer", "qa", "output"]
+    # RAV-604: one default route per non-code kind.
+    assert [s["agent_type"] for s in _plan("research-default")] == ["research", "output"]
+    assert [s["agent_type"] for s in _plan("analysis-default")] == ["analysis", "output"]
+    assert [s["agent_type"] for s in _plan("ops-default")] == ["ops", "output"]
+
+
+def test_builtin_seeds_cover_every_kind_exactly_once():
+    """Each JobKind has exactly one builtin default template (RAV-604)."""
+    from embry0.orchestration.state import JobKind
+
+    defaults = [t.get("default_for_kind") for t in BUILTIN_PIPELINE_TEMPLATES.values() if t.get("default_for_kind")]
+    assert sorted(defaults) == sorted(k.value for k in JobKind)
 
 
 def test_builtin_seeds_validate():
@@ -97,6 +109,17 @@ def test_past_end_dispatches_end():
     assert next_route(_state(cursor=99)) == "end"
 
 
+def test_generic_steps_dispatch_to_agent():
+    """research/analysis/ops steps all resolve to the 'agent' route key (RAV-604)."""
+    for name in ("research-default", "analysis-default", "ops-default"):
+        s = {"route_plan": _plan(name), "route_cursor": 0, "qa": {}}
+        assert next_route(s) == "agent"
+        s.update(advance(s))
+        assert next_route(s) == "output"
+        s.update(advance(s))
+        assert next_route(s) == "end"
+
+
 def test_cursor_at_finds_first_step_of_type():
     s = _state()
     assert cursor_at(s, "developer") == 0
@@ -134,3 +157,15 @@ def test_step_template_config_empty_or_out_of_range():
     assert step_template_config(state, "developer") is None
     state["route_cursor"] = 0
     assert step_template_config(state, "developer") is None  # empty config → None
+
+
+def test_step_template_config_generic_agents_use_own_type():
+    """Non-code steps: template agent_type IS the runtime type (RAV-604)."""
+    from embry0.workflows.issue_to_pr.route_plan import step_template_config
+
+    state = {
+        "route_plan": [{"agent_type": "research", "node_id": "r", "config": {"model": "claude-opus-4-7"}}],
+        "route_cursor": 0,
+    }
+    assert step_template_config(state, "research") == {"agent_models": {"research": "claude-opus-4-7"}}
+    assert step_template_config(state, "developer") is None

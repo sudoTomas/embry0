@@ -32,6 +32,16 @@ def test_unknown_agent_type_rejected():
     assert any("unknown agent_type" in p for p in validate_graph_definition("x", g))
 
 
+def test_noncode_agent_types_accepted():
+    """research/analysis/ops joined the executable vocabulary (RAV-604)."""
+    for agent_type in ("research", "analysis", "ops"):
+        g = _graph(
+            [_n("t", "triage"), _n("a", agent_type), _n("o", "output")],
+            [_e("t", "a"), _e("a", "o")],
+        )
+        assert validate_graph_definition("x", g) == [], agent_type
+
+
 def test_cycle_rejected():
     g = _graph([_n("a", "developer"), _n("b", "reviewer")], [_e("a", "b"), _e("b", "a")])
     problems = validate_graph_definition("x", g)

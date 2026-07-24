@@ -296,6 +296,12 @@ class AgentCreateRequest(BaseModel):
     tools: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     system_prompt: str = ""
+    # RAV-604: expose the full agent_definitions surface so non-code agents
+    # are creatable via the API. None = defer to the resolver's global
+    # defaults; values mirror embry0/agents/resolver.py's vocabularies.
+    execution_mode: str | None = Field(default=None, pattern="^(sdk|cli)$")
+    auth_mode: str | None = Field(default=None, pattern="^(api_key|oauth)$")
+    mcp_servers: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("type")
     @classmethod
@@ -312,6 +318,9 @@ class AgentUpdateRequest(BaseModel):
     tools: list[str] | None = None
     skills: list[str] | None = None
     system_prompt: str | None = None
+    execution_mode: str | None = Field(default=None, pattern="^(sdk|cli)$")
+    auth_mode: str | None = Field(default=None, pattern="^(api_key|oauth)$")
+    mcp_servers: dict[str, Any] | None = None
 
 
 # --- Pipeline Templates ---
