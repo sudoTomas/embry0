@@ -21,6 +21,7 @@ from embry0.storage.migrations.runner import run_migrations
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 from embry0.storage.repositories.budget_config import BudgetConfigRepository
 from embry0.storage.repositories.context_config import ContextConfigRepository
+from embry0.storage.repositories.deliverables import DeliverablesRepository
 from embry0.storage.repositories.environment import EnvironmentRepository
 from embry0.storage.repositories.integration_config import IntegrationConfigRepository
 from embry0.storage.repositories.jobs import JobsRepository
@@ -279,6 +280,7 @@ async def _init_app_state(
 
     app.state.jobs_repo = JobsRepository(db)
     app.state.traces_repo = TracesRepository(db)
+    app.state.deliverables_repo = DeliverablesRepository(db)
     app.state.profiles_repo = SandboxProfilesRepository(db)
     app.state.context_repo = ContextConfigRepository(db)
     app.state.budget_repo = BudgetConfigRepository(db)
@@ -975,6 +977,7 @@ def _register_routers(app: FastAPI) -> None:
         agents,
         bootstrap,
         config,
+        deliverables,
         environment,
         github,
         health,
@@ -1004,6 +1007,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(agents.router, prefix="/api/v1", tags=["agents"], dependencies=auth_deps)
     app.include_router(issues.router, prefix="/api/v1", tags=["issues"], dependencies=auth_deps)
     app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"], dependencies=auth_deps)
+    # RAV-603: typed job outputs (pr/report/artifact/message) + artifact download.
+    app.include_router(deliverables.router, prefix="/api/v1", tags=["deliverables"], dependencies=auth_deps)
     app.include_router(qa_artifacts.router, prefix="/api/v1", tags=["qa-artifacts"], dependencies=auth_deps)
     app.include_router(qa_dashboard.router, prefix="/api/v1", tags=["qa-dashboard"], dependencies=auth_deps)
     # Phase 5G: dashboard admin surface for per-repo workspace_provider
