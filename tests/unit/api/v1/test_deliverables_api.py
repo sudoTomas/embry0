@@ -44,7 +44,8 @@ def app():
     repo.get = AsyncMock(return_value=ARTIFACT)
     app.state.deliverables_repo = repo
     minio = MagicMock()
-    minio.presign_get = AsyncMock(return_value="http://minio/presigned")
+    minio.stat_object = AsyncMock(return_value={"size": 4})
+    minio.get_object_bytes = AsyncMock(return_value=b"a,b\n")
     app.state.qa_minio = minio
     return app
 
@@ -64,20 +65,23 @@ async def test_list_deliverables(app):
 
 
 @pytest.mark.asyncio
-async def test_download_redirects_to_presigned(app):
+async def test_download_streams_bytes_with_attachment_disposition(app):
     async with _client(app) as client:
-        resp = await client.get("/api/v1/jobs/job-1/deliverables/del-art1/download", follow_redirects=False)
-    assert resp.status_code == 302
-    assert resp.headers["location"] == "http://minio/presigned"
-    app.state.qa_minio.presign_get.assert_awaited_once_with("job-deliverables", "job-1/out.csv", expires_seconds=300)
+        resp = await client.get("/api/v1/jobs/job-1/deliverables/del-art1/download")
+    assert resp.status_code == 200
+    assert resp.content == b"a,b\n"
+    assert resp.headers["content-type"].startswith("text/csv")
+    assert resp.headers["content-disposition"] == 'attachment; filename="out.csv"'
+    app.state.qa_minio.get_object_bytes.assert_awaited_once_with("job-deliverables", "job-1/out.csv")
 
 
 @pytest.mark.asyncio
-async def test_download_json_mode(app):
+async def test_download_oversized_artifact_413s(app):
+    app.state.qa_minio.stat_object = AsyncMock(return_value={"size": 51 * 1024 * 1024})
     async with _client(app) as client:
-        resp = await client.get("/api/v1/jobs/job-1/deliverables/del-art1/download?redirect=false")
-    assert resp.status_code == 200
-    assert resp.json() == {"url": "http://minio/presigned"}
+        resp = await client.get("/api/v1/jobs/job-1/deliverables/del-art1/download")
+    assert resp.status_code == 413
+    app.state.qa_minio.get_object_bytes.assert_not_awaited()
 
 
 @pytest.mark.asyncio

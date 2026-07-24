@@ -22,13 +22,21 @@ export async function fetchDeliverables(jobId: string): Promise<Deliverable[]> {
   return data;
 }
 
-/** Resolve an artifact deliverable to a short-lived presigned URL.
- * The endpoint's default 302 can't be followed as a plain link (the Bearer
- * header doesn't ride browser navigations), so we ask for JSON and open it. */
-export async function fetchDeliverableDownloadUrl(jobId: string, deliverableId: string): Promise<string> {
-  const { data } = await api.get<{ url: string }>(
-    `/jobs/${jobId}/deliverables/${deliverableId}/download`,
-    { params: { redirect: false } },
+/** Download an artifact deliverable and hand it to the browser as a file.
+ * The endpoint streams bytes through the orchestrator (a presigned MinIO URL
+ * would point at the in-compose `minio:9000` host, unreachable from a LAN
+ * browser), so we fetch a blob via the authenticated client and save it. */
+export async function downloadDeliverable(deliverable: Deliverable): Promise<void> {
+  const { data } = await api.get<Blob>(
+    `/jobs/${deliverable.job_id}/deliverables/${deliverable.id}/download`,
+    { responseType: "blob" },
   );
-  return data.url;
+  const objectUrl = URL.createObjectURL(data);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = (deliverable.title || deliverable.storage_key || "artifact").split("/").pop() || "artifact";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
 }
