@@ -101,6 +101,7 @@ def resolve_agent_invocation(
     max_turns: int,
     timeout_seconds: int,
     credentials: dict[str, str],
+    template_config: dict[str, Any] | None = None,
 ) -> AgentInvocation:
     """Resolve a fully-validated AgentInvocation from the five-level chain.
 
@@ -161,7 +162,9 @@ def resolve_agent_invocation(
     resolved = resolve_agent_config(
         agent_type=agent_type,
         agent_definition=agent_definition,
-        template_config=None,
+        # RAV-602: per-step template overrides (route_plan step config) sit
+        # between the DB definition and triage's runtime pipeline_config.
+        template_config=template_config,
         pipeline_config=pipeline_config,
     )
 

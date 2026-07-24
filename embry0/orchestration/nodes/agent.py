@@ -86,6 +86,29 @@ def _auth_error_updates(
     }
 
 
+async def load_agent_definition(config: Any, agent_type: str, fallback: dict[str, Any]) -> dict[str, Any]:
+    """The DB agent_definitions row for ``agent_type``, or the code fallback.
+
+    RAV-602: workflow nodes load their definition (model/tools/skills/
+    system_prompt) from the DB so operators can edit them per deployment,
+    instead of hardcoding tool lists inline. Best-effort — tests and minimal
+    setups without a ``db`` in configurable keep the code defaults, and a
+    load failure must never block the agent run.
+    """
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    db = configurable.get("db")
+    if db is None:
+        return fallback
+    try:
+        from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
+
+        row = await AgentDefinitionsRepository(db).get(agent_type)
+    except Exception:
+        logger.warning("agent_definition_load_failed", agent_type=agent_type, exc_info=True)
+        return fallback
+    return row or fallback
+
+
 async def run_agent_node(
     state: dict[str, Any],
     agent_runner: Any,
@@ -98,6 +121,7 @@ async def run_agent_node(
     network: str | None = None,
     on_event: Any | None = None,
     agent_definition: dict[str, Any] | None = None,
+    template_config: dict[str, Any] | None = None,
     credentials: dict[str, str] | None = None,
     global_defaults: dict[str, Any] | None = None,
     config: Any | None = None,
@@ -180,6 +204,7 @@ async def run_agent_node(
                 "auth_mode": state.get("auth_mode_override"),
             },
             agent_definition=agent_definition,
+            template_config=template_config,
             pipeline_config=pipeline_config or {},
             max_turns=max_turns,
             timeout_seconds=timeout_seconds,

@@ -103,6 +103,36 @@ def next_route(state: dict[str, Any]) -> str:
     return "end"
 
 
+def step_template_config(state: dict[str, Any], run_agent_type: str) -> dict[str, Any] | None:
+    """Resolver-shaped overrides from the CURRENT route step's config (RAV-602).
+
+    Template nodes may carry a per-step ``config`` ({"model": ..., "tools":
+    [...], "skills": [...]}); this maps it onto the resolver's per-agent
+    override shape, sitting between the DB agent definition and triage's
+    runtime pipeline_config. ``run_agent_type`` is the runtime agent type
+    ("developer"/"review"/"qa") — template steps use "reviewer" for the
+    review agent. Returns None when there is no plan, the cursor is out of
+    range, or the current step belongs to a different agent.
+    """
+    plan = state.get("route_plan") or []
+    cursor = int(state.get("route_cursor", 0) or 0)
+    if not 0 <= cursor < len(plan):
+        return None
+    step = plan[cursor]
+    step_to_runtime = {"developer": "developer", "reviewer": "review", "qa": "qa", "output": "output"}
+    if step_to_runtime.get(step.get("agent_type", "")) != run_agent_type:
+        return None
+    cfg = step.get("config") or {}
+    out: dict[str, Any] = {}
+    if cfg.get("model"):
+        out["agent_models"] = {run_agent_type: cfg["model"]}
+    if cfg.get("tools"):
+        out["agent_tools"] = {run_agent_type: list(cfg["tools"])}
+    if cfg.get("skills"):
+        out["agent_skills"] = {run_agent_type: list(cfg["skills"])}
+    return out or None
+
+
 def cursor_at(state: dict[str, Any], agent_type: str) -> int:
     """Index of the first route step of ``agent_type`` (0 when absent).
 

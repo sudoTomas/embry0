@@ -261,7 +261,11 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     # instead of being prepended into the user turn and re-billed uncached
     # on every run. Plumbing: agent_definition.system_prompt →
     # invocation.system_prompt → sandbox runner → config_builder.
-    triage_agent_definition: dict[str, Any] = {
+    # RAV-602: model/tools/skills come from the DB agent_definitions row when
+    # available (operator-editable); this dict is the code fallback.
+    from embry0.orchestration.nodes.agent import load_agent_definition
+
+    triage_fallback: dict[str, Any] = {
         "model": model,
         "tools": ["Read", "Glob", "Grep"],
         "skills": [],
@@ -270,6 +274,19 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         "execution_mode": None,
         "auth_mode": None,
     }
+    triage_agent_definition = dict(await load_agent_definition(config, "triage", triage_fallback))
+    # The triage system prompt is code, not data: it defines the JSON contract
+    # TriageDecisionModel parses, so a DB-edited prompt could silently break
+    # the parser. Always use the module constant.
+    triage_agent_definition["system_prompt"] = _TRIAGE_SYSTEM_PROMPT
+    if not triage_agent_definition.get("tools"):
+        triage_agent_definition["tools"] = ["Read", "Glob", "Grep"]
+    # An explicit TRIAGE_MODEL/DEFAULT_MODEL env still wins over the DB row
+    # (the env flip is the documented no-deploy model-tier experiment path).
+    if os.environ.get("TRIAGE_MODEL") or os.environ.get("DEFAULT_MODEL"):
+        triage_agent_definition["model"] = model
+    elif not triage_agent_definition.get("model"):
+        triage_agent_definition["model"] = model
 
     # Collect agent events locally so we can scan for agent_ask_user events
     # after the agent finishes. We still forward every event to the graph
@@ -1230,13 +1247,32 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     else:
         prompt = _build_developer_full_prompt(state, branch_name)
 
+    # RAV-602: definition (model/tools/skills) from the DB row, per-step
+    # template overrides from the current route step; triage's
+    # pipeline_config.agent_* still wins on top (resolver precedence).
+    from embry0.orchestration.nodes.agent import load_agent_definition
+    from embry0.workflows.issue_to_pr.route_plan import step_template_config
+
+    developer_definition = await load_agent_definition(
+        config,
+        "developer",
+        {
+            "model": "claude-sonnet-4-6",
+            "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+            "skills": [],
+            "system_prompt": "",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        },
+    )
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
         agent_type="developer",
         prompt=prompt,
-        model=state.get("pipeline_config", {}).get("agent_models", {}).get("developer", "claude-sonnet-4-6"),
-        tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+        agent_definition=developer_definition,
+        template_config=step_template_config(state, "developer"),
         timeout_seconds=1800,
         on_event=_forward_event,
         credentials=credentials,
@@ -1587,13 +1623,31 @@ Return ONLY a JSON object:
             "the updated diff, and decide again.\n\n" + prompt[schema_start:]
         )
 
+    # RAV-602: definition from the DB row + per-step template overrides;
+    # triage's pipeline_config still wins on top.
+    from embry0.orchestration.nodes.agent import load_agent_definition
+    from embry0.workflows.issue_to_pr.route_plan import step_template_config
+
+    review_definition = await load_agent_definition(
+        config,
+        "review",
+        {
+            "model": "claude-sonnet-4-6",
+            "tools": ["Read", "Bash", "Glob", "Grep"],
+            "skills": [],
+            "system_prompt": "",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        },
+    )
     result = await run_agent_node(
         state=state,
         agent_runner=agent_runner,
         agent_type="review",
         prompt=prompt,
-        model=state.get("pipeline_config", {}).get("agent_models", {}).get("review", "claude-sonnet-4-6"),
-        tools=["Read", "Bash", "Glob", "Grep"],
+        agent_definition=review_definition,
+        template_config=step_template_config(state, "review"),
         timeout_seconds=300,
         on_event=_forward_event,
         credentials=credentials,
