@@ -4,7 +4,7 @@
 # Vibium + Chrome for Testing — see docs/glossary.md#browser-backend),
 # qa-compose wrapper.
 
-FROM python:3.12.7-slim-bookworm
+FROM python:3.12.15-slim-bookworm
 
 # Upgrade OS packages first — the pinned base tag ships a CRITICAL OpenSSL
 # (CVE-2026-31789) whose fix is already in the Debian repos.

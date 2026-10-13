@@ -1,4 +1,4 @@
-FROM python:3.12.7-slim-bookworm AS base
+FROM python:3.12.15-slim-bookworm AS base
 
 # Upgrade OS packages first — the pinned base tag ships a CRITICAL OpenSSL
 # (CVE-2026-31789) whose fix is already in the Debian repos.

@@ -17,7 +17,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Serve with nginx
-FROM nginx:1.27-alpine
+FROM nginx:1.31-alpine
 
 # Upgrade OS packages first — see the build stage note (CVE-2026-31789).
 RUN apk upgrade --no-cache
