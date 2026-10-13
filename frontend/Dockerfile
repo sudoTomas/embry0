@@ -1,5 +1,5 @@
 # Stage 1: Build the React SPA
-FROM node:20.18-alpine AS build
+FROM node:26.11-alpine AS build
 
 # Upgrade OS packages first — the pinned base tags ship a CRITICAL OpenSSL
 # (CVE-2026-31789) whose fix is already in the Alpine repos.
