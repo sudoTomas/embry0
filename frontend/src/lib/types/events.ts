@@ -177,45 +177,54 @@ type Fields = { required: readonly string[]; optional: readonly string[] };
 
 const BASE_OPTIONAL = ["agent", "event_seq", "job_id", "node", "parent_tool_use_id", "run_id"] as const;
 const TRUNC = ["original_length", "truncated"] as const;
+/** A sorted copy that keeps the members literal. `sorted([...BASE_OPTIONAL, "x"])` widens the
+ *  fresh literal to string, which makes RowKeys<T> string and both guards below vacuous. */
+const sorted = <const T extends readonly string[]>(fields: T): readonly T[number][] => [...fields].sort();
 
 /** Same contract as data. Keys and field lists must equal docs/contracts/events.json (sorted). */
 export const EVENT_FIELDS = {
   agent_started: { required: ["max_turns", "model", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
   turn_start: { required: ["model", "timestamp", "turn_number", "type"], optional: [...BASE_OPTIONAL] },
   turn_usage: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "input_tokens", "model", "output_tokens", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
-  text: { required: ["text", "timestamp", "type"], optional: [...BASE_OPTIONAL, ...TRUNC].sort() },
-  thinking: { required: ["text", "timestamp", "type"], optional: [...BASE_OPTIONAL, ...TRUNC].sort() },
+  text: { required: ["text", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC]) },
+  thinking: { required: ["text", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC]) },
   tool_call: { required: ["summary", "timestamp", "tool_id", "tool_input", "tool_name", "type"], optional: [...BASE_OPTIONAL] },
-  tool_result: { required: ["content", "is_error", "timestamp", "tool_id", "type"], optional: [...BASE_OPTIONAL, ...TRUNC].sort() },
+  tool_result: { required: ["content", "is_error", "timestamp", "tool_id", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC]) },
   subagent_start: { required: ["name", "timestamp", "tool_id", "type"], optional: [...BASE_OPTIONAL] },
   subagent_end: { required: ["is_error", "timestamp", "tool_id", "type"], optional: [...BASE_OPTIONAL] },
-  context_compacted: { required: ["timestamp", "type"], optional: [...BASE_OPTIONAL, "pre_tokens"].sort() },
-  agent_ask_user: { required: ["category", "importance", "options", "question", "timestamp", "type"], optional: [...BASE_OPTIONAL, "suggested_answer"].sort() },
+  context_compacted: { required: ["timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "pre_tokens"]) },
+  agent_ask_user: { required: ["category", "importance", "options", "question", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "suggested_answer"]) },
   cost_update: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "duration_api_ms", "duration_ms", "num_turns", "timestamp", "tokens_in", "tokens_out", "type"], optional: [...BASE_OPTIONAL] },
-  agent_completed: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "duration_ms", "error_code", "error_message", "input_tokens", "is_error", "output", "output_tokens", "policy_denials", "timestamp", "tools_called", "type"], optional: [...BASE_OPTIONAL, ...TRUNC].sort() },
-  error: { required: ["message", "timestamp", "type"], optional: [...BASE_OPTIONAL, "code", "tool_name"].sort() },
-  node_started: { required: ["attempt", "timestamp", "type"], optional: [...BASE_OPTIONAL, "round"].sort() },
-  node_completed: { required: ["attempt", "timestamp", "type"], optional: [...BASE_OPTIONAL, "action", "deliverables", "error", "job_kind", "ok", "round", "template"].sort() },
+  agent_completed: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "duration_ms", "error_code", "error_message", "input_tokens", "is_error", "output", "output_tokens", "policy_denials", "timestamp", "tools_called", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC]) },
+  error: { required: ["message", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "code", "tool_name"]) },
+  node_started: { required: ["attempt", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "round"]) },
+  node_completed: { required: ["attempt", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "action", "deliverables", "error", "job_kind", "ok", "round", "template"]) },
   pipeline_graph: { required: ["graph", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
-  progress: { required: ["message", "timestamp", "type"], optional: [...BASE_OPTIONAL, "app"].sort() },
-  interrupt: { required: ["timestamp", "type"], optional: [...BASE_OPTIONAL, "questions", "reason", "summary"].sort() },
+  progress: { required: ["message", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "app"]) },
+  interrupt: { required: ["timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "questions", "reason", "summary"]) },
   agent_paused_for_input: { required: ["count", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
-  review_decision: { required: ["decision", "summary", "timestamp", "type"], optional: [...BASE_OPTIONAL, "duplicates_open_pr"].sort() },
+  review_decision: { required: ["decision", "summary", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "duplicates_open_pr"]) },
   validation_result: { required: ["timestamp", "type", "validation"], optional: [...BASE_OPTIONAL] },
-  verification_result: { required: ["blocking", "gate_verdict", "tier", "timestamp", "type"], optional: [...BASE_OPTIONAL, "browser_qa", "human_merge_only", "mode"].sort() },
+  verification_result: { required: ["blocking", "gate_verdict", "tier", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "browser_qa", "human_merge_only", "mode"]) },
   pr_created: { required: ["branch", "pr_url", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
   qa_apps_resolved: { required: ["apps", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
   qa_subtask_started: { required: ["app", "target", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
-  qa_subtask_finished: { required: ["app", "duration_ms", "status", "timestamp", "type"], optional: [...BASE_OPTIONAL, "failure_summary"].sort() },
-  qa_subtask_status: { required: ["app", "status", "timestamp", "type"], optional: [...BASE_OPTIONAL, "boot_phase", "duration_ms", "failure_summary"].sort() },
+  qa_subtask_finished: { required: ["app", "duration_ms", "status", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "failure_summary"]) },
+  qa_subtask_status: { required: ["app", "status", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "boot_phase", "duration_ms", "failure_summary"]) },
   qa_agent_transient_retry: { required: ["app", "reason", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
   system: { required: ["message", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
   job_failed: { required: ["kind", "message", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
   job_finished: { required: ["error_code", "error_message", "pr_url", "status", "timestamp", "total_cost_usd", "type"], optional: [...BASE_OPTIONAL] },
 } as const satisfies Record<ContractEventType, Fields>;
 
-// Compile-time guard: every key of each contract interface appears in its row (required or optional).
+// Compile-time guards, both directions: every key of each contract interface
+// appears in its row (required or optional), and every row field appears in
+// its interface. Without the second, "backend adds a field, JSON regenerated,
+// row updated for the vitest, interface forgotten" compiles silently.
 type RowKeys<T extends ContractEventType> = (typeof EVENT_FIELDS)[T]["required"][number] | (typeof EVENT_FIELDS)[T]["optional"][number];
 type Missing = { [T in ContractEventType]: Exclude<keyof Extract<ContractEvent, { type: T }>, RowKeys<T>> }[ContractEventType];
 const _everyInterfaceKeyIsInItsRow: Missing extends never ? true : never = true;
 void _everyInterfaceKeyIsInItsRow;
+type Extra = { [T in ContractEventType]: Exclude<RowKeys<T>, keyof Extract<ContractEvent, { type: T }>> }[ContractEventType];
+const _everyRowFieldIsInItsInterface: Extra extends never ? true : never = true;
+void _everyRowFieldIsInItsInterface;
