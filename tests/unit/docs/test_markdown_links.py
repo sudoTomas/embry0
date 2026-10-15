@@ -138,15 +138,17 @@ def test_the_link_check_reports_a_dangling_link(tmp_path):
 
 
 def test_internal_material_is_not_under_docs():
-    """#529: audits, RCAs, specs and plans live under internal/, which the public export drops.
+    """#529: audits and RCAs live under internal/, which the public export drops.
 
-    The superpowers skills default to docs/superpowers/, so a new spec lands
-    in the exported tree unless it is moved.
+    Specs and plans are different: they ship in the pull request of the work
+    they describe, under docs/superpowers/ (CLAUDE.md, "A spec or plan ships
+    with the work it describes"). A spec written for one deployment is an
+    audit-class document and stays in that deployment's private records.
     """
     misplaced = [
         str(p.relative_to(ROOT))
         for p in _markdown_files(ROOT)
-        if p.relative_to(ROOT).parts[:2] in {("docs", "audits"), ("docs", "rca"), ("docs", "superpowers")}
+        if p.relative_to(ROOT).parts[:2] in {("docs", "audits"), ("docs", "rca")}
     ]
     assert not misplaced, f"internal material under docs/ (move it to internal/): {misplaced}"
     # The public export has no internal/ at all; where it exists, its README
