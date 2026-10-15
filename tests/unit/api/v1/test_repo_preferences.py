@@ -31,6 +31,7 @@ def app():
         dev_checks=None,
         base_branch=None,
         verification=None,
+        pr_review=None,
     ):
         return {
             "repo": repo,
@@ -44,6 +45,7 @@ def app():
             "dev_checks": dev_checks or [],
             "base_branch": base_branch,
             "verification": verification,
+            "pr_review": pr_review,
             "updated_at": datetime.now(UTC),
         }
 
@@ -366,3 +368,64 @@ async def test_get_tolerates_an_odd_stored_verification_object(app):
         resp = await client.get("/api/v1/repos/acme/widgets/preferences")
     assert resp.status_code == 200
     assert resp.json()["verification"] == {"test_targets": "not-a-list"}
+
+
+@pytest.mark.asyncio
+async def test_put_pr_review_stores_the_whole_settings_object(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": {"enabled": True}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200, resp.text
+    kwargs = app.state.repo_preferences_repo.upsert.call_args.kwargs
+    assert kwargs == {"pr_review": {"enabled": True, "depth": "full", "model": None}}, (
+        "a partial pr_review must be stored whole, and nothing else may be written"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [{"depth": "deep"}, {"enabled": "yes"}, {"extra": 1}])
+async def test_put_pr_review_rejects_a_malformed_object(app, body):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": body},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 422, f"{body} was accepted: {resp.text}"
+    loc = resp.json()["detail"][0]["loc"]
+    # Refused inside the settings object, not as an unknown pr_review field.
+    assert loc[:2] == ["body", "pr_review"] and len(loc) == 3, f"refused at {loc}, not inside pr_review"
+
+
+@pytest.mark.asyncio
+async def test_put_pr_review_refuses_an_unpriced_model(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": {"enabled": True, "model": "grok-0-unpriced"}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 422, resp.text
+    # The model id itself contains "price", so match the route's refusal text,
+    # not pydantic's echo of the body.
+    detail = resp.json()["detail"]
+    assert isinstance(detail, str) and "no price entry" in detail, f"not refused as unpriced: {resp.text}"
+
+
+@pytest.mark.asyncio
+async def test_a_blank_pr_review_model_means_the_heavy_tier(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": {"enabled": True, "model": "   "}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200, resp.text
+    assert app.state.repo_preferences_repo.upsert.call_args.kwargs["pr_review"]["model"] is None

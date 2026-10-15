@@ -2590,6 +2590,40 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             '#657: how the watcher chose signature_id. evidence = a window cluster the proposal quotes; fallback = nothing it quotes is in the window, so the window''s loudest line (confirm-healed answers inconclusive). NULL = not a watcher anchor, or opened before #657.';
         """,
     ),
+    (
+        95,
+        "pr_reviews + repo_preferences.pr_review — review a pull request when it is ready (#30)",
+        # One row per review a trigger asked for. trigger_key is the dedupe
+        # key — ready:<repo>#<number>@<sha> for a ready event,
+        # command:<forge>:<comment id> for a /embry0 review comment — and the
+        # unique index makes a redelivered webhook a no-op across restarts.
+        # job_id is SET NULL when a job row is purged, so the earlier review's
+        # verdict outlives it and the next review can still read it.
+        """
+        ALTER TABLE repo_preferences ADD COLUMN IF NOT EXISTS pr_review JSONB;
+        COMMENT ON COLUMN repo_preferences.pr_review IS
+            '#30: pull request review settings {"enabled": bool, "depth": "full"|"targeted"|"read_only", "model": str|null}. NULL = never configured, which means off.';
+
+        CREATE TABLE IF NOT EXISTS pr_reviews (
+            id          TEXT PRIMARY KEY,
+            repo        TEXT NOT NULL,
+            number      INTEGER NOT NULL,
+            head_sha    TEXT NOT NULL,
+            trigger     TEXT NOT NULL CHECK (trigger IN ('ready', 'command')),
+            trigger_key TEXT NOT NULL,
+            job_id      TEXT REFERENCES jobs(job_id) ON DELETE SET NULL,
+            verdict     JSONB,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            posted_at   TIMESTAMPTZ
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_reviews_trigger_key ON pr_reviews (trigger_key);
+        CREATE INDEX IF NOT EXISTS idx_pr_reviews_repo_number ON pr_reviews (repo, number, created_at DESC);
+        COMMENT ON COLUMN pr_reviews.verdict IS
+            '#30: the reviewer''s parsed verdict, kept whether or not it was posted. The next review of the same pull request reads it.';
+        COMMENT ON COLUMN pr_reviews.posted_at IS
+            '#30: when the review landed on the forge. NULL = not (yet) posted.';
+        """,
+    ),
 ]
 
 

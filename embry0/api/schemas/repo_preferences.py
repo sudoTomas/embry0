@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 from embry0.workflows.verification.config import VerificationConfig
 
@@ -55,6 +55,25 @@ class DevCheck(BaseModel):
         return cleaned
 
 
+class PrReviewSettings(BaseModel):
+    """#30: per-repo pull request review. Off until an operator turns it on."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Strict: pydantic would read "yes" as true, and a typo must not turn reviews on.
+    enabled: StrictBool = False
+    depth: Literal["full", "targeted", "read_only"] = "full"
+    # None = the deployment's heavy tier (MODEL_HEAVY).
+    model: str | None = Field(default=None, max_length=200)
+
+    @field_validator("model")
+    @classmethod
+    def _blank_is_the_default(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return v.strip() or None
+
+
 class RepoPreferencesResponse(BaseModel):
     repo: str
     sandbox_profile: str | None
@@ -69,6 +88,8 @@ class RepoPreferencesResponse(BaseModel):
     # #298/#299. Untyped on the way OUT so one odd stored object can never
     # 500 the read; the request model below is where the shape is enforced.
     verification: dict[str, Any] | None = None
+    # #30. Untyped on the way out for the same reason as verification.
+    pr_review: dict[str, Any] | None = None
     updated_at: datetime
 
 
@@ -92,6 +113,8 @@ class RepoPreferencesUpdateRequest(BaseModel):
     base_branch: str | None = None
     # #298/#299: the orchestrator-run test gate + tier path rules.
     verification: VerificationConfig | None = None
+    # #30: pull request review settings, stored whole.
+    pr_review: PrReviewSettings | None = None
 
     @field_validator("base_branch")
     @classmethod
