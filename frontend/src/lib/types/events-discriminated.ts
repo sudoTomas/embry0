@@ -312,7 +312,7 @@ export interface FindingPublishedEvent extends BaseLogEvent {
 // ─── Discriminated union ──────────────────────────────────────────────────────
 
 /** Discriminated union of all event types emitted by the backend WS stream. */
-export type LogEventDU =
+export type LegacyLogEvent =
   | TextEvent
   | ThinkingEvent
   | ToolCallEvent
@@ -345,3 +345,6 @@ export type LogEventDU =
   | ErrorEvent
   | SystemEvent
   | FindingPublishedEvent;
+
+/** Back-compat name for the legacy union. */
+export type LogEventDU = LegacyLogEvent;

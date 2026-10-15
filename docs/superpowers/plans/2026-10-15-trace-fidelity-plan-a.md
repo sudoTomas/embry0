@@ -1343,6 +1343,7 @@ EOF
 - Rewrite: `frontend/src/lib/types/events.ts`
 - Modify: `frontend/src/lib/types/events-discriminated.ts` (rename the union export)
 - Create: `frontend/src/lib/types/__tests__/events.contract.test.ts`
+- Modify: `frontend/vitest.config.ts` (let the test read `docs/contracts/`)
 
 **Interfaces:**
 - Produces: `ContractEvent` union, `ContractEventType`, `EVENT_FIELDS` runtime map, and the existing `LogEvent`/`LogEventType` names re-exported unchanged from the legacy file so no consumer changes in this plan (#41 swaps them).
@@ -1351,18 +1352,18 @@ EOF
 
 ```ts
 // frontend/src/lib/types/__tests__/events.contract.test.ts
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
+import contractText from "../../../../../docs/contracts/events.json?raw";
 import { EVENT_FIELDS } from "../events";
 
 type Contract = Record<string, { required: string[]; optional: string[] }>;
 
-const contractPath = path.resolve(import.meta.dirname, "../../../../../docs/contracts/events.json");
-const contract: Contract = JSON.parse(readFileSync(contractPath, "utf-8"));
+// Read as text through Vite (`?raw`): the app tsconfig has no Node types.
+const contract: Contract = JSON.parse(contractText);
 
 describe("event contract mirror", () => {
   it("declares exactly the backend's event types", () => {
+    expect(Object.keys(contract).length).toBeGreaterThan(0);
     expect(Object.keys(EVENT_FIELDS).sort()).toEqual(Object.keys(contract).sort());
   });
 
@@ -1374,6 +1375,23 @@ describe("event contract mirror", () => {
 });
 ```
 
+The app tsconfig has no Node types, so the test reads the JSON as text through Vite's `?raw` import rather than `node:fs`. Vite refuses files outside `frontend/` by default, so `vitest.config.ts` allows that one directory and keeps the default root:
+
+```ts
+import { searchForWorkspaceRoot } from "vite";
+// ...
+  server: {
+    fs: {
+      // The event contract test reads docs/contracts/events.json, outside
+      // the frontend root; allow that one directory and keep the default.
+      allow: [
+        searchForWorkspaceRoot(import.meta.dirname),
+        path.resolve(import.meta.dirname, "../docs/contracts"),
+      ],
+    },
+  },
+```
+
 - [ ] **Step 2: Run to verify failure**
 
 Run: `cd frontend && npx vitest run src/lib/types/__tests__/events.contract.test.ts 2>&1 | tail -8`
@@ -1381,7 +1399,7 @@ Expected: FAIL, `EVENT_FIELDS` is not exported.
 
 - [ ] **Step 3: Write the types**
 
-In `events-discriminated.ts`, leave every interface as is; change only the union export line to `export type LegacyLogEvent = ...` (the current `LogEventDU` body) and keep `export type LogEventDU = LegacyLogEvent;` for back-compat. Then replace `events.ts` with:
+In `events-discriminated.ts`, leave every interface as is; change only the union export line to `export type LegacyLogEvent = ...` (the current `LogEventDU` body) and keep `export type LogEventDU = LegacyLogEvent;` for back-compat. Then replace `events.ts` with the following. `LogEventType` and the `PipelineGraphEvent` alias are defined in `events.ts` today and stay there verbatim:
 
 ```ts
 /**
@@ -1436,7 +1454,43 @@ export type {
   SystemEvent,
   FindingPublishedEvent,
 } from "./events-discriminated";
-export type { LogEventType } from "./events-discriminated";
+
+export type LogEventType =
+  | "text"
+  | "tool_start"
+  | "tool_end"
+  | "tool_call"
+  | "tool_result"
+  | "thinking"
+  | "cost_update"
+  | "turn_start"
+  | "subagent_start"
+  | "subagent_end"
+  | "progress"
+  | "error"
+  | "complete"
+  | "system"
+  | "stream_end"
+  | "pipeline_graph"
+  | "node_state"
+  | "node_started"
+  | "node_completed"
+  | "feedback_triggered"
+  | "feedback_resolved"
+  | "awaiting_input"
+  | "auto_answered"
+  | "input_resumed"
+  | "conversation_message"
+  | "agent_started"
+  | "agent_completed"
+  | "pipeline_stage_started"
+  | "pipeline_stage_completed"
+  | "pr_created"
+  | "interrupt"
+  | "finding_published";
+
+/** Back-compat alias: PipelineGraphEvent → PipelineGraphEventDU */
+export type { PipelineGraphEventDU as PipelineGraphEvent } from "./events-discriminated";
 
 // ---- the contract -----------------------------------------------------------
 
@@ -1579,7 +1633,7 @@ Expected: 2 passed; `tsc -b` silent; lint clean. If the JSON and the map disagre
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/src/lib/types/events.ts frontend/src/lib/types/events-discriminated.ts frontend/src/lib/types/__tests__/events.contract.test.ts
+git add frontend/src/lib/types/events.ts frontend/src/lib/types/events-discriminated.ts frontend/src/lib/types/__tests__/events.contract.test.ts frontend/vitest.config.ts docs/superpowers/plans/2026-10-15-trace-fidelity-plan-a.md
 git commit -q -F - <<'EOF'
 feat(frontend): mirror the event contract and pin it in a test
 
