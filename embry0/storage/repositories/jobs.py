@@ -123,6 +123,12 @@ _UPDATABLE_FIELDS = frozenset(
 )
 
 
+def _text_or_none(value: Any) -> str | None:
+    """A str as is, anything else None: the correlation columns are TEXT, and a
+    non-string in the payload must not fail the INSERT and drop the event."""
+    return value if isinstance(value, str) else None
+
+
 class JobsRepository:
     """CRUD operations for the jobs table."""
 
@@ -595,9 +601,9 @@ class JobsRepository:
             job_id,
             "pipeline",
             json_mod.dumps(event, default=str),
-            event.get("run_id"),
-            event.get("node"),
-            event.get("type"),
+            _text_or_none(event.get("run_id")),
+            _text_or_none(event.get("node")),
+            _text_or_none(event.get("type")),
         )
         assert row is not None, "INSERT ... RETURNING must return a row"
         return int(row["id"])

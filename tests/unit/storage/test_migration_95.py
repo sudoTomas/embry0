@@ -46,6 +46,19 @@ async def test_append_log_event_fills_the_correlation_columns(db_with_migrations
 
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
+async def test_append_log_event_coerces_non_string_correlation_values(db_with_migrations: DatabasePool) -> None:
+    """A non-string run_id/node/type must not fail the INSERT (and so drop the
+    event); the TEXT columns get None and the JSON keeps the raw value."""
+    jobs = JobsRepository(db_with_migrations)
+    job_id = await jobs.create(repo="a/b", task="t")
+    seq = await jobs.append_log_event(job_id, {"type": "progress", "run_id": 7, "node": ["qa"], "message": "m"})
+    row = await db_with_migrations.fetchrow("SELECT run_id, node, event_type, text FROM job_logs WHERE id = $1", seq)
+    assert row["run_id"] is None and row["node"] is None and row["event_type"] == "progress"
+    assert json.loads(row["text"])["run_id"] == 7
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
 async def test_agent_id_column_is_gone_and_indexes_exist(db_with_migrations: DatabasePool) -> None:
     db = db_with_migrations
     columns = {
