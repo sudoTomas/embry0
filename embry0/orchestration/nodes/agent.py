@@ -515,11 +515,13 @@ async def run_agent_node(
     configurable = _graph_configurable(config)
     traces_repo = configurable.get("traces_repo")
     trace_job_id = configurable.get("job_id", "")
+    running_row_written = False
     if traces_repo is not None and trace_job_id:
         try:
             await traces_repo.create(
                 job_id=trace_job_id, agent_type=agent_type, model=invocation.model, result="running", trace_id=run_id
             )
+            running_row_written = True
         except Exception:
             logger.warning("trace_start_persist_failed", agent_type=agent_type, exc_info=True)
 
@@ -527,7 +529,15 @@ async def run_agent_node(
         if traces_repo is None or not trace_job_id:
             return
         try:
-            await traces_repo.finish(run_id, **fields)
+            if running_row_written:
+                await traces_repo.finish(run_id, **fields)
+            else:
+                # The start write failed, so there is no row to UPDATE; create
+                # it now with the final fields under the same run id, so the
+                # trace, its spend and its events still join up.
+                await traces_repo.create(
+                    job_id=trace_job_id, agent_type=agent_type, model=invocation.model, trace_id=run_id, **fields
+                )
         except Exception:
             logger.warning("trace_finish_persist_failed", agent_type=agent_type, exc_info=True)
 

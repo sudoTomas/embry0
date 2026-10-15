@@ -571,7 +571,9 @@ async def test_run_agent_node_trace_persist_failure_does_not_fail_run() -> None:
     # Agent run must succeed regardless of trace write failure.
     assert updates["current_stage"] == "developer_complete"
     assert updates["total_cost_usd"] == pytest.approx(0.5)
-    assert traces_repo.create.await_count == 1
+    # The start write, then the run-end fallback create (both failed here).
+    assert traces_repo.create.await_count == 2
+    assert traces_repo.finish.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -785,6 +787,33 @@ async def test_run_agent_node_writes_a_running_trace_row_before_the_exec_and_fin
     assert re.fullmatch(r"run-[0-9a-f]{32}", traces_repo.create.call_args.kwargs["trace_id"]), (
         "spec 3.4: the run id is a full UUID4, not a 12-hex prefix"
     )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_node_creates_the_trace_at_run_end_when_the_start_write_failed() -> None:
+    """A transient DB error at run start must not lose the trace: with no running
+    row to UPDATE, finish would match nothing, so the node creates the row with
+    the final fields instead."""
+    traces_repo = AsyncMock()
+    traces_repo.create = AsyncMock(side_effect=[RuntimeError("DB unreachable"), "run-x"])
+    runner = _make_fake_runner(cost_usd=0.5, duration_ms=1000, tools_called={"Bash": 2})
+
+    await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
+        agent_runner=runner,
+        agent_type="developer",
+        prompt="do it",
+        credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+        config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+    )
+
+    assert traces_repo.finish.await_count == 0, "nothing to finish: the running row was never written"
+    assert traces_repo.create.await_count == 2, "the trace is created at run end instead"
+    first, second = (c.kwargs for c in traces_repo.create.await_args_list)
+    assert second["trace_id"] == first["trace_id"], "the same run id, so the events still join the row"
+    assert second["job_id"] == "job-test" and second["agent_type"] == "developer"
+    assert second["result"] == "success" and second["cost_usd"] == pytest.approx(0.5)
+    assert second["tools_called"] == {"Bash": 2} and second["duration_ms"] == 1000
 
 
 @pytest.mark.asyncio
