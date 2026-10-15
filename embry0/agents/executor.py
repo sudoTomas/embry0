@@ -25,6 +25,7 @@ from embry0.agents.provider_limits import (
     failure_from_text,
 )
 from embry0.agents.provider_limits import merge as merge_provider_failure
+from embry0.agents.providers import price_usage
 from embry0.agents.sdk_support import SdkSupportError, assert_sdk_supports_hooks
 from embry0.agents.session import render_transcript_block
 from embry0.execution import events
@@ -673,6 +674,28 @@ class SdkAgentExecutor:
             nonlocal input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
             nonlocal is_error, provider_failure, cli_error
             turn_number = 0
+            # Subagent bookkeeping (spec 3.3): parent tool id -> the Task tool
+            # call's name, recorded when the parent's tool_call was seen. A
+            # subagent is open from the first message that names it as parent
+            # until its own tool_result arrives.
+            task_calls: dict[str, str] = {}
+            open_subagents: set[str] = set()
+
+            def _scoped_ids(parent: str | None) -> dict[str, Any]:
+                """The correlation ids for a message under ``parent``.
+
+                Also EMITS subagent_start the first time a known parent is
+                seen, so the boundary precedes every event scoped under it.
+                A parent we never saw a Task call for is still stamped on the
+                events, but opens no subagent: there is nothing to close it.
+                """
+                if not parent:
+                    return dict(ids)
+                if parent in task_calls and parent not in open_subagents:
+                    open_subagents.add(parent)
+                    writer(events.subagent_start(tool_id=parent, name=task_calls[parent], **ids))
+                return {**ids, "parent_tool_use_id": parent}
+
             async for message in stream:
                 failure = _sdk_provider_failure(message, now=self._clock())
                 if failure is not None:
@@ -692,8 +715,42 @@ class SdkAgentExecutor:
                 if msg_session_id and not captured_session_id:
                     captured_session_id = str(msg_session_id)
                 if _is_assistant(message):
-                    turn_number += 1
-                    writer(events.turn_start(turn_number=turn_number, model=getattr(message, "model", ""), **ids))
+                    parent = getattr(message, "parent_tool_use_id", None) or None
+                    scoped = _scoped_ids(parent)
+                    # Only a top-level message is a turn; a subagent's messages
+                    # ride under its parent's turn (spec 3.3).
+                    if parent is None:
+                        turn_number += 1
+                        writer(
+                            events.turn_start(turn_number=turn_number, model=getattr(message, "model", ""), **scoped)
+                        )
+                    # One turn_usage per message that reports usage (the SDK's
+                    # AssistantMessage.usage is a dict or None); cost_update at
+                    # the result stays the run's authoritative total.
+                    usage_now = getattr(message, "usage", None)
+                    if isinstance(usage_now, dict):
+                        model_now = str(getattr(message, "model", "") or invocation.model)
+                        turn_in = int(usage_now.get("input_tokens", 0) or 0)
+                        turn_out = int(usage_now.get("output_tokens", 0) or 0)
+                        turn_cache_read = int(usage_now.get("cache_read_input_tokens", 0) or 0)
+                        turn_cache_creation = int(usage_now.get("cache_creation_input_tokens", 0) or 0)
+                        writer(
+                            events.turn_usage(
+                                input_tokens=turn_in,
+                                output_tokens=turn_out,
+                                cache_read_tokens=turn_cache_read,
+                                cache_creation_tokens=turn_cache_creation,
+                                cost_usd=price_usage(
+                                    model_now,
+                                    input_tokens=turn_in,
+                                    output_tokens=turn_out,
+                                    cache_read_tokens=turn_cache_read,
+                                    cache_creation_tokens=turn_cache_creation,
+                                ),
+                                model=model_now,
+                                **scoped,
+                            )
+                        )
                     # Accumulate this assistant turn's text into the messages
                     # buffer (api_key resume path). We collapse all text
                     # blocks in the message into a single content string;
@@ -705,12 +762,16 @@ class SdkAgentExecutor:
                         if _is_text_block(block):
                             block_text = str(getattr(block, "text", ""))
                             assistant_text += block_text
-                            writer(events.text(text=block_text, **ids))
+                            writer(events.text(text=block_text, **scoped))
                         elif _is_tool_use_block(block):
                             tn = getattr(block, "name", "") or getattr(block, "tool_name", "")
                             if tn:
                                 tools_called[tn] = tools_called.get(tn, 0) + 1
                             raw_block_input = getattr(block, "input", {})
+                            if tn in ("Task", "Agent") and isinstance(raw_block_input, dict):
+                                task_calls[str(getattr(block, "id", ""))] = str(
+                                    raw_block_input.get("subagent_type") or raw_block_input.get("description") or tn
+                                )
                             # Preserve full structured input on the event so
                             # downstream consumers (e.g. triage_node parsing
                             # the set_qa_decision tool call) can re-validate
@@ -722,11 +783,11 @@ class SdkAgentExecutor:
                                     tool_id=getattr(block, "id", ""),
                                     summary=_summarize_tool_input(tn, raw_block_input),
                                     tool_input=raw_block_input if isinstance(raw_block_input, dict) else {},
-                                    **ids,
+                                    **scoped,
                                 )
                             )
                         elif ThinkingBlock is not None and isinstance(block, ThinkingBlock):
-                            writer(events.thinking(text=getattr(block, "thinking", ""), **ids))
+                            writer(events.thinking(text=getattr(block, "thinking", ""), **scoped))
                     # Record this assistant turn in the messages buffer.
                     # Skip empty turns (assistant emitted only tool_use /
                     # thinking — no textual reply); they're meaningless to
@@ -776,6 +837,13 @@ class SdkAgentExecutor:
                     # An error result goes on to the SDK's closing exception.
                     if not getattr(message, "is_error", False):
                         return
+                elif getattr(message, "subtype", None) == "compact_boundary":
+                    # SystemMessage(subtype, data): only the compaction
+                    # boundary is an event; other subtypes (init, ...) are not.
+                    data = getattr(message, "data", None) or {}
+                    meta = data.get("compact_metadata") if isinstance(data, dict) else None
+                    pre = meta.get("pre_tokens") if isinstance(meta, dict) else None
+                    writer(events.context_compacted(pre_tokens=int(pre) if isinstance(pre, int) else None, **ids))
                 elif hasattr(message, "content"):
                     # Tool results ride UserMessage (Anthropic protocol). Emit
                     # each as tool_result and recover any ask_user event the
@@ -785,9 +853,11 @@ class SdkAgentExecutor:
                     # String content is a user turn, not a result: scan it for
                     # ask_user events and emit nothing else.
                     user_content = getattr(message, "content", None)
+                    parent = getattr(message, "parent_tool_use_id", None) or None
+                    scoped = _scoped_ids(parent)
                     if isinstance(user_content, str):
                         for embedded in _extract_embedded_ask_user_events(user_content):
-                            writer({**embedded, **ids})
+                            writer({**embedded, **scoped})
                     elif isinstance(user_content, list):
                         for block in user_content:
                             tool_use_id = getattr(block, "tool_use_id", None)
@@ -795,15 +865,20 @@ class SdkAgentExecutor:
                                 continue
                             result_text = _render_tool_result(getattr(block, "content", None))
                             for embedded in _extract_embedded_ask_user_events(result_text):
-                                writer({**embedded, **ids})
+                                writer({**embedded, **scoped})
+                            is_error_result = bool(getattr(block, "is_error", False))
                             writer(
                                 events.tool_result(
                                     tool_id=str(tool_use_id),
                                     content=result_text,
-                                    is_error=bool(getattr(block, "is_error", False)),
-                                    **ids,
+                                    is_error=is_error_result,
+                                    **scoped,
                                 )
                             )
+                            # The Task call's own result closes its subagent.
+                            if str(tool_use_id) in open_subagents:
+                                open_subagents.discard(str(tool_use_id))
+                                writer(events.subagent_end(tool_id=str(tool_use_id), is_error=is_error_result, **ids))
 
         async def execute() -> None:
             stream = query(prompt=prompt, options=options)

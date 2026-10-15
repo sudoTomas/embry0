@@ -1150,3 +1150,107 @@ async def test_sdk_executor_output_parses_as_a_watcher_proposal_without_glue(tmp
     assert verdict["kind"] == "proposal"
     assert verdict["proposal"]["title"] == "Mailbox sync hits 403 quota"
     assert verdict["proposal"]["severity"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_turn_usage_is_emitted_per_assistant_message_with_a_priced_delta(tmp_path, monkeypatch) -> None:
+    usage = {"input_tokens": 1000, "output_tokens": 100, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    messages = [
+        _assistant_with([_FakeBlock("one")], model="claude-sonnet-5", usage=usage),
+        _assistant_with([_FakeBlock("two")], model="claude-sonnet-5", usage=usage),
+        _FakeResultMessage("done", 0.009),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    turn_usage = [e for e in events if e["type"] == "turn_usage"]
+    assert len(turn_usage) == 2, "one turn_usage per assistant message carrying usage"
+    assert turn_usage[0]["input_tokens"] == 1000 and turn_usage[0]["output_tokens"] == 100
+    assert turn_usage[0]["cost_usd"] == pytest.approx(0.003 + 0.0015)
+    assert turn_usage[0]["model"] == "claude-sonnet-5"
+    assert len([e for e in events if e["type"] == "cost_update"]) == 1, "cost_update stays once per run"
+
+
+@pytest.mark.asyncio
+async def test_assistant_message_without_usage_emits_no_turn_usage(tmp_path, monkeypatch) -> None:
+    messages = [_assistant_with([_FakeBlock("one")], usage=None), _FakeResultMessage("done", 0.001)]
+    events = await _run(messages, monkeypatch, tmp_path)
+    assert not [e for e in events if e["type"] == "turn_usage"]
+    assert [e for e in events if e["type"] == "turn_start"][0]["turn_number"] == 1
+
+
+@pytest.mark.asyncio
+async def test_unpriced_model_turn_usage_has_null_cost(tmp_path, monkeypatch) -> None:
+    usage = {"input_tokens": 10, "output_tokens": 10}
+    messages = [
+        _assistant_with([_FakeBlock("one")], model="claude-experimental-9", usage=usage),
+        _FakeResultMessage("done", 0.0),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    assert next(e for e in events if e["type"] == "turn_usage")["cost_usd"] is None
+
+
+@pytest.mark.asyncio
+async def test_subagent_messages_are_bracketed_and_do_not_count_as_turns(tmp_path, monkeypatch) -> None:
+    messages = [
+        _assistant_with([_FakeToolUse("task-1", "Task", {"subagent_type": "Explore", "prompt": "look"})]),
+        _assistant_with([_FakeBlock("sub says hi")], parent="task-1"),
+        _assistant_with([_FakeToolUse("t2", "Read", {"file_path": "x"})], parent="task-1"),
+        _FakeUserMessage([_FakeToolResultBlock("t2", "contents")], parent_tool_use_id="task-1"),
+        _FakeUserMessage([_FakeToolResultBlock("task-1", "sub result")]),
+        _assistant_with([_FakeBlock("parent continues")]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    types = [e["type"] for e in events]
+    start = next(e for e in events if e["type"] == "subagent_start")
+    assert start["tool_id"] == "task-1" and start["name"] == "Explore"
+    assert types.index("subagent_start") < types.index("subagent_end")
+    end = next(e for e in events if e["type"] == "subagent_end")
+    assert end["tool_id"] == "task-1" and end["is_error"] is False
+    sub_text = next(e for e in events if e["type"] == "text" and e["text"] == "sub says hi")
+    assert sub_text["parent_tool_use_id"] == "task-1"
+    turns = [e["turn_number"] for e in events if e["type"] == "turn_start" and "parent_tool_use_id" not in e]
+    assert turns == [1, 2], "only top-level assistant messages count as turns"
+    assert (
+        next(e for e in events if e["type"] == "tool_result" and e["tool_id"] == "t2")["parent_tool_use_id"] == "task-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_result_for_an_unknown_parent_emits_no_subagent_start(tmp_path, monkeypatch) -> None:
+    messages = [
+        _FakeUserMessage([_FakeToolResultBlock("t-orphan", "late")], parent_tool_use_id="never-seen"),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    assert [e for e in events if e["type"] == "tool_result"][0]["tool_id"] == "t-orphan"
+    assert not [e for e in events if e["type"] == "subagent_start"]
+
+
+@pytest.mark.asyncio
+async def test_compact_boundary_system_message_emits_context_compacted(tmp_path, monkeypatch) -> None:
+    class _FakeSystemMessage:
+        def __init__(self) -> None:
+            self.subtype = "compact_boundary"
+            self.data = {"compact_metadata": {"pre_tokens": 123456}}
+
+    messages = [_FakeSystemMessage(), _assistant_with([_FakeBlock("after")]), _FakeResultMessage("done", 0.001)]
+    events = await _run(messages, monkeypatch, tmp_path)
+    compacted = next(e for e in events if e["type"] == "context_compacted")
+    assert compacted["pre_tokens"] == 123456
+
+
+@pytest.mark.asyncio
+async def test_ask_user_recovered_from_a_subagent_tool_result_carries_the_parent(tmp_path, monkeypatch) -> None:
+    """Spec 3.3: every event under a parent carries parent_tool_use_id, the
+    agent_ask_user recovered from a subagent's Bash output included."""
+    ask = json.dumps({"type": "agent_ask_user", "question": "which db?", "category": "general", "options": []})
+    messages = [
+        _assistant_with([_FakeToolUse("task-1", "Task", {"subagent_type": "Explore"})]),
+        _assistant_with([_FakeToolUse("b1", "Bash", {"command": "ask"})], parent="task-1"),
+        _FakeUserMessage([_FakeToolResultBlock("b1", ask)], parent_tool_use_id="task-1"),
+        _FakeUserMessage([_FakeToolResultBlock("task-1", "sub result")]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    asked = next(e for e in events if e["type"] == "agent_ask_user")
+    assert asked["parent_tool_use_id"] == "task-1", f"ask_user from a subagent lost its parent: {asked}"
