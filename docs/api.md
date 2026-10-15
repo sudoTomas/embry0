@@ -322,7 +322,7 @@ Every event carries `type` and `timestamp`; the orchestrator stamps `job_id` and
 | `agent_completed` | `cache_creation_tokens`, `cache_read_tokens`, `cost_usd`, `duration_ms`, `error_code`, `error_message`, `input_tokens`, `is_error`, `output`, `output_tokens`, `policy_denials`, `timestamp`, `tools_called`, `type` | `agent`, `event_seq`, `job_id`, `node`, `original_length`, `parent_tool_use_id`, `run_id`, `truncated` |
 | `error` | `message`, `timestamp`, `type` | `agent`, `code`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id`, `tool_name` |
 | `node_started` | `attempt`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `round`, `run_id` |
-| `node_completed` | `attempt`, `timestamp`, `type` | `action`, `agent`, `deliverables`, `event_seq`, `job_id`, `job_kind`, `node`, `parent_tool_use_id`, `run_id`, `template` |
+| `node_completed` | `attempt`, `timestamp`, `type` | `action`, `agent`, `deliverables`, `error`, `event_seq`, `job_id`, `job_kind`, `node`, `ok`, `parent_tool_use_id`, `round`, `run_id`, `template` |
 | `pipeline_graph` | `graph`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
 | `progress` | `message`, `timestamp`, `type` | `agent`, `app`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
 | `interrupt` | `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `questions`, `reason`, `run_id`, `summary` |
