@@ -123,6 +123,9 @@ class ErrorCode(StrEnum):
     QA_IDLE = "ERR_QA_IDLE"  # the QA agent idled out
     QA_RESULT_INVALID = "ERR_QA_RESULT_INVALID"  # the QA agent never wrote a valid result.json
     ONBOARD_FAILED = "ERR_ONBOARD_FAILED"  # the onboard pipeline ended without a valid qa.yaml in the config store
+    PR_REVIEW_INIT_FAILED = "ERR_PR_REVIEW_INIT_FAILED"  # a pr-review job could not create its sandbox or check out the pull request's head (#30)
+    PR_REVIEW_NO_VERDICT = "ERR_PR_REVIEW_NO_VERDICT"  # the pull request reviewer ended without a readable verdict; nothing was posted (#30)
+    PR_REVIEW_PUBLISH_FAILED = "ERR_PR_REVIEW_PUBLISH_FAILED"  # the forge refused the review, after the fallback (#30)
     UNEXPECTED_INTERRUPT = (
         "ERR_UNEXPECTED_INTERRUPT"  # a graph that never asks questions (QA, onboard) paused on an interrupt
     )
@@ -232,6 +235,9 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.QA_IDLE: _C.AGENT,
     ErrorCode.QA_RESULT_INVALID: _C.AGENT,
     ErrorCode.ONBOARD_FAILED: _C.AGENT,
+    ErrorCode.PR_REVIEW_INIT_FAILED: _C.INFRA,
+    ErrorCode.PR_REVIEW_NO_VERDICT: _C.AGENT,
+    ErrorCode.PR_REVIEW_PUBLISH_FAILED: _C.INFRA,
     ErrorCode.UNEXPECTED_INTERRUPT: _C.INFRA,
     # #356: unusable model output, the same call TRIAGE_MALFORMED makes. Not
     # VERIFICATION — nothing was verified; the reviewer's answer was unreadable.
@@ -295,6 +301,7 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
     ("embry0.orchestration.state:UnsupportedContextError", ErrorCode.UNSUPPORTED_CONTEXT),
     ("embry0.orchestration.state:TriageParseError", ErrorCode.TRIAGE_MALFORMED),
     ("embry0.workflows.issue_to_pr.plan_route:TemplateInvalidError", ErrorCode.TEMPLATE_INVALID),
+    ("embry0.workflows.pr_review.publish:PublishError", ErrorCode.PR_REVIEW_PUBLISH_FAILED),
     (
         "embry0.workflows.issue_to_pr.nodes._qa_failure_action:QAFailureActionInvalid",
         ErrorCode.TRIAGE_QA_ACTION_INVALID,

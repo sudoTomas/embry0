@@ -15,6 +15,7 @@ import asyncio
 import ssl
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
@@ -80,6 +81,34 @@ def retry_after_seconds(response: httpx.Response) -> float | None:
             except ValueError:
                 pass
     return None
+
+
+@dataclass(frozen=True)
+class ForgeWrite:
+    """What a forge answered to one write: its status, and its own words when it refused."""
+
+    status_code: int
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return 200 <= self.status_code < 300
+
+
+def forge_write(response: httpx.Response) -> ForgeWrite:
+    """``response`` as a :class:`ForgeWrite`; ``detail`` is the forge's message, at most 1000 characters."""
+    if 200 <= response.status_code < 300:
+        return ForgeWrite(status_code=response.status_code)
+    detail = ""
+    try:
+        body: Any = response.json()
+    except ValueError:
+        body = None
+    if isinstance(body, dict):
+        message = body.get("message") or body.get("error") or ""
+        errors = body.get("errors")
+        detail = f"{message} {errors}".strip() if errors else str(message)
+    return ForgeWrite(status_code=response.status_code, detail=(detail or response.text)[:1000])
 
 
 class ForgeClient:

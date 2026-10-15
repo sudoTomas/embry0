@@ -25,9 +25,10 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
+import httpx
 import structlog
 
-from embry0.execution.forge_client import ForgeClient
+from embry0.execution.forge_client import ForgeClient, ForgeWrite, forge_write
 from embry0.execution.gitlab_tokens import resolve_for_repo
 from embry0.execution.tls import build_ssl_context, load_ca_pem
 
@@ -138,14 +139,40 @@ class GitLabClient(ForgeClient):
         )
         return resp.status_code in (200, 201)
 
+    async def post_mr_note(self, repo: str, iid: int, body: str) -> ForgeWrite:
+        """Post a note on a merge request; what the forge answered."""
+        resp = await self.post(self.project_path(repo, f"/merge_requests/{iid}/notes"), repo=repo, json={"body": body})
+        return forge_write(resp)
+
     async def create_mr_note(self, repo: str, iid: int, body: str) -> bool:
         """Post a note (comment) on a merge request. True when accepted."""
+        return (await self.post_mr_note(repo, iid, body)).ok
+
+    async def create_mr_discussion(self, repo: str, iid: int, *, body: str, position: dict[str, Any]) -> ForgeWrite:
+        """Start a diff discussion at ``position`` (#30); GitLab answers 400 for a line outside the diff."""
         resp = await self.post(
-            self.project_path(repo, f"/merge_requests/{iid}/notes"),
+            self.project_path(repo, f"/merge_requests/{iid}/discussions"),
             repo=repo,
-            json={"body": body},
+            json={"body": body, "position": position},
         )
-        return resp.status_code in (200, 201)
+        return forge_write(resp)
+
+    async def list_merge_request_diffs(self, repo: str, iid: int) -> list[dict[str, Any]]:
+        """The merge request's file diffs (#30).
+
+        ``/diffs`` exists from GitLab 15.7; an older instance answers 404 there
+        and serves the same items under ``/changes``. Raises on any other error.
+        """
+        try:
+            items = await self.paginate(self.project_path(repo, f"/merge_requests/{iid}/diffs"), repo=repo, strict=True)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+            resp = await self.get(self.project_path(repo, f"/merge_requests/{iid}/changes"), repo=repo)
+            resp.raise_for_status()
+            body = resp.json()
+            items = body.get("changes") or [] if isinstance(body, dict) else []
+        return [item for item in items if isinstance(item, dict)]
 
     async def add_mr_labels(self, repo: str, iid: int, labels: list[str]) -> bool:
         """Add labels to a merge request without touching the ones it has."""

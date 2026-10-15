@@ -32,6 +32,8 @@ from embry0.execution.forge_client import (
     MAX_BACKOFF_SECONDS,
     RETRY_STATUSES,
     ForgeClient,
+    ForgeWrite,
+    forge_write,
     retry_after_seconds,
 )
 from embry0.execution.github_tokens import resolve_for_repo
@@ -133,6 +135,30 @@ class GitHubClient(ForgeClient):
         the list is whole compares its length to the PR's ``changed_files``."""
         items = await self.paginate(f"/repos/{repo}/pulls/{number}/files", repo=repo, max_pages=30)
         return [str(f["filename"]) for f in items if isinstance(f, dict) and f.get("filename")]
+
+    async def list_pull_file_patches(self, repo: str, number: int) -> list[dict[str, Any]]:
+        """``pulls/{n}/files`` items with their ``patch`` (#30).
+
+        Raises ``httpx.HTTPStatusError`` on an error page: a reviewer that
+        placed comments against half the files would place them wrongly.
+        GitHub omits ``patch`` for binary and very large files.
+        """
+        items = await self.paginate(f"/repos/{repo}/pulls/{number}/files", repo=repo, max_pages=30, strict=True)
+        return [f for f in items if isinstance(f, dict)]
+
+    async def create_pull_review(
+        self, repo: str, number: int, *, commit_id: str | None, body: str, comments: list[dict[str, Any]]
+    ) -> ForgeWrite:
+        """Post one review with ``event: COMMENT`` (#30) — advisory: never APPROVE or REQUEST_CHANGES.
+
+        ``commit_id`` pins the inline comments to the reviewed commit; None
+        lets GitHub use the pull request's head (a body-only review needs no pin).
+        """
+        payload: dict[str, Any] = {"body": body, "event": "COMMENT", "comments": comments}
+        if commit_id:
+            payload = {"commit_id": commit_id, **payload}
+        resp = await self.post(f"/repos/{repo}/pulls/{number}/reviews", repo=repo, json=payload)
+        return forge_write(resp)
 
     async def get_check_runs(self, repo: str, sha: str) -> dict[str, Any] | None:
         """One page (100) of check runs on ``sha`` as ``{total_count, check_runs}``,
