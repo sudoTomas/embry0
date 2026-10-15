@@ -203,7 +203,11 @@ class PrReviewDispatcher:
                 return self._refuse(reason, **ids, commenter=command.author)
         if await self._reviews.exists(trigger.trigger_key):  # gate 4
             return self._refuse("duplicate", **ids)
-        refusal = await self._executor.dispatch_refusal(actor=trigger.actor or None)  # gate 5
+        # The runner re-checks the budget against the job's dispatched_by, so
+        # the pre-check must charge that same actor or it admits a job the
+        # runner then refuses.
+        actor = trigger.actor or dispatch_actors.PR_REVIEW
+        refusal = await self._executor.dispatch_refusal(actor=actor)  # gate 5
         if refusal is not None:
             return self._refuse(f"budget_{refusal.limit or 'refused'}", **ids)
         # The UNIQUE index is the authority: two deliveries racing past the
@@ -215,9 +219,7 @@ class PrReviewDispatcher:
             return self._refuse("duplicate", **ids)
         review = build_review_config(trigger, repo=repo, settings=settings, review_id=review_id)
         try:
-            job_id = await self._executor.start_pr_review_job(
-                repo=repo, review=review, dispatched_by=trigger.actor or dispatch_actors.PR_REVIEW
-            )
+            job_id = await self._executor.start_pr_review_job(repo=repo, review=review, dispatched_by=actor)
         except Exception:
             logger.warning("pr_review_job_create_failed", review_id=review_id, **ids, exc_info=True)
             await self._reviews.release(review_id)

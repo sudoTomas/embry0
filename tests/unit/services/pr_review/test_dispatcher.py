@@ -359,6 +359,9 @@ async def test_a_nameless_trigger_is_charged_to_the_service_actor() -> None:
     payload["sender"] = {}
     await dispatcher.handle_github_pull_request(payload, "ready_for_review")
     assert executor.started[0]["dispatched_by"] == dispatch_actors.PR_REVIEW
+    assert executor.asked_actor == [dispatch_actors.PR_REVIEW], (
+        "the budget pre-check must charge the actor the job records, or the runner refuses what it admitted"
+    )
 
 
 # ---- the job ---------------------------------------------------------------
