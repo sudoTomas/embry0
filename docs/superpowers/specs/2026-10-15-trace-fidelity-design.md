@@ -85,7 +85,7 @@ Constructor functions, one per type, are the only way production code builds an 
 | `interrupt` | nodes | `reason`, `questions`, `summary` (a dict) |
 | `agent_paused_for_input` | nodes | `count` |
 | `review_decision` | review | `decision`, `summary` (both nullable), `duplicates_open_pr` (the duplicate PR's data) |
-| `validation_result` | review | unchanged |
+| `validation_result` | review | `validation` (a dict: the validator's result, nested like the other payloads) |
 | `verification_result` | verify | unchanged |
 | `pr_created` | developer | `pr_url`, `branch` |
 | `qa_apps_resolved`, `qa_subtask_started`, `qa_subtask_finished`, `qa_subtask_status`, `qa_agent_transient_retry` | QA | `app` plus existing fields |
@@ -210,6 +210,7 @@ The xAI executor makes the same field changes so both paths conform until the Gr
 - Migration 95: `job_logs` columns and indexes, `agent_id` dropped, `traces.result` accepts `running`. Existing rows keep NULL `run_id`/`node`/`event_type`; the UI treats NULL `event_type` rows as legacy and still parses the JSON.
 - The sandbox image must be rebuilt: `embry0/agents/executor.py`, `executor_xai.py`, `embry0/execution/events.py` and `embry0/sandbox/` change. The PR's deploy notes name the recipe from `docs/ops/deploy.md`.
 - Old events already in `job_logs` carry the old `error` key and no `run_id`. The frontend's reducers accept `message ?? error` for the `error` type only, so old jobs keep rendering; no backfill.
+- The executors renamed `tool_call.input` to `summary` (plus the full `tool_input`) and `tool_result.tool_use_id` to `tool_id`. Until #41 rewrites the reducers, they read the contract name first and the legacy name second (`summary ?? input`, `tool_input ?? input`, `tool_id ?? tool_use_id`) so a live dashboard keeps pairing results with calls across the deploy.
 - No API route changes; the WebSocket gains a close and the REST events endpoint is unchanged.
 
 ## 7. Issue breakdown (milestone "Trace fidelity")

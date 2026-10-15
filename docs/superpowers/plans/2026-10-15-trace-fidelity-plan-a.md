@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Work in the worktree `/Users/tomas/repos/embry0-worktrees/trace-fidelity` on branch `feat/trace-fidelity`; never check out another branch in `/Users/tomas/repos/embry0`.
+- Work in the worktree `<worktree-root>/trace-fidelity` on branch `feat/trace-fidelity`; never check out another branch in `<deploy-checkout>`.
 - Commits follow `.claude/skills/commit-standard` (Conventional Commits, subject ≤ 72 chars, no AI co-author footer). Every commit message ends with `Claude-Session: https://claude.ai/code/session_011MYiGJuebTGdHFAS8GWusQ`.
 - A new test is shown failing on the pre-fix tree with its own assertion message before the fix is written. "Run: … Expected: FAIL" steps are not optional.
 - Read the pytest summary line; `grep FAILED` is not a result.
@@ -158,7 +158,7 @@ def test_emit_to_stdout_writes_one_line(capsys: pytest.CaptureFixture[str]) -> N
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd /Users/tomas/repos/embry0-worktrees/trace-fidelity && .venv/bin/python -m pytest tests/unit/execution/test_events.py -q 2>&1 | tail -5`
+Run: `cd <worktree-root>/trace-fidelity && .venv/bin/python -m pytest tests/unit/execution/test_events.py -q 2>&1 | tail -5`
 Expected: `ImportError` on `EVENT_SCHEMAS`/`contract` (collection error), summary line shows errors, 0 passed.
 
 - [ ] **Step 3: Write the contract module**
