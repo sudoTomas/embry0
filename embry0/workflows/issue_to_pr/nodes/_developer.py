@@ -16,6 +16,7 @@ from langgraph.types import Command
 # `embry0.workflows.issue_to_pr.nodes.<seam>` reach this module. The self-import is safe: the package __init__ binds the seams
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
+from embry0.execution import events
 from embry0.orchestration.nodes.agent import (
     BRAINSTORMING_ASK_USER_CAP,
     DEFAULT_ASK_USER_CAP,
@@ -809,7 +810,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     based on the executor output, pending agent questions, and budget state.
     """
     writer = _nodes.get_stream_writer()
-    writer({"type": "node_started", "node": "developer", "agent": "developer"})
+    writer(events.node_started(node="developer", agent="developer"))
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
@@ -1019,9 +1020,9 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         branch = branch_name
 
     if pr_url:
-        writer({"type": "pr_created", "pr_url": pr_url, "branch": branch})
+        writer(events.pr_created(pr_url=pr_url, branch=branch))
 
-    writer({"type": "node_completed", "node": "developer"})
+    writer(events.node_completed(node="developer"))
 
     updates: dict[str, Any] = {
         **result,

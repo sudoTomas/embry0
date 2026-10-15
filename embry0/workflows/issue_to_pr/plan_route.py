@@ -22,6 +22,7 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
+from embry0.execution import events
 from embry0.workflows._validation import validate_graph_definition
 from embry0.workflows.issue_to_pr.route_plan import LEGACY_ROUTE_PLAN, build_route_plan, triage_template_config
 
@@ -288,7 +289,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     ``pipeline_template_request`` still wins: that is a person's call.
     """
     writer = get_stream_writer()
-    writer({"type": "node_started", "node": "plan_route"})
+    writer(events.node_started(node="plan_route"))
 
     decision = state.get("triage_decision") or {}
     job_kind = str(decision.get("job_kind") or "code")
@@ -391,24 +392,23 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     # _broadcast_event, so it is persisted to job_logs AND broadcast: live
     # viewers, WS-replay late joiners, and the REST fallback all receive it.
     writer(
-        {
-            "type": "pipeline_graph",
-            "graph": build_pipeline_graph(
+        events.pipeline_graph(
+            graph=build_pipeline_graph(
                 job_id=str(state.get("job_id") or ""),
                 plan=plan,
                 graph_definition=resolved_graph,
                 template_name=resolved_name,
             ),
-        }
+            node="plan_route",
+        )
     )
 
     writer(
-        {
-            "type": "node_completed",
-            "node": "plan_route",
-            "job_kind": effective_kind,
-            "template": resolved_name or "legacy",
-        }
+        events.node_completed(
+            node="plan_route",
+            job_kind=effective_kind,
+            template=resolved_name or "legacy",
+        )
     )
     return {
         "job_kind": effective_kind,
@@ -512,7 +512,7 @@ async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) ->
     ``pr_url`` at completion for every job uniformly.
     """
     writer = get_stream_writer()
-    writer({"type": "node_started", "node": "finalize_output"})
+    writer(events.node_started(node="finalize_output"))
 
     summary = ""
     for entry in reversed(state.get("agent_outputs") or []):
@@ -531,7 +531,7 @@ async def finalize_output_node(state: dict[str, Any], config: RunnableConfig) ->
         )
     deliverables.extend(await _collect_artifacts(state, config))
 
-    writer({"type": "node_completed", "node": "finalize_output", "deliverables": len(deliverables)})
+    writer(events.node_completed(node="finalize_output", deliverables=len(deliverables)))
     return {
         "result_summary": summary,
         "deliverables": deliverables,

@@ -13,6 +13,7 @@ from langchain_core.runnables import RunnableConfig
 # this module. The self-import is safe: the package __init__ binds the seams
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
+from embry0.execution import events
 from embry0.workflows.issue_to_pr.evidence import log_scope
 from embry0.workflows.issue_to_pr.nodes._common import _filter_user_env_for_sandbox
 
@@ -149,7 +150,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
     initializer.validate(context, embry0_config)
 
     writer = _nodes.get_stream_writer()
-    writer({"type": "node_started", "node": "init"})
+    writer(events.node_started(node="init"))
 
     job_id = state.get("job_id", "")
     repo = context.get("repo") or state.get("repo", "")
@@ -285,7 +286,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
             git_push_branches=[_job_push_branch(state)],
         )
         logger.info("sandbox_created", job_id=job_id, container_id=container_id)
-        writer({"type": "progress", "message": "Sandbox container created"})
+        writer(events.progress(message="Sandbox container created", node="init"))
 
         # EMB-45: when the xai-proxy is running, deliver the per-sandbox proxy bearer
         # to a 0600 file the DirectXaiExecutor reads to authenticate to the proxy. The
@@ -352,7 +353,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
         )
     except Exception as exc:
         logger.error("sandbox_init_failed", job_id=job_id, error=str(exc))
-        writer({"type": "error", "message": f"Sandbox init failed: {exc}"})
+        writer(events.error(message=f"Sandbox init failed: {exc}", node="init"))
         # Clean up partially-created container to avoid leaks
         if container_id:
             try:
@@ -367,7 +368,7 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
             raise
         raise RuntimeError(f"Sandbox initialization failed: {exc}") from exc
 
-    writer({"type": "node_completed", "node": "init"})
+    writer(events.node_completed(node="init"))
     update: dict[str, Any] = {
         "sandbox_container_id": container_id,
         "current_stage": "initialized",

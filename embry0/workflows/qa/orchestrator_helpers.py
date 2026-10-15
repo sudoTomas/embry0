@@ -21,6 +21,7 @@ from typing import Any
 
 import structlog
 
+from embry0.execution import events
 from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
 from embry0.workflows.qa.qa_yaml_v2 import QAYamlConfigV2
 from embry0.workflows.qa.subtask_graph import run_subtask
@@ -151,11 +152,10 @@ async def fan_out_subtasks(
                     failure_summary="not started: the job's budget cap was reached (overrun_mode=hard)",
                 )
             writer(
-                {
-                    "type": "qa_subtask_started",
-                    "app": resolved.app_name,
-                    "target": resolved.target,
-                }
+                events.qa_subtask_started(
+                    app=resolved.app_name,
+                    target=resolved.target,
+                )
             )
             if bus is not None:
                 try:
@@ -197,13 +197,12 @@ async def fan_out_subtasks(
                     failure_summary=f"sub-task crashed: {exc}",
                 )
             writer(
-                {
-                    "type": "qa_subtask_finished",
-                    "app": resolved.app_name,
-                    "status": str(result.status),
-                    "duration_ms": result.duration_ms,
-                    "failure_summary": result.failure_summary,
-                }
+                events.qa_subtask_finished(
+                    app=resolved.app_name,
+                    status=str(result.status),
+                    duration_ms=result.duration_ms,
+                    failure_summary=result.failure_summary,
+                )
             )
             return result
 

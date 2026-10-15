@@ -166,7 +166,7 @@ async def test_track_task_logs_and_publishes_on_failure(capsys):
     evt = queue.get_nowait()
     assert evt["type"] == "job_failed"
     assert evt["job_id"] == "job-1"
-    assert "kaboom" in evt.get("error", "")
+    assert "kaboom" in evt.get("message", "")
 
 
 @pytest.mark.asyncio

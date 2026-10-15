@@ -15,6 +15,7 @@ from langgraph.types import Command
 # this module. The self-import is safe: the package __init__ binds the seams
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
+from embry0.execution import events
 from embry0.orchestration.nodes.agent import (
     DEFAULT_ASK_USER_CAP,
 )
@@ -66,7 +67,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     from embry0.orchestration.nodes.agent import SandboxRequiredError
 
     writer = _nodes.get_stream_writer()
-    writer({"type": "node_started", "node": "triage", "agent": "triage"})
+    writer(events.node_started(node="triage", agent="triage"))
 
     # EMB-35: TRIAGE_MODEL lets triage tier independently of the pipeline
     # default (it's a bounded classification pass — a haiku-class experiment
@@ -288,10 +289,10 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     if recovery_session is not None:
         logger.warning("triage_max_turns_decide_now_resume", job_id=state.get("job_id"))
         writer(
-            {
-                "type": "progress",
-                "message": "Triage hit its turn cap — resuming once to decide from evidence gathered",
-            }
+            events.progress(
+                message="Triage hit its turn cap — resuming once to decide from evidence gathered",
+                node="triage",
+            )
         )
         first_outputs = list(result.get("agent_outputs") or [])
         retry_state = {**state, "total_cost_usd": result.get("total_cost_usd", state.get("total_cost_usd", 0.0))}
@@ -385,8 +386,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 result["current_stage"] = "triage_complete"
             except TriageParseError as exc:
                 logger.error("triage_parse_error", error=str(exc))
-                writer({"type": "error", "message": f"Triage parse failed: {exc}"})
-                writer({"type": "node_completed", "node": "triage", "action": "failed"})
+                writer(events.error(message=f"Triage parse failed: {exc}", node="triage"))
+                writer(events.node_completed(node="triage", agent="triage", action="failed"))
                 return Command(
                     goto=END,
                     update={
@@ -408,8 +409,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             _last_triage_output,
             fallback="Triage agent returned no output",
         )
-        writer({"type": "error", "message": f"Triage agent failed: {_err_msg}"})
-        writer({"type": "node_completed", "node": "triage", "action": "failed"})
+        writer(events.error(message=f"Triage agent failed: {_err_msg}", node="triage"))
+        writer(events.node_completed(node="triage", agent="triage", action="failed"))
         return Command(
             goto=END,
             update={
@@ -437,13 +438,13 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
 
         exhausted, cap_updates = _enforce_ask_user_cap(state, pending_questions, job_id_for_log=state.get("job_id"))
         if exhausted:
-            writer({"type": "node_completed", "node": "triage", "action": "failed"})
+            writer(events.node_completed(node="triage", agent="triage", action="failed"))
             return Command(goto="max_retries", update=cap_updates)
         # Only divert to ask_user_interrupt when there are blocking questions.
         # Auto-answerable-only emissions don't pause; fall through to the
         # normal needs_info / proceed routing.
         if cap_updates.get("pending_agent_questions"):
-            writer({"type": "node_completed", "node": "triage", "action": "ask_user"})
+            writer(events.node_completed(node="triage", agent="triage", action="ask_user"))
             return Command(
                 goto="ask_user_interrupt",
                 update={**result, **cap_updates, "current_stage": "triage_asked_user"},
@@ -470,7 +471,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 rounds=_triage_rounds,
                 job_id=state.get("job_id"),
             )
-            writer({"type": "node_completed", "node": "triage", "action": "failed"})
+            writer(events.node_completed(node="triage", agent="triage", action="failed"))
             return Command(
                 goto=END,
                 update={
@@ -483,7 +484,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
 
         questions = triage_decision_result.get("questions", [])
         reasoning = triage_decision_result.get("reasoning", "")
-        writer({"type": "interrupt", "node": "triage", "questions": questions})
+        writer(events.interrupt(node="triage", questions=questions))
         logger.info("triage_needs_info", questions=len(questions))
 
         answers = _nodes.interrupt(
@@ -514,7 +515,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             additional += f"\n\n{answers_text}"
 
         updated = {**state, "additional_context": additional}
-        writer({"type": "progress", "message": "Re-running triage with answers"})
+        writer(events.progress(message="Re-running triage with answers", node="triage"))
 
         # Plan C Task 7: reload the session before the resume re-run — it may
         # have been persisted by the initial pass above. Persist again after.
@@ -613,8 +614,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                     result["current_stage"] = "triage_complete"
                 except TriageParseError as exc:
                     logger.error("triage_parse_error", error=str(exc))
-                    writer({"type": "error", "message": f"Triage parse failed: {exc}"})
-                    writer({"type": "node_completed", "node": "triage", "action": "failed"})
+                    writer(events.error(message=f"Triage parse failed: {exc}", node="triage"))
+                    writer(events.node_completed(node="triage", agent="triage", action="failed"))
                     return Command(
                         goto=END,
                         update={
@@ -634,8 +635,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 _last_resume_output,
                 fallback="Triage agent returned no output on resume",
             )
-            writer({"type": "error", "message": f"Triage agent failed on resume: {_err_msg}"})
-            writer({"type": "node_completed", "node": "triage", "action": "failed"})
+            writer(events.error(message=f"Triage agent failed on resume: {_err_msg}", node="triage"))
+            writer(events.node_completed(node="triage", agent="triage", action="failed"))
             return Command(
                 goto=END,
                 update={
@@ -666,10 +667,10 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 {**state, **result}, pending_questions, job_id_for_log=state.get("job_id")
             )
             if exhausted:
-                writer({"type": "node_completed", "node": "triage", "action": "failed"})
+                writer(events.node_completed(node="triage", agent="triage", action="failed"))
                 return Command(goto="max_retries", update=cap_updates)
             if cap_updates.get("pending_agent_questions"):
-                writer({"type": "node_completed", "node": "triage", "action": "ask_user"})
+                writer(events.node_completed(node="triage", agent="triage", action="ask_user"))
                 return Command(
                     goto="ask_user_interrupt",
                     update={**result, **cap_updates, "current_stage": "triage_asked_user"},
@@ -776,8 +777,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                 pr_number=_dup_match["number"],
                 reason=_dup_reason[:200],
             )
-            writer({"type": "progress", "message": _dup_summary})
-            writer({"type": "node_completed", "node": "triage", "action": "duplicate"})
+            writer(events.progress(message=_dup_summary, node="triage"))
+            writer(events.node_completed(node="triage", agent="triage", action="duplicate"))
             return Command(
                 goto=END,
                 update={
@@ -792,7 +793,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             flagged_pr_number=_dup_flag.get("pr_number"),
         )
 
-    writer({"type": "node_completed", "node": "triage", "action": result.get("triage_decision", {}).get("action")})
+    writer(events.node_completed(node="triage", agent="triage", action=result.get("triage_decision", {}).get("action")))
 
     # RAV-1152: triage self-routes via Command EXCLUSIVELY — its conditional
     # edge is removed. This node has 13 Command returns (caps, interrupts,
@@ -859,7 +860,7 @@ def _route_qa_failure_action(
     except QAFailureActionInvalid as invalid:
         log_event = f"triage_qa_failure_action_{invalid.reason}"
         logger.warning(log_event, job_id=state.get("job_id"), kind=invalid.kind, error=invalid.detail[:300])
-        writer({"type": "node_completed", "node": "triage", "action": "qa_failure_unresolved"})
+        writer(events.node_completed(node="triage", agent="triage", action="qa_failure_unresolved"))
         return Command(
             goto=END,
             update={
@@ -878,7 +879,7 @@ def _route_qa_failure_action(
     from embry0.workflows.issue_to_pr.route_plan import cursor_at
 
     if isinstance(action, RetryDeveloper):
-        writer({"type": "node_completed", "node": "triage", "action": "qa_retry_developer"})
+        writer(events.node_completed(node="triage", agent="triage", action="qa_retry_developer"))
         return Command(
             goto="developer",
             update={
@@ -890,7 +891,7 @@ def _route_qa_failure_action(
             },
         )
     if isinstance(action, RerunQA):
-        writer({"type": "node_completed", "node": "triage", "action": "qa_rerun"})
+        writer(events.node_completed(node="triage", agent="triage", action="qa_rerun"))
         # goto targets the issue-to-pr graph's QA chain head. (This was
         # "init_qa" — a node that exists only in the QA sub-task graph —
         # so the rerun path could never actually dispatch.)
@@ -913,9 +914,9 @@ def _route_qa_failure_action(
     }
     exhausted, cap_updates = _enforce_ask_user_cap(state, [question], job_id_for_log=state.get("job_id"))
     if exhausted:
-        writer({"type": "node_completed", "node": "triage", "action": "qa_ask_user_cap_exhausted"})
+        writer(events.node_completed(node="triage", agent="triage", action="qa_ask_user_cap_exhausted"))
         return Command(goto="max_retries", update={**result, **cap_updates})
-    writer({"type": "node_completed", "node": "triage", "action": "qa_ask_user"})
+    writer(events.node_completed(node="triage", agent="triage", action="qa_ask_user"))
     return Command(
         goto="ask_user_interrupt",
         update={
@@ -1054,7 +1055,9 @@ async def _repair_qa_failure_action(
         reason=invalid.reason,
         error=invalid.detail[:300],
     )
-    writer({"type": "progress", "message": "Triage's qa_failure_action failed validation — asking once for a fix"})
+    writer(
+        events.progress(message="Triage's qa_failure_action failed validation — asking once for a fix", node="triage")
+    )
 
     merged, repair_last = await _rerun_triage_once(
         state=state,
@@ -1135,7 +1138,7 @@ async def _repair_triage_decision(
     job_id = state.get("job_id", "")
     rejected = str(((result.get("agent_outputs") or [{}])[-1]).get("output") or "")
     logger.warning("triage_decision_repair_retry", job_id=job_id, error=str(error)[:300])
-    writer({"type": "progress", "message": "Triage's decision failed validation — asking once for a fix"})
+    writer(events.progress(message="Triage's decision failed validation — asking once for a fix", node="triage"))
 
     merged, repair_last = await _rerun_triage_once(
         state=state,

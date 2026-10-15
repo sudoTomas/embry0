@@ -22,6 +22,7 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
+from embry0.execution import events
 from embry0.orchestration.nodes.agent import load_agent_definition, run_agent_node
 from embry0.workflows.issue_to_pr.log_tool import grant_log_tool
 from embry0.workflows.issue_to_pr.route_plan import (
@@ -106,7 +107,7 @@ async def generic_agent_node(state: dict[str, Any], config: RunnableConfig) -> d
 
     agent_type = str(step["agent_type"])
     writer = get_stream_writer()
-    writer({"type": "node_started", "node": "generic_agent", "agent": agent_type})
+    writer(events.node_started(node="generic_agent", agent=agent_type))
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
@@ -133,7 +134,7 @@ async def generic_agent_node(state: dict[str, Any], config: RunnableConfig) -> d
         config=config,
     )
 
-    writer({"type": "node_completed", "node": "generic_agent", "agent": agent_type})
+    writer(events.node_completed(node="generic_agent", agent=agent_type))
 
     updates: dict[str, Any] = {**result}
     if updates.get("current_stage") == f"{agent_type}_complete":

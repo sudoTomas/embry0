@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from embry0.execution import events
+
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Mapping
 
@@ -784,12 +786,7 @@ class IssueExecutor:
                 pub_task = asyncio.create_task(
                     self._event_bus.publish(
                         job_id,
-                        {
-                            "type": "job_failed",
-                            "job_id": job_id,
-                            "kind": kind,
-                            "error": str(exc),
-                        },
+                        {**events.job_failed(kind=kind, message=str(exc)), "job_id": job_id},
                     )
                 )
                 self._background_tasks.add(pub_task)
@@ -818,13 +815,12 @@ class IssueExecutor:
             try:
                 await self._broadcast_event(
                     job_id,
-                    {
-                        "type": "system",
-                        "message": (
+                    events.system(
+                        message=(
                             f"Queued: all {slots.limit} run slots (MAX_RUNNING_JOBS) are in use; "
                             f"position {position}. The job starts when a slot frees."
                         ),
-                    },
+                    ),
                 )
             except Exception:
                 logger.warning("job_queued_event_failed", job_id=job_id, exc_info=True)
@@ -919,10 +915,9 @@ class IssueExecutor:
             try:
                 await self._broadcast_event(
                     job_id,
-                    {
-                        "type": "system",
-                        "message": "Interrupted: embry0 is shutting down. The job resumes from its last checkpoint when it is back.",
-                    },
+                    events.system(
+                        message="Interrupted: embry0 is shutting down. The job resumes from its last checkpoint when it is back.",
+                    ),
                 )
             except Exception:
                 logger.warning("job_interrupt_event_failed", job_id=job_id, exc_info=True)
@@ -1246,7 +1241,7 @@ class IssueExecutor:
     async def _announce_recovery(self, job_id: str, message: str) -> None:
         logger.info("job_recovered_after_restart", job_id=job_id)
         try:
-            await self._broadcast_event(job_id, {"type": "system", "message": message})
+            await self._broadcast_event(job_id, events.system(message=message))
         except Exception:
             logger.warning("job_recovery_event_failed", job_id=job_id, exc_info=True)
 

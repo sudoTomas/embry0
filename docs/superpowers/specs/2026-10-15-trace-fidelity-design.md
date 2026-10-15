@@ -79,12 +79,12 @@ Constructor functions, one per type, are the only way production code builds an 
 | `agent_completed` | executors | `is_error`, `error_code`, `policy_denials`, `output` (tail, redacted), `tools_called` |
 | `error` | executors and nodes | `message`, `code` (an `ErrorCode` when known), `tool_name` |
 | `node_started` | nodes | `attempt` |
-| `node_completed` | nodes | `action`, `attempt` |
+| `node_completed` | nodes | `action`, `attempt`, `ok`, `round`, `deliverables` (count), `error` |
 | `pipeline_graph` | plan_route, onboard, QA orchestrator | `graph` |
 | `progress` | nodes | `message`, `app` |
-| `interrupt` | nodes | `reason`, `questions`, `summary` |
+| `interrupt` | nodes | `reason`, `questions`, `summary` (a dict) |
 | `agent_paused_for_input` | nodes | `count` |
-| `review_decision` | review | `decision`, `summary`, `duplicates_open_pr` |
+| `review_decision` | review | `decision`, `summary` (both nullable), `duplicates_open_pr` (the duplicate PR's data) |
 | `validation_result` | review | unchanged |
 | `verification_result` | verify | unchanged |
 | `pr_created` | developer | `pr_url`, `branch` |

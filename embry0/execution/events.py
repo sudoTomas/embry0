@@ -191,7 +191,10 @@ class NodeCompletedEvent(BaseEvent):
     action: NotRequired[str]
     job_kind: NotRequired[str]
     template: NotRequired[str]
-    deliverables: NotRequired[list[dict[str, Any]]]
+    deliverables: NotRequired[int]
+    ok: NotRequired[bool]
+    round: NotRequired[int]
+    error: NotRequired[str]
 
 
 class PipelineGraphEvent(BaseEvent):
@@ -206,7 +209,7 @@ class ProgressEvent(BaseEvent):
 class InterruptEvent(BaseEvent):
     reason: NotRequired[str]
     questions: NotRequired[list[dict[str, Any]]]
-    summary: NotRequired[str]
+    summary: NotRequired[dict[str, Any]]
 
 
 class AgentPausedForInputEvent(BaseEvent):
@@ -214,9 +217,9 @@ class AgentPausedForInputEvent(BaseEvent):
 
 
 class ReviewDecisionEvent(BaseEvent):
-    decision: str
-    summary: str
-    duplicates_open_pr: NotRequired[bool]
+    decision: str | None
+    summary: str | None
+    duplicates_open_pr: NotRequired[dict[str, Any]]
 
 
 class ValidationResultEvent(BaseEvent):
@@ -606,7 +609,10 @@ def node_completed(
     action: str | None = None,
     job_kind: str | None = None,
     template: str | None = None,
-    deliverables: list[dict[str, Any]] | None = None,
+    deliverables: int | None = None,
+    ok: bool | None = None,
+    round: int | None = None,  # noqa: A002
+    error: str | None = None,
 ) -> dict[str, Any]:
     fields: dict[str, Any] = {"attempt": attempt}
     for key, value in (
@@ -614,6 +620,9 @@ def node_completed(
         ("job_kind", job_kind),
         ("template", template),
         ("deliverables", deliverables),
+        ("ok", ok),
+        ("round", round),
+        ("error", error),
     ):
         if value is not None:
             fields[key] = value
@@ -636,7 +645,7 @@ def interrupt(
     node: str,
     reason: str | None = None,
     questions: list[dict[str, Any]] | None = None,
-    summary: str | None = None,
+    summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     for key, value in (("reason", reason), ("questions", questions), ("summary", summary)):
@@ -650,7 +659,11 @@ def agent_paused_for_input(*, node: str, count: int) -> dict[str, Any]:
 
 
 def review_decision(
-    *, decision: str, summary: str, duplicates_open_pr: bool | None = None, node: str = "review"
+    *,
+    decision: str | None,
+    summary: str | None,
+    duplicates_open_pr: dict[str, Any] | None = None,
+    node: str = "review",
 ) -> dict[str, Any]:
     fields: dict[str, Any] = {"decision": decision, "summary": summary}
     if duplicates_open_pr is not None:

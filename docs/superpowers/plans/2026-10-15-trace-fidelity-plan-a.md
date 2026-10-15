@@ -359,7 +359,10 @@ class NodeCompletedEvent(BaseEvent):
     action: NotRequired[str]
     job_kind: NotRequired[str]
     template: NotRequired[str]
-    deliverables: NotRequired[list[dict[str, Any]]]
+    deliverables: NotRequired[int]
+    ok: NotRequired[bool]
+    round: NotRequired[int]
+    error: NotRequired[str]
 
 
 class PipelineGraphEvent(BaseEvent):
@@ -374,7 +377,7 @@ class ProgressEvent(BaseEvent):
 class InterruptEvent(BaseEvent):
     reason: NotRequired[str]
     questions: NotRequired[list[dict[str, Any]]]
-    summary: NotRequired[str]
+    summary: NotRequired[dict[str, Any]]
 
 
 class AgentPausedForInputEvent(BaseEvent):
@@ -382,9 +385,9 @@ class AgentPausedForInputEvent(BaseEvent):
 
 
 class ReviewDecisionEvent(BaseEvent):
-    decision: str
-    summary: str
-    duplicates_open_pr: NotRequired[bool]
+    decision: str | None
+    summary: str | None
+    duplicates_open_pr: NotRequired[dict[str, Any]]
 
 
 class ValidationResultEvent(BaseEvent):
@@ -754,10 +757,21 @@ def node_completed(
     action: str | None = None,
     job_kind: str | None = None,
     template: str | None = None,
-    deliverables: list[dict[str, Any]] | None = None,
+    deliverables: int | None = None,
+    ok: bool | None = None,
+    round: int | None = None,  # noqa: A002
+    error: str | None = None,
 ) -> dict[str, Any]:
     fields: dict[str, Any] = {"attempt": attempt}
-    for key, value in (("action", action), ("job_kind", job_kind), ("template", template), ("deliverables", deliverables)):
+    for key, value in (
+        ("action", action),
+        ("job_kind", job_kind),
+        ("template", template),
+        ("deliverables", deliverables),
+        ("ok", ok),
+        ("round", round),
+        ("error", error),
+    ):
         if value is not None:
             fields[key] = value
     return _make(EventType.NODE_COMPLETED, fields, _base(node=node, agent=agent))
@@ -779,7 +793,7 @@ def interrupt(
     node: str,
     reason: str | None = None,
     questions: list[dict[str, Any]] | None = None,
-    summary: str | None = None,
+    summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     for key, value in (("reason", reason), ("questions", questions), ("summary", summary)):
@@ -792,7 +806,13 @@ def agent_paused_for_input(*, node: str, count: int) -> dict[str, Any]:
     return _make(EventType.AGENT_PAUSED_FOR_INPUT, {"count": count}, _base(node=node))
 
 
-def review_decision(*, decision: str, summary: str, duplicates_open_pr: bool | None = None, node: str = "review") -> dict[str, Any]:
+def review_decision(
+    *,
+    decision: str | None,
+    summary: str | None,
+    duplicates_open_pr: dict[str, Any] | None = None,
+    node: str = "review",
+) -> dict[str, Any]:
     fields: dict[str, Any] = {"decision": decision, "summary": summary}
     if duplicates_open_pr is not None:
         fields["duplicates_open_pr"] = duplicates_open_pr
@@ -1120,7 +1140,7 @@ EOF
 ### Task 3: Orchestrator emit sites through constructors
 
 **Files:**
-- Modify: every file the scan test lists under `embry0/workflows/`, `embry0/services/`, `embry0/api/app.py`, `embry0/orchestration/`, `embry0/qa/` (not the two executors; Tasks 6 and 7 own those)
+- Modify: every file the scan test lists under `embry0/workflows/`, `embry0/services/`, `embry0/api/app.py`, `embry0/orchestration/`, `embry0/qa/`, `embry0/workspace_init/` (not the two executors; Tasks 6 and 7 own those)
 
 **Interfaces:**
 - Consumes: the constructors from Task 1.
@@ -1195,9 +1215,18 @@ await self._event_bus.publish(job_id, {"type": "job_failed", "job_id": job_id, "
 await self._event_bus.publish(job_id, {**events.job_failed(kind=kind, message=err), "job_id": job_id})
 ```
 
-For the orphan marker in `embry0/api/app.py` (around line 1047) use `events.node_completed(node=stage, action="orphaned")`. For the QA bus (`embry0/qa/event_bus.py` consumers in `orchestrator_helpers.py` and `subtask_nodes.py`) the `subtask_status`/`done` payloads are **not** in `EventType` and stay as they are in this plan (#40 moves them).
+For the orphan marker in `embry0/api/app.py` (around line 1047) use `events.node_completed(node="developer", action="orphaned", error=orphan_message)`. For the QA bus (`embry0/qa/event_bus.py` consumers in `orchestrator_helpers.py` and `subtask_nodes.py`) the `subtask_status`/`done` payloads are **not** in `EventType` and stay as they are in this plan (#40 moves them).
 
 The `node` argument on `progress`/`error` is the emitting node's id (the same string its `node_started` uses). A site inside the executor service that has no node passes none.
+
+**Contract widening.** Migration found six payloads the Task 1 TypedDicts never modeled; the contract follows the code, so `events.py` widens rather than any value being dropped:
+
+1. `node_completed` gains `error` (the orphan marker in `embry0/api/app.py`).
+2. `node_completed` gains `ok` (onboard `validate` and `smoke`).
+3. `node_completed` gains `round` (onboard `analyze`).
+4. `node_completed.deliverables` is the count of deliverables (`int`), not the list; the list reaches the frontend over REST.
+5. `interrupt.summary` is a dict (the `max_retries` summary the frontend reads `latest_review` from); every `interrupt` site that sends a summary sends a dict.
+6. `review_decision.decision` and `.summary` are nullable (still required keys), and `duplicates_open_pr` is the duplicate PR's data (a dict), sent only when known.
 
 - [ ] **Step 3: Run the scan and the touched suites**
 
@@ -1457,13 +1486,13 @@ export interface AgentCompletedContract extends ContractBase, Truncatable {
 export interface ErrorContract extends ContractBase { type: "error"; message: string; code?: string; tool_name?: string }
 export interface NodeStartedContract extends ContractBase { type: "node_started"; attempt: number; round?: number }
 export interface NodeCompletedContract extends ContractBase {
-  type: "node_completed"; attempt: number; action?: string; job_kind?: string; template?: string; deliverables?: Record<string, unknown>[];
+  type: "node_completed"; attempt: number; action?: string; job_kind?: string; template?: string; deliverables?: number; ok?: boolean; round?: number; error?: string;
 }
 export interface PipelineGraphContract extends ContractBase { type: "pipeline_graph"; graph: Record<string, unknown> }
 export interface ProgressContract extends ContractBase { type: "progress"; message: string; app?: string }
-export interface InterruptContract extends ContractBase { type: "interrupt"; reason?: string; questions?: Record<string, unknown>[]; summary?: string }
+export interface InterruptContract extends ContractBase { type: "interrupt"; reason?: string; questions?: Record<string, unknown>[]; summary?: Record<string, unknown> }
 export interface AgentPausedForInputContract extends ContractBase { type: "agent_paused_for_input"; count: number }
-export interface ReviewDecisionContract extends ContractBase { type: "review_decision"; decision: string; summary: string; duplicates_open_pr?: boolean }
+export interface ReviewDecisionContract extends ContractBase { type: "review_decision"; decision: string | null; summary: string | null; duplicates_open_pr?: Record<string, unknown> }
 export interface ValidationResultContract extends ContractBase { type: "validation_result"; validation: Record<string, unknown> }
 export interface VerificationResultContract extends ContractBase {
   type: "verification_result"; tier: string; gate_verdict: string; blocking: boolean;
@@ -1516,7 +1545,7 @@ export const EVENT_FIELDS = {
   agent_completed: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "duration_ms", "error_code", "error_message", "input_tokens", "is_error", "output", "output_tokens", "policy_denials", "timestamp", "tools_called", "type"], optional: [...BASE_OPTIONAL, ...TRUNC].sort() },
   error: { required: ["message", "timestamp", "type"], optional: [...BASE_OPTIONAL, "code", "tool_name"].sort() },
   node_started: { required: ["attempt", "timestamp", "type"], optional: [...BASE_OPTIONAL, "round"].sort() },
-  node_completed: { required: ["attempt", "timestamp", "type"], optional: [...BASE_OPTIONAL, "action", "deliverables", "job_kind", "template"].sort() },
+  node_completed: { required: ["attempt", "timestamp", "type"], optional: [...BASE_OPTIONAL, "action", "deliverables", "error", "job_kind", "ok", "round", "template"].sort() },
   pipeline_graph: { required: ["graph", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
   progress: { required: ["message", "timestamp", "type"], optional: [...BASE_OPTIONAL, "app"].sort() },
   interrupt: { required: ["timestamp", "type"], optional: [...BASE_OPTIONAL, "questions", "reason", "summary"].sort() },

@@ -26,6 +26,7 @@ from langgraph.graph import END
 from langgraph.types import Command
 
 import embry0.workflows.issue_to_pr.nodes as _nodes
+from embry0.execution import events
 from embry0.safety.error_codes import ErrorCode
 from embry0.workflows.verification.config import VerificationConfig, load_verification_config
 from embry0.workflows.verification.gate import GateReport
@@ -117,7 +118,7 @@ async def _stored_config(configurable: dict[str, Any], repo: str) -> tuple[Verif
 
 async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[str]:
     writer = _nodes.get_stream_writer()
-    writer({"type": "node_started", "node": "verify"})
+    writer(events.node_started(node="verify"))
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     mode = verification_mode(configurable.get("embry0_config"))
@@ -154,7 +155,7 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
     elif docker is None or not container_id:
         gate = GateReport.without_runs("error", note="no sandbox was available to run the tests in")
     else:
-        writer({"type": "progress", "message": "Running the repository's tests on base and head"})
+        writer(events.progress(message="Running the repository's tests on base and head", node="verify"))
         try:
             gate = await run_gate(
                 docker=docker,
@@ -190,15 +191,14 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
         changed_files=len(changed_files),
     )
     writer(
-        {
-            "type": "verification_result",
-            "tier": tier.tier,
-            "gate_verdict": gate.verdict,
-            "blocking": gate.blocking,
-            "browser_qa": result["browser_qa"],
-            "human_merge_only": result["human_merge_only"],
-            "mode": mode,
-        }
+        events.verification_result(
+            tier=tier.tier,
+            gate_verdict=gate.verdict,
+            blocking=gate.blocking,
+            browser_qa=result["browser_qa"],
+            human_merge_only=result["human_merge_only"],
+            mode=mode,
+        )
     )
 
     verifications_repo = configurable.get("job_verifications_repo")
@@ -217,7 +217,7 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
 
     if mode == "shadow":
         # Record only: route exactly as review would have.
-        writer({"type": "node_completed", "node": "verify", "action": "shadow"})
+        writer(events.node_completed(node="verify", action="shadow"))
         return Command(goto=goto_after_review({**state, **updates}), update=updates)
 
     if gate.blocking:
@@ -237,7 +237,7 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
                 ),
             }
         )
-        writer({"type": "node_completed", "node": "verify", "action": "failed"})
+        writer(events.node_completed(node="verify", action="failed"))
         return Command(goto=END, update=updates)
 
     if not plan.run_browser_qa and qa_block.get("needs_qa"):
@@ -246,7 +246,7 @@ async def verify_node(state: dict[str, Any], config: RunnableConfig) -> Command[
         qa_block["needs_qa"] = False
         qa_block["qa_required_reason"] = f"browser QA skipped by verification tiers ({plan.reason_code})"
         updates["qa"] = qa_block
-        writer({"type": "progress", "message": f"Browser QA skipped: {plan.reason_code}"})
+        writer(events.progress(message=f"Browser QA skipped: {plan.reason_code}", node="verify"))
 
-    writer({"type": "node_completed", "node": "verify", "action": "passed"})
+    writer(events.node_completed(node="verify", action="passed"))
     return Command(goto=goto_after_review({**state, **updates}), update=updates)

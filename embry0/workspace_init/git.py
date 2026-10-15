@@ -15,6 +15,7 @@ from typing import Any
 
 import structlog
 
+from embry0.execution import events
 from embry0.workspace_init.base import InitContext, WorkspaceInitError
 
 logger = structlog.get_logger(__name__)
@@ -168,8 +169,8 @@ class GitWorkspaceInitializer:
             )
         except RuntimeError as exc:
             logger.error("repo_clone_failed", job_id=ctx.job_id, repo=repo, error=str(exc))
-            ctx.emit({"type": "error", "message": f"Repository clone failed for {repo}: {exc}"})
+            ctx.emit(events.error(message=f"Repository clone failed for {repo}: {exc}", node="init"))
             raise WorkspaceInitError(f"Repository clone failed for {repo}: {exc}") from exc
-        ctx.emit({"type": "progress", "message": f"Repository {repo} cloned"})
+        ctx.emit(events.progress(message=f"Repository {repo} cloned", node="init"))
         logger.info("repo_cloned", job_id=ctx.job_id, repo=repo, ref=ref)
         return {}
