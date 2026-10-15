@@ -1039,8 +1039,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     await boot_credentials_repo.finish_uses(jid, outcome.value)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("credential_uses_finish_failed", job_id=jid, error=type(exc).__name__)
-            # Append synthetic node_failed events to job_logs so the frontend
-            # event timeline reflects the orphaned state
+            # Append a synthetic node_completed(action="orphaned") to job_logs
+            # so the frontend event timeline reflects the orphaned state
             for jid in orphaned_ids:
                 synthetic = events.node_completed(node="developer", action="orphaned", error=orphan_message)
                 try:

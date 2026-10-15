@@ -67,7 +67,13 @@ DEFAULT_AGENT_MAX_TURNS: dict[str, int] = {
 
 
 def agent_attempt(state: dict[str, Any], agent_type: str) -> int:
-    """1 + the number of earlier runs of this agent in the job (agent_outputs is append-only)."""
+    """1 + the number of earlier runs of this agent in the job (agent_outputs is append-only).
+
+    The count is of prior ``agent_outputs`` entries of this ``agent_type``, not of
+    node re-entries: a decide-now resume appends two entries in one node entry,
+    so the next attempt advances by two, and two generic steps that share an
+    agent type read as attempts 1 and 2 of the same node.
+    """
     outputs = state.get("agent_outputs") or []
     return 1 + sum(1 for entry in outputs if isinstance(entry, dict) and entry.get("agent_type") == agent_type)
 

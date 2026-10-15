@@ -855,14 +855,13 @@ def _route_qa_failure_action(
     has already incremented it before this node fires.
     """
     from embry0.agents.triage_actions import RerunQA, RetryDeveloper
-
-    attempt = agent_attempt(state, "triage")
     from embry0.safety.error_codes import ErrorCode
     from embry0.workflows.issue_to_pr.nodes._qa_failure_action import (
         QAFailureActionInvalid,
         parse_qa_failure_action,
     )
 
+    attempt = agent_attempt(state, "triage")
     try:
         action = parse_qa_failure_action(triage_decision)
     except QAFailureActionInvalid as invalid:

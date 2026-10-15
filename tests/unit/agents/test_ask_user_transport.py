@@ -171,8 +171,8 @@ def test_developer_prompts_document_ask_user():
 @pytest.mark.asyncio
 async def test_executor_reemits_ask_user_from_user_message_tool_result(tmp_path, monkeypatch):
     """EMB-44 follow-up: in production, tool results arrive as USER messages
-    (Anthropic protocol) — the assistant-branch ToolResultBlock path never
-    fires. The user-message branch must recover embedded ask_user events."""
+    (Anthropic protocol). The user-message branch must recover embedded
+    ask_user events."""
     monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     captured = []
 
