@@ -83,6 +83,58 @@ def test_a_blank_line_after_a_full_hunk_is_not_a_line() -> None:
     assert commentable_lines("@@ -1,2 +1,2 @@\n a\n\n") == {1: NewLine("context", 1), 2: NewLine("context", 2)}
 
 
+def test_a_form_feed_in_a_context_line_does_not_shift_the_numbers() -> None:
+    # str.splitlines() would split " \x0c" into " " and "", one line too many.
+    patch = "@@ -1,1 +1,3 @@\n \x0c\n+a\n+b"
+    assert commentable_lines(patch) == {
+        1: NewLine("context", 1),
+        2: NewLine("added", None),
+        3: NewLine("added", None),
+    }, "only \\n ends a diff line"
+
+
+def test_a_line_separator_inside_an_added_line_keeps_the_hunk_open() -> None:
+    # A mid-line U+2028 would leave a fragment that ends the hunk early.
+    patch = "@@ -0,0 +1,3 @@\n+x = 'a b'\n+y\n+z"
+    assert commentable_lines(patch) == {n: NewLine("added", None) for n in (1, 2, 3)}, "only \\n ends a diff line"
+
+
+def test_a_crlf_patch_keeps_its_stripped_empty_context_line() -> None:
+    patch = "@@ -1,3 +1,3 @@\r\n a\r\n\r\n+c\r\n-b\r\n"
+    assert commentable_lines(patch) == {
+        1: NewLine("context", 1),
+        2: NewLine("context", 2),
+        3: NewLine("added", None),
+    }, "a CRLF line ending is not part of the line"
+
+
+def test_a_counted_hunk_then_a_second_file_in_one_patch() -> None:
+    # The first hunk claims more lines than it carries (a truncated patch), so only the
+    # "diff --git" line stops the next file's "---"/"+++" header reading as diff lines.
+    patch = "\n".join(
+        [
+            "diff --git a/a.py b/a.py",
+            "--- a/a.py",
+            "+++ b/a.py",
+            "@@ -1,5 +1,6 @@",
+            " a",
+            "+b",
+            "diff --git a/c.py b/c.py",
+            "--- a/c.py",
+            "+++ b/c.py",
+            "@@ -10 +10,2 @@",
+            " c",
+            "+d",
+        ]
+    )
+    assert commentable_lines(patch) == {
+        1: NewLine("context", 1),
+        2: NewLine("added", None),
+        10: NewLine("context", 10),
+        11: NewLine("added", None),
+    }, "the second file's header leaked into the first hunk"
+
+
 def test_binary_and_patchless_files_are_not_commentable() -> None:
     github = files_from_github(
         [

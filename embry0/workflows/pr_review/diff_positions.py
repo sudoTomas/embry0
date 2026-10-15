@@ -45,7 +45,9 @@ def commentable_lines(patch: str | None) -> dict[int, NewLine]:
     if not patch:
         return lines
     old = new = old_left = new_left = 0
-    for raw in patch.splitlines():
+    # Only "\n" ends a diff line: splitlines() also splits on \x0c, \x85, U+2028 and others.
+    for line in patch.split("\n"):
+        raw = line.removesuffix("\r")
         header = _HUNK_RE.match(raw)
         if header:
             old, new = int(header.group(1)), int(header.group(3))
