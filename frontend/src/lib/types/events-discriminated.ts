@@ -37,12 +37,19 @@ export interface ToolCallEvent extends BaseLogEvent {
   tool_name: string;
   /** Backend emits as tool_id. */
   tool_id: string;
-  input: Record<string, unknown>;
+  /** Legacy shape (events persisted before the contract); the contract sends summary + tool_input. */
+  input?: Record<string, unknown>;
+  /** Contract: one-line summary of the call (see ToolCallContract). Read as `summary ?? input` until #41. */
+  summary?: string;
+  /** Contract: the full tool input (see ToolCallContract). Read as `tool_input ?? input` until #41. */
+  tool_input?: Record<string, unknown>;
 }
 
 export interface ToolResultEvent extends BaseLogEvent {
   type: "tool_result";
-  tool_use_id: string;
+  /** Legacy shape; the contract sends tool_id. Read as `tool_id ?? tool_use_id` until #41. */
+  tool_use_id?: string;
+  tool_id?: string;
   /** Backend emits tool result content as "content" (not "result"). */
   content: string;
   is_error: boolean;

@@ -34,7 +34,10 @@ export interface UseLiveJobSummaryResult {
  * `tool_call · Edit apps/recruit/notes.ts`. */
 function summarizeToolCall(toolName: string, input: unknown): string {
   let detail = "";
-  if (input && typeof input === "object" && !Array.isArray(input)) {
+  if (typeof input === "string") {
+    // The contract's tool_call.summary is already the one-line detail.
+    detail = input;
+  } else if (input && typeof input === "object" && !Array.isArray(input)) {
     for (const key of TOOL_INPUT_KEYS) {
       const value = (input as Record<string, unknown>)[key];
       if (typeof value === "string" && value.length > 0) {
@@ -96,7 +99,8 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
         snapshot.lastProgress = event.message;
         break;
       case "tool_call":
-        snapshot.lastToolCall = summarizeToolCall(event.tool_name, event.input);
+        // Contract name first, legacy name second (spec section 6), until #41.
+        snapshot.lastToolCall = summarizeToolCall(event.tool_name, event.summary ?? event.input);
         break;
       case "tool_start":
         // Legacy tool event shape (field is `tool`, not `tool_name`) —

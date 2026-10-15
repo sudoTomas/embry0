@@ -188,17 +188,18 @@ export function useAgentStates(
           }
           break;
         }
-        case "tool_call":
+        case "tool_call": {
+          // Contract name first, legacy name second (spec section 6), until #41.
+          const summary = event.summary ?? event.input;
           agent.toolCalls.push({
             tool_name: event.tool_name,
             tool_id: event.tool_id,
-            input: typeof event.input === "string"
-              ? event.input
-              : JSON.stringify(event.input ?? ""),
+            input: typeof summary === "string" ? summary : JSON.stringify(summary ?? ""),
             timestamp: event.timestamp,
           });
           agent.toolCallCount++;
           break;
+        }
         case "tool_start":
           agent.toolCalls.push({
             tool_name: event.tool,
@@ -211,8 +212,9 @@ export function useAgentStates(
           agent.toolCallCount++;
           break;
         case "tool_result": {
-          if (event.tool_use_id) {
-            const tc = agent.toolCalls.find((t) => t.tool_id === event.tool_use_id);
+          const toolId = event.tool_id ?? event.tool_use_id;
+          if (toolId) {
+            const tc = agent.toolCalls.find((t) => t.tool_id === toolId);
             if (tc) {
               tc.result = event.content;
               tc.is_error = event.is_error;
