@@ -202,6 +202,7 @@ class DirectXaiExecutor:
 
         totals = {"in": 0, "out": 0, "cache_read": 0, "cache_creation": 0, "turns": 0}
         tools_called: dict[str, int] = {}
+        policy_denials: dict[str, int] = {}
         final_text = FinalText()
         is_error = False
         error_message = ""
@@ -279,6 +280,7 @@ class DirectXaiExecutor:
 
                     verdict = gate_tool_call(policy, name, tool_input, cwd=cwd)
                     if not verdict.allowed:
+                        policy_denials[name] = policy_denials.get(name, 0) + 1
                         writer(
                             events.error(
                                 message=verdict.reason or "",
@@ -371,6 +373,7 @@ class DirectXaiExecutor:
             events.cost_update(
                 cost_usd=cost,
                 duration_ms=elapsed_ms,
+                # The xAI path has no separate API timing, so wall time is reported.
                 duration_api_ms=elapsed_ms,
                 num_turns=totals["turns"],
                 tokens_in=totals["in"],
@@ -390,6 +393,7 @@ class DirectXaiExecutor:
             cost_usd=cost,
             duration_ms=elapsed_ms,
             tools_called=tools_called,
+            policy_denials=policy_denials,
             input_tokens=totals["in"],
             output_tokens=totals["out"],
             cache_read_tokens=totals["cache_read"],
@@ -407,7 +411,7 @@ class DirectXaiExecutor:
                 cost_usd=cost,
                 duration_ms=elapsed_ms,
                 tools_called=tools_called,
-                policy_denials={},
+                policy_denials=policy_denials,
                 input_tokens=totals["in"],
                 output_tokens=totals["out"],
                 cache_read_tokens=totals["cache_read"],
