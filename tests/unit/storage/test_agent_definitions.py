@@ -12,18 +12,21 @@ pytestmark = pytest.mark.requires_postgres
 @pytest.fixture
 async def agent_repo(db_with_migrations: DatabasePool) -> AgentDefinitionsRepository:
     # Migrations seed triage/developer/review. Everything else in BUILTIN_SEED
-    # arrives at app startup (embry0/api/app.py): qa and onboarding have their
-    # own force-syncing seeders, and seed_missing_builtin_agents inserts the
-    # rest — the non-code agents (research/analysis/ops, RAV-604). Mirror all
-    # three here so BUILTIN_SEED ⊆ list_all() holds; omitting the last one is
+    # arrives at app startup (embry0/api/app.py): qa, onboarding and
+    # pr-reviewer have their own force-syncing seeders, and
+    # seed_missing_builtin_agents inserts the rest — the non-code agents
+    # (research/analysis/ops, RAV-604). Mirror all four here so
+    # BUILTIN_SEED ⊆ list_all() holds; omitting the last one is
     # why this fixture went stale when the non-code agents were added.
     from embry0.storage.seeds.agents_builtin import seed_missing_builtin_agents
     from embry0.workflows.onboard.agent_seed import seed_onboarding_agent
+    from embry0.workflows.pr_review.agent_seed import seed_pr_reviewer_agent
     from embry0.workflows.qa.agent_seed import seed_qa_agent
 
     repo = AgentDefinitionsRepository(db_with_migrations)
     await seed_qa_agent(repo)
     await seed_onboarding_agent(repo)
+    await seed_pr_reviewer_agent(repo)
     await seed_missing_builtin_agents(repo)
     return repo
 
