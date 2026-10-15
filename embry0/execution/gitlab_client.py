@@ -139,14 +139,26 @@ class GitLabClient(ForgeClient):
         )
         return resp.status_code in (200, 201)
 
-    async def post_mr_note(self, repo: str, iid: int, body: str) -> ForgeWrite:
-        """Post a note on a merge request; what the forge answered."""
-        resp = await self.post(self.project_path(repo, f"/merge_requests/{iid}/notes"), repo=repo, json={"body": body})
+    async def post_mr_note(self, repo: str, iid: int, body: str, *, retry_transient: bool = False) -> ForgeWrite:
+        """Post a note on a merge request; what the forge answered.
+
+        Sent once by default: a note GitLab accepted and answered 502 must not
+        be posted twice.
+        """
+        resp = await self.post(
+            self.project_path(repo, f"/merge_requests/{iid}/notes"),
+            repo=repo,
+            json={"body": body},
+            retry_transient=retry_transient,
+        )
         return forge_write(resp)
 
     async def create_mr_note(self, repo: str, iid: int, body: str) -> bool:
-        """Post a note (comment) on a merge request. True when accepted."""
-        return (await self.post_mr_note(repo, iid, body)).ok
+        """Post a note (comment) on a merge request. True when accepted.
+
+        Keeps the default retry policy its callers had before ``post_mr_note``.
+        """
+        return (await self.post_mr_note(repo, iid, body, retry_transient=True)).ok
 
     async def create_mr_discussion(self, repo: str, iid: int, *, body: str, position: dict[str, Any]) -> ForgeWrite:
         """Start a diff discussion at ``position`` (#30); GitLab answers 400 for a line outside the diff."""
@@ -154,6 +166,7 @@ class GitLabClient(ForgeClient):
             self.project_path(repo, f"/merge_requests/{iid}/discussions"),
             repo=repo,
             json={"body": body, "position": position},
+            retry_transient=False,  # sent once: an accepted discussion answered 502 must not be posted twice
         )
         return forge_write(resp)
 

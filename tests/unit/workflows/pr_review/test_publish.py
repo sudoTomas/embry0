@@ -228,3 +228,35 @@ async def test_head_moved_since_review_posts_everything_in_the_summary_on_gitlab
     )
     assert client.positions == [], "no inline comment may be placed against lines of another commit"
     assert (result.inline_count, result.listed_count) == (0, 1)
+
+
+TWO_INLINE = (ON_DIFF, Finding("src/app.py", 3, "critical", "Wrong default."))
+
+
+async def test_a_refused_summary_after_discussions_landed_says_how_many_landed() -> None:
+    client = _GitLab(note=ForgeWrite(500, "Internal Server Error"))
+    with pytest.raises(PublishError) as caught:
+        await publish_gitlab(
+            client, repo="acme/products/web", number=5, head_sha=SHA, verdict=_verdict(*TWO_INLINE), ctx=CTX
+        )
+    assert len(client.positions) == 2
+    assert caught.value.inline_posted == 2, "the caller must know the merge request already carries 2 comments"
+
+
+async def test_a_summary_note_lost_in_transit_is_a_publish_error_with_the_count() -> None:
+    class _NoteTimesOut(_GitLab):
+        async def post_mr_note(self, repo: str, iid: int, body: str) -> ForgeWrite:
+            raise httpx.ReadTimeout("timed out reading the answer")
+
+    with pytest.raises(PublishError, match="timed out reading the answer") as caught:
+        await publish_gitlab(
+            _NoteTimesOut(), repo="acme/products/web", number=5, head_sha=SHA, verdict=_verdict(*TWO_INLINE), ctx=CTX
+        )
+    assert caught.value.inline_posted == 2
+
+
+async def test_a_github_refusal_posted_nothing_inline() -> None:
+    client = _GitHub(answers=[ForgeWrite(403, "Resource not accessible by integration")])
+    with pytest.raises(PublishError) as caught:
+        await publish_github(client, repo="acme/widgets", number=7, head_sha=SHA, verdict=_verdict(ON_DIFF), ctx=CTX)
+    assert caught.value.inline_posted == 0, "a refused GitHub review posts nothing: it is one request"

@@ -87,3 +87,40 @@ async def test_pull_file_patches_raise_on_an_error_page() -> None:
         await _client(lambda _r: httpx.Response(404, json={"message": "Not Found"})).list_pull_file_patches(
             "acme/widgets", 7
         )
+
+
+async def test_a_review_the_forge_answered_502_is_not_sent_again() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(502, text="Bad Gateway") if len(calls) == 1 else httpx.Response(200, json={})
+
+    result = await _client(handler).create_pull_review("acme/widgets", 7, commit_id=SHA, body="b", comments=[])
+    assert calls == ["POST"], "a 502 may follow an accepted review: re-sending it would post the review twice"
+    assert result.status_code == 502
+
+
+async def test_a_review_whose_answer_was_lost_is_not_sent_again() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        if len(calls) == 1:
+            raise httpx.ReadTimeout("timed out")
+        return httpx.Response(200, json={})
+
+    with pytest.raises(httpx.ReadTimeout):
+        await _client(handler).create_pull_review("acme/widgets", 7, commit_id=SHA, body="b", comments=[])
+    assert calls == ["POST"], "a lost answer may follow an accepted review: re-sending it would post it twice"
+
+
+async def test_other_posts_still_retry_a_502() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(502) if len(calls) == 1 else httpx.Response(201, json={"number": 1})
+
+    created = await _client(handler).create_issue("acme/widgets", title="t", body="b")
+    assert created == {"number": 1} and len(calls) == 2, "the default retry policy must be unchanged"

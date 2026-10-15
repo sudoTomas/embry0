@@ -183,12 +183,17 @@ class ForgeClient:
         params: Mapping[str, Any] | None = None,
         json: Any = None,
         extra_headers: Mapping[str, str] | None = None,
+        retry_transient: bool = True,
         **header_kwargs: Any,
     ) -> httpx.Response:
         """Issue one request, retrying transient failures.
 
         Returns the response whatever its status. Raises only when every
         attempt failed at the transport layer, which retrying will not fix.
+
+        ``retry_transient=False`` sends the request once: a write the forge
+        accepted can still be answered 5xx or lose its answer in transit, and
+        sending it again would post it twice.
         """
         headers = self.headers(repo, token=await self.token_for(repo), **header_kwargs)
         if extra_headers:
@@ -197,7 +202,8 @@ class ForgeClient:
         client = self._http or httpx.AsyncClient(timeout=self._timeout, verify=self._verify)
         owned = self._http is None
         try:
-            for attempt in range(1, self._max_attempts + 1):
+            attempts = self._max_attempts if retry_transient else 1
+            for attempt in range(1, attempts + 1):
                 try:
                     response = await client.request(
                         method,
@@ -208,12 +214,12 @@ class ForgeClient:
                         timeout=self._timeout,
                     )
                 except httpx.TransportError:
-                    if attempt == self._max_attempts:
+                    if attempt == attempts:
                         raise
                     await self._backoff(attempt, None, method=method, path=path, reason="transport")
                     continue
 
-                if response.status_code in RETRY_STATUSES and attempt < self._max_attempts:
+                if response.status_code in RETRY_STATUSES and attempt < attempts:
                     await self._backoff(
                         attempt,
                         response,

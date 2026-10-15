@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import structlog
 
 from embry0.workflows.pr_review.diff_positions import FileIndex, build_line_index, files_from_github, files_from_gitlab
@@ -34,7 +35,17 @@ _POSITION_REFS = ("base_sha", "start_sha", "head_sha")
 
 
 class PublishError(RuntimeError):
-    """The forge refused the review after the fallback. The message is the forge's."""
+    """The forge refused the review after the fallback. The message is the forge's.
+
+    ``inline_posted`` counts the inline comments already on the pull request
+    when publishing stopped: on GitLab each discussion is its own request, so a
+    refused summary can follow accepted discussions. GitHub posts one request,
+    so it is always 0 there.
+    """
+
+    def __init__(self, message: str, *, inline_posted: int = 0) -> None:
+        super().__init__(message)
+        self.inline_posted = inline_posted
 
 
 @dataclass(frozen=True)
@@ -150,7 +161,16 @@ async def publish_gitlab(
             )
             listed.append(comment.finding)
     listed = by_severity(listed)
-    note = await client.post_mr_note(repo, number, render_summary(verdict, inline_count=inline, listed=listed, ctx=ctx))
+    try:
+        note = await client.post_mr_note(
+            repo, number, render_summary(verdict, inline_count=inline, listed=listed, ctx=ctx)
+        )
+    except httpx.HTTPError as exc:
+        raise PublishError(
+            f"GitLab review summary failed in transit ({type(exc).__name__}): {exc}", inline_posted=inline
+        ) from exc
     if not note.ok:
-        raise PublishError(f"GitLab refused the review summary ({note.status_code}): {note.detail}")
+        raise PublishError(
+            f"GitLab refused the review summary ({note.status_code}): {note.detail}", inline_posted=inline
+        )
     return PublishResult(inline_count=inline, listed_count=len(listed))

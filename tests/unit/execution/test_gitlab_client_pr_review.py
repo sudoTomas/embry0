@@ -121,3 +121,61 @@ async def test_an_older_gitlab_without_the_diffs_endpoint_falls_back_to_changes(
         )
 
     assert [d["new_path"] for d in await _client(handler).list_merge_request_diffs("acme/products/web", 5)] == ["b.py"]
+
+
+@pytest.mark.parametrize("write", ["discussion", "note"])
+async def test_a_review_write_the_forge_answered_502_is_not_sent_again(write) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(502, text="Bad Gateway") if len(calls) == 1 else httpx.Response(201, json={})
+
+    client = _client(handler)
+    if write == "discussion":
+        result = await client.create_mr_discussion("acme/products/web", 5, body="x", position={})
+    else:
+        result = await client.post_mr_note("acme/products/web", 5, "summary")
+    assert calls == ["POST"], "a 502 may follow an accepted write: re-sending it would post it twice"
+    assert result.status_code == 502
+
+
+@pytest.mark.parametrize("write", ["discussion", "note"])
+async def test_a_review_write_whose_answer_was_lost_is_not_sent_again(write) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        if len(calls) == 1:
+            raise httpx.ReadTimeout("timed out")
+        return httpx.Response(201, json={})
+
+    client = _client(handler)
+    with pytest.raises(httpx.ReadTimeout):
+        if write == "discussion":
+            await client.create_mr_discussion("acme/products/web", 5, body="x", position={})
+        else:
+            await client.post_mr_note("acme/products/web", 5, "summary")
+    assert calls == ["POST"], "a lost answer may follow an accepted write: re-sending it would post it twice"
+
+
+async def test_other_gitlab_posts_still_retry_a_502() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(502) if len(calls) == 1 else httpx.Response(201, json={})
+
+    assert await _client(handler).create_issue_note("acme/products/web", 5, "b") is True
+    assert len(calls) == 2, "the default retry policy must be unchanged"
+
+
+async def test_the_existing_mr_note_api_keeps_retrying_a_502() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(502) if len(calls) == 1 else httpx.Response(201, json={})
+
+    assert await _client(handler).create_mr_note("acme/products/web", 5, "b") is True
+    assert len(calls) == 2, "create_mr_note's callers keep the retry policy they had"

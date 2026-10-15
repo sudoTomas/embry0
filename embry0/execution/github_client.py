@@ -157,7 +157,8 @@ class GitHubClient(ForgeClient):
         payload: dict[str, Any] = {"body": body, "event": "COMMENT", "comments": comments}
         if commit_id:
             payload = {"commit_id": commit_id, **payload}
-        resp = await self.post(f"/repos/{repo}/pulls/{number}/reviews", repo=repo, json=payload)
+        # Sent once: a review GitHub accepted and answered 502 must not be posted twice.
+        resp = await self.post(f"/repos/{repo}/pulls/{number}/reviews", repo=repo, json=payload, retry_transient=False)
         return forge_write(resp)
 
     async def get_check_runs(self, repo: str, sha: str) -> dict[str, Any] | None:
