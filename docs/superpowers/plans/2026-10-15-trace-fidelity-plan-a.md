@@ -1585,7 +1585,7 @@ EOF
 Replace `test_sdk_executor_with_tool_result_block` and add, in `tests/unit/agents/test_sdk_executor.py`:
 
 ```python
-class _FakeToolUseBlock:
+class _FakeToolUse:
     def __init__(self, id_: str, name: str, input_: dict) -> None:
         self.id = id_
         self.name = name
@@ -1625,7 +1625,7 @@ async def _run(messages: list, monkeypatch, tmp_path, **inv) -> list[dict]:  # n
 @pytest.mark.asyncio
 async def test_tool_result_on_a_user_message_is_emitted_and_paired(tmp_path, monkeypatch) -> None:
     messages = [
-        _assistant_with([_FakeToolUseBlock("t1", "Read", {"file_path": "a.py"})]),
+        _assistant_with([_FakeToolUse("t1", "Read", {"file_path": "a.py"})]),
         _FakeUserMessage([_FakeToolResultBlock("t1", "file content here")]),
         _FakeResultMessage("done", 0.001),
     ]
@@ -1642,7 +1642,7 @@ async def test_tool_result_on_a_user_message_is_emitted_and_paired(tmp_path, mon
 async def test_tool_result_list_content_renders_text_and_marks_images(tmp_path, monkeypatch) -> None:
     content = [{"type": "text", "text": "first"}, {"type": "image", "source": {"data": "AAAA"}}, {"type": "text", "text": "last"}]
     messages = [
-        _assistant_with([_FakeToolUseBlock("t1", "mcp__playwright__browser_snapshot", {})]),
+        _assistant_with([_FakeToolUse("t1", "mcp__playwright__browser_snapshot", {})]),
         _FakeUserMessage([_FakeToolResultBlock("t1", content)]),
         _FakeResultMessage("done", 0.001),
     ]
@@ -1662,7 +1662,7 @@ async def test_user_message_with_string_content_emits_no_tool_result(tmp_path, m
 @pytest.mark.asyncio
 async def test_long_tool_result_is_cut_with_a_marker(tmp_path, monkeypatch) -> None:
     messages = [
-        _assistant_with([_FakeToolUseBlock("t1", "Bash", {"command": "cat big"})]),
+        _assistant_with([_FakeToolUse("t1", "Bash", {"command": "cat big"})]),
         _FakeUserMessage([_FakeToolResultBlock("t1", "x" * 5000)]),
         _FakeResultMessage("done", 0.001),
     ]
@@ -1675,7 +1675,7 @@ async def test_long_tool_result_is_cut_with_a_marker(tmp_path, monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_every_executor_event_carries_run_id_node_and_agent(tmp_path, monkeypatch) -> None:
     messages = [
-        _assistant_with([_FakeBlock("hi"), _FakeToolUseBlock("t1", "Read", {"file_path": "a"})]),
+        _assistant_with([_FakeBlock("hi"), _FakeToolUse("t1", "Read", {"file_path": "a"})]),
         _FakeUserMessage([_FakeToolResultBlock("t1", "ok")]),
         _FakeResultMessage("done", 0.001),
     ]
@@ -2038,9 +2038,9 @@ async def test_unpriced_model_turn_usage_has_null_cost(tmp_path, monkeypatch) ->
 @pytest.mark.asyncio
 async def test_subagent_messages_are_bracketed_and_do_not_count_as_turns(tmp_path, monkeypatch) -> None:
     messages = [
-        _assistant_with([_FakeToolUseBlock("task-1", "Task", {"subagent_type": "Explore", "prompt": "look"})]),
+        _assistant_with([_FakeToolUse("task-1", "Task", {"subagent_type": "Explore", "prompt": "look"})]),
         _assistant_with([_FakeBlock("sub says hi")], parent="task-1"),
-        _assistant_with([_FakeToolUseBlock("t2", "Read", {"file_path": "x"})], parent="task-1"),
+        _assistant_with([_FakeToolUse("t2", "Read", {"file_path": "x"})], parent="task-1"),
         _FakeUserMessage([_FakeToolResultBlock("t2", "contents")], parent_tool_use_id="task-1"),
         _FakeUserMessage([_FakeToolResultBlock("task-1", "sub result")]),
         _assistant_with([_FakeBlock("parent continues")]),

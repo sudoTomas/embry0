@@ -74,11 +74,12 @@ class _ToolResultBlock:
         self.is_error = False
 
 
-class _AssistantMessage:
+class _UserMessage:
+    """Duck-typed UserMessage — content, no model, no total_cost_usd."""
+
     def __init__(self, content):
         self.content = content
-        self.model = "claude-sonnet-4-6"
-        self.uuid = "u-1"
+        self.uuid = "u-2"
 
 
 class _ResultMessage:
@@ -118,20 +119,18 @@ def _inv():
 
 @pytest.mark.asyncio
 async def test_executor_reemits_embedded_ask_user_event(tmp_path, monkeypatch):
+    """A tool result carrying an ask_user JSON yields both the ask event and
+    the regular tool_result; the ask event carries the correlation fields."""
     monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     captured = []
 
     tool_result = _ToolResultBlock("cmd output\n" + _helper_output(question="Ship it?"))
     messages = [
-        _AssistantMessage([tool_result]),
+        _UserMessage([tool_result]),
         _ResultMessage(),
     ]
 
-    # Patch ToolResultBlock so isinstance matches our fake.
-    with (
-        patch("claude_agent_sdk.query", return_value=_scripted(messages)),
-        patch("claude_agent_sdk.ToolResultBlock", _ToolResultBlock),
-    ):
+    with patch("claude_agent_sdk.query", return_value=_scripted(messages)):
         out = await SdkAgentExecutor().run(
             _inv(),
             config={"configurable": {}, "_test_writer": captured.append},
@@ -142,8 +141,11 @@ async def test_executor_reemits_embedded_ask_user_event(tmp_path, monkeypatch):
     assert len(asks) == 1
     assert asks[0]["question"] == "Ship it?"
     assert asks[0]["node"] == "developer"
-    # The regular tool_result event still flows.
-    assert any(e.get("type") == "tool_result" for e in captured)
+    assert asks[0]["agent"] == "developer"
+    # The regular tool_result event still flows, paired to the tool use.
+    results = [e for e in captured if e.get("type") == "tool_result"]
+    assert len(results) == 1
+    assert results[0]["tool_id"] == "tu-1"
 
 
 # ---------------------------------------------------------------------------
@@ -164,14 +166,6 @@ def test_developer_prompts_document_ask_user():
     ):
         assert "from embry0.sandbox.ask_user import ask_user" in prompt
         assert "never reach the user" in prompt
-
-
-class _UserMessage:
-    """Duck-typed UserMessage — content, no model, no total_cost_usd."""
-
-    def __init__(self, content):
-        self.content = content
-        self.uuid = "u-2"
 
 
 @pytest.mark.asyncio

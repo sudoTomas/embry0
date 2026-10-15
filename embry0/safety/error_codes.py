@@ -54,6 +54,7 @@ class ErrorCode(StrEnum):
     SAFETY_HOOK_FAILED = "ERR_SAFETY_HOOK_FAILED"  # Hook raised or malformed — fails closed
     SANDBOX_REQUIRED = "ERR_SANDBOX_REQUIRED"  # Sandbox-less in-process execution refused (no fallback by design)
     TOOL_DENIED = "ERR_TOOL_DENIED"  # Safety policy denied a tool call
+    POLICY_DENIED = "ERR_POLICY_DENIED"  # the Ring-3 hook denied one tool call; the code on the executor's error event (TOOL_DENIED is the job-level code)
 
     # Phase 5 — QA pipeline integration
     QA_FAILURES_UNRESOLVED = "ERR_QA_FAILURES_UNRESOLVED"  # QA failed and triage↔QA loop hit max_qa_failure_rounds (default 2) without a passing run; written when QAStateBlock.failure_rounds is exhausted
@@ -195,6 +196,7 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.SAFETY_HOOK_FAILED: _C.INFRA,
     ErrorCode.SANDBOX_REQUIRED: _C.INFRA,
     ErrorCode.TOOL_DENIED: _C.AGENT,
+    ErrorCode.POLICY_DENIED: _C.CONFIG,
     ErrorCode.QA_FAILURES_UNRESOLVED: _C.VERIFICATION,
     ErrorCode.VERIFY_NEW_TEST_FAILURES: _C.VERIFICATION,
     ErrorCode.TRIAGE_QA_ACTION_INVALID: _C.AGENT,

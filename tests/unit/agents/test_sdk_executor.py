@@ -128,10 +128,10 @@ async def test_sdk_executor_extracts_token_usage(tmp_path, monkeypatch) -> None:
     assert cost_update["cache_creation_tokens"] == 4500
 
     completed = next(e for e in captured_events if e["type"] == "agent_completed")
-    assert completed["result"]["input_tokens"] == 1200
-    assert completed["result"]["output_tokens"] == 340
-    assert completed["result"]["cache_read_tokens"] == 98000
-    assert completed["result"]["cache_creation_tokens"] == 4500
+    assert completed["input_tokens"] == 1200
+    assert completed["output_tokens"] == 340
+    assert completed["cache_read_tokens"] == 98000
+    assert completed["cache_creation_tokens"] == 4500
 
 
 @pytest.mark.asyncio
@@ -570,43 +570,152 @@ async def test_sdk_executor_with_thinking_block(tmp_path, monkeypatch) -> None:
     assert "I should check" in thinking_events[0]["text"]
 
 
+class _FakeToolUse:
+    def __init__(self, id_: str, name: str, input_: dict) -> None:
+        self.id = id_
+        self.name = name
+        self.input = input_
+
+
+class _FakeToolResultBlock:
+    def __init__(self, tool_use_id: str, content, is_error: bool | None = False) -> None:  # noqa: ANN001
+        self.tool_use_id = tool_use_id
+        self.content = content
+        self.is_error = is_error
+
+
+class _FakeUserMessage:
+    def __init__(self, content, parent_tool_use_id: str | None = None) -> None:  # noqa: ANN001
+        self.content = content
+        self.parent_tool_use_id = parent_tool_use_id
+
+
+def _assistant_with(
+    blocks: list, model: str = "claude-sonnet-4-6", parent: str | None = None, usage: dict | None = None
+):  # noqa: ANN001
+    msg = _FakeAssistantMessage("")
+    msg.content = blocks
+    msg.model = model
+    msg.parent_tool_use_id = parent
+    msg.usage = usage
+    return msg
+
+
+async def _run(messages: list, monkeypatch, tmp_path, **inv) -> list[dict]:  # noqa: ANN001
+    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
+    events: list[dict] = []
+    with patch("claude_agent_sdk.query", return_value=_scripted_query(messages)):
+        await SdkAgentExecutor().run(_inv(**inv), config={"configurable": {}, "_test_writer": events.append})
+    return events
+
+
 @pytest.mark.asyncio
-async def test_sdk_executor_with_tool_result_block(tmp_path, monkeypatch) -> None:
-    """Use real ToolResultBlock to hit the isinstance() branch."""
-    from claude_agent_sdk import AssistantMessage, ResultMessage, ToolResultBlock
+async def test_tool_result_on_a_user_message_is_emitted_and_paired(tmp_path, monkeypatch) -> None:
+    messages = [
+        _assistant_with([_FakeToolUse("t1", "Read", {"file_path": "a.py"})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", "file content here")]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path, run_id="run-1", node="developer")
+    results = [e for e in events if e["type"] == "tool_result"]
+    assert len(results) == 1, "a ToolResultBlock on a UserMessage must become one tool_result event"
+    assert results[0]["tool_id"] == "t1"
+    assert results[0]["content"] == "file content here"
+    assert results[0]["is_error"] is False
+    assert results[0]["run_id"] == "run-1" and results[0]["node"] == "developer"
+
+
+@pytest.mark.asyncio
+async def test_tool_result_list_content_renders_text_and_marks_images(tmp_path, monkeypatch) -> None:
+    content = [
+        {"type": "text", "text": "first"},
+        {"type": "image", "source": {"data": "AAAA"}},
+        {"type": "text", "text": "last"},
+    ]
+    messages = [
+        _assistant_with([_FakeToolUse("t1", "mcp__playwright__browser_snapshot", {})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", content)]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert result["content"] == "first\n[image]\nlast"
+    assert "AAAA" not in result["content"], "image bytes must never ride the event"
+
+
+@pytest.mark.asyncio
+async def test_user_message_with_string_content_emits_no_tool_result(tmp_path, monkeypatch) -> None:
+    messages = [_FakeUserMessage("the prompt echoed back"), _FakeResultMessage("done", 0.001)]
+    events = await _run(messages, monkeypatch, tmp_path)
+    assert not [e for e in events if e["type"] == "tool_result"]
+
+
+@pytest.mark.asyncio
+async def test_long_tool_result_is_cut_with_a_marker(tmp_path, monkeypatch) -> None:
+    messages = [
+        _assistant_with([_FakeToolUse("t1", "Bash", {"command": "cat big"})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", "x" * 5000)]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert len(result["content"]) == 4000
+    assert result["truncated"] is True and result["original_length"] == 5000
+
+
+@pytest.mark.asyncio
+async def test_every_executor_event_carries_run_id_node_and_agent(tmp_path, monkeypatch) -> None:
+    messages = [
+        _assistant_with([_FakeBlock("hi"), _FakeToolUse("t1", "Read", {"file_path": "a"})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", "ok")]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path, run_id="run-9", node="generic_agent", agent_type="research")
+    for e in events:
+        assert e.get("run_id") == "run-9", f"{e['type']} lacks run_id"
+        assert e.get("node") == "generic_agent", f"{e['type']} lacks node"
+        assert e.get("agent") == "research", f"{e['type']} lacks agent"
+
+
+@pytest.mark.asyncio
+async def test_stream_failure_error_event_uses_message_and_code(tmp_path, monkeypatch) -> None:
+    async def _boom():
+        raise RuntimeError("socket closed")
+        yield  # pragma: no cover
 
     monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     events: list[dict] = []
-
-    tool_result = ToolResultBlock(tool_use_id="t1", content="file content here", is_error=False)
-    assistant_msg = AssistantMessage(content=[tool_result], model="claude-sonnet-4-6")
-    result_msg = ResultMessage(
-        subtype="result",
-        duration_ms=100,
-        duration_api_ms=80,
-        is_error=False,
-        num_turns=1,
-        session_id="s1",
-        total_cost_usd=0.001,
-        usage=None,
-        result="done",
-    )
-
-    with patch(
-        "claude_agent_sdk.query",
-        return_value=_scripted_query([assistant_msg, result_msg]),
-    ):
-        executor = SdkAgentExecutor()
-        out = await executor.run(
-            _inv(),
-            config={"configurable": {}, "_test_writer": lambda e: events.append(e)},
+    with patch("claude_agent_sdk.query", return_value=_boom()):
+        out = await SdkAgentExecutor().run(
+            _inv(run_id="r", node="developer"), config={"configurable": {}, "_test_writer": events.append}
         )
+    assert out.is_error
+    err = next(e for e in events if e["type"] == "error")
+    assert err["message"] == "socket closed"
+    assert "error" not in err
+    assert err["node"] == "developer" and err["run_id"] == "r"
 
-    assert out.is_error is False
-    tr_events = [e for e in events if e.get("type") == "tool_result"]
-    assert len(tr_events) == 1
-    assert tr_events[0]["tool_use_id"] == "t1"
-    assert tr_events[0]["content"] == "file content here"
+
+@pytest.mark.asyncio
+async def test_policy_denial_error_event_names_the_tool_and_the_code() -> None:
+    from embry0.agents.executor import _evaluate_hook
+
+    events: list[dict] = []
+    policy = default_policy_for_agent("developer")
+    await _evaluate_hook(
+        policy,
+        "Bash",
+        {"command": "rm -rf /"},
+        {},
+        events.append,
+        {},
+        ids={"run_id": "r", "node": "developer", "agent": "developer"},
+    )
+    err = next(e for e in events if e["type"] == "error")
+    assert err["tool_name"] == "Bash"
+    assert err["code"] == "ERR_POLICY_DENIED"
+    assert err["message"], "the denial reason is the message"
+    assert err["node"] == "developer"
 
 
 # ---------------------------------------------------------------------------

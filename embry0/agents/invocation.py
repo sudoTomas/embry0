@@ -55,3 +55,8 @@ class AgentInvocation:
     # None for Anthropic. The executor overlays the provider's base_url +
     # container-env API key on the CLI subprocess for this agent only.
     provider: str | None = None
+    # Correlation (spec 3.4): the run id minted by run_agent_node before the
+    # sandbox exec, and the graph node id this run executes under. Empty for
+    # callers that predate them; the executor then falls back to agent_type.
+    run_id: str = ""
+    node: str = ""

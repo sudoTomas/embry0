@@ -27,6 +27,7 @@ from embry0.agents.provider_limits import (
 from embry0.agents.provider_limits import merge as merge_provider_failure
 from embry0.agents.sdk_support import SdkSupportError, assert_sdk_supports_hooks
 from embry0.agents.session import render_transcript_block
+from embry0.execution import events
 from embry0.execution.agent_runner import AgentOutput
 from embry0.safety.error_codes import ACCOUNT_FAILURE_CODES, ErrorCode
 from embry0.safety.policy import SafetyPolicy, evaluate_policy, render_settings_json
@@ -250,6 +251,35 @@ def _resolve_writer(config: dict[str, Any] | None) -> Callable[[dict[str, Any]],
         return lambda _e: None
 
 
+def _ids(invocation: AgentInvocation) -> dict[str, str]:
+    """The correlation fields every executor event carries."""
+    return {
+        "run_id": invocation.run_id,
+        "node": invocation.node or invocation.agent_type,
+        "agent": invocation.agent_type,
+    }
+
+
+def _render_tool_result(content: Any) -> str:
+    """Tool result content as text. String stays; a block list joins its text
+    parts with newlines and replaces an image part by ``[image]``."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            kind = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+            if kind == "image":
+                parts.append("[image]")
+            else:
+                text_value = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+                parts.append(str(text_value if text_value is not None else block))
+        return "\n".join(parts)
+    return str(content)
+
+
 def _summarize_tool_input(tool_name: str, tool_input: dict[str, Any]) -> str:
     if not isinstance(tool_input, dict):
         return str(tool_input)[:200]
@@ -325,6 +355,8 @@ async def _evaluate_hook(
     tools_called: dict[str, int],  # noqa: ARG001 — reserved for future per-tool counters
     writer: Callable[[dict[str, Any]], None],
     policy_denials: dict[str, int] | None = None,
+    *,
+    ids: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Ring-3 PreToolUse hook — delegates to evaluate_policy, fail-closed.
 
@@ -358,7 +390,14 @@ async def _evaluate_hook(
         # The counter and the event stay keyed on the raw reason so counts do
         # not fragment and existing consumers are unaffected; only the text the
         # agent reads gains the guidance.
-        writer({"type": "error", "error": verdict.reason, "tool_name": tool_name})
+        writer(
+            events.error(
+                message=verdict.reason or "",
+                code=ErrorCode.POLICY_DENIED.value,
+                tool_name=tool_name,
+                **(ids or {}),
+            )
+        )
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -428,10 +467,6 @@ class SdkAgentExecutor:
             from claude_agent_sdk import ThinkingBlock
         except ImportError:
             ThinkingBlock = None  # type: ignore[assignment,misc]
-        try:
-            from claude_agent_sdk import ToolResultBlock
-        except ImportError:
-            ToolResultBlock = None  # type: ignore[assignment,misc]
 
         # Duck-type message/block detection so tests can swap in fakes with
         # equivalent structure. Real SDK classes satisfy the same shape.
@@ -457,6 +492,7 @@ class SdkAgentExecutor:
             return hasattr(blk, "name") and hasattr(blk, "id") and hasattr(blk, "input") and not hasattr(blk, "text")
 
         writer = _resolve_writer(config)  # type: ignore[arg-type]
+        ids = _ids(invocation)
         now = time.time()
         tools_called: dict[str, int] = {}
         final_text = FinalText()
@@ -609,6 +645,7 @@ class SdkAgentExecutor:
                 tools_called,
                 writer,
                 policy_denials,
+                ids=ids,
             )
 
         # Attach hook to options. The SDK's hook support was asserted at the
@@ -624,7 +661,7 @@ class SdkAgentExecutor:
         if resume_messages and not resume_session_id:
             prompt = f"{render_transcript_block(resume_messages)}\n\n{prompt}"
 
-        writer({"type": "agent_started", "agent": invocation.agent_type})
+        writer(events.agent_started(model=invocation.model, max_turns=invocation.max_turns, **ids))
 
         # Seed the api_key-mode messages list with the user prompt as turn 0.
         # We append AssistantMessage text below; this stays empty/unused in
@@ -656,14 +693,7 @@ class SdkAgentExecutor:
                     captured_session_id = str(msg_session_id)
                 if _is_assistant(message):
                     turn_number += 1
-                    writer(
-                        {
-                            "type": "turn_start",
-                            "turn_number": turn_number,
-                            "model": getattr(message, "model", ""),
-                            "node": invocation.agent_type,
-                        }
-                    )
+                    writer(events.turn_start(turn_number=turn_number, model=getattr(message, "model", ""), **ids))
                     # Accumulate this assistant turn's text into the messages
                     # buffer (api_key resume path). We collapse all text
                     # blocks in the message into a single content string;
@@ -675,13 +705,7 @@ class SdkAgentExecutor:
                         if _is_text_block(block):
                             block_text = str(getattr(block, "text", ""))
                             assistant_text += block_text
-                            writer(
-                                {
-                                    "type": "text",
-                                    "text": block_text[:2000],
-                                    "node": invocation.agent_type,
-                                }
-                            )
+                            writer(events.text(text=block_text, **ids))
                         elif _is_tool_use_block(block):
                             tn = getattr(block, "name", "") or getattr(block, "tool_name", "")
                             if tn:
@@ -690,48 +714,19 @@ class SdkAgentExecutor:
                             # Preserve full structured input on the event so
                             # downstream consumers (e.g. triage_node parsing
                             # the set_qa_decision tool call) can re-validate
-                            # against a Pydantic schema. ``input`` stays as a
+                            # against a Pydantic schema. ``summary`` stays as a
                             # short human-readable summary for log/UI use.
                             writer(
-                                {
-                                    "type": "tool_call",
-                                    "tool_name": tn,
-                                    "tool_id": getattr(block, "id", ""),
-                                    "input": _summarize_tool_input(tn, raw_block_input),
-                                    "tool_input": raw_block_input if isinstance(raw_block_input, dict) else {},
-                                    "node": invocation.agent_type,
-                                }
+                                events.tool_call(
+                                    tool_name=tn,
+                                    tool_id=getattr(block, "id", ""),
+                                    summary=_summarize_tool_input(tn, raw_block_input),
+                                    tool_input=raw_block_input if isinstance(raw_block_input, dict) else {},
+                                    **ids,
+                                )
                             )
                         elif ThinkingBlock is not None and isinstance(block, ThinkingBlock):
-                            writer(
-                                {
-                                    "type": "thinking",
-                                    "text": getattr(block, "thinking", "")[:3000],
-                                    "node": invocation.agent_type,
-                                }
-                            )
-                        elif ToolResultBlock is not None and isinstance(block, ToolResultBlock):
-                            result_text = str(getattr(block, "content", ""))
-                            # EMB-44: the embry0.sandbox.ask_user helper emits
-                            # its agent_ask_user JSON to the BASH TOOL's
-                            # stdout, which the CLI captures as this tool
-                            # result — it never reaches the runner's stdout
-                            # event stream on its own. Re-emit any embedded
-                            # ask_user events so _extract_ask_user_events can
-                            # pause the pipeline for developer/review asks the
-                            # same way it does for triage.
-                            for embedded in _extract_embedded_ask_user_events(result_text):
-                                embedded["node"] = invocation.agent_type
-                                writer(embedded)
-                            writer(
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": getattr(block, "tool_use_id", ""),
-                                    "content": result_text[:1000],
-                                    "is_error": getattr(block, "is_error", False),
-                                    "node": invocation.agent_type,
-                                }
-                            )
+                            writer(events.thinking(text=getattr(block, "thinking", ""), **ids))
                     # Record this assistant turn in the messages buffer.
                     # Skip empty turns (assistant emitted only tool_use /
                     # thinking — no textual reply); they're meaningless to
@@ -756,17 +751,17 @@ class SdkAgentExecutor:
                     cache_read_tokens = int(usage.get("cache_read_input_tokens", 0) or 0)
                     cache_creation_tokens = int(usage.get("cache_creation_input_tokens", 0) or 0)
                     writer(
-                        {
-                            "type": "cost_update",
-                            "cost_usd": cost_usd,
-                            "duration_ms": getattr(message, "duration_ms", 0),
-                            "num_turns": getattr(message, "num_turns", 0),
-                            "tokens_in": input_tokens,
-                            "tokens_out": output_tokens,
-                            "cache_read_tokens": cache_read_tokens,
-                            "cache_creation_tokens": cache_creation_tokens,
-                            "node": invocation.agent_type,
-                        }
+                        events.cost_update(
+                            cost_usd=cost_usd,
+                            duration_ms=getattr(message, "duration_ms", 0),
+                            duration_api_ms=getattr(message, "duration_api_ms", 0),
+                            num_turns=getattr(message, "num_turns", 0),
+                            tokens_in=input_tokens,
+                            tokens_out=output_tokens,
+                            cache_read_tokens=cache_read_tokens,
+                            cache_creation_tokens=cache_creation_tokens,
+                            **ids,
+                        )
                     )
                     # The agent's successful result is its last word. CLI
                     # 2.1.292 would hold the run open after it until every
@@ -782,26 +777,33 @@ class SdkAgentExecutor:
                     if not getattr(message, "is_error", False):
                         return
                 elif hasattr(message, "content"):
-                    # EMB-44 follow-up: tool RESULTS ride UserMessage objects
-                    # (Anthropic protocol — tool_result blocks are user-turn
-                    # content), which this loop previously ignored entirely,
-                    # so the AssistantMessage ToolResultBlock branch above
-                    # never fires in production. Scan user-message content
-                    # for ask_user events the Bash tool captured; emit
-                    # nothing else here to keep the event stream unchanged.
+                    # Tool results ride UserMessage (Anthropic protocol). Emit
+                    # each as tool_result and recover any ask_user event the
+                    # Bash tool captured in its output (EMB-44: the in-sandbox
+                    # ask_user helper prints its JSON to the Bash tool's
+                    # stdout, so it only ever reaches us inside a result).
+                    # String content is a user turn, not a result: scan it for
+                    # ask_user events and emit nothing else.
                     user_content = getattr(message, "content", None)
-                    scan_texts: list[str] = []
                     if isinstance(user_content, str):
-                        scan_texts.append(user_content)
+                        for embedded in _extract_embedded_ask_user_events(user_content):
+                            writer({**embedded, **ids})
                     elif isinstance(user_content, list):
                         for block in user_content:
-                            block_content = getattr(block, "content", None)
-                            if block_content is not None:
-                                scan_texts.append(str(block_content))
-                    for text_chunk in scan_texts:
-                        for embedded in _extract_embedded_ask_user_events(text_chunk):
-                            embedded["node"] = invocation.agent_type
-                            writer(embedded)
+                            tool_use_id = getattr(block, "tool_use_id", None)
+                            if tool_use_id is None:
+                                continue
+                            result_text = _render_tool_result(getattr(block, "content", None))
+                            for embedded in _extract_embedded_ask_user_events(result_text):
+                                writer({**embedded, **ids})
+                            writer(
+                                events.tool_result(
+                                    tool_id=str(tool_use_id),
+                                    content=result_text,
+                                    is_error=bool(getattr(block, "is_error", False)),
+                                    **ids,
+                                )
+                            )
 
         async def execute() -> None:
             stream = query(prompt=prompt, options=options)
@@ -865,7 +867,7 @@ class SdkAgentExecutor:
             if status is not None and error_message and not kept_sdk_wording and str(status) not in error_message:
                 error_message = f"{error_message}; api_error_status={status}"
         if stream_error and error_message:
-            writer({"type": "error", "error": error_message})
+            writer(events.error(message=error_message, code=error_code, **ids))
 
         elapsed_ms = int((time.time() - now) * 1000)
         output = final_text.render() if final_text else tail_on_line_boundary(result_fallback)
@@ -927,25 +929,20 @@ class SdkAgentExecutor:
             session_blob_path=out_session_blob_path,
         )
         writer(
-            {
-                "type": "agent_completed",
-                "result": {
-                    "agent_type": invocation.agent_type,
-                    "is_error": is_error,
-                    "error_message": error_message,
-                    "output": output,
-                    "cost_usd": cost_usd,
-                    "duration_ms": elapsed_ms,
-                    "tools_called": tools_called,
-                    "policy_denials": policy_denials,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "cache_read_tokens": cache_read_tokens,
-                    "cache_creation_tokens": cache_creation_tokens,
-                },
-                "cost_usd": cost_usd,
-                "duration_ms": elapsed_ms,
-                "tools_called": tools_called,
-            }
+            events.agent_completed(
+                is_error=is_error,
+                error_code=error_code,
+                error_message=error_message,
+                output=output,
+                cost_usd=cost_usd,
+                duration_ms=elapsed_ms,
+                tools_called=tools_called,
+                policy_denials=policy_denials,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_creation_tokens=cache_creation_tokens,
+                **ids,
+            )
         )
         return result

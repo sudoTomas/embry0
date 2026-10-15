@@ -71,6 +71,8 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
         safety_policy=policy,
         channel_config=None,
         provider=cfg.get("provider"),
+        run_id=str(cfg.get("run_id") or ""),
+        node=str(cfg.get("node") or ""),
     )
 
 

@@ -77,8 +77,12 @@ def test_invocation_from_config_builds_all_fields() -> None:
         "timeout_seconds": 30,
         "execution_mode": "sdk",
         "auth_mode": "api_key",
+        "run_id": "run-1",
+        "node": "developer",
     }
     inv = _invocation_from_config(cfg)
+    assert inv.run_id == "run-1"
+    assert inv.node == "developer"
     assert inv.agent_type == "developer"
     assert inv.prompt == "hi"
     assert inv.system_prompt == "sp"
@@ -107,6 +111,8 @@ def test_invocation_from_config_defaults_when_fields_missing() -> None:
     assert inv.mcp_servers == {}
     assert inv.execution_mode == "sdk"
     assert inv.auth_mode == "oauth"
+    assert inv.run_id == ""
+    assert inv.node == ""
 
 
 # ---------------------------------------------------------------------------
