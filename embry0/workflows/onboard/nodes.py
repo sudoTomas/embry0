@@ -139,7 +139,7 @@ async def init_onboard_node(state: dict[str, Any], config: RunnableConfig) -> di
 
 async def analyze_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Run the onboarding agent in the analysis sandbox (one round)."""
-    from embry0.orchestration.nodes.agent import run_agent_node
+    from embry0.orchestration.nodes.agent import agent_attempt, run_agent_node
     from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 
     ob = _onboard_state(state)
@@ -217,13 +217,15 @@ async def analyze_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
         )
 
     writer = _writer()
-    writer(events.node_started(node="analyze", agent="onboarding", round=round_n))
+    attempt = agent_attempt(state, "onboarding")
+    writer(events.node_started(node="analyze", agent="onboarding", attempt=attempt, round=round_n))
 
     try:
         out = await run_agent_node(
             state=state,
             agent_runner=agent_runner,
             agent_type="onboarding",
+            node="analyze",
             prompt=prompt,
             agent_definition=agent_definition,
             max_turns=ANALYZE_MAX_TURNS,
@@ -236,7 +238,7 @@ async def analyze_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
         return _fail(state, f"onboarding agent crashed: {exc}")
 
     ob["round"] = round_n
-    writer(events.node_completed(node="analyze", agent="onboarding", round=round_n))
+    writer(events.node_completed(node="analyze", agent="onboarding", attempt=attempt, round=round_n))
     return {"onboard": ob, "agent_outputs": out.get("agent_outputs", []) or []}
 
 

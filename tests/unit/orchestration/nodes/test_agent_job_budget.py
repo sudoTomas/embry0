@@ -269,8 +269,10 @@ class _Traces:
         self.sum = already
 
     async def create(self, **row: Any) -> str:
+        return row["trace_id"]  # the running row costs nothing yet
+
+    async def finish(self, trace_id: str, **row: Any) -> None:
         self.sum += row["cost_usd"]
-        return "trc"
 
     async def total_cost_for_job(self, job_id: str) -> float:
         return self.sum
@@ -314,7 +316,8 @@ async def test_a_turn_whose_trace_was_not_written_still_counts() -> None:
     """State is the floor: a failed trace write must not lower the total."""
     config = _config("hard")
     traces = _Traces(0.0)
-    traces.create = None  # type: ignore[assignment]  # the write raises; the sum stays $0
+    traces.create = None  # type: ignore[assignment]  # the writes raise; the sum stays $0
+    traces.finish = None  # type: ignore[assignment]
     config["configurable"]["traces_repo"] = traces
     with pytest.raises(BudgetOverrunError):
         await run_agent_node(

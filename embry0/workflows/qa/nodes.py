@@ -261,6 +261,7 @@ async def qa_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, An
         state=state,
         agent_runner=agent_runner,
         agent_type="qa",
+        node="qa",
         prompt=prompt,
         agent_definition=agent_definition,
         # Scaled with the acceptance-criteria count (see above): 100 floor

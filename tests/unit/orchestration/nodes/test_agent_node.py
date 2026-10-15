@@ -429,7 +429,7 @@ async def test_run_agent_node_per_job_model_override_wins() -> None:
 
 @pytest.mark.asyncio
 async def test_run_agent_node_persists_trace_on_success() -> None:
-    """After a successful run, a trace row is written via traces_repo.create."""
+    """After a successful run, the running trace row is finalized via traces_repo.finish."""
     fake_out = AgentOutput(
         agent_type="developer",
         is_error=False,
@@ -439,7 +439,7 @@ async def test_run_agent_node_persists_trace_on_success() -> None:
         tools_called={"Read": 3, "Edit": 1},
     )
     traces_repo = AsyncMock()
-    traces_repo.create = AsyncMock(return_value="trc-abcdef")
+    traces_repo.create = AsyncMock(return_value="run-abcdef")
 
     runner = AsyncMock()
     runner.run = AsyncMock(return_value=fake_out)
@@ -469,9 +469,10 @@ async def test_run_agent_node_persists_trace_on_success() -> None:
 
     assert updates["current_stage"] == "developer_complete"
     assert traces_repo.create.await_count == 1
-    call_kwargs = traces_repo.create.call_args.kwargs
-    assert call_kwargs["job_id"] == "job-test"
-    assert call_kwargs["agent_type"] == "developer"
+    assert traces_repo.create.call_args.kwargs["job_id"] == "job-test"
+    assert traces_repo.create.call_args.kwargs["agent_type"] == "developer"
+    assert traces_repo.finish.await_count == 1
+    call_kwargs = traces_repo.finish.call_args.kwargs
     assert call_kwargs["cost_usd"] == pytest.approx(1.5)
     assert call_kwargs["duration_ms"] == 2000
     assert call_kwargs["result"] == "success"
@@ -480,7 +481,7 @@ async def test_run_agent_node_persists_trace_on_success() -> None:
 
 @pytest.mark.asyncio
 async def test_run_agent_node_persists_token_counts_on_trace_and_state() -> None:
-    """EMB-35: token fields flow from AgentOutput into traces_repo.create kwargs
+    """EMB-35: token fields flow from AgentOutput into traces_repo.finish kwargs
     and onto the agent_outputs state entry."""
     fake_out = AgentOutput(
         agent_type="developer",
@@ -522,7 +523,7 @@ async def test_run_agent_node_persists_token_counts_on_trace_and_state() -> None
         config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
     )
 
-    call_kwargs = traces_repo.create.call_args.kwargs
+    call_kwargs = traces_repo.finish.call_args.kwargs
     assert call_kwargs["input_tokens"] == 1500
     assert call_kwargs["output_tokens"] == 250
     assert call_kwargs["cache_read_tokens"] == 88000
@@ -668,7 +669,7 @@ async def _run_with_trace(fake_out: AgentOutput) -> tuple[dict[str, Any], dict[s
         credentials={"api_key": "", "oauth_token": "oauth-xyz"},
         config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
     )
-    return updates, traces_repo.create.call_args.kwargs
+    return updates, traces_repo.finish.call_args.kwargs
 
 
 @pytest.mark.asyncio
@@ -729,3 +730,151 @@ async def test_successful_run_records_no_failure_fields() -> None:
     _, trace = await _run_with_trace(AgentOutput(agent_type="developer", output="ok", stderr_tail="ignored"))
     assert trace["error_code"] is None
     assert trace["stderr_tail"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_agent_node_writes_a_running_trace_row_before_the_exec_and_finishes_it() -> None:
+    order: list[str] = []
+    traces_repo = AsyncMock()
+
+    async def _create(**kwargs: Any) -> str:
+        order.append("create")
+        assert kwargs["result"] == "running", "the row written before the exec must say running"
+        assert kwargs["trace_id"], "the run id is the trace id"
+        return kwargs["trace_id"]
+
+    async def _finish(trace_id: str, **kwargs: Any) -> None:
+        order.append("finish")
+        assert kwargs["result"] == "success"
+
+    traces_repo.create = AsyncMock(side_effect=_create)
+    traces_repo.finish = AsyncMock(side_effect=_finish)
+
+    runner = AsyncMock()
+
+    async def _run(**kwargs: Any) -> AgentOutput:
+        order.append("exec")
+        assert kwargs["config"]["run_id"], "the sandbox must receive the run id"
+        assert kwargs["config"]["node"] == "generic_agent"
+        return AgentOutput(agent_type="research", is_error=False, output="ok", cost_usd=0.1, duration_ms=5)
+
+    runner.run = AsyncMock(side_effect=_run)
+    await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
+        agent_runner=runner,
+        agent_type="research",
+        node="generic_agent",
+        prompt="go",
+        agent_definition={
+            "model": "claude-sonnet-5",
+            "tools": [],
+            "skills": [],
+            "system_prompt": "",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        },
+        credentials={"api_key": "", "oauth_token": "t"},
+        config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+    )
+    assert order == ["create", "exec", "finish"]
+    assert traces_repo.finish.call_args.args[0] == traces_repo.create.call_args.kwargs["trace_id"], (
+        "finish must finalize the row create wrote"
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_node_defaults_node_to_the_agent_type() -> None:
+    runner = _make_fake_runner()
+    await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
+        agent_runner=runner,
+        agent_type="developer",
+        prompt="go",
+        agent_definition={
+            "model": "claude-sonnet-5",
+            "tools": [],
+            "skills": [],
+            "system_prompt": "",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        },
+        credentials={"api_key": "", "oauth_token": "t"},
+    )
+    assert runner.run.call_args.kwargs["config"]["node"] == "developer"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_node_trace_finish_failure_does_not_fail_run() -> None:
+    """The running row persisted; finalizing it fails. The run's outcome still returns."""
+    traces_repo = AsyncMock()
+    traces_repo.create = AsyncMock(return_value="run-x")
+    traces_repo.finish = AsyncMock(side_effect=RuntimeError("DB unreachable"))
+    updates = await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
+        agent_runner=_make_fake_runner(cost_usd=0.5),
+        agent_type="developer",
+        prompt="do it",
+        credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+        config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+    )
+    assert updates["current_stage"] == "developer_complete"
+    assert updates["total_cost_usd"] == pytest.approx(0.5)
+    assert traces_repo.finish.await_count == 1
+
+
+def test_agent_attempt_counts_prior_runs_of_the_same_agent() -> None:
+    from embry0.orchestration.nodes.agent import agent_attempt
+
+    state = {"agent_outputs": [{"agent_type": "developer"}, {"agent_type": "review"}, {"agent_type": "developer"}]}
+    assert agent_attempt(state, "developer") == 3
+    assert agent_attempt(state, "review") == 2
+    assert agent_attempt({}, "triage") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_exec_raises_finishes_its_trace_row_as_error() -> None:
+    """The row was written running before the exec; a crash must not leave it running."""
+    traces_repo = AsyncMock()
+    traces_repo.create = AsyncMock(return_value="run-x")
+    runner = AsyncMock()
+    runner.run = AsyncMock(side_effect=RuntimeError("docker exec lost"))
+    with pytest.raises(RuntimeError, match="docker exec lost"):
+        await run_agent_node(
+            state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
+            agent_runner=runner,
+            agent_type="developer",
+            prompt="do it",
+            credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+            config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+        )
+    assert traces_repo.finish.await_count == 1, "a crashed exec must still finalize the running row"
+    finished = traces_repo.finish.call_args
+    assert finished.args[0] == traces_repo.create.call_args.kwargs["trace_id"]
+    assert finished.kwargs["result"] == "error"
+    assert finished.kwargs["result_summary"] == "docker exec lost"
+    assert finished.kwargs["cost_usd"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_an_auth_error_from_the_exec_finishes_its_trace_row_with_the_code() -> None:
+    from embry0.execution.auth_provider import AuthConfigError
+    from embry0.safety.error_codes import ErrorCode
+
+    traces_repo = AsyncMock()
+    traces_repo.create = AsyncMock(return_value="run-x")
+    runner = AsyncMock()
+    runner.run = AsyncMock(side_effect=AuthConfigError(ErrorCode.MISSING_API_KEY, "no key"))
+    updates = await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
+        agent_runner=runner,
+        agent_type="developer",
+        prompt="do it",
+        credentials={"api_key": "", "oauth_token": "oauth-xyz"},
+        config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+    )
+    assert updates["current_stage"] == "developer_failed"
+    assert traces_repo.finish.await_count == 1
+    assert traces_repo.finish.call_args.kwargs["result"] == "error"
+    assert traces_repo.finish.call_args.kwargs["error_code"] == ErrorCode.MISSING_API_KEY.value

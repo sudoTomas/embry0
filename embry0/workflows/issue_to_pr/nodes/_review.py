@@ -15,6 +15,7 @@ from langgraph.types import Command
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
+from embry0.orchestration.nodes.agent import agent_attempt
 from embry0.workflows.issue_to_pr.nodes._common import (
     DECIDE_NOW_MAX_TURNS,
     _extract_ask_user_events,
@@ -146,7 +147,8 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[
         ``Command(goto=...)`` because they bypass ``route_after_review``.
     """
     writer = _nodes.get_stream_writer()
-    writer(events.node_started(node="review", agent="review"))
+    attempt = agent_attempt(state, "review")
+    writer(events.node_started(node="review", agent="review", attempt=attempt))
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
@@ -495,7 +497,7 @@ The JSON object is the last thing you output — nothing after it."""
                         output_head=(output_text or "")[:200],
                     )
 
-    writer(events.node_completed(node="review"))
+    writer(events.node_completed(node="review", agent="review", attempt=attempt))
 
     updates: dict[str, Any] = {**result, "current_stage": "review_complete"}
     # RAV-1271: the resumed answers were consumed into this run's prompt —
