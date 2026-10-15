@@ -287,7 +287,11 @@ class DirectXaiExecutor:
                                 **ids,
                             )
                         )
-                        results.append(_tool_result_block(tool_id, verdict.reason, is_error=True))
+                        # The Anthropic request block (keyed by tool_use_id) sent back to the
+                        # model, not an embry0 event; the event goes out through events.tool_result.
+                        results.append(
+                            {"type": "tool_result", "tool_use_id": tool_id, "content": verdict.reason, "is_error": True}
+                        )
                         writer(events.tool_result(tool_id=tool_id, content=verdict.reason or "", is_error=True, **ids))
                         continue
 
@@ -303,7 +307,9 @@ class DirectXaiExecutor:
                         if name == "Bash":
                             for embedded in _extract_embedded_ask_user_events(result_text):
                                 writer({**embedded, **ids})
-                    results.append(_tool_result_block(tool_id, result_content, is_error=tool_err))
+                    results.append(
+                        {"type": "tool_result", "tool_use_id": tool_id, "content": result_content, "is_error": tool_err}
+                    )
                     writer(events.tool_result(tool_id=tool_id, content=result_text, is_error=tool_err, **ids))
 
                 messages.append({"role": "user", "content": results})
@@ -485,16 +491,6 @@ def _merge_consecutive_roles(messages: list[dict[str, Any]]) -> list[dict[str, A
         else:
             merged.append(dict(message))
     return merged
-
-
-def _tool_result_block(tool_id: str, content: str | list[dict[str, Any]], *, is_error: bool) -> dict[str, Any]:
-    """A ``tool_result`` content block for the next Messages API request.
-
-    This is the Anthropic request shape (keyed by ``tool_use_id``), sent back to
-    the model, not an embry0 event; the event goes out through
-    :func:`embry0.execution.events.tool_result`.
-    """
-    return dict(type="tool_result", tool_use_id=tool_id, content=content, is_error=is_error)
 
 
 def _error_output(agent_type: str, message: str) -> AgentOutput:

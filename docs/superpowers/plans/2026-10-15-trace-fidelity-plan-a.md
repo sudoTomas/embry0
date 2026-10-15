@@ -1072,21 +1072,40 @@ def test_contract_file_matches_the_code() -> None:
     )
 
 
+def _is_event_type_value(value: ast.expr) -> bool:
+    """A "type" value that names an event: a literal EventType value, or EventType.X / EventType.X.value."""
+    if isinstance(value, ast.Constant):
+        return value.value in EVENT_VALUES
+    node = value.value if isinstance(value, ast.Attribute) and value.attr == "value" else value
+    return isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "EventType"
+
+
+def _dict_items(node: ast.AST) -> list[tuple[str | None, ast.expr]] | None:
+    """(key, value) pairs of a dict literal or a dict(...) call; None for any other node."""
+    if isinstance(node, ast.Dict):
+        return [
+            (k.value if isinstance(k, ast.Constant) else None, v) for k, v in zip(node.keys, node.values, strict=True)
+        ]
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict":
+        return [(kw.arg, kw.value) for kw in node.keywords]
+    return None
+
+
 def _literal_event_dicts(path: Path) -> list[int]:
-    """Line numbers of dict literals whose "type" value is an EventType member."""
+    """Line numbers of dict literals and dict(...) calls whose "type" names an EventType member."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     hits: list[int] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Dict):
+        items = _dict_items(node)
+        if items is None:
             continue
-        for key, value in zip(node.keys, node.values, strict=True):
-            if (
-                isinstance(key, ast.Constant)
-                and key.value == "type"
-                and isinstance(value, ast.Constant)
-                and value.value in EVENT_VALUES
-            ):
-                hits.append(node.lineno)
+        # A dict keyed by tool_use_id is an Anthropic request block (the
+        # tool_result an executor sends back to the model), not an event: no
+        # event in the contract carries that key, events use tool_id.
+        if any(key == "tool_use_id" for key, _ in items):
+            continue
+        if any(key == "type" and _is_event_type_value(value) for key, value in items):
+            hits.append(node.lineno)
     return hits
 
 
@@ -1105,7 +1124,7 @@ def test_no_literal_event_dict_outside_the_contract_module() -> None:
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/unit/execution/test_event_contract.py -q 2>&1 | tail -40`
-Expected: `test_contract_file_matches_the_code` FAILS with "docs/contracts/events.json is missing"; `test_no_literal_event_dict_outside_the_contract_module` FAILS listing every current emit site (executor.py, executor_xai.py, the workflow nodes, issue_executor.py, app.py, the QA orchestrator). `embry0/agents/mcp_client.py` and `embry0/sandbox/context_mcp.py` are exempt by path: their `{"type": "text", ...}` dicts are MCP content blocks, not events. Keep that list; Tasks 3, 6, 7 and 9 clear it.
+Expected: `test_contract_file_matches_the_code` FAILS with "docs/contracts/events.json is missing"; `test_no_literal_event_dict_outside_the_contract_module` FAILS listing every current emit site (executor.py, executor_xai.py, the workflow nodes, issue_executor.py, app.py, the QA orchestrator). The scan matches dict literals and `dict(...)` calls alike, and a `type` written as `EventType.X` or `EventType.X.value` as well as the literal string, so neither spelling evades it. A dict keyed by `tool_use_id` is skipped: that key is the Anthropic request-block shape (the `tool_result` an executor sends back to the model) and no event carries it (events use `tool_id`), so the xAI executor writes those blocks as plain literals. `embry0/agents/mcp_client.py` and `embry0/sandbox/context_mcp.py` are exempt by path: their `{"type": "text", ...}` dicts are MCP content blocks with no distinguishing key. Keep that list; Tasks 3, 6, 7 and 9 clear it.
 
 - [ ] **Step 3: Generate the JSON**
 
