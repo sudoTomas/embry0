@@ -21,7 +21,7 @@
 - Nothing in this tree names a customer, deployment, person, host, cost or job id.
 - No time estimates anywhere.
 - The sandbox image must be rebuilt after this plan (executor and contract module change); the PR's deploy notes name the recipe in `docs/ops/deploy.md`.
-- Python: `from __future__ import annotations` at the top of every new module; type everything (mypy strict).
+- Python: `from __future__ import annotations` at the top of every new module, except `embry0/execution/events.py`: its `contract()` reads the TypedDicts' `__required_keys__`/`__optional_keys__` at runtime, and under PEP 563 string annotations `NotRequired` is lost and every key reads as required. Type everything (mypy strict).
 
 ## Review Focus
 
@@ -185,7 +185,9 @@ the event is made). Stamped later by the orchestrator: ``job_id``,
 ``parent_tool_use_id`` (subagent events only).
 """
 
-from __future__ import annotations
+# No ``from __future__ import annotations`` here: contract() introspects the
+# TypedDicts at runtime, and under PEP 563 string annotations they lose
+# NotRequired, so __optional_keys__ comes back empty.
 
 import argparse
 import json
@@ -449,7 +451,7 @@ class JobFinishedEvent(BaseEvent):
     total_cost_usd: float
 
 
-EVENT_SCHEMAS: dict[str, type] = {
+EVENT_SCHEMAS: dict[str, type[Any]] = {
     EventType.AGENT_STARTED: AgentStartedEvent,
     EventType.TURN_START: TurnStartEvent,
     EventType.TURN_USAGE: TurnUsageEvent,
@@ -923,8 +925,8 @@ def contract() -> dict[str, dict[str, list[str]]]:
     """
     out: dict[str, dict[str, list[str]]] = {}
     for name, typed in EVENT_SCHEMAS.items():
-        required = sorted(typed.__required_keys__)
-        optional = sorted(typed.__optional_keys__)
+        required = sorted(getattr(typed, "__required_keys__"))
+        optional = sorted(getattr(typed, "__optional_keys__"))
         out[str(name)] = {"required": required, "optional": optional}
     return out
 
@@ -955,9 +957,6 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-
-
-__all__ = [name for name in dir() if not name.startswith("_")]
 ```
 
 - [ ] **Step 4: Point the ask-user helper and the sandbox runner test at the contract**
@@ -980,7 +979,7 @@ from embry0.execution.events import agent_ask_user, emit_to_stdout
     )
 ```
 
-Delete `embry0/sandbox/events.py`. In `tests/unit/sandbox/test_runner.py` replace the import with `from embry0.execution import events` and `from embry0.execution.events import emit_to_stdout`, and rewrite the three `emit_event(...)` tests to `emit_to_stdout(events.progress(message="Reading files"))`, `emit_to_stdout(events.agent_started(model="m", max_turns=1, run_id="r", node="developer", agent="developer"))` and `emit_to_stdout(events.agent_completed(is_error=False, error_code=None, error_message="", output="", cost_usd=0.42, duration_ms=1, tools_called={}, policy_denials={}, input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_creation_tokens=0, run_id="r", node="developer", agent="developer"))`, keeping each test's assertions on the captured stdout JSON. Run `grep -n "sandbox.events" tests/unit/sandbox/test_runner_import_surface.py`; if the allowed list names `embry0.sandbox.events`, remove that entry.
+Delete `embry0/sandbox/events.py`. In `tests/unit/sandbox/test_runner.py` replace the import with `from embry0.execution import events` and `from embry0.execution.events import emit_to_stdout`, and rewrite the three `emit_event(...)` tests to `emit_to_stdout(events.progress(message="Reading files"))`, `emit_to_stdout(events.agent_started(model="m", max_turns=1, run_id="r", node="developer", agent="developer"))` and `emit_to_stdout(events.agent_completed(is_error=False, error_code=None, error_message="", output="", cost_usd=0.42, duration_ms=1, tools_called={"Read": 5}, policy_denials={}, input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_creation_tokens=0, run_id="r", node="developer", agent="developer"))`, keeping each test's assertions on the captured stdout JSON. Run `grep -n "sandbox.events" tests/unit/sandbox/test_runner_import_surface.py`; if the allowed list names `embry0.sandbox.events`, remove that entry.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 

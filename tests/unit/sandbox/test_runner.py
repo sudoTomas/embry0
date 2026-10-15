@@ -7,8 +7,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from embry0.execution import events
 from embry0.execution.agent_runner import AgentOutput
-from embry0.sandbox.events import EventType, emit_event
+from embry0.execution.events import emit_to_stdout
 from embry0.sandbox.runner import _invocation_from_config, main, run_agent
 
 
@@ -16,7 +17,7 @@ from embry0.sandbox.runner import _invocation_from_config, main, run_agent
 # Preserved: wire-format event emission is still stdout JSON-per-line.
 # ---------------------------------------------------------------------------
 def test_emit_event_stdout(capsys):
-    emit_event(EventType.PROGRESS, message="Reading files")
+    emit_to_stdout(events.progress(message="Reading files"))
     captured = capsys.readouterr()
     data = json.loads(captured.out.strip())
     assert data["type"] == "progress"
@@ -25,7 +26,7 @@ def test_emit_event_stdout(capsys):
 
 
 def test_emit_agent_started(capsys):
-    emit_event(EventType.AGENT_STARTED, agent="developer")
+    emit_to_stdout(events.agent_started(model="m", max_turns=1, run_id="r", node="developer", agent="developer"))
     captured = capsys.readouterr()
     data = json.loads(captured.out.strip())
     assert data["type"] == "agent_started"
@@ -33,12 +34,24 @@ def test_emit_agent_started(capsys):
 
 
 def test_emit_agent_completed(capsys):
-    emit_event(
-        EventType.AGENT_COMPLETED,
-        cost_usd=0.42,
-        duration_ms=15000,
-        tools_called={"Read": 5},
-        result={"passed": True},
+    emit_to_stdout(
+        events.agent_completed(
+            is_error=False,
+            error_code=None,
+            error_message="",
+            output="",
+            cost_usd=0.42,
+            duration_ms=1,
+            tools_called={"Read": 5},
+            policy_denials={},
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            run_id="r",
+            node="developer",
+            agent="developer",
+        )
     )
     captured = capsys.readouterr()
     data = json.loads(captured.out.strip())

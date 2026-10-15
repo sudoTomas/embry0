@@ -19,7 +19,7 @@ from the last checkpoint with the Q&A pairs included in the agent's context.
 
 from __future__ import annotations
 
-from embry0.sandbox.events import EventType, emit_event
+from embry0.execution.events import agent_ask_user, emit_to_stdout
 
 
 def ask_user(
@@ -41,12 +41,12 @@ def ask_user(
     ``suggested_answer`` as the answer and continues the workflow without
     pausing — the user can override post-hoc from the dashboard.
     """
-    kwargs: dict[str, object] = {
-        "question": question,
-        "category": category or "general",
-        "options": list(options) if options else [],
-        "importance": importance,
-    }
-    if importance == "auto_answerable" and suggested_answer is not None:
-        kwargs["suggested_answer"] = suggested_answer
-    emit_event(EventType.AGENT_ASK_USER, **kwargs)
+    emit_to_stdout(
+        agent_ask_user(
+            question=question,
+            category=category or "general",
+            options=list(options) if options else [],
+            importance=importance,
+            suggested_answer=suggested_answer if importance == "auto_answerable" else None,
+        )
+    )
