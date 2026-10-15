@@ -16,7 +16,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 @dataclass(frozen=True)
@@ -44,28 +44,33 @@ def commentable_lines(patch: str | None) -> dict[int, NewLine]:
     lines: dict[int, NewLine] = {}
     if not patch:
         return lines
-    old = new = 0
-    in_hunk = False
+    old = new = old_left = new_left = 0
     for raw in patch.splitlines():
         header = _HUNK_RE.match(raw)
         if header:
-            old, new = int(header.group(1)), int(header.group(2))
-            in_hunk = True
+            old, new = int(header.group(1)), int(header.group(3))
+            # An omitted count means one line; the counts bound the hunk.
+            old_left = int(header.group(2) or 1)
+            new_left = int(header.group(4) or 1)
             continue
-        if not in_hunk or raw.startswith("\\"):
-            continue  # file headers, "Binary files … differ", "\ No newline at end of file"
+        if (old_left <= 0 and new_left <= 0) or raw.startswith("\\"):
+            continue  # file headers, "Binary files … differ", "\ No newline at end of file", past a hunk
         tag = raw[:1]
         if tag == "+":
             lines[new] = NewLine("added", None)
             new += 1
+            new_left -= 1
         elif tag == "-":
             old += 1
+            old_left -= 1
         elif tag in (" ", ""):
             lines[new] = NewLine("context", old)
             old += 1
             new += 1
+            old_left -= 1
+            new_left -= 1
         else:
-            in_hunk = False  # the next file's "diff --git" in a multi-file patch
+            old_left = new_left = 0  # the next file's "diff --git" in a multi-file patch
     return lines
 
 

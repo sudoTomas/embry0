@@ -77,6 +77,12 @@ def test_an_empty_context_line_counts() -> None:
     assert commentable_lines(patch) == {1: NewLine("context", 1), 2: NewLine("context", 2), 3: NewLine("added", None)}
 
 
+def test_a_blank_line_after_a_full_hunk_is_not_a_line() -> None:
+    # The header's counts bound the hunk; a trailing blank is not a stripped context line.
+    assert commentable_lines("@@ -1 +1 @@\n-a\n+b\n\n") == {1: NewLine("added", None)}, "phantom line past the hunk"
+    assert commentable_lines("@@ -1,2 +1,2 @@\n a\n\n") == {1: NewLine("context", 1), 2: NewLine("context", 2)}
+
+
 def test_binary_and_patchless_files_are_not_commentable() -> None:
     github = files_from_github(
         [
