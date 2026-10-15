@@ -591,10 +591,13 @@ class JobsRepository:
         import json as json_mod
 
         row = await self._db.fetchrow(
-            "INSERT INTO job_logs (job_id, stream, text) VALUES ($1, $2, $3) RETURNING id",
+            "INSERT INTO job_logs (job_id, stream, text, run_id, node, event_type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
             job_id,
             "pipeline",
             json_mod.dumps(event, default=str),
+            event.get("run_id"),
+            event.get("node"),
+            event.get("type"),
         )
         assert row is not None, "INSERT ... RETURNING must return a row"
         return int(row["id"])
