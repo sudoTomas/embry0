@@ -282,7 +282,7 @@ class DirectXaiExecutor:
                         writer(
                             events.error(
                                 message=verdict.reason or "",
-                                code=ErrorCode.POLICY_DENIED.value,
+                                code=ErrorCode.TOOL_DENIED.value,
                                 tool_name=name,
                                 **ids,
                             )

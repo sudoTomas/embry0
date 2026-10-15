@@ -713,7 +713,7 @@ async def test_policy_denial_error_event_names_the_tool_and_the_code() -> None:
     )
     err = next(e for e in events if e["type"] == "error")
     assert err["tool_name"] == "Bash"
-    assert err["code"] == "ERR_POLICY_DENIED"
+    assert err["code"] == "ERR_TOOL_DENIED"
     assert err["message"], "the denial reason is the message"
     assert err["node"] == "developer"
 

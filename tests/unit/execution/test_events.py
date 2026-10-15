@@ -41,7 +41,7 @@ def test_tool_call_carries_summary_and_full_input() -> None:
 
 
 def test_error_event_uses_message_not_error() -> None:
-    event = events.error(message="denied", code="ERR_POLICY_DENIED", tool_name="Bash", node="developer", run_id="r")
+    event = events.error(message="denied", code="ERR_TOOL_DENIED", tool_name="Bash", node="developer", run_id="r")
     assert event["message"] == "denied"
     assert "error" not in event, "the error key is the legacy shape the UI never read"
 

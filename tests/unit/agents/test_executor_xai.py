@@ -120,7 +120,7 @@ async def test_xai_denied_tool_error_event_uses_message_code_and_ids(env, monkey
     await DirectXaiExecutor().run(inv, config={"configurable": {}, "_test_writer": events.append})
     err = next(e for e in events if e["type"] == "error")
     assert err["tool_name"] == "Bash"
-    assert err["code"] == "ERR_POLICY_DENIED", f"denied tool error must carry the policy code: {err}"
+    assert err["code"] == "ERR_TOOL_DENIED", f"denied tool error must carry the policy code: {err}"
     assert "error" not in err and err["message"], f"error event must carry message, not error: {err}"
     for e in events:
         assert e.get("run_id") == "run-x" and e.get("node") == "developer", f"{e['type']} lacks ids"

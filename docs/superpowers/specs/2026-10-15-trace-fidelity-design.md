@@ -104,7 +104,7 @@ Removed from the frontend union because nothing ever emitted them: `complete`, `
 In `SdkAgentExecutor.consume()`:
 
 - For every `UserMessage` whose content is a list, each `ToolResultBlock` (duck-typed on `tool_use_id`) emits `tool_result` with `content` rendered to text (strings as is; list blocks joined by their `text` fields, image blocks replaced by `[image]`), capped with a marker (3.6), and `is_error`. The ask-user recovery stays.
-- Executor `error` events gain `message` (replacing the `error` key), `code`, and the run's `node`/`run_id`. Policy denials carry `code=ERR_POLICY_DENIED` (existing code) and `tool_name`.
+- Executor `error` events gain `message` (replacing the `error` key), `code`, and the run's `node`/`run_id`. Policy denials carry `code=ERR_TOOL_DENIED` (the existing code for a denied tool call) and `tool_name`.
 - `agent_started`, `agent_completed` and the stream-failure `error` carry `node` and `run_id` like every other executor event. Today they carry neither.
 
 The xAI executor makes the same field changes so both paths conform until the Grok Build decision (section 4) retires it.

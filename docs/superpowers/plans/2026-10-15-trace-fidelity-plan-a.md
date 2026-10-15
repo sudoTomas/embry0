@@ -116,7 +116,7 @@ def test_tool_call_carries_summary_and_full_input() -> None:
 
 
 def test_error_event_uses_message_not_error() -> None:
-    event = events.error(message="denied", code="ERR_POLICY_DENIED", tool_name="Bash", node="developer", run_id="r")
+    event = events.error(message="denied", code="ERR_TOOL_DENIED", tool_name="Bash", node="developer", run_id="r")
     assert event["message"] == "denied"
     assert "error" not in event, "the error key is the legacy shape the UI never read"
 
@@ -1795,12 +1795,12 @@ async def test_policy_denial_error_event_names_the_tool_and_the_code() -> None:
     await _evaluate_hook(policy, "Bash", {"command": "rm -rf /"}, {}, events.append, {}, ids={"run_id": "r", "node": "developer", "agent": "developer"})
     err = next(e for e in events if e["type"] == "error")
     assert err["tool_name"] == "Bash"
-    assert err["code"] == "ERR_POLICY_DENIED"
+    assert err["code"] == "ERR_TOOL_DENIED"
     assert err["message"], "the denial reason is the message"
     assert err["node"] == "developer"
 ```
 
-`ErrorCode` has no policy-denial member today (verified: only `AGENT_MAX_TURNS`, `SANDBOX_INIT`, `INVALID_CONFIG` of the names this plan uses exist). Add `POLICY_DENIED = "ERR_POLICY_DENIED"` to `ErrorCode` in `embry0/safety/error_codes.py` and map it to the CONFIG category in `ERROR_CATEGORIES` (a test asserts the two sets match), in this task's implementation step.
+`ErrorCode.TOOL_DENIED` ("Safety policy denied a tool call", category AGENT) already names this condition in `embry0/safety/error_codes.py`; use it. Do not add a second code for the same denial — two codes for one condition is the vocabulary drift this workstream exists to end.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -1865,7 +1865,7 @@ def _render_tool_result(content: Any) -> str:
 `_evaluate_hook` gains a keyword `ids: dict[str, str] | None = None` and emits:
 
 ```python
-        writer(events.error(message=verdict.reason or "", code=ErrorCode.POLICY_DENIED.value, tool_name=tool_name, **(ids or {})))
+        writer(events.error(message=verdict.reason or "", code=ErrorCode.TOOL_DENIED.value, tool_name=tool_name, **(ids or {})))
 ```
 
 (The hook closure in `run()` passes `ids=_ids(invocation)`.) Inside `run()`/`consume()` replace, with `ids = _ids(invocation)` computed once:
@@ -1974,7 +1974,7 @@ async def test_xai_denied_tool_error_event_uses_message_code_and_ids(monkeypatch
     await DirectXaiExecutor().run(inv, config={"configurable": {}, "_test_writer": events.append})
     err = next(e for e in events if e["type"] == "error")
     assert err["tool_name"] == "Bash"
-    assert err["code"] == "ERR_POLICY_DENIED"
+    assert err["code"] == "ERR_TOOL_DENIED"
     assert "error" not in err and err["message"]
     for e in events:
         assert e.get("run_id") == "run-x" and e.get("node") == "developer", f"{e['type']} lacks ids"
@@ -2012,7 +2012,7 @@ writer(events.turn_start(turn_number=turn, model=invocation.model, **ids))
 writer(events.text(text=text, **ids))
 writer(events.thinking(text=str(getattr(block, "thinking", "")), **ids))
 writer(events.tool_call(tool_name=name, tool_id=tool_id, summary=_summarize_tool_input(name, tool_input), tool_input=tool_input, **ids))
-writer(events.error(message=verdict.reason or "", code=ErrorCode.POLICY_DENIED.value, tool_name=name, **ids))
+writer(events.error(message=verdict.reason or "", code=ErrorCode.TOOL_DENIED.value, tool_name=name, **ids))
 writer(events.tool_result(tool_id=tool_id, content=verdict.reason or "", is_error=True, **ids))
 writer({**embedded, **ids})                                                                  # ask_user recovery
 writer(events.tool_result(tool_id=tool_id, content=result_text, is_error=tool_err, **ids))
@@ -2028,7 +2028,7 @@ writer(events.agent_completed(is_error=is_error, error_code=error_code, error_me
                               cache_creation_tokens=totals["cache_creation"], **ids))
 ```
 
-Use the `ErrorCode` member names that exist (`grep -n "AGENT_MAX_TURNS\|POLICY_DENIED\|SANDBOX_INIT\|INVALID_CONFIG" embry0/safety/error_codes.py`); where a code is not known at the site (the timeout path), pass `code=None`.
+Use the `ErrorCode` member names that exist (`grep -n "AGENT_MAX_TURNS\|TOOL_DENIED\|SANDBOX_INIT\|INVALID_CONFIG" embry0/safety/error_codes.py`); where a code is not known at the site (the timeout path), pass `code=None`.
 
 - [ ] **Step 4: Run, lint, commit**
 
