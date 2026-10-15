@@ -1,0 +1,558 @@
+{
+  "agent_ask_user": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id",
+      "suggested_answer"
+    ],
+    "required": [
+      "category",
+      "importance",
+      "options",
+      "question",
+      "timestamp",
+      "type"
+    ]
+  },
+  "agent_completed": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "original_length",
+      "parent_tool_use_id",
+      "run_id",
+      "truncated"
+    ],
+    "required": [
+      "cache_creation_tokens",
+      "cache_read_tokens",
+      "cost_usd",
+      "duration_ms",
+      "error_code",
+      "error_message",
+      "input_tokens",
+      "is_error",
+      "output",
+      "output_tokens",
+      "policy_denials",
+      "timestamp",
+      "tools_called",
+      "type"
+    ]
+  },
+  "agent_paused_for_input": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "count",
+      "timestamp",
+      "type"
+    ]
+  },
+  "agent_started": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "max_turns",
+      "model",
+      "timestamp",
+      "type"
+    ]
+  },
+  "context_compacted": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "pre_tokens",
+      "run_id"
+    ],
+    "required": [
+      "timestamp",
+      "type"
+    ]
+  },
+  "cost_update": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "cache_creation_tokens",
+      "cache_read_tokens",
+      "cost_usd",
+      "duration_api_ms",
+      "duration_ms",
+      "num_turns",
+      "timestamp",
+      "tokens_in",
+      "tokens_out",
+      "type"
+    ]
+  },
+  "error": {
+    "optional": [
+      "agent",
+      "code",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id",
+      "tool_name"
+    ],
+    "required": [
+      "message",
+      "timestamp",
+      "type"
+    ]
+  },
+  "interrupt": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "questions",
+      "reason",
+      "run_id",
+      "summary"
+    ],
+    "required": [
+      "timestamp",
+      "type"
+    ]
+  },
+  "job_failed": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "kind",
+      "message",
+      "timestamp",
+      "type"
+    ]
+  },
+  "job_finished": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "error_code",
+      "error_message",
+      "pr_url",
+      "status",
+      "timestamp",
+      "total_cost_usd",
+      "type"
+    ]
+  },
+  "node_completed": {
+    "optional": [
+      "action",
+      "agent",
+      "deliverables",
+      "event_seq",
+      "job_id",
+      "job_kind",
+      "node",
+      "parent_tool_use_id",
+      "run_id",
+      "template"
+    ],
+    "required": [
+      "attempt",
+      "timestamp",
+      "type"
+    ]
+  },
+  "node_started": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "round",
+      "run_id"
+    ],
+    "required": [
+      "attempt",
+      "timestamp",
+      "type"
+    ]
+  },
+  "pipeline_graph": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "graph",
+      "timestamp",
+      "type"
+    ]
+  },
+  "pr_created": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "branch",
+      "pr_url",
+      "timestamp",
+      "type"
+    ]
+  },
+  "progress": {
+    "optional": [
+      "agent",
+      "app",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "message",
+      "timestamp",
+      "type"
+    ]
+  },
+  "qa_agent_transient_retry": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "app",
+      "reason",
+      "timestamp",
+      "type"
+    ]
+  },
+  "qa_apps_resolved": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "apps",
+      "timestamp",
+      "type"
+    ]
+  },
+  "qa_subtask_finished": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "failure_summary",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "app",
+      "duration_ms",
+      "status",
+      "timestamp",
+      "type"
+    ]
+  },
+  "qa_subtask_started": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "app",
+      "target",
+      "timestamp",
+      "type"
+    ]
+  },
+  "qa_subtask_status": {
+    "optional": [
+      "agent",
+      "boot_phase",
+      "duration_ms",
+      "event_seq",
+      "failure_summary",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "app",
+      "status",
+      "timestamp",
+      "type"
+    ]
+  },
+  "review_decision": {
+    "optional": [
+      "agent",
+      "duplicates_open_pr",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "decision",
+      "summary",
+      "timestamp",
+      "type"
+    ]
+  },
+  "subagent_end": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "is_error",
+      "timestamp",
+      "tool_id",
+      "type"
+    ]
+  },
+  "subagent_start": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "name",
+      "timestamp",
+      "tool_id",
+      "type"
+    ]
+  },
+  "system": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "message",
+      "timestamp",
+      "type"
+    ]
+  },
+  "text": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "original_length",
+      "parent_tool_use_id",
+      "run_id",
+      "truncated"
+    ],
+    "required": [
+      "text",
+      "timestamp",
+      "type"
+    ]
+  },
+  "thinking": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "original_length",
+      "parent_tool_use_id",
+      "run_id",
+      "truncated"
+    ],
+    "required": [
+      "text",
+      "timestamp",
+      "type"
+    ]
+  },
+  "tool_call": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "summary",
+      "timestamp",
+      "tool_id",
+      "tool_input",
+      "tool_name",
+      "type"
+    ]
+  },
+  "tool_result": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "original_length",
+      "parent_tool_use_id",
+      "run_id",
+      "truncated"
+    ],
+    "required": [
+      "content",
+      "is_error",
+      "timestamp",
+      "tool_id",
+      "type"
+    ]
+  },
+  "turn_start": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "model",
+      "timestamp",
+      "turn_number",
+      "type"
+    ]
+  },
+  "turn_usage": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "cache_creation_tokens",
+      "cache_read_tokens",
+      "cost_usd",
+      "input_tokens",
+      "model",
+      "output_tokens",
+      "timestamp",
+      "type"
+    ]
+  },
+  "validation_result": {
+    "optional": [
+      "agent",
+      "event_seq",
+      "job_id",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "timestamp",
+      "type",
+      "validation"
+    ]
+  },
+  "verification_result": {
+    "optional": [
+      "agent",
+      "browser_qa",
+      "event_seq",
+      "human_merge_only",
+      "job_id",
+      "mode",
+      "node",
+      "parent_tool_use_id",
+      "run_id"
+    ],
+    "required": [
+      "blocking",
+      "gate_verdict",
+      "tier",
+      "timestamp",
+      "type"
+    ]
+  }
+}

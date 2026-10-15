@@ -1037,6 +1037,8 @@ REPO = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = REPO / "docs" / "contracts" / "events.json"
 CONTRACT_MODULE = REPO / "embry0" / "execution" / "events.py"
 EVENT_VALUES = {member.value for member in EventType}
+# MCP content blocks ({"type": "text", ...}) are the MCP wire shape, not events.
+SCAN_EXEMPT = {"embry0/agents/mcp_client.py", "embry0/sandbox/context_mcp.py"}
 
 
 def test_contract_file_matches_the_code() -> None:
@@ -1069,9 +1071,11 @@ def _literal_event_dicts(path: Path) -> list[int]:
 
 
 def test_no_literal_event_dict_outside_the_contract_module() -> None:
+    missing = sorted(p for p in SCAN_EXEMPT if not (REPO / p).is_file())
+    assert not missing, f"SCAN_EXEMPT names files that no longer exist: {missing}"
     offenders: list[str] = []
     for path in sorted((REPO / "embry0").rglob("*.py")):
-        if path == CONTRACT_MODULE:
+        if path == CONTRACT_MODULE or path.relative_to(REPO).as_posix() in SCAN_EXEMPT:
             continue
         for line in _literal_event_dicts(path):
             offenders.append(f"{path.relative_to(REPO)}:{line}")
@@ -1081,7 +1085,7 @@ def test_no_literal_event_dict_outside_the_contract_module() -> None:
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/unit/execution/test_event_contract.py -q 2>&1 | tail -40`
-Expected: `test_contract_file_matches_the_code` FAILS with "docs/contracts/events.json is missing"; `test_no_literal_event_dict_outside_the_contract_module` FAILS listing every current emit site (executor.py, executor_xai.py, the workflow nodes, issue_executor.py, app.py, the QA orchestrator). Keep that list; Tasks 3, 6, 7 and 9 clear it.
+Expected: `test_contract_file_matches_the_code` FAILS with "docs/contracts/events.json is missing"; `test_no_literal_event_dict_outside_the_contract_module` FAILS listing every current emit site (executor.py, executor_xai.py, the workflow nodes, issue_executor.py, app.py, the QA orchestrator). `embry0/agents/mcp_client.py` and `embry0/sandbox/context_mcp.py` are exempt by path: their `{"type": "text", ...}` dicts are MCP content blocks, not events. Keep that list; Tasks 3, 6, 7 and 9 clear it.
 
 - [ ] **Step 3: Generate the JSON**
 
