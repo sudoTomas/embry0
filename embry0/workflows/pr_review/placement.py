@@ -45,7 +45,7 @@ def by_severity(findings: Iterable[Finding]) -> list[Finding]:
 
 
 def _locate(finding: Finding, index: Mapping[str, FileIndex]) -> InlineComment | None:
-    if finding.line is None:
+    if finding.line is None:  # lines.get(None) misses too; this narrows the type for InlineComment.line
         return None
     path = normalize_finding_path(finding.file)
     entry = index.get(path)

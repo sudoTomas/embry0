@@ -2,7 +2,11 @@
 
 Everything the agent wrote is redacted before it is posted: the sandbox may
 print a credential into a check's output, and the pull request's page may be
-public. The footer names the reviewed sha, links the job, says how to ask for
+public. The body is redacted as a whole, so no field can slip past. Agent
+prose keeps its markdown, but cannot leave a code fence open over what
+follows, open an HTML comment, or notify anyone with an @mention.
+
+The footer names the reviewed sha, links the job, says how to ask for
 another review — mid-line, so the body never reads as the command itself —
 and ends with the hidden marker that keeps embry0 from triggering on its own
 comments.
@@ -11,11 +15,12 @@ comments.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from embry0.safety.redaction import redact_bounded
+from embry0.safety.redaction import REDACT_OVERLAP_CHARS, redact_bounded, redact_log_text
 from embry0.workflows.pr_review.verdict import Finding, Verdict
 
 BODY_LIMIT = 60000  # GitHub caps a review body at 65536 characters
@@ -24,7 +29,8 @@ COMMENT_CHARS = 4000
 OUTPUT_TAIL_CHARS = 1500
 _LABEL = {"critical": "Critical", "important": "Important", "suggestion": "Suggestion"}
 _TRUNCATED = "\n\n… (cut to fit the forge's size limit; the full verdict is on the job)"
-_CLOSE_FENCE = "\n  ~~~"
+_FENCE_RE = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
+_MENTION_RE = re.compile(r"@(?=\w)")
 
 
 @dataclass(frozen=True)
@@ -41,7 +47,34 @@ def review_marker(job_id: str, head_sha: str) -> str:
 
 
 def _code(text: str) -> str:
-    return "`" + text.replace("`", "'") + "`"
+    return "`" + " ".join(text.split()).replace("`", "'") + "`"
+
+
+def _open_fence(text: str) -> str | None:
+    """The line that closes the code fence still open at the end of ``text``, if any."""
+    fence: tuple[str, str] | None = None  # (indent, run)
+    for line in text.split("\n"):
+        match = _FENCE_RE.match(line)
+        if not match:
+            continue
+        indent, run, rest = match.groups()
+        if fence is None:
+            if not (run[0] == "`" and "`" in rest):  # a backtick fence's info string has no backtick
+                fence = (indent, run)
+        elif run[0] == fence[1][0] and len(run) >= len(fence[1]) and not rest.strip():
+            fence = None
+    return None if fence is None else fence[0] + fence[1]
+
+
+def _prose(text: str, *, mid_line: bool = True) -> str:
+    """Agent markdown, contained: fences closed, no HTML comment, no notifying @mention.
+
+    Most fields follow a label on their first line, where a fence cannot
+    open; ``mid_line=False`` is for a field that starts its own line.
+    """
+    text = _MENTION_RE.sub("@\u200b", text.replace("<!--", "&lt;!--"))
+    closer = _open_fence("." + text if mid_line else text)
+    return f"{text}\n{closer}" if closer else text
 
 
 def _where(file: str, line: int | None) -> str:
@@ -52,7 +85,8 @@ def _where(file: str, line: int | None) -> str:
 
 def inline_body(finding: Finding, *, marker: str) -> str:
     label = _LABEL.get(finding.severity, "Suggestion")
-    return f"**{label}** — {redact_bounded(finding.comment, COMMENT_CHARS)}\n\n{marker}"
+    comment = _prose(redact_bounded(finding.comment, COMMENT_CHARS))
+    return f"{redact_log_text(f'**{label}** — {comment}')}\n\n{marker}"
 
 
 def _counts(verdict: Verdict, inline_count: int, listed: int) -> str:
@@ -89,7 +123,7 @@ def _previous(verdict: Verdict) -> str:
     lines = ["### Earlier findings"]
     for p in verdict.previous_findings:
         state = "resolved" if p.status == "resolved" else "still open"
-        lines.append(f"- {state} — {_code(_where(p.file, p.line))} {redact_bounded(p.comment, COMMENT_CHARS)}")
+        lines.append(f"- {state} — {_code(_where(p.file, p.line))} {_prose(redact_bounded(p.comment, COMMENT_CHARS))}")
     return "\n".join(lines)
 
 
@@ -97,7 +131,9 @@ def _elsewhere(listed: Sequence[Finding]) -> str:
     lines = ["### Elsewhere in the code"]
     for f in listed:
         label = _LABEL.get(f.severity, "Suggestion")
-        lines.append(f"- **{label}** {_code(_where(f.file, f.line))} — {redact_bounded(f.comment, COMMENT_CHARS)}")
+        lines.append(
+            f"- **{label}** {_code(_where(f.file, f.line))} — {_prose(redact_bounded(f.comment, COMMENT_CHARS))}"
+        )
     return "\n".join(lines)
 
 
@@ -125,7 +161,7 @@ def _footer(ctx: SummaryContext) -> str:
 def render_summary(verdict: Verdict, *, inline_count: int, listed: Sequence[Finding], ctx: SummaryContext) -> str:
     parts = [
         "## embry0 review",
-        redact_bounded(verdict.summary, SUMMARY_CHARS),
+        _prose(redact_bounded(verdict.summary, SUMMARY_CHARS), mid_line=False),
         _counts(verdict, inline_count, len(listed)),
         _checks(verdict, ctx),
     ]
@@ -136,11 +172,25 @@ def render_summary(verdict: Verdict, *, inline_count: int, listed: Sequence[Find
     if verdict.suggested_dev_checks:
         parts.append(_suggested(verdict))
     footer = _footer(ctx)
-    body = "\n\n".join(parts)
+    raw = "\n\n".join(parts)
     room = BODY_LIMIT - len(footer) - 2
-    if len(body) > room:
-        body = body[: room - len(_TRUNCATED) - len(_CLOSE_FENCE)]
-        if sum(1 for line in body.splitlines() if line.lstrip().startswith("~~~")) % 2:
-            body += _CLOSE_FENCE  # the cut landed inside a check's output or the dev_checks block
-        body += _TRUNCATED
+    # One pass over everything the agent wrote, bounded: what lies past the
+    # window is cut anyway.
+    window = raw[: room + REDACT_OVERLAP_CHARS]
+    body = redact_log_text(window)
+    if len(body) > room or len(window) < len(raw):
+        body = _cut(body, room - len(_TRUNCATED)) + _TRUNCATED
     return f"{body}\n\n{footer}"
+
+
+def _cut(text: str, limit: int) -> str:
+    """``text`` cut to ``limit``, closing a code fence the cut lands in."""
+    cut = limit
+    while True:
+        head = text[:cut]
+        closer = _open_fence(head)
+        if not closer:
+            return head
+        if cut + 1 + len(closer) <= limit:
+            return f"{head}\n{closer}"
+        cut = limit - 1 - len(closer)  # strictly shorter each round, so this ends

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from embry0.services.pr_review.triggers import has_review_command
 from embry0.workflows.pr_review.summary import (
     BODY_LIMIT,
@@ -104,6 +106,87 @@ def test_secrets_in_agent_text_are_redacted() -> None:
     )
     body = render_summary(verdict, inline_count=0, listed=[], ctx=CTX)
     assert token not in body
+
+
+def test_secrets_in_every_agent_field_are_redacted() -> None:
+    token = "ghp_" + "B" * 36
+    verdict = _verdict(
+        checks_run=(CheckRun(f"probe {token}", f"curl -H {token}", "failed", ""),),
+        suggested_dev_checks=(SuggestedCheck(f"name-{token}", (f"src/{token}",), f"echo {token}"),),
+        previous_findings=(PreviousFinding(f"src/{token}.py", 3, "c", "resolved"),),
+    )
+    listed = [Finding(f"src/{token}.py", 4, "suggestion", "c")]
+    body = render_summary(verdict, inline_count=0, listed=listed, ctx=CTX)
+    assert body.count(token) == 0, f"the token appears {body.count(token)} times in the summary"
+    inline = inline_body(
+        Finding(f"src/{token}.py", 1, "important", f"uses {token}"), marker=review_marker("job-1", SHA)
+    )
+    assert token not in inline, "the inline comment carries the token"
+
+
+def _fence_open_at(body: str, needle: str) -> bool:
+    """Whether the line holding ``needle`` sits inside a fenced code block (CommonMark rules)."""
+    fence: tuple[str, int] | None = None
+    for line in body.splitlines():
+        if needle in line and fence is None:
+            return False
+        if needle in line:
+            return True
+        m = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if not m:
+            continue
+        run, rest = m.group(1), m.group(2)
+        if fence is None:
+            if not (run[0] == "`" and "`" in rest):
+                fence = (run[0], len(run))
+        elif run[0] == fence[0] and len(run) >= fence[1] and not rest.strip():
+            fence = None
+    raise AssertionError(f"{needle!r} is not in the body")
+
+
+def test_an_unclosed_fence_in_agent_prose_is_closed_where_it_ends() -> None:
+    verdict = _verdict(summary="Look at this:\n```python\nx = 1")
+    listed = [Finding("a.py", 1, "suggestion", "~~~\nstray")]
+    body = render_summary(verdict, inline_count=0, listed=listed + [Finding("b.py", 2, "important", "next")], ctx=CTX)
+    assert not _fence_open_at(body, "### Checks"), "the summary's fence swallowed the checks"
+    assert not _fence_open_at(body, "### Elsewhere in the code"), "the summary's fence swallowed the findings"
+    assert not _fence_open_at(body, "`b.py:2`"), "a comment's fence swallowed the next finding"
+    assert not _fence_open_at(body, "Reviewed `"), "a fence swallowed the footer"
+    opening = render_summary(_verdict(summary="```\nstarts with a fence"), inline_count=0, listed=[], ctx=CTX)
+    assert not _fence_open_at(opening, "### Checks"), "a summary that opens with a fence swallowed the checks"
+    inline = inline_body(Finding("a.py", 1, "important", "```\ncode"), marker="<!-- m -->")
+    assert not _fence_open_at(inline, "<!-- m -->"), "the inline comment's fence swallowed its marker"
+
+
+def test_mentions_in_agent_prose_do_not_notify() -> None:
+    verdict = _verdict(summary="Ask @octocat.", previous_findings=(PreviousFinding("a.py", 1, "cc @jdoe", "resolved"),))
+    body = render_summary(verdict, inline_count=0, listed=[Finding("a.py", 2, "suggestion", "@acme/team?")], ctx=CTX)
+    for handle in ("@octocat", "@jdoe", "@acme"):
+        assert handle not in body, f"{handle} would notify"
+    assert "@octocat" not in inline_body(Finding("a.py", 1, "important", "@octocat look"), marker="m")
+
+
+def test_agent_prose_cannot_open_an_html_comment() -> None:
+    marker = review_marker("job-1", SHA)
+    verdict = _verdict(summary="Before <!-- hidden")
+    body = render_summary(verdict, inline_count=0, listed=[Finding("a.py", 2, "suggestion", "x <!-- y")], ctx=CTX)
+    assert body.count("<!--") == 1 and body.endswith(marker), "agent prose opened an HTML comment"
+    inline = inline_body(Finding("a.py", 1, "important", "<!-- gone"), marker=marker)
+    assert inline.count("<!--") == 1, "agent prose opened an HTML comment inline"
+
+
+def test_a_newline_in_a_code_span_does_not_end_it() -> None:
+    verdict = _verdict(checks_run=(CheckRun("unit\n# Pwned", "pytest\n\n-q", "failed", ""),))
+    body = render_summary(verdict, inline_count=0, listed=[Finding("a.py\n## Heading", 2, "suggestion", "c")], ctx=CTX)
+    assert "`unit # Pwned`: `pytest -q`" in body, "a newline in a check broke its code span"
+    assert "`a.py ## Heading:2`" in body, "a newline in a file broke its code span"
+
+
+def test_a_cut_inside_a_backtick_fence_in_a_comment_still_closes_it() -> None:
+    listed = [Finding(f"f{n}.py", n, "suggestion", "~~~\nstray\n```\n" + "z\n" * 600 + "```") for n in range(100)]
+    body = render_summary(_verdict(), inline_count=0, listed=listed, ctx=CTX)
+    assert len(body) <= BODY_LIMIT
+    assert not _fence_open_at(body, "Reviewed `"), "the cut left a fence open over the footer"
 
 
 def test_a_huge_body_is_cut_to_the_limit_and_keeps_its_footer() -> None:
