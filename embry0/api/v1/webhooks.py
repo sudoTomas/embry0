@@ -99,12 +99,10 @@ async def gitlab_webhook(
     )
     payload = parse_webhook_body(body)
 
-    gitlab_sync = getattr(request.app.state, "gitlab_sync", None)
-    if gitlab_sync is None:
-        return {"status": "ignored", "reason": "gitlab integration not configured"}
-
     # #30: merge request and comment events are review triggers. Before this
     # they reached GitLabSyncService, which ignores everything but issues.
+    # Routed ahead of the sync check: reviews are gated on registration and
+    # pr_review.enabled, not on the issue integration being wired.
     kind = payload.get("object_kind")
     if kind in ("merge_request", "note"):
         method = "handle_gitlab_merge_request" if kind == "merge_request" else "handle_gitlab_note"
@@ -112,6 +110,10 @@ async def gitlab_webhook(
         if review is None:
             return {"status": "ignored", "reason": f"not a pull request review trigger: {kind}"}
         return _pr_review_response(review)
+
+    gitlab_sync = getattr(request.app.state, "gitlab_sync", None)
+    if gitlab_sync is None:
+        return {"status": "ignored", "reason": "gitlab integration not configured"}
 
     logger.info(
         "gitlab_webhook_received",

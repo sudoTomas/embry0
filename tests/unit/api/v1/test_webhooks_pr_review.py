@@ -191,3 +191,23 @@ async def test_gitlab_merge_request_and_note_events_reach_the_dispatcher(payload
     await _post(app, "/api/v1/webhook/gitlab", gitlab_issue(action="update", labels=["embry0"], previous_labels=[]))
     assert dispatcher.calls == [call]
     assert len(app.state.gitlab_sync.calls) == 1
+
+
+async def test_gitlab_review_triggers_do_not_need_the_issue_sync() -> None:
+    dispatcher = _Dispatcher()
+    app = _app(dispatcher)
+    app.state.gitlab_sync = None
+    body = await _post(app, "/api/v1/webhook/gitlab", gitlab_merge_request())
+    assert dispatcher.calls == ["merge_request"], "a merge_request needed the GitLab issue sync to reach the reviewer"
+    assert body == {"status": "accepted", "action": "pr_review", "dispatched": True, "reason": "ok", "job_id": "job-1"}
+
+
+async def test_an_issue_event_without_the_issue_sync_is_still_not_configured() -> None:
+    dispatcher = _Dispatcher()
+    app = _app(dispatcher)
+    app.state.gitlab_sync = None
+    body = await _post(
+        app, "/api/v1/webhook/gitlab", gitlab_issue(action="update", labels=["embry0"], previous_labels=[])
+    )
+    assert body == {"status": "ignored", "reason": "gitlab integration not configured"}
+    assert dispatcher.calls == [], "an issue event reached the reviewer"
