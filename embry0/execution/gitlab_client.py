@@ -107,6 +107,28 @@ class GitLabClient(ForgeClient):
         body = resp.json()
         return body if isinstance(body, dict) else None
 
+    async def get_merge_request(self, repo: str, iid: int) -> dict[str, Any] | None:
+        """One merge request by its project-scoped ``iid``, or None when missing or unreadable."""
+        resp = await self.get(self.project_path(repo, f"/merge_requests/{iid}"), repo=repo)
+        if resp.status_code != 200:
+            return None
+        body = resp.json()
+        return body if isinstance(body, dict) else None
+
+    async def get_member_access_level(self, repo: str, user_id: int) -> int | None:
+        """The user's access level on the project, inherited memberships included.
+
+        ``/members/all`` counts group membership too; plain ``/members`` would
+        refuse a Developer who is one only through the group. None when the
+        user is not a member or the lookup failed.
+        """
+        resp = await self.get(self.project_path(repo, f"/members/all/{user_id}"), repo=repo)
+        if resp.status_code != 200:
+            return None
+        body = resp.json()
+        level = body.get("access_level") if isinstance(body, dict) else None
+        return level if isinstance(level, int) and not isinstance(level, bool) else None
+
     async def create_issue_note(self, repo: str, iid: int, body: str) -> bool:
         """Post a note (comment) on an issue. True when accepted."""
         resp = await self.post(
