@@ -58,7 +58,7 @@ def test_direct_executor_records_an_error_for_an_unpriced_model(monkeypatch, tmp
     assert out.is_error, "a run on an unpriced model must be recorded as an error, not a clean $0 run"
     assert UNPRICED in (out.error_message or ""), f"the error must name the model: {out.error_message!r}"
     assert out.error_code == "ERR_INVALID_CONFIG", f"expected ERR_INVALID_CONFIG, got {out.error_code!r}"
-    assert any(e["type"] == "error" and UNPRICED in e["error"] for e in events), "an error event must be emitted"
+    assert any(e["type"] == "error" and UNPRICED in e["message"] for e in events), "an error event must be emitted"
 
 
 def _resolve(model: str):

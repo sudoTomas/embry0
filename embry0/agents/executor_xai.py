@@ -35,6 +35,7 @@ import structlog
 
 from embry0.agents.executor import (
     _extract_embedded_ask_user_events,
+    _ids,
     _resolve_writer,
     _summarize_tool_input,
     _workspace_root,
@@ -51,6 +52,7 @@ from embry0.agents.mcp_client import (
 from embry0.agents.output_text import FinalText
 from embry0.agents.providers import provider_for_model
 from embry0.agents.xai_tools import BUILTIN_TOOL_NAMES, execute_tool, tool_defs
+from embry0.execution import events
 from embry0.execution.agent_runner import AgentOutput
 from embry0.safety.error_codes import XAI_DENIAL_CODES, ErrorCode, classify_agent_error
 from embry0.safety.policy import gate_tool_call
@@ -148,6 +150,7 @@ class DirectXaiExecutor:
         writer = _resolve_writer(config)  # type: ignore[arg-type]
         started = time.time()
         agent_type = invocation.agent_type
+        ids = _ids(invocation)
 
         base_url = os.environ.get("EMBRY0_XAI_PROXY_URL", "")
         if not base_url:
@@ -173,7 +176,7 @@ class DirectXaiExecutor:
             except Exception as exc:
                 await _close_mcp_clients(mcp_clients)
                 message = f"MCP server startup failed: {exc}"
-                writer({"type": "error", "error": message})
+                writer(events.error(message=message, code=ErrorCode.SANDBOX_INIT.value, **ids))
                 return _error_output(agent_type, message)
 
         system = _SYSTEM_PROMPT_BASE
@@ -208,7 +211,7 @@ class DirectXaiExecutor:
 
         client = _make_client(base_url, proxy_token)
 
-        writer({"type": "agent_started", "agent": agent_type})
+        writer(events.agent_started(model=invocation.model, max_turns=invocation.max_turns, **ids))
 
         async def execute() -> None:
             nonlocal capped
@@ -230,7 +233,7 @@ class DirectXaiExecutor:
                     totals["cache_read"] += int(getattr(usage, "cache_read_input_tokens", 0) or 0)
                     totals["cache_creation"] += int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
 
-                writer({"type": "turn_start", "turn_number": turn, "model": invocation.model, "node": agent_type})
+                writer(events.turn_start(turn_number=turn, model=invocation.model, **ids))
 
                 content = list(getattr(resp, "content", []) or [])
                 assistant_text = ""
@@ -240,11 +243,9 @@ class DirectXaiExecutor:
                     if btype == "text":
                         text = str(getattr(block, "text", ""))
                         assistant_text += text
-                        writer({"type": "text", "text": text[:2000], "node": agent_type})
+                        writer(events.text(text=text, **ids))
                     elif btype == "thinking":
-                        writer(
-                            {"type": "thinking", "text": str(getattr(block, "thinking", ""))[:3000], "node": agent_type}
-                        )
+                        writer(events.thinking(text=str(getattr(block, "thinking", "")), **ids))
                     elif btype == "tool_use":
                         tool_uses.append(block)
 
@@ -267,31 +268,27 @@ class DirectXaiExecutor:
                     tool_input = raw_input if isinstance(raw_input, dict) else {}
                     tools_called[name] = tools_called.get(name, 0) + 1
                     writer(
-                        {
-                            "type": "tool_call",
-                            "tool_name": name,
-                            "tool_id": tool_id,
-                            "input": _summarize_tool_input(name, tool_input),
-                            "tool_input": tool_input,
-                            "node": agent_type,
-                        }
+                        events.tool_call(
+                            tool_name=name,
+                            tool_id=tool_id,
+                            summary=_summarize_tool_input(name, tool_input),
+                            tool_input=tool_input,
+                            **ids,
+                        )
                     )
 
                     verdict = gate_tool_call(policy, name, tool_input, cwd=cwd)
                     if not verdict.allowed:
-                        writer({"type": "error", "error": verdict.reason, "tool_name": name})
-                        results.append(
-                            {"type": "tool_result", "tool_use_id": tool_id, "content": verdict.reason, "is_error": True}
-                        )
                         writer(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": verdict.reason[:1000],
-                                "is_error": True,
-                                "node": agent_type,
-                            }
+                            events.error(
+                                message=verdict.reason or "",
+                                code=ErrorCode.POLICY_DENIED.value,
+                                tool_name=name,
+                                **ids,
+                            )
                         )
+                        results.append(_tool_result_block(tool_id, verdict.reason, is_error=True))
+                        writer(events.tool_result(tool_id=tool_id, content=verdict.reason or "", is_error=True, **ids))
                         continue
 
                     result_content: str | list[dict[str, Any]]
@@ -305,36 +302,31 @@ class DirectXaiExecutor:
                         # which lands in this tool result — recover + re-emit it (EMB-44).
                         if name == "Bash":
                             for embedded in _extract_embedded_ask_user_events(result_text):
-                                embedded["node"] = agent_type
-                                writer(embedded)
-                    results.append(
-                        {"type": "tool_result", "tool_use_id": tool_id, "content": result_content, "is_error": tool_err}
-                    )
-                    writer(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": result_text[:1000],
-                            "is_error": tool_err,
-                            "node": agent_type,
-                        }
-                    )
+                                writer({**embedded, **ids})
+                    results.append(_tool_result_block(tool_id, result_content, is_error=tool_err))
+                    writer(events.tool_result(tool_id=tool_id, content=result_text, is_error=tool_err, **ids))
 
                 messages.append({"role": "user", "content": results})
             # Loop exhausted max_turns without a natural stop.
             capped = True
-            writer({"type": "error", "error": f"reached max_turns ({invocation.max_turns})"})
+            writer(
+                events.error(
+                    message=f"reached max_turns ({invocation.max_turns})",
+                    code=ErrorCode.AGENT_MAX_TURNS.value,
+                    **ids,
+                )
+            )
 
         try:
             await asyncio.wait_for(execute(), timeout=max(invocation.timeout_seconds, 0.001))
         except TimeoutError:
             is_error = True
             error_message = f"Agent timed out after {invocation.timeout_seconds}s"
-            writer({"type": "error", "error": error_message})
+            writer(events.error(message=error_message, code=None, **ids))
         except Exception as exc:
             is_error = True
             error_code, error_message = _xai_failure(exc)
-            writer({"type": "error", "error": error_message})
+            writer(events.error(message=error_message, code=error_code, **ids))
         finally:
             await client.close()
             await _close_mcp_clients(mcp_clients)
@@ -362,7 +354,7 @@ class DirectXaiExecutor:
                 tokens_in=totals["in"],
                 tokens_out=totals["out"],
             )
-            writer({"type": "error", "error": unpriced_message})
+            writer(events.error(message=unpriced_message, code=ErrorCode.INVALID_CONFIG.value, **ids))
             if not is_error:
                 is_error = True
                 error_message = unpriced_message
@@ -370,17 +362,17 @@ class DirectXaiExecutor:
         output = final_text.render()
 
         writer(
-            {
-                "type": "cost_update",
-                "cost_usd": cost,
-                "duration_ms": elapsed_ms,
-                "num_turns": totals["turns"],
-                "tokens_in": totals["in"],
-                "tokens_out": totals["out"],
-                "cache_read_tokens": totals["cache_read"],
-                "cache_creation_tokens": totals["cache_creation"],
-                "node": agent_type,
-            }
+            events.cost_update(
+                cost_usd=cost,
+                duration_ms=elapsed_ms,
+                duration_api_ms=elapsed_ms,
+                num_turns=totals["turns"],
+                tokens_in=totals["in"],
+                tokens_out=totals["out"],
+                cache_read_tokens=totals["cache_read"],
+                cache_creation_tokens=totals["cache_creation"],
+                **ids,
+            )
         )
 
         result = AgentOutput(
@@ -401,25 +393,21 @@ class DirectXaiExecutor:
             session_blob_path=None,
         )
         writer(
-            {
-                "type": "agent_completed",
-                "result": {
-                    "agent_type": agent_type,
-                    "is_error": is_error,
-                    "error_message": error_message,
-                    "output": output,
-                    "cost_usd": cost,
-                    "duration_ms": elapsed_ms,
-                    "tools_called": tools_called,
-                    "input_tokens": totals["in"],
-                    "output_tokens": totals["out"],
-                    "cache_read_tokens": totals["cache_read"],
-                    "cache_creation_tokens": totals["cache_creation"],
-                },
-                "cost_usd": cost,
-                "duration_ms": elapsed_ms,
-                "tools_called": tools_called,
-            }
+            events.agent_completed(
+                is_error=is_error,
+                error_code=error_code,
+                error_message=error_message,
+                output=output,
+                cost_usd=cost,
+                duration_ms=elapsed_ms,
+                tools_called=tools_called,
+                policy_denials={},
+                input_tokens=totals["in"],
+                output_tokens=totals["out"],
+                cache_read_tokens=totals["cache_read"],
+                cache_creation_tokens=totals["cache_creation"],
+                **ids,
+            )
         )
         return result
 
@@ -497,6 +485,16 @@ def _merge_consecutive_roles(messages: list[dict[str, Any]]) -> list[dict[str, A
         else:
             merged.append(dict(message))
     return merged
+
+
+def _tool_result_block(tool_id: str, content: str | list[dict[str, Any]], *, is_error: bool) -> dict[str, Any]:
+    """A ``tool_result`` content block for the next Messages API request.
+
+    This is the Anthropic request shape (keyed by ``tool_use_id``), sent back to
+    the model, not an embry0 event; the event goes out through
+    :func:`embry0.execution.events.tool_result`.
+    """
+    return dict(type="tool_result", tool_use_id=tool_id, content=content, is_error=is_error)
 
 
 def _error_output(agent_type: str, message: str) -> AgentOutput:
