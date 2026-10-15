@@ -22,6 +22,7 @@ from embry0.api.webhook_ingress import SignatureScheme, parse_webhook_body, veri
 from embry0.notifications.inbound_dispatch import apply_inbound_directives
 from embry0.notifications.inbound_parser import parse_answer_directives
 from embry0.services.answer_recorder import record_answer
+from embry0.services.pr_review.triggers import has_review_command
 from embry0.trackers import TriggerContext, actor_of
 from embry0.trackers.author_association import check_comment_author, parse_author_roles
 
@@ -102,6 +103,16 @@ async def gitlab_webhook(
     if gitlab_sync is None:
         return {"status": "ignored", "reason": "gitlab integration not configured"}
 
+    # #30: merge request and comment events are review triggers. Before this
+    # they reached GitLabSyncService, which ignores everything but issues.
+    kind = payload.get("object_kind")
+    if kind in ("merge_request", "note"):
+        method = "handle_gitlab_merge_request" if kind == "merge_request" else "handle_gitlab_note"
+        review = await _pr_review(request, method, payload)
+        if review is None:
+            return {"status": "ignored", "reason": f"not a pull request review trigger: {kind}"}
+        return _pr_review_response(review)
+
     logger.info(
         "gitlab_webhook_received",
         object_kind=payload.get("object_kind"),
@@ -146,6 +157,27 @@ async def github_webhook(
     if handler is None:
         return {"status": "ignored", "event": event_type, "action": action}
     return await handler(request, payload, action)
+
+
+async def _pr_review(request: Request, method: str, *args: Any) -> dict[str, Any] | None:
+    """Hand a delivery to the pull request reviewer (#30); None when it is not a review trigger.
+
+    Never raises: a review that cannot start must not fail the delivery, or
+    the merge-sync bookkeeping that rides the same event.
+    """
+    dispatcher = getattr(request.app.state, "pr_review_dispatcher", None)
+    if dispatcher is None:
+        return None
+    try:
+        result = await getattr(dispatcher, method)(*args)
+    except Exception:
+        logger.warning("pr_review_dispatch_failed", method=method, exc_info=True)
+        return {"dispatched": False, "reason": "dispatch_error"}
+    return None if result is None else dict(result.as_dict())
+
+
+def _pr_review_response(review: dict[str, Any]) -> dict[str, Any]:
+    return {"status": "accepted" if review.get("dispatched") else "ignored", "action": "pr_review", **review}
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +234,13 @@ async def _handle_issue_comment(request: Request, payload: dict[str, Any], actio
     comment_body = comment.get("body") or ""
     if not comment_body:
         return {"ok": True, "applied": 0, "reason": "empty body"}
+
+    # #30: a /embry0 review comment on a pull request asks for a review and
+    # nothing else — never a follow-up, never an /answer — even when the
+    # reviewer is not wired.
+    if (payload.get("issue") or {}).get("pull_request") and has_review_command(comment_body):
+        review = await _pr_review(request, "handle_github_comment", payload)
+        return _pr_review_response(review or {"dispatched": False, "reason": "pr_review_not_configured"})
 
     # RAV-1092: a tagged comment on a PULL REQUEST dispatches a pr-followup
     # job on the PR's branch (session-adopting). Checked before the /answer
@@ -349,6 +388,19 @@ _PR_ACTIONS = ("opened", "reopened", "synchronize", "closed")
 
 
 async def _handle_pull_request(request: Request, payload: dict[str, Any], action: str) -> dict[str, Any]:
+    """Merge-sync bookkeeping, then the pull request review trigger (#30).
+
+    The two are independent: ``opened`` is both a delivery state and a
+    possible review trigger, ``ready_for_review`` is only the latter.
+    """
+    result = await _record_pull_request(request, payload, action)
+    review = await _pr_review(request, "handle_github_pull_request", payload, action)
+    if review is not None:
+        result = {**result, "pr_review": review}
+    return result
+
+
+async def _record_pull_request(request: Request, payload: dict[str, Any], action: str) -> dict[str, Any]:
     """PR ↔ job linking and delivery state. Creates no jobs — bookkeeping only.
 
     All of it lives in ``services.merge_sync``: this handler only turns the
