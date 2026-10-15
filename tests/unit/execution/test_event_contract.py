@@ -6,7 +6,7 @@ import ast
 import json
 from pathlib import Path
 
-from embry0.execution.events import EventType, contract
+from embry0.execution.events import EventType, contract, render_markdown
 
 REPO = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = REPO / "docs" / "contracts" / "events.json"
@@ -55,3 +55,23 @@ def test_no_literal_event_dict_outside_the_contract_module() -> None:
         for line in _literal_event_dicts(path):
             offenders.append(f"{path.relative_to(REPO)}:{line}")
     assert not offenders, "events must be built through embry0.execution.events constructors:\n" + "\n".join(offenders)
+
+
+API_DOC = REPO / "docs" / "api.md"
+BEGIN = "<!-- events:begin -->"
+END = "<!-- events:end -->"
+
+
+def test_api_doc_events_section_is_rendered_from_the_contract() -> None:
+    doc = API_DOC.read_text(encoding="utf-8")
+    assert BEGIN in doc and END in doc, "docs/api.md must carry the events markers"
+    section = doc.split(BEGIN, 1)[1].split(END, 1)[0].strip()
+    assert section == render_markdown().strip(), (
+        "docs/api.md events table is stale; paste the output of "
+        "python -m embry0.execution.events --render-markdown between the markers"
+    )
+
+
+def test_api_doc_does_not_document_routes_that_do_not_exist() -> None:
+    doc = API_DOC.read_text(encoding="utf-8")
+    assert "/api/v1/graphs/" not in doc, "docs/api.md documents /graphs/* routes that were never implemented"
