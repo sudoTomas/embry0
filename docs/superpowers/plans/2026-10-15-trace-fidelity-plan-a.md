@@ -2468,7 +2468,7 @@ def agent_attempt(state: dict[str, Any], agent_type: str) -> int:
 `run_agent_node` gains `node: str | None = None` and, right after the invocation is built (before `serialized`):
 
 ```python
-    run_id = f"run-{uuid.uuid4().hex[:12]}"
+    run_id = f"run-{uuid.uuid4().hex}"
     node_id = node or agent_type
     invocation = replace(invocation, run_id=run_id, node=node_id)
 ```

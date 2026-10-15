@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -780,6 +781,9 @@ async def test_run_agent_node_writes_a_running_trace_row_before_the_exec_and_fin
     assert order == ["create", "exec", "finish"]
     assert traces_repo.finish.call_args.args[0] == traces_repo.create.call_args.kwargs["trace_id"], (
         "finish must finalize the row create wrote"
+    )
+    assert re.fullmatch(r"run-[0-9a-f]{32}", traces_repo.create.call_args.kwargs["trace_id"]), (
+        "spec 3.4: the run id is a full UUID4, not a 12-hex prefix"
     )
 
 

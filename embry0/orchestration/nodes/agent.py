@@ -485,7 +485,7 @@ async def run_agent_node(
 
     # Spec 3.4: the run id is minted here, before the exec, so the trace row
     # and every event of this run share it; the sandbox stamps it on events.
-    run_id = f"run-{uuid.uuid4().hex[:12]}"
+    run_id = f"run-{uuid.uuid4().hex}"
     invocation = replace(invocation, run_id=run_id, node=node or agent_type)
 
     # Build the serialized invocation dict the sandbox runner receives.
