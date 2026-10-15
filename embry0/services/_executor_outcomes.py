@@ -956,6 +956,9 @@ async def _handle_split(self: IssueExecutor, issue_id: str | None, job_id: str, 
 
 async def _broadcast_event(self: IssueExecutor, job_id: str, event: dict[str, Any]) -> None:
     """Forward event to WebSocket subscribers and persist to job_logs."""
+    # The orchestrator stamps job_id (events.py docstring, docs/api.md); the
+    # sandbox never knows it.
+    event = {**event, "job_id": job_id}
     # Add timestamp if missing (events from StreamWriter don't include one)
     if "timestamp" not in event:
         from datetime import UTC, datetime
