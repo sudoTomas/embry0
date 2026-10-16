@@ -15,6 +15,7 @@ Success looks like this: an operator marks a pull request ready, and a review ap
 | Purpose | Advisory comments. It never approves, never requests changes, and sets no status check. |
 | Triggers | The transition to ready, or opened directly as non-draft. Pushes do not re-trigger. |
 | On demand | A `/embry0 review` comment from someone with write access, on GitHub or GitLab. |
+| Who triggers automatic reviews | A per-repo setting, `ready_authors`: `team` (default) reviews a ready pull request only when its author has write access and is not a bot; `anyone` reviews every ready pull request. The `/embry0 review` command keeps its own write-access check either way. |
 | Re-review | Continues the agent session of the pull request's previous review. |
 | Depth | A per-repo setting: `full` (default), `targeted` or `read_only`. |
 | No `dev_checks` configured | The agent works out the commands from the repo (CI config, Makefile, `package.json`, README), says what it ran, and suggests them as `dev_checks`. |
@@ -55,9 +56,13 @@ Applied in this order. Each refusal is logged with its reason and posts nothing.
 
 1. The repo is registered, and `repo_preferences.pr_review.enabled` is true.
 2. The pull request is not embry0's own: no job has it as `pr_url`, and its head branch does not start with `embry0/`.
-3. A comment command needs the author to have write access:
-   - GitHub: `author_association` is OWNER, MEMBER or COLLABORATOR, and the author is not a bot. This is the existing `check_comment_author`.
-   - GitLab: the commenter's project access level is Developer (30) or higher, checked through the members API (`/projects/:id/members/all/:user_id`).
+3. Author trust:
+   - A comment command needs the commenter to have write access:
+     - GitHub: `author_association` is OWNER, MEMBER or COLLABORATOR, and the author is not a bot. This is the existing `check_comment_author`.
+     - GitLab: the commenter's project access level is Developer (30) or higher, checked through the members API (`/projects/:id/members/all/:user_id`).
+   - A ready event, when `pr_review.ready_authors` is `team` (the default), needs the pull request's author to pass the same check. On GitHub that is the pull request object's own `author_association` and `user`, through `check_comment_author`. On GitLab it is the merge request's `object_attributes.author_id`, not the user who marked it ready. A failed or impossible lookup refuses. The refusal reason is `author_not_on_team`. With `anyone`, ready events skip this check.
+   - The CLI and `POST /jobs` are operator actions and skip this gate.
+   - It runs before dedupe and budget, so a refused author claims no key and is never charged.
 4. Dedupe:
    - Ready events are keyed on `(repo, number, head_sha)`.
    - Comment commands are keyed on the comment id.
@@ -190,11 +195,13 @@ A finding becomes an inline comment only when its file and line are on the new s
 - `enabled`: default false
 - `depth`: default `"full"`
 - `model`: null means the heavy tier
+- `ready_authors`: `"team"` (default) or `"anyone"`; a stored object without it reads as `"team"`
 
 It is added to `_COLUMNS`, `_WRITABLE` and `_CASTS`, and to the preferences schemas. It is edited through `PUT /repos/{repo}/preferences`. The dashboard's repo preferences gain a "Pull request review" card with:
 - a switch
 - a depth selector, with a line describing each option
 - a model picker, with "Default (heavy tier)" first
+- a "Who triggers automatic reviews" choice: team (default) or anyone, the latter noting that outsiders' fork pull requests then start read-only reviews on the repo's budget
 - a note listing the webhook events the repo needs
 
 ### Storage
@@ -240,6 +247,7 @@ Every new test is shown failing first, against a clean tree.
   - embry0's own pull request
   - a GitLab member below Developer
   - a bot author
+  - a ready pull request from outside the team, under `ready_authors: team` (GitHub association, GitLab author access, a failed lookup), and the same one admitted under `anyone`
   - over budget
 - **Dedupe:** against a throwaway Postgres; a second delivery of the same key is refused.
 - **Forks:** depth is forced to `read_only`, and the forge's head ref is fetched.

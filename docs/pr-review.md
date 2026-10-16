@@ -2,7 +2,16 @@
 
 embry0 can review pull requests (GitHub) and merge requests (GitLab) on a registered repository and post what it finds on them. It is an **advisory reviewer**: it comments, and it never approves, never requests changes and sets no status check. The author and the human reviewers decide.
 
-Review is **off** for every repository until an operator turns it on (Repositories → the repository → *Pull request review*, or `PUT /api/v1/repos/{repo}/preferences` with a `pr_review` object: `enabled`, `depth`, `model`).
+Review is **off** for every repository until an operator turns it on (Repositories → the repository → *Pull request review*, or `PUT /api/v1/repos/{repo}/preferences` with a `pr_review` object: `enabled`, `depth`, `model`, `ready_authors`).
+
+`ready_authors` says who starts a review by opening or readying a pull request:
+
+| Value | A ready pull request is reviewed when |
+|---|---|
+| `team` (default) | its author has write access and is not a bot: on GitHub the pull request's `author_association` is in `COMMENT_DISPATCH_AUTHOR_ROLES` (default `OWNER,MEMBER,COLLABORATOR`); on GitLab the merge request's author has Developer (30) access or higher |
+| `anyone` | anyone opens or readies it, including from a fork; outsiders' fork pull requests then start read-only reviews on your budget |
+
+Settings saved before `ready_authors` existed read as `team`. It does not change who may comment `/embry0 review`, which always needs write access, and the manual trigger is not subject to it.
 
 ## When a review runs
 
@@ -30,7 +39,7 @@ A trigger is refused, with the reason in the orchestrator log (`pr_review_refuse
 1. the repository is not registered, or its review is off (the manual trigger skips the on/off setting only);
 2. the pull request is closed, or the forge would not return it;
 3. the pull request is embry0's own (a job opened it, or its branch starts with `embry0/`);
-4. a comment's author lacks write access: on GitHub an `author_association` outside `COMMENT_DISPATCH_AUTHOR_ROLES` (default `OWNER,MEMBER,COLLABORATOR`) or a bot; on GitLab a project access level below Developer (30);
+4. a comment's author lacks write access: on GitHub an `author_association` outside `COMMENT_DISPATCH_AUTHOR_ROLES` (default `OWNER,MEMBER,COLLABORATOR`) or a bot; on GitLab a project access level below Developer (30). With `ready_authors: team`, a ready event is held to the same check against the pull request's **author** (on GitLab, `object_attributes.author_id`, not whoever marked it ready; a lookup that fails refuses), with the reason `author_not_on_team`. It is skipped before any key is claimed or budget asked;
 5. the same trigger was seen before: a ready event is keyed on its pull request and head sha, a command on its comment id (`pr_reviews.trigger_key`, unique, so this survives restarts);
 6. the budget gate refuses the actor: the pull request's author for a GitHub ready event, the user who opened it or marked it ready for a GitLab one, the commenter for a command.
 
@@ -73,7 +82,9 @@ A pull request from a fork is always reviewed read-only, whatever the depth: no 
 
 The agent is the Claude CLI working in the checked-out tree, and that CLI reads project configuration from the tree: skills and commands under `.claude/`, MCP servers in `.mcp.json`, and instructions in `CLAUDE.md`. A skill or command can run shell commands when it is invoked, and an MCP server is a process. So when a review runs nothing (a fork, or the `read_only` depth), the checkout removes from the worktree every `.claude/` directory, `.mcp.json`, `CLAUDE.md` and `CLAUDE.local.md` before the agent starts. The agent still reads what those files say, as text in the precomputed diff. embry0 then writes its own `.claude/settings.json` as for every agent. A same-repo review at `full` or `targeted` depth keeps them: its author has write access, and its checks run the repository's code anyway.
 
-A ready event is not checked for write access; only a command is. On a repository with review turned on, anyone who can open a pull request, including from a fork, starts a review when it becomes ready. What bounds that is the read-only rule above and the budget gate: the daily and monthly spend caps (`DAILY_BUDGET_CAP_USD`, `MONTHLY_BUDGET_CAP_USD`) and the per-actor hourly limit (`RATE_LIMIT_PER_AUTHOR_PER_HOUR`), charged to the pull request's author (on GitLab, to whoever opened it or marked it ready). Turn review on only for repositories where that is acceptable.
+By default (`ready_authors: team`) a ready event starts a review only when the pull request's author has write access and is not a bot, the same standard a `/embry0 review` command is held to. A pull request from anyone else is skipped silently: nothing is posted, no trigger key is taken, and the budget is not charged; a team member can still review it with `/embry0 review`. Bots are refused even with an allowed association, so a dependency bot's pull requests do not each start a review.
+
+With `ready_authors: anyone`, anyone who can open a pull request, including from a fork, starts a review when it becomes ready. What bounds that is the read-only rule above and the budget gate: the daily and monthly spend caps (`DAILY_BUDGET_CAP_USD`, `MONTHLY_BUDGET_CAP_USD`) and the per-actor hourly limit (`RATE_LIMIT_PER_AUTHOR_PER_HOUR`), charged to the pull request's author (on GitLab, to whoever opened it or marked it ready). Choose `anyone` only for repositories where that is acceptable.
 
 ## Webhook setup
 
