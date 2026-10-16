@@ -999,6 +999,7 @@ class IssueExecutor:
         try:
             await self._jobs.update(job_id, status="cancelled")
             await self._finish_credential_uses(job_id, error_code="cancelled")
+            await self._announce_finished(job_id)
         except StatusTransitionConflict:
             logger.warning(
                 "job_status_race_on_cancel",
@@ -1171,6 +1172,7 @@ class IssueExecutor:
             **({"pr_url": pr_url} if pr_url else {}),
         )
         await self._finish_credential_uses(job_id, error_code=code.value)
+        await self._announce_finished(job_id)
         if pr_url:
             await self._record_pr_opened(issue_id, job_id, pr_url)
         await self._issues.update(issue_id, status="open")
@@ -1230,11 +1232,13 @@ class IssueExecutor:
         if not issue:
             from embry0.safety.error_codes import ErrorCode
 
-            await self._jobs.fail_jobs(
+            failed_ids = await self._jobs.fail_jobs(
                 [job_id],
                 ErrorCode.ORPHANED.value,
                 "Orchestrator restarted and the job's issue no longer exists; nothing to start.",
             )
+            for failed_id in failed_ids:
+                await self._announce_finished(failed_id)
             return
         await self._run_workflow(
             issue_id, job_id, issue, additional_context=str(launch.get("additional_context") or "")

@@ -760,6 +760,7 @@ async def _handle_workflow_result(
             finished_at=datetime.now(UTC),
         )
         await self._finish_credential_uses(job_id, error_code=error_code)
+        await self._announce_finished(job_id)
         # Spec §3.6: a rate limit, a spent quota, or a refused token
         # quarantines the account that served this job. The job row is
         # already written. A quarantine failure must not flip it.
@@ -923,6 +924,7 @@ async def _handle_split(self: IssueExecutor, issue_id: str | None, job_id: str, 
 
     await self._jobs.update(job_id, status="completed")
     await self._finish_credential_uses(job_id, error_code=None)
+    await self._announce_finished(job_id)
     await self._issues.update(issue_id, status="open")
     await self._issues.update_parent_status(issue_id)
 
@@ -1019,6 +1021,7 @@ async def _handle_needs_info(self: IssueExecutor, issue_id: str | None, job_id: 
             finished_at=datetime.now(UTC),
         )
         await self._finish_credential_uses(job_id, error_code=ErrorCode.EMPTY_INTERRUPT.value)
+        await self._announce_finished(job_id)
         await self._issues.update(issue_id, status="open")
         return
 
@@ -1177,6 +1180,7 @@ async def _handle_needs_info(self: IssueExecutor, issue_id: str | None, job_id: 
         qa_block = _fold_auto_answers_into_context(enriched_questions)
         await self._jobs.update(job_id, status="completed")
         await self._finish_credential_uses(job_id, error_code=None)
+        await self._announce_finished(job_id)
         if issue_id is None:
             # Issue-less API jobs have no issue row to re-triage — the
             # auto-answer re-run path is issue-driven. Surfaced by the

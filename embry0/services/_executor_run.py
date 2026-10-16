@@ -190,6 +190,7 @@ async def _refuse_if_over_budget(
             finished_at=datetime.now(UTC),
         )
         await self._finish_credential_uses(job_id, error_code=ErrorCode.BUDGET_REFUSED.value)
+        await self._announce_finished(job_id)
     except (StatusTransitionConflict, ValueError):
         # ValueError: the job left `pending` meanwhile (cancelled) — the
         # repository refuses the transition; the job is not ours to fail.
@@ -289,6 +290,7 @@ async def _run_onboard_workflow(
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=ErrorCode.UNEXPECTED_INTERRUPT.value)
+            await self._announce_finished(job_id)
             return
 
         ob = (final_state or {}).get("onboard") or {}
@@ -299,6 +301,7 @@ async def _run_onboard_workflow(
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=None)
+            await self._announce_finished(job_id)
         else:
             await self._jobs.update(
                 job_id,
@@ -308,6 +311,7 @@ async def _run_onboard_workflow(
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=ErrorCode.ONBOARD_FAILED.value)
+            await self._announce_finished(job_id)
     except Exception as exc:  # noqa: BLE001
         logger.error("onboard_workflow_crashed", job_id=job_id, error=str(exc), exc_info=True)
         crash_code = classify_failure(exc=exc, stage="onboard").value
@@ -320,6 +324,7 @@ async def _run_onboard_workflow(
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=crash_code)
+            await self._announce_finished(job_id)
         except StatusTransitionConflict:
             pass
     finally:
@@ -979,6 +984,7 @@ async def _run_workflow(
         else:
             await self._jobs.update(job_id, status="completed")
             await self._finish_credential_uses(job_id, error_code=None)
+            await self._announce_finished(job_id)
 
         # Don't destroy sandbox for paused jobs
         job_record = await self._jobs.get(job_id)
@@ -1016,6 +1022,7 @@ async def _run_workflow(
             **({"pr_url": pr_url} if pr_url else {}),
         )
         await self._finish_credential_uses(job_id, error_code=code.value)
+        await self._announce_finished(job_id)
         if pr_url:
             await self._record_pr_opened(issue_id, job_id, pr_url)
         await self._issues.update(issue_id, status="open")
@@ -1178,6 +1185,7 @@ async def _skip_as_duplicate(
         finished_at=datetime.now(UTC),
     )
     await self._finish_credential_uses(job_id, error_code=None)
+    await self._announce_finished(job_id)
     await record_case_event(
         self,
         "existing_pr_found",
@@ -1351,6 +1359,7 @@ async def _run_qa_workflow(
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=ErrorCode.UNEXPECTED_INTERRUPT.value)
+            await self._announce_finished(job_id)
             # Terminal like any other failure: release the sandbox and the
             # job's volumes (#274).
             await self._cleanup_sandbox(final_state, job_id)
@@ -1434,6 +1443,7 @@ async def _run_qa_workflow(
             **profile_used,
         )
         await self._finish_credential_uses(job_id, error_code=error_code)
+        await self._announce_finished(job_id)
 
         # Cleanup: sandbox + checkpoint state.
         await self._cleanup_sandbox(final_state, job_id)
@@ -1471,6 +1481,7 @@ async def _run_qa_workflow(
             **spent,
         )
         await self._finish_credential_uses(job_id, error_code=crash_code)
+        await self._announce_finished(job_id)
         await self._cleanup_sandbox(final_state, job_id)
         from embry0.orchestration.checkpoint import purge_thread as _purge
 

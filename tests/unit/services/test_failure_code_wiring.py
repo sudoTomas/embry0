@@ -139,6 +139,7 @@ def _main_path_executor():
     ex._budget_gate = None
     ex._emit_audit = AsyncMock()
     ex._post_tracker_outcome = AsyncMock()
+    ex._announce_finished = AsyncMock()
     return ex
 
 
