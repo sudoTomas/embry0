@@ -116,6 +116,7 @@ async def test_the_lifespan_hands_the_facade_to_every_producer(booted: Any) -> N
     assert metrics is not None
     assert booted.state.jobs_repo._metrics is metrics
     assert booted.state.traces_repo._metrics is metrics
+    assert booted.state.issue_executor._metrics is metrics, "the executor counts persist failures (plan B Task 1)"
     assert booted.state.healing_cases._metrics is metrics
     assert booted.state.watcher_services, "the seeded stack must have a watcher"
     for service in booted.state.watcher_services.values():
@@ -123,6 +124,10 @@ async def test_the_lifespan_hands_the_facade_to_every_producer(booted: Any) -> N
     assert booted.state.linear_reconciler._metrics is metrics
     assert booted.state.agent_runner._on_stale_image == metrics.sandbox_runner_stale_image
     assert channels._fold_observer is not None
+    reaper = booted.state.container_reaper
+    assert reaper.on_job_finished == booted.state.issue_executor._announce_finished, (
+        "the paused-job reaper announces job_finished through the executor (plan B Task 3)"
+    )
 
 
 async def test_the_lifespan_hands_one_runtime_to_the_sandbox_manager(

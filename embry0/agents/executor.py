@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
 
+from embry0.agents._common import make_scrubber
 from embry0.agents.claude_cli_session import find_session_file, restored_cost_usd
 from embry0.agents.config_builder import build_sdk_options
 from embry0.agents.invocation import AgentInvocation
@@ -494,6 +495,7 @@ class SdkAgentExecutor:
 
         writer = _resolve_writer(config)  # type: ignore[arg-type]
         ids = _ids(invocation)
+        scrub = make_scrubber()
         now = time.time()
         tools_called: dict[str, int] = {}
         final_text = FinalText()
@@ -762,7 +764,7 @@ class SdkAgentExecutor:
                         if _is_text_block(block):
                             block_text = str(getattr(block, "text", ""))
                             assistant_text += block_text
-                            writer(events.text(text=block_text, **scoped))
+                            writer(events.text(text=scrub(block_text), **scoped))
                         elif _is_tool_use_block(block):
                             tn = getattr(block, "name", "") or getattr(block, "tool_name", "")
                             if tn:
@@ -787,7 +789,7 @@ class SdkAgentExecutor:
                                 )
                             )
                         elif ThinkingBlock is not None and isinstance(block, ThinkingBlock):
-                            writer(events.thinking(text=getattr(block, "thinking", ""), **scoped))
+                            writer(events.thinking(text=scrub(str(getattr(block, "thinking", ""))), **scoped))
                     # Record this assistant turn in the messages buffer.
                     # Skip empty turns (assistant emitted only tool_use /
                     # thinking — no textual reply); they're meaningless to
@@ -870,7 +872,7 @@ class SdkAgentExecutor:
                             writer(
                                 events.tool_result(
                                     tool_id=str(tool_use_id),
-                                    content=result_text,
+                                    content=scrub(result_text),
                                     is_error=is_error_result,
                                     **scoped,
                                 )
@@ -1008,7 +1010,7 @@ class SdkAgentExecutor:
                 is_error=is_error,
                 error_code=error_code,
                 error_message=error_message,
-                output=output,
+                output=scrub(output),
                 cost_usd=cost_usd,
                 duration_ms=elapsed_ms,
                 tools_called=tools_called,

@@ -34,9 +34,11 @@ copied into the proxy image (``infra/Dockerfile.proxy``).
 
 from __future__ import annotations
 
+import bisect
 import os
 import re
 from collections.abc import Callable, Iterable
+from typing import Any
 
 REDACTED = "***REDACTED***"
 #: What an e-mail address becomes. The same placeholder the log-signature
@@ -119,12 +121,31 @@ _MIN_KNOWN_VALUE_LEN = 8
 # credential registry) still have to be scrubbed. app.py registers them at
 # startup; the credentials API re-registers after create/rotate.
 _KNOWN_SECRETS: set[str] = set()
+# The registry sorted for scrubbing, rebuilt only when it changes: it holds a
+# value per live sandbox bearer, and secret_env_values() runs once per event.
+_KNOWN_SORTED: list[str] | None = None
+
+
+def _scrub_order(value: str) -> tuple[int, str]:
+    """Longest first (a value containing another must go before it), then by
+    value so the order is deterministic."""
+    return (-len(value), value)
 
 
 def register_known_secrets(values: Iterable[str], *, reset: bool = False) -> None:
+    global _KNOWN_SORTED
     if reset:
         _KNOWN_SECRETS.clear()
     _KNOWN_SECRETS.update(v for v in values if isinstance(v, str) and len(v) >= _MIN_KNOWN_VALUE_LEN)
+    _KNOWN_SORTED = None
+
+
+def unregister_known_secrets(values: Iterable[str]) -> None:
+    """Forget values that no longer need protecting, such as a sandbox
+    bearer the proxies have revoked. Values never registered are ignored."""
+    global _KNOWN_SORTED
+    _KNOWN_SECRETS.difference_update(values)
+    _KNOWN_SORTED = None
 
 
 def known_secret_values() -> list[str]:
@@ -134,10 +155,17 @@ def known_secret_values() -> list[str]:
 def secret_env_values(environ: dict[str, str] | None = None) -> list[str]:
     """Values of this process's secret-looking env vars plus the registered
     known secrets, longest first, so a secret that appears verbatim is caught
-    even in a shape no pattern knows."""
+    even in a shape no pattern knows. Only the env part is sorted per call;
+    the registry's order is cached."""
+    global _KNOWN_SORTED
+    if _KNOWN_SORTED is None:
+        _KNOWN_SORTED = sorted(_KNOWN_SECRETS, key=_scrub_order)
     env = os.environ if environ is None else environ
-    values = {v for k, v in env.items() if _SECRET_ENV_NAME.search(k) and len(v) >= _MIN_KNOWN_VALUE_LEN}
-    return sorted(values | _KNOWN_SECRETS, key=len, reverse=True)
+    merged = list(_KNOWN_SORTED)
+    for value in {v for k, v in env.items() if _SECRET_ENV_NAME.search(k) and len(v) >= _MIN_KNOWN_VALUE_LEN}:
+        if value not in _KNOWN_SECRETS:
+            bisect.insort(merged, value, key=_scrub_order)
+    return merged
 
 
 def redact_secrets(text: str, known_values: Iterable[str] = ()) -> str:
@@ -286,3 +314,43 @@ def redact_bounded(
     if limit <= 0:
         return ""
     return redact(text[: limit + REDACT_OVERLAP_CHARS])[:limit]
+
+
+# ---- one event, every string -------------------------------------------------
+
+#: Top-level event keys that carry identifiers, never text. Left as they are
+#: so a scrub can never break the pairing of a result with its call or of an
+#: event with its run.
+EVENT_KEYS_NOT_REDACTED = frozenset(
+    {
+        "type",
+        "timestamp",
+        "job_id",
+        "event_seq",
+        "run_id",
+        "node",
+        "agent",
+        "parent_tool_use_id",
+        "tool_id",
+        "tool_name",
+    }
+)
+
+
+def redact_event(event: dict[str, Any], known_values: Iterable[str]) -> dict[str, Any]:
+    """A copy of ``event`` with every string value passed through
+    :func:`redact_secrets`, recursively through dicts and lists, so a secret
+    inside ``tool_input`` or a content block is caught too. The input is not
+    mutated. Top-level correlation keys are left as they are."""
+    values = list(known_values)
+
+    def _walk(value: Any) -> Any:
+        if isinstance(value, str):
+            return redact_secrets(value, values)
+        if isinstance(value, dict):
+            return {k: _walk(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_walk(v) for v in value]
+        return value
+
+    return {k: (v if k in EVENT_KEYS_NOT_REDACTED else _walk(v)) for k, v in event.items()}

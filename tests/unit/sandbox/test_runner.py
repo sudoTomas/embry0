@@ -262,3 +262,26 @@ def test_successful_run_writes_no_diagnostic(monkeypatch, capsys) -> None:
     line = json.loads(captured.out.strip().splitlines()[-1])
     assert line["type"] == "final_result"
     assert "diagnostic" not in line
+
+
+def test_emit_scrubs_every_string_value_before_stdout(capsys, monkeypatch) -> None:
+    """The runner's writer is the sandbox's last line: tool_input and anything a
+    constructor did not cap are scrubbed here (spec 3.6, second pass)."""
+    from embry0.sandbox.runner import _emit
+
+    secret = "runner-secret-value-abcdef123456"
+    monkeypatch.setenv("RUNNER_TEST_TOKEN", secret)
+    _emit(
+        events.tool_call(
+            tool_id="t1",
+            tool_name="Bash",
+            summary=f"echo {secret}",
+            tool_input={"command": f"echo {secret}", "env": [secret]},
+            run_id="r",
+            node="n",
+            agent="a",
+        )
+    )
+    line = json.loads(capsys.readouterr().out)
+    assert secret not in json.dumps(line)
+    assert line["tool_id"] == "t1" and line["type"] == "tool_call"

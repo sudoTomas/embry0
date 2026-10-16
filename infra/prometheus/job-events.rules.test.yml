@@ -1,0 +1,44 @@
+# promtool test rules job-events.rules.test.yml
+rule_files:
+  - job-events.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # No series at all (a deployment that never failed a persist): the rule
+  # evaluates (vector(0)) and stays quiet.
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: Embry0JobEventsNotPersisted
+        exp_alerts: []
+
+  # The counter exists and does not move: quiet.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_job_events_persist_failed_total{instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '3x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: Embry0JobEventsNotPersisted
+        exp_alerts: []
+
+  # Two failures at minute 20: fires (the proof the expression can produce a
+  # series at all), and is quiet again once 15 minutes have passed.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_job_events_persist_failed_total{instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x20 2x60'
+    alert_rule_test:
+      - eval_time: 22m
+        alertname: Embry0JobEventsNotPersisted
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Job events are failing to persist"
+              description: "2 job event(s) in the last 15 minutes were published to live clients but could not be written to job_logs, so no reconnecting client can replay them. Check the orchestrator log for event_persist_failed and the database."
+      - eval_time: 50m
+        alertname: Embry0JobEventsNotPersisted
+        exp_alerts: []

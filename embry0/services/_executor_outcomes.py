@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 from embry0.orchestration import dispatch_actors
 from embry0.services._cost import resolve_job_total_cost
 from embry0.services.healing.recorder import record_case_event
+from embry0.services.job_events import broadcast_job_event, emit_job_finished
 from embry0.storage.repositories.jobs import StatusTransitionConflict
 from embry0.trackers import forge_number_of, linear_identifier_of
 from embry0.workflows.issue_to_pr.plan_route import build_notification_summary, job_title_from_task
@@ -759,6 +760,7 @@ async def _handle_workflow_result(
             finished_at=datetime.now(UTC),
         )
         await self._finish_credential_uses(job_id, error_code=error_code)
+        await self._announce_finished(job_id)
         # Spec §3.6: a rate limit, a spent quota, or a refused token
         # quarantines the account that served this job. The job row is
         # already written. A quarantine failure must not flip it.
@@ -922,6 +924,7 @@ async def _handle_split(self: IssueExecutor, issue_id: str | None, job_id: str, 
 
     await self._jobs.update(job_id, status="completed")
     await self._finish_credential_uses(job_id, error_code=None)
+    await self._announce_finished(job_id)
     await self._issues.update(issue_id, status="open")
     await self._issues.update_parent_status(issue_id)
 
@@ -955,42 +958,16 @@ async def _handle_split(self: IssueExecutor, issue_id: str | None, job_id: str, 
 
 
 async def _broadcast_event(self: IssueExecutor, job_id: str, event: dict[str, Any]) -> None:
-    """Forward event to WebSocket subscribers and persist to job_logs."""
-    # The orchestrator stamps job_id (events.py docstring, docs/api.md); the
-    # sandbox never knows it.
-    event = {**event, "job_id": job_id}
-    # Add timestamp if missing (events from StreamWriter don't include one)
-    if "timestamp" not in event:
-        from datetime import UTC, datetime
+    """Forward event to WebSocket subscribers and persist to job_logs (embry0.services.job_events)."""
+    await broadcast_job_event(
+        self._jobs, getattr(self, "_event_bus", None), getattr(self, "_metrics", None), job_id, event
+    )
 
-        event = {**event, "timestamp": datetime.now(UTC).isoformat()}
 
-    # Persist to database and capture the assigned sequence id.
-    # Stamp it onto the event dict so WS subscribers can use it as a replay
-    # cursor (see embry0/api/ws/streaming.py).
-    seq: int | None = None
-    try:
-        seq = await self._jobs.append_log_event(job_id, event)
-    except Exception:
-        logger.warning("event_persist_failed", job_id=job_id, exc_info=True)
-    if seq is not None:
-        event = {**event, "event_seq": seq}
-
-    # Persist cost incrementally on cost_update events.
-    # Use atomic increment — each cost_update event carries the DELTA for the
-    # most recent turn, not the cumulative total. Using update() here would
-    # overwrite prior turns' cost.
-    if event.get("type") == "cost_update" and event.get("cost_usd"):
-        try:
-            await self._jobs.increment_cost(job_id, event["cost_usd"])
-        except Exception:
-            logger.warning("cost_update_failed", job_id=job_id, exc_info=True)
-
-    # Forward to WebSocket subscribers via the concurrency-safe event bus.
-    # The bus logs individual subscriber failures; we skip if no bus was
-    # injected (test shim).
-    if self._event_bus is not None:
-        await self._event_bus.publish(job_id, event)
+async def _announce_finished(self: IssueExecutor, job_id: str) -> None:
+    """spec 3.5: every terminal transition ends with job_finished. Called right
+    after the terminal status write at every site (a guard test enforces it)."""
+    await emit_job_finished(self._jobs, getattr(self, "_event_bus", None), getattr(self, "_metrics", None), job_id)
 
 
 async def _handle_needs_info(self: IssueExecutor, issue_id: str | None, job_id: str, decision: dict[str, Any]) -> None:
@@ -1044,6 +1021,7 @@ async def _handle_needs_info(self: IssueExecutor, issue_id: str | None, job_id: 
             finished_at=datetime.now(UTC),
         )
         await self._finish_credential_uses(job_id, error_code=ErrorCode.EMPTY_INTERRUPT.value)
+        await self._announce_finished(job_id)
         await self._issues.update(issue_id, status="open")
         return
 
@@ -1202,6 +1180,7 @@ async def _handle_needs_info(self: IssueExecutor, issue_id: str | None, job_id: 
         qa_block = _fold_auto_answers_into_context(enriched_questions)
         await self._jobs.update(job_id, status="completed")
         await self._finish_credential_uses(job_id, error_code=None)
+        await self._announce_finished(job_id)
         if issue_id is None:
             # Issue-less API jobs have no issue row to re-triage — the
             # auto-answer re-run path is issue-driven. Surfaced by the

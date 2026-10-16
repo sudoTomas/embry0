@@ -27,6 +27,7 @@ from langgraph.config import get_stream_writer
 from embry0.execution import events
 from embry0.orchestration.budget import BudgetOverrunError, resolve_job_cap
 from embry0.orchestration.nodes.agent import evaluate_job_cap
+from embry0.workflows.pipeline_graphs import qa_pipeline_graph
 from embry0.workflows.qa._orchestrator_workspace import (
     compute_changed_files_via_diff,
     resolve_base_branch,
@@ -79,7 +80,31 @@ async def _configured_base_branch(*, state: dict[str, Any], repo: str, prefs_rep
     return await preferred_base_branch(prefs_repo, repo)
 
 
+def _stream_writer() -> Any:
+    """The node's LangGraph stream writer, or a no-op outside a runnable
+    context (unit tests)."""
+    try:
+        return get_stream_writer()
+    except RuntimeError:
+        return lambda _event: None
+
+
 async def init_orchestrator_node(
+    state: dict[str, Any],
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """LangGraph node: brackets ``_init_orchestrator_node_impl`` with
+    ``node_started``/``node_completed`` on the job stream (spec 3.7), so
+    every non-raising return path, early ones included, is closed."""
+    writer = _stream_writer()
+    writer(events.node_started(node="init_orchestrator"))
+    writer(events.pipeline_graph(graph=qa_pipeline_graph(str(state.get("job_id") or "")), node="init_orchestrator"))
+    out = await _init_orchestrator_node_impl(state, config)
+    writer(events.node_completed(node="init_orchestrator"))
+    return out
+
+
+async def _init_orchestrator_node_impl(
     state: dict[str, Any],
     config: RunnableConfig,
 ) -> dict[str, Any]:
@@ -444,8 +469,21 @@ async def qa_orchestrator_node(
     Phase 5C: after the inner implementation returns, publishes a single
     ``done`` event to the QA event bus (when wired). The dashboard's SSE
     route uses that event to close the stream and let polling take over.
+
+    Spec 3.7: it also brackets itself with ``node_started`` /
+    ``node_completed`` on the job stream, the latter carrying
+    ``action=<overall_status>`` as the run-level outcome.
     """
+    writer = _stream_writer()
+    writer(events.node_started(node="orchestrate_qa"))
     out = await _qa_orchestrator_node_impl(state, config)
+
+    # Pull the final status from whichever path the impl returned through:
+    # success path writes outcome.overall_status, every infra-error path
+    # also fills it in (see the early returns in _qa_orchestrator_node_impl).
+    out_qa = out.get("qa") if isinstance(out, dict) else None
+    outcome = out_qa.get("outcome") if isinstance(out_qa, dict) else None
+    overall_status = outcome.get("overall_status") if isinstance(outcome, dict) else None
 
     # Phase 5C: publish run-level "done" so SSE clients can close cleanly.
     # No-op when no bus is wired (tests / legacy callers).
@@ -453,12 +491,6 @@ async def qa_orchestrator_node(
     bus = configurable.get("qa_event_bus")
     if bus is not None:
         run_id = state.get("job_id")
-        # Pull the final status from whichever path the impl returned through:
-        # success path writes outcome.overall_status, every infra-error path
-        # also fills it in (see early-return blocks above).
-        out_qa = out.get("qa") if isinstance(out, dict) else None
-        outcome = out_qa.get("outcome") if isinstance(out_qa, dict) else None
-        overall_status = outcome.get("overall_status") if isinstance(outcome, dict) else None
         if run_id and overall_status:
             try:
                 await bus.publish(
@@ -476,6 +508,9 @@ async def qa_orchestrator_node(
                     error=str(exc),
                 )
 
+    # spec 3.7: the run-level outcome on the job stream (the QA bus `done`
+    # keeps closing the SSE route).
+    writer(events.node_completed(node="orchestrate_qa", action=str(overall_status) if overall_status else None))
     return out
 
 

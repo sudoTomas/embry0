@@ -49,6 +49,7 @@ export type {
   ErrorEvent,
   SystemEvent,
   FindingPublishedEvent,
+  JobFinishedEvent,
 } from "./events-discriminated";
 
 export type LogEventType =
@@ -83,7 +84,8 @@ export type LogEventType =
   | "pipeline_stage_completed"
   | "pr_created"
   | "interrupt"
-  | "finding_published";
+  | "finding_published"
+  | "job_finished";
 
 /** Back-compat alias: PipelineGraphEvent → PipelineGraphEventDU */
 export type { PipelineGraphEventDU as PipelineGraphEvent } from "./events-discriminated";
@@ -95,6 +97,8 @@ export interface ContractBase {
   timestamp: string;
   job_id?: string;
   event_seq?: number;
+  /** The job's previous persisted event_seq; event_seq is job_logs.id, shared by every job. */
+  prev_seq?: number;
   run_id?: string;
   node?: string;
   agent?: string;
@@ -153,7 +157,7 @@ export interface QaAppsResolvedContract extends ContractBase { type: "qa_apps_re
 export interface QaSubtaskStartedContract extends ContractBase { type: "qa_subtask_started"; app: string; target: string }
 export interface QaSubtaskFinishedContract extends ContractBase { type: "qa_subtask_finished"; app: string; status: string; duration_ms: number; failure_summary?: string }
 export interface QaSubtaskStatusContract extends ContractBase {
-  type: "qa_subtask_status"; app: string; status: string; duration_ms?: number; failure_summary?: string; boot_phase?: string;
+  type: "qa_subtask_status"; app: string; status: string; duration_ms?: number; failure_summary?: string; boot_phase?: Record<string, unknown>;
 }
 export interface QaAgentTransientRetryContract extends ContractBase { type: "qa_agent_transient_retry"; app: string; reason: string }
 export interface SystemContract extends ContractBase { type: "system"; message: string }
@@ -175,7 +179,7 @@ export type ContractEventType = ContractEvent["type"];
 
 type Fields = { required: readonly string[]; optional: readonly string[] };
 
-const BASE_OPTIONAL = ["agent", "event_seq", "job_id", "node", "parent_tool_use_id", "run_id"] as const;
+const BASE_OPTIONAL = ["agent", "event_seq", "job_id", "node", "parent_tool_use_id", "prev_seq", "run_id"] as const;
 const TRUNC = ["original_length", "truncated"] as const;
 /** A sorted copy that keeps the members literal. `sorted([...BASE_OPTIONAL, "x"])` widens the
  *  fresh literal to string, which makes RowKeys<T> string and both guards below vacuous. */

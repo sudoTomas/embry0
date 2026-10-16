@@ -678,6 +678,31 @@ async def test_emit_result_node_publishes_subtask_status_to_event_bus():
 
 
 @pytest.mark.asyncio
+async def test_emit_result_node_emits_the_final_status_through_the_parent_writer():
+    from embry0.workflows.qa.subtask_nodes import emit_result_node
+
+    events_out: list[dict] = []
+    boot_phase = {"outcome": "timeout", "attempts": 12, "duration_ms": 600_000}
+    now = time.monotonic()
+    state = {
+        "app_name": "hub",
+        "parent_run_id": "JOB-42",
+        "status": SubTaskStatus.BOOT_FAILURE,
+        "failure_summary": "boot timeout",
+        "started_at": now - 3.0,
+        "completed_at": now,
+        "raw_result": {},
+        "boot_phase": boot_phase,
+    }
+    await emit_result_node(state, {"configurable": {"qa_parent_writer": events_out.append}})
+    status = next((e for e in events_out if e["type"] == "qa_subtask_status"), None)
+    assert status is not None, "emit_result_node writes the final status to the parent writer"
+    assert status["app"] == "hub" and status["status"] == "boot_failure"
+    assert status["duration_ms"] >= 2900 and status["failure_summary"] == "boot timeout"
+    assert status["boot_phase"] == boot_phase
+
+
+@pytest.mark.asyncio
 async def test_emit_result_node_skips_publish_when_no_event_bus():
     """No-op when config['configurable']['qa_event_bus'] is absent."""
     from embry0.workflows.qa.subtask_nodes import emit_result_node

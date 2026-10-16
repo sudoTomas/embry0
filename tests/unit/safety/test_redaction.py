@@ -5,6 +5,7 @@ import pytest
 from embry0.safety.redaction import (
     REDACTED,
     STDERR_TAIL_MAX_BYTES,
+    redact_event,
     redact_secrets,
     redacted_stderr_tail,
     secret_env_values,
@@ -108,3 +109,28 @@ def test_redaction_stays_linear_on_a_long_unbroken_word():
     start = time.perf_counter()
     assert redact_secrets("A" * 200_000) == "A" * 200_000
     assert time.perf_counter() - start < 5.0
+
+
+def test_redact_event_scrubs_strings_recursively_and_leaves_correlation_keys() -> None:
+    secret = "sekrit-value-0123456789"
+    event = {
+        "type": "tool_call",
+        "timestamp": "2026-10-16T00:00:00+00:00",
+        "run_id": "run-" + "a" * 32,
+        "tool_id": "toolu_01" + secret[:8],
+        "tool_name": "Bash",
+        "summary": f"curl -H 'Authorization: Bearer {secret}'",
+        "tool_input": {"command": f"export TOKEN={secret}", "env": [{"name": "X", "value": secret}]},
+        "content": [{"type": "text", "text": f"saw {secret}"}],
+        "is_error": False,
+        "count": 3,
+    }
+    out = redact_event(event, [secret])
+    assert secret not in repr(out), "every string value, however nested, is scrubbed"
+    assert out["tool_input"]["env"][0]["value"] == REDACTED
+    assert out["content"][0]["text"] == f"saw {REDACTED}"
+    assert out["tool_id"] == event["tool_id"] and out["run_id"] == event["run_id"], (
+        "correlation keys are never rewritten"
+    )
+    assert out["is_error"] is False and out["count"] == 3
+    assert secret in event["summary"], "the input event is not mutated"

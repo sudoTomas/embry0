@@ -543,3 +543,94 @@ async def test_analyze_shows_the_agent_this_deployments_profiles(monkeypatch):
         f"the agent was not shown this deployment's profiles:\n{prompts[0]}"
     )
     assert "- slim: boot-only, NO browser" in prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_init_onboard_emits_the_pipeline_graph_first(monkeypatch):
+    """spec 3.8: the onboarding job page no longer shows an empty map."""
+    from types import SimpleNamespace
+
+    from embry0.workflows.onboard import nodes as onboard_nodes
+    from embry0.workflows.onboard.nodes import init_onboard_node
+
+    events_out: list[dict] = []
+    monkeypatch.setattr(onboard_nodes, "_writer", lambda: events_out.append)
+
+    class _Sb:
+        async def create(self, job_id, profile=None, env=None, repo=None, forge="github", **_kw):
+            return "cid-1", "tok-" + "A" * 40
+
+    class _Profiles:
+        async def get(self, name):
+            return {"name": "slim"}
+
+    class _Docker:
+        def _build_base_cmd(self):
+            return ["docker"]
+
+        def build_exec_cmd(self, cid, cmd):
+            return ["docker", "exec", cid, *cmd]
+
+        async def run_cmd(self, cmd, timeout=None):
+            return ""
+
+    async def fake_clone(**kw):
+        from embry0.workflows.qa._subtask_prep import ClonedSandbox
+
+        return ClonedSandbox(head_sha="abc123")
+
+    monkeypatch.setattr("embry0.workflows.qa._subtask_prep.prep_qa_sandbox_clone", fake_clone)
+    await init_onboard_node(
+        {"job_id": "job-1", "repo": "acme/group/backend", "branch_name": "dev"},
+        {
+            "configurable": {
+                "docker": _Docker(),
+                "sandbox_manager": _Sb(),
+                "profiles_repo": _Profiles(),
+                "repos_repo": _ForgeRepos("gitlab"),
+                "embry0_config": SimpleNamespace(gitlab_url="https://gitlab.example.com"),
+            }
+        },
+    )
+    types = [e["type"] for e in events_out]
+    assert "pipeline_graph" in types, "init_onboard must emit the graph"
+    assert types.index("node_started") < types.index("pipeline_graph")
+    graph = next(e for e in events_out if e["type"] == "pipeline_graph")
+    assert graph["node"] == "init_onboard" and graph["graph"]["graph_id"] == "onboard-job-1"
+
+
+def _node_events(events_out: list[dict], node: str) -> list[tuple[str, object]]:
+    return [(e["type"], e.get("ok")) for e in events_out if e.get("node") == node and e["type"].startswith("node_")]
+
+
+async def test_write_config_and_cleanup_light_their_graph_nodes(monkeypatch):
+    """#40: the onboarding map's last two nodes stayed pending after the job ended."""
+    from embry0.workflows.onboard import nodes as onboard_nodes
+
+    events_out: list[dict] = []
+    monkeypatch.setattr(onboard_nodes, "_writer", lambda: events_out.append)
+    state = {
+        "repo": "acme/widgets",
+        "onboard": {"validated": True, "qa_yaml_text": _VALID_QA_YAML, "round": 1},
+    }
+    await write_config_node(state, {"configurable": {"qa_configs_repo": _FakeConfigsRepo()}})
+    assert _node_events(events_out, "write_config") == [("node_started", None), ("node_completed", True)], (
+        "write_config brackets its work with node_started and node_completed(ok=True)"
+    )
+
+    await cleanup_node({"onboard": {"final_status": "completed"}}, {"configurable": {}})
+    assert [t for t, _ok in _node_events(events_out, "cleanup")] == ["node_started", "node_completed"], (
+        "cleanup brackets its work with node_started and node_completed"
+    )
+
+
+async def test_a_failed_write_config_completes_its_node_not_ok(monkeypatch):
+    from embry0.workflows.onboard import nodes as onboard_nodes
+
+    events_out: list[dict] = []
+    monkeypatch.setattr(onboard_nodes, "_writer", lambda: events_out.append)
+    state = {"repo": "acme/widgets", "onboard": {"validated": True, "qa_yaml_text": _VALID_QA_YAML, "round": 1}}
+    await write_config_node(state, {"configurable": {}})
+    assert _node_events(events_out, "write_config") == [("node_started", None), ("node_completed", False)], (
+        "a failing write_config still closes its node, with ok=False"
+    )

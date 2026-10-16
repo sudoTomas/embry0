@@ -22,8 +22,15 @@ from embry0.orchestration.budget import (
     resolve_job_cap,
 )
 from embry0.orchestration.state import AgentOutputEntry
+from embry0.safety.redaction import redact_bounded, redact_secrets, secret_env_values
 
 logger = structlog.get_logger(__name__)
+
+TRACE_SUMMARY_CAP = 500
+
+
+def _redact_trace_text(text: str) -> str:
+    return redact_secrets(text, secret_env_values())
 
 
 def _env_cap(name: str, default: int) -> int:
@@ -85,7 +92,7 @@ def _crashed_trace_fields(exc: BaseException, error_code: str | None) -> dict[st
         "cost_usd": 0.0,
         "duration_ms": 0,
         "tools_called": {},
-        "result_summary": str(exc)[:500],
+        "result_summary": str(exc),
         "input_tokens": 0,
         "output_tokens": 0,
         "cache_read_tokens": 0,
@@ -534,6 +541,10 @@ async def run_agent_node(
     async def _finish_trace(**fields: Any) -> None:
         if traces_repo is None or not trace_job_id:
             return
+        # spec 3.6: the summary is redacted at write, and before the cap, so a
+        # cut can never leave a fragment no pattern recognises.
+        summary = str(fields.get("result_summary") or "")
+        fields["result_summary"] = redact_bounded(summary, TRACE_SUMMARY_CAP, redact=_redact_trace_text)
         try:
             if running_row_written:
                 await traces_repo.finish(run_id, **fields)
@@ -606,7 +617,7 @@ async def run_agent_node(
         cost_usd=result.cost_usd,
         duration_ms=result.duration_ms,
         tools_called=result.tools_called or {},
-        result_summary=(result.error_message or result.output or "")[:500],
+        result_summary=result.error_message or result.output or "",
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,
         cache_read_tokens=result.cache_read_tokens,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -267,6 +268,7 @@ class ContainerReaper:
         jobs_repo: Any = None,
         issues_repo: Any = None,
         database_url: str | None = None,
+        on_job_finished: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self._runtime = runtime
         # Stop and rm of a sandbox still go through the CLI client (#268).
@@ -279,6 +281,9 @@ class ContainerReaper:
         self._jobs_repo = jobs_repo
         self._issues_repo = issues_repo
         self._database_url = database_url
+        # spec 3.5: expiry is terminal, so each expired job is announced. Set
+        # by the lifespan once the executor exists (the reaper is built first).
+        self.on_job_finished = on_job_finished
 
     def start(self) -> None:
         """Start the reaper background task."""
@@ -467,6 +472,11 @@ class ContainerReaper:
                     logger.warning("expire_paused_job_status_race", job_id=job_id)
                     continue
                 logger.info("expiring_paused_job", job_id=job_id)
+                if self.on_job_finished is not None:
+                    try:
+                        await self.on_job_finished(job_id)
+                    except Exception:
+                        logger.warning("job_finished_announce_failed", job_id=job_id, exc_info=True)
                 try:
                     stop_cmd = self._docker.build_stop_cmd(container_name, timeout=5)
                     await self._docker.run_cmd(stop_cmd)

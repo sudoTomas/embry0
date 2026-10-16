@@ -22,6 +22,7 @@ from embry0.execution.profile_isolation import profile_isolation_problems
 from embry0.execution.runtime import AgentRuntime, DockerRuntime
 from embry0.execution.worker_env import compute_worker_env
 from embry0.safety.error_codes import ErrorCode
+from embry0.safety.redaction import register_known_secrets, unregister_known_secrets
 from embry0.services.credentials.resolver import (
     CredentialMissingError,
     CredentialUnavailableError,
@@ -169,6 +170,10 @@ class SandboxManager:
         self._credential_resolver = credential_resolver
         self._forge_credentials: dict[str, ResolvedCredential] = {}
         self._llm_credentials: dict[str, dict[str, ResolvedCredential]] = {}
+        # #39: the bearers each container was enrolled with, registered as
+        # scrub targets until destroy() revokes them. Without the release the
+        # process-wide scrub list grows by one value per sandbox, forever.
+        self._bearers: dict[str, set[str]] = {}
         # #522: a profile's dind_enabled only asks for the shared daemon; this
         # says which repos an admin let have it. None grants nobody — a
         # manager built without it fails closed, never open.
@@ -671,6 +676,9 @@ class SandboxManager:
                 git_push_branches=git_push_branches,
                 job_id=job_id,
             )
+            # spec 3.6: the bearer matches no pattern on its own, so it is an
+            # exact-value scrub target from the moment it exists.
+            self._remember_bearer(container_id, sandbox_token)
         except RuntimeError as exc:
             logger.error("sandbox_enroll_failed_rolling_back", container=name, error=str(exc))
             # Clean any partial enrollment from earlier proxies before rm.
@@ -700,6 +708,7 @@ class SandboxManager:
                     error=str(exc),
                 )
                 await self._proxy_manager.unenroll_sandbox(container_id)
+                self._release_bearers(container_id)
                 try:
                     await self._docker.run_cmd(self._docker.build_rm_cmd(name))
                 except RuntimeError:
@@ -730,6 +739,7 @@ class SandboxManager:
                     error=str(exc),
                 )
                 await self._proxy_manager.unenroll_sandbox(container_id)
+                self._release_bearers(container_id)
                 try:
                     await self._docker.run_cmd(self._docker.build_rm_cmd(name))
                 except RuntimeError:
@@ -858,6 +868,9 @@ class SandboxManager:
                 git_push_branches=git_push_branches,
                 job_id=job_id,
             )
+            # spec 3.6: the bearer matches no pattern on its own, so it is an
+            # exact-value scrub target from the moment it exists.
+            self._remember_bearer(container, sandbox_token)
             if getattr(proxy, "xai_proxy_url", ""):
                 await self._docker.run_cmd(
                     self._docker.build_exec_cmd(container, build_xai_token_write_cmd(sandbox_token)), timeout=10
@@ -961,6 +974,14 @@ class SandboxManager:
             logger.warning("claude_credentials_read_failed", error=str(exc))
             return None
 
+    def _remember_bearer(self, container: str, token: str) -> None:
+        register_known_secrets([token])
+        self._bearers.setdefault(container, set()).add(token)
+
+    def _release_bearers(self, container: str) -> None:
+        """Stop scrubbing the container's bearers: unenrolled, they open nothing."""
+        unregister_known_secrets(self._bearers.pop(container, ()))
+
     async def destroy(self, container: str, timeout: int = 10) -> None:
         """Stop and remove a sandbox container."""
         # Unenroll first so the proxy stops accepting the bearer; if this races
@@ -975,6 +996,7 @@ class SandboxManager:
         # container's address still resolves. Best-effort.
         self._forge_credentials.pop(container, None)
         self._llm_credentials.pop(container, None)
+        self._release_bearers(container)
         was_enforced = container in self._egress_enforced
         self._egress_enforced.discard(container)
         try:

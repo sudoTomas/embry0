@@ -124,6 +124,7 @@ async def test_qa_unexpected_interrupt_still_releases_sandbox_and_volumes():
         database_url="postgresql://test/test",
     )
     ex._jobs.update = AsyncMock()
+    ex._announce_finished = AsyncMock()
     ex._sandbox = MagicMock()
     ex._sandbox.destroy = AsyncMock()
     mgr = MagicMock()

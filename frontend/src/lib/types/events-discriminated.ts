@@ -13,6 +13,12 @@ import type { PipelineGraph } from "./pipelines";
 interface BaseLogEvent {
   type: string;
   timestamp: string;
+  /** Replay cursor stamped by the orchestrator after persist (job_logs.id). Absent on an event whose persist failed. */
+  event_seq?: number;
+  /** The job's previous persisted event_seq. event_seq is job_logs.id, shared by every job, so a
+   * prev_seq above the client's last processed seq is a gap; a larger event_seq alone is not. */
+  prev_seq?: number;
+  job_id?: string;
 }
 
 // ─── Simple content variants ──────────────────────────────────────────────────
@@ -316,6 +322,16 @@ export interface FindingPublishedEvent extends BaseLogEvent {
   category?: string;
 }
 
+/** spec 3.5: the terminal event; the server closes the socket after it. */
+export interface JobFinishedEvent extends BaseLogEvent {
+  type: "job_finished";
+  status: string;
+  error_code: string | null;
+  error_message: string | null;
+  pr_url: string | null;
+  total_cost_usd: number;
+}
+
 // ─── Discriminated union ──────────────────────────────────────────────────────
 
 /** Discriminated union of all event types emitted by the backend WS stream. */
@@ -351,7 +367,8 @@ export type LegacyLogEvent =
   | ProgressEvent
   | ErrorEvent
   | SystemEvent
-  | FindingPublishedEvent;
+  | FindingPublishedEvent
+  | JobFinishedEvent;
 
 /** Back-compat name for the legacy union. */
 export type LogEventDU = LegacyLogEvent;

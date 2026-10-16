@@ -302,7 +302,7 @@ describe("useLiveJobSummary", () => {
     expect(result.current.latestTokensOut).toBe(250);
   });
 
-  it("tracks cost fields and marks isComplete with an immediate flush on complete event", async () => {
+  it("tracks cost fields from a complete event and marks isComplete with an immediate flush on job_finished", async () => {
     const { result } = renderHook(() => useLiveJobSummary("job-abc"));
     await flushConnect();
 
@@ -315,24 +315,44 @@ describe("useLiveJobSummary", () => {
         tokens_in: 1000,
         tokens_out: 400,
         turns: 5,
+        event_seq: 1,
+      });
+      lastCreatedWs!.simulateMessage({
+        type: "job_finished",
+        timestamp: "t2",
+        status: "completed",
+        error_code: null,
+        error_message: null,
+        pr_url: null,
+        total_cost_usd: 0.042,
+        event_seq: 2,
       });
     });
 
-    // complete triggers an immediate flush without needing to advance timers
+    // job_finished triggers an immediate flush without needing to advance timers
     expect(result.current.isComplete).toBe(true);
     expect(result.current.latestCost).toBe(0.042);
     expect(result.current.latestTokensIn).toBe(1000);
     expect(result.current.latestTokensOut).toBe(400);
   });
 
-  it("marks isComplete and flushes pending activity immediately on stream_end", async () => {
+  it("marks isComplete and flushes pending activity immediately on job_finished", async () => {
     const { result } = renderHook(() => useLiveJobSummary("job-abc"));
     await flushConnect();
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t1", message: "Wrapping up" });
-      lastCreatedWs!.simulateMessage({ type: "stream_end", timestamp: "t2" });
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t1", message: "Wrapping up", event_seq: 1 });
+      lastCreatedWs!.simulateMessage({
+        type: "job_finished",
+        timestamp: "t2",
+        status: "completed",
+        error_code: null,
+        error_message: null,
+        pr_url: null,
+        total_cost_usd: 0,
+        event_seq: 2,
+      });
     });
 
     expect(result.current.isComplete).toBe(true);
@@ -438,14 +458,23 @@ describe("useLiveJobSummary", () => {
     expect(result.current.lastActivity).toBe("Opening PR");
   });
 
-  it("does not reconnect after stream_end close (isComplete=true)", async () => {
+  it("does not reconnect after job_finished close (isComplete=true)", async () => {
     renderHook(() => useLiveJobSummary("job-abc"));
     await flushConnect();
     const wsCount = allCreatedWs.length;
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "stream_end", timestamp: "t1" });
+      lastCreatedWs!.simulateMessage({
+        type: "job_finished",
+        timestamp: "t1",
+        status: "completed",
+        error_code: null,
+        error_message: null,
+        pr_url: null,
+        total_cost_usd: 0,
+        event_seq: 1,
+      });
       lastCreatedWs!.simulateClose();
     });
 
@@ -473,6 +502,15 @@ describe("useLiveJobSummary", () => {
       { type: "progress", timestamp: "t2", message: "Finished implementation" },
       { type: "cost_update", timestamp: "t3", cost_usd: 0.5, tokens_in: 200, tokens_out: 100, num_turns: 4 },
       { type: "complete", timestamp: "t4", cost_usd: 0.6 },
+      {
+        type: "job_finished",
+        timestamp: "t5",
+        status: "completed",
+        error_code: null,
+        error_message: null,
+        pr_url: null,
+        total_cost_usd: 0.6,
+      },
     ] as never);
 
     const { result } = renderHook(() => useLiveJobSummary("job-done"));
@@ -483,7 +521,7 @@ describe("useLiveJobSummary", () => {
       await vi.advanceTimersByTimeAsync(1100);
     });
 
-    expect(fetchJobLogEvents).toHaveBeenCalledWith("job-done");
+    expect(fetchJobLogEvents).toHaveBeenCalledWith("job-done", 0);
     expect(result.current.lastActivity).toBe("Finished implementation");
     expect(result.current.currentNode).toBe("developer");
     expect(result.current.latestCost).toBe(0.6);
@@ -527,7 +565,16 @@ describe("useLiveJobSummary", () => {
         tokens_out: 100,
         num_turns: 2,
       });
-      lastCreatedWs!.simulateMessage({ type: "stream_end", timestamp: "t4" });
+      lastCreatedWs!.simulateMessage({
+        type: "job_finished",
+        timestamp: "t4",
+        status: "completed",
+        error_code: null,
+        error_message: null,
+        pr_url: null,
+        total_cost_usd: 0.5,
+        event_seq: 4,
+      });
     });
 
     expect(result.current.isComplete).toBe(true);
