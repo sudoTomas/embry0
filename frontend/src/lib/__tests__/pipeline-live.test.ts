@@ -47,6 +47,13 @@ describe("deriveNodeStates (RAV-1285)", () => {
     expect(states.qa.state).toBe("completed");
   });
 
+  it("a qa_subtask_status event marks the qa node running", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "qa_subtask_status", app: "backend", status: "running" }),
+    ]);
+    expect(states.qa.state).toBe("running");
+  });
+
   it("attributes cost_update to the running node", () => {
     const states = deriveNodeStates(GRAPH, [
       ev({ type: "node_started", node: "developer" }),

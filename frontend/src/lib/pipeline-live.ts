@@ -6,13 +6,17 @@ import { getNodeId } from "@/hooks/useAgentStates";
 // signals are the node_started/node_completed/error events the log stream
 // already carries. This derives NodeStateEvent-shaped entries for the
 // graph view from those, using each graph node's `physical_node` (the
-// LangGraph node whose events represent it). The QA chain is the special
-// case: it streams qa_* events instead of node_started/node_completed.
+// LangGraph node whose events represent it). The QA chain inside an
+// issue-to-pr job is the special case: its one graph node is lit by qa_*
+// events, not node_started/node_completed. A standalone QA job's graph
+// names its own nodes, which emit node events like any other.
 
 const QA_EVENT_TYPES = new Set([
   "qa_apps_resolved",
   "qa_subtask_started",
   "qa_subtask_finished",
+  "qa_subtask_status",
+  // The QA bus's name for the same event; kept until #41 retires it.
   "subtask_status",
 ]);
 
