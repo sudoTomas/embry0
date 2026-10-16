@@ -221,13 +221,16 @@ class _FinishedJobRepo:
 
 
 class _LiveRepo:
-    """A running job whose first replay call injects live events into the bus."""
+    """A job whose first replay call injects live events into the bus (running unless ``status`` says otherwise)."""
 
-    def __init__(self, app, job_id: str, live: list[dict], rows: list[dict] | None = None) -> None:
+    def __init__(
+        self, app, job_id: str, live: list[dict], rows: list[dict] | None = None, status: str = "running"
+    ) -> None:
         self._app = app
         self._job_id = job_id
         self._live = live
         self._rows = rows or []
+        self._status = status
         self._marked = False
 
     async def get_log_events(self, job_id, stream="pipeline", limit=500, since_seq=0):
@@ -239,7 +242,7 @@ class _LiveRepo:
         return [r for r in self._rows if r["id"] > since_seq][:limit]
 
     async def get(self, job_id):
-        return {"job_id": job_id, "status": "running"}
+        return {"job_id": job_id, "status": self._status}
 
 
 def test_ws_closes_with_1000_after_forwarding_job_finished():
@@ -344,3 +347,24 @@ def test_ws_since_seq_replays_only_newer_rows_and_drops_live_duplicates():
                 break
             seen.append(msg["n"])
     assert seen == [4, 5, 6], f"replay must start after since_seq and the live copy of 5 must be dropped: {seen}"
+
+
+def test_ws_closes_after_replay_for_a_job_whose_pr_was_merged():
+    """A job that finished before job_finished existed and whose PR was then merged
+    sits in pr_merged: finished too, so the socket closes after the replay (#37)."""
+    app = _make_ws_app(auth_dev_mode=True)
+    # The marker is live on the bus: a route that waits for live events would send it.
+    app.state.jobs_repo = _LiveRepo(
+        app,
+        "job-merged",
+        live=[{"type": "marker", "event_seq": 10**9}],
+        rows=[{"id": 1, "payload": {"type": "progress", "n": 1}}],
+        status="pr_merged",
+    )
+    client = TestClient(app)
+    with client.websocket_connect("/ws/jobs/job-merged/events") as ws:
+        assert ws.receive_json()["n"] == 1
+        with pytest.raises(WebSocketDisconnect) as exc:
+            msg = ws.receive_json()
+            pytest.fail(f"a pr_merged job must close after replay, but the route stayed live and sent {msg}")
+    assert exc.value.code == 1000

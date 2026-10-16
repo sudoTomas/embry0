@@ -8,6 +8,7 @@ import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from embry0.storage.repositories.jobs import TERMINAL_JOB_STATUSES
+from embry0.storage.schemas import JobStatus
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -15,6 +16,11 @@ router = APIRouter()
 #: RFC 6455 normal closure: the server finished the stream on purpose. The
 #: client treats it as "complete" and does not reconnect (spec 3.5).
 FINISHED_CLOSE_CODE = 1000
+
+#: A job with nothing live left to stream. The post-terminal statuses count:
+#: a job that finished before job_finished existed and whose PR was later
+#: merged or closed has no terminal row to replay, so the row is all there is.
+FINISHED_STATUSES: frozenset[str] = TERMINAL_JOB_STATUSES | {JobStatus.PR_MERGED, JobStatus.PR_CLOSED}
 
 
 def _is_job_finished(event: Any) -> bool:
@@ -28,7 +34,7 @@ async def _job_is_terminal(jobs_repo: Any, job_id: str) -> bool:
         row = await jobs_repo.get(job_id)
     except Exception:
         return False
-    return isinstance(row, dict) and str(row.get("status") or "") in TERMINAL_JOB_STATUSES
+    return isinstance(row, dict) and str(row.get("status") or "") in FINISHED_STATUSES
 
 
 def _passes_filter(event: dict[str, object], wanted: set[str]) -> bool:
