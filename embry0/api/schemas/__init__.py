@@ -119,6 +119,19 @@ class JobContext(BaseModel):
         return self
 
 
+# Job overrides a pr-review job refuses (#30): its model, tools, profile and
+# budget come from the repo's pr_review settings and the deployment's own.
+_PR_REVIEW_REFUSED_FIELDS = (
+    "agent_models",
+    "pipeline_config",
+    "pipeline_template",
+    "sandbox_profile",
+    "max_budget_usd",
+    "execution_mode_override",
+    "auth_mode_override",
+)
+
+
 class JobCreateRequest(BaseModel):
     repo: str | None = Field(default=None, max_length=200)
     # ``task`` is required for the legacy issue-to-pr flow but optional for
@@ -126,7 +139,7 @@ class JobCreateRequest(BaseModel):
     # in the handler when pipeline != 'qa'.
     task: str | None = Field(default=None, max_length=50000)
     issue_number: int | None = None
-    pipeline: Literal["issue-to-pr", "qa", "onboard"] | None = None
+    pipeline: Literal["issue-to-pr", "qa", "onboard", "pr-review"] | None = None
     branch: str | None = Field(default=None, max_length=255)
     qa: QAJobOverrides | None = None
     context: JobContext | None = None
@@ -148,6 +161,9 @@ class JobCreateRequest(BaseModel):
     # EMB-50, onboard pipeline only: skip the boot/ready-check smoke phase
     # (schema validation still gates the store write).
     skip_smoke: bool = False
+    # #30, pr-review pipeline only: the pull request (GitHub) or merge request
+    # iid (GitLab) to review now.
+    number: int | None = Field(default=None, ge=1)
 
     @field_validator("repo")
     @classmethod
@@ -162,9 +178,25 @@ class JobCreateRequest(BaseModel):
         handler synthesizes a placeholder. All other pipelines (issue-to-pr, custom
         templates) still need a task to drive triage / dispatch.
         """
-        if self.pipeline not in ("qa", "onboard"):
+        if self.pipeline not in ("qa", "onboard", "pr-review"):
             if self.task is None or not self.task.strip():
                 raise ValueError("task is required and must be non-empty for non-qa pipelines")
+        return self
+
+    @model_validator(mode="after")
+    def _refuse_overrides_for_pr_review(self) -> "JobCreateRequest":
+        """#30: a review runs on the repo's ``pr_review`` settings and nothing else.
+
+        Refused rather than dropped, so a caller never believes an override
+        took effect (RAV-1058 was overrides accepted and silently ignored).
+        """
+        if self.pipeline != "pr-review":
+            return self
+        sent = [name for name in _PR_REVIEW_REFUSED_FIELDS if getattr(self, name) is not None]
+        if sent:
+            raise ValueError(
+                f"pipeline=pr-review takes no {', '.join(sent)}: the review runs on the repo's pr_review settings"
+            )
         return self
 
     @model_validator(mode="after")
@@ -177,9 +209,11 @@ class JobCreateRequest(BaseModel):
         - both             -> must be git + matching repo, else reject
         - neither          -> context = {none}
         """
-        if self.pipeline in ("qa", "onboard"):
+        if self.pipeline in ("qa", "onboard", "pr-review"):
             if self.repo is None:
                 raise ValueError(f"repo is required for pipeline={self.pipeline}")
+            if self.pipeline == "pr-review" and self.number is None:
+                raise ValueError("number is required for pipeline=pr-review")
             return self
         if self.context is not None and self.repo is not None:
             if self.context.type != ContextType.git or self.context.repo != self.repo:

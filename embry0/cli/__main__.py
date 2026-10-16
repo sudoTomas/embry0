@@ -767,6 +767,41 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_review(args: argparse.Namespace) -> None:
+    """Handle ``embry0 review <repo> <number>`` (#30).
+
+    Thin API client: POST /api/v1/jobs {pipeline: "pr-review"}. Reviews one
+    pull request now, whether or not the repo has review turned on; every
+    other gate (embry0's own pull request, budget) still applies. Prints the
+    job and does not wait: the review lands on the pull request itself.
+    """
+    import httpx
+
+    base = (args.api_url or os.environ.get("EMBRY0_API_URL") or "http://localhost:8200").rstrip("/")
+    key = _resolve_api_key(args.api_key)
+    headers = {"X-Requested-With": "XMLHttpRequest"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    try:
+        resp = httpx.post(
+            f"{base}/api/v1/jobs",
+            json={"pipeline": "pr-review", "repo": args.repo, "number": args.number},
+            headers=headers,
+            timeout=httpx.Timeout(60.0, connect=10.0),
+        )
+    except httpx.ConnectError:
+        _err(f"cannot reach the orchestrator at {base} — is the stack running? (embry0 start)")
+        sys.exit(2)
+    if resp.status_code == 401:
+        _err("orchestrator rejected the request (401) — set EMBRY0_API_KEY or pass --api-key")
+        sys.exit(2)
+    if resp.status_code >= 400:
+        _err(f"review not started ({resp.status_code}): {resp.text[:500]}")
+        sys.exit(2)
+    job_id = resp.json().get("job_id")
+    _info(f"review job {job_id} started for {args.repo}#{args.number}; follow it at {base}/jobs/{job_id}")
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Handle ``embry0 init`` (EMB-49) — one-command new-project bootstrap.
 
@@ -980,6 +1015,22 @@ def main() -> None:
         help="Bearer key (default: EMBRY0_API_KEY / API_KEY env, then ./.env)",
     )
 
+    # review (#30)
+    review_p = subparsers.add_parser(
+        "review",
+        help="Review one pull request (or merge request) now and post the findings on it.",
+    )
+    review_p.add_argument(
+        "repo", help="Repository as registered in embry0 (owner/name, or a GitLab group/project path)"
+    )
+    review_p.add_argument("number", type=int, help="Pull request number (GitLab: the merge request iid)")
+    review_p.add_argument(
+        "--api-url", default=None, help="Orchestrator base URL (default: EMBRY0_API_URL or http://localhost:8200)"
+    )
+    review_p.add_argument(
+        "--api-key", default=None, help="Bearer key (default: EMBRY0_API_KEY / API_KEY env, then ./.env)"
+    )
+
     args = parser.parse_args()
 
     commands = {
@@ -995,6 +1046,7 @@ def main() -> None:
         "credentials": cmd_credentials,
         "build-qa-image": cmd_build_qa_image,
         "onboard": cmd_onboard,
+        "review": cmd_review,
         "init": cmd_init,
     }
     commands[args.command](args)

@@ -327,6 +327,154 @@ async def _run_onboard_workflow(
             cv.unbind_contextvars("trace_id")
 
 
+async def _heavy_tier_model(self: IssueExecutor) -> str:
+    """The deployment's heavy tier (MODEL_HEAVY): the provider_config row, then the env, then the default."""
+    from embry0.orchestration.nodes.agent import load_triage_model_settings
+
+    _default, tiers = await load_triage_model_settings(
+        {"configurable": {"db": getattr(self, "_db", None), "embry0_config": getattr(self, "_config", None)}}
+    )
+    return tiers["model_heavy"]
+
+
+async def _pr_review_model(self: IssueExecutor, review: dict[str, Any], job_id: str) -> str:
+    """The repo's ``pr_review.model`` if it can still run, else the heavy tier.
+
+    The override was checked when it was saved; a model that has since lost
+    its price entry or been disabled would otherwise fail the review at the
+    agent (unpriced) or move it to the medium tier (the resolver's disabled
+    fallback). Either way the review runs on the heavy tier, and the log
+    says why.
+    """
+    from embry0.agents.providers import unpriced_models
+
+    heavy = await _heavy_tier_model(self)
+    wanted = str(review.get("model") or "").strip()
+    if not wanted:
+        return heavy
+    reason = ""
+    if unpriced_models([wanted]):
+        reason = "unpriced"
+    elif wanted in set((await _model_policy_for_precheck(self) or {}).get("disabled_models") or []):
+        reason = "disabled"
+    if reason:
+        logger.warning("pr_review_model_unusable", job_id=job_id, model=wanted, reason=reason, fallback=heavy)
+        return heavy
+    return wanted
+
+
+async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
+    """Background runner for pr-review jobs (#30).
+
+    Mirrors ``_run_onboard_workflow``: the graph's own nodes decide success
+    (the review was posted) or failure (``pr_review.error_code``). Everything
+    the run needs is the job row's ``pipeline_config``, so a relaunch after a
+    restart needs no arguments. The sandbox is destroyed here too, from the
+    last state the graph streamed, in case the graph raised before cleanup.
+
+    ``pipeline_config`` carries the pull request's own text, so none of it
+    reaches the agent's settings: the model is the repo's override or the
+    heavy tier, and ``state.pipeline_config`` (where the agent node reads
+    ``agent_tools``) is never set.
+    """
+    from datetime import UTC, datetime
+
+    import structlog.contextvars as cv
+
+    from embry0.workflows.pr_review.agent_seed import AGENT_TYPE
+
+    trace_id_bound = False
+    job_row: dict[str, Any] | None = None
+    try:
+        job_row = await self._jobs.get(job_id)
+        trace_id = (job_row or {}).get("trace_id")
+        if trace_id:
+            cv.bind_contextvars(trace_id=trace_id)
+            trace_id_bound = True
+    except Exception:
+        logger.warning("trace_id_bind_failed", job_id=job_id, exc_info=True)
+
+    review = dict((job_row or {}).get("pipeline_config") or {})
+    sink: dict[str, Any] = {}
+    try:
+        if await self._refuse_if_over_budget(job_id, actor=(job_row or {}).get("dispatched_by")):
+            return
+        await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
+
+        repo = str(review.get("repo") or (job_row or {}).get("repo") or "")
+        initial_state: dict[str, Any] = {
+            "job_id": job_id,
+            "repo": repo,
+            "task": str((job_row or {}).get("task") or f"Review {repo}"),
+            "current_stage": "init",
+            "agent_outputs": [],
+            "errors": [],
+            "retry_count": 0,
+            "total_cost_usd": 0.0,
+            "budget_overrun_usd": 0.0,
+            "pr_review": review,
+            # The model is explicit, so a deployment-wide default_model does
+            # not move reviews off the heavy tier, and the LLM precheck sees
+            # the provider the review will use.
+            "agent_models_override": {AGENT_TYPE: await _pr_review_model(self, review, job_id)},
+        }
+        if not review.get("from_fork") and review.get("depth") != "read_only":
+            env_vars = await self._load_merged_env_vars(repo, job_id)
+            if env_vars:
+                initial_state["user_env_vars"] = env_vars
+
+        final_state, interrupted, _ = await self._execute_workflow_stream(
+            initial_state, issue_id="", job_id=job_id, pipeline="pr-review", state_sink=sink
+        )
+        if interrupted:
+            logger.warning("pr_review_workflow_unexpected_interrupt", job_id=job_id)
+            await self._jobs.update(
+                job_id,
+                status="failed",
+                error_message="pr-review workflow interrupted unexpectedly",
+                error_code=ErrorCode.UNEXPECTED_INTERRUPT.value,
+                finished_at=datetime.now(UTC),
+            )
+            await self._finish_credential_uses(job_id, error_code=ErrorCode.UNEXPECTED_INTERRUPT.value)
+            return
+
+        rv = (final_state or {}).get("pr_review") or {}
+        if rv.get("final_status") == "completed":
+            summary = str((rv.get("verdict") or {}).get("summary") or "")
+            await self._jobs.update(
+                job_id, status="completed", finished_at=datetime.now(UTC), result_summary=summary[:4000] or None
+            )
+            await self._finish_credential_uses(job_id, error_code=None)
+        else:
+            code = str(rv.get("error_code") or ErrorCode.PR_REVIEW_NO_VERDICT.value)
+            await self._jobs.update(
+                job_id,
+                status="failed",
+                error_message=str(rv.get("failure_summary") or "the pull request review did not complete")[:4000],
+                error_code=code,
+                finished_at=datetime.now(UTC),
+            )
+            await self._finish_credential_uses(job_id, error_code=code)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("pr_review_workflow_crashed", job_id=job_id, error=str(exc), exc_info=True)
+        crash_code = classify_failure(exc=exc, stage="pr-review").value
+        try:
+            await self._jobs.update(
+                job_id,
+                status="failed",
+                error_message=f"pr-review workflow crashed: {exc}"[:4000],
+                error_code=crash_code,
+                finished_at=datetime.now(UTC),
+            )
+            await self._finish_credential_uses(job_id, error_code=crash_code)
+        except StatusTransitionConflict:
+            pass
+    finally:
+        await self._cleanup_sandbox(sink or None, job_id)
+        if trace_id_bound:
+            cv.unbind_contextvars("trace_id")
+
+
 async def _cleanup_sandbox(self: IssueExecutor, final_state: dict[str, Any] | None, job_id: str) -> None:
     """Destroy the sandbox container if present, then the job's volumes.
 
@@ -595,7 +743,7 @@ async def _execute_workflow_stream(
 # it without git_push. Every other pipeline runs IssueToprWorkflow, whose init
 # node creates it with git_push for the developer's branch. Mirrors
 # IssueExecutor._select_workflow.
-_READ_ONLY_PIPELINES = frozenset({"qa", "onboard"})
+_READ_ONLY_PIPELINES = frozenset({"qa", "onboard", "pr-review"})
 
 
 # Facts a job sets before it can pause, which its terminal steps read (#482).
