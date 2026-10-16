@@ -12,7 +12,10 @@ must import nothing outside the standard library and structlog.
 
 Base fields (every event): ``type``, ``timestamp`` (UTC ISO 8601, stamped where
 the event is made). Stamped later by the orchestrator: ``job_id``,
-``event_seq`` (after persist). Correlation (sandbox and node events):
+``event_seq`` (after persist) and ``prev_seq`` (the job's previous persisted
+``event_seq``; ``event_seq`` is ``job_logs.id``, shared by every job, so this is
+how a client tells a gap from another job's interleaved ids). Correlation
+(sandbox and node events):
 ``run_id`` (one agent run), ``node`` (graph node id), ``agent`` (agent type),
 ``parent_tool_use_id`` (subagent events only).
 """
@@ -73,6 +76,9 @@ class BaseEvent(TypedDict):
     timestamp: str
     job_id: NotRequired[str]
     event_seq: NotRequired[int]
+    # stamped by the orchestrator: the job's previous persisted event_seq, so a
+    # client can tell a gap from another job's interleaved ids
+    prev_seq: NotRequired[int]
     run_id: NotRequired[str]
     node: NotRequired[str]
     agent: NotRequired[str]
@@ -321,7 +327,7 @@ EVENT_SCHEMAS: dict[str, type[Any]] = {
     EventType.JOB_FINISHED: JobFinishedEvent,
 }
 
-_BASE_OPTIONAL = ("job_id", "event_seq", "run_id", "node", "agent", "parent_tool_use_id")
+_BASE_OPTIONAL = ("job_id", "event_seq", "prev_seq", "run_id", "node", "agent", "parent_tool_use_id")
 
 
 def _now() -> str:

@@ -97,6 +97,8 @@ export interface ContractBase {
   timestamp: string;
   job_id?: string;
   event_seq?: number;
+  /** The job's previous persisted event_seq; event_seq is job_logs.id, shared by every job. */
+  prev_seq?: number;
   run_id?: string;
   node?: string;
   agent?: string;
@@ -177,7 +179,7 @@ export type ContractEventType = ContractEvent["type"];
 
 type Fields = { required: readonly string[]; optional: readonly string[] };
 
-const BASE_OPTIONAL = ["agent", "event_seq", "job_id", "node", "parent_tool_use_id", "run_id"] as const;
+const BASE_OPTIONAL = ["agent", "event_seq", "job_id", "node", "parent_tool_use_id", "prev_seq", "run_id"] as const;
 const TRUNC = ["original_length", "truncated"] as const;
 /** A sorted copy that keeps the members literal. `sorted([...BASE_OPTIONAL, "x"])` widens the
  *  fresh literal to string, which makes RowKeys<T> string and both guards below vacuous. */

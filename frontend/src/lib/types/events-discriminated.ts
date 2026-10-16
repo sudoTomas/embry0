@@ -15,6 +15,9 @@ interface BaseLogEvent {
   timestamp: string;
   /** Replay cursor stamped by the orchestrator after persist (job_logs.id). Absent on an event whose persist failed. */
   event_seq?: number;
+  /** The job's previous persisted event_seq. event_seq is job_logs.id, shared by every job, so a
+   * prev_seq above the client's last processed seq is a gap; a larger event_seq alone is not. */
+  prev_seq?: number;
   job_id?: string;
 }
 

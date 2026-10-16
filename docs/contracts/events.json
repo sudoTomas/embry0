@@ -6,6 +6,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id",
       "suggested_answer"
     ],
@@ -26,6 +27,7 @@
       "node",
       "original_length",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id",
       "truncated"
     ],
@@ -53,6 +55,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -68,6 +71,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -85,6 +89,7 @@
       "node",
       "parent_tool_use_id",
       "pre_tokens",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -99,6 +104,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -122,6 +128,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id",
       "tool_name"
     ],
@@ -138,6 +145,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "questions",
       "reason",
       "run_id",
@@ -155,6 +163,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -171,6 +180,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -195,6 +205,7 @@
       "node",
       "ok",
       "parent_tool_use_id",
+      "prev_seq",
       "round",
       "run_id",
       "template"
@@ -212,6 +223,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "round",
       "run_id"
     ],
@@ -228,6 +240,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -243,6 +256,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -260,6 +274,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -275,6 +290,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -291,6 +307,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -307,6 +324,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -324,6 +342,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -343,6 +362,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -360,6 +380,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -376,6 +397,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -392,6 +414,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -408,6 +431,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -424,6 +448,7 @@
       "node",
       "original_length",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id",
       "truncated"
     ],
@@ -441,6 +466,7 @@
       "node",
       "original_length",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id",
       "truncated"
     ],
@@ -457,6 +483,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -476,6 +503,7 @@
       "node",
       "original_length",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id",
       "truncated"
     ],
@@ -494,6 +522,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -510,6 +539,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -530,6 +560,7 @@
       "job_id",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [
@@ -548,6 +579,7 @@
       "mode",
       "node",
       "parent_tool_use_id",
+      "prev_seq",
       "run_id"
     ],
     "required": [

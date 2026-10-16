@@ -10,7 +10,7 @@ from prometheus_client import CollectorRegistry
 from embry0.api.events.bus import EventBus
 from embry0.metrics import LoopMetrics
 from embry0.safety.redaction import REDACTED, register_known_secrets
-from embry0.services.job_events import broadcast_job_event, emit_job_finished
+from embry0.services.job_events import broadcast_job_event, emit_job_finished, reset_sequence_memory
 
 
 def _jobs(*, seq: int | None = 7, row: dict | None = None, persist_error: Exception | None = None) -> MagicMock:
@@ -22,6 +22,13 @@ def _jobs(*, seq: int | None = 7, row: dict | None = None, persist_error: Except
     jobs.increment_cost = AsyncMock()
     jobs.get = AsyncMock(return_value=row)
     return jobs
+
+
+@pytest.fixture(autouse=True)
+def _forget_sequences():
+    reset_sequence_memory()
+    yield
+    reset_sequence_memory()
 
 
 @pytest.mark.asyncio
@@ -209,3 +216,84 @@ async def test_a_scrub_failure_drops_the_event_and_logs_only_its_type(monkeypatc
     logged = capsys.readouterr().out
     assert "event_redaction_failed" in logged and "text" in logged
     assert "the payload" not in logged, "the log line carries the event type only"
+
+
+# ---- spec 3.5: prev_seq, so a client can tell a gap from an interleave --------
+
+
+def _seq_jobs(*seqs: int | Exception) -> MagicMock:
+    """append_log_event answers each call from ``seqs`` in order (an Exception is raised)."""
+    jobs = MagicMock()
+    jobs.append_log_event = AsyncMock(side_effect=list(seqs))
+    jobs.increment_cost = AsyncMock()
+    return jobs
+
+
+async def _published(jobs: MagicMock, job_id: str, event: dict) -> dict:
+    bus = EventBus()
+    queue = await bus.subscribe(job_id)
+    out = await broadcast_job_event(jobs, bus, None, job_id, event)
+    assert out is not None
+    assert queue.get_nowait() == out
+    return out
+
+
+@pytest.mark.asyncio
+async def test_the_second_event_of_a_job_carries_the_first_ones_seq_as_prev_seq() -> None:
+    jobs = _seq_jobs(100, 107)
+    first = await _published(jobs, "job-1", {"type": "progress", "message": "a"})
+    second = await _published(jobs, "job-1", {"type": "progress", "message": "b"})
+    assert "prev_seq" not in first, "a job's first event has no previous persisted seq"
+    assert second.get("prev_seq") == 100, (
+        f"prev_seq must be the job's previous persisted event_seq (100), got {second.get('prev_seq')!r}"
+    )
+    persisted = jobs.append_log_event.await_args.args[1]
+    assert persisted.get("prev_seq") == 100, "prev_seq is stamped before the persist, so a replay carries it too"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_persist_does_not_advance_prev_seq() -> None:
+    jobs = _seq_jobs(100, RuntimeError("db down"), 109)
+    await _published(jobs, "job-1", {"type": "progress", "message": "a"})
+    lost = await _published(jobs, "job-1", {"type": "progress", "message": "b"})
+    assert lost.get("prev_seq") == 100 and "event_seq" not in lost
+    third = await _published(jobs, "job-1", {"type": "progress", "message": "c"})
+    assert third.get("prev_seq") == 100, (
+        f"an event that was never persisted cannot be the previous persisted one; got {third.get('prev_seq')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_job_finished_forgets_the_job() -> None:
+    import embry0.services.job_events as job_events
+
+    jobs = _seq_jobs(100, 101, 102)
+    await _published(jobs, "job-1", {"type": "progress", "message": "a"})
+    finished = await _published(
+        jobs,
+        "job-1",
+        {
+            "type": "job_finished",
+            "status": "completed",
+            "error_code": None,
+            "error_message": None,
+            "pr_url": None,
+            "total_cost_usd": 0.0,
+        },
+    )
+    assert finished.get("prev_seq") == 100, "the terminal event itself still points at its predecessor"
+    assert "job-1" not in job_events._LAST_SEQ, "the map is bounded by live jobs: job_finished must drop the entry"
+    late = await _published(jobs, "job-1", {"type": "job_failed", "kind": "late", "message": "x"})
+    assert "prev_seq" not in late
+
+
+@pytest.mark.asyncio
+async def test_another_jobs_events_do_not_move_this_jobs_prev_seq() -> None:
+    jobs = _seq_jobs(100, 101, 102, 103)
+    await _published(jobs, "job-1", {"type": "progress", "message": "a"})
+    await _published(jobs, "job-2", {"type": "progress", "message": "b"})
+    await _published(jobs, "job-2", {"type": "progress", "message": "c"})
+    out = await _published(jobs, "job-1", {"type": "progress", "message": "d"})
+    assert out.get("prev_seq") == 100, (
+        f"job-1's previous persisted seq is 100 whatever job-2 wrote in between; got {out.get('prev_seq')!r}"
+    )

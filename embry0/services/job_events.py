@@ -1,8 +1,9 @@
 """Job events: the one path from a producer to job_logs and the WebSocket bus.
 
-``broadcast_job_event`` stamps ``job_id`` and ``timestamp``, persists the
-event (the row id becomes ``event_seq``), adds a ``cost_update`` delta to
-``jobs.total_cost_usd`` and publishes to the bus. ``IssueExecutor``
+``broadcast_job_event`` stamps ``job_id``, ``timestamp`` and ``prev_seq`` (the
+job's previous persisted ``event_seq``, remembered per live job in this
+process), persists the event (the row id becomes ``event_seq``), adds a
+``cost_update`` delta to ``jobs.total_cost_usd`` and publishes to the bus. ``IssueExecutor``
 delegates its ``_broadcast_event`` here; the paused-job reaper and the boot
 orphan sweep, which have no executor, call it directly (they pass
 ``bus=None`` when nothing can be subscribed yet, so the event is persisted
@@ -30,6 +31,18 @@ from embry0.storage.repositories.jobs import TERMINAL_JOB_STATUSES
 
 logger = structlog.get_logger(__name__)
 
+#: The last persisted ``event_seq`` of every live job. ``event_seq`` is
+#: ``job_logs.id``, shared by every job, so consecutive events of one job are
+#: not contiguous; stamping the previous one as ``prev_seq`` is what lets a
+#: client tell a gap from another job's interleaved ids (spec 3.5). An entry
+#: is dropped once the job's ``job_finished`` has gone out.
+_LAST_SEQ: dict[str, int] = {}
+
+
+def reset_sequence_memory() -> None:
+    """Forget every job's last persisted seq (tests)."""
+    _LAST_SEQ.clear()
+
 
 class EventPublisher(Protocol):
     async def publish(self, job_id: str, event: dict[str, Any]) -> None: ...
@@ -49,10 +62,14 @@ async def broadcast_job_event(
     event: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Stamp, persist, count and publish one event. Returns the event as
-    published (with ``event_seq`` when the persist succeeded)."""
+    published (with ``event_seq`` when the persist succeeded, and ``prev_seq``
+    when this job had an earlier event persisted by this process)."""
     event = {**event, "job_id": job_id}
     if "timestamp" not in event:
         event = {**event, "timestamp": datetime.now(UTC).isoformat()}
+    prev = _LAST_SEQ.get(job_id)
+    if prev is not None:
+        event = {**event, "prev_seq": prev}
 
     # spec 3.6: redact before persisting and before publishing, every string
     # value, recursively. spec 3.9: a scrubber that raises drops the event;
@@ -74,6 +91,7 @@ async def broadcast_job_event(
             metrics.job_event_persist_failed()
     if seq is not None:
         event = {**event, "event_seq": seq}
+        _LAST_SEQ[job_id] = seq
 
     # cost_update carries the run's delta; it is the only event that moves
     # jobs.total_cost_usd (spec 3.3: turn_usage is an estimate, never added).
@@ -85,6 +103,8 @@ async def broadcast_job_event(
 
     if bus is not None:
         await bus.publish(job_id, event)
+    if event.get("type") == "job_finished":
+        _LAST_SEQ.pop(job_id, None)  # the job is over: keep the map bounded by live jobs
     return event
 
 
