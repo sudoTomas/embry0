@@ -7,11 +7,16 @@ the gates apply in one order everywhere:
 1. the repo is registered and its ``pr_review.enabled`` is on (the CLI skips
    the setting, never the registration);
 2. the pull request is not embry0's own;
-3. a comment's author has write access;
+3. the author is trusted: a comment's author has write access; for a ready
+   event under ``pr_review.ready_authors: "team"`` (the default), so does
+   the pull request's author (``author_not_on_team`` otherwise). The CLI and
+   ``POST /jobs`` are operator actions and skip this gate;
 4. the trigger key is new (``pr_reviews.trigger_key`` is UNIQUE);
 5. the budget gate allows the actor.
 
-A refusal is logged with its reason and posts nothing.
+A refusal is logged with its reason and posts nothing. Gate 3 runs before
+gates 4 and 5, so a refused author claims no key and never reaches the
+budget gate.
 """
 
 from __future__ import annotations
@@ -198,9 +203,13 @@ class PrReviewDispatcher:
         if await self._is_own(pr):  # gate 2
             return self._refuse("own_pull_request", **ids)
         if command is not None:  # gate 3
-            trusted, reason = await self._author_trusted(command)
+            trusted, reason = await self._commenter_trusted(command)
             if not trusted:
                 return self._refuse(reason, **ids, commenter=command.author)
+        elif trigger.trigger == "ready" and settings.ready_authors == "team":  # gate 3
+            trusted, reason = await self._ready_author_trusted(trigger)
+            if not trusted:
+                return self._refuse("author_not_on_team", **ids, author=pr.author, detail=reason)
         if await self._reviews.exists(trigger.trigger_key):  # gate 4
             return self._refuse("duplicate", **ids)
         # The runner re-checks the budget against the job's dispatched_by, so
@@ -236,20 +245,41 @@ class PrReviewDispatcher:
                 return True
         return False
 
-    async def _author_trusted(self, command: ReviewCommand) -> tuple[bool, str]:
+    def _github_roles(self) -> set[str]:
+        return parse_author_roles(getattr(self._config, "comment_dispatch_author_roles", None) or DEFAULT_AUTHOR_ROLES)
+
+    async def _commenter_trusted(self, command: ReviewCommand) -> tuple[bool, str]:
         if command.forge == "github":
-            roles = parse_author_roles(
-                getattr(self._config, "comment_dispatch_author_roles", None) or DEFAULT_AUTHOR_ROLES
-            )
-            return check_comment_author(dict(command.github_comment or {}), roles)
+            return check_comment_author(dict(command.github_comment or {}), self._github_roles())
+        return await self._gitlab_developer(command.repo, command.gitlab_user_id)
+
+    async def _ready_author_trusted(self, trigger: ReviewTrigger) -> tuple[bool, str]:
+        """Whether a ready pull request's author is on the team: write access, and not a bot.
+
+        GitHub's pull request object carries the same ``user`` and
+        ``author_association`` a comment does, so the comment gate's check
+        applies unchanged. GitLab is asked about the merge request's author,
+        not the user who marked it ready.
+        """
+        pr = trigger.pr
+        if pr.forge == "github":
+            author = {
+                "user": {"login": pr.author, "type": trigger.author_type},
+                "author_association": trigger.author_association,
+            }
+            return check_comment_author(author, self._github_roles())
+        return await self._gitlab_developer(pr.repo, trigger.gitlab_author_id)
+
+    async def _gitlab_developer(self, repo: str, user_id: int | None) -> tuple[bool, str]:
+        """Developer access or better. Anything unknown — no client, no id, a failed lookup — is a no."""
         if self._gitlab is None:
             return False, "gitlab_not_configured"
-        if command.gitlab_user_id is None:
+        if user_id is None:
             return False, "author_unknown"
         try:
-            level = await self._gitlab.get_member_access_level(command.repo, command.gitlab_user_id)
+            level = await self._gitlab.get_member_access_level(repo, user_id)
         except Exception:
-            logger.warning("pr_review_member_lookup_failed", repo=command.repo, exc_info=True)
+            logger.warning("pr_review_member_lookup_failed", repo=repo, exc_info=True)
             level = None
         if level is None or level < GITLAB_DEVELOPER_ACCESS:
             return False, f"access_level_{level}_below_developer"

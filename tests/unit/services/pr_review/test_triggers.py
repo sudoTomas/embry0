@@ -183,6 +183,31 @@ def test_gitlab_fork_is_detected_from_project_ids() -> None:
     assert trigger is not None and trigger.pr.from_fork is True
 
 
+def test_a_github_ready_trigger_carries_the_authors_standing() -> None:
+    payload = github_review_pull_request(author="dependabot[bot]", association="MEMBER", author_type="Bot")
+    trigger = ready_trigger_from_github(payload, "ready_for_review")
+    assert trigger is not None
+    standing = (getattr(trigger, "author_association", None), getattr(trigger, "author_type", None))
+    assert standing == ("MEMBER", "Bot"), (
+        "the author trust gate needs the pull request's author_association and user.type"
+    )
+
+
+def test_a_gitlab_ready_trigger_names_the_author_not_the_readying_user() -> None:
+    trigger = ready_trigger_from_gitlab(gitlab_merge_request(user_id=42, author_id=51))
+    assert trigger is not None
+    assert getattr(trigger, "gitlab_author_id", None) == 51, (
+        f"gitlab_author_id is {getattr(trigger, 'gitlab_author_id', 'missing')}: "
+        "it must be object_attributes.author_id, not the user who marked it ready"
+    )
+
+
+def test_a_gitlab_ready_trigger_without_an_author_id_names_nobody() -> None:
+    trigger = ready_trigger_from_gitlab(gitlab_merge_request(author_id=None))
+    assert trigger is not None
+    assert getattr(trigger, "gitlab_author_id", "missing") is None, "a hook without author_id must name no author"
+
+
 def test_a_gitlab_issue_event_is_not_a_review() -> None:
     assert ready_trigger_from_gitlab(gitlab_issue()) is None
 

@@ -2623,7 +2623,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         """
         ALTER TABLE repo_preferences ADD COLUMN IF NOT EXISTS pr_review JSONB;
         COMMENT ON COLUMN repo_preferences.pr_review IS
-            '#30: pull request review settings {"enabled": bool, "depth": "full"|"targeted"|"read_only", "model": str|null}. NULL = never configured, which means off.';
+            '#30: pull request review settings {"enabled": bool, "depth": "full"|"targeted"|"read_only", "model": str|null, "ready_authors": "team"|"anyone"}. NULL = never configured, which means off; a missing ready_authors means team.';
 
         CREATE TABLE IF NOT EXISTS pr_reviews (
             id          TEXT PRIMARY KEY,

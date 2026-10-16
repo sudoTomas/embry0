@@ -119,12 +119,15 @@ class _GitHub:
 
 
 class _GitLab:
-    def __init__(self, level: int | None) -> None:
+    def __init__(self, level: int | None, *, fail: bool = False) -> None:
         self.level = level
+        self.fail = fail
         self.asked: list[tuple[str, int]] = []
 
     async def get_member_access_level(self, repo: str, user_id: int) -> int | None:
         self.asked.append((repo, user_id))
+        if self.fail:
+            raise RuntimeError("GitLab answered 500")
         return self.level
 
     async def get_merge_request(self, repo: str, iid: int) -> dict[str, Any] | None:
@@ -223,6 +226,119 @@ async def test_a_follow_up_or_an_earlier_review_does_not_make_it_ours() -> None:
     dispatcher, executor, _ = _dispatcher(jobs=jobs)
     result = await dispatcher.handle_github_pull_request(github_review_pull_request(), "ready_for_review")
     assert result is not None and result.dispatched, f"refused as {result and result.reason}"
+
+
+# ---- gate 3: who may start a review by readying a pull request -------------
+
+ANYONE = {"pr_review": {"enabled": True, "depth": "full", "model": None, "ready_authors": "anyone"}}
+
+
+def _assert_not_on_team(result: Any, executor: _Executor, reviews: _Reviews, what: str) -> None:
+    assert result is not None and (result.dispatched, result.reason) == (False, "author_not_on_team"), (
+        f"{what}: expected author_not_on_team, got {result and (result.dispatched, result.reason)}"
+    )
+    assert reviews.rows == {}, f"{what}: a refused author must not claim the trigger key"
+    assert executor.asked_actor == [], f"{what}: the author gate runs before the budget gate"
+    assert executor.started == []
+
+
+@pytest.mark.parametrize("association", ["CONTRIBUTOR", "NONE", "FIRST_TIME_CONTRIBUTOR"])
+async def test_team_mode_skips_a_github_author_outside_the_team(association: str) -> None:
+    dispatcher, executor, reviews = _dispatcher()
+    payload = github_review_pull_request(association=association)
+    result = await dispatcher.handle_github_pull_request(payload, "ready_for_review")
+    _assert_not_on_team(result, executor, reviews, association)
+
+
+@pytest.mark.parametrize(
+    ("login", "author_type"), [("dependabot[bot]", "User"), ("dependabot[bot]", "Bot"), ("ci-app", "Bot")]
+)
+async def test_team_mode_skips_a_bot_author_whatever_its_association(login: str, author_type: str) -> None:
+    dispatcher, executor, reviews = _dispatcher()
+    payload = github_review_pull_request(author=login, association="MEMBER", author_type=author_type)
+    result = await dispatcher.handle_github_pull_request(payload, "ready_for_review")
+    _assert_not_on_team(result, executor, reviews, f"{login} ({author_type})")
+
+
+async def test_team_mode_skips_an_opened_pull_request_from_outside_the_team() -> None:
+    dispatcher, executor, reviews = _dispatcher()
+    payload = github_review_pull_request(action="opened", association="NONE")
+    result = await dispatcher.handle_github_pull_request(payload, "opened")
+    _assert_not_on_team(result, executor, reviews, "opened by NONE")
+
+
+async def test_team_mode_reviews_a_collaborators_pull_request() -> None:
+    dispatcher, executor, _ = _dispatcher()
+    result = await dispatcher.handle_github_pull_request(
+        github_review_pull_request(association="COLLABORATOR"), "ready_for_review"
+    )
+    assert result is not None and result.dispatched, f"a COLLABORATOR was refused as {result and result.reason}"
+
+
+async def test_settings_without_ready_authors_review_only_the_team() -> None:
+    legacy = {"acme/widgets": {"pr_review": {"enabled": True, "depth": "full", "model": None}}}
+    dispatcher, executor, reviews = _dispatcher(prefs=legacy)
+    result = await dispatcher.handle_github_pull_request(
+        github_review_pull_request(association="NONE"), "ready_for_review"
+    )
+    _assert_not_on_team(result, executor, reviews, "settings saved without ready_authors")
+
+
+@pytest.mark.parametrize(("level", "fail"), [(20, False), (10, False), (None, False), (None, True)])
+async def test_team_mode_skips_a_gitlab_author_below_developer(level: int | None, fail: bool) -> None:
+    gitlab = _GitLab(level, fail=fail)
+    dispatcher, executor, reviews = _dispatcher(gitlab=gitlab)
+    result = await dispatcher.handle_gitlab_merge_request(gitlab_merge_request())
+    _assert_not_on_team(result, executor, reviews, f"GitLab access {level}, lookup failed: {fail}")
+
+
+async def test_team_mode_fails_closed_without_a_gitlab_client_or_an_author_id() -> None:
+    for gitlab, payload, what in (
+        (None, gitlab_merge_request(), "no GitLab client"),
+        (_GitLab(40), gitlab_merge_request(author_id=None), "no author_id"),
+    ):
+        dispatcher, executor, reviews = _dispatcher(gitlab=gitlab)
+        _assert_not_on_team(await dispatcher.handle_gitlab_merge_request(payload), executor, reviews, what)
+
+
+async def test_team_mode_checks_the_gitlab_merge_request_author_not_whoever_readied_it() -> None:
+    gitlab = _GitLab(30)
+    dispatcher, executor, _ = _dispatcher(gitlab=gitlab)
+    result = await dispatcher.handle_gitlab_merge_request(gitlab_merge_request(user_id=42, author_id=51))
+    assert result is not None and result.dispatched, f"a Developer author was refused as {result and result.reason}"
+    assert gitlab.asked == [("acme/products/web", 51)], (
+        f"looked up {gitlab.asked}: the gate must ask about the author (51), not the readying user (42)"
+    )
+
+
+async def test_anyone_mode_reviews_an_outsider_and_a_bot() -> None:
+    prefs = {"acme/widgets": ANYONE, "acme/products/web": ANYONE}
+    for payload, what in (
+        (github_review_pull_request(association="FIRST_TIME_CONTRIBUTOR"), "a first-time contributor"),
+        (github_review_pull_request(author="dependabot[bot]", author_type="Bot", head_sha="b" * 40), "a bot"),
+    ):
+        dispatcher, executor, _ = _dispatcher(prefs=prefs)
+        result = await dispatcher.handle_github_pull_request(payload, "ready_for_review")
+        assert result is not None and result.dispatched, f"anyone mode refused {what} as {result and result.reason}"
+    gitlab = _GitLab(10)
+    dispatcher, executor, _ = _dispatcher(prefs=prefs, gitlab=gitlab)
+    result = await dispatcher.handle_gitlab_merge_request(gitlab_merge_request())
+    assert result is not None and result.dispatched, f"anyone mode refused a Guest as {result and result.reason}"
+    assert gitlab.asked == [], "anyone mode must not look the author up"
+
+
+async def test_a_command_is_not_held_to_the_ready_author_gate() -> None:
+    # The pull request's author is an outsider; a collaborator asks for the review.
+    dispatcher, executor, _ = _dispatcher(github=_GitHub(_pull(author_association="NONE")))
+    payload = github_issue_comment(body="/embry0 review", repo="acme/widgets", number=7, on_pull_request=True)
+    result = await dispatcher.handle_github_comment(payload)
+    assert result is not None and result.dispatched, f"the command was refused as {result and result.reason}"
+
+
+async def test_a_manual_review_is_not_held_to_the_ready_author_gate() -> None:
+    dispatcher, executor, _ = _dispatcher(github=_GitHub(_pull(author_association="NONE")))
+    result = await dispatcher.dispatch_manual(repo="acme/widgets", number=7, actor="ops@example.com")
+    assert result.dispatched, f"a manual review was refused as {result.reason}"
 
 
 # ---- gate 3 ----------------------------------------------------------------
@@ -405,7 +521,7 @@ async def test_a_fork_is_reviewed_read_only_whatever_the_depth() -> None:
 
 
 async def test_a_gitlab_fork_is_reviewed_read_only() -> None:
-    dispatcher, executor, _ = _dispatcher()
+    dispatcher, executor, _ = _dispatcher(gitlab=_GitLab(30))
     await dispatcher.handle_gitlab_merge_request(gitlab_merge_request(source_project_id=9))
     review = executor.started[0]["review"]
     assert (review["forge"], review["from_fork"], review["depth"]) == ("gitlab", True, "read_only")

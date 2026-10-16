@@ -381,13 +381,24 @@ async def test_put_pr_review_stores_the_whole_settings_object(app):
         )
     assert resp.status_code == 200, resp.text
     kwargs = app.state.repo_preferences_repo.upsert.call_args.kwargs
-    assert kwargs == {"pr_review": {"enabled": True, "depth": "full", "model": None}}, (
+    assert kwargs == {"pr_review": {"enabled": True, "depth": "full", "model": None, "ready_authors": "team"}}, (
         "a partial pr_review must be stored whole, and nothing else may be written"
     )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body", [{"depth": "deep"}, {"enabled": "yes"}, {"extra": 1}])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"depth": "deep"},
+        {"enabled": "yes"},
+        {"extra": 1},
+        {"ready_authors": "everyone"},
+        {"ready_authors": "Team"},
+        {"ready_authors": None},
+        {"ready_authors": 1},
+    ],
+)
 async def test_put_pr_review_rejects_a_malformed_object(app, body):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -429,3 +440,38 @@ async def test_a_blank_pr_review_model_means_the_heavy_tier(app):
         )
     assert resp.status_code == 200, resp.text
     assert app.state.repo_preferences_repo.upsert.call_args.kwargs["pr_review"]["model"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ready_authors", ["team", "anyone"])
+async def test_put_pr_review_stores_who_triggers_automatic_reviews(app, ready_authors):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": {"enabled": True, "ready_authors": ready_authors}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200, resp.text
+    stored = app.state.repo_preferences_repo.upsert.call_args.kwargs["pr_review"]
+    assert stored["ready_authors"] == ready_authors, f"stored {stored}"
+    assert resp.json()["pr_review"]["ready_authors"] == ready_authors
+
+
+@pytest.mark.asyncio
+async def test_get_returns_the_team_default_saved_with_the_settings(app):
+    # What a PUT without ready_authors stores is what a GET then reads back.
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": {"enabled": True}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        saved = await app.state.repo_preferences_repo.upsert.side_effect(
+            "acme/widgets", **app.state.repo_preferences_repo.upsert.call_args.kwargs
+        )
+        app.state.repo_preferences_repo.get = AsyncMock(return_value=saved)
+        resp = await client.get("/api/v1/repos/acme/widgets/preferences")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["pr_review"].get("ready_authors") == "team", f"GET returned {resp.json()['pr_review']}"

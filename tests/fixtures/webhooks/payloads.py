@@ -105,11 +105,15 @@ def github_review_pull_request(
     draft: bool | None = False,
     author: str = "octocat",
     state: str = "open",
+    association: str = "COLLABORATOR",
+    author_type: str = "User",
 ) -> dict[str, Any]:
     """A `pull_request` delivery with every field the reviewer reads (#30).
 
     ``head_repo=None`` is a fork whose repository was deleted: GitHub sends
-    ``head.repo: null``. ``draft=None`` leaves the key out.
+    ``head.repo: null``. ``draft=None`` leaves the key out. ``association``
+    is the pull request's ``author_association``; ``author_type`` is
+    GitHub's ``user.type`` (``"Bot"`` for an app).
     """
     pr: dict[str, Any] = {
         "number": number,
@@ -117,7 +121,8 @@ def github_review_pull_request(
         "title": "Add the login form",
         "body": "Adds the login form and its validation.",
         "state": state,
-        "user": {"login": author},
+        "user": {"login": author, "type": author_type},
+        "author_association": association,
         "head": {"ref": head_ref, "sha": head_sha, "repo": {"full_name": head_repo} if head_repo else None},
         "base": {"ref": base_ref, "sha": "b" * 40, "repo": {"full_name": repo}},
         "updated_at": "2026-10-15T10:00:00Z",
@@ -199,12 +204,17 @@ def gitlab_merge_request(
     sha: str = "c" * 40,
     state: str = "opened",
     username: str = "jdoe",
+    user_id: int = 42,
+    author_id: int | None = 51,
 ) -> dict[str, Any]:
     """GitLab Merge Request Hook (#30).
 
     ``legacy_wip`` spells the draft flag ``work_in_progress``, as GitLab did
     before ``draft`` existed, in ``object_attributes`` and in ``changes``.
-    ``previous_draft=None`` sends no ``changes`` delta at all.
+    ``previous_draft=None`` sends no ``changes`` delta at all. ``user`` is
+    whoever opened the merge request or marked it ready; the author is named
+    only by ``object_attributes.author_id``, so the two ids differ by default.
+    ``author_id=None`` leaves the key out.
     """
     key = "work_in_progress" if legacy_wip else "draft"
     attrs: dict[str, Any] = {
@@ -220,12 +230,14 @@ def gitlab_merge_request(
         "target_project_id": target_project_id,
         "last_commit": {"id": sha},
     }
+    if author_id is not None:
+        attrs["author_id"] = author_id
     if draft is not None:
         attrs[key] = draft
     payload: dict[str, Any] = {
         "object_kind": "merge_request",
         "event_type": "merge_request",
-        "user": {"id": 42, "username": username},
+        "user": {"id": user_id, "username": username},
         "project": {"id": target_project_id, "path_with_namespace": project_path},
         "object_attributes": attrs,
     }

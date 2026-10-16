@@ -62,6 +62,12 @@ class ReviewTrigger:
     trigger: TriggerKind
     trigger_key: str
     actor: str  # whom the budget gate charges
+    # The author's standing, for the ready-event author gate. GitHub: the
+    # pull request's ``author_association`` and ``user.type``. GitLab: the
+    # merge request's ``author_id`` (the hook names the author by id only).
+    author_association: str = ""
+    author_type: str = ""
+    gitlab_author_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -223,6 +229,8 @@ def ready_trigger_from_github(payload: Mapping[str, Any], action: str) -> Review
         trigger="ready",
         trigger_key=ready_key(repo, pr.number, pr.head_sha),
         actor=pr.author or actor_of(payload, "github"),
+        author_association=_str(pr_obj.get("author_association")),
+        author_type=_str(_map(pr_obj.get("user")).get("type")),
     )
 
 
@@ -252,6 +260,7 @@ def ready_trigger_from_gitlab(payload: Mapping[str, Any]) -> ReviewTrigger | Non
         trigger="ready",
         trigger_key=ready_key(repo, pr.number, pr.head_sha),
         actor=actor_of(payload, "gitlab") or pr.author,
+        gitlab_author_id=_int(attrs.get("author_id")),
     )
 
 

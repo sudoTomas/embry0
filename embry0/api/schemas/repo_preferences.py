@@ -65,6 +65,9 @@ class PrReviewSettings(BaseModel):
     depth: Literal["full", "targeted", "read_only"] = "full"
     # None = the deployment's heavy tier (MODEL_HEAVY).
     model: str | None = Field(default=None, max_length=200)
+    # Whose ready pull requests start a review on their own: "team" (write
+    # access, no bots) or "anyone". `/embry0 review` keeps its own check.
+    ready_authors: Literal["team", "anyone"] = "team"
 
     @field_validator("model")
     @classmethod
