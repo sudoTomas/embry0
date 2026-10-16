@@ -295,3 +295,10 @@ def test_a_quiet_tick_is_a_verdict_but_not_an_analysis() -> None:
     assert get("embry0_watcher_last_verdict_tick_timestamp_seconds", {"stack": ""}) == quiet.timestamp()
     assert get("embry0_watcher_last_analysed_tick_timestamp_seconds", {"stack": ""}) == first.timestamp()
     assert get("embry0_watcher_last_tick_timestamp_seconds", {"stack": ""}) == later.timestamp()
+
+
+def test_job_event_persist_failed_counts() -> None:
+    m, registry = _metrics()
+    m.job_event_persist_failed()
+    m.job_event_persist_failed()
+    assert registry.get_sample_value("embry0_job_events_persist_failed_total") == 2

@@ -89,7 +89,10 @@ async def test_broadcast_event_stamps_event_seq_from_persist():
 async def test_broadcast_event_no_event_seq_when_persist_fails():
     """If append_log_event raises, the event still reaches subscribers but
     carries no event_seq stamp (nothing to stamp since nothing was persisted)."""
+    from prometheus_client import CollectorRegistry
+
     from embry0.api.events.bus import EventBus
+    from embry0.metrics import LoopMetrics
     from embry0.services.issue_executor import IssueExecutor
 
     jobs = MagicMock()
@@ -99,15 +102,20 @@ async def test_broadcast_event_no_event_seq_when_persist_fails():
     bus = EventBus()
     queue = await bus.subscribe("job-1")
 
+    registry = CollectorRegistry()
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._jobs = jobs
     executor._event_bus = bus
+    executor._metrics = LoopMetrics(registry)
 
     await executor._broadcast_event("job-1", {"type": "progress", "message": "hi"})
 
     delivered = queue.get_nowait()
     assert "event_seq" not in delivered
     assert delivered["type"] == "progress"
+    assert registry.get_sample_value("embry0_job_events_persist_failed_total") == 1, (
+        "the executor must hand its metrics facade to the job-events core"
+    )
 
 
 @pytest.mark.asyncio

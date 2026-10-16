@@ -827,6 +827,7 @@ async def _init_app_state(
         qa_token_registry=getattr(app.state, "qa_token_registry", None),
         profiles_repo=app.state.profiles_repo,
         agent_sessions_repo=app.state.agent_sessions_repo,
+        metrics=loop_metrics,
         # Phase-A wiring: cache layers + dashboard reporting
         qa_app_results_repo=app.state.qa_app_results_repo,
         qa_image_tags_repo=app.state.qa_image_tags_repo,

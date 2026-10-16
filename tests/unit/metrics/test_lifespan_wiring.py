@@ -116,6 +116,7 @@ async def test_the_lifespan_hands_the_facade_to_every_producer(booted: Any) -> N
     assert metrics is not None
     assert booted.state.jobs_repo._metrics is metrics
     assert booted.state.traces_repo._metrics is metrics
+    assert booted.state.issue_executor._metrics is metrics, "the executor counts persist failures (plan B Task 1)"
     assert booted.state.healing_cases._metrics is metrics
     assert booted.state.watcher_services, "the seeded stack must have a watcher"
     for service in booted.state.watcher_services.values():

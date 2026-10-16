@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine, Mapping
 
     from embry0.api.events.bus import EventBus
+    from embry0.metrics import LoopMetrics
     from embry0.orchestration.budget_gate import DispatchDecision
     from embry0.storage.repositories.environment import EnvironmentRepository
     from embry0.storage.repositories.repo_preferences import RepoPreferencesRepository
@@ -116,7 +117,11 @@ class IssueExecutor:
         # CredentialHealth: quarantines the LLM account behind a provider
         # failure. None in tests / legacy callers: the job still finishes.
         credential_health: Any = None,
+        # LoopMetrics: counts job events that could not be persisted. None in
+        # tests / legacy callers: the failure is still logged.
+        metrics: LoopMetrics | None = None,
     ) -> None:
+        self._metrics = metrics
         self._case_recorder = case_recorder
         self._credential_resolver = credential_resolver
         self._credentials_repo = credentials_repo
@@ -1309,5 +1314,6 @@ class IssueExecutor:
     _record_pr_opened = _executor_outcomes._record_pr_opened
     _handle_split = _executor_outcomes._handle_split
     _broadcast_event = _executor_outcomes._broadcast_event
+    _announce_finished = _executor_outcomes._announce_finished
     _handle_needs_info = _executor_outcomes._handle_needs_info
     _finish_credential_uses = _executor_outcomes._finish_credential_uses
