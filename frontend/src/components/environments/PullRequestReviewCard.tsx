@@ -37,11 +37,18 @@ interface PullRequestReviewCardProps {
 
 /** #30: per-repo pull request review settings, saved as one object. */
 export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
-  const { data: prefs, isLoading } = useRepoPreferences(repo);
+  const { data: prefs, isLoading, isError, isSuccess } = useRepoPreferences(repo);
   const { models } = useModels();
   const setPrefs = useSetRepoPreferences();
   const [settings, setSettings] = useState<PrReviewSettings>(DEFAULTS);
   const [dirty, setDirty] = useState(false);
+  // Until the stored settings are read, the form shows the defaults, and
+  // saving them would overwrite what is stored (a read_only depth with full).
+  const locked = !isSuccess;
+  const storedModel = prefs?.pr_review?.model ?? null;
+  // A stored model the list no longer offers (disabled, unpriced, renamed)
+  // is shown as itself, so the select never claims the default is in use.
+  const unlistedModel = storedModel && !models.includes(storedModel) ? storedModel : null;
 
   useEffect(() => {
     setSettings({ ...DEFAULTS, ...(prefs?.pr_review ?? {}) });
@@ -54,6 +61,7 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
   };
 
   const handleSave = () => {
+    if (locked) return;
     setPrefs.mutate(
       // PUT is a partial update (#350): only pr_review is sent, so the other
       // preferences are kept.
@@ -78,17 +86,26 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
         </p>
       </div>
 
+      {isLoading && <p className="text-xs text-muted-foreground">Loading review settings…</p>}
+      {isError && (
+        <p role="alert" className="text-xs text-red-400">
+          This repository's review settings could not be loaded, so they cannot be changed here. Reload the page to
+          try again.
+        </p>
+      )}
+
       <div className="flex items-center gap-3">
         <button
           type="button"
           role="switch"
           aria-checked={settings.enabled}
           aria-label="Review pull requests"
-          disabled={isLoading}
+          disabled={locked}
           onClick={() => update({ enabled: !settings.enabled })}
           className={cn(
             "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-ring",
             settings.enabled ? "bg-cyan-500" : "bg-white/20",
+            "disabled:cursor-not-allowed disabled:opacity-50",
           )}
         >
           <span
@@ -110,6 +127,7 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
               name="pr-review-depth"
               value={option.value}
               checked={settings.depth === option.value}
+              disabled={locked}
               onChange={() => update({ depth: option.value })}
               className="mt-1"
             />
@@ -126,9 +144,11 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
         <Select
           id="pr-review-model"
           value={settings.model ?? ""}
+          disabled={locked}
           onChange={(e) => update({ model: e.target.value || null })}
         >
           <option value="">Default (heavy tier)</option>
+          {unlistedModel && <option value={unlistedModel}>{unlistedModel} (not in the model list)</option>}
           {models.map((m) => (
             <option key={m} value={m}>
               {m}
@@ -144,7 +164,7 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
         <code>/embry0 review</code>.
       </p>
 
-      <Button size="sm" onClick={handleSave} disabled={setPrefs.isPending || !dirty}>
+      <Button size="sm" onClick={handleSave} disabled={locked || setPrefs.isPending || !dirty}>
         {setPrefs.isPending ? "Saving…" : "Save review settings"}
       </Button>
     </Card>

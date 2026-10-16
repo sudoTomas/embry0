@@ -31,7 +31,21 @@ const BASE = {
 };
 
 function withPrReview(pr_review: unknown) {
-  mockUseRepoPreferences.mockReturnValue({ data: { ...BASE, pr_review }, isLoading: false });
+  mockUseRepoPreferences.mockReturnValue({
+    data: { ...BASE, pr_review },
+    isLoading: false,
+    isError: false,
+    isSuccess: true,
+  });
+}
+
+function controls() {
+  return [
+    screen.getByRole("switch", { name: "Review pull requests" }),
+    ...screen.getAllByRole("radio"),
+    screen.getByLabelText("Model"),
+    screen.getByRole("button", { name: "Save review settings" }),
+  ];
 }
 
 describe("PullRequestReviewCard", () => {
@@ -99,5 +113,49 @@ describe("PullRequestReviewCard", () => {
     for (const event of ["Pull requests", "Issue comments", "Merge request events", "Comments"]) {
       expect(note).toHaveTextContent(event);
     }
+  });
+
+  it("locks every control while the stored settings load", () => {
+    mockUseRepoPreferences.mockReturnValue({ data: undefined, isLoading: true, isError: false, isSuccess: false });
+    render(<PullRequestReviewCard repo="acme/widgets" />);
+    for (const control of controls()) {
+      const name = control.getAttribute("aria-label") || control.getAttribute("value") || control.textContent;
+      expect(control, `${name} is editable while loading`).toBeDisabled();
+    }
+  });
+
+  it("refuses to save over settings it could not load", async () => {
+    const user = userEvent.setup();
+    mockUseRepoPreferences.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      isSuccess: false,
+      error: new Error("Network Error"),
+    });
+    render(<PullRequestReviewCard repo="acme/widgets" />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/could not be loaded/);
+    for (const control of controls()) {
+      expect(control, "a control is editable after a failed load").toBeDisabled();
+    }
+    await user.click(screen.getByRole("switch", { name: "Review pull requests" }));
+    await user.click(screen.getByRole("button", { name: "Save review settings" }));
+    expect(mockMutate, "the defaults were saved over the stored settings").not.toHaveBeenCalled();
+  });
+
+  it("shows a stored model that is not in the model list as itself", async () => {
+    const user = userEvent.setup();
+    withPrReview({ enabled: false, depth: "read_only", model: "claude-retired-1" });
+    render(<PullRequestReviewCard repo="acme/widgets" />);
+    const model = screen.getByLabelText("Model");
+    expect(model, "the select shows another model than the stored one").toHaveValue("claude-retired-1");
+    expect(within(model).getByRole("option", { name: /claude-retired-1/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("switch", { name: "Review pull requests" }));
+    await user.click(screen.getByRole("button", { name: "Save review settings" }));
+    await waitFor(() => expect(mockMutate).toHaveBeenCalled());
+    expect(mockMutate.mock.calls[0][0].update).toEqual({
+      pr_review: { enabled: true, depth: "read_only", model: "claude-retired-1" },
+    });
   });
 });
