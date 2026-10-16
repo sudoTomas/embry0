@@ -162,8 +162,9 @@ row, one per agent run, which is also what `GET /jobs/{id}` bills from.
 does not split a series.
 
 A persist failure means a live client saw an event no reconnecting client
-can replay; `infra/prometheus/job-events.rules.yml` alerts on it (Task 8
-adds the rule).
+can replay. Alert `Embry0JobEventsNotPersisted`
+(`infra/prometheus/job-events.rules.yml`) fires on any increase in 15
+minutes.
 
 ## Linear dispatch reconciler
 
