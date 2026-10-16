@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import httpx
 import structlog
 
+from embry0.execution import events
 from embry0.workspace_init.base import HttpFetchError, InitContext
 
 logger = structlog.get_logger(__name__)
@@ -106,6 +107,6 @@ class HttpWorkspaceInitializer:
             tmp.close()
             tmp_path.unlink(missing_ok=True)
 
-        ctx.emit({"type": "progress", "message": f"Fetched {received} bytes from {url} into /workspace"})
+        ctx.emit(events.progress(message=f"Fetched {received} bytes from {url} into /workspace", node="init"))
         logger.info("http_context_staged", job_id=ctx.job_id, url=url, bytes=received)
         return {}

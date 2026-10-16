@@ -6,6 +6,7 @@ import { Pagination } from "@/components/ui/Pagination";
 import { RESULT_COLORS } from "@/lib/constants";
 import { formatCost, formatDate, formatTokens } from "@/lib/utils";
 import { TraceDetailPanel } from "@/components/traces/TraceDetailPanel";
+import { useAgents } from "@/hooks/useAgents";
 import type { TraceResponse } from "@/lib/types";
 
 interface TracesTableFilters {
@@ -33,6 +34,8 @@ export function TracesTable({
   onPageChange,
 }: TracesTableProps) {
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const { data: agents } = useAgents();
+  const agentOptions = (agents ?? []).map((a) => a.type);
 
   function handleRowClick(traceId: string) {
     setSelectedTraceId((prev) => (prev === traceId ? null : traceId));
@@ -46,13 +49,13 @@ export function TracesTable({
           <FilterSelect
             label="Agent"
             value={filters.agent_type}
-            options={["triage", "developer", "review", "explorer"]}
+            options={agentOptions}
             onChange={(agent_type) => onFilterChange({ ...filters, agent_type })}
           />
           <FilterSelect
             label="Result"
             value={filters.result}
-            options={["pass", "fail", "partial", "error", "timeout", "budget_exceeded"]}
+            options={["success", "error", "running"]}
             onChange={(result) => onFilterChange({ ...filters, result })}
           />
         </div>

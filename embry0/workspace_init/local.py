@@ -20,6 +20,7 @@ from typing import Any
 
 import structlog
 
+from embry0.execution import events
 from embry0.workspace_init.base import InitContext, LocalContextDeniedError
 
 logger = structlog.get_logger(__name__)
@@ -126,6 +127,6 @@ class LocalWorkspaceInitializer:
         finally:
             tar_path.unlink(missing_ok=True)
 
-        ctx.emit({"type": "progress", "message": f"Staged {files} files ({size} bytes) into /workspace"})
+        ctx.emit(events.progress(message=f"Staged {files} files ({size} bytes) into /workspace", node="init"))
         logger.info("local_context_staged", job_id=ctx.job_id, source=str(source), files=files, bytes=size)
         return {}

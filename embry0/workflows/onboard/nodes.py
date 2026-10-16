@@ -23,6 +23,8 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
+from embry0.execution import events
+
 logger = structlog.get_logger(__name__)
 
 MAX_ROUNDS = 3
@@ -46,7 +48,7 @@ def _fail(state: dict[str, Any], summary: str) -> dict[str, Any]:
     ob["final_status"] = "failed"
     ob["failure_summary"] = summary
     logger.error("onboard_failed", job_id=state.get("job_id"), summary=summary)
-    _writer()({"type": "error", "message": summary})
+    _writer()(events.error(message=summary))
     return {"onboard": ob}
 
 
@@ -73,7 +75,7 @@ async def init_onboard_node(state: dict[str, Any], config: RunnableConfig) -> di
     assert isinstance(job_id, str) and isinstance(repo, str)
 
     writer = _writer()
-    writer({"type": "node_started", "node": "init_onboard"})
+    writer(events.node_started(node="init_onboard"))
 
     profile = await profiles_repo.get("slim")
     if profile is None:
@@ -131,13 +133,13 @@ async def init_onboard_node(state: dict[str, Any], config: RunnableConfig) -> di
 
     ob = _onboard_state(state)
     ob.update({"sandbox_id": container_id, "round": 0, "final_status": "pending"})
-    writer({"type": "node_completed", "node": "init_onboard"})
+    writer(events.node_completed(node="init_onboard"))
     return {"onboard": ob, "sandbox_container_id": container_id}
 
 
 async def analyze_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Run the onboarding agent in the analysis sandbox (one round)."""
-    from embry0.orchestration.nodes.agent import run_agent_node
+    from embry0.orchestration.nodes.agent import agent_attempt, run_agent_node
     from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 
     ob = _onboard_state(state)
@@ -215,13 +217,15 @@ async def analyze_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
         )
 
     writer = _writer()
-    writer({"type": "node_started", "node": "analyze", "round": round_n})
+    attempt = agent_attempt(state, "onboarding")
+    writer(events.node_started(node="analyze", agent="onboarding", attempt=attempt, round=round_n))
 
     try:
         out = await run_agent_node(
             state=state,
             agent_runner=agent_runner,
             agent_type="onboarding",
+            node="analyze",
             prompt=prompt,
             agent_definition=agent_definition,
             max_turns=ANALYZE_MAX_TURNS,
@@ -234,7 +238,7 @@ async def analyze_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
         return _fail(state, f"onboarding agent crashed: {exc}")
 
     ob["round"] = round_n
-    writer({"type": "node_completed", "node": "analyze", "round": round_n})
+    writer(events.node_completed(node="analyze", agent="onboarding", attempt=attempt, round=round_n))
     return {"onboard": ob, "agent_outputs": out.get("agent_outputs", []) or []}
 
 
@@ -253,7 +257,7 @@ async def validate_node(state: dict[str, Any], config: RunnableConfig) -> dict[s
         return _fail(state, "validate missing docker or sandbox_id")
 
     writer = _writer()
-    writer({"type": "node_started", "node": "validate"})
+    writer(events.node_started(node="validate"))
 
     try:
         yaml_text = await docker.run_cmd(
@@ -263,7 +267,7 @@ async def validate_node(state: dict[str, Any], config: RunnableConfig) -> dict[s
     except Exception as exc:  # noqa: BLE001
         ob["last_error"] = f"/workspace/.onboard/qa.yaml was not written or is unreadable: {exc}"
         ob["validated"] = False
-        writer({"type": "node_completed", "node": "validate", "ok": False})
+        writer(events.node_completed(node="validate", ok=False))
         return {"onboard": ob}
 
     try:
@@ -271,7 +275,7 @@ async def validate_node(state: dict[str, Any], config: RunnableConfig) -> dict[s
     except Exception as exc:  # noqa: BLE001
         ob["last_error"] = f"schema validation failed:\n{exc}"
         ob["validated"] = False
-        writer({"type": "node_completed", "node": "validate", "ok": False})
+        writer(events.node_completed(node="validate", ok=False))
         return {"onboard": ob}
 
     # Read notes.md best-effort — it rides into the job record for humans.
@@ -293,7 +297,7 @@ async def validate_node(state: dict[str, Any], config: RunnableConfig) -> dict[s
             "notes_md": notes,
         }
     )
-    writer({"type": "node_completed", "node": "validate", "ok": True})
+    writer(events.node_completed(node="validate", ok=True))
     return {"onboard": ob}
 
 
@@ -346,7 +350,7 @@ async def smoke_node(state: dict[str, Any], config: RunnableConfig) -> dict[str,
 
     cfg = QAYamlConfigV2.model_validate(ob["qa_yaml_parsed"])
     writer = _writer()
-    writer({"type": "node_started", "node": "smoke"})
+    writer(events.node_started(node="smoke"))
 
     failures: list[str] = []
     results: dict[str, str] = {}
@@ -376,7 +380,7 @@ async def smoke_node(state: dict[str, Any], config: RunnableConfig) -> dict[str,
         ob["smoke"] = {"results": results, "failures": failures}
         ob["last_error"] = "smoke run rejected the config before boot:\n- " + "\n- ".join(failures)
         ob["validated"] = False
-        writer({"type": "node_completed", "node": "smoke", "ok": False})
+        writer(events.node_completed(node="smoke", ok=False))
         return {"onboard": ob}
 
     for app_name in cfg.apps:
@@ -485,7 +489,7 @@ async def smoke_node(state: dict[str, Any], config: RunnableConfig) -> dict[str,
     if failures:
         ob["last_error"] = "smoke run (boot + ready checks) failed:\n- " + "\n- ".join(failures)
         ob["validated"] = False
-    writer({"type": "node_completed", "node": "smoke", "ok": not failures})
+    writer(events.node_completed(node="smoke", ok=not failures))
     return {"onboard": ob}
 
 
@@ -521,7 +525,7 @@ async def write_config_node(state: dict[str, Any], config: RunnableConfig) -> di
 
     store_path = f"db:repo_qa_configs/{repo}"
     ob.update({"final_status": "completed", "store_path": store_path})
-    _writer()({"type": "progress", "message": f"qa.yaml stored in the embry0 DB for {repo}"})
+    _writer()(events.progress(message=f"qa.yaml stored in the embry0 DB for {repo}", node="write_config"))
     logger.info("onboard_config_written", job_id=state.get("job_id"), repo=repo, path=store_path)
     return {"onboard": ob}
 

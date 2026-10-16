@@ -40,14 +40,19 @@ class TracesRepository:
         cache_creation_tokens: int = 0,
         error_code: str | None = None,
         stderr_tail: str | None = None,
+        trace_id: str | None = None,
     ) -> str:
         """Create a trace record and return its ID.
+
+        ``trace_id`` is the run id run_agent_node mints before the sandbox
+        exec (spec 3.4), so the row and the run's events share one id; a
+        caller without one gets a fresh ``trc-`` id.
 
         ``error_code`` / ``stderr_tail`` (#281) describe an ERRORED run: the
         runner's diagnosis and the redacted, size-capped end of its stderr.
         Callers pass the tail already scrubbed — this layer stores verbatim.
         """
-        trace_id = f"trc-{uuid.uuid4().hex[:12]}"
+        trace_id = trace_id or f"trc-{uuid.uuid4().hex[:12]}"
         await self._db.execute(
             """
             INSERT INTO traces (
@@ -78,6 +83,52 @@ class TracesRepository:
         if self._metrics is not None and cost_usd > 0:
             await self._count_spend(job_id, model, cost_usd)
         return trace_id
+
+    async def finish(
+        self,
+        trace_id: str,
+        *,
+        result: str,
+        cost_usd: float,
+        duration_ms: int,
+        tools_called: dict[str, int] | None,
+        result_summary: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int,
+        cache_creation_tokens: int,
+        error_code: str | None,
+        stderr_tail: str | None,
+    ) -> None:
+        """Finalize the row written at run start (result='running').
+
+        The running row carries no cost, so spend is counted here, once.
+        """
+        await self._db.execute(
+            """
+            UPDATE traces SET result = $2, cost_usd = $3, duration_ms = $4, tools_called = $5, result_summary = $6,
+                input_tokens = $7, output_tokens = $8, cache_read_tokens = $9, cache_creation_tokens = $10,
+                error_code = $11, stderr_tail = $12
+            WHERE trace_id = $1
+            """,
+            trace_id,
+            result,
+            cost_usd,
+            duration_ms,
+            tools_called or {},
+            result_summary,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+            error_code,
+            stderr_tail,
+        )
+        logger.info("trace_finished", trace_id=trace_id, result=result)
+        if self._metrics is not None and cost_usd > 0:
+            row = await self._db.fetchrow("SELECT job_id, model FROM traces WHERE trace_id = $1", trace_id)
+            if row is not None:
+                await self._count_spend(str(row["job_id"]), str(row["model"]), cost_usd)
 
     async def _count_spend(self, job_id: str, model: str, cost_usd: float) -> None:
         """Best-effort: the trace is written; a metric must not fail its caller.

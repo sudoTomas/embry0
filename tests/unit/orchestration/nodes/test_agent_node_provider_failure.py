@@ -92,7 +92,7 @@ def _agent_runner(line: bytes) -> AgentRunner:
 
 async def _run_node(line: bytes) -> tuple[dict[str, Any], dict[str, Any]]:
     traces_repo = AsyncMock()
-    traces_repo.create = AsyncMock(return_value="trc-1")
+    traces_repo.create = AsyncMock(return_value="run-1")
     updates = await run_agent_node(
         state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
         agent_runner=_agent_runner(line),
@@ -110,7 +110,7 @@ async def _run_node(line: bytes) -> tuple[dict[str, Any], dict[str, Any]]:
         credentials={"api_key": "", "oauth_token": "oauth-xyz"},
         config={"configurable": {"job_id": "job-1", "traces_repo": traces_repo}},
     )
-    return traces_repo.create.call_args.kwargs, updates
+    return traces_repo.finish.call_args.kwargs, updates
 
 
 @pytest.mark.asyncio

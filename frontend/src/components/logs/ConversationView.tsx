@@ -118,14 +118,16 @@ export function ConversationView({ events }: ConversationViewProps) {
             type: "tool_use",
             id: event.tool_id,
             name: event.tool_name,
-            input: event.input,
+            // Contract name first, legacy second (spec section 6), until #41;
+            // this block renders the full input as JSON, so tool_input is its counterpart.
+            input: event.tool_input ?? event.input,
           } as ConversationContentBlock);
           break;
         }
         case "tool_result": {
           turn.userBlocks.push({
             type: "tool_result",
-            tool_use_id: event.tool_use_id,
+            tool_use_id: event.tool_id ?? event.tool_use_id,
             content: event.content,
             is_error: event.is_error,
           } as ConversationContentBlock);

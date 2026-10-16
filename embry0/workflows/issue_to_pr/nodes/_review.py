@@ -14,6 +14,8 @@ from langgraph.types import Command
 # this module. The self-import is safe: the package __init__ binds the seams
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
+from embry0.execution import events
+from embry0.orchestration.nodes.agent import agent_attempt
 from embry0.workflows.issue_to_pr.nodes._common import (
     DECIDE_NOW_MAX_TURNS,
     _extract_ask_user_events,
@@ -145,7 +147,8 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> Command[
         ``Command(goto=...)`` because they bypass ``route_after_review``.
     """
     writer = _nodes.get_stream_writer()
-    writer({"type": "node_started", "node": "review", "agent": "review"})
+    attempt = agent_attempt(state, "review")
+    writer(events.node_started(node="review", agent="review", attempt=attempt))
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
@@ -385,10 +388,10 @@ The JSON object is the last thing you output — nothing after it."""
     if recovery_session is not None:
         logger.warning("review_max_turns_verdict_now_resume", job_id=state.get("job_id"))
         writer(
-            {
-                "type": "progress",
-                "message": "Review hit its turn cap — resuming once for a verdict from checks already run",
-            }
+            events.progress(
+                message="Review hit its turn cap — resuming once for a verdict from checks already run",
+                node="review",
+            )
         )
         first_outputs = list(result.get("agent_outputs") or [])
         retry_state = {**state, "total_cost_usd": result.get("total_cost_usd", state.get("total_cost_usd", 0.0))}
@@ -453,7 +456,7 @@ The JSON object is the last thing you output — nothing after it."""
 
             try:
                 data = json_mod.loads(output_text)
-                writer({"type": "validation_result", **data.get("validation", {})})
+                writer(events.validation_result(validation=data.get("validation", {})))
                 # RAV-1079: duplicates_open_pr rides the decision event so the
                 # trace/dashboard show the overlap verdict (informational —
                 # it does not change the approved/changes_requested routing).
@@ -465,12 +468,11 @@ The JSON object is the last thing you output — nothing after it."""
                         pr_number=_review_dup.get("number"),
                     )
                 writer(
-                    {
-                        "type": "review_decision",
-                        "decision": data.get("decision"),
-                        "summary": data.get("summary"),
-                        "duplicates_open_pr": _review_dup if isinstance(_review_dup, dict) else None,
-                    }
+                    events.review_decision(
+                        decision=data.get("decision"),
+                        summary=data.get("summary"),
+                        duplicates_open_pr=_review_dup if isinstance(_review_dup, dict) else None,
+                    )
                 )
             except (json_mod.JSONDecodeError, TypeError):
                 # #356: a bare json.loads was the ONLY thing that emitted a
@@ -482,12 +484,10 @@ The JSON object is the last thing you output — nothing after it."""
 
                 _fallback = _parse(output_text)
                 writer(
-                    {
-                        "type": "review_decision",
-                        "decision": _fallback,
-                        "summary": None if _fallback else "Review emitted no readable verdict",
-                        "duplicates_open_pr": None,
-                    }
+                    events.review_decision(
+                        decision=_fallback,
+                        summary=None if _fallback else "Review emitted no readable verdict",
+                    )
                 )
                 if _fallback is None:
                     logger.warning(
@@ -497,7 +497,7 @@ The JSON object is the last thing you output — nothing after it."""
                         output_head=(output_text or "")[:200],
                     )
 
-    writer({"type": "node_completed", "node": "review"})
+    writer(events.node_completed(node="review", agent="review", attempt=attempt))
 
     updates: dict[str, Any] = {**result, "current_stage": "review_complete"}
     # RAV-1271: the resumed answers were consumed into this run's prompt —
