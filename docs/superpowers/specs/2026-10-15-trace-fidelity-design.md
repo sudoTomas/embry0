@@ -127,7 +127,7 @@ The xAI executor makes the same field changes so both paths conform until the Gr
 
 ### 3.5 Terminal event, reconnect and gaps
 
-- `job_finished` is emitted through `_broadcast_event` by the executor's outcome path for every terminal transition (completed, failed, partial, cancelled, expired, skipped) and when a job is orphaned at startup. Paused and awaiting-input are not terminal and emit nothing new (the `interrupt` and `agent_paused_for_input` events already cover them).
+- `job_finished` is emitted through `_broadcast_event` by the executor's outcome path for every terminal transition (completed, failed, partial, cancelled, expired, skipped) and when a job is orphaned at startup. Paused and awaiting-input are not terminal and emit nothing new (the `interrupt` and `agent_paused_for_input` events already cover them). The paused-job reaper and the boot orphan sweep have no executor; they call the same job-events core directly (the boot sweep with no bus: nothing is subscribed before the server listens, so the event is persisted and replayed). The synthetic `node_completed(action="orphaned")` marker is gone; `job_finished` carries the orphan's error code.
 - The WebSocket route closes with code 1000 after forwarding `job_finished`. A client connecting to a job whose latest persisted event is `job_finished` gets the replay and then the close. `job_failed` goes through `_broadcast_event` like everything else.
 - The client (`useJobEventStream`) tracks the last `event_seq` it processed and reconnects with `?since_seq=<last>`. Replayed events ≤ last are dropped. A live event whose `event_seq` exceeds last + 1 means a gap (bus overflow or a persist failure): the client fetches `GET /jobs/{id}/logs/events?since_seq=<last>` to fill it before applying the live event. On `job_finished` the client marks the stream complete and never reconnects. A server close with code 1000 means the same (the route closes that way straight after replay for a job that was already terminal).
 - An event whose persist failed is still published, with no `event_seq`; clients apply it but it cannot be replayed. The `event_persist_failed` log line is kept; a counter `embry0_job_events_persist_failed_total` is added so it is visible in Prometheus. Rule: `or vector(0)` and a threshold test that shows it fires (CLAUDE.md guardrail).
@@ -142,7 +142,7 @@ The xAI executor makes the same field changes so both paths conform until the Gr
 ### 3.7 QA and executor-service events on the job stream
 
 - The QA orchestrator emits `qa_subtask_status` through the parent writer at sub-task start and end (as well as to the QA bus), and the three QA graph nodes emit `node_started`/`node_completed`, the orchestrator's `node_completed` carrying `action=<overall_status>`, which is the run-level outcome on the job stream; the QA bus `done` keeps closing the SSE route and gains no contract type. The SSE route and `QAEventBus` are unchanged in this workstream; milestone 3 removes them once the merged job page reads the job stream.
-- `job_failed` and the startup orphan marker go through `_broadcast_event`.
+- `job_failed` goes through `_broadcast_event`; the startup orphan path emits `job_finished` (3.5).
 
 ### 3.8 Frontend adoption (honesty fixes only)
 

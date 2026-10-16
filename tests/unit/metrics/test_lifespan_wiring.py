@@ -124,6 +124,10 @@ async def test_the_lifespan_hands_the_facade_to_every_producer(booted: Any) -> N
     assert booted.state.linear_reconciler._metrics is metrics
     assert booted.state.agent_runner._on_stale_image == metrics.sandbox_runner_stale_image
     assert channels._fold_observer is not None
+    reaper = booted.state.container_reaper
+    assert reaper.on_job_finished == booted.state.issue_executor._announce_finished, (
+        "the paused-job reaper announces job_finished through the executor (plan B Task 3)"
+    )
 
 
 async def test_the_lifespan_hands_one_runtime_to_the_sandbox_manager(

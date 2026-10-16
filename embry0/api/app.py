@@ -19,7 +19,6 @@ from embry0.cache.prebaked_staleness import BaseImageDigestResolver
 from embry0.cache.volume_manager import SharedVolumeManager
 from embry0.config import Embry0Config
 from embry0.config_redaction import mask_url_credentials
-from embry0.execution import events
 from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import run_migrations
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
@@ -1040,14 +1039,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     await boot_credentials_repo.finish_uses(jid, outcome.value)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("credential_uses_finish_failed", job_id=jid, error=type(exc).__name__)
-            # Append a synthetic node_completed(action="orphaned") to job_logs
-            # so the frontend event timeline reflects the orphaned state
+            # spec 3.5: the orphan path is a terminal transition. Nothing can be
+            # subscribed before the server listens, so persist only (bus=None);
+            # the WebSocket replay and the REST log serve it.
+            from embry0.services.job_events import emit_job_finished
+
+            boot_metrics = getattr(app.state, "loop_metrics", None)
             for jid in orphaned_ids:
-                synthetic = events.node_completed(node="developer", action="orphaned", error=orphan_message)
-                try:
-                    await boot_jobs_repo.append_log_event(jid, synthetic)
-                except Exception:
-                    pass
+                await emit_job_finished(boot_jobs_repo, None, boot_metrics, jid)
 
             # Also reset any issues stuck in triaging/awaiting_input for these jobs
             reopened = await IssuesRepository(db).reopen_stuck_for_jobs(orphaned_ids)
@@ -1547,6 +1546,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         agent_runner=agent_runner,
         proxy_manager=proxy_mgr,
     )
+    # spec 3.5: the reaper was built before the executor existed; it announces
+    # each expired job's job_finished through the executor's event path.
+    app.state.container_reaper.on_job_finished = app.state.issue_executor._announce_finished
 
     # Seed the log scrubbers with every registry secret before any job runs.
     from embry0.safety.redaction import register_known_secrets, register_redacted_fields
