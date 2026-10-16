@@ -745,9 +745,9 @@ class IssueExecutor:
         - Removes the task from ``_background_tasks`` (idempotent).
         - On CancelledError: silent (normal shutdown path).
         - On any other exception: logs ``background_task_failed`` with the
-          kind/job_id/issue_id context, and publishes a ``job_failed`` event
-          via the event bus so WS clients see the failure even if the coro
-          died outside its own try/except.
+          kind/job_id/issue_id context, and broadcasts a ``job_failed`` event
+          (persisted, then published) so WS clients see the failure even if
+          the coro died outside its own try/except.
         """
         workflow = coro
         if run_slot:
@@ -784,18 +784,15 @@ class IssueExecutor:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            # Best-effort WS notification. Track the publish task on
-            # _background_tasks so a clean shutdown awaits it (otherwise it
-            # could be orphaned if the loop is tearing down).
-            if self._event_bus is not None:
-                pub_task = asyncio.create_task(
-                    self._event_bus.publish(
-                        job_id,
-                        {**events.job_failed(kind=kind, message=str(exc)), "job_id": job_id},
-                    )
-                )
-                self._background_tasks.add(pub_task)
-                pub_task.add_done_callback(self._background_tasks.discard)
+            # spec 3.7: job_failed is persisted like every other event (it used
+            # to bypass job_logs and reach only live clients). The callback is
+            # synchronous, so the broadcast runs as a tracked task that a
+            # clean shutdown awaits.
+            pub_task = asyncio.create_task(
+                self._broadcast_event(job_id, events.job_failed(kind=kind, message=str(exc)))
+            )
+            self._background_tasks.add(pub_task)
+            pub_task.add_done_callback(self._background_tasks.discard)
 
         task.add_done_callback(_on_done)
         return task

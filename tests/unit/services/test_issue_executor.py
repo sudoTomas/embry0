@@ -142,9 +142,10 @@ async def test_track_task_registers_and_removes_on_completion():
 
 
 @pytest.mark.asyncio
-async def test_track_task_logs_and_publishes_on_failure(capsys):
-    """If the coroutine raises an unexpected exception, _track_task logs it
-    AND publishes a job_failed event via the bus (so WS clients see it)."""
+async def test_track_task_logs_and_persists_job_failed_on_failure(capsys):
+    """If the coroutine raises an unexpected exception, _track_task logs it AND
+    routes a job_failed event through _broadcast_event, so it is persisted
+    (replayable) as well as published (spec 3.7)."""
     from embry0.api.events.bus import EventBus
     from embry0.services.issue_executor import IssueExecutor
 
@@ -152,6 +153,7 @@ async def test_track_task_logs_and_publishes_on_failure(capsys):
     executor._background_tasks = set()
     executor._tasks_by_job = {}
     executor._event_bus = EventBus()
+    executor._jobs = MagicMock(append_log_event=AsyncMock(return_value=77), increment_cost=AsyncMock())
 
     queue = await executor._event_bus.subscribe("job-1")
 
@@ -159,26 +161,25 @@ async def test_track_task_logs_and_publishes_on_failure(capsys):
         raise RuntimeError("kaboom")
 
     task = executor._track_task(_boom(), kind="workflow", job_id="job-1")
-    # Awaiting the failed task always re-raises the exception for the caller.
-    # What _track_task guarantees is that the done-callback ALSO sees the
-    # exception (via .exception()) and logs/publishes it — even if no one awaits.
     try:
         await task
     except RuntimeError:
         pass
-    await asyncio.sleep(0)
+    # The done-callback schedules the broadcast as a tracked task; let it run.
+    for _ in range(3):
+        await asyncio.sleep(0)
+    pending = [t for t in executor._background_tasks if not t.done()]
+    if pending:
+        await asyncio.gather(*pending)
 
-    # Failure was logged
     captured = capsys.readouterr()
-    assert "background_task_failed" in captured.out
-    assert "kaboom" in captured.out
+    assert "background_task_failed" in captured.out and "kaboom" in captured.out
 
-    # job_failed event was published
-    assert queue.qsize() == 1
     evt = queue.get_nowait()
-    assert evt["type"] == "job_failed"
-    assert evt["job_id"] == "job-1"
-    assert "kaboom" in evt.get("message", "")
+    assert evt["type"] == "job_failed" and evt["job_id"] == "job-1" and "kaboom" in evt["message"]
+    assert evt["event_seq"] == 77, "job_failed must be persisted before publish, like every other event"
+    persisted = executor._jobs.append_log_event.await_args.args[1]
+    assert persisted["type"] == "job_failed" and persisted["kind"] == "workflow"
 
 
 @pytest.mark.asyncio
