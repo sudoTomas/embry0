@@ -6,10 +6,10 @@ import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { useRepoPreferences, useSetRepoPreferences } from "@/hooks/useRepoPreferences";
 import { useModels } from "@/hooks/useModels";
-import type { PrReviewDepth, PrReviewSettings } from "@/api/repoPreferences";
+import type { PrReviewDepth, PrReviewReadyAuthors, PrReviewSettings } from "@/api/repoPreferences";
 import { cn } from "@/lib/utils";
 
-const DEFAULTS: PrReviewSettings = { enabled: false, depth: "full", model: null };
+const DEFAULTS: PrReviewSettings = { enabled: false, depth: "full", model: null, ready_authors: "team" };
 
 const DEPTH_OPTIONS: { value: PrReviewDepth; label: string; description: string }[] = [
   {
@@ -27,6 +27,15 @@ const DEPTH_OPTIONS: { value: PrReviewDepth; label: string; description: string 
     value: "read_only",
     label: "Read only",
     description: "Read the code and the diff, and run nothing. Pull requests from forks are always reviewed this way.",
+  },
+];
+
+const READY_AUTHOR_OPTIONS: { value: PrReviewReadyAuthors; label: string; description?: string }[] = [
+  { value: "team", label: "Team — people with write access" },
+  {
+    value: "anyone",
+    label: "Anyone who opens or readies a pull request",
+    description: "Outsiders' fork pull requests then start read-only reviews on your budget.",
   },
 ];
 
@@ -134,6 +143,29 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
             <span>
               <span className="font-medium">{option.label}</span>
               <span className="block text-xs text-muted-foreground">{option.description}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">Who triggers automatic reviews</legend>
+        {READY_AUTHOR_OPTIONS.map((option) => (
+          <label key={option.value} className="flex items-start gap-2 text-sm cursor-pointer">
+            <input
+              type="radio"
+              name="pr-review-ready-authors"
+              value={option.value}
+              checked={settings.ready_authors === option.value}
+              disabled={locked}
+              onChange={() => update({ ready_authors: option.value })}
+              className="mt-1"
+            />
+            <span>
+              <span className="font-medium">{option.label}</span>
+              {option.description && (
+                <span className="block text-xs text-muted-foreground">{option.description}</span>
+              )}
             </span>
           </label>
         ))}

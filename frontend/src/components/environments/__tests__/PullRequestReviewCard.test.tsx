@@ -89,7 +89,9 @@ describe("PullRequestReviewCard", () => {
     await waitFor(() => expect(mockMutate).toHaveBeenCalled());
     const { fullRepo, update } = mockMutate.mock.calls[0][0];
     expect(fullRepo).toBe("acme/widgets");
-    expect(update).toEqual({ pr_review: { enabled: true, depth: "targeted", model: "claude-sonnet-5" } });
+    expect(update).toEqual({
+      pr_review: { enabled: true, depth: "targeted", model: "claude-sonnet-5", ready_authors: "team" },
+    });
   });
 
   it("sends null for the default model", async () => {
@@ -155,7 +157,50 @@ describe("PullRequestReviewCard", () => {
     await user.click(screen.getByRole("button", { name: "Save review settings" }));
     await waitFor(() => expect(mockMutate).toHaveBeenCalled());
     expect(mockMutate.mock.calls[0][0].update).toEqual({
-      pr_review: { enabled: true, depth: "read_only", model: "claude-retired-1" },
+      pr_review: { enabled: true, depth: "read_only", model: "claude-retired-1", ready_authors: "team" },
     });
+  });
+
+  it("offers who triggers automatic reviews, team by default", () => {
+    render(<PullRequestReviewCard repo="acme/widgets" />);
+    const group = screen.getByRole("group", { name: "Who triggers automatic reviews" });
+    const team = within(group).getByRole("radio", { name: /^Team — people with write access/ });
+    const anyone = within(group).getByRole("radio", { name: /^Anyone who opens or readies a pull request/ });
+    expect(team, "a repo that never configured it must default to the team").toBeChecked();
+    expect(anyone).not.toBeChecked();
+    expect(within(group).getByText(/fork pull requests then start read-only reviews on your budget/)).toBeInTheDocument();
+  });
+
+  it("reads settings saved without ready_authors as team", () => {
+    withPrReview({ enabled: true, depth: "full", model: null });
+    render(<PullRequestReviewCard repo="acme/widgets" />);
+    expect(screen.getByRole("radio", { name: /^Team — people with write access/ })).toBeChecked();
+  });
+
+  it("shows a stored anyone", () => {
+    withPrReview({ enabled: true, depth: "full", model: null, ready_authors: "anyone" });
+    render(<PullRequestReviewCard repo="acme/widgets" />);
+    expect(screen.getByRole("radio", { name: /^Anyone who opens or readies a pull request/ })).toBeChecked();
+  });
+
+  it("saves ready_authors in the PUT payload", async () => {
+    const user = userEvent.setup();
+    withPrReview({ enabled: true, depth: "full", model: null });
+    render(<PullRequestReviewCard repo="acme/widgets" />);
+    await user.click(screen.getByRole("radio", { name: /^Anyone who opens or readies a pull request/ }));
+    await user.click(screen.getByRole("button", { name: "Save review settings" }));
+    await waitFor(() => expect(mockMutate).toHaveBeenCalled());
+    expect(mockMutate.mock.calls[0][0].update, "ready_authors was not saved").toEqual({
+      pr_review: { enabled: true, depth: "full", model: null, ready_authors: "anyone" },
+    });
+  });
+
+  it("locks the ready-authors choice while the stored settings load", () => {
+    mockUseRepoPreferences.mockReturnValue({ data: undefined, isLoading: true, isError: false, isSuccess: false });
+    render(<PullRequestReviewCard repo="acme/widgets" />);
+    const group = screen.getByRole("group", { name: "Who triggers automatic reviews" });
+    for (const radio of within(group).getAllByRole("radio")) {
+      expect(radio, `${radio.getAttribute("value")} is editable while loading`).toBeDisabled();
+    }
   });
 });
