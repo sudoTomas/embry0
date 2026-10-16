@@ -2660,3 +2660,54 @@ async def test_no_sub_task_starts_once_a_hard_cap_is_crossed():
     assert started == []
     assert [r.status for r in results] == [SubTaskStatus.INFRA_FAILURE] * 2
     assert "budget" in (results[0].failure_summary or "")
+
+
+@pytest.mark.asyncio
+async def test_qa_orchestrator_node_brackets_itself_on_the_job_stream(monkeypatch):
+    """spec 3.7: the run-level done is node_completed(node="orchestrate_qa", action=<overall_status>)."""
+    from embry0.workflows.qa import orchestrator as orch
+
+    events_out: list[dict] = []
+    monkeypatch.setattr(orch, "get_stream_writer", lambda: events_out.append)
+    monkeypatch.setattr(
+        orch,
+        "_qa_orchestrator_node_impl",
+        AsyncMock(return_value={"qa": {"outcome": {"overall_status": "passed"}}}),
+    )
+    await orch.qa_orchestrator_node({"job_id": "JOB-1"}, {"configurable": {}})
+    started = next((e for e in events_out if e["type"] == "node_started"), None)
+    completed = next((e for e in events_out if e["type"] == "node_completed"), None)
+    assert started is not None and completed is not None, f"the wrapper brackets itself, got {events_out}"
+    assert started["node"] == "orchestrate_qa" and completed["node"] == "orchestrate_qa"
+    assert completed["action"] == "passed"
+    assert events_out.index(started) < events_out.index(completed)
+
+
+@pytest.mark.asyncio
+async def test_init_orchestrator_node_brackets_itself_on_an_early_return(monkeypatch):
+    """spec 3.7: init_orchestrator emits node_started/node_completed even when it bails out early."""
+    from embry0.workflows.qa import orchestrator as orch
+
+    events_out: list[dict] = []
+    monkeypatch.setattr(orch, "get_stream_writer", lambda: events_out.append)
+    out = await orch.init_orchestrator_node({}, {"configurable": {}})
+    assert out["qa"]["outcome"]["overall_status"] == "infra_error"
+    nodes = [(e["type"], e.get("node")) for e in events_out]
+    assert nodes == [("node_started", "init_orchestrator"), ("node_completed", "init_orchestrator")], (
+        f"init_orchestrator brackets its missing-deps return, got {nodes}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_qa_report_node_brackets_itself_on_the_job_stream(monkeypatch):
+    """spec 3.7: qa_report emits node_started/node_completed (here on its no-token return)."""
+    from embry0.workflows.qa import orchestrator_report
+
+    events_out: list[dict] = []
+    monkeypatch.setattr(orchestrator_report, "get_stream_writer", lambda: events_out.append)
+    out = await orchestrator_report.qa_report_node({"qa": {}}, {"configurable": {}})
+    assert out == {}
+    nodes = [(e["type"], e.get("node")) for e in events_out]
+    assert nodes == [("node_started", "qa_report"), ("node_completed", "qa_report")], (
+        f"qa_report brackets its skipped-write return, got {nodes}"
+    )

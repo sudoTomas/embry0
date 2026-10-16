@@ -153,7 +153,7 @@ export interface QaAppsResolvedContract extends ContractBase { type: "qa_apps_re
 export interface QaSubtaskStartedContract extends ContractBase { type: "qa_subtask_started"; app: string; target: string }
 export interface QaSubtaskFinishedContract extends ContractBase { type: "qa_subtask_finished"; app: string; status: string; duration_ms: number; failure_summary?: string }
 export interface QaSubtaskStatusContract extends ContractBase {
-  type: "qa_subtask_status"; app: string; status: string; duration_ms?: number; failure_summary?: string; boot_phase?: string;
+  type: "qa_subtask_status"; app: string; status: string; duration_ms?: number; failure_summary?: string; boot_phase?: Record<string, unknown>;
 }
 export interface QaAgentTransientRetryContract extends ContractBase { type: "qa_agent_transient_retry"; app: string; reason: string }
 export interface SystemContract extends ContractBase { type: "system"; message: string }

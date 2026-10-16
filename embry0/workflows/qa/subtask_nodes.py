@@ -1106,6 +1106,19 @@ async def emit_result_node(state: SubTaskState, config: RunnableConfig) -> dict[
         boot_phase=state.get("boot_phase"),
     )
 
+    # spec 3.7: the final per-app status rides the job stream too, so it is
+    # persisted and replayed; the QA bus below keeps feeding the SSE route.
+    boot_phase = state.get("boot_phase")
+    _parent_writer(config)(
+        events.qa_subtask_status(
+            app=state["app_name"],
+            status=str(status),
+            duration_ms=duration_ms,
+            failure_summary=failure_summary,
+            boot_phase=boot_phase if isinstance(boot_phase, dict) else None,
+        )
+    )
+
     # Phase 5C: publish to the QA event bus for SSE liveness. Absent when
     # tests / legacy callers don't wire one in — that's intentional.
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}

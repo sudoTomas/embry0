@@ -261,7 +261,7 @@ class QaSubtaskStatusEvent(BaseEvent):
     status: str
     duration_ms: NotRequired[int]
     failure_summary: NotRequired[str]
-    boot_phase: NotRequired[str]
+    boot_phase: NotRequired[dict[str, Any]]
 
 
 class QaAgentTransientRetryEvent(BaseEvent):
@@ -719,7 +719,7 @@ def qa_subtask_status(
     status: str,
     duration_ms: int | None = None,
     failure_summary: str | None = None,
-    boot_phase: str | None = None,
+    boot_phase: dict[str, Any] | None = None,
     node: str = "qa",
 ) -> dict[str, Any]:
     fields: dict[str, Any] = {"app": app, "status": status}

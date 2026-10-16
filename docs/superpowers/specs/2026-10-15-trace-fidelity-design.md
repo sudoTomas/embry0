@@ -88,7 +88,7 @@ Constructor functions, one per type, are the only way production code builds an 
 | `validation_result` | review | `validation` (a dict: the validator's result, nested like the other payloads) |
 | `verification_result` | verify | unchanged |
 | `pr_created` | developer | `pr_url`, `branch` |
-| `qa_apps_resolved`, `qa_subtask_started`, `qa_subtask_finished`, `qa_subtask_status`, `qa_agent_transient_retry` | QA | `app` plus existing fields |
+| `qa_apps_resolved`, `qa_subtask_started`, `qa_subtask_finished`, `qa_subtask_status`, `qa_agent_transient_retry` | QA | `app` plus existing fields; `qa_subtask_status.boot_phase` is a dict (the structured boot outcome) |
 | `system` | executor service | `message` |
 | `job_failed` | executor service | `kind`, `message` |
 | `job_finished` | executor service | `status`, `error_code`, `error_message`, `pr_url`, `total_cost_usd` |
@@ -141,7 +141,7 @@ The xAI executor makes the same field changes so both paths conform until the Gr
 
 ### 3.7 QA and executor-service events on the job stream
 
-- The QA orchestrator publishes `qa_subtask_status` and the QA `done` through the parent writer as well as the QA bus, so they persist and replay on the job stream. The SSE route and `QAEventBus` are unchanged in this workstream; milestone 3 removes them once the merged job page reads the job stream.
+- The QA orchestrator emits `qa_subtask_status` through the parent writer at sub-task start and end (as well as to the QA bus), and the three QA graph nodes emit `node_started`/`node_completed`, the orchestrator's `node_completed` carrying `action=<overall_status>`, which is the run-level outcome on the job stream; the QA bus `done` keeps closing the SSE route and gains no contract type. The SSE route and `QAEventBus` are unchanged in this workstream; milestone 3 removes them once the merged job page reads the job stream.
 - `job_failed` and the startup orphan marker go through `_broadcast_event`.
 
 ### 3.8 Frontend adoption (honesty fixes only)

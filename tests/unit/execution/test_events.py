@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import get_type_hints
+from typing import Any, get_type_hints
 
 import pytest
 
@@ -79,3 +79,12 @@ def test_emit_to_stdout_writes_one_line(capsys: pytest.CaptureFixture[str]) -> N
     out = capsys.readouterr().out
     assert out.count("\n") == 1
     assert json.loads(out)["question"] == "Which branch?"
+
+
+def test_qa_subtask_status_carries_the_boot_phase_dict() -> None:
+    boot_phase = {"outcome": "timeout", "attempts": 12, "duration_ms": 600_000}
+    event = events.qa_subtask_status(app="hub", status="boot_failure", duration_ms=3000, boot_phase=boot_phase)
+    assert event["boot_phase"] == boot_phase, "boot_phase is the structured boot outcome, not a string"
+    assert get_type_hints(events.qa_subtask_status)["boot_phase"] == dict[str, Any] | None, (
+        "the constructor types boot_phase as the dict it carries"
+    )
