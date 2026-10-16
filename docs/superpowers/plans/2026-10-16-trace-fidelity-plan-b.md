@@ -61,6 +61,8 @@ Input classes the spec implies but no existing test exercises, most likely to bi
 | `embry0/services/job_events.py` (new) | `broadcast_job_event` (stamp, redact, persist, count, publish, persist-failed counter) and `emit_job_finished` (job row to `job_finished`) |
 | `embry0/services/_executor_outcomes.py` (edit) | `_broadcast_event` delegates; `_announce_finished` after each terminal write |
 | `embry0/services/_executor_run.py`, `embry0/services/issue_executor.py` (edit) | `_announce_finished` after each terminal write; `metrics` kwarg; `job_failed` through `_broadcast_event`; LLM secrets registered at job start |
+| `tests/unit/services/test_job_finished_sites.py` (new) | the terminal-write sites announce `job_finished`, with a structural guard whose matcher also sees `status=JobStatus.<member>` |
+| `tests/unit/services/test_run_qa_workflow_seeding.py`, `test_failure_code_wiring.py`, `test_executor_volume_cleanup.py` (edit) | their executor builders stub `_announce_finished` |
 | `embry0/storage/repositories/jobs.py` (edit) | `TERMINAL_JOB_STATUSES` exported |
 | `embry0/execution/image_manager.py` (edit) | `ContainerReaper.on_job_finished` |
 | `embry0/api/app.py` (edit) | boot sweep emits `job_finished`; executor gets `metrics`; reaper callback wired |
@@ -68,16 +70,19 @@ Input classes the spec implies but no existing test exercises, most likely to bi
 | `embry0/metrics/loop.py` (edit) | `job_event_persist_failed()` |
 | `infra/prometheus/job-events.rules.yml`, `job-events.rules.test.yml` (new) | the persist-failed alert and its promtool test |
 | `.github/workflows/ci.yml`, `docs/ops/verification.md`, `docs/ops/metrics.md` (edit) | the rule file in the promtool list; the counter documented |
-| `embry0/safety/redaction.py` (edit) | `redact_event` (recursive string scrub of one event) |
+| `tests/unit/infra/test_alert_rule_files_are_run.py` (new) | every rule test file is named in the `run:` of the CI step that runs `promtool test rules`, and in the verification doc |
+| `embry0/safety/redaction.py` (edit) | `redact_event` (recursive string scrub of one event); `unregister_known_secrets`; the registry's longest-first order cached between calls of `secret_env_values` |
 | `embry0/agents/_common.py` (edit) | `make_scrubber()` |
 | `embry0/agents/executor.py`, `embry0/agents/executor_xai.py` (edit) | scrub the four text fields before the constructors |
 | `embry0/sandbox/runner.py` (edit) | `_emit` scrubs every string value |
 | `embry0/execution/events.py` (edit) | `_capped(keep=)`, output tail, `tool_input` string cap, `boot_phase` dict |
-| `embry0/execution/sandbox_manager.py` (edit) | register the per-sandbox bearer |
+| `embry0/execution/sandbox_manager.py` (edit) | register the per-sandbox bearer at create and reenroll; unregister it at destroy and on the create rollbacks that bypass destroy |
+| `tests/conftest.py` (edit) | autouse `_no_leaked_known_secrets`: resets the process-wide scrub registry after each test |
 | `embry0/orchestration/nodes/agent.py` (edit) | `result_summary` redacted before its cap |
 | `embry0/workflows/qa/orchestrator_helpers.py`, `subtask_nodes.py`, `orchestrator.py`, `orchestrator_report.py` (edit) | `qa_subtask_status` on the job stream; `node_started`/`node_completed` for the three QA nodes |
 | `embry0/workflows/pipeline_graphs.py` (new) | static onboarding and QA pipeline graphs in the frontend shape |
-| `embry0/workflows/onboard/nodes.py`, `embry0/workflows/qa/orchestrator.py` (edit) | emit `pipeline_graph` from the first node |
+| `embry0/workflows/onboard/nodes.py`, `embry0/workflows/qa/orchestrator.py` (edit) | emit `pipeline_graph` from the first node; in `onboard/nodes.py`, `write_config_node` and `cleanup_node` bracketed with `node_started`/`node_completed` so every onboarding graph node lights |
+| `frontend/src/lib/pipeline-live.ts` (edit) | `qa_subtask_status` among the events that mark an issue-to-pr job's QA node running |
 | `frontend/src/hooks/useJobEventStream.ts` (rewrite) | cursor, dedupe, gap fill, `job_finished`, close 1000 |
 | `frontend/src/api/logs.ts`, `frontend/src/lib/types/events-discriminated.ts`, `frontend/src/lib/types/events.ts` (edit) | `since_seq` parameter; `event_seq`, `job_id`, `JobFinishedEvent` on the legacy union |
 | `frontend/src/hooks/__tests__/useJobEventStream.test.ts` (new) | the reconnect, dedupe, gap and terminal tests |
@@ -487,6 +492,7 @@ EOF
 **Files:**
 - Modify: every terminal write site in `embry0/services/_executor_run.py`, `embry0/services/_executor_outcomes.py`, `embry0/services/issue_executor.py` (inventory below)
 - Create: `tests/unit/services/test_job_finished_sites.py`
+- Modify: `tests/unit/services/test_run_qa_workflow_seeding.py`, `tests/unit/services/test_failure_code_wiring.py`, `tests/unit/services/test_executor_volume_cleanup.py` (their executor builders set `_announce_finished = AsyncMock()`)
 
 **Interfaces:**
 - Consumes: `IssueExecutor._announce_finished(job_id)` from Task 1.
@@ -2030,6 +2036,7 @@ EOF
 - Modify: `embry0/orchestration/nodes/agent.py:82-100, 599-619` (`result_summary` redacted before its cap)
 - Modify: `tests/unit/services/test_job_events.py`, `tests/unit/execution/test_sandbox_manager*.py` (the file that already tests `create`'s enrollment), `tests/unit/services/` (the precheck's existing test file; `grep -rln _precheck_llm_accounts tests/unit`), `tests/unit/orchestration/nodes/test_agent_node.py`
 - Modify: `docs/superpowers/specs/2026-10-15-trace-fidelity-design.md` sections 3.6 and 3.9
+- Modify: `tests/conftest.py` (the autouse `_no_leaked_known_secrets` fixture resets the registry after every test, since creating a sandbox or prechecking a job's LLM accounts now registers process-wide scrub values)
 
 **Interfaces:**
 - Consumes: `redact_event`, `secret_env_values`, `redact_secrets`, `register_known_secrets`, `known_secret_values` (`embry0/safety/redaction.py`); `broadcast_job_event` from Task 1.
