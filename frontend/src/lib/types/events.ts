@@ -49,6 +49,7 @@ export type {
   ErrorEvent,
   SystemEvent,
   FindingPublishedEvent,
+  JobFinishedEvent,
 } from "./events-discriminated";
 
 export type LogEventType =
@@ -83,7 +84,8 @@ export type LogEventType =
   | "pipeline_stage_completed"
   | "pr_created"
   | "interrupt"
-  | "finding_published";
+  | "finding_published"
+  | "job_finished";
 
 /** Back-compat alias: PipelineGraphEvent → PipelineGraphEventDU */
 export type { PipelineGraphEventDU as PipelineGraphEvent } from "./events-discriminated";
