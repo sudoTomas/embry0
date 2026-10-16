@@ -64,8 +64,8 @@ export function JobLogsPage() {
       const nodeId = "node_id" in e ? (e as { node_id?: string }).node_id : undefined;
       // Show events that match the selected node_id
       if (nodeId === selectedNodeId) return true;
-      // Always show stream-level events (complete, stream_end, error without node_id)
-      if (!nodeId && (e.type === "complete" || e.type === "stream_end" || e.type === "error")) return true;
+      // Always show stream-level events (complete, stream_end, job_finished, error without node_id)
+      if (!nodeId && (e.type === "complete" || e.type === "stream_end" || e.type === "job_finished" || e.type === "error")) return true;
       return false;
     });
   }, [events, selectedNodeId]);
