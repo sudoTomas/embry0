@@ -26,6 +26,11 @@ written twice: ``FILES_LIST`` for the agent to read, and ``FILES_NUL``
 ``REVIEW_DIR`` is under ``/workspace`` (the Ring-2 allow-list) and inside ``.git``,
 where no pull request can put a file of its own.
 
+Exit 3 (``HEAD_GONE_EXIT``): the forge answered, and the commit the trigger
+named is not on it. Exit 5 (``FETCH_FAILED_EXIT``): the head could not be
+fetched and the forge did not answer either (the git-proxy is down, or the
+credential was refused), which says nothing about the branch.
+
 The last stdout line is ``embry0-review-checkout: delta=<state> base=<sha>``.
 ``delta`` is ``none`` (no previous review), ``yes``, or ``rewritten``: the
 previous sha is gone or no longer an ancestor of the head (a force-push or a
@@ -45,6 +50,7 @@ DELTA_DIFF = f"{REVIEW_DIR}/delta.diff"
 FILES_LIST = f"{REVIEW_DIR}/files.txt"
 FILES_NUL = f"{REVIEW_DIR}/files.nul"
 HEAD_GONE_EXIT = 3
+FETCH_FAILED_EXIT = 5
 DELTA_STATES: tuple[str, ...] = ("none", "yes", "rewritten")
 
 _RESULT_PREFIX = "embry0-review-checkout:"
@@ -91,16 +97,28 @@ def build_checkout_script(
         f"embry0-review: commit {head_sha} is no longer on the forge; "
         "the branch was rewritten after the review was asked for"
     )
+    unreachable = (
+        f"embry0-review: could not fetch {fetch_ref} from the forge, which did not answer "
+        "(check the git-proxy and the repository's forge credential)"
+    )
     lines = [
         "set -u",
         f"cd {q(workspace)} || exit 4",
         f"out={q(out_dir)}",
         'mkdir -p "$out"',
-        f"git fetch --quiet --depth={depth} origin {head_spec} || true",
+        f"git fetch --quiet --depth={depth} origin {head_spec}",
+        "fetched=$?",
         f"if ! git cat-file -e {commit} 2>/dev/null; then",
         f"  git fetch --quiet --depth={depth} origin {q(head_sha)} 2>/dev/null || true",
         "fi",
         f"if ! git cat-file -e {commit} 2>/dev/null; then",
+        # The ref fetch failing is not evidence of a rewrite: the forge may be
+        # down, or the credential refused. Only a forge that answers can say
+        # the commit is gone.
+        '  if [ "$fetched" -ne 0 ] && ! git ls-remote origin HEAD >/dev/null 2>&1; then',
+        f"    echo {q(unreachable)} >&2",
+        f"    exit {FETCH_FAILED_EXIT}",
+        "  fi",
         f"  echo {q(gone)} >&2",
         f"  exit {HEAD_GONE_EXIT}",
         "fi",

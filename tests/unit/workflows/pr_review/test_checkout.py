@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from embry0.workflows.pr_review.checkout import (
+    FETCH_FAILED_EXIT,
     HEAD_GONE_EXIT,
     CheckoutResult,
     build_checkout_script,
@@ -254,6 +255,30 @@ def test_head_that_is_gone_exits_3_with_a_message(repo: SimpleNamespace) -> None
 
     assert done.returncode == HEAD_GONE_EXIT == 3
     assert "is no longer on the forge" in done.stderr
+
+
+@needs_git
+def test_a_deleted_branch_is_reported_as_gone_not_as_a_fetch_failure(repo: SimpleNamespace) -> None:
+    _git(repo.bare, "update-ref", "-d", "refs/heads/feature/login")
+    _git(repo.bare, "update-ref", "-d", "refs/pull/7/head")
+    _git(repo.bare, "gc", "--quiet", "--prune=now")
+
+    done = _run(repo, fetch_ref="refs/heads/feature/login", head_sha=repo.head)
+
+    assert done.returncode == HEAD_GONE_EXIT, done.stderr
+    assert "is no longer on the forge" in done.stderr
+
+
+@needs_git
+def test_an_unreachable_forge_is_a_fetch_failure_not_a_rewritten_branch(repo: SimpleNamespace, tmp_path: Path) -> None:
+    _git(repo.ws, "remote", "set-url", "origin", f"file://{tmp_path / 'no-such-remote.git'}")
+
+    done = _run(repo, fetch_ref="refs/heads/feature/login", head_sha=repo.head)
+
+    assert done.returncode == FETCH_FAILED_EXIT == 5, (
+        f"a fetch that failed was reported as exit {done.returncode}: {done.stderr}"
+    )
+    assert "could not fetch" in done.stderr and "rewritten" not in done.stderr, done.stderr
 
 
 @pytest.mark.parametrize(
