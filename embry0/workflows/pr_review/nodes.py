@@ -448,8 +448,16 @@ def _publish_failure(exc: Exception, forge: str) -> str:
 
 
 def _job_url(configurable: dict[str, Any], job_id: str) -> str:
-    base = getattr(configurable.get("embry0_config"), "dashboard_public_url", "") or "http://localhost:8200"
-    return f"{str(base).rstrip('/')}/jobs/{job_id}"
+    """The job's dashboard page, or "" when the dashboard URL is unset or loopback.
+
+    ``dashboard_public_url`` defaults to ``http://localhost:8200``, and a pull
+    request's page may be public: a local address there is a dead link that
+    tells its readers about the deployment.
+    """
+    from embry0.services.linear_sync import public_dashboard_url
+
+    base = public_dashboard_url(str(getattr(configurable.get("embry0_config"), "dashboard_public_url", "") or ""))
+    return f"{base}/jobs/{job_id}" if base else ""
 
 
 async def _record_outcome(configurable: dict[str, Any], rv: dict[str, Any], *, posted: bool) -> None:

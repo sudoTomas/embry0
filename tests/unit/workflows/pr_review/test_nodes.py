@@ -464,7 +464,7 @@ async def test_publish_posts_on_the_jobs_forge_and_records_it(forge: str, target
     args, kwargs = poster.call_args
     assert args == ("gh" if forge == "github" else "gl",)
     assert (kwargs["repo"], kwargs["number"], kwargs["head_sha"]) == ("acme/widgets", 7, SHA)
-    assert kwargs["ctx"].job_url == "http://localhost:8200/jobs/job-1"
+    assert kwargs["ctx"].job_url == "", "no dashboard_public_url: the footer must not link a local address"
     assert reviews.outcomes == [{"review_id": "prr-1", "verdict": VERDICT, "posted": True}]
 
 
@@ -721,3 +721,26 @@ async def test_a_review_that_runs_nothing_strips_agent_configuration_from_the_ch
         f"from_fork={from_fork} depth={depth}: the checkout {'kept' if stripped else 'stripped'} "
         "the head's .claude/, .mcp.json and CLAUDE.md files"
     )
+
+
+@pytest.mark.parametrize(
+    ("public_url", "expected"),
+    [
+        ("https://embry0.example.com/", "https://embry0.example.com/jobs/job-1"),
+        ("", ""),
+        (None, ""),
+        ("http://localhost:8200", ""),
+        ("http://127.0.0.1:8200/", ""),
+    ],
+)
+async def test_the_job_link_is_the_public_dashboard_url_or_nothing(public_url: str | None, expected: str) -> None:
+    from types import SimpleNamespace
+
+    poster = AsyncMock(return_value=PublishResult(inline_count=0, listed_count=0))
+    config = _config(embry0_config=SimpleNamespace(dashboard_public_url=public_url))
+    with (
+        patch("embry0.workflows.pr_review.publish.publish_github", poster),
+        patch("embry0.workflows.pr_review.nodes._github_client", return_value="gh"),
+    ):
+        await publish_node(_reviewed(), config)
+    assert poster.call_args.kwargs["ctx"].job_url == expected, f"dashboard_public_url={public_url!r}"

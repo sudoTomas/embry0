@@ -6,10 +6,10 @@ public. The body is redacted as a whole, so no field can slip past. Agent
 prose keeps its markdown, but cannot leave a code fence open over what
 follows, open an HTML comment, or notify anyone with an @mention.
 
-The footer names the reviewed sha, links the job, says how to ask for
-another review — mid-line, so the body never reads as the command itself —
-and ends with the hidden marker that keeps embry0 from triggering on its own
-comments.
+The footer names the reviewed sha and the job (linked only when the
+deployment has a public dashboard URL), says how to ask for another review —
+mid-line, so the body never reads as the command itself — and ends with the
+hidden marker that keeps embry0 from triggering on its own comments.
 """
 
 from __future__ import annotations
@@ -151,8 +151,9 @@ def _suggested(verdict: Verdict) -> str:
 
 
 def _footer(ctx: SummaryContext) -> str:
+    job = f"[job {ctx.job_id}]({ctx.job_url})" if ctx.job_url else f"job {ctx.job_id}"
     return (
-        f"---\nReviewed {_code(ctx.head_sha[:12])} · [job {ctx.job_id}]({ctx.job_url}) · "
+        f"---\nReviewed {_code(ctx.head_sha[:12])} · {job} · "
         "For another review, comment with a line that reads `/embry0 review`.\n"
         f"{review_marker(ctx.job_id, ctx.head_sha)}"
     )

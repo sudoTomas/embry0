@@ -209,3 +209,11 @@ def test_a_cut_inside_a_check_output_still_closes_its_fence() -> None:
     assert len(body) <= BODY_LIMIT
     fences = [line for line in body.splitlines() if line.lstrip().startswith("~~~")]
     assert len(fences) % 2 == 0, "the cut left a code fence open over the footer"
+
+
+def test_without_a_public_dashboard_url_the_footer_links_nothing() -> None:
+    ctx = SummaryContext(job_id="job-1", head_sha=SHA, job_url="", from_fork=False, depth="full")
+    body = render_summary(_verdict(), inline_count=0, listed=[], ctx=ctx)
+    footer = body[body.rindex("\n---\n") :]
+    assert "](" not in footer and "localhost" not in footer, f"the footer links somewhere: {footer!r}"
+    assert "job job-1" in footer and body.rstrip().endswith(review_marker("job-1", SHA))
