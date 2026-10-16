@@ -145,3 +145,32 @@ async def test_create_registers_the_sandbox_bearer_with_the_scrubber():
         assert "bearer-token-" + "x" * 30 in known_secret_values(), "the bearer is registered as a known secret"
     finally:
         register_known_secrets([], reset=True)
+
+
+async def test_destroy_unregisters_the_bearer_create_registered():
+    """#39: a revoked bearer has nothing left to protect; kept registered, the
+    scrub list grows by one value per sandbox for the life of the process."""
+    from embry0.safety.redaction import known_secret_values
+
+    resolver = MagicMock()
+    resolver.resolve_forge = AsyncMock(return_value=_resolved())
+    mgr = SandboxManager(docker=_docker(), proxy_manager=_proxy(), credential_resolver=resolver)
+    container_id, _ = await mgr.create("job-1", repo="acme/widgets", forge="github")
+    assert "bearer-token-" + "x" * 30 in known_secret_values(), "precondition: create registered the bearer"
+    await mgr.destroy(container_id)
+    assert "bearer-token-" + "x" * 30 not in known_secret_values(), "destroy unregisters the bearer"
+
+
+async def test_a_create_rolled_back_after_enrollment_unregisters_its_bearer():
+    """The bare-rm rollback paths never reach destroy(); they must release the bearer too."""
+    from embry0.safety.redaction import known_secret_values
+
+    resolver = MagicMock()
+    resolver.resolve_forge = AsyncMock(return_value=_resolved())
+    pm = _proxy()
+    mgr = SandboxManager(docker=_docker(), proxy_manager=pm, credential_resolver=resolver)
+    mgr.connect_network = AsyncMock(side_effect=RuntimeError("no such network"))  # type: ignore[method-assign]
+    with pytest.raises(SandboxInitError, match="extra-network attach failed"):
+        await mgr.create("job-1", repo="acme/widgets", forge="github", profile={"extra_networks": ["sandbox-internet"]})
+    assert pm.enroll_sandbox.await_count == 1, "precondition: the bearer was minted before the rollback"
+    assert "bearer-token-" + "x" * 30 not in known_secret_values(), "a rolled-back create releases its bearer"

@@ -26,3 +26,47 @@ def test_short_values_are_not_registered():
     redaction.register_known_secrets(["abc"], reset=True)
     registered = "abc" in redaction.known_secret_values()
     assert registered is False
+
+
+def test_unregister_removes_a_registered_value():
+    redaction.register_known_secrets(["bearer-one-aaaaaaaa", "bearer-two-bbbbbbbb"])
+    redaction.unregister_known_secrets(["bearer-one-aaaaaaaa"])
+    values = redaction.known_secret_values()
+    assert "bearer-one-aaaaaaaa" not in values, "an unregistered value is no longer a known secret"
+    assert "bearer-two-bbbbbbbb" in values, "unregistering one value leaves the others registered"
+    assert "bearer-one-aaaaaaaa" not in redaction.secret_env_values(environ={}), "the scrub list forgets it too"
+
+
+def test_unregister_tolerates_values_never_registered():
+    redaction.unregister_known_secrets(["never-registered-value", "x"])
+    assert redaction.known_secret_values() == []
+
+
+def _reference(environ: dict[str, str]) -> list[str]:
+    env = {v for k, v in environ.items() if redaction._SECRET_ENV_NAME.search(k) and len(v) >= 8}
+    return sorted(env | set(redaction.known_secret_values()), key=lambda v: (-len(v), v))
+
+
+def test_secret_env_values_is_the_merged_list_longest_first_across_cache_changes():
+    environ = {
+        "GITHUB_TOKEN": "env-token-cccccccccc",
+        "API_KEY": "shared-value-dddddd",  # also registered: appears once
+        "HOME": "/home/not-a-secret",
+    }
+    redaction.register_known_secrets(["registered-a-eeeeeeeeeeee", "shared-value-dddddd", "reg-b-ffffffff"])
+    first = redaction.secret_env_values(environ=environ)
+    assert first == _reference(environ), "merged list matches the reference sort (first call fills the cache)"
+    assert redaction.secret_env_values(environ=environ) == first, "a cached call returns the same list"
+
+    redaction.register_known_secrets(["a-much-longer-registered-value-gggggggggg"])
+    assert redaction.secret_env_values(environ=environ) == _reference(environ), "register invalidates the cache"
+    redaction.unregister_known_secrets(["registered-a-eeeeeeeeeeee"])
+    assert redaction.secret_env_values(environ=environ) == _reference(environ), "unregister invalidates the cache"
+    redaction.register_known_secrets(["only-one-left-hhhhhhhh"], reset=True)
+    assert redaction.secret_env_values(environ=environ) == _reference(environ), "reset invalidates the cache"
+
+
+def test_secret_env_values_result_is_a_copy():
+    redaction.register_known_secrets(["registered-iiiiiiiiii"])
+    redaction.secret_env_values(environ={}).append("mutated-jjjjjjjjjj")
+    assert "mutated-jjjjjjjjjj" not in redaction.secret_env_values(environ={}), "callers cannot mutate the cache"
