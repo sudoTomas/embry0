@@ -239,6 +239,12 @@ class LoopMetrics:
             "WebSocket clients but no reconnecting client can replay it (spec 3.5).",
             registry=r,
         )
+        self._job_events_dropped = Counter(
+            "embry0_job_events_dropped_total",
+            "Job events dropped because the redaction scrub raised; the log line "
+            "event_redaction_failed names the type.",
+            registry=r,
+        )
         self.jobs_in_flight = Gauge(
             "embry0_jobs_in_flight", "Non-terminal jobs by status (the queue).", ["status"], registry=r
         )
@@ -463,6 +469,12 @@ class LoopMetrics:
     @_never_raises
     def job_event_persist_failed(self) -> None:
         self._job_event_persist_failures.inc()
+
+    @_never_raises
+    def job_event_dropped(self) -> None:
+        """Job events dropped because the redaction scrub raised; the log line
+        event_redaction_failed names the type."""
+        self._job_events_dropped.inc()
 
     # ---- linear dispatch reconciler ------------------------------------------
 

@@ -209,13 +209,18 @@ async def test_a_scrub_failure_drops_the_event_and_logs_only_its_type(monkeypatc
     jobs = _jobs(seq=1)
     bus = EventBus()
     queue = await bus.subscribe("job-1")
-    out = await broadcast_job_event(jobs, bus, None, "job-1", {"type": "text", "text": "the payload"})
+    registry = CollectorRegistry()
+    metrics = LoopMetrics(registry)
+    out = await broadcast_job_event(jobs, bus, metrics, "job-1", {"type": "text", "text": "the payload"})
     assert out is None
     jobs.append_log_event.assert_not_awaited()
     assert queue.qsize() == 0, "a line that could not be scrubbed must not reach anyone"
     logged = capsys.readouterr().out
     assert "event_redaction_failed" in logged and "text" in logged
     assert "the payload" not in logged, "the log line carries the event type only"
+    assert registry.get_sample_value("embry0_job_events_dropped_total") == 1, (
+        "the drop is counted: a dropped job_finished leaves the live socket open and the log is otherwise its only trace"
+    )
 
 
 # ---- spec 3.5: prev_seq, so a client can tell a gap from an interleave --------

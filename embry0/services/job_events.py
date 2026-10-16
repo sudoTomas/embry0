@@ -78,6 +78,8 @@ async def broadcast_job_event(
         event = redact_event(event, secret_env_values())
     except Exception:
         logger.error("event_redaction_failed", job_id=job_id, event_type=str(event.get("type") or "unknown"))
+        if metrics is not None:
+            metrics.job_event_dropped()
         return None
 
     seq: int | None = None
