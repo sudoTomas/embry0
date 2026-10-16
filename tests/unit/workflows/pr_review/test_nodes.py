@@ -685,7 +685,11 @@ async def test_every_event_the_nodes_emit_is_on_the_contract() -> None:
         await publish_node(_reviewed(), config)
         await review_node(_ready(), _config(agent_runner=None))  # the error path
 
-    assert {e["type"] for e in emitted} == {"node_started", "node_completed", "progress", "error"}
+    assert {e["type"] for e in emitted} == {"node_started", "node_completed", "progress", "error", "pipeline_graph"}, (
+        f"emitted {sorted({e['type'] for e in emitted})}: init must emit the pr-review pipeline graph"
+    )
+    [graph] = [e for e in emitted if e["type"] == "pipeline_graph"]
+    assert graph["node"] == "init_pr_review" and graph["graph"]["graph_id"].startswith("pr-review-")
     off = {f"{e['type']}/{e.get('node')}": _off_contract(e) for e in emitted if _off_contract(e)}
     assert not off, f"pr-review emitted events off the contract: {off}"
     review_events = [e for e in emitted if e.get("node") == "review" and e["type"] != "error"]

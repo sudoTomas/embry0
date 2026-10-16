@@ -442,6 +442,7 @@ async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=ErrorCode.UNEXPECTED_INTERRUPT.value)
+            await self._announce_finished(job_id)
             return
 
         rv = (final_state or {}).get("pr_review") or {}
@@ -451,6 +452,7 @@ async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
                 job_id, status="completed", finished_at=datetime.now(UTC), result_summary=summary[:4000] or None
             )
             await self._finish_credential_uses(job_id, error_code=None)
+            await self._announce_finished(job_id)
         else:
             code = str(rv.get("error_code") or ErrorCode.PR_REVIEW_NO_VERDICT.value)
             await self._jobs.update(
@@ -461,6 +463,7 @@ async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=code)
+            await self._announce_finished(job_id)
     except Exception as exc:  # noqa: BLE001
         logger.error("pr_review_workflow_crashed", job_id=job_id, error=str(exc), exc_info=True)
         crash_code = classify_failure(exc=exc, stage="pr-review").value
@@ -473,6 +476,7 @@ async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
                 finished_at=datetime.now(UTC),
             )
             await self._finish_credential_uses(job_id, error_code=crash_code)
+            await self._announce_finished(job_id)
         except StatusTransitionConflict:
             pass
     finally:

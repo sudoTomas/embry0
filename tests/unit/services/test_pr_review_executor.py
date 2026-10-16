@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from embry0.orchestration.budget_gate import DispatchDecision
 from embry0.orchestration.restart import NOT_RESUMABLE_PIPELINES
 from embry0.safety.error_codes import ErrorCode
@@ -288,4 +290,34 @@ async def test_an_override_that_was_disabled_falls_back_to_the_heavy_tier() -> N
 
     assert seen["initial_state"]["agent_models_override"] == {"pr-reviewer": "claude-opus-5"}, (
         "a disabled override must fall back to the heavy tier, not to the resolver's medium-tier default"
+    )
+
+
+def _ending(kind: str) -> AsyncMock:
+    if kind == "crashed":
+        return AsyncMock(side_effect=RuntimeError("graph exploded"))
+    if kind == "interrupted":
+        return AsyncMock(return_value=(None, True, None))
+    status = "completed" if kind == "completed" else "failed"
+    return AsyncMock(return_value=({"pr_review": {"final_status": status}}, False, None))
+
+
+@pytest.mark.parametrize("kind", ["completed", "failed", "crashed", "interrupted"])
+async def test_every_ending_announces_the_finished_job_after_its_terminal_write(kind: str) -> None:
+    jobs = _Jobs(_row())
+    executor = _executor(jobs)
+    order: list[str] = []
+    original_update = jobs.update
+
+    async def update(job_id: str, **fields: Any) -> None:
+        order.append(f"update:{fields.get('status')}")
+        await original_update(job_id, **fields)
+
+    jobs.update = update  # type: ignore[method-assign]
+    executor._announce_finished = AsyncMock(side_effect=lambda job_id: order.append(f"announce:{job_id}"))  # type: ignore[method-assign]
+    with patch.object(executor, "_execute_workflow_stream", _ending(kind)):
+        await executor._run_pr_review_workflow("job-1")
+    terminal = "completed" if kind == "completed" else "failed"
+    assert order[-2:] == [f"update:{terminal}", "announce:job-1"], (
+        f"a {kind} review must announce job_finished after its terminal write, got {order}"
     )

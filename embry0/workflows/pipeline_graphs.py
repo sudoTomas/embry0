@@ -1,7 +1,7 @@
 """Static pipeline graphs for the jobs whose graph triage does not plan.
 
 issue-to-pr jobs get their graph from plan_route (built from the route plan);
-onboarding and standalone QA jobs run a fixed LangGraph, so their graph is
+onboarding, standalone QA and pull request review jobs run a fixed LangGraph, so their graph is
 written down here in the frontend PipelineGraph shape and emitted by the
 first node. tests/unit/workflows/test_pipeline_graphs.py pins each node list
 to the compiled graph's nodes, so the two cannot drift.
@@ -50,6 +50,18 @@ QA_NODE_IDS: tuple[tuple[str, str, str], ...] = (
 _QA_EDGES: tuple[tuple[str, str, str], ...] = (
     ("init_orchestrator", "orchestrate_qa", "flow"),
     ("orchestrate_qa", "qa_report", "flow"),
+)
+
+PR_REVIEW_NODE_IDS: tuple[tuple[str, str, str], ...] = (
+    ("init_pr_review", "pr-reviewer", "Init"),
+    ("review", "pr-reviewer", "Review"),
+    ("publish", "pr-reviewer", "Publish"),
+    ("cleanup", "pr-reviewer", "Cleanup"),
+)
+_PR_REVIEW_EDGES: tuple[tuple[str, str, str], ...] = (
+    ("init_pr_review", "review", "flow"),
+    ("review", "publish", "flow"),
+    ("publish", "cleanup", "flow"),
 )
 
 
@@ -102,4 +114,14 @@ def qa_pipeline_graph(job_id: str) -> dict[str, Any]:
         description="Boot the apps and run the browser QA agent per app",
         nodes=QA_NODE_IDS,
         edges=_QA_EDGES,
+    )
+
+
+def pr_review_pipeline_graph(job_id: str) -> dict[str, Any]:
+    return _static_graph(
+        graph_id=f"pr-review-{job_id}",
+        name="pull request review",
+        description="Review a pull request at its head commit and post the findings on it",
+        nodes=PR_REVIEW_NODE_IDS,
+        edges=_PR_REVIEW_EDGES,
     )

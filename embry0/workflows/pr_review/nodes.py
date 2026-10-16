@@ -17,6 +17,7 @@ from langgraph.config import get_stream_writer
 
 from embry0.execution import events
 from embry0.safety.error_codes import ErrorCode
+from embry0.workflows.pipeline_graphs import pr_review_pipeline_graph
 from embry0.workflows.pr_review import publish as _publish
 from embry0.workflows.pr_review.agent_seed import AGENT_TYPE, PR_REVIEWER_AGENT_SEED
 
@@ -139,6 +140,7 @@ async def init_pr_review_node(state: dict[str, Any], config: RunnableConfig) -> 
 
     writer = _writer()
     writer(events.node_started(node="init_pr_review"))
+    writer(events.pipeline_graph(graph=pr_review_pipeline_graph(job_id), node="init_pr_review"))
 
     prefs = await _repo_preferences(configurable, repo)
     profile_name = str(prefs.get("sandbox_profile") or DEFAULT_PROFILE)
@@ -531,6 +533,8 @@ async def publish_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
 async def cleanup_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Destroy the review sandbox. Always runs."""
     rv = _review(state)
+    writer = _writer()
+    writer(events.node_started(node="cleanup"))
     sandbox_mgr = _configurable(config).get("sandbox_manager")
     sandbox_id = rv.get("sandbox_id") or state.get("sandbox_container_id")
     if sandbox_mgr is not None and sandbox_id:
@@ -546,4 +550,5 @@ async def cleanup_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
                 "failure_summary": "the review ended before its verdict was published",
             }
         )
+    writer(events.node_completed(node="cleanup"))
     return {"pr_review": rv, "sandbox_container_id": None}
