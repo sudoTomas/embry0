@@ -14,6 +14,7 @@ from embry0.workflows.pr_review.checkout import (
     CheckoutResult,
     build_checkout_script,
     head_fetch_ref,
+    parse_changed_paths,
     parse_checkout_output,
 )
 
@@ -82,6 +83,32 @@ def test_the_exact_head_is_checked_out_and_the_change_written(repo: SimpleNamesp
     assert (repo.out / "files.txt").read_text().split() == ["app.py", "login.py"]
     diff = (repo.out / "changes.diff").read_text()
     assert "+b = 2" in diff and "+def login():" in diff
+
+
+@needs_git
+def test_changed_paths_are_listed_unquoted_for_the_node_and_the_agent(repo: SimpleNamespace) -> None:
+    _git(repo.src, "checkout", "--quiet", "feature/login")
+    (repo.src / "caf\u00e9.py").write_text("x = 1\n")
+    (repo.src / "tab\there.py").write_text("y = 1\n")
+    _git(repo.src, "add", ".")
+    _git(repo.src, "commit", "--quiet", "-m", "odd names")
+    head = _git(repo.src, "rev-parse", "HEAD")
+    _git(repo.src, "push", "--quiet", str(repo.bare), "feature/login")
+
+    done = _run(repo, fetch_ref="refs/heads/feature/login", head_sha=head)
+
+    assert done.returncode == 0, done.stderr
+    raw = (repo.out / "files.nul").read_bytes().decode()
+    assert sorted(raw.split("\0")[:-1]) == sorted(["app.py", "caf\u00e9.py", "login.py", "tab\there.py"]), (
+        f"git quoted the names the node reads: {raw!r}"
+    )
+    assert "caf\u00e9.py" in (repo.out / "files.txt").read_text(), "the agent's listing must not octal-quote names"
+    assert sorted(parse_changed_paths(raw)) == ["app.py", "caf\u00e9.py", "login.py", "tabhere.py"]
+
+
+def test_parse_changed_paths_strips_control_characters_and_empties() -> None:
+    raw = "a.py\0\x1b[31mred.py\0\0  \0line\nbreak.py\0\x7fdel\x9b.py"
+    assert parse_changed_paths(raw) == ["a.py", "[31mred.py", "linebreak.py", "del.py"]
 
 
 @needs_git

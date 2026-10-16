@@ -11,8 +11,10 @@ the head into ``refs/embry0-review/head``:
 
 It checks out the sha the trigger named, deepens until base and head share a
 merge base, and writes the change, the changed paths and, for a re-review,
-the delta since the previously reviewed sha into ``REVIEW_DIR``. That
-directory is under ``/workspace`` (the Ring-2 allow-list) and inside ``.git``,
+the delta since the previously reviewed sha into ``REVIEW_DIR``. The paths are
+written twice: ``FILES_LIST`` for the agent to read, and ``FILES_NUL``
+(NUL-separated, never C-quoted) for ``parse_changed_paths``.
+``REVIEW_DIR`` is under ``/workspace`` (the Ring-2 allow-list) and inside ``.git``,
 where no pull request can put a file of its own.
 
 The last stdout line is ``embry0-review-checkout: delta=<state> base=<sha>``.
@@ -32,6 +34,7 @@ REVIEW_DIR = "/workspace/.git/embry0-review"
 CHANGES_DIFF = f"{REVIEW_DIR}/changes.diff"
 DELTA_DIFF = f"{REVIEW_DIR}/delta.diff"
 FILES_LIST = f"{REVIEW_DIR}/files.txt"
+FILES_NUL = f"{REVIEW_DIR}/files.nul"
 HEAD_GONE_EXIT = 3
 DELTA_STATES: tuple[str, ...] = ("none", "yes", "rewritten")
 
@@ -97,7 +100,10 @@ def build_checkout_script(
         "done",
         'mb=$(git merge-base "$base" HEAD 2>/dev/null || echo "$base")',
         'git diff --no-color "$mb" HEAD > "$out/changes.diff" || exit 4',
-        'git diff --name-only "$mb" HEAD > "$out/files.txt" || exit 4',
+        # files.txt is the agent's, with UTF-8 names unquoted; files.nul is
+        # the node's, NUL-separated, so no name comes back C-quoted.
+        'git -c core.quotePath=false diff --name-only "$mb" HEAD > "$out/files.txt" || exit 4',
+        'git diff --name-only -z "$mb" HEAD > "$out/files.nul" || exit 4',
         "delta=none",
     ]
     if previous_sha:
@@ -127,3 +133,16 @@ def parse_checkout_output(stdout: str) -> CheckoutResult | None:
         base_sha = fields.get("base", "")
         return CheckoutResult(delta=delta, base_sha=base_sha if _SHA_RE.match(base_sha) else "")
     return None
+
+
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def parse_changed_paths(raw: str) -> list[str]:
+    """The paths in ``FILES_NUL``, in git's order, with control characters removed.
+
+    The names reach the agent's prompt, and a pull request chooses them: a
+    newline or an escape sequence in one must not shape that prompt.
+    """
+    paths = (_CONTROL_RE.sub("", name).strip() for name in raw.split("\0"))
+    return [path for path in paths if path]

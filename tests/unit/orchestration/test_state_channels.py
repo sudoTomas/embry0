@@ -24,9 +24,15 @@ def _workflows() -> dict[str, type]:
     """Every compiled graph whose state schema is JobState."""
     from embry0.workflows.issue_to_pr.graph import IssueToprWorkflow
     from embry0.workflows.onboard.graph import OnboardWorkflow
+    from embry0.workflows.pr_review.graph import PrReviewWorkflow
     from embry0.workflows.qa.graph import QAWorkflow
 
-    return {"issue-to-pr": IssueToprWorkflow, "onboard": OnboardWorkflow, "qa": QAWorkflow}
+    return {
+        "issue-to-pr": IssueToprWorkflow,
+        "onboard": OnboardWorkflow,
+        "pr-review": PrReviewWorkflow,
+        "qa": QAWorkflow,
+    }
 
 
 _GRAPHS = sorted(_workflows())
@@ -45,7 +51,7 @@ def test_every_job_state_graph_is_covered() -> None:
 
     root = pathlib.Path(embry0.__file__).parent
     users = {p.parent.name for p in root.rglob("*.py") if re.search(r"StateGraph\(JobState\)", p.read_text())}
-    assert users == {"issue_to_pr", "onboard", "qa"}
+    assert users == {"issue_to_pr", "onboard", "pr_review", "qa"}
 
 
 @pytest.mark.parametrize("graph", _GRAPHS)

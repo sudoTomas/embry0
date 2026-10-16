@@ -523,6 +523,10 @@ class JobState(TypedDict, total=False):
     onboard: Annotated[dict[str, Any] | None, FoldingLastValue]
     # EMB-50: skip the boot/ready smoke phase (onboard jobs, --no-smoke).
     skip_smoke: Annotated[bool, FoldingLastValue]
+    # #30 pr-review pipeline: the job's pipeline_config plus sandbox id,
+    # checkout facts, previous review, verdict and final_status. Owned by
+    # embry0/workflows/pr_review/nodes.py; absent on other pipelines.
+    pr_review: Annotated[dict[str, Any] | None, FoldingLastValue]
 
 
 class QAAttempt(TypedDict, total=False):
