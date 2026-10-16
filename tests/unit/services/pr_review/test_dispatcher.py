@@ -301,6 +301,18 @@ async def test_team_mode_fails_closed_without_a_gitlab_client_or_an_author_id() 
         _assert_not_on_team(await dispatcher.handle_gitlab_merge_request(payload), executor, reviews, what)
 
 
+async def test_a_gitlab_author_refusal_logs_the_author_id() -> None:
+    from structlog.testing import capture_logs
+
+    dispatcher, _, _ = _dispatcher(gitlab=_GitLab(20))
+    with capture_logs() as logs:
+        await dispatcher.handle_gitlab_merge_request(gitlab_merge_request(user_id=42, author_id=51))
+    refusals = [e for e in logs if e.get("event") == "pr_review_refused"]
+    assert refusals and refusals[0].get("gitlab_author_id") == 51, (
+        f"the refusal log must name the GitLab author id the gate checked: {refusals}"
+    )
+
+
 async def test_team_mode_checks_the_gitlab_merge_request_author_not_whoever_readied_it() -> None:
     gitlab = _GitLab(30)
     dispatcher, executor, _ = _dispatcher(gitlab=gitlab)

@@ -18,6 +18,11 @@ async def get_repo_preferences(full_repo: str, request: Request) -> RepoPreferen
     row = await prefs_repo.get(full_repo)
     if row is None:
         return None
+    pr_review = row.get("pr_review")
+    if isinstance(pr_review, dict) and "ready_authors" not in pr_review:
+        # #30: settings saved before ready_authors existed are read as the
+        # team default everywhere (review_settings), so say so here too.
+        row = {**row, "pr_review": {**pr_review, "ready_authors": "team"}}
     return RepoPreferencesResponse(**row)
 
 

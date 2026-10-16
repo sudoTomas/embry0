@@ -1949,7 +1949,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # pr_review.enabled is the gate, and the webhook handlers find it here.
     # GitLab gets a client only when a GitLab credential exists (gitlab_sync
     # is built under the same condition); a GitLab comment command is then
-    # refused as gitlab_not_configured.
+    # refused as gitlab_not_configured, and so is a GitLab ready event under
+    # pr_review.ready_authors "team" (reason author_not_on_team, detail
+    # gitlab_not_configured), since the author's access cannot be checked.
     from embry0.execution.github_client import GitHubClient as _ReviewGitHubClient
     from embry0.services.pr_review.dispatcher import PrReviewDispatcher
     from embry0.storage.repositories.pr_reviews import PrReviewsRepository

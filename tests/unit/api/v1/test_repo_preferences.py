@@ -459,7 +459,7 @@ async def test_put_pr_review_stores_who_triggers_automatic_reviews(app, ready_au
 
 
 @pytest.mark.asyncio
-async def test_get_returns_the_team_default_saved_with_the_settings(app):
+async def test_a_put_without_ready_authors_saves_the_team_default(app):
     # What a PUT without ready_authors stores is what a GET then reads back.
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -475,3 +475,26 @@ async def test_get_returns_the_team_default_saved_with_the_settings(app):
         resp = await client.get("/api/v1/repos/acme/widgets/preferences")
     assert resp.status_code == 200, resp.text
     assert resp.json()["pr_review"].get("ready_authors") == "team", f"GET returned {resp.json()['pr_review']}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.requires_postgres
+async def test_get_fills_in_team_for_a_stored_pr_review_without_ready_authors(app, db_with_migrations):
+    # A row saved before ready_authors existed, written straight through the repository.
+    from embry0.storage.repositories.repo_preferences import RepoPreferencesRepository
+
+    prefs_repo = RepoPreferencesRepository(db_with_migrations)
+    await prefs_repo.upsert("acme/widgets", pr_review={"enabled": True, "depth": "targeted", "model": None})
+    await prefs_repo.upsert("acme/gadgets", pr_review={"enabled": True, "depth": "full", "ready_authors": "anyone"})
+    await prefs_repo.upsert("acme/tools", notes="no review settings")
+    app.state.repo_preferences_repo = prefs_repo
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        legacy = (await client.get("/api/v1/repos/acme/widgets/preferences")).json()["pr_review"]
+        anyone = (await client.get("/api/v1/repos/acme/gadgets/preferences")).json()["pr_review"]
+        unset = (await client.get("/api/v1/repos/acme/tools/preferences")).json()["pr_review"]
+    assert legacy == {"enabled": True, "depth": "targeted", "model": None, "ready_authors": "team"}, (
+        f"GET returned {legacy}: a stored pr_review without ready_authors must read as team, other fields as stored"
+    )
+    assert anyone["ready_authors"] == "anyone", f"a stored anyone was rewritten: {anyone}"
+    assert unset is None, f"a repo with no pr_review gained one: {unset}"

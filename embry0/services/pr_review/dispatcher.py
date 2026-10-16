@@ -209,7 +209,8 @@ class PrReviewDispatcher:
         elif trigger.trigger == "ready" and settings.ready_authors == "team":  # gate 3
             trusted, reason = await self._ready_author_trusted(trigger)
             if not trusted:
-                return self._refuse("author_not_on_team", **ids, author=pr.author, detail=reason)
+                extra = {"gitlab_author_id": trigger.gitlab_author_id} if pr.forge == "gitlab" else {}
+                return self._refuse("author_not_on_team", **ids, author=pr.author, detail=reason, **extra)
         if await self._reviews.exists(trigger.trigger_key):  # gate 4
             return self._refuse("duplicate", **ids)
         # The runner re-checks the budget against the job's dispatched_by, so
