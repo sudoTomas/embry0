@@ -65,6 +65,8 @@ GitHub signs each delivery with `X-Hub-Signature-256: sha256=<hex HMAC>`. A job 
 
 `issue_comment.created` also carries answers to agent questions: `/answer <input_id>: <text>` (canonical — the id is stable no matter what other channels answer in the meantime, and embry0 prints it under each question in the question comment) or `/answer <n>: <text>`, where `<n>` is the question's position *in that one question comment*, not in the live pending list. The positional form is sugar bound to a single comment: embry0 refuses it whenever the issue has questions outstanding in more than one comment, or a blocking question whose comment it could not map — it cannot tell which list you are replying to, since GitHub issue comments carry no `in_reply_to`. Anything embry0 cannot resolve — an ambiguous `<n>`, a stale one, or a question already answered from another channel — is rejected with a reply asking for the id (or the dashboard), never applied to a neighbouring question. `/skip <ref>` takes the same reference. Directives are honored only from comment authors whose `author_association` is in `COMMENT_DISPATCH_AUTHOR_ROLES` (default `OWNER,MEMBER,COLLABORATOR`); everyone else is ignored silently and logged as `answer_rejected_author`.
 
+**Pull request review (#30).** With review turned on for the repository, `pull_request` (`ready_for_review`, or `opened` as non-draft) and an `issue_comment` on a pull request with a line starting `/embry0 review` start an advisory review that embry0 posts on the pull request. Such a comment is only a review request, never an `/answer` or a follow-up. The `pull_request` events also keep feeding merge sync, as before. See [pull request review](pr-review.md).
+
 ### Linear
 
 Linear workspace → Settings → API → Webhooks → New webhook:
@@ -98,7 +100,7 @@ Project (or group) → Settings → Webhooks → Add new webhook:
 
 - **URL:** `<base>/api/v1/webhook/gitlab`
 - **Secret token:** the value of `GITLAB_WEBHOOK_SECRET` in `.env`
-- **Trigger:** Issues events (the handler acts on `object_kind: issue` with action `open`/`reopen`/`update`; `close` syncs status; everything else is ignored)
+- **Trigger:** Issues events (the handler acts on `object_kind: issue` with action `open`/`reopen`/`update`; `close` syncs status), plus **Merge request events** and **Comments** for [pull request review](pr-review.md) (a merge request marked ready or opened as non-draft, and a `/embry0 review` note on a merge request; these reach the reviewer even when the GitLab issue sync is not set up); everything else is ignored
 
 ⚠️ GitLab does **not** sign the body at all: `X-Gitlab-Token` carries the configured secret **verbatim**. Treat that secret like a bearer token — it is only as safe as the TLS channel it rides on, so never expose the endpoint over plain HTTP.
 
