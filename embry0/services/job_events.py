@@ -25,6 +25,7 @@ from typing import Any, Protocol
 import structlog
 
 from embry0.execution import events
+from embry0.safety.redaction import redact_event, secret_env_values
 from embry0.storage.repositories.jobs import TERMINAL_JOB_STATUSES
 
 logger = structlog.get_logger(__name__)
@@ -52,6 +53,15 @@ async def broadcast_job_event(
     event = {**event, "job_id": job_id}
     if "timestamp" not in event:
         event = {**event, "timestamp": datetime.now(UTC).isoformat()}
+
+    # spec 3.6: redact before persisting and before publishing, every string
+    # value, recursively. spec 3.9: a scrubber that raises drops the event;
+    # the log carries the type only, never the payload.
+    try:
+        event = redact_event(event, secret_env_values())
+    except Exception:
+        logger.error("event_redaction_failed", job_id=job_id, event_type=str(event.get("type") or "unknown"))
+        return None
 
     seq: int | None = None
     try:

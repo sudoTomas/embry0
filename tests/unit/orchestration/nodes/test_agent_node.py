@@ -911,3 +911,33 @@ async def test_an_auth_error_from_the_exec_finishes_its_trace_row_with_the_code(
     assert traces_repo.finish.await_count == 1
     assert traces_repo.finish.call_args.kwargs["result"] == "error"
     assert traces_repo.finish.call_args.kwargs["error_code"] == ErrorCode.MISSING_API_KEY.value
+
+
+@pytest.mark.asyncio
+async def test_trace_result_summary_is_redacted_before_its_cap(monkeypatch) -> None:
+    """spec 3.6: traces.result_summary is redacted at write, and before the 500-char cut."""
+    secret = "trace-secret-value-0011223344"
+    monkeypatch.setenv("TRACE_TEST_TOKEN", secret)
+    runner = _make_fake_runner(is_error=True, error_message="x" * 490 + secret, output="")
+    traces_repo = AsyncMock()
+    traces_repo.create = AsyncMock(return_value="run-x")
+    await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
+        agent_runner=runner,
+        agent_type="developer",
+        prompt="go",
+        agent_definition={
+            "model": "claude-sonnet-5",
+            "tools": [],
+            "skills": [],
+            "system_prompt": "",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        },
+        credentials={"api_key": "", "oauth_token": "t"},
+        config={"configurable": {"job_id": "job-test", "traces_repo": traces_repo}},
+    )
+    summary = traces_repo.finish.call_args.kwargs["result_summary"]
+    assert secret not in summary and secret[:8] not in summary, "no fragment of the secret may survive the cut"
+    assert len(summary) <= 500

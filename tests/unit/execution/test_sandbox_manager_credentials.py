@@ -128,3 +128,20 @@ async def test_without_resolver_env_path_unchanged(monkeypatch):
     mgr = SandboxManager(docker=_docker(), proxy_manager=pm, github_token="ghp_default")
     await mgr.create("job-5", repo="acme/widgets", forge="github")
     assert pm.enroll_sandbox.await_args.kwargs["github_token"] == "ghp_env"
+
+
+async def test_create_registers_the_sandbox_bearer_with_the_scrubber():
+    """spec 3.6: the per-sandbox bearer must be an exact-value scrub target; it
+    matches no pattern on its own."""
+    from embry0.safety.redaction import known_secret_values, register_known_secrets
+
+    register_known_secrets([], reset=True)
+    try:
+        resolver = MagicMock()
+        resolver.resolve_forge = AsyncMock(return_value=_resolved())
+        pm = _proxy()
+        mgr = SandboxManager(docker=_docker(), proxy_manager=pm, credential_resolver=resolver)
+        await mgr.create("job-1", repo="acme/widgets", forge="github")
+        assert "bearer-token-" + "x" * 30 in known_secret_values(), "the bearer is registered as a known secret"
+    finally:
+        register_known_secrets([], reset=True)

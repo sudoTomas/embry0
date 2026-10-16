@@ -22,6 +22,7 @@ from embry0.execution.profile_isolation import profile_isolation_problems
 from embry0.execution.runtime import AgentRuntime, DockerRuntime
 from embry0.execution.worker_env import compute_worker_env
 from embry0.safety.error_codes import ErrorCode
+from embry0.safety.redaction import register_known_secrets
 from embry0.services.credentials.resolver import (
     CredentialMissingError,
     CredentialUnavailableError,
@@ -671,6 +672,9 @@ class SandboxManager:
                 git_push_branches=git_push_branches,
                 job_id=job_id,
             )
+            # spec 3.6: the bearer matches no pattern on its own, so it is an
+            # exact-value scrub target from the moment it exists.
+            register_known_secrets([sandbox_token])
         except RuntimeError as exc:
             logger.error("sandbox_enroll_failed_rolling_back", container=name, error=str(exc))
             # Clean any partial enrollment from earlier proxies before rm.
@@ -858,6 +862,9 @@ class SandboxManager:
                 git_push_branches=git_push_branches,
                 job_id=job_id,
             )
+            # spec 3.6: the bearer matches no pattern on its own, so it is an
+            # exact-value scrub target from the moment it exists.
+            register_known_secrets([sandbox_token])
             if getattr(proxy, "xai_proxy_url", ""):
                 await self._docker.run_cmd(
                     self._docker.build_exec_cmd(container, build_xai_token_write_cmd(sandbox_token)), timeout=10

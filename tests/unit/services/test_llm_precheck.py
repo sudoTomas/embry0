@@ -194,3 +194,25 @@ async def test_missing_llm_account_fails_before_the_graph(monkeypatch) -> None:
         raise AssertionError(
             "a provider with no account must fail with CredentialMissingError before _build_graph_config"
         )
+
+
+@pytest.mark.asyncio
+async def test_precheck_registers_the_resolved_secrets_with_the_scrubber(monkeypatch) -> None:
+    """spec 3.6: an env-fallback LLM credential is not in the registry, so the
+    job's resolution is what registers it."""
+    from embry0.safety.redaction import known_secret_values, register_known_secrets
+
+    register_known_secrets([], reset=True)
+    try:
+
+        async def resolve_llm_for_job(repo, providers, *, job_id, parent_job_id=None):
+            return {provider: _resolved(provider) for provider in providers}
+
+        resolver = MagicMock()
+        resolver.resolve_llm_for_job = resolve_llm_for_job
+        executor = _executor(resolver, build_graph_config=lambda job_id, **kw: {"configurable": {"thread_id": job_id}})
+        monkeypatch.setattr("embry0.services._executor_run.checkpointer_context", lambda _url: _Saver())
+        await executor._execute_workflow_stream({"repo": "acme/widgets", "job_id": "job-1"}, "iss-1", "job-1")
+        assert "super-secret-token" in known_secret_values(), "every resolved LLM secret is a known scrub value"
+    finally:
+        register_known_secrets([], reset=True)

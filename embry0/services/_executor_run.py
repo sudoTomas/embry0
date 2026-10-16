@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 from embry0.orchestration.checkpoint import checkpointer_context
 from embry0.orchestration.restart import NOT_RESUMABLE_PIPELINES, ShutdownInterrupt
 from embry0.safety.error_codes import ErrorCode, classify_failure, classify_qa_outcome
+from embry0.safety.redaction import register_known_secrets
 from embry0.services._cost import resolve_job_total_cost
 from embry0.services.healing.lifecycle import Origin
 from embry0.services.healing.recorder import record_case_event
@@ -515,6 +516,9 @@ async def _precheck_llm_accounts(
         await _model_policy_for_precheck(self),
     )
     resolved = await resolver.resolve_llm_for_job(str(state.get("repo") or ""), providers, job_id=job_id)
+    # spec 3.6: registry secrets are registered at startup; an env-fallback
+    # credential is not, so register whatever this job resolved to.
+    register_known_secrets(cred.secret for cred in resolved.values() if isinstance(cred.secret, str))
     ids = {provider: cred.id for provider, cred in resolved.items()}
     kinds = {provider: cred.kind for provider, cred in resolved.items()}
     if isinstance(input_value, dict):

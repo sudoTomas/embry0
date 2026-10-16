@@ -134,7 +134,7 @@ The xAI executor makes the same field changes so both paths conform until the Gr
 
 ### 3.6 Redaction and truncation
 
-- `_broadcast_event` redacts before persisting and before publishing: `redact_secrets` with `known_secret_values()` is applied to every string value in the event, recursively through `tool_input`, `result`, and lists. Per-sandbox bearers and credential secrets are already registered via `register_known_secrets`; the executor service registers the job's resolved credential secrets at job start so the pattern-based scrub is complemented by exact-value scrubbing.
+- `_broadcast_event` redacts before persisting and before publishing: `redact_secrets` with `known_secret_values()` is applied to every string value in the event, recursively through `tool_input`, `result`, and lists. Registry credential secrets are registered with `register_known_secrets` at startup and after create or rotate; the sandbox manager registers each per-sandbox bearer when it enrolls the sandbox (the bearer matches no pattern on its own), and the executor service registers the job's resolved LLM secrets at job start (which covers env-fallback credentials). Every scrub uses `secret_env_values()`, the process's secret env values plus the registered set.
 - The sandbox executors scrub `text`, `thinking`, `tool_result.content` and `agent_completed.output` with the secret values they can see (their own env) before the constructor caps them, so a token is never cut before it is matched; the runner's writer scrubs every string value of the event once more before stdout, so `tool_input` is covered and no line depends on one side alone.
 - Caps become markers: `text` 4000, `thinking` 4000, `tool_result` 4000, `agent_completed.output` 10000 (unchanged), each with `truncated: true` and `original_length` when cut. `tool_call.summary` keeps 200; `tool_input` is stored whole (it already is) but a single string value above 64 KiB is cut with a marker inside the value (the event shape is unchanged), so a `Write` of a large file does not store the file twice.
 - `traces.result_summary` is redacted at write.
@@ -157,7 +157,7 @@ The xAI executor makes the same field changes so both paths conform until the Gr
 
 ### 3.9 Error handling
 
-- A malformed line from the sandbox (not JSON, or JSON without `type`) is wrapped as `system` with the raw text, as today, and counted.
+- A malformed line from the sandbox (not JSON) is dropped by the agent runner with an `event_parse_failed` log line, as today; wrapping it as a `system` event is not part of this workstream.
 - A constructor is never called with an unknown type; the contract test scans `embry0/` for a literal dict whose `"type"` value is an `EventType` member and fails on any hit outside the contract module and its tests, so every emit site goes through a constructor.
 - Persist failure: event still published, counter incremented, client cannot replay it (3.5).
 - Redaction failure (unexpected exception in the scrubber): the event is dropped, not published, and logged with the event type only. Leaking is worse than a missing line.

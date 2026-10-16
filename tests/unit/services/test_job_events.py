@@ -9,6 +9,7 @@ from prometheus_client import CollectorRegistry
 
 from embry0.api.events.bus import EventBus
 from embry0.metrics import LoopMetrics
+from embry0.safety.redaction import REDACTED, register_known_secrets
 from embry0.services.job_events import broadcast_job_event, emit_job_finished
 
 
@@ -148,3 +149,63 @@ def test_executor_constructor_stores_metrics() -> None:
         metrics=metrics,
     )
     assert ex._metrics is metrics, "IssueExecutor(metrics=...) must store the facade as _metrics"
+
+
+# ---- spec 3.6 / 3.9: redaction in the core ----------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clean_known_secrets():
+    register_known_secrets([], reset=True)
+    yield
+    register_known_secrets([], reset=True)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_redacts_nested_values_before_persist_and_publish() -> None:
+    """Review focus 3: a registered secret two levels down and one in a list block."""
+    secret = "registered-secret-value-00112233"
+    register_known_secrets([secret])
+    jobs = _jobs(seq=1)
+    bus = EventBus()
+    queue = await bus.subscribe("job-1")
+    event = {
+        "type": "tool_call",
+        "tool_id": "t1",
+        "tool_name": "Bash",
+        "summary": "run",
+        "tool_input": {"command": "run", "env": [{"name": "K", "value": secret}]},
+        "run_id": "run-1",
+    }
+    await broadcast_job_event(jobs, bus, None, "job-1", event)
+    persisted = jobs.append_log_event.await_args.args[1]
+    published = queue.get_nowait()
+    assert persisted["tool_input"]["env"][0]["value"] == REDACTED, "scrubbed before persist"
+    assert published["tool_input"]["env"][0]["value"] == REDACTED, "scrubbed before publish"
+    assert persisted["tool_id"] == "t1" and persisted["run_id"] == "run-1"
+    assert event["tool_input"]["env"][0]["value"] == secret, "the caller's dict is not mutated"
+
+    content_event = {"type": "tool_result", "tool_id": "t1", "is_error": False, "content": f"line {secret}"}
+    await broadcast_job_event(jobs, bus, None, "job-1", content_event)
+    assert secret not in jobs.append_log_event.await_args.args[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_scrub_failure_drops_the_event_and_logs_only_its_type(monkeypatch, capsys) -> None:
+    """spec 3.9: leaking is worse than a missing line."""
+    import embry0.services.job_events as job_events
+
+    def _boom(event, values):
+        raise RuntimeError("regex exploded")
+
+    monkeypatch.setattr(job_events, "redact_event", _boom)
+    jobs = _jobs(seq=1)
+    bus = EventBus()
+    queue = await bus.subscribe("job-1")
+    out = await broadcast_job_event(jobs, bus, None, "job-1", {"type": "text", "text": "the payload"})
+    assert out is None
+    jobs.append_log_event.assert_not_awaited()
+    assert queue.qsize() == 0, "a line that could not be scrubbed must not reach anyone"
+    logged = capsys.readouterr().out
+    assert "event_redaction_failed" in logged and "text" in logged
+    assert "the payload" not in logged, "the log line carries the event type only"
