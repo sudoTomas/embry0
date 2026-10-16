@@ -304,6 +304,8 @@ ws.onmessage = (event) => {
 
 Every event carries `type` and `timestamp`; the orchestrator stamps `job_id` and `event_seq` (the replay cursor, also accepted as `?since_seq=`). Sandbox and node events carry `run_id` (one agent run), `node` (graph node id), `agent` (agent type) and, on subagent events, `parent_tool_use_id`. The table is generated from `embry0/execution/events.py` (`python -m embry0.execution.events --render-markdown`); `docs/contracts/events.json` is the same contract as data.
 
+The route closes with code 1000 after forwarding `job_finished`, or straight after the replay when the job is already finished (a terminal row, or one whose PR was since merged or closed): the stream is over and a client must not reconnect. A client keeps the highest `event_seq` it processed as its `?since_seq=` cursor for the next connect, and treats a live event whose `prev_seq` is greater than that cursor as a gap (this job had a persisted event the client never received) to fill from `GET /jobs/{id}/logs/events?since_seq=<cursor>` before applying it. A larger `event_seq` alone is not a gap: ids are `job_logs.id`, shared by every job.
+
 <!-- events:begin -->
 | Type | Required fields | Optional fields |
 |---|---|---|
