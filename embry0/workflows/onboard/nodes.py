@@ -24,6 +24,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from embry0.execution import events
+from embry0.workflows.pipeline_graphs import onboard_pipeline_graph
 
 logger = structlog.get_logger(__name__)
 
@@ -76,6 +77,7 @@ async def init_onboard_node(state: dict[str, Any], config: RunnableConfig) -> di
 
     writer = _writer()
     writer(events.node_started(node="init_onboard"))
+    writer(events.pipeline_graph(graph=onboard_pipeline_graph(job_id), node="init_onboard"))
 
     profile = await profiles_repo.get("slim")
     if profile is None:

@@ -27,6 +27,7 @@ from langgraph.config import get_stream_writer
 from embry0.execution import events
 from embry0.orchestration.budget import BudgetOverrunError, resolve_job_cap
 from embry0.orchestration.nodes.agent import evaluate_job_cap
+from embry0.workflows.pipeline_graphs import qa_pipeline_graph
 from embry0.workflows.qa._orchestrator_workspace import (
     compute_changed_files_via_diff,
     resolve_base_branch,
@@ -97,6 +98,7 @@ async def init_orchestrator_node(
     every non-raising return path, early ones included, is closed."""
     writer = _stream_writer()
     writer(events.node_started(node="init_orchestrator"))
+    writer(events.pipeline_graph(graph=qa_pipeline_graph(str(state.get("job_id") or "")), node="init_orchestrator"))
     out = await _init_orchestrator_node_impl(state, config)
     writer(events.node_completed(node="init_orchestrator"))
     return out

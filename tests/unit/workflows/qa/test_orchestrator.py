@@ -2693,9 +2693,11 @@ async def test_init_orchestrator_node_brackets_itself_on_an_early_return(monkeyp
     out = await orch.init_orchestrator_node({}, {"configurable": {}})
     assert out["qa"]["outcome"]["overall_status"] == "infra_error"
     nodes = [(e["type"], e.get("node")) for e in events_out]
-    assert nodes == [("node_started", "init_orchestrator"), ("node_completed", "init_orchestrator")], (
-        f"init_orchestrator brackets its missing-deps return, got {nodes}"
-    )
+    assert nodes == [
+        ("node_started", "init_orchestrator"),
+        ("pipeline_graph", "init_orchestrator"),
+        ("node_completed", "init_orchestrator"),
+    ], f"init_orchestrator brackets its missing-deps return, got {nodes}"
 
 
 @pytest.mark.asyncio
@@ -2711,3 +2713,42 @@ async def test_qa_report_node_brackets_itself_on_the_job_stream(monkeypatch):
     assert nodes == [("node_started", "qa_report"), ("node_completed", "qa_report")], (
         f"qa_report brackets its skipped-write return, got {nodes}"
     )
+
+
+@pytest.mark.asyncio
+async def test_init_orchestrator_emits_the_pipeline_graph(monkeypatch):
+    from types import SimpleNamespace
+
+    from embry0.workflows.qa import orchestrator as orch
+
+    events_out: list[dict] = []
+    monkeypatch.setattr(orch, "get_stream_writer", lambda: events_out.append)
+    sb, profiles, docker = _rav1251_harness()
+
+    async def fake_clone(**kw):
+        from embry0.workflows.qa._subtask_prep import ClonedSandbox
+
+        return ClonedSandbox(head_sha="abc123")
+
+    monkeypatch.setattr("embry0.workflows.qa._subtask_prep.prep_qa_sandbox_clone", fake_clone)
+    await init_orchestrator_node(
+        {"job_id": "run-graph", "repo": "acme/group/backend", "branch_name": "dev", "qa": {}},
+        {
+            "configurable": {
+                "docker": docker,
+                "sandbox_manager": sb,
+                "profiles_repo": profiles,
+                "proxy_manager": None,
+                "qa_configs_repo": _FakeQAConfigs({"acme/group/backend": _QA_YAML_V2}),
+                "repos_repo": _ForgeRepos("gitlab"),
+                "embry0_config": SimpleNamespace(gitlab_url="https://gitlab.example.com"),
+            }
+        },
+    )
+    types = [e["type"] for e in events_out]
+    assert types.index("node_started") < types.index("pipeline_graph"), (
+        "node_started (Task 9) comes first, then the graph"
+    )
+    graph = next(e for e in events_out if e["type"] == "pipeline_graph")
+    assert graph["node"] == "init_orchestrator" and graph["graph"]["graph_id"] == "qa-run-graph"
+    assert [n["node_id"] for n in graph["graph"]["nodes"]] == ["init_orchestrator", "orchestrate_qa", "qa_report"]
