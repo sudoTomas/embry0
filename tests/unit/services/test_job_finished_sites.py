@@ -6,10 +6,13 @@ import ast
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 import embry0.services._executor_outcomes as _executor_outcomes
 import embry0.services._executor_run as _executor_run
 import embry0.services.issue_executor as issue_executor
 from embry0.services.issue_executor import IssueExecutor
+from embry0.storage.schemas import JobStatus
 
 _TERMINAL = {"completed", "failed", "cancelled", "partial", "expired", "skipped"}
 
@@ -78,7 +81,7 @@ async def test_cancel_job_announces_the_cancellation(monkeypatch):
 
 
 def _is_terminal_job_update(node: ast.AST) -> bool:
-    """`await self._jobs.update(..., status=<terminal literal | variable>)`."""
+    """`await self._jobs.update(..., status=<terminal literal | terminal JobStatus member | variable>)`."""
     if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Await)):
         return False
     call = node.value.value
@@ -88,6 +91,9 @@ def _is_terminal_job_update(node: ast.AST) -> bool:
         if kw.arg == "status":
             if isinstance(kw.value, ast.Constant):
                 return kw.value.value in _TERMINAL
+            if isinstance(kw.value, ast.Attribute):
+                member = JobStatus.__members__.get(kw.value.attr)
+                return member is not None and member.value in _TERMINAL
             return isinstance(kw.value, ast.Name)
     return False
 
@@ -101,6 +107,25 @@ def _is_bulk_fail(node: ast.AST) -> bool:
 
 def _announces(block: list[ast.stmt]) -> bool:
     return any("self._announce_finished(" in ast.unparse(stmt) for stmt in block)
+
+
+@pytest.mark.parametrize(
+    ("source", "terminal"),
+    [
+        ('await self._jobs.update(job_id, status="failed")', True),
+        ('await self._jobs.update(job_id, status="running")', False),
+        ("await self._jobs.update(job_id, status=final_status)", True),
+        ("await self._jobs.update(job_id, status=JobStatus.FAILED)", True),
+        ("await self._jobs.update(job_id, status=JobStatus.SKIPPED)", True),
+        ("await self._jobs.update(job_id, status=JobStatus.RUNNING)", False),
+        ("await self._jobs.update(job_id, status=JobStatus.AWAITING_INPUT)", False),
+        ("await self._jobs.update(job_id, pr_url=url)", False),
+    ],
+)
+def test_the_matcher_sees_every_spelling_of_a_terminal_write(source: str, terminal: bool) -> None:
+    """A spelling the matcher misses is a terminal write the guard below never checks."""
+    stmt = ast.parse(f"async def f():\n    {source}\n").body[0].body[0]  # type: ignore[attr-defined]
+    assert _is_terminal_job_update(stmt) is terminal, f"matcher got {source!r} wrong"
 
 
 def test_every_terminal_status_write_is_followed_by_job_finished():
