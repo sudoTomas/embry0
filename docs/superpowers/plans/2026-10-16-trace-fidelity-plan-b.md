@@ -1717,7 +1717,7 @@ EOF
 
 **Files:**
 - Modify: `embry0/safety/redaction.py` (add `redact_event`)
-- Modify: `embry0/agents/_common.py` (add `make_scrubber`)
+- Create: `embry0/agents/_common.py` (`make_scrubber`; the ask-user helper `_extract_embedded_ask_user_events` stays in `executor.py`, where `executor_xai.py` imports it from)
 - Modify: `embry0/agents/executor.py` (`run()`: build the scrubber; `consume()`: scrub `text`, `thinking`, `tool_result.content`, `agent_completed.output`)
 - Modify: `embry0/agents/executor_xai.py` (same four sites: lines ~247, ~249, ~300, ~318, ~409)
 - Modify: `embry0/sandbox/runner.py:29-33` (`_emit` scrubs every string value)
@@ -1757,16 +1757,17 @@ def test_redact_event_scrubs_strings_recursively_and_leaves_correlation_keys() -
     assert out["content"][0]["text"] == f"saw {REDACTED}"
     assert out["tool_id"] == event["tool_id"] and out["run_id"] == event["run_id"], "correlation keys are never rewritten"
     assert out["is_error"] is False and out["count"] == 3
-    assert event["summary"].endswith(secret), "the input event is not mutated"
+    assert secret in event["summary"], "the input event is not mutated"
 ```
 
 Append to `tests/unit/execution/test_events.py`:
 
 ```python
 def test_agent_completed_output_keeps_the_tail_when_cut() -> None:
-    output = "x" * 9000 + "THE END"
+    # The sentinel sits past OUTPUT_CAP so a head cut drops it and only a tail cut keeps it.
+    output = "x" * 9000 + "y" * 2000 + "THE END"
     event = events.agent_completed(
-        is_error=False, error_code=None, error_message="", output=output + "y" * 2000, cost_usd=0.0, duration_ms=1,
+        is_error=False, error_code=None, error_message="", output=output, cost_usd=0.0, duration_ms=1,
         tools_called={}, policy_denials={}, input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_creation_tokens=0,
         run_id="r", node="developer", agent="developer",
     )
@@ -1819,7 +1820,9 @@ async def test_a_secret_straddling_the_cap_leaves_no_fragment(tmp_path, monkeypa
     """Redact before cap (spec 3.6): a token cut in half matches no pattern."""
     secret = "straddle-secret-abcdefghij0123456789"
     monkeypatch.setenv("STRADDLE_TOKEN", secret)
-    content = "p" * 3990 + secret + "q" * 200  # the cut at 4000 would land inside the secret
+    # The cut at 4000 lands inside the 36-char secret (3980 + 36 > 4000); the
+    # 14-char marker that replaces it fits whole (3980 + 14 < 4000).
+    content = "p" * 3980 + secret + "q" * 200
     messages = [
         _assistant_with([_FakeToolUse("t1", "Bash", {"command": "x"})]),
         _FakeUserMessage([_FakeToolResultBlock("t1", content)]),
@@ -1909,7 +1912,7 @@ def redact_event(event: dict[str, Any], known_values: Iterable[str]) -> dict[str
 
 (`Any` is imported from `typing` at the module top; add it to the existing import line.)
 
-Append to `embry0/agents/_common.py`:
+Create `embry0/agents/_common.py`:
 
 ```python
 from collections.abc import Callable
@@ -1977,11 +1980,13 @@ def _cap_tool_input(tool_input: dict[str, Any]) -> dict[str, Any]:
     """``tool_input`` is stored whole, except that a single string value above
     TOOL_INPUT_STRING_CAP is cut with a marker inside the value, so a Write of
     a large file does not store the file twice (spec 3.6). The event shape is
-    unchanged: the marker lives in the string."""
+    unchanged: the marker lives in the string, and the stored value is never
+    longer than the cap, marker included."""
     out: dict[str, Any] = {}
     for key, value in tool_input.items():
         if isinstance(value, str) and len(value) > TOOL_INPUT_STRING_CAP:
-            out[key] = value[:TOOL_INPUT_STRING_CAP] + f"\n… [truncated; original_length={len(value)}]"
+            marker = f"\n… [truncated; original_length={len(value)}]"
+            out[key] = value[: TOOL_INPUT_STRING_CAP - len(marker)] + marker
         else:
             out[key] = value
     return out
