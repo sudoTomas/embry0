@@ -125,7 +125,9 @@ async def test_xai_denied_tool_error_event_uses_message_code_and_ids(env, monkey
     for e in events:
         assert e.get("run_id") == "run-x" and e.get("node") == "developer", f"{e['type']} lacks ids"
     completed = next(e for e in events if e["type"] == "agent_completed")
-    assert completed["policy_denials"] == {"Bash": 1}, f"the denial must be counted, not reported as zero: {completed}"
+    assert completed["policy_denials"] == {err["message"]: 1}, (
+        f"the denial must be counted under the policy reason, as the Claude path does: {completed}"
+    )
 
 
 @pytest.mark.asyncio

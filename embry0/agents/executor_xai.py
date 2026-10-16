@@ -280,7 +280,10 @@ class DirectXaiExecutor:
 
                     verdict = gate_tool_call(policy, name, tool_input, cwd=cwd)
                     if not verdict.allowed:
-                        policy_denials[name] = policy_denials.get(name, 0) + 1
+                        # Keyed by the policy's reason, as the Claude path keys it
+                        # (executor.py _evaluate_hook), so both paths report one shape.
+                        denial_key = verdict.reason or name
+                        policy_denials[denial_key] = policy_denials.get(denial_key, 0) + 1
                         writer(
                             events.error(
                                 message=verdict.reason or "",
