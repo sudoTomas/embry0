@@ -182,6 +182,17 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
 
         # A finished job has nothing live to wait for: close after the replay.
         if replayed_finished or await _job_is_terminal(jobs_repo, job_id):
+            # The job may have ended during this replay: its job_finished is
+            # then on the queue, not in the rows. Forward it so this session
+            # still gets the terminal payload (status, pr_url, cost); the
+            # client marks complete on the close and would never ask again.
+            while not queue.empty():
+                event = queue.get_nowait()
+                event_seq = event.get("event_seq")
+                if isinstance(event_seq, int) and event_seq <= watermark:
+                    continue
+                if _is_job_finished(event) and _passes_filter(event, wanted_types):
+                    await websocket.send_json(event)
             logger.info("ws_closed_finished_job", job_id=job_id, replayed_terminal=replayed_finished)
             await websocket.close(code=FINISHED_CLOSE_CODE)
             return

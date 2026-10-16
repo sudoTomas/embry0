@@ -368,3 +368,36 @@ def test_ws_closes_after_replay_for_a_job_whose_pr_was_merged():
             msg = ws.receive_json()
             pytest.fail(f"a pr_merged job must close after replay, but the route stayed live and sent {msg}")
     assert exc.value.code == 1000
+
+
+def test_ws_forwards_a_job_finished_that_landed_during_the_replay_before_closing():
+    """The job ended while this connect was replaying: its job_finished is on the
+    queue, not in the rows. The client must still get the terminal payload."""
+    app = _make_ws_app(auth_dev_mode=True)
+    finished = {
+        "type": "job_finished",
+        "status": "completed",
+        "event_seq": 2,
+        "error_code": None,
+        "error_message": None,
+        "pr_url": "https://example.invalid/pr/9",
+        "total_cost_usd": 0.3,
+    }
+    app.state.jobs_repo = _LiveRepo(
+        app,
+        "job-ending",
+        live=[finished],
+        rows=[{"id": 1, "payload": {"type": "progress", "n": 1}}],
+        status="completed",
+    )
+    client = TestClient(app)
+    with client.websocket_connect("/ws/jobs/job-ending/events") as ws:
+        assert ws.receive_json()["n"] == 1
+        try:
+            second = ws.receive_json()
+        except WebSocketDisconnect as e:
+            pytest.fail(f"the route closed ({e.code}) without forwarding the job_finished that was on the queue")
+        assert second["type"] == "job_finished" and second["pr_url"] == "https://example.invalid/pr/9"
+        with pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_json()
+    assert exc.value.code == 1000
