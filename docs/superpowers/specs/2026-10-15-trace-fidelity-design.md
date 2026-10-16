@@ -52,6 +52,7 @@ class BaseEvent(TypedDict):
     timestamp: str      # UTC ISO 8601, stamped where the event is created
     job_id: NotRequired[str]        # stamped by _broadcast_event
     event_seq: NotRequired[int]     # stamped by _broadcast_event after persist
+    prev_seq: NotRequired[int]  # stamped by _broadcast_event: the job's previous persisted event_seq
     run_id: NotRequired[str]        # every event of one agent run (3.4)
     node: NotRequired[str]          # graph node id, not the agent type (3.4)
     agent: NotRequired[str]         # agent type
@@ -129,7 +130,7 @@ The xAI executor makes the same field changes so both paths conform until the Gr
 
 - `job_finished` is emitted through `_broadcast_event` by the executor's outcome path for every terminal transition (completed, failed, partial, cancelled, expired, skipped) and when a job is orphaned at startup. Paused and awaiting-input are not terminal and emit nothing new (the `interrupt` and `agent_paused_for_input` events already cover them). The paused-job reaper and the boot orphan sweep have no executor; they call the same job-events core directly (the boot sweep with no bus: nothing is subscribed before the server listens, so the event is persisted and replayed). The synthetic `node_completed(action="orphaned")` marker is gone; `job_finished` carries the orphan's error code.
 - The WebSocket route closes with code 1000 after forwarding `job_finished`. A client connecting to a job whose latest persisted event is `job_finished` gets the replay and then the close. `job_failed` goes through `_broadcast_event` like everything else.
-- The client (`useJobEventStream`) tracks the last `event_seq` it processed and reconnects with `?since_seq=<last>`. Replayed events ≤ last are dropped. A live event whose `event_seq` exceeds last + 1 means a gap (bus overflow or a persist failure): the client fetches `GET /jobs/{id}/logs/events?since_seq=<last>` to fill it before applying the live event. On `job_finished` the client marks the stream complete and never reconnects. A server close with code 1000 means the same (the route closes that way straight after replay for a job that was already terminal).
+- The client (`useJobEventStream`) tracks the last `event_seq` it processed and reconnects with `?since_seq=<last>`. Replayed events ≤ last are dropped. `event_seq` is `job_logs.id`, shared by every job, so consecutive events of one job are not contiguous; the orchestrator stamps `prev_seq`, the job's previous persisted `event_seq`, and a live event whose `prev_seq` is greater than the client's last processed seq means a gap (bus overflow or a persist failure): the client fetches `GET /jobs/{id}/logs/events?since_seq=<last>` to fill it before applying the live event. On `job_finished` the client marks the stream complete and never reconnects. A server close with code 1000 means the same (the route closes that way straight after replay for a job that was already terminal).
 - An event whose persist failed is still published, with no `event_seq`; clients apply it but it cannot be replayed. The `event_persist_failed` log line is kept; a counter `embry0_job_events_persist_failed_total` is added so it is visible in Prometheus. Rule: `or vector(0)` and a threshold test that shows it fires (CLAUDE.md guardrail).
 
 ### 3.6 Redaction and truncation

@@ -41,6 +41,7 @@ The research for this plan (verbatim code, every terminal write site, every read
 10. **`job_failed` is persisted** by scheduling `self._broadcast_event(...)` as a tracked task from the done-callback. It does not imply `job_finished`: the runner already wrote the terminal status in the common path, and a job whose row still says `running` after a crash is the boot sweep's job, as today.
 11. **Metrics wiring.** `IssueExecutor` gains `metrics: LoopMetrics | None = None`; the lifespan passes `app.state.loop_metrics` and the wiring test pins it. The counter `embry0_job_events_persist_failed_total` has no labels. The rule file is added to the promtool command in `.github/workflows/ci.yml` and `docs/ops/verification.md`, and a test asserts every `*.rules.test.yml` under `infra/prometheus/` is named there.
 12. **Spec 3.9's "a malformed line is wrapped as `system`, as today"** is not today's behaviour (`AgentRunner` drops it and logs `event_parse_failed`). Wrapping is not in #37 to #40; Task 7 corrects the spec sentence to describe the drop. The "redaction exception drops the event" rule of 3.9 is implemented in Task 7.
+13. **`event_seq` is not contiguous per job.** Spec 3.5's gap rule ("a live event whose `event_seq` exceeds last + 1 means a gap") assumed consecutive events of one job have consecutive seqs. `event_seq` is `job_logs.id`, a table-wide `BIGSERIAL`: with two jobs writing, one job's seqs run 100, 103, 107, so the client would fetch the REST log on nearly every live event and could never tell a gap from an interleave. Decision: `broadcast_job_event` (Task 1's module) remembers each live job's last persisted `event_seq` in a process-local map and stamps it on the job's next event as `prev_seq`, before the scrub and the persist so a replayed row carries it too; a failed persist advances nothing, and `job_finished` drops the entry so the map is bounded by live jobs. The hook (Task 5) detects a gap only when `prev_seq` is above its cursor. `prev_seq` joins the contract's base fields (`events.py`, `docs/contracts/events.json`, the `docs/api.md` table, the frontend mirrors); spec 3.1 and 3.5 are amended. Rejected: a per-job sequence column (a migration and a second counter per write for a value the orchestrator already holds in memory), and dropping live gap detection to rely on the `since_seq` replay (a bus overflow would stay invisible until the next reconnect). Known limit: after an orchestrator restart the first event of each job carries no `prev_seq`, and that one boundary is covered by the reconnect replay, not by a fill.
 
 ## Review Focus
 
@@ -1169,7 +1170,7 @@ EOF
 - Rewrite: `frontend/src/hooks/useJobEventStream.ts`
 - Modify: `frontend/src/api/logs.ts:11-24` (`fetchJobLogEvents(jobId, sinceSeq = 0)`)
 - Modify: `frontend/src/lib/types/events-discriminated.ts:11-16` (`BaseLogEvent`), `:321-357` (union), new `JobFinishedEvent`
-- Modify: `frontend/src/lib/types/events.ts` (re-export `JobFinishedEvent`; add `"job_finished"` to `LogEventType`)
+- Modify: `frontend/src/lib/types/events.ts` (re-export `JobFinishedEvent`; add `"job_finished"` to `LogEventType`; `prev_seq?` on `ContractBase` and `"prev_seq"` in `BASE_OPTIONAL`, decision 13)
 - Create: `frontend/src/hooks/__tests__/useJobEventStream.test.ts`
 - Modify: `frontend/src/hooks/__tests__/useJobLogs.test.ts:217-262` (the reconnect test carries `event_seq` and asserts the cursor)
 - Modify: `docs/superpowers/specs/2026-10-15-trace-fidelity-design.md` section 3.5 (client bullet: close code 1000)
@@ -1300,25 +1301,91 @@ describe("useJobEventStream replay cursor (spec 3.5, #38)", () => {
     expect(onEvent).toHaveBeenCalledTimes(1);
   });
 
-  it("fills a gap from the REST log before applying the live event, once each, in order", async () => {
+  it("an interleaved seq (2 then 5 with prev_seq 2) fetches nothing and delivers both", async () => {
+    // event_seq is job_logs.id, shared by every job: 3 and 4 belong to other jobs.
+    const { onEvent } = harness();
+    await flushConnect();
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t2", message: "two", event_seq: 2 });
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t5", message: "five", event_seq: 5, prev_seq: 2 });
+    });
+    await act(async () => {});
+    expect(fetchJobLogEvents, "no REST fetch for ids another job used").not.toHaveBeenCalled();
+    const seqs = onEvent.mock.calls.map((c) => (c[0] as { event_seq: number }).event_seq);
+    expect(seqs).toEqual([2, 5]);
+  });
+
+  it("a real gap (2 then 5 with prev_seq 4) fetches from the cursor and delivers in order", async () => {
     vi.mocked(fetchJobLogEvents).mockResolvedValue([
-      { type: "progress", timestamp: "t3", message: "three", event_seq: 3 },
-      { type: "progress", timestamp: "t4", message: "four", event_seq: 4 },
-      { type: "progress", timestamp: "t5", message: "five", event_seq: 5 },
+      { type: "progress", timestamp: "t3", message: "three", event_seq: 3, prev_seq: 2 },
+      { type: "progress", timestamp: "t4", message: "four", event_seq: 4, prev_seq: 3 },
+      { type: "progress", timestamp: "t5", message: "five", event_seq: 5, prev_seq: 4 },
     ] as never);
     const { onEvent } = harness();
     await flushConnect();
     await act(async () => {
       lastCreatedWs!.simulateOpen();
       lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t2", message: "two", event_seq: 2 });
-      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t5", message: "five", event_seq: 5 });
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t5", message: "five", event_seq: 5, prev_seq: 4 });
       // arrives while the fill is in flight: must wait behind it
-      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t6", message: "six", event_seq: 6 });
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t6", message: "six", event_seq: 6, prev_seq: 5 });
     });
     await act(async () => {});
     expect(fetchJobLogEvents).toHaveBeenCalledWith("job-1", 2);
     const seqs = onEvent.mock.calls.map((c) => (c[0] as { event_seq: number }).event_seq);
     expect(seqs).toEqual([2, 3, 4, 5, 6]);
+  });
+
+  it("a reconnect during a fill does not queue the new connection behind it", async () => {
+    vi.mocked(fetchJobLogEvents).mockReturnValueOnce(new Promise(() => {})); // a fill that never lands
+    const { onEvent } = harness();
+    await flushConnect();
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t1", message: "one", event_seq: 1 });
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t3", message: "three", event_seq: 3, prev_seq: 2 });
+      lastCreatedWs!.simulateClose();
+    });
+    expect(fetchJobLogEvents).toHaveBeenCalledWith("job-1", 1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(allCreatedWs).toHaveLength(2);
+    onEvent.mockClear();
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t2", message: "two", event_seq: 2, prev_seq: 1 });
+    });
+    expect(onEvent, "the replay on the new socket must not wait behind the old fill").toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a gap fill that lands after the job changed", async () => {
+    let resolveFill: (events: never) => void = () => {};
+    vi.mocked(fetchJobLogEvents).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFill = resolve as (events: never) => void;
+      }),
+    );
+    const onEvent = vi.fn();
+    const { rerender } = renderHook(({ id }: { id: string }) => useJobEventStream(id, { onEvent }, false), {
+      initialProps: { id: "job-1" },
+    });
+    await flushConnect();
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t1", message: "one", event_seq: 1 });
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t3", message: "three", event_seq: 3, prev_seq: 2 });
+    });
+    expect(fetchJobLogEvents).toHaveBeenCalledWith("job-1", 1);
+    await act(async () => {
+      rerender({ id: "job-2" });
+    });
+    onEvent.mockClear();
+    await act(async () => {
+      resolveFill([{ type: "progress", timestamp: "t2", message: "two", event_seq: 2 }] as never);
+    });
+    expect(onEvent).not.toHaveBeenCalled();
   });
 
   it("does not treat the first event of a fresh connection as a gap", async () => {
@@ -1394,7 +1461,7 @@ Give the third message `event_seq: 3`. (The test keeps its "3 events total" asse
 - [ ] **Step 2: Run to verify failure**
 
 Run: `cd frontend && npx vitest run src/hooks/__tests__/useJobEventStream.test.ts src/hooks/__tests__/useJobLogs.test.ts 2>&1 | tail -15`
-Expected: the seven new tests FAIL (`?since_seq=` missing from the URL, `onEvent` called 3 times instead of 1, `fetchJobLogEvents` not called with a cursor, `isComplete` false); the strengthened reconnect test FAILS on the URL. `npx tsc -b` also fails: `event_seq` is not on `LogEvent`, `"job_finished"` is not a member of the union.
+Expected: the new tests FAIL, each with its own message (`?since_seq=` missing from the URL, `onEvent` called 3 times instead of 1, the interleaved seq triggering a REST fetch, `fetchJobLogEvents` not called with a cursor, a fill that landed after the job changed delivering, the first event of a new socket held behind the old fill, `isComplete` false); the strengthened reconnect test FAILS on the URL. `npx tsc -b` also fails: `event_seq` is not on `LogEvent`, `"job_finished"` is not a member of the union.
 
 - [ ] **Step 3: Types and the API client**
 
@@ -1406,6 +1473,9 @@ interface BaseLogEvent {
   timestamp: string;
   /** Replay cursor stamped by the orchestrator after persist (job_logs.id). Absent on an event whose persist failed. */
   event_seq?: number;
+  /** The job's previous persisted event_seq. event_seq is job_logs.id, shared by every job, so a
+   * prev_seq above the client's last processed seq is a gap; a larger event_seq alone is not. */
+  prev_seq?: number;
   job_id?: string;
 }
 ```
@@ -1490,17 +1560,30 @@ function seqOf(event: LogEvent): number | undefined {
   return typeof seq === "number" ? seq : undefined;
 }
 
+function prevSeqOf(event: LogEvent): number | undefined {
+  const prev = (event as { prev_seq?: unknown }).prev_seq;
+  return typeof prev === "number" ? prev : undefined;
+}
+
 /**
  * Shared WS connection core for per-job event streams.
  *
  * Replay and gaps (spec 3.5): the hook remembers the highest `event_seq` it
  * delivered. A reconnect asks the server for `?since_seq=<that>`; a live or
- * replayed event at or below it is a duplicate and is dropped; a live event
- * more than one past it means events were lost between (bus overflow, a
- * persist failure), so the hook fetches the persisted log from the cursor
- * and delivers it first, holding later live events until the fill lands.
- * `job_finished`, or a server close with code 1000, ends the stream: the
- * hook marks it complete and never reconnects.
+ * replayed event at or below it is a duplicate and is dropped. `event_seq`
+ * is `job_logs.id`, shared by every job, so one job's seqs are not
+ * contiguous and a larger seq alone means nothing; the server stamps
+ * `prev_seq`, the job's previous persisted seq, and a live event whose
+ * `prev_seq` is above the cursor means this job had an event the hook never
+ * got (bus overflow, a persist failure), so the hook fetches the persisted
+ * log from the cursor and delivers it first, holding later live events until
+ * the fill lands. A new connection drops a fill still in flight: its replay
+ * covers the same rows. `job_finished`, or a server close with code 1000,
+ * ends the stream: the hook marks it complete and never reconnects.
+ *
+ * @param hasEvents whether the consumer has already received live events —
+ *   suppresses the REST fallback so live data is never clobbered by a
+ *   stale persisted snapshot.
  */
 export function useJobEventStream(
   jobId: string | undefined,
@@ -1553,26 +1636,32 @@ export function useJobEventStream(
         queuedRef.current.push(event); // a fill owns the order until it lands
         return;
       }
-      const gap = seq !== undefined && lastSeqRef.current > 0 && seq > lastSeqRef.current + 1;
+      const prevSeq = prevSeqOf(event);
+      const gap = prevSeq !== undefined && lastSeqRef.current > 0 && prevSeq > lastSeqRef.current;
       if (!gap) {
         deliver(event);
         return;
       }
       queuedRef.current.push(event);
       const from = lastSeqRef.current;
-      fillRef.current = fetchJobLogEvents(currentJobId, from)
+      // A teardown (jobId change, unmount) clears fillRef; a fill that lands
+      // after it belongs to the previous cycle and must deliver nothing.
+      const fill: Promise<void> = fetchJobLogEvents(currentJobId, from)
         .then((persisted) => {
+          if (fillRef.current !== fill) return;
           for (const p of persisted) deliver(p);
         })
         .catch(() => {
           // The live event still lands below; the gap stays a gap.
         })
         .finally(() => {
+          if (fillRef.current !== fill) return;
           fillRef.current = null;
           const queued = queuedRef.current;
           queuedRef.current = [];
           for (const q of queued) deliver(q);
         });
+      fillRef.current = fill;
     },
     [deliver],
   );
@@ -1604,6 +1693,10 @@ export function useJobEventStream(
         setIsConnected(true);
         wsEverConnectedRef.current = true;
         retryCountRef.current = 0;
+        // A fill from the previous connection must not hold this one's replay:
+        // the replay starts at the same cursor, so it brings the same rows.
+        fillRef.current = null;
+        queuedRef.current = [];
       };
 
       ws.onmessage = (e) => {
@@ -1655,6 +1748,8 @@ export function useJobEventStream(
         ws.onerror = null;
         ws.close();
       }
+      fillRef.current = null;
+      queuedRef.current = [];
       handlersRef.current.onReset?.();
     };
   }, [connect]);
@@ -1687,9 +1782,9 @@ export function useJobEventStream(
 }
 ```
 
-The `stream_end`/`complete` branches are gone: nothing emits them (spec 1, item 3), and `job_finished` is the terminal event now. Update the two consumer tests that fed those phantom types to terminate the stream ("marks isComplete … on stream_end", "… on complete event", "does not reconnect after stream_end close" in both `useJobLogs.test.ts` and `useLiveJobSummary.test.ts`): send a `job_finished` event instead, keep each test's assertion. `useJobLogs`' and `useLiveJobSummary`'s own `complete` cost branches stay until #41.
+A gap is a live event whose `prev_seq` is above the cursor (decision 13), never a larger `event_seq` alone. A fill that lands after the job changed, or after a new connection opened, delivers nothing: the `fillRef.current !== fill` guards make a superseded fill inert, and `ws.onopen` drops the fill and its queue because the reconnect's replay starts at the same cursor. The `stream_end`/`complete` branches are gone: nothing emits them (spec 1, item 3), and `job_finished` is the terminal event now. Update the two consumer tests that fed those phantom types to terminate the stream ("marks isComplete … on stream_end", "… on complete event", "does not reconnect after stream_end close" in both `useJobLogs.test.ts` and `useLiveJobSummary.test.ts`): send a `job_finished` event instead, keep each test's assertion. `useJobLogs`' and `useLiveJobSummary`'s own `complete` cost branches stay until #41.
 
-Amend spec 3.5's client bullet: after "On `job_finished` the client marks the stream complete and never reconnects." add "A server close with code 1000 means the same (the route closes that way straight after replay for a job that was already terminal)."
+Amend spec 3.5's client bullet: after "On `job_finished` the client marks the stream complete and never reconnects." add "A server close with code 1000 means the same (the route closes that way straight after replay for a job that was already terminal)." Replace its gap sentence with "`event_seq` is `job_logs.id`, shared by every job, so consecutive events of one job are not contiguous; the orchestrator stamps `prev_seq`, the job's previous persisted `event_seq`, and a live event whose `prev_seq` is greater than the client's last processed seq means a gap (bus overflow or a persist failure)", and add `prev_seq: NotRequired[int]` to the `BaseEvent` block in 3.1 (decision 13).
 
 - [ ] **Step 5: Run, type-check, lint**
 
