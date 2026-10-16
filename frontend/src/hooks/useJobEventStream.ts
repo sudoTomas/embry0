@@ -38,17 +38,26 @@ function seqOf(event: LogEvent): number | undefined {
   return typeof seq === "number" ? seq : undefined;
 }
 
+function prevSeqOf(event: LogEvent): number | undefined {
+  const prev = (event as { prev_seq?: unknown }).prev_seq;
+  return typeof prev === "number" ? prev : undefined;
+}
+
 /**
  * Shared WS connection core for per-job event streams.
  *
  * Replay and gaps (spec 3.5): the hook remembers the highest `event_seq` it
  * delivered. A reconnect asks the server for `?since_seq=<that>`; a live or
- * replayed event at or below it is a duplicate and is dropped; a live event
- * more than one past it means events were lost between (bus overflow, a
- * persist failure), so the hook fetches the persisted log from the cursor
- * and delivers it first, holding later live events until the fill lands.
- * `job_finished`, or a server close with code 1000, ends the stream: the
- * hook marks it complete and never reconnects.
+ * replayed event at or below it is a duplicate and is dropped. `event_seq`
+ * is `job_logs.id`, shared by every job, so one job's seqs are not
+ * contiguous and a larger seq alone means nothing; the server stamps
+ * `prev_seq`, the job's previous persisted seq, and a live event whose
+ * `prev_seq` is above the cursor means this job had an event the hook never
+ * got (bus overflow, a persist failure), so the hook fetches the persisted
+ * log from the cursor and delivers it first, holding later live events until
+ * the fill lands. A new connection drops a fill still in flight: its replay
+ * covers the same rows. `job_finished`, or a server close with code 1000,
+ * ends the stream: the hook marks it complete and never reconnects.
  *
  * @param hasEvents whether the consumer has already received live events —
  *   suppresses the REST fallback so live data is never clobbered by a
@@ -105,7 +114,8 @@ export function useJobEventStream(
         queuedRef.current.push(event); // a fill owns the order until it lands
         return;
       }
-      const gap = seq !== undefined && lastSeqRef.current > 0 && seq > lastSeqRef.current + 1;
+      const prevSeq = prevSeqOf(event);
+      const gap = prevSeq !== undefined && lastSeqRef.current > 0 && prevSeq > lastSeqRef.current;
       if (!gap) {
         deliver(event);
         return;
@@ -161,6 +171,10 @@ export function useJobEventStream(
         setIsConnected(true);
         wsEverConnectedRef.current = true;
         retryCountRef.current = 0;
+        // A fill from the previous connection must not hold this one's replay:
+        // the replay starts at the same cursor, so it brings the same rows.
+        fillRef.current = null;
+        queuedRef.current = [];
       };
 
       ws.onmessage = (e) => {

@@ -115,25 +115,63 @@ describe("useJobEventStream replay cursor (spec 3.5, #38)", () => {
     expect(onEvent).toHaveBeenCalledTimes(1);
   });
 
-  it("fills a gap from the REST log before applying the live event, once each, in order", async () => {
+  it("an interleaved seq (2 then 5 with prev_seq 2) fetches nothing and delivers both", async () => {
+    // event_seq is job_logs.id, shared by every job: 3 and 4 belong to other jobs.
+    const { onEvent } = harness();
+    await flushConnect();
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t2", message: "two", event_seq: 2 });
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t5", message: "five", event_seq: 5, prev_seq: 2 });
+    });
+    await act(async () => {});
+    expect(fetchJobLogEvents, "no REST fetch for ids another job used").not.toHaveBeenCalled();
+    const seqs = onEvent.mock.calls.map((c) => (c[0] as { event_seq: number }).event_seq);
+    expect(seqs).toEqual([2, 5]);
+  });
+
+  it("a real gap (2 then 5 with prev_seq 4) fetches from the cursor and delivers in order", async () => {
     vi.mocked(fetchJobLogEvents).mockResolvedValue([
-      { type: "progress", timestamp: "t3", message: "three", event_seq: 3 },
-      { type: "progress", timestamp: "t4", message: "four", event_seq: 4 },
-      { type: "progress", timestamp: "t5", message: "five", event_seq: 5 },
+      { type: "progress", timestamp: "t3", message: "three", event_seq: 3, prev_seq: 2 },
+      { type: "progress", timestamp: "t4", message: "four", event_seq: 4, prev_seq: 3 },
+      { type: "progress", timestamp: "t5", message: "five", event_seq: 5, prev_seq: 4 },
     ] as never);
     const { onEvent } = harness();
     await flushConnect();
     await act(async () => {
       lastCreatedWs!.simulateOpen();
       lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t2", message: "two", event_seq: 2 });
-      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t5", message: "five", event_seq: 5 });
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t5", message: "five", event_seq: 5, prev_seq: 4 });
       // arrives while the fill is in flight: must wait behind it
-      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t6", message: "six", event_seq: 6 });
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t6", message: "six", event_seq: 6, prev_seq: 5 });
     });
     await act(async () => {});
     expect(fetchJobLogEvents).toHaveBeenCalledWith("job-1", 2);
     const seqs = onEvent.mock.calls.map((c) => (c[0] as { event_seq: number }).event_seq);
     expect(seqs).toEqual([2, 3, 4, 5, 6]);
+  });
+
+  it("a reconnect during a fill does not queue the new connection behind it", async () => {
+    vi.mocked(fetchJobLogEvents).mockReturnValueOnce(new Promise(() => {})); // a fill that never lands
+    const { onEvent } = harness();
+    await flushConnect();
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t1", message: "one", event_seq: 1 });
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t3", message: "three", event_seq: 3, prev_seq: 2 });
+      lastCreatedWs!.simulateClose();
+    });
+    expect(fetchJobLogEvents).toHaveBeenCalledWith("job-1", 1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(allCreatedWs).toHaveLength(2);
+    onEvent.mockClear();
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t2", message: "two", event_seq: 2, prev_seq: 1 });
+    });
+    expect(onEvent, "the replay on the new socket must not wait behind the old fill").toHaveBeenCalledTimes(1);
   });
 
   it("drops a gap fill that lands after the job changed", async () => {
@@ -151,7 +189,7 @@ describe("useJobEventStream replay cursor (spec 3.5, #38)", () => {
     await act(async () => {
       lastCreatedWs!.simulateOpen();
       lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t1", message: "one", event_seq: 1 });
-      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t3", message: "three", event_seq: 3 });
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t3", message: "three", event_seq: 3, prev_seq: 2 });
     });
     expect(fetchJobLogEvents).toHaveBeenCalledWith("job-1", 1);
     await act(async () => {
