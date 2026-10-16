@@ -26,6 +26,9 @@ vi.mock("@/components/environments/DetectBanner", () => ({
 vi.mock("@/components/environments/RepoPreferencesSection", () => ({
   RepoPreferencesSection: () => null,
 }));
+vi.mock("@/components/environments/PullRequestReviewCard", () => ({
+  PullRequestReviewCard: () => null,
+}));
 
 import { EnvironmentsPage } from "../EnvironmentsPage";
 

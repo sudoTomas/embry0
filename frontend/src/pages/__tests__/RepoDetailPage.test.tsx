@@ -25,6 +25,9 @@ vi.mock("@/components/qa/QaConfigEditor", () => ({
 vi.mock("@/components/environments/RepoPreferencesSection", () => ({
   RepoPreferencesSection: () => <div data-testid="repo-prefs-section" />,
 }));
+vi.mock("@/components/environments/PullRequestReviewCard", () => ({
+  PullRequestReviewCard: ({ repo }: { repo: string }) => <div data-testid="pr-review-card">{repo}</div>,
+}));
 
 vi.mock("@/components/repos/RepoAccountsSection", () => ({
   RepoAccountsSection: ({ repo, forge }: { repo: string; forge: string }) => (
@@ -94,6 +97,9 @@ describe("RepoDetailPage (RAV-1253)", () => {
     expect(environment.compareDocumentPosition(accounts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(accounts.compareDocumentPosition(sandbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByTestId("repo-prefs-section")).toBeInTheDocument();
+    const review = screen.getByRole("heading", { name: "Pull request review" });
+    expect(sandbox.compareDocumentPosition(review) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId("pr-review-card")).toHaveTextContent("acme/widgets");
     expect(screen.getByTestId("repo-env-manage-link")).toHaveAttribute(
       "href",
       "/environments?repo=acme%2Fwidgets",

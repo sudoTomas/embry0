@@ -17,6 +17,7 @@ import { EnvVarModal } from "@/components/environments/EnvVarModal";
 import { envErrorText } from "@/components/environments/envErrorText";
 import { DetectBanner } from "@/components/environments/DetectBanner";
 import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
+import { PullRequestReviewCard } from "@/components/environments/PullRequestReviewCard";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { FolderOpen, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -425,6 +426,8 @@ export function EnvironmentsPage() {
             {validRepo && <DetectBanner repo={selectedRepo} onImport={handleImport} />}
 
             {validRepo && <RepoPreferencesSection repo={selectedRepo} />}
+
+            {validRepo && <PullRequestReviewCard repo={selectedRepo} />}
 
             {validRepo ? (
               <div className="space-y-6">
