@@ -603,3 +603,52 @@ async def test_no_failure_before_publish_writes_an_outcome() -> None:
     reviews = _Reviews()
     out = await publish_node(_ready(), _config(pr_reviews_repo=reviews))  # no verdict in state
     assert out["pr_review"]["error_code"] == ErrorCode.PR_REVIEW_NO_VERDICT.value and reviews.outcomes == []
+
+
+# ---- fix round 1: a crashed or overridden review stays contained ----
+
+
+class _CrashingRunner(_Runner):
+    async def run(
+        self,
+        container: str,
+        config: dict[str, Any],
+        network: Any = None,
+        on_event: Any = None,
+        *,
+        resume_session: Any = None,
+    ) -> AgentOutput:
+        raise RuntimeError("Docker command failed: exec died, token=ghp_" + "x" * 36)
+
+
+async def test_a_crashed_reviewer_fails_the_job_and_the_graph_still_cleans_up() -> None:
+    from embry0.workflows.pr_review.graph import PrReviewWorkflow
+
+    config = _config(agent_runner=_CrashingRunner())
+    final = await PrReviewWorkflow().compile().ainvoke(_state(), config)
+
+    rv = final["pr_review"]
+    assert rv["final_status"] == "failed", rv
+    assert rv["error_code"] == ErrorCode.PR_REVIEW_NO_VERDICT.value, rv["error_code"]
+    assert "the pull request reviewer crashed" in rv["failure_summary"] and "exec died" in rv["failure_summary"]
+    assert "ghp_" + "x" * 36 not in rv["failure_summary"], "the crash text must be redacted"
+    assert config["configurable"]["sandbox_manager"].destroyed == ["sandbox-1"], "cleanup must run after a crash"
+
+
+@pytest.mark.parametrize(("from_fork", "depth"), [(True, "full"), (False, "read_only")])
+async def test_a_tools_override_cannot_give_bash_back(from_fork: bool, depth: str) -> None:
+    config = _config()
+    state = {
+        **_ready(from_fork=from_fork, depth=depth),
+        "pipeline_config": {"agent_tools": {"pr-reviewer": ["Read", "Bash"]}},
+    }
+    await review_node(state, config)
+    tools = config["configurable"]["agent_runner"].calls[0]["config"]["tools"]
+    assert "Bash" not in tools, f"from_fork={from_fork} depth={depth}: the agent_tools override restored {tools}"
+
+
+async def test_a_tools_override_still_applies_where_bash_is_allowed() -> None:
+    config = _config()
+    state = {**_ready(), "pipeline_config": {"agent_tools": {"pr-reviewer": ["Read", "Bash"]}}}
+    await review_node(state, config)
+    assert config["configurable"]["agent_runner"].calls[0]["config"]["tools"] == ["Read", "Bash"]

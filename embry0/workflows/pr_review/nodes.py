@@ -263,13 +263,33 @@ async def _persist_session(sessions: Any, job_id: str, resume: Any, last: Any, c
         logger.warning("pr_review_session_persist_failed", job_id=job_id, exc_info=True)
 
 
-async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-    """Run the pr-reviewer agent and read its verdict."""
+def _without_bash_override(state: dict[str, Any]) -> dict[str, Any]:
+    """``state`` with Bash taken out of any ``agent_tools`` override for the reviewer.
+
+    ``resolve_agent_invocation`` lets ``pipeline_config.agent_tools`` replace
+    the definition's tools, so removing Bash from the definition alone would
+    let an override bring it back.
+    """
+    pipeline_config = state.get("pipeline_config")
+    if not isinstance(pipeline_config, dict):
+        return state
+    overrides = pipeline_config.get("agent_tools")
+    if not isinstance(overrides, dict) or AGENT_TYPE not in overrides:
+        return state
+    tools = overrides[AGENT_TYPE]
+    kept = {k: v for k, v in overrides.items() if k != AGENT_TYPE}
+    if isinstance(tools, list):
+        kept[AGENT_TYPE] = [t for t in tools if t != "Bash"]
+    return {**state, "pipeline_config": {**pipeline_config, "agent_tools": kept}}
+
+
+async def _prepare_review(
+    state: dict[str, Any], rv: dict[str, Any], config: RunnableConfig, sessions: Any, job_id: str
+) -> tuple[dict[str, Any], str, Any, dict[str, Any]]:
+    """The reviewer's definition, prompt, resume session and the state it runs with."""
     from embry0.agents.session import session_resumable
-    from embry0.orchestration.nodes.agent import load_agent_definition, run_agent_node
-    from embry0.safety.redaction import redact_bounded
+    from embry0.orchestration.nodes.agent import load_agent_definition
     from embry0.workflows.pr_review.prompts import (
-        REVIEW_TIMEOUT_SECONDS,
         PromptContext,
         build_delta_prompt,
         build_full_prompt,
@@ -277,20 +297,6 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         format_previous_findings,
         select_dev_checks,
     )
-    from embry0.workflows.pr_review.verdict import parse_verdict
-
-    rv = _review(state)
-    if rv.get("final_status") == "failed":
-        return {}
-    configurable = _configurable(config)
-    agent_runner = configurable.get("agent_runner")
-    if agent_runner is None:
-        return _failed(rv, ErrorCode.AGENT_RUNNER_UNAVAILABLE.value, "no agent runner is configured")
-    credentials = configurable.get("credentials") or {}
-    sessions = configurable.get("agent_sessions_repo")
-    job_id = str(state.get("job_id") or "")
-    writer = _writer()
-    writer({"type": "node_started", "node": "review", "agent": AGENT_TYPE})
 
     depth = str(rv.get("depth") or "full")
     # A fork is reviewed read-only whatever the depth: its code is untrusted.
@@ -332,19 +338,47 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         )
         prompt = build_full_prompt(ctx, previous_findings=findings)
 
-    result = await run_agent_node(
-        state=state,
-        agent_runner=agent_runner,
-        agent_type=AGENT_TYPE,
-        prompt=prompt,
-        agent_definition=definition,
-        max_turns=REVIEW_MAX_TURNS,
-        timeout_seconds=REVIEW_TIMEOUT_SECONDS,
-        on_event=writer,
-        credentials=credentials,
-        config=config,
-        resume_session=resume,
-    )
+    return definition, prompt, resume, _without_bash_override(state) if runs_nothing else state
+
+
+async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
+    """Run the pr-reviewer agent and read its verdict."""
+    from embry0.orchestration.nodes.agent import run_agent_node
+    from embry0.safety.redaction import redact_bounded
+    from embry0.workflows.pr_review.prompts import REVIEW_TIMEOUT_SECONDS
+    from embry0.workflows.pr_review.verdict import parse_verdict
+
+    rv = _review(state)
+    if rv.get("final_status") == "failed":
+        return {}
+    configurable = _configurable(config)
+    agent_runner = configurable.get("agent_runner")
+    if agent_runner is None:
+        return _failed(rv, ErrorCode.AGENT_RUNNER_UNAVAILABLE.value, "no agent runner is configured")
+    credentials = configurable.get("credentials") or {}
+    sessions = configurable.get("agent_sessions_repo")
+    job_id = str(state.get("job_id") or "")
+    writer = _writer()
+    writer({"type": "node_started", "node": "review", "agent": AGENT_TYPE})
+
+    try:
+        definition, prompt, resume, run_state = await _prepare_review(state, rv, config, sessions, job_id)
+        result = await run_agent_node(
+            state=run_state,
+            agent_runner=agent_runner,
+            agent_type=AGENT_TYPE,
+            prompt=prompt,
+            agent_definition=definition,
+            max_turns=REVIEW_MAX_TURNS,
+            timeout_seconds=REVIEW_TIMEOUT_SECONDS,
+            on_event=writer,
+            credentials=credentials,
+            config=config,
+            resume_session=resume,
+        )
+    except Exception as exc:  # noqa: BLE001 — a crashed run must still reach cleanup
+        crash = redact_bounded(f"{type(exc).__name__}: {exc}", 2000)
+        return _failed(rv, ErrorCode.PR_REVIEW_NO_VERDICT.value, f"the pull request reviewer crashed: {crash}")
     outputs = result.get("agent_outputs") or []
     last = outputs[-1] if outputs else None
     await _persist_session(sessions, job_id, resume, last, credentials)
