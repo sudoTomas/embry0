@@ -36,7 +36,7 @@ from embry0.storage.repositories.sandbox_profiles import SandboxProfilesReposito
 from embry0.storage.repositories.traces import TracesRepository
 from embry0.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
 from embry0.workflows.pr_review.agent_seed import seed_pr_reviewer_agent
-from embry0.workflows.pr_review.checkout import DELTA_DIFF, FILES_LIST
+from embry0.workflows.pr_review.checkout import DELTA_DIFF, FILES_NUL
 from embry0.workflows.pr_review.summary import review_marker
 from embry0.workflows.registry import WorkflowRegistry
 from tests.fixtures.webhooks import github_issue_comment, github_review_pull_request
@@ -74,8 +74,8 @@ class _Docker:
             self.scripts.append(cmd[-1])
             delta = "yes" if "prev=" in cmd[-1] else "none"
             return f"embry0-review-checkout: delta={delta} base={'c' * 40}"
-        if cmd[-2:] == ["cat", FILES_LIST]:
-            return "src/app.py\n"
+        if cmd[-2:] == ["cat", FILES_NUL]:
+            return "src/app.py\0"
         return ""
 
 
@@ -166,8 +166,11 @@ async def test_a_ready_pull_request_is_reviewed_then_re_reviewed_on_a_command(db
     await repos.register("acme/widgets", forge="github")
     await prefs.upsert(
         "acme/widgets",
-        pr_review={"enabled": True, "depth": "full", "model": None},
-        dev_checks=[{"name": "unit", "paths": [], "command": "pytest -q"}],
+        pr_review={"enabled": True, "depth": "targeted", "model": None},
+        dev_checks=[
+            {"name": "unit", "paths": ["src"], "command": "pytest -q"},
+            {"name": "docs", "paths": ["docs"], "command": "make docs"},
+        ],
     )
     await seed_builtin_sandbox_profiles(SandboxProfilesRepository(db))
     await seed_pr_reviewer_agent(AgentDefinitionsRepository(db))
@@ -233,7 +236,10 @@ async def test_a_ready_pull_request_is_reviewed_then_re_reviewed_on_a_command(db
         assert review["comments"][0]["body"].startswith("**Important** — b is never checked.")
         assert "**passed** `unit`: `pytest -q`" in review["body"]
         assert review["body"].rstrip().endswith(review_marker(first_job, SHA))
-        assert "- unit: `pytest -q`" in runner.calls[0]["config"]["prompt"]
+        prompt = runner.calls[0]["config"]["prompt"]
+        assert "Changed files in this branch (1):\n- src/app.py" in prompt, "the changed paths never reached the prompt"
+        assert "- unit: `pytest -q`" in prompt, "targeted depth must select the check whose paths the change touches"
+        assert "make docs" not in prompt, "targeted depth ran a check whose paths the change does not touch"
         assert sandbox.destroyed == [f"sandbox-{first_job}"]
 
         # 2. A redelivery of the same event is refused, durably.
