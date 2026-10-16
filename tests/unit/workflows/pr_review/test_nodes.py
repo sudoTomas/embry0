@@ -652,3 +652,55 @@ async def test_a_tools_override_still_applies_where_bash_is_allowed() -> None:
     state = {**_ready(), "pipeline_config": {"agent_tools": {"pr-reviewer": ["Read", "Bash"]}}}
     await review_node(state, config)
     assert config["configurable"]["agent_runner"].calls[0]["config"]["tools"] == ["Read", "Bash"]
+
+
+# ---- the event contract (#56) ------------------------------------------------
+
+
+def _off_contract(event: dict[str, Any]) -> list[str]:
+    """What makes an event fall outside the contract: an unknown type, a
+    missing required field or a field the contract does not name."""
+    from embry0.execution.events import contract
+
+    spec = contract().get(str(event.get("type")))
+    if spec is None:
+        return [f"unknown type {event.get('type')!r}"]
+    allowed = set(spec["required"]) | set(spec["optional"])
+    problems = [f"missing {key}" for key in spec["required"] if key not in event]
+    problems += [f"unknown field {key}" for key in event if key not in allowed]
+    return problems
+
+
+async def test_every_event_the_nodes_emit_is_on_the_contract() -> None:
+    emitted: list[dict[str, Any]] = []
+    config = _config()
+    poster = AsyncMock(return_value=PublishResult(inline_count=1, listed_count=2))
+    with (
+        patch("embry0.workflows.pr_review.nodes._writer", return_value=emitted.append),
+        patch("embry0.workflows.pr_review.publish.publish_github", poster),
+        patch("embry0.workflows.pr_review.nodes._github_client"),
+    ):
+        await init_pr_review_node(_state(), config)
+        await review_node(_ready(), config)
+        await publish_node(_reviewed(), config)
+        await review_node(_ready(), _config(agent_runner=None))  # the error path
+
+    assert {e["type"] for e in emitted} == {"node_started", "node_completed", "progress", "error"}
+    off = {f"{e['type']}/{e.get('node')}": _off_contract(e) for e in emitted if _off_contract(e)}
+    assert not off, f"pr-review emitted events off the contract: {off}"
+    review_events = [e for e in emitted if e.get("node") == "review" and e["type"] != "error"]
+    assert [(e["agent"], e["attempt"]) for e in review_events] == [("pr-reviewer", 1)] * 2, (
+        "the review node's events must name the agent and the attempt"
+    )
+    [published] = [e for e in emitted if e["type"] == "node_completed" and e.get("node") == "publish"]
+    assert published["ok"] is True
+    [posted] = [e for e in emitted if e["type"] == "progress"]
+    assert posted["node"] == "publish" and "1 inline, 2 in the summary" in posted["message"]
+
+
+async def test_the_reviewer_runs_under_the_review_node() -> None:
+    config = _config()
+    await review_node(_ready(), config)
+    assert config["configurable"]["agent_runner"].calls[0]["config"]["node"] == "review", (
+        "the sandbox's events must carry the graph node, not the agent type"
+    )

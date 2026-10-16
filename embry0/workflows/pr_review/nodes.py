@@ -15,6 +15,7 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
+from embry0.execution import events
 from embry0.safety.error_codes import ErrorCode
 from embry0.workflows.pr_review import publish as _publish
 from embry0.workflows.pr_review.agent_seed import AGENT_TYPE, PR_REVIEWER_AGENT_SEED
@@ -45,7 +46,7 @@ def _review(state: dict[str, Any]) -> dict[str, Any]:
 def _failed(rv: dict[str, Any], code: str, summary: str) -> dict[str, Any]:
     rv.update({"final_status": "failed", "error_code": code, "failure_summary": summary[:4000]})
     logger.warning("pr_review_failed", review_id=rv.get("review_id"), error_code=code, summary=summary[:500])
-    _writer()({"type": "error", "message": summary[:1000]})
+    _writer()(events.error(message=summary[:1000]))
     return {"pr_review": rv}
 
 
@@ -132,7 +133,7 @@ async def init_pr_review_node(state: dict[str, Any], config: RunnableConfig) -> 
         return _failed(rv, ErrorCode.PR_REVIEW_INIT_FAILED.value, "init_pr_review has no repository")
 
     writer = _writer()
-    writer({"type": "node_started", "node": "init_pr_review"})
+    writer(events.node_started(node="init_pr_review"))
 
     prefs = await _repo_preferences(configurable, repo)
     profile_name = str(prefs.get("sandbox_profile") or DEFAULT_PROFILE)
@@ -214,7 +215,7 @@ async def init_pr_review_node(state: dict[str, Any], config: RunnableConfig) -> 
             "dev_checks": list(prefs.get("dev_checks") or []),
         }
     )
-    writer({"type": "node_completed", "node": "init_pr_review"})
+    writer(events.node_completed(node="init_pr_review"))
     return {"pr_review": rv, "sandbox_container_id": container_id, "current_stage": "init_complete"}
 
 
@@ -343,7 +344,7 @@ async def _prepare_review(
 
 async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Run the pr-reviewer agent and read its verdict."""
-    from embry0.orchestration.nodes.agent import run_agent_node
+    from embry0.orchestration.nodes.agent import agent_attempt, run_agent_node
     from embry0.safety.redaction import redact_bounded
     from embry0.workflows.pr_review.prompts import REVIEW_TIMEOUT_SECONDS
     from embry0.workflows.pr_review.verdict import parse_verdict
@@ -359,7 +360,8 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     sessions = configurable.get("agent_sessions_repo")
     job_id = str(state.get("job_id") or "")
     writer = _writer()
-    writer({"type": "node_started", "node": "review", "agent": AGENT_TYPE})
+    attempt = agent_attempt(state, AGENT_TYPE)
+    writer(events.node_started(node="review", agent=AGENT_TYPE, attempt=attempt))
 
     try:
         definition, prompt, resume, run_state = await _prepare_review(state, rv, config, sessions, job_id)
@@ -367,6 +369,7 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             state=run_state,
             agent_runner=agent_runner,
             agent_type=AGENT_TYPE,
+            node="review",
             prompt=prompt,
             agent_definition=definition,
             max_turns=REVIEW_MAX_TURNS,
@@ -382,7 +385,7 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     outputs = result.get("agent_outputs") or []
     last = outputs[-1] if outputs else None
     await _persist_session(sessions, job_id, resume, last, credentials)
-    writer({"type": "node_completed", "node": "review"})
+    writer(events.node_completed(node="review", agent=AGENT_TYPE, attempt=attempt))
 
     if not last or last.get("is_error"):
         code = str(result.get("error_code") or (last or {}).get("error_code") or ErrorCode.PR_REVIEW_NO_VERDICT.value)
@@ -477,7 +480,7 @@ async def publish_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
         depth=str(rv.get("depth") or "full"),
     )
     writer = _writer()
-    writer({"type": "node_started", "node": "publish"})
+    writer(events.node_started(node="publish"))
     repo = str(state.get("repo") or "")
     number = int(rv.get("number") or 0)
     forge = str(rv.get("forge") or "github")
@@ -504,7 +507,12 @@ async def publish_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
         return _failed(rv, ErrorCode.PR_REVIEW_PUBLISH_FAILED.value, summary)
     await _record_outcome(configurable, rv, posted=True)
     rv.update({"final_status": "completed", "inline_count": result.inline_count, "listed_count": result.listed_count})
-    writer({"type": "node_completed", "node": "publish", "inline": result.inline_count, "listed": result.listed_count})
+    writer(
+        events.progress(
+            message=f"review posted: {result.inline_count} inline, {result.listed_count} in the summary", node="publish"
+        )
+    )
+    writer(events.node_completed(node="publish", ok=True))
     return {"pr_review": rv, "current_stage": "published"}
 
 
