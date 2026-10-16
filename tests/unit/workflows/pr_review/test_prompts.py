@@ -40,7 +40,6 @@ CTX = PromptContext(
     from_fork=False,
     changed_files=("ml/train.py", "README.md"),
     checks=(),
-    dev_checks_configured=False,
 )
 
 
@@ -65,7 +64,7 @@ def test_read_only_depth_runs_nothing(dev_checks) -> None:
 
 def test_the_full_prompt_carries_everything_the_spec_lists() -> None:
     checks = tuple(select_dev_checks(CHECKS, CTX.changed_files, "full"))
-    prompt = build_full_prompt(replace(CTX, checks=checks, dev_checks_configured=True))
+    prompt = build_full_prompt(replace(CTX, checks=checks))
     for needle in (
         "Pull request #7 on acme/widgets: https://github.com/acme/widgets/pull/7",
         "Title: Add the login form",
@@ -95,7 +94,7 @@ def test_no_configured_checks_at_full_depth_asks_the_agent_to_work_them_out() ->
 
 
 def test_targeted_depth_with_nothing_relevant_runs_nothing() -> None:
-    prompt = build_full_prompt(replace(CTX, depth="targeted", dev_checks_configured=True))
+    prompt = build_full_prompt(replace(CTX, depth="targeted"))
     assert "No configured dev check covers" in prompt and "Run nothing" not in prompt
 
 

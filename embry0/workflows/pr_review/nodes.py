@@ -327,7 +327,6 @@ async def _prepare_review(
         from_fork=bool(rv.get("from_fork")),
         changed_files=changed,
         checks=tuple(select_dev_checks(dev_checks, changed, "read_only" if runs_nothing else depth)),
-        dev_checks_configured=bool(select_dev_checks(dev_checks, changed, "full")),
     )
     previous = rv.get("previous") or {}
     resume = await _load_session(sessions, job_id) if previous.get("session_copied") else None

@@ -67,7 +67,6 @@ class PromptContext:
     from_fork: bool
     changed_files: tuple[str, ...]
     checks: tuple[dict[str, Any], ...]
-    dev_checks_configured: bool
 
 
 def _touches(path: str, prefix: str) -> bool:
