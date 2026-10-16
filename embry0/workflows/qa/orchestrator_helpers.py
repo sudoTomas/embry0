@@ -157,6 +157,7 @@ async def fan_out_subtasks(
                     target=resolved.target,
                 )
             )
+            writer(events.qa_subtask_status(app=resolved.app_name, status="running"))
             if bus is not None:
                 try:
                     await bus.publish(

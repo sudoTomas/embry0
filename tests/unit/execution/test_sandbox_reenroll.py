@@ -200,3 +200,19 @@ async def test_a_failed_enrollment_is_retryable():
             "cid-1", job_id="job-1", repo="acme/widgets", forge="github", xai_credential_id=None, context_scope=None
         )
     assert exc.value.error_code == ErrorCode.SANDBOX_INIT
+
+
+async def test_destroy_unregisters_the_bearer_reenroll_registered():
+    """#39: the fresh bearer is a scrub target until the sandbox is destroyed, then released."""
+    from embry0.safety.redaction import known_secret_values
+
+    docker, _calls = _docker()
+    pm = _proxy()
+    pm.unenroll_sandbox = AsyncMock()
+    mgr = _manager(docker, pm)
+    await mgr.reenroll(
+        "cid-1", job_id="job-1", repo="acme/widgets", forge="github", xai_credential_id=None, context_scope=None
+    )
+    assert NEW_TOKEN in known_secret_values(), "precondition: reenroll registered the fresh bearer"
+    await mgr.destroy("cid-1")
+    assert NEW_TOKEN not in known_secret_values(), "destroy unregisters the reenrolled bearer"

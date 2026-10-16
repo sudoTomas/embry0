@@ -48,7 +48,9 @@ from typing import Any
 
 import structlog
 from langchain_core.runnables import RunnableConfig
+from langgraph.config import get_stream_writer
 
+from embry0.execution import events
 from embry0.execution.github_client import GitHubClient
 from embry0.notifications.qa_comment import render_qa_comment, upsert_sticky_comment
 from embry0.workflows.qa.subtask_result_schema import (
@@ -93,7 +95,14 @@ async def qa_report_node(
 
     Best-effort: failures are logged and the run continues. final_status is
     already set by qa_orchestrator_node; this node is reporting only.
+    Brackets itself with ``node_started``/``node_completed`` on the job
+    stream (spec 3.7).
     """
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:  # outside a runnable context (unit tests)
+        writer = lambda _event: None  # noqa: E731
+    writer(events.node_started(node="qa_report"))
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
 
     qa_state = state.get("qa") or {}
@@ -126,6 +135,7 @@ async def qa_report_node(
             has_token=bool(github_token),
             repo=repo,
         )
+        writer(events.node_completed(node="qa_report"))
         return {}
 
     results = _hydrate_results(per_app)
@@ -158,4 +168,5 @@ async def qa_report_node(
                 error=str(exc),
             )
 
+    writer(events.node_completed(node="qa_report"))
     return {}

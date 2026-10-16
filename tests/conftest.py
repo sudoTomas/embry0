@@ -142,6 +142,17 @@ def _no_leaked_image_pins() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_leaked_known_secrets() -> Iterator[None]:
+    """The registered scrub values are process-wide (spec 3.6). Creating a
+    sandbox or prechecking a job's LLM accounts registers its secrets, so a
+    test that runs either must not change what a later test's scrub sees."""
+    from embry0.safety.redaction import register_known_secrets
+
+    yield
+    register_known_secrets([], reset=True)
+
+
+@pytest.fixture(autouse=True)
 def _capturable_structlog(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Keep ``capture_logs`` working after a test reconfigures structlog (#569).
 

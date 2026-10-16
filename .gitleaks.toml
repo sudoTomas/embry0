@@ -54,6 +54,10 @@ regexes = [
     '''^embry0\.api-key$''',
     '''^ghp_fromenv12345678$''',
     '''^abcdefgh12345678$''',
+    # The 36-char synthetic token the redact-before-cap test places across the
+    # 4000-char tool_result cap (tests/unit/agents/test_sdk_executor.py; the
+    # same test is quoted in docs/superpowers/plans/2026-10-16-trace-fidelity-plan-b.md).
+    '''^straddle-secret-abcdefghij0123456789$''',
     # xAI's public OAuth client id for the device-code login: an identifier
     # every client sends, not a credential (embry0/execution/xai_device_login.py).
     '''^b1a00492-073a-47ea-816f-4c329264a828$''',

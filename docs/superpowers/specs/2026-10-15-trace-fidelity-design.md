@@ -52,6 +52,7 @@ class BaseEvent(TypedDict):
     timestamp: str      # UTC ISO 8601, stamped where the event is created
     job_id: NotRequired[str]        # stamped by _broadcast_event
     event_seq: NotRequired[int]     # stamped by _broadcast_event after persist
+    prev_seq: NotRequired[int]  # stamped by _broadcast_event: the job's previous persisted event_seq
     run_id: NotRequired[str]        # every event of one agent run (3.4)
     node: NotRequired[str]          # graph node id, not the agent type (3.4)
     agent: NotRequired[str]         # agent type
@@ -88,7 +89,7 @@ Constructor functions, one per type, are the only way production code builds an 
 | `validation_result` | review | `validation` (a dict: the validator's result, nested like the other payloads) |
 | `verification_result` | verify | unchanged |
 | `pr_created` | developer | `pr_url`, `branch` |
-| `qa_apps_resolved`, `qa_subtask_started`, `qa_subtask_finished`, `qa_subtask_status`, `qa_agent_transient_retry` | QA | `app` plus existing fields |
+| `qa_apps_resolved`, `qa_subtask_started`, `qa_subtask_finished`, `qa_subtask_status`, `qa_agent_transient_retry` | QA | `app` plus existing fields; `qa_subtask_status.boot_phase` is a dict (the structured boot outcome) |
 | `system` | executor service | `message` |
 | `job_failed` | executor service | `kind`, `message` |
 | `job_finished` | executor service | `status`, `error_code`, `error_message`, `pr_url`, `total_cost_usd` |
@@ -127,22 +128,22 @@ The xAI executor makes the same field changes so both paths conform until the Gr
 
 ### 3.5 Terminal event, reconnect and gaps
 
-- `job_finished` is emitted through `_broadcast_event` by the executor's outcome path for every terminal transition (completed, failed, partial, cancelled, expired, skipped) and when a job is orphaned at startup. Paused and awaiting-input are not terminal and emit nothing new (the `interrupt` and `agent_paused_for_input` events already cover them).
+- `job_finished` is emitted through `_broadcast_event` by the executor's outcome path for every terminal transition (completed, failed, partial, cancelled, expired, skipped) and when a job is orphaned at startup. Paused and awaiting-input are not terminal and emit nothing new (the `interrupt` and `agent_paused_for_input` events already cover them). The paused-job reaper and the boot orphan sweep have no executor; they call the same job-events core directly (the boot sweep with no bus: nothing is subscribed before the server listens, so the event is persisted and replayed). The synthetic `node_completed(action="orphaned")` marker is gone; `job_finished` carries the orphan's error code.
 - The WebSocket route closes with code 1000 after forwarding `job_finished`. A client connecting to a job whose latest persisted event is `job_finished` gets the replay and then the close. `job_failed` goes through `_broadcast_event` like everything else.
-- The client (`useJobEventStream`) tracks the last `event_seq` it processed and reconnects with `?since_seq=<last>`. Replayed events ≤ last are dropped. A live event whose `event_seq` exceeds last + 1 means a gap (bus overflow or a persist failure): the client fetches `GET /jobs/{id}/logs/events?since_seq=<last>` to fill it before applying the live event. On `job_finished` the client marks the stream complete and never reconnects.
+- The client (`useJobEventStream`) tracks the last `event_seq` it processed and reconnects with `?since_seq=<last>`. Replayed events ≤ last are dropped. `event_seq` is `job_logs.id`, shared by every job, so consecutive events of one job are not contiguous; the orchestrator stamps `prev_seq`, the job's previous persisted `event_seq`, and a live event whose `prev_seq` is greater than the client's last processed seq means a gap (bus overflow or a persist failure): the client fetches `GET /jobs/{id}/logs/events?since_seq=<last>` to fill it before applying the live event. On `job_finished` the client marks the stream complete and never reconnects. A server close with code 1000 means the same (the route closes that way straight after replay for a job that was already terminal).
 - An event whose persist failed is still published, with no `event_seq`; clients apply it but it cannot be replayed. The `event_persist_failed` log line is kept; a counter `embry0_job_events_persist_failed_total` is added so it is visible in Prometheus. Rule: `or vector(0)` and a threshold test that shows it fires (CLAUDE.md guardrail).
 
 ### 3.6 Redaction and truncation
 
-- `_broadcast_event` redacts before persisting and before publishing: `redact_secrets` with `known_secret_values()` is applied to every string value in the event, recursively through `tool_input`, `result`, and lists. Per-sandbox bearers and credential secrets are already registered via `register_known_secrets`; the executor service registers the job's resolved credential secrets at job start so the pattern-based scrub is complemented by exact-value scrubbing.
-- The sandbox applies the same function to `text`, `thinking`, `tool_result.content` and `agent_completed.output` before writing to stdout, with the secret values it can see (its own env), so a line is scrubbed twice and never depends on one side alone.
-- Caps become markers: `text` 4000, `thinking` 4000, `tool_result` 4000, `agent_completed.output` 10000 (unchanged), each with `truncated: true` and `original_length` when cut. `tool_call.summary` keeps 200; `tool_input` is stored whole (it already is) but a single string value above 64 KiB is cut with the same marker, so a `Write` of a large file does not store the file twice.
+- `_broadcast_event` redacts before persisting and before publishing: `redact_secrets` with `known_secret_values()` is applied to every string value in the event, recursively through `tool_input`, `result`, and lists. Registry credential secrets are registered with `register_known_secrets` at startup and after create or rotate; the sandbox manager registers each per-sandbox bearer when it enrolls the sandbox (the bearer matches no pattern on its own), and the executor service registers the job's resolved LLM secrets at job start (which covers env-fallback credentials). Every scrub uses `secret_env_values()`, the process's secret env values plus the registered set.
+- The sandbox executors scrub `text`, `thinking`, `tool_result.content` and `agent_completed.output` with the secret values they can see (their own env) before the constructor caps them, so a token is never cut before it is matched; the runner's writer scrubs every string value of the event once more before stdout, so `tool_input` is covered and no line depends on one side alone.
+- Caps become markers: `text` 4000, `thinking` 4000, `tool_result` 4000, `agent_completed.output` 10000 (unchanged), each with `truncated: true` and `original_length` when cut. `tool_call.summary` keeps 200; `tool_input` is stored whole (it already is) but a single string value above 64 KiB is cut with a marker inside the value (the event shape is unchanged), so a `Write` of a large file does not store the file twice.
 - `traces.result_summary` is redacted at write.
 
 ### 3.7 QA and executor-service events on the job stream
 
-- The QA orchestrator publishes `qa_subtask_status` and the QA `done` through the parent writer as well as the QA bus, so they persist and replay on the job stream. The SSE route and `QAEventBus` are unchanged in this workstream; milestone 3 removes them once the merged job page reads the job stream.
-- `job_failed` and the startup orphan marker go through `_broadcast_event`.
+- The QA orchestrator emits `qa_subtask_status` through the parent writer at sub-task start and end (as well as to the QA bus), and the three QA graph nodes emit `node_started`/`node_completed`, the orchestrator's `node_completed` carrying `action=<overall_status>`, which is the run-level outcome on the job stream; the QA bus `done` keeps closing the SSE route and gains no contract type. The SSE route and `QAEventBus` are unchanged in this workstream; milestone 3 removes them once the merged job page reads the job stream.
+- `job_failed` goes through `_broadcast_event`; the startup orphan path emits `job_finished` (3.5).
 
 ### 3.8 Frontend adoption (honesty fixes only)
 
@@ -157,7 +158,7 @@ The xAI executor makes the same field changes so both paths conform until the Gr
 
 ### 3.9 Error handling
 
-- A malformed line from the sandbox (not JSON, or JSON without `type`) is wrapped as `system` with the raw text, as today, and counted.
+- A malformed line from the sandbox (not JSON) is dropped by the agent runner with an `event_parse_failed` log line, as today; wrapping it as a `system` event is not part of this workstream.
 - A constructor is never called with an unknown type; the contract test scans `embry0/` for a literal dict whose `"type"` value is an `EventType` member and fails on any hit outside the contract module and its tests, so every emit site goes through a constructor.
 - Persist failure: event still published, counter incremented, client cannot replay it (3.5).
 - Redaction failure (unexpected exception in the scrubber): the event is dropped, not published, and logged with the event type only. Leaking is worse than a missing line.

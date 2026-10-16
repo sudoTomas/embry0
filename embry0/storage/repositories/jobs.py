@@ -99,6 +99,10 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset(
     }
 )
 
+#: The statuses a live job ends in. Public so the services layer can ask
+#: "is this row terminal?" with the repository's own answer (plan B).
+TERMINAL_JOB_STATUSES: frozenset[str] = _TERMINAL_STATUSES
+
 # What a terminal UPDATE returns, for the outcome metrics (#285).
 _FINISHED_COLUMNS = "job_id, status, pipeline_template, error_code, created_at, started_at, finished_at"
 

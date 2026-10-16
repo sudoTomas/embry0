@@ -12,7 +12,10 @@ must import nothing outside the standard library and structlog.
 
 Base fields (every event): ``type``, ``timestamp`` (UTC ISO 8601, stamped where
 the event is made). Stamped later by the orchestrator: ``job_id``,
-``event_seq`` (after persist). Correlation (sandbox and node events):
+``event_seq`` (after persist) and ``prev_seq`` (the job's previous persisted
+``event_seq``; ``event_seq`` is ``job_logs.id``, shared by every job, so this is
+how a client tells a gap from another job's interleaved ids). Correlation
+(sandbox and node events):
 ``run_id`` (one agent run), ``node`` (graph node id), ``agent`` (agent type),
 ``parent_tool_use_id`` (subagent events only).
 """
@@ -26,7 +29,7 @@ import json
 import sys
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 import structlog
 
@@ -73,6 +76,9 @@ class BaseEvent(TypedDict):
     timestamp: str
     job_id: NotRequired[str]
     event_seq: NotRequired[int]
+    # stamped by the orchestrator: the job's previous persisted event_seq, so a
+    # client can tell a gap from another job's interleaved ids
+    prev_seq: NotRequired[int]
     run_id: NotRequired[str]
     node: NotRequired[str]
     agent: NotRequired[str]
@@ -261,7 +267,7 @@ class QaSubtaskStatusEvent(BaseEvent):
     status: str
     duration_ms: NotRequired[int]
     failure_summary: NotRequired[str]
-    boot_phase: NotRequired[str]
+    boot_phase: NotRequired[dict[str, Any]]
 
 
 class QaAgentTransientRetryEvent(BaseEvent):
@@ -321,7 +327,7 @@ EVENT_SCHEMAS: dict[str, type[Any]] = {
     EventType.JOB_FINISHED: JobFinishedEvent,
 }
 
-_BASE_OPTIONAL = ("job_id", "event_seq", "run_id", "node", "agent", "parent_tool_use_id")
+_BASE_OPTIONAL = ("job_id", "event_seq", "prev_seq", "run_id", "node", "agent", "parent_tool_use_id")
 
 
 def _now() -> str:
@@ -396,10 +402,13 @@ def turn_usage(
     )
 
 
-def _capped(fields: dict[str, Any], key: str, value: str, cap: int) -> dict[str, Any]:
-    """Store ``value`` under ``key`` cut at ``cap`` characters, with a marker when cut."""
+def _capped(
+    fields: dict[str, Any], key: str, value: str, cap: int, *, keep: Literal["head", "tail"] = "head"
+) -> dict[str, Any]:
+    """Store ``value`` under ``key`` cut at ``cap`` characters, with a marker when cut.
+    ``keep="tail"`` keeps the end (an agent's final output ends with its conclusion)."""
     if len(value) > cap:
-        fields[key] = value[:cap]
+        fields[key] = value[:cap] if keep == "head" else value[-cap:]
         fields["truncated"] = True
         fields["original_length"] = len(value)
     else:
@@ -412,6 +421,23 @@ THINKING_CAP = 4000
 TOOL_RESULT_CAP = 4000
 OUTPUT_CAP = 10000
 SUMMARY_CAP = 200
+TOOL_INPUT_STRING_CAP = 64 * 1024
+
+
+def _cap_tool_input(tool_input: dict[str, Any]) -> dict[str, Any]:
+    """``tool_input`` is stored whole, except that a single string value above
+    TOOL_INPUT_STRING_CAP is cut with a marker inside the value, so a Write of
+    a large file does not store the file twice (spec 3.6). The event shape is
+    unchanged: the marker lives in the string, and the stored value is never
+    longer than the cap, marker included."""
+    out: dict[str, Any] = {}
+    for key, value in tool_input.items():
+        if isinstance(value, str) and len(value) > TOOL_INPUT_STRING_CAP:
+            marker = f"\n… [truncated; original_length={len(value)}]"
+            out[key] = value[: TOOL_INPUT_STRING_CAP - len(marker)] + marker
+        else:
+            out[key] = value
+    return out
 
 
 def text(*, text: str, run_id: str, node: str, agent: str, parent_tool_use_id: str | None = None) -> dict[str, Any]:
@@ -443,7 +469,12 @@ def tool_call(
 ) -> dict[str, Any]:
     return _make(
         EventType.TOOL_CALL,
-        {"tool_id": tool_id, "tool_name": tool_name, "summary": summary[:SUMMARY_CAP], "tool_input": tool_input},
+        {
+            "tool_id": tool_id,
+            "tool_name": tool_name,
+            "summary": summary[:SUMMARY_CAP],
+            "tool_input": _cap_tool_input(tool_input),
+        },
         _base(run_id=run_id, node=node, agent=agent, parent_tool_use_id=parent_tool_use_id),
     )
 
@@ -570,6 +601,7 @@ def agent_completed(
         "output",
         output,
         OUTPUT_CAP,
+        keep="tail",
     )
     return _make(EventType.AGENT_COMPLETED, fields, _base(run_id=run_id, node=node, agent=agent))
 
@@ -719,7 +751,7 @@ def qa_subtask_status(
     status: str,
     duration_ms: int | None = None,
     failure_summary: str | None = None,
-    boot_phase: str | None = None,
+    boot_phase: dict[str, Any] | None = None,
     node: str = "qa",
 ) -> dict[str, Any]:
     fields: dict[str, Any] = {"app": app, "status": status}

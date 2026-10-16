@@ -1,0 +1,25 @@
+# Job-event persistence failures (spec 3.5, #39). Load this into the
+# Prometheus that scrapes the orchestrator's /metrics (docs/ops/metrics.md).
+#
+# embry0_job_events_persist_failed_total does not exist as a series until the
+# first failure, so the expression is `or vector(0)`: it evaluates to 0 on a
+# healthy deployment instead of to nothing (a rule that produces no series
+# cannot be told from a rule that never fires, CLAUDE.md). The sum has no
+# labels, so there is no `and on(...)` join to get wrong (#371).
+# Tested by job-events.rules.test.yml (promtool test rules).
+groups:
+  - name: embry0-job-events
+    rules:
+      - alert: Embry0JobEventsNotPersisted
+        expr: |
+          (sum(increase(embry0_job_events_persist_failed_total[15m])) or vector(0)) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Job events are failing to persist"
+          description: >-
+            {{ $value | humanize }} job event(s) in the last 15 minutes were
+            published to live clients but could not be written to job_logs, so
+            no reconnecting client can replay them. Check the orchestrator log
+            for event_persist_failed and the database.

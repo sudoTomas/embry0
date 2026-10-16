@@ -165,6 +165,16 @@ def test_orphan_sweep_stamps_credential_uses():
     assert "finish_uses" in following, "fail_orphaned is not followed by a credential_uses finish_uses stamp"
 
 
+def test_orphan_sweep_emits_job_finished_and_no_synthetic_node_marker() -> None:
+    """spec 3.5: the boot orphan path emits job_finished through the job-events core,
+    not a hand-made node_completed(action="orphaned")."""
+    source = _src()
+    start = source.index("fail_orphaned(")
+    window = source[start : start + 3000]
+    assert "emit_job_finished(" in window, "the orphan sweep must emit job_finished for every orphaned job"
+    assert 'action="orphaned"' not in source, "the synthetic node_completed marker is replaced by job_finished"
+
+
 def test_case_close_reads_github_through_the_registry():
     """The /cases close route builds its own GitHubClient; it must carry the app's resolver."""
     from embry0.api.v1.cases import _github_issues

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine, Mapping
 
     from embry0.api.events.bus import EventBus
+    from embry0.metrics import LoopMetrics
     from embry0.orchestration.budget_gate import DispatchDecision
     from embry0.storage.repositories.environment import EnvironmentRepository
     from embry0.storage.repositories.repo_preferences import RepoPreferencesRepository
@@ -117,7 +118,11 @@ class IssueExecutor:
         # CredentialHealth: quarantines the LLM account behind a provider
         # failure. None in tests / legacy callers: the job still finishes.
         credential_health: Any = None,
+        # LoopMetrics: counts job events that could not be persisted. None in
+        # tests / legacy callers: the failure is still logged.
+        metrics: LoopMetrics | None = None,
     ) -> None:
+        self._metrics = metrics
         self._case_recorder = case_recorder
         self._credential_resolver = credential_resolver
         self._credentials_repo = credentials_repo
@@ -786,9 +791,9 @@ class IssueExecutor:
         - Removes the task from ``_background_tasks`` (idempotent).
         - On CancelledError: silent (normal shutdown path).
         - On any other exception: logs ``background_task_failed`` with the
-          kind/job_id/issue_id context, and publishes a ``job_failed`` event
-          via the event bus so WS clients see the failure even if the coro
-          died outside its own try/except.
+          kind/job_id/issue_id context, and broadcasts a ``job_failed`` event
+          (persisted, then published) so WS clients see the failure even if
+          the coro died outside its own try/except.
         """
         workflow = coro
         if run_slot:
@@ -825,18 +830,15 @@ class IssueExecutor:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
-            # Best-effort WS notification. Track the publish task on
-            # _background_tasks so a clean shutdown awaits it (otherwise it
-            # could be orphaned if the loop is tearing down).
-            if self._event_bus is not None:
-                pub_task = asyncio.create_task(
-                    self._event_bus.publish(
-                        job_id,
-                        {**events.job_failed(kind=kind, message=str(exc)), "job_id": job_id},
-                    )
-                )
-                self._background_tasks.add(pub_task)
-                pub_task.add_done_callback(self._background_tasks.discard)
+            # spec 3.7: job_failed is persisted like every other event (it used
+            # to bypass job_logs and reach only live clients). The callback is
+            # synchronous, so the broadcast runs as a tracked task that a
+            # clean shutdown awaits.
+            pub_task = asyncio.create_task(
+                self._broadcast_event(job_id, events.job_failed(kind=kind, message=str(exc)))
+            )
+            self._background_tasks.add(pub_task)
+            pub_task.add_done_callback(self._background_tasks.discard)
 
         task.add_done_callback(_on_done)
         return task
@@ -1043,6 +1045,7 @@ class IssueExecutor:
         try:
             await self._jobs.update(job_id, status="cancelled")
             await self._finish_credential_uses(job_id, error_code="cancelled")
+            await self._announce_finished(job_id)
         except StatusTransitionConflict:
             logger.warning(
                 "job_status_race_on_cancel",
@@ -1215,6 +1218,7 @@ class IssueExecutor:
             **({"pr_url": pr_url} if pr_url else {}),
         )
         await self._finish_credential_uses(job_id, error_code=code.value)
+        await self._announce_finished(job_id)
         if pr_url:
             await self._record_pr_opened(issue_id, job_id, pr_url)
         await self._issues.update(issue_id, status="open")
@@ -1277,11 +1281,13 @@ class IssueExecutor:
         if not issue:
             from embry0.safety.error_codes import ErrorCode
 
-            await self._jobs.fail_jobs(
+            failed_ids = await self._jobs.fail_jobs(
                 [job_id],
                 ErrorCode.ORPHANED.value,
                 "Orchestrator restarted and the job's issue no longer exists; nothing to start.",
             )
+            for failed_id in failed_ids:
+                await self._announce_finished(failed_id)
             return
         await self._run_workflow(
             issue_id, job_id, issue, additional_context=str(launch.get("additional_context") or "")
@@ -1359,5 +1365,6 @@ class IssueExecutor:
     _record_pr_opened = _executor_outcomes._record_pr_opened
     _handle_split = _executor_outcomes._handle_split
     _broadcast_event = _executor_outcomes._broadcast_event
+    _announce_finished = _executor_outcomes._announce_finished
     _handle_needs_info = _executor_outcomes._handle_needs_info
     _finish_credential_uses = _executor_outcomes._finish_credential_uses

@@ -28,7 +28,7 @@ Then the Postgres the suites connect to:
     (cd frontend && npm ci && npx tsc -b && npm run lint && npm run test -- --run && npm run build)
     docker run --rm -v "$PWD/infra/prometheus:/rules:ro" -w /rules --entrypoint promtool \
       prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0 \
-      test rules offhost-backup.rules.test.yml
+      test rules offhost-backup.rules.test.yml job-events.rules.test.yml
 
 The last gate runs the alert rules in `infra/prometheus/` against their
 `promtool` tests; it prints `SUCCESS` and exits 0 on a pass.

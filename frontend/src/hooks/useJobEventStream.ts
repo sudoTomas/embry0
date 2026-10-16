@@ -4,6 +4,8 @@ import { fetchJobLogEvents } from "@/api/logs";
 import { fetchJobEventsToken } from "@/api/jobs";
 
 const MAX_RECONNECT_RETRIES = 10;
+/** RFC 6455 normal closure: the server ended the stream on purpose (spec 3.5). */
+const FINISHED_CLOSE_CODE = 1000;
 
 /**
  * Consumer callbacks for {@link useJobEventStream}. Handlers are read through
@@ -11,21 +13,18 @@ const MAX_RECONNECT_RETRIES = 10;
  * it never tears down or reconnects the WebSocket.
  */
 export interface JobEventStreamHandlers {
-  /** Called for every parsed live WS event except `stream_end` (a pure
-   * stream marker that never enters consumer state). */
+  /** Called once for every event, in `event_seq` order, live or gap-filled. */
   onEvent: (event: LogEvent) => void;
-  /** Called when the stream terminates (`stream_end` or `complete` event) so
-   * consumers can force-flush any batched state immediately. For a
-   * `complete` event this fires after `onEvent` has delivered the event. */
+  /** Called when the stream terminates (`job_finished`, or the server closed
+   * with 1000) so consumers can flush batched state immediately. For a
+   * `job_finished` event this fires after `onEvent` has delivered it. */
   onStreamEnd?: () => void;
   /** Called with persisted events when the REST fallback loads them (the WS
    * never connected — typically a job that finished before mount). */
   onFallbackEvents?: (events: LogEvent[]) => void;
   /** Called on teardown of each connection cycle (jobId change or unmount).
-   * Consumers reset event-derived state and clear batch timers here.
-   * Reconnects within one cycle intentionally do NOT reset: the backend's
-   * since_seq replay cursor (Plan A) ensures events received after reconnect
-   * are appended without duplicates. */
+   * Reconnects within one cycle do NOT reset: the hook reconnects with
+   * `?since_seq=<last event_seq>` and drops anything it already delivered. */
   onReset?: () => void;
 }
 
@@ -34,13 +33,31 @@ export interface JobEventStreamResult {
   isComplete: boolean;
 }
 
+function seqOf(event: LogEvent): number | undefined {
+  const seq = (event as { event_seq?: unknown }).event_seq;
+  return typeof seq === "number" ? seq : undefined;
+}
+
+function prevSeqOf(event: LogEvent): number | undefined {
+  const prev = (event as { prev_seq?: unknown }).prev_seq;
+  return typeof prev === "number" ? prev : undefined;
+}
+
 /**
- * Shared WS connection core for per-job event streams: connects to
- * `/ws/jobs/{jobId}/events`, reconnects with a retry cap while the stream is
- * live, and falls back to the persisted REST log when the WS never connects.
+ * Shared WS connection core for per-job event streams.
  *
- * Consumers (`useJobLogs`, `useLiveJobSummary`) own all event-derived state
- * via the handler callbacks; this hook owns only the connection lifecycle.
+ * Replay and gaps (spec 3.5): the hook remembers the highest `event_seq` it
+ * delivered. A reconnect asks the server for `?since_seq=<that>`; a live or
+ * replayed event at or below it is a duplicate and is dropped. `event_seq`
+ * is `job_logs.id`, shared by every job, so one job's seqs are not
+ * contiguous and a larger seq alone means nothing; the server stamps
+ * `prev_seq`, the job's previous persisted seq, and a live event whose
+ * `prev_seq` is above the cursor means this job had an event the hook never
+ * got (bus overflow, a persist failure), so the hook fetches the persisted
+ * log from the cursor and delivers it first, holding later live events until
+ * the fill lands. A new connection drops a fill still in flight: its replay
+ * covers the same rows. `job_finished`, or a server close with code 1000,
+ * ends the stream: the hook marks it complete and never reconnects.
  *
  * @param hasEvents whether the consumer has already received live events —
  *   suppresses the REST fallback so live data is never clobbered by a
@@ -58,25 +75,77 @@ export function useJobEventStream(
   const isCompleteRef = useRef(false);
   const retryCountRef = useRef(0);
   const wsEverConnectedRef = useRef(false);
-  // Monotonic counter for connect attempts — the token mint is async, so a
-  // teardown or newer connect invalidates any mint still in flight.
   const connectAttemptRef = useRef(0);
-  // Latest-ref pattern: handlers change identity every render; routing them
-  // through a ref keeps `connect` stable on jobId alone.
+  /** Highest event_seq delivered to the consumer; the reconnect cursor. */
+  const lastSeqRef = useRef(0);
+  /** A gap fill in flight; live events queue behind it. */
+  const fillRef = useRef<Promise<void> | null>(null);
+  const queuedRef = useRef<LogEvent[]>([]);
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
 
   const markStreamComplete = useCallback(() => {
+    if (isCompleteRef.current) return;
     setIsComplete(true);
     isCompleteRef.current = true;
     retryCountRef.current = 0;
     handlersRef.current.onStreamEnd?.();
   }, []);
 
+  /** Deliver one event unless its seq was already delivered; advance the cursor. */
+  const deliver = useCallback(
+    (event: LogEvent) => {
+      const seq = seqOf(event);
+      if (seq !== undefined) {
+        if (seq <= lastSeqRef.current) return;
+        lastSeqRef.current = seq;
+      }
+      handlersRef.current.onEvent(event);
+      if (event.type === "job_finished") markStreamComplete();
+    },
+    [markStreamComplete],
+  );
+
+  const applyLive = useCallback(
+    (event: LogEvent, currentJobId: string) => {
+      const seq = seqOf(event);
+      if (seq !== undefined && seq <= lastSeqRef.current) return; // replayed duplicate
+      if (fillRef.current) {
+        queuedRef.current.push(event); // a fill owns the order until it lands
+        return;
+      }
+      const prevSeq = prevSeqOf(event);
+      const gap = prevSeq !== undefined && lastSeqRef.current > 0 && prevSeq > lastSeqRef.current;
+      if (!gap) {
+        deliver(event);
+        return;
+      }
+      queuedRef.current.push(event);
+      const from = lastSeqRef.current;
+      // A teardown (jobId change, unmount) clears fillRef; a fill that lands
+      // after it belongs to the previous cycle and must deliver nothing.
+      const fill: Promise<void> = fetchJobLogEvents(currentJobId, from)
+        .then((persisted) => {
+          if (fillRef.current !== fill) return;
+          for (const p of persisted) deliver(p);
+        })
+        .catch(() => {
+          // The live event still lands below; the gap stays a gap.
+        })
+        .finally(() => {
+          if (fillRef.current !== fill) return;
+          fillRef.current = null;
+          const queued = queuedRef.current;
+          queuedRef.current = [];
+          for (const q of queued) deliver(q);
+        });
+      fillRef.current = fill;
+    },
+    [deliver],
+  );
+
   const connect = useCallback(() => {
     if (!jobId) return;
-    // Guards the async token mint below: cleanup / a newer connect bumps the
-    // attempt counter, so a stale mint result never opens a zombie socket.
     const attempt = ++connectAttemptRef.current;
 
     void (async () => {
@@ -94,48 +163,45 @@ export function useJobEventStream(
       if (attempt !== connectAttemptRef.current) return;
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/jobs/${jobId}/events`, subprotocols);
+      const cursor = lastSeqRef.current > 0 ? `?since_seq=${lastSeqRef.current}` : "";
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/jobs/${jobId}/events${cursor}`, subprotocols);
       wsRef.current = ws;
 
       ws.onopen = () => {
         setIsConnected(true);
         wsEverConnectedRef.current = true;
         retryCountRef.current = 0;
+        // A fill from the previous connection must not hold this one's replay:
+        // the replay starts at the same cursor, so it brings the same rows.
+        fillRef.current = null;
+        queuedRef.current = [];
       };
 
       ws.onmessage = (e) => {
         try {
           const event: LogEvent = JSON.parse(e.data);
-
-          if (event.type === "stream_end") {
-            markStreamComplete();
-            return;
-          }
-
-          handlersRef.current.onEvent(event);
-
-          if (event.type === "complete") {
-            markStreamComplete();
-          }
+          applyLive(event, jobId);
         } catch {
           // Ignore malformed messages
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (e) => {
         setIsConnected(false);
+        if (e.code === FINISHED_CLOSE_CODE) {
+          // The server closed on purpose: the job is over (spec 3.5).
+          markStreamComplete();
+          return;
+        }
         if (!isCompleteRef.current && retryCountRef.current < MAX_RECONNECT_RETRIES) {
           retryCountRef.current += 1;
-          // Consumer buffers are intentionally preserved across reconnects (see
-          // onReset docs above). Buffers reset only when jobId changes, via the
-          // effect cleanup below.
           reconnectTimeoutRef.current = setTimeout(connect, 3000);
         }
       };
 
       ws.onerror = () => ws.close();
     })();
-  }, [jobId, markStreamComplete]);
+  }, [jobId, applyLive, markStreamComplete]);
 
   useEffect(() => {
     setIsConnected(false);
@@ -143,42 +209,43 @@ export function useJobEventStream(
     isCompleteRef.current = false;
     retryCountRef.current = 0;
     wsEverConnectedRef.current = false;
+    lastSeqRef.current = 0;
+    fillRef.current = null;
+    queuedRef.current = [];
     connect();
 
     return () => {
       clearTimeout(reconnectTimeoutRef.current);
-      // Invalidate any in-flight token mint so it can't open a socket for the
-      // previous jobId after teardown. Reading the live ref here is the point —
-      // the counter must reflect connects that happened after the effect ran.
       // eslint-disable-next-line react-hooks/exhaustive-deps
       connectAttemptRef.current++;
       const ws = wsRef.current;
       if (ws) {
-        // Detach handlers before closing: the browser fires onclose
-        // asynchronously after close(), which would otherwise schedule a
-        // zombie reconnect against the previous jobId.
         ws.onopen = null;
         ws.onmessage = null;
         ws.onclose = null;
         ws.onerror = null;
         ws.close();
       }
+      fillRef.current = null;
+      queuedRef.current = [];
       handlersRef.current.onReset?.();
     };
   }, [connect]);
 
-  // Fallback: load persisted events for completed/failed jobs
+  // Fallback: load persisted events for a job whose socket never connected.
   useEffect(() => {
     if (!jobId || isConnected || wsEverConnectedRef.current || hasEvents) return;
     const timer = setTimeout(async () => {
       try {
-        const persisted = await fetchJobLogEvents(jobId);
+        const persisted = await fetchJobLogEvents(jobId, 0);
         if (persisted.length > 0) {
-          // A persisted terminal event means the stream is over. Only the
-          // isComplete state flips — isCompleteRef keeps its live-path
-          // reconnect-gating semantics.
-          if (persisted.some((ev) => ev.type === "complete" || ev.type === "stream_end")) {
+          for (const ev of persisted) {
+            const seq = seqOf(ev);
+            if (seq !== undefined && seq > lastSeqRef.current) lastSeqRef.current = seq;
+          }
+          if (persisted.some((ev) => ev.type === "job_finished")) {
             setIsComplete(true);
+            isCompleteRef.current = true;
           }
           handlersRef.current.onFallbackEvents?.(persisted);
         }

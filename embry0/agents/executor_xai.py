@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from embry0.agents._common import make_scrubber
 from embry0.agents.executor import (
     _extract_embedded_ask_user_events,
     _ids,
@@ -151,6 +152,7 @@ class DirectXaiExecutor:
         started = time.time()
         agent_type = invocation.agent_type
         ids = _ids(invocation)
+        scrub = make_scrubber()
 
         base_url = os.environ.get("EMBRY0_XAI_PROXY_URL", "")
         if not base_url:
@@ -244,9 +246,9 @@ class DirectXaiExecutor:
                     if btype == "text":
                         text = str(getattr(block, "text", ""))
                         assistant_text += text
-                        writer(events.text(text=text, **ids))
+                        writer(events.text(text=scrub(text), **ids))
                     elif btype == "thinking":
-                        writer(events.thinking(text=str(getattr(block, "thinking", "")), **ids))
+                        writer(events.thinking(text=scrub(str(getattr(block, "thinking", ""))), **ids))
                     elif btype == "tool_use":
                         tool_uses.append(block)
 
@@ -315,7 +317,7 @@ class DirectXaiExecutor:
                     results.append(
                         {"type": "tool_result", "tool_use_id": tool_id, "content": result_content, "is_error": tool_err}
                     )
-                    writer(events.tool_result(tool_id=tool_id, content=result_text, is_error=tool_err, **ids))
+                    writer(events.tool_result(tool_id=tool_id, content=scrub(result_text), is_error=tool_err, **ids))
 
                 messages.append({"role": "user", "content": results})
             # Loop exhausted max_turns without a natural stop.
@@ -410,7 +412,7 @@ class DirectXaiExecutor:
                 is_error=is_error,
                 error_code=error_code,
                 error_message=error_message,
-                output=output,
+                output=scrub(output),
                 cost_usd=cost,
                 duration_ms=elapsed_ms,
                 tools_called=tools_called,
