@@ -502,8 +502,16 @@ async def write_config_node(state: dict[str, Any], config: RunnableConfig) -> di
     ob = _onboard_state(state)
     if ob.get("final_status") == "failed":
         return {}
+
+    writer = _writer()
+    writer(events.node_started(node="write_config"))
+
+    def _failed(summary: str) -> dict[str, Any]:
+        writer(events.node_completed(node="write_config", ok=False))
+        return _fail(state, summary)
+
     if not ob.get("validated"):
-        return _fail(state, ob.get("last_error") or "config never passed validation")
+        return _failed(ob.get("last_error") or "config never passed validation")
 
     repo = state.get("repo", "")
     # Defense-in-depth (kept from the retired file store's path guard): the
@@ -515,25 +523,28 @@ async def write_config_node(state: dict[str, Any], config: RunnableConfig) -> di
     try:
         validate_repo_path(repo)
     except ValueError as exc:
-        return _fail(state, f"unsafe repo name {repo!r} — {exc}")
+        return _failed(f"unsafe repo name {repo!r} — {exc}")
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     qa_configs_repo = configurable.get("qa_configs_repo")
     if qa_configs_repo is None:
-        return _fail(state, "qa_configs_repo unavailable — cannot persist the config")
+        return _failed("qa_configs_repo unavailable — cannot persist the config")
     try:
         await qa_configs_repo.upsert(repo, ob["qa_yaml_text"], updated_by="onboard-pipeline")
     except Exception as exc:  # noqa: BLE001
-        return _fail(state, f"config store write failed: {exc}")
+        return _failed(f"config store write failed: {exc}")
 
     store_path = f"db:repo_qa_configs/{repo}"
     ob.update({"final_status": "completed", "store_path": store_path})
-    _writer()(events.progress(message=f"qa.yaml stored in the embry0 DB for {repo}", node="write_config"))
+    writer(events.progress(message=f"qa.yaml stored in the embry0 DB for {repo}", node="write_config"))
     logger.info("onboard_config_written", job_id=state.get("job_id"), repo=repo, path=store_path)
+    writer(events.node_completed(node="write_config", ok=True))
     return {"onboard": ob}
 
 
 async def cleanup_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Destroy the analysis sandbox. Always runs (terminal node)."""
+    writer = _writer()
+    writer(events.node_started(node="cleanup"))
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     sandbox_mgr = configurable.get("sandbox_manager")
     ob = _onboard_state(state)
@@ -550,6 +561,7 @@ async def cleanup_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
             f"no valid config after {MAX_ROUNDS} analysis rounds; last error:\n{ob.get('last_error')}"
         )
     ob["finished_at"] = time.time()
+    writer(events.node_completed(node="cleanup"))
     return {"onboard": ob}
 
 

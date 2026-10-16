@@ -597,3 +597,40 @@ async def test_init_onboard_emits_the_pipeline_graph_first(monkeypatch):
     assert types.index("node_started") < types.index("pipeline_graph")
     graph = next(e for e in events_out if e["type"] == "pipeline_graph")
     assert graph["node"] == "init_onboard" and graph["graph"]["graph_id"] == "onboard-job-1"
+
+
+def _node_events(events_out: list[dict], node: str) -> list[tuple[str, object]]:
+    return [(e["type"], e.get("ok")) for e in events_out if e.get("node") == node and e["type"].startswith("node_")]
+
+
+async def test_write_config_and_cleanup_light_their_graph_nodes(monkeypatch):
+    """#40: the onboarding map's last two nodes stayed pending after the job ended."""
+    from embry0.workflows.onboard import nodes as onboard_nodes
+
+    events_out: list[dict] = []
+    monkeypatch.setattr(onboard_nodes, "_writer", lambda: events_out.append)
+    state = {
+        "repo": "acme/widgets",
+        "onboard": {"validated": True, "qa_yaml_text": _VALID_QA_YAML, "round": 1},
+    }
+    await write_config_node(state, {"configurable": {"qa_configs_repo": _FakeConfigsRepo()}})
+    assert _node_events(events_out, "write_config") == [("node_started", None), ("node_completed", True)], (
+        "write_config brackets its work with node_started and node_completed(ok=True)"
+    )
+
+    await cleanup_node({"onboard": {"final_status": "completed"}}, {"configurable": {}})
+    assert [t for t, _ok in _node_events(events_out, "cleanup")] == ["node_started", "node_completed"], (
+        "cleanup brackets its work with node_started and node_completed"
+    )
+
+
+async def test_a_failed_write_config_completes_its_node_not_ok(monkeypatch):
+    from embry0.workflows.onboard import nodes as onboard_nodes
+
+    events_out: list[dict] = []
+    monkeypatch.setattr(onboard_nodes, "_writer", lambda: events_out.append)
+    state = {"repo": "acme/widgets", "onboard": {"validated": True, "qa_yaml_text": _VALID_QA_YAML, "round": 1}}
+    await write_config_node(state, {"configurable": {}})
+    assert _node_events(events_out, "write_config") == [("node_started", None), ("node_completed", False)], (
+        "a failing write_config still closes its node, with ok=False"
+    )

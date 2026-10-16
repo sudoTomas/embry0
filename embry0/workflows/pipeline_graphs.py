@@ -7,7 +7,8 @@ first node. tests/unit/workflows/test_pipeline_graphs.py pins each node list
 to the compiled graph's nodes, so the two cannot drift.
 
 ``physical_node`` is the LangGraph node whose node_started/node_completed
-events light the graph node; every node here emits under its own id.
+events light the graph node; every node here emits both under its own id,
+which the same test file pins per node by scanning the node modules.
 """
 
 from __future__ import annotations

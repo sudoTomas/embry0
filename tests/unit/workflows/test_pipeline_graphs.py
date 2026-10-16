@@ -17,7 +17,7 @@ def test_onboard_graph_names_exactly_the_compiled_nodes() -> None:
         "the static graph must list the LangGraph nodes, no more, no less"
     )
     assert all(n["physical_node"] == n["node_id"] for n in graph["nodes"]), (
-        "onboard nodes emit node_started under their own id"
+        "each onboard graph node is lit by the LangGraph node of the same name"
     )
     assert graph["graph_id"] == "onboard-job-1"
 
@@ -41,6 +41,33 @@ def test_graphs_have_the_frontend_shape() -> None:
         for edge in graph["edges"]:
             assert set(edge) == {"edge_id", "source", "target", "edge_type"}
             assert edge["source"] in ids and edge["target"] in ids, f"dangling edge {edge}"
+
+
+def test_every_onboard_node_emits_its_own_node_events() -> None:
+    """A node that never emits stays ``pending`` on the map after the job ends
+    (the terminal override only flips ``running`` nodes), so pin emission per id."""
+    from pathlib import Path
+
+    import embry0.workflows.onboard.nodes as onboard_nodes
+    from embry0.workflows.pipeline_graphs import ONBOARD_NODE_IDS
+
+    source = Path(onboard_nodes.__file__).read_text()
+    for node_id, _agent, _label in ONBOARD_NODE_IDS:
+        assert f'node_started(node="{node_id}"' in source, f"onboard node {node_id!r} never emits node_started"
+        assert f'node_completed(node="{node_id}"' in source, f"onboard node {node_id!r} never emits node_completed"
+
+
+def test_every_qa_node_emits_its_own_node_events() -> None:
+    from pathlib import Path
+
+    import embry0.workflows.qa.orchestrator as qa_orchestrator
+    import embry0.workflows.qa.orchestrator_report as qa_report
+    from embry0.workflows.pipeline_graphs import QA_NODE_IDS
+
+    source = Path(qa_orchestrator.__file__).read_text() + Path(qa_report.__file__).read_text()
+    for node_id, _agent, _label in QA_NODE_IDS:
+        assert f'node_started(node="{node_id}"' in source, f"QA node {node_id!r} never emits node_started"
+        assert f'node_completed(node="{node_id}"' in source, f"QA node {node_id!r} never emits node_completed"
 
 
 def test_onboard_graph_carries_the_retry_edges() -> None:
