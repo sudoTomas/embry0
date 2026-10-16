@@ -24,6 +24,7 @@ import structlog
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
+from embry0.execution import events
 from embry0.orchestration.budget import BudgetOverrunError, resolve_job_cap
 from embry0.orchestration.nodes.agent import evaluate_job_cap
 from embry0.workflows.qa._orchestrator_workspace import (
@@ -930,12 +931,12 @@ async def _qa_orchestrator_node_impl(
     shared_volume_name: str | None = qa_state.get("shared_volume_name")
     app_names = [rc.app_name for rc in resolved_configs]
     writer(
-        {
-            "type": "progress",
-            "message": f"QA fan-out: {len(app_names)} app(s): {', '.join(app_names)}",
-        }
+        events.progress(
+            message=f"QA fan-out: {len(app_names)} app(s): {', '.join(app_names)}",
+            node="orchestrate_qa",
+        )
     )
-    writer({"type": "qa_apps_resolved", "apps": app_names})
+    writer(events.qa_apps_resolved(apps=app_names))
     # Thread the live stream writer into the sub-task config — sub-graphs
     # run under ainvoke() where get_stream_writer() is dead (see above).
     child_config: dict[str, Any] = dict(config or {})
@@ -996,7 +997,7 @@ async def _qa_orchestrator_node_impl(
 
     # 7. Compute overall_status.
     overall = compute_overall(per_app_results)
-    writer({"type": "progress", "message": f"QA fan-out complete: {overall}"})
+    writer(events.progress(message=f"QA fan-out complete: {overall}", node="orchestrate_qa"))
     # RAV-1249: aggregate the failing apps' summaries onto the run-level
     # outcome. Triage's qa_failure_block reads outcome.failure_summary at
     # re-entry — without this it rendered "no failure summary recorded"

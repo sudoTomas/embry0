@@ -325,8 +325,8 @@ async def test_review_decision_event_surfaces_duplicate_flag():
 
 
 @pytest.mark.asyncio
-async def test_review_decision_event_null_flag_when_absent():
+async def test_review_decision_event_omits_flag_when_absent():
     captured = {}
     await _run_review(dict(_REVIEW_STATE), captured, _APPROVED)
     decision_events = [e for e in captured["events"] if e.get("type") == "review_decision"]
-    assert decision_events and decision_events[0]["duplicates_open_pr"] is None
+    assert decision_events and "duplicates_open_pr" not in decision_events[0]

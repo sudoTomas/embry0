@@ -96,6 +96,39 @@ def provider_for_model(model: str) -> ModelProvider | None:
     return None
 
 
+CACHE_READ_FACTOR = 0.1
+"""Cached input is billed at a tenth of the input rate (Anthropic; applied to every provider as an estimate)."""
+CACHE_WRITE_FACTOR = 1.25
+"""Cache creation is billed at 125% of the input rate (same caveat)."""
+
+
+def price_usage(
+    model: str,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+) -> float | None:
+    """Estimated USD for one message's usage, or None when the model is unpriced.
+
+    turn_usage events carry this so cost can tick during a run; cost_update
+    (the provider's own total at the end of the run) stays authoritative.
+    """
+    for provider in CATALOG_PROVIDERS:
+        rates = provider.pricing_usd_per_mtok.get(model)
+        if rates is not None:
+            rate_in, rate_out = rates
+            per_mtok = (
+                input_tokens * rate_in
+                + output_tokens * rate_out
+                + cache_read_tokens * rate_in * CACHE_READ_FACTOR
+                + cache_creation_tokens * rate_in * CACHE_WRITE_FACTOR
+            )
+            return per_mtok / 1_000_000
+    return None
+
+
 def known_models() -> set[str]:
     """Every model id any catalog provider declares."""
     return {m for provider in CATALOG_PROVIDERS for m in provider.models}

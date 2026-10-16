@@ -1,5 +1,5 @@
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "partial" | "cancelled" | "awaiting_input" | "pr_merged" | "pr_closed" | "paused" | "expired" | "skipped";
-export type TraceResult = "pass" | "fail" | "partial" | "error" | "timeout" | "budget_exceeded";
+export type TraceResult = "success" | "error" | "running";
 
 /** Every JobStatus, in board-lane order. The `satisfies` + Record guard makes
  * adding a status to the union a build error HERE instead of a silently stale

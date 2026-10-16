@@ -70,12 +70,9 @@ export const JOB_STATUS_BG_COLORS: Record<string, string> = {
 };
 
 export const RESULT_COLORS: Record<string, string> = {
-  pass: "text-success",
-  fail: "text-destructive",
-  partial: "text-warning",
+  success: "text-success",
   error: "text-destructive",
-  timeout: "text-muted-foreground",
-  budget_exceeded: "text-warning",
+  running: "text-warning",
 };
 
 export const ISSUE_STATE_COLORS: Record<string, string> = {

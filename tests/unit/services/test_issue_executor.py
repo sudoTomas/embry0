@@ -79,6 +79,10 @@ async def test_broadcast_event_stamps_event_seq_from_persist():
     delivered = queue.get_nowait()
     assert delivered["event_seq"] == 12345
     assert delivered["type"] == "progress"
+    # The orchestrator stamps job_id (events.py docstring, docs/api.md), on
+    # the persisted copy as well as the published one.
+    assert delivered["job_id"] == "job-1", f"job_id must be stamped before publish: {delivered}"
+    assert jobs.append_log_event.await_args.args[1]["job_id"] == "job-1", "job_id must be stamped before persist"
 
 
 @pytest.mark.asyncio
@@ -166,7 +170,7 @@ async def test_track_task_logs_and_publishes_on_failure(capsys):
     evt = queue.get_nowait()
     assert evt["type"] == "job_failed"
     assert evt["job_id"] == "job-1"
-    assert "kaboom" in evt.get("error", "")
+    assert "kaboom" in evt.get("message", "")
 
 
 @pytest.mark.asyncio

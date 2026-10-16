@@ -17,7 +17,7 @@ _COLUMNS = "id, repo, number, head_sha, trigger, trigger_key, job_id, verdict, c
 
 
 class PrReviewsRepository:
-    """CRUD for ``pr_reviews`` (migration 95)."""
+    """CRUD for ``pr_reviews`` (migration 96)."""
 
     def __init__(self, db: DatabasePool) -> None:
         self._db = db

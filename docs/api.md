@@ -65,19 +65,6 @@ curl http://localhost:8200/api/v1/jobs/{job_id}/artifacts/screenshots/latest
 curl "http://localhost:8200/api/v1/jobs/{job_id}/artifacts/logs/gateway?follow=true"
 ```
 
-## Graph execution (low-level)
-
-```bash
-# List available workflows
-curl http://localhost:8200/api/v1/graphs/workflows
-
-# Execute a workflow
-curl -X POST http://localhost:8200/api/v1/graphs/execute \
-  -H "Content-Type: application/json" \
-  -H "X-Requested-With: XMLHttpRequest" \
-  -d '{"workflow": "issue-to-pr", "input_state": {"repo": "owner/repo", "task": "..."}}'
-```
-
 ## Runtime configuration
 
 ```bash
@@ -311,17 +298,48 @@ curl http://localhost:8200/api/v1/sandboxes/active \
 const ws = new WebSocket('ws://localhost:8200/ws/jobs/{job_id}/events');
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
-  // { type: "agent_started", agent: "developer", ... }
-  // { type: "progress", message: "Editing src/auth/login.py", ... }
-  // { type: "agent_completed", cost_usd: 0.42, ... }
-  // Rich event types:
-  // { type: "thinking", text: "...", node: "developer" }
-  // { type: "tool_call", tool_name: "Edit", input: "main.py", node: "developer" }
-  // { type: "tool_result", tool_use_id: "...", content: "...", is_error: false }
-  // { type: "text", text: "...", node: "developer" }
-  // { type: "cost_update", cost_usd: 1.23, tokens_in: 5000, tokens_out: 2000 }
+  // every event: { type, timestamp, event_seq, ...fields }
 };
 ```
+
+Every event carries `type` and `timestamp`; the orchestrator stamps `job_id` and `event_seq` (the replay cursor, also accepted as `?since_seq=`). Sandbox and node events carry `run_id` (one agent run), `node` (graph node id), `agent` (agent type) and, on subagent events, `parent_tool_use_id`. The table is generated from `embry0/execution/events.py` (`python -m embry0.execution.events --render-markdown`); `docs/contracts/events.json` is the same contract as data.
+
+<!-- events:begin -->
+| Type | Required fields | Optional fields |
+|---|---|---|
+| `agent_started` | `max_turns`, `model`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `turn_start` | `model`, `timestamp`, `turn_number`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `turn_usage` | `cache_creation_tokens`, `cache_read_tokens`, `cost_usd`, `input_tokens`, `model`, `output_tokens`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `text` | `text`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `original_length`, `parent_tool_use_id`, `run_id`, `truncated` |
+| `thinking` | `text`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `original_length`, `parent_tool_use_id`, `run_id`, `truncated` |
+| `tool_call` | `summary`, `timestamp`, `tool_id`, `tool_input`, `tool_name`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `tool_result` | `content`, `is_error`, `timestamp`, `tool_id`, `type` | `agent`, `event_seq`, `job_id`, `node`, `original_length`, `parent_tool_use_id`, `run_id`, `truncated` |
+| `subagent_start` | `name`, `timestamp`, `tool_id`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `subagent_end` | `is_error`, `timestamp`, `tool_id`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `context_compacted` | `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `pre_tokens`, `run_id` |
+| `agent_ask_user` | `category`, `importance`, `options`, `question`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id`, `suggested_answer` |
+| `cost_update` | `cache_creation_tokens`, `cache_read_tokens`, `cost_usd`, `duration_api_ms`, `duration_ms`, `num_turns`, `timestamp`, `tokens_in`, `tokens_out`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `agent_completed` | `cache_creation_tokens`, `cache_read_tokens`, `cost_usd`, `duration_ms`, `error_code`, `error_message`, `input_tokens`, `is_error`, `output`, `output_tokens`, `policy_denials`, `timestamp`, `tools_called`, `type` | `agent`, `event_seq`, `job_id`, `node`, `original_length`, `parent_tool_use_id`, `run_id`, `truncated` |
+| `error` | `message`, `timestamp`, `type` | `agent`, `code`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id`, `tool_name` |
+| `node_started` | `attempt`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `round`, `run_id` |
+| `node_completed` | `attempt`, `timestamp`, `type` | `action`, `agent`, `deliverables`, `error`, `event_seq`, `job_id`, `job_kind`, `node`, `ok`, `parent_tool_use_id`, `round`, `run_id`, `template` |
+| `pipeline_graph` | `graph`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `progress` | `message`, `timestamp`, `type` | `agent`, `app`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `interrupt` | `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `questions`, `reason`, `run_id`, `summary` |
+| `agent_paused_for_input` | `count`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `review_decision` | `decision`, `summary`, `timestamp`, `type` | `agent`, `duplicates_open_pr`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `validation_result` | `timestamp`, `type`, `validation` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `verification_result` | `blocking`, `gate_verdict`, `tier`, `timestamp`, `type` | `agent`, `browser_qa`, `event_seq`, `human_merge_only`, `job_id`, `mode`, `node`, `parent_tool_use_id`, `run_id` |
+| `pr_created` | `branch`, `pr_url`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `qa_apps_resolved` | `apps`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `qa_subtask_started` | `app`, `target`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `qa_subtask_finished` | `app`, `duration_ms`, `status`, `timestamp`, `type` | `agent`, `event_seq`, `failure_summary`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `qa_subtask_status` | `app`, `status`, `timestamp`, `type` | `agent`, `boot_phase`, `duration_ms`, `event_seq`, `failure_summary`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `qa_agent_transient_retry` | `app`, `reason`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `system` | `message`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `job_failed` | `kind`, `message`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+| `job_finished` | `error_code`, `error_message`, `pr_url`, `status`, `timestamp`, `total_cost_usd`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `run_id` |
+<!-- events:end -->
 
 ## Healing cases
 

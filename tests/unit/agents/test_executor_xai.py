@@ -106,6 +106,47 @@ def _run(inv, events):
 # ---- tests ---------------------------------------------------------------
 
 
+@pytest.mark.asyncio
+async def test_xai_denied_tool_error_event_uses_message_code_and_ids(env, monkeypatch) -> None:
+    _install(
+        monkeypatch,
+        [
+            _Resp([_Block("tool_use", id="t1", name="Bash", input={"command": "rm -rf /"})], "tool_use", _Usage(5, 5)),
+            _Resp([_Block("text", text="done")], "end_turn", _Usage(5, 5)),
+        ],
+    )
+    events: list[dict] = []
+    inv = dataclasses.replace(_invocation(), run_id="run-x", node="developer")
+    await DirectXaiExecutor().run(inv, config={"configurable": {}, "_test_writer": events.append})
+    err = next(e for e in events if e["type"] == "error")
+    assert err["tool_name"] == "Bash"
+    assert err["code"] == "ERR_TOOL_DENIED", f"denied tool error must carry the policy code: {err}"
+    assert "error" not in err and err["message"], f"error event must carry message, not error: {err}"
+    for e in events:
+        assert e.get("run_id") == "run-x" and e.get("node") == "developer", f"{e['type']} lacks ids"
+    completed = next(e for e in events if e["type"] == "agent_completed")
+    assert completed["policy_denials"] == {err["message"]: 1}, (
+        f"the denial must be counted under the policy reason, as the Claude path does: {completed}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_xai_tool_result_uses_tool_id_and_marker(env, monkeypatch) -> None:
+    _install(
+        monkeypatch,
+        [
+            _Resp([_Block("tool_use", id="t1", name="Bash", input={"command": "echo hi"})], "tool_use", _Usage(5, 5)),
+            _Resp([_Block("text", text="done")], "end_turn", _Usage(5, 5)),
+        ],
+    )
+    monkeypatch.setattr(ex, "execute_tool", lambda name, tool_input, cwd, policy: ("y" * 4100, False))
+    events: list[dict] = []
+    await DirectXaiExecutor().run(_invocation(), config={"configurable": {}, "_test_writer": events.append})
+    result = next(e for e in events if e["type"] == "tool_result")
+    assert result["tool_id"] == "t1", f"tool_result event must be keyed by tool_id: {result}"
+    assert result["truncated"] is True and result["original_length"] == 4100
+
+
 def test_missing_proxy_url_errors(monkeypatch, tmp_path):
     monkeypatch.delenv("EMBRY0_XAI_PROXY_URL", raising=False)
     monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))

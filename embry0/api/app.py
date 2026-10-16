@@ -19,6 +19,7 @@ from embry0.cache.prebaked_staleness import BaseImageDigestResolver
 from embry0.cache.volume_manager import SharedVolumeManager
 from embry0.config import Embry0Config
 from embry0.config_redaction import mask_url_credentials
+from embry0.execution import events
 from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import run_migrations
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
@@ -1043,19 +1044,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     await boot_credentials_repo.finish_uses(jid, outcome.value)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("credential_uses_finish_failed", job_id=jid, error=type(exc).__name__)
-            # Append synthetic node_failed events to job_logs so the frontend
-            # event timeline reflects the orphaned state
-            from datetime import UTC, datetime
-
-            now_iso = datetime.now(UTC).isoformat()
+            # Append a synthetic node_completed(action="orphaned") to job_logs
+            # so the frontend event timeline reflects the orphaned state
             for jid in orphaned_ids:
-                synthetic = {
-                    "type": "node_completed",
-                    "node": "developer",
-                    "action": "orphaned",
-                    "error": orphan_message,
-                    "timestamp": now_iso,
-                }
+                synthetic = events.node_completed(node="developer", action="orphaned", error=orphan_message)
                 try:
                     await boot_jobs_repo.append_log_event(jid, synthetic)
                 except Exception:

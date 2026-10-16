@@ -1,12 +1,12 @@
-"""Migration 95 — pr_reviews and repo_preferences.pr_review (#30)."""
+"""Migration 95 — job_logs carries run_id, node and event_type; traces.result admits 'running'."""
 
-import asyncpg
+import json
+
 import pytest
 
 from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import MIGRATIONS
-
-SHA = "a" * 40
+from embry0.storage.repositories.jobs import JobsRepository
 
 
 def _sql_for(version: int) -> str:
@@ -17,47 +17,49 @@ def _sql_for(version: int) -> str:
 
 def test_migration_95_present_and_gapless() -> None:
     versions = [v for v, _, _ in MIGRATIONS]
-    assert 95 in versions, "migration 95 (pr_reviews, #30) is missing"
+    assert 95 in versions, "migration 95 (job_logs correlation columns, #36) is missing"
     assert versions == list(range(1, len(versions) + 1))
 
 
-def test_migration_95_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_94.py)."""
-    assert MIGRATIONS[-1][0] == 95, "migration 95 must add pr_reviews"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
-async def test_a_trigger_key_is_stored_once(db_with_migrations: DatabasePool) -> None:
+async def test_append_log_event_fills_the_correlation_columns(db_with_migrations: DatabasePool) -> None:
     db = db_with_migrations
     await db.execute(_sql_for(95))  # a second run must be a no-op
-    insert = (
-        "INSERT INTO pr_reviews (id, repo, number, head_sha, trigger, trigger_key) "
-        "VALUES ($1, 'acme/widgets', 7, $2, 'ready', $3)"
+    jobs = JobsRepository(db)
+    job_id = await jobs.create(repo="a/b", task="t")
+    seq = await jobs.append_log_event(
+        job_id, {"type": "tool_call", "run_id": "run-1", "node": "developer", "tool_name": "Bash"}
     )
-    key = f"ready:acme/widgets#7@{SHA}"
-    await db.execute(insert, "prr-1", SHA, key)
-    with pytest.raises(asyncpg.UniqueViolationError):
-        await db.execute(insert, "prr-2", SHA, key)
+    row = await db.fetchrow("SELECT run_id, node, event_type, text FROM job_logs WHERE id = $1", seq)
+    assert row["run_id"] == "run-1" and row["node"] == "developer" and row["event_type"] == "tool_call"
+    assert json.loads(row["text"])["tool_name"] == "Bash"
+    legacy = await jobs.append_log_event(job_id, {"type": "system", "message": "queued"})
+    legacy_row = await db.fetchrow("SELECT run_id, node, event_type FROM job_logs WHERE id = $1", legacy)
+    assert legacy_row["run_id"] is None and legacy_row["node"] is None and legacy_row["event_type"] == "system"
 
 
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
-async def test_the_trigger_takes_the_vocabulary_and_nothing_else(db_with_migrations: DatabasePool) -> None:
-    with pytest.raises(asyncpg.CheckViolationError):
-        await db_with_migrations.execute(
-            "INSERT INTO pr_reviews (id, repo, number, head_sha, trigger, trigger_key) "
-            "VALUES ('prr-x', 'acme/widgets', 7, 'abc1234', 'push', 'push:1')"
-        )
+async def test_append_log_event_coerces_non_string_correlation_values(db_with_migrations: DatabasePool) -> None:
+    """A non-string run_id/node/type must not fail the INSERT (and so drop the
+    event); the TEXT columns get None and the JSON keeps the raw value."""
+    jobs = JobsRepository(db_with_migrations)
+    job_id = await jobs.create(repo="a/b", task="t")
+    seq = await jobs.append_log_event(job_id, {"type": "progress", "run_id": 7, "node": ["qa"], "message": "m"})
+    row = await db_with_migrations.fetchrow("SELECT run_id, node, event_type, text FROM job_logs WHERE id = $1", seq)
+    assert row["run_id"] is None and row["node"] is None and row["event_type"] == "progress"
+    assert json.loads(row["text"])["run_id"] == 7
 
 
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
-async def test_repo_preferences_gains_a_nullable_pr_review_column(db_with_migrations: DatabasePool) -> None:
-    row = await db_with_migrations.fetchrow(
-        "SELECT data_type, is_nullable FROM information_schema.columns "
-        "WHERE table_name = 'repo_preferences' AND column_name = 'pr_review'"
-    )
-    assert row is not None, "repo_preferences.pr_review is missing"
-    assert (row["data_type"], row["is_nullable"]) == ("jsonb", "YES")
+async def test_agent_id_column_is_gone_and_indexes_exist(db_with_migrations: DatabasePool) -> None:
+    db = db_with_migrations
+    columns = {
+        r["column_name"]
+        for r in await db.fetch("SELECT column_name FROM information_schema.columns WHERE table_name = 'job_logs'")
+    }
+    assert "agent_id" not in columns and {"run_id", "node", "event_type"} <= columns
+    indexes = {r["indexname"] for r in await db.fetch("SELECT indexname FROM pg_indexes WHERE tablename = 'job_logs'")}
+    assert {"idx_job_logs_job_event_type", "idx_job_logs_run_id"} <= indexes

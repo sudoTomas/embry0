@@ -2592,6 +2592,27 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     ),
     (
         95,
+        "job_logs correlation columns — run_id, node, event_type; traces.result admits running (#36)",
+        # Every event already lands in job_logs as JSON text. These columns
+        # are the same fields lifted out so a run, a node or a type can be
+        # indexed without scanning the JSON; agent_id was never written. A
+        # trace row is now written at run start as 'running' and finalized
+        # at the end, so the column's vocabulary gains that value (no CHECK
+        # existed; this documents it).
+        """
+        ALTER TABLE job_logs ADD COLUMN IF NOT EXISTS run_id TEXT;
+        ALTER TABLE job_logs ADD COLUMN IF NOT EXISTS node TEXT;
+        ALTER TABLE job_logs ADD COLUMN IF NOT EXISTS event_type TEXT;
+        ALTER TABLE job_logs DROP COLUMN IF EXISTS agent_id;
+        CREATE INDEX IF NOT EXISTS idx_job_logs_job_event_type ON job_logs (job_id, event_type);
+        CREATE INDEX IF NOT EXISTS idx_job_logs_run_id ON job_logs (run_id) WHERE run_id IS NOT NULL;
+
+        COMMENT ON COLUMN traces.result IS
+            '#36: success | error | running (written at run start, replaced at run end)';
+        """,
+    ),
+    (
+        96,
         "pr_reviews + repo_preferences.pr_review — review a pull request when it is ready (#30)",
         # One row per review a trigger asked for. trigger_key is the dedupe
         # key — ready:<repo>#<number>@<sha> for a ready event,

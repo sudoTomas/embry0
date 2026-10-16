@@ -23,6 +23,7 @@ from typing import Any
 import structlog
 from langchain_core.runnables import RunnableConfig
 
+from embry0.execution import events
 from embry0.execution.runtime.egress import derive_deployed_egress_allowlist
 from embry0.workflows.qa._subtask_boot_phase import (
     _boot_phase_from_state,
@@ -75,11 +76,11 @@ async def acquire_sandbox_node(state: SubTaskState, config: RunnableConfig) -> d
 
     _app = str(state.get("app_name") or "")
     _parent_writer(config)(
-        {
-            "type": "progress",
-            "message": f"[{_app}] acquiring sandbox",
-            "app": _app,
-        }
+        events.progress(
+            message=f"[{_app}] acquiring sandbox",
+            node="acquire_sandbox",
+            app=_app,
+        )
     )
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
@@ -383,11 +384,11 @@ async def boot_app_node(state: SubTaskState, config: RunnableConfig) -> dict[str
 
     _app = str(state.get("app_name") or "")
     _parent_writer(config)(
-        {
-            "type": "progress",
-            "message": f"[{_app}] booting app (target={resolved.target})",
-            "app": _app,
-        }
+        events.progress(
+            message=f"[{_app}] booting app (target={resolved.target})",
+            node="boot_app",
+            app=_app,
+        )
     )
 
     async with httpx.AsyncClient(timeout=10.0) as http:
@@ -810,7 +811,7 @@ async def exploratory_qa_node(state: SubTaskState, config: RunnableConfig) -> di
         )
         writer = ((config or {}).get("configurable") or {}).get("qa_parent_writer")
         if writer is not None:
-            writer({"type": "qa_agent_transient_retry", "app": resolved.app_name, "reason": exit_reason[:200]})
+            writer(events.qa_agent_transient_retry(app=resolved.app_name, reason=exit_reason[:200]))
 
     update: dict[str, Any] = {"agent_outputs": agent_outputs}
     if retries:

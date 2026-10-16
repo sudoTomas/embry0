@@ -143,9 +143,12 @@ def test_the_link_check_reports_a_dangling_link(tmp_path):
 def test_internal_material_is_not_under_docs():
     """#529: audits and RCAs live under internal/, which the public export drops.
 
-    Specs and plans are different since #21: they ship in the pull request of
-    their work, under docs/superpowers/specs/ and docs/superpowers/plans/
-    (CLAUDE.md). Anything else under docs/superpowers/ is still refused.
+    Specs and plans are different: they ship in the pull request of the work
+    they describe, under docs/superpowers/specs/ and docs/superpowers/plans/
+    (CLAUDE.md, "A spec or plan ships with the work it describes"). Anything
+    else under docs/superpowers/ is still refused (#44). A spec written for
+    one deployment is an audit-class document and stays in that deployment's
+    private records.
     """
     misplaced = []
     for p in _markdown_files(ROOT):
