@@ -704,3 +704,20 @@ async def test_the_reviewer_runs_under_the_review_node() -> None:
     assert config["configurable"]["agent_runner"].calls[0]["config"]["node"] == "review", (
         "the sandbox's events must carry the graph node, not the agent type"
     )
+
+
+@pytest.mark.parametrize(
+    ("from_fork", "depth", "stripped"),
+    [(True, "read_only", True), (True, "full", True), (False, "read_only", True), (False, "full", False)],
+)
+async def test_a_review_that_runs_nothing_strips_agent_configuration_from_the_checkout(
+    from_fork: bool, depth: str, stripped: bool
+) -> None:
+    config = _config()
+    out = await init_pr_review_node(_state(from_fork=from_fork, depth=depth), config)
+    assert out["pr_review"]["final_status"] == "pending", out["pr_review"].get("failure_summary")
+    script = config["configurable"]["docker"].checkout_script
+    assert ("CLAUDE.md" in script) is stripped, (
+        f"from_fork={from_fork} depth={depth}: the checkout {'kept' if stripped else 'stripped'} "
+        "the head's .claude/, .mcp.json and CLAUDE.md files"
+    )

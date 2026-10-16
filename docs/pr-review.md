@@ -48,7 +48,7 @@ The pull request's title, author and description reach the agent inside a block 
 |---|---|
 | `full` (default) | Installs dependencies and runs every `dev_checks` entry. With none configured, the agent works out the commands from the repository's CI configuration, Makefile, `package.json`, `pyproject.toml` and README, says what it ran, and suggests them as `dev_checks`. |
 | `targeted` | Only the `dev_checks` entries whose paths the change touches (an entry with no paths always runs). With none that match, the agent reviews by reading. |
-| `read_only` | Nothing: the agent reads the code and the diff, has no shell, and the sandbox gets none of the repository's environment variables. |
+| `read_only` | Nothing: the agent reads the code and the diff, has no shell, the sandbox gets none of the repository's environment variables, and the head's own agent configuration is removed from the checkout (see [Forks and the trust model](#forks-and-the-trust-model)). |
 
 ## What gets posted
 
@@ -70,6 +70,8 @@ A command (a `/embry0 review` comment or the manual trigger) continues the agent
 ## Forks and the trust model
 
 A pull request from a fork is always reviewed read-only, whatever the depth: no command runs, the agent has no shell, and the sandbox gets none of the repository's environment variables. A pull request whose head repository is unknown or deleted counts as a fork. Code a job runs can read its sandbox's credentials, including the LLM credential ([ADR 0008](adr/0008-llm-credential-in-sandbox-env.md)), so running a stranger's tests would hand them that credential.
+
+The agent is the Claude CLI working in the checked-out tree, and that CLI reads project configuration from the tree: skills and commands under `.claude/`, MCP servers in `.mcp.json`, and instructions in `CLAUDE.md`. A skill or command can run shell commands when it is invoked, and an MCP server is a process. So when a review runs nothing (a fork, or the `read_only` depth), the checkout removes from the worktree every `.claude/` directory, `.mcp.json`, `CLAUDE.md` and `CLAUDE.local.md` before the agent starts. The agent still reads what those files say, as text in the precomputed diff. embry0 then writes its own `.claude/settings.json` as for every agent. A same-repo review at `full` or `targeted` depth keeps them: its author has write access, and its checks run the repository's code anyway.
 
 A ready event is not checked for write access; only a command is. On a repository with review turned on, anyone who can open a pull request, including from a fork, starts a review when it becomes ready. What bounds that is the read-only rule above and the budget gate: the daily and monthly spend caps (`DAILY_BUDGET_CAP_USD`, `MONTHLY_BUDGET_CAP_USD`) and the per-actor hourly limit (`RATE_LIMIT_PER_AUTHOR_PER_HOUR`), charged to the pull request's author (on GitLab, to whoever opened it or marked it ready). Turn review on only for repositories where that is acceptable.
 

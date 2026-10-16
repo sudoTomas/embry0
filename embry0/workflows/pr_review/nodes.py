@@ -43,6 +43,11 @@ def _review(state: dict[str, Any]) -> dict[str, Any]:
     return dict(state.get("pr_review") or {})
 
 
+def _runs_nothing(rv: dict[str, Any]) -> bool:
+    """A fork is reviewed read-only whatever the depth: its code is untrusted."""
+    return rv.get("depth") == "read_only" or bool(rv.get("from_fork"))
+
+
 def _failed(rv: dict[str, Any], code: str, summary: str) -> dict[str, Any]:
     rv.update({"final_status": "failed", "error_code": code, "failure_summary": summary[:4000]})
     logger.warning("pr_review_failed", review_id=rv.get("review_id"), error_code=code, summary=summary[:500])
@@ -195,6 +200,7 @@ async def init_pr_review_node(state: dict[str, Any], config: RunnableConfig) -> 
             head_sha=str(rv.get("head_sha") or ""),
             base_ref=str(rv.get("base_ref") or ""),
             previous_sha=str((previous or {}).get("head_sha") or ""),
+            runs_nothing=_runs_nothing(rv),
         )
         out = await docker.run_cmd(
             docker.build_exec_cmd(container_id, ["bash", "-c", script]), timeout=CHECKOUT_TIMEOUT_SECONDS
@@ -300,8 +306,7 @@ async def _prepare_review(
     )
 
     depth = str(rv.get("depth") or "full")
-    # A fork is reviewed read-only whatever the depth: its code is untrusted.
-    runs_nothing = depth == "read_only" or bool(rv.get("from_fork"))
+    runs_nothing = _runs_nothing(rv)
     definition = await load_agent_definition(config, AGENT_TYPE, dict(PR_REVIEWER_AGENT_SEED))
     if runs_nothing:
         definition = {**definition, "tools": [t for t in definition.get("tools") or [] if t != "Bash"]}

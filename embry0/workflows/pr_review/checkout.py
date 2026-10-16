@@ -11,7 +11,16 @@ the head into ``refs/embry0-review/head``:
 
 It checks out the sha the trigger named, deepens until base and head share a
 merge base, and writes the change, the changed paths and, for a re-review,
-the delta since the previously reviewed sha into ``REVIEW_DIR``. The paths are
+the delta since the previously reviewed sha into ``REVIEW_DIR``.
+
+When the review runs nothing (a fork, or the read-only depth), the script
+then removes the head's own agent configuration from the worktree: every
+``.claude/`` directory, ``.mcp.json``, ``CLAUDE.md`` and ``CLAUDE.local.md``.
+The Claude CLI would otherwise load them from ``/workspace`` as project
+skills, commands, MCP servers and instructions, which is code and direction
+from the pull request's author. Their content stays readable as text in the
+diff. The executor writes its own ``.claude/settings.json`` later, when the
+agent starts. The paths are
 written twice: ``FILES_LIST`` for the agent to read, and ``FILES_NUL``
 (NUL-separated, never C-quoted) for ``parse_changed_paths``.
 ``REVIEW_DIR`` is under ``/workspace`` (the Ring-2 allow-list) and inside ``.git``,
@@ -39,6 +48,8 @@ HEAD_GONE_EXIT = 3
 DELTA_STATES: tuple[str, ...] = ("none", "yes", "rewritten")
 
 _RESULT_PREFIX = "embry0-review-checkout:"
+# Names the Claude CLI reads as project configuration from its working tree.
+AGENT_CONFIG_NAMES: tuple[str, ...] = (".claude", ".mcp.json", "CLAUDE.md", "CLAUDE.local.md")
 _SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 
 
@@ -63,6 +74,7 @@ def build_checkout_script(
     workspace: str = "/workspace",
     out_dir: str = REVIEW_DIR,
     depth: int = 50,
+    runs_nothing: bool = False,
 ) -> str:
     if not _SHA_RE.match(head_sha):
         raise ValueError(f"head_sha {head_sha!r} is not a commit sha")
@@ -117,6 +129,12 @@ def build_checkout_script(
             "  delta=rewritten",
             "fi",
         ]
+    if runs_nothing:
+        # find does not follow symlinks (-P), so a link named .claude goes,
+        # not what it points at; rm gets each path as an argument, never
+        # through a shell. .git is pruned: REVIEW_DIR lives there.
+        names = " -o ".join(f"-name {q(name)}" for name in AGENT_CONFIG_NAMES)
+        lines.append(f"find . -path ./.git -prune -o \\( {names} \\) -prune -exec rm -rf -- {{}} + || exit 4")
     lines.append('base_sha=$(git rev-parse --verify --quiet "$mb^{commit}" 2>/dev/null || true)')
     lines.append(f'echo "{_RESULT_PREFIX} delta=$delta base=$base_sha"')
     return "\n".join(lines) + "\n"
