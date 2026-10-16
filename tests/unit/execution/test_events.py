@@ -88,3 +88,53 @@ def test_qa_subtask_status_carries_the_boot_phase_dict() -> None:
     assert get_type_hints(events.qa_subtask_status)["boot_phase"] == dict[str, Any] | None, (
         "the constructor types boot_phase as the dict it carries"
     )
+
+
+def test_agent_completed_output_keeps_the_tail_when_cut() -> None:
+    # The sentinel sits past OUTPUT_CAP so a head cut drops it and only a tail cut keeps it.
+    output = "x" * 9000 + "y" * 2000 + "THE END"
+    event = events.agent_completed(
+        is_error=False,
+        error_code=None,
+        error_message="",
+        output=output,
+        cost_usd=0.0,
+        duration_ms=1,
+        tools_called={},
+        policy_denials={},
+        input_tokens=0,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_creation_tokens=0,
+        run_id="r",
+        node="developer",
+        agent="developer",
+    )
+    assert event["truncated"] is True and event["original_length"] == 11007
+    assert len(event["output"]) == events.OUTPUT_CAP
+    assert "THE END" in event["output"], "spec 3.1: agent_completed.output is the tail, where the conclusion is"
+
+
+def test_text_still_keeps_the_head_when_cut() -> None:
+    event = events.text(text="A" + "b" * 5000, run_id="r", node="n", agent="a")
+    assert event["text"].startswith("A") and len(event["text"]) == events.TEXT_CAP
+
+
+def test_tool_input_string_values_above_64kib_are_cut_with_an_in_string_marker() -> None:
+    big = "z" * (events.TOOL_INPUT_STRING_CAP + 10)
+    event = events.tool_call(
+        tool_id="t",
+        tool_name="Write",
+        summary="write",
+        tool_input={"file_path": "a.py", "content": big},
+        run_id="r",
+        node="n",
+        agent="a",
+    )
+    stored = event["tool_input"]["content"]
+    assert len(stored) < len(big) and stored.startswith("z" * 100)
+    assert f"original_length={len(big)}" in stored, (
+        "the cut is marked inside the value, so the contract shape is unchanged"
+    )
+    assert event["tool_input"]["file_path"] == "a.py"
+    assert "truncated" not in event, "tool_call carries no top-level marker (spec 3.6: the value is cut, not the event)"

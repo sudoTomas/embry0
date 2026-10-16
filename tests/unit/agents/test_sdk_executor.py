@@ -1254,3 +1254,40 @@ async def test_ask_user_recovered_from_a_subagent_tool_result_carries_the_parent
     events = await _run(messages, monkeypatch, tmp_path)
     asked = next(e for e in events if e["type"] == "agent_ask_user")
     assert asked["parent_tool_use_id"] == "task-1", f"ask_user from a subagent lost its parent: {asked}"
+
+
+@pytest.mark.asyncio
+async def test_executor_scrubs_text_and_tool_results_with_the_sandbox_env_secrets(tmp_path, monkeypatch) -> None:
+    secret = "env-secret-value-9876543210"
+    monkeypatch.setenv("SOME_SERVICE_TOKEN", secret)
+    messages = [
+        _assistant_with([_FakeBlock(f"the token is {secret}"), _FakeToolUse("t1", "Bash", {"command": "cat .env"})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", f"SOME_SERVICE_TOKEN={secret}\n")]),
+        _FakeResultMessage(f"done, used {secret}", 0.001),
+    ]
+    events_out = await _run(messages, monkeypatch, tmp_path)
+    text = next(e for e in events_out if e["type"] == "text")
+    result = next(e for e in events_out if e["type"] == "tool_result")
+    completed = next(e for e in events_out if e["type"] == "agent_completed")
+    assert secret not in text["text"] and "***REDACTED***" in text["text"]
+    assert secret not in result["content"]
+    assert secret not in completed["output"]
+
+
+@pytest.mark.asyncio
+async def test_a_secret_straddling_the_cap_leaves_no_fragment(tmp_path, monkeypatch) -> None:
+    """Redact before cap (spec 3.6): a token cut in half matches no pattern."""
+    secret = "straddle-secret-abcdefghij0123456789"
+    monkeypatch.setenv("STRADDLE_TOKEN", secret)
+    # The cut at 4000 lands inside the 36-char secret (3980 + 36 > 4000); the
+    # 14-char marker that replaces it fits whole (3980 + 14 < 4000).
+    content = "p" * 3980 + secret + "q" * 200
+    messages = [
+        _assistant_with([_FakeToolUse("t1", "Bash", {"command": "x"})]),
+        _FakeUserMessage([_FakeToolResultBlock("t1", content)]),
+        _FakeResultMessage("done", 0.001),
+    ]
+    events_out = await _run(messages, monkeypatch, tmp_path)
+    result = next(e for e in events_out if e["type"] == "tool_result")
+    assert secret[:10] not in result["content"], "a fragment of the secret survived the cut"
+    assert "***REDACTED***" in result["content"]

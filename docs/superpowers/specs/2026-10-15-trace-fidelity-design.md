@@ -135,8 +135,8 @@ The xAI executor makes the same field changes so both paths conform until the Gr
 ### 3.6 Redaction and truncation
 
 - `_broadcast_event` redacts before persisting and before publishing: `redact_secrets` with `known_secret_values()` is applied to every string value in the event, recursively through `tool_input`, `result`, and lists. Per-sandbox bearers and credential secrets are already registered via `register_known_secrets`; the executor service registers the job's resolved credential secrets at job start so the pattern-based scrub is complemented by exact-value scrubbing.
-- The sandbox applies the same function to `text`, `thinking`, `tool_result.content` and `agent_completed.output` before writing to stdout, with the secret values it can see (its own env), so a line is scrubbed twice and never depends on one side alone.
-- Caps become markers: `text` 4000, `thinking` 4000, `tool_result` 4000, `agent_completed.output` 10000 (unchanged), each with `truncated: true` and `original_length` when cut. `tool_call.summary` keeps 200; `tool_input` is stored whole (it already is) but a single string value above 64 KiB is cut with the same marker, so a `Write` of a large file does not store the file twice.
+- The sandbox executors scrub `text`, `thinking`, `tool_result.content` and `agent_completed.output` with the secret values they can see (their own env) before the constructor caps them, so a token is never cut before it is matched; the runner's writer scrubs every string value of the event once more before stdout, so `tool_input` is covered and no line depends on one side alone.
+- Caps become markers: `text` 4000, `thinking` 4000, `tool_result` 4000, `agent_completed.output` 10000 (unchanged), each with `truncated: true` and `original_length` when cut. `tool_call.summary` keeps 200; `tool_input` is stored whole (it already is) but a single string value above 64 KiB is cut with a marker inside the value (the event shape is unchanged), so a `Write` of a large file does not store the file twice.
 - `traces.result_summary` is redacted at write.
 
 ### 3.7 QA and executor-service events on the job stream

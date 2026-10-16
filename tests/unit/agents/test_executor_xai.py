@@ -661,3 +661,28 @@ def test_grep_result_leaves_out_files_a_read_deny_rule_covers(env, monkeypatch):
     tr = client.messages.calls[1]["messages"][-1]["content"][0]
     assert "s3cr3t-value" not in tr["content"], f"the executor's Grep returned a Read-denied file: {tr['content']!r}"
     assert "s3cr3t-open" in tr["content"], f"the allowed file must still be found: {tr['content']!r}"
+
+
+@pytest.mark.asyncio
+async def test_xai_executor_scrubs_text_and_tool_results(env, monkeypatch) -> None:
+    secret = "xai-env-secret-value-1234567890"
+    monkeypatch.setenv("ANOTHER_API_KEY", secret)
+    _install(
+        monkeypatch,
+        [
+            _Resp(
+                [
+                    _Block("text", text=f"key {secret}"),
+                    _Block("tool_use", id="t1", name="Bash", input={"command": "echo hi"}),
+                ],
+                "tool_use",
+                _Usage(5, 5),
+            ),
+            _Resp([_Block("text", text="done")], "end_turn", _Usage(5, 5)),
+        ],
+    )
+    monkeypatch.setattr(ex, "execute_tool", lambda name, tool_input, cwd, policy: (f"out {secret}", False))
+    events_out: list[dict] = []
+    await DirectXaiExecutor().run(_invocation(), config={"configurable": {}, "_test_writer": events_out.append})
+    assert all(secret not in e.get("text", "") for e in events_out if e["type"] == "text")
+    assert all(secret not in e.get("content", "") for e in events_out if e["type"] == "tool_result")

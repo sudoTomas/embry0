@@ -37,6 +37,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Callable, Iterable
+from typing import Any
 
 REDACTED = "***REDACTED***"
 #: What an e-mail address becomes. The same placeholder the log-signature
@@ -286,3 +287,43 @@ def redact_bounded(
     if limit <= 0:
         return ""
     return redact(text[: limit + REDACT_OVERLAP_CHARS])[:limit]
+
+
+# ---- one event, every string -------------------------------------------------
+
+#: Top-level event keys that carry identifiers, never text. Left as they are
+#: so a scrub can never break the pairing of a result with its call or of an
+#: event with its run.
+EVENT_KEYS_NOT_REDACTED = frozenset(
+    {
+        "type",
+        "timestamp",
+        "job_id",
+        "event_seq",
+        "run_id",
+        "node",
+        "agent",
+        "parent_tool_use_id",
+        "tool_id",
+        "tool_name",
+    }
+)
+
+
+def redact_event(event: dict[str, Any], known_values: Iterable[str]) -> dict[str, Any]:
+    """A copy of ``event`` with every string value passed through
+    :func:`redact_secrets`, recursively through dicts and lists, so a secret
+    inside ``tool_input`` or a content block is caught too. The input is not
+    mutated. Top-level correlation keys are left as they are."""
+    values = list(known_values)
+
+    def _walk(value: Any) -> Any:
+        if isinstance(value, str):
+            return redact_secrets(value, values)
+        if isinstance(value, dict):
+            return {k: _walk(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_walk(v) for v in value]
+        return value
+
+    return {k: (v if k in EVENT_KEYS_NOT_REDACTED else _walk(v)) for k, v in event.items()}
