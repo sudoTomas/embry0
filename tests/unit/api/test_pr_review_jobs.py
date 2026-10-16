@@ -111,6 +111,13 @@ async def test_a_repo_the_dispatcher_does_not_know_is_a_400() -> None:
         {"max_budget_usd": 5},
         {"execution_mode_override": "cli"},
         {"auth_mode_override": "api_key"},
+        {"additional_context": "focus on the parser"},
+        {"task": "review the parser"},
+        {"branch": "feature/login"},
+        {"qa": {}},
+        {"context": {"type": "git", "repo": "acme/widgets"}},
+        {"issue_number": 3},
+        {"skip_smoke": True},
     ],
 )
 async def test_a_manual_review_takes_no_overrides(override: dict[str, Any]) -> None:
@@ -120,3 +127,19 @@ async def test_a_manual_review_takes_no_overrides(override: dict[str, Any]) -> N
     assert resp.status_code == 422, resp.text
     assert next(iter(override)) in resp.text
     assert dispatcher.calls == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"repo": "acme/widgets", "task": "fix it", "number": 7},
+        {"pipeline": "issue-to-pr", "repo": "acme/widgets", "task": "fix it", "number": 7},
+        {"pipeline": "qa", "repo": "acme/widgets", "number": 7},
+        {"pipeline": "onboard", "repo": "acme/widgets", "number": 7},
+    ],
+)
+async def test_number_is_refused_for_every_other_pipeline(body: dict[str, Any]) -> None:
+    """``number`` names the pull request to review; any other pipeline would drop it silently."""
+    resp = await _post(_app(_Dispatcher(DispatchResult(True, "ok", "job-9"))), body)
+    assert resp.status_code == 422, f"{body.get('pipeline')}: number was accepted ({resp.status_code})"
+    assert "number" in resp.text, resp.text

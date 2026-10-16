@@ -23,7 +23,7 @@ curl -X POST "$EMBRY0_API_URL/api/v1/jobs" -H "Authorization: Bearer $EMBRY0_API
   -d '{"pipeline": "pr-review", "repo": "acme/widgets", "number": 7}'
 ```
 
-This skips the repository's on/off setting and nothing else. The review runs on the repository's `pr_review` settings, so a request that also sends `agent_models`, `pipeline_config`, `pipeline_template`, `sandbox_profile`, `max_budget_usd`, `execution_mode_override` or `auth_mode_override` is refused with 422. An unregistered repository answers 400; any other refusal answers 409 with its reason. A manual review counts as a command, so it continues the previous review the same way a `/embry0 review` comment does.
+This skips the repository's on/off setting and nothing else. The review runs on the repository's `pr_review` settings, and on the pull request `number` names, so a request that also sends `agent_models`, `pipeline_config`, `pipeline_template`, `sandbox_profile`, `max_budget_usd`, `execution_mode_override`, `auth_mode_override`, `additional_context`, `task`, `branch`, `qa`, `context`, `issue_number` or `skip_smoke: true` is refused with 422, rather than accepted and ignored. `number` is refused with 422 for every other pipeline. An unregistered repository answers 400; any other refusal answers 409 with its reason. A manual review counts as a command, so it continues the previous review the same way a `/embry0 review` comment does.
 
 A trigger is refused, with the reason in the orchestrator log (`pr_review_refused`) and nothing posted, when:
 

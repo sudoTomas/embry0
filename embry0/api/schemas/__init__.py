@@ -119,8 +119,9 @@ class JobContext(BaseModel):
         return self
 
 
-# Job overrides a pr-review job refuses (#30): its model, tools, profile and
-# budget come from the repo's pr_review settings and the deployment's own.
+# Job fields a pr-review job refuses (#30): its model, tools, profile and
+# budget come from the repo's pr_review settings and the deployment's own, and
+# what it reviews is the pull request ``number`` names, nothing else.
 _PR_REVIEW_REFUSED_FIELDS = (
     "agent_models",
     "pipeline_config",
@@ -129,6 +130,12 @@ _PR_REVIEW_REFUSED_FIELDS = (
     "max_budget_usd",
     "execution_mode_override",
     "auth_mode_override",
+    "additional_context",
+    "task",
+    "branch",
+    "qa",
+    "context",
+    "issue_number",
 )
 
 
@@ -185,14 +192,19 @@ class JobCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def _refuse_overrides_for_pr_review(self) -> "JobCreateRequest":
-        """#30: a review runs on the repo's ``pr_review`` settings and nothing else.
+        """#30: a review runs on the repo's ``pr_review`` settings and nothing else,
+        and ``number`` means nothing to any other pipeline.
 
         Refused rather than dropped, so a caller never believes an override
         took effect (RAV-1058 was overrides accepted and silently ignored).
         """
         if self.pipeline != "pr-review":
+            if self.number is not None:
+                raise ValueError("number is for pipeline=pr-review only")
             return self
         sent = [name for name in _PR_REVIEW_REFUSED_FIELDS if getattr(self, name) is not None]
+        if self.skip_smoke:
+            sent.append("skip_smoke")
         if sent:
             raise ValueError(
                 f"pipeline=pr-review takes no {', '.join(sent)}: the review runs on the repo's pr_review settings"
