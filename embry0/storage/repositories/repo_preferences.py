@@ -12,7 +12,7 @@ logger = structlog.get_logger(__name__)
 
 _COLUMNS = (
     "repo, sandbox_profile, language_hint, notes, execution_mode, auth_mode, "
-    "git_author_name, git_author_email, dev_checks, base_branch, verification, updated_at"
+    "git_author_name, git_author_email, dev_checks, base_branch, verification, pr_review, updated_at"
 )
 
 
@@ -28,8 +28,9 @@ _WRITABLE = (
     "dev_checks",
     "base_branch",
     "verification",
+    "pr_review",
 )
-_CASTS = {"dev_checks": "::jsonb", "verification": "::jsonb"}
+_CASTS = {"dev_checks": "::jsonb", "verification": "::jsonb", "pr_review": "::jsonb"}
 
 
 def _db_value(column: str, value: Any) -> Any:
@@ -38,7 +39,7 @@ def _db_value(column: str, value: Any) -> Any:
         return value or ""
     if column == "dev_checks":
         return value or []
-    if column == "verification":
+    if column in ("verification", "pr_review"):
         return value or None
     return value
 
@@ -66,9 +67,9 @@ class RepoPreferencesRepository:
 
         A field left out keeps its stored value; one passed is written,
         ``None`` included, which clears it (``notes`` to ``''``,
-        ``dev_checks`` to ``[]``, ``verification`` to NULL; ``{}`` also
-        clears ``verification``). Before #350 this replaced the whole row,
-        so a caller naming one field wiped the rest.
+        ``dev_checks`` to ``[]``, ``verification`` to NULL, ``pr_review`` to
+        NULL; ``{}`` also clears ``verification``). Before #350 this replaced
+        the whole row, so a caller naming one field wiped the rest.
         """
         unknown = set(fields) - set(_WRITABLE)
         if unknown:

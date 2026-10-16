@@ -18,6 +18,11 @@ async def get_repo_preferences(full_repo: str, request: Request) -> RepoPreferen
     row = await prefs_repo.get(full_repo)
     if row is None:
         return None
+    pr_review = row.get("pr_review")
+    if isinstance(pr_review, dict) and "ready_authors" not in pr_review:
+        # #30: settings saved before ready_authors existed are read as the
+        # team default everywhere (review_settings), so say so here too.
+        row = {**row, "pr_review": {**pr_review, "ready_authors": "team"}}
     return RepoPreferencesResponse(**row)
 
 
@@ -37,12 +42,25 @@ async def put_repo_preferences(
                     detail=f"sandbox_profile '{req.sandbox_profile}' does not exist",
                 )
 
+    if req.pr_review is not None and req.pr_review.model:
+        from embry0.services.model_enablement import UnpricedModelError, ensure_models_priced
+
+        try:
+            ensure_models_priced([req.pr_review.model])
+        except UnpricedModelError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     prefs_repo = request.app.state.repo_preferences_repo
     # #350: only the fields the client sent are written; an omitted field
     # keeps its stored value, an explicit null (or "", [] or {}) clears it.
     # exclude_unset also keeps verification {} as {} (= clear) rather than
     # a dict of defaults.
-    saved = await prefs_repo.upsert(full_repo, **req.model_dump(exclude_unset=True))
+    fields = req.model_dump(exclude_unset=True)
+    if req.pr_review is not None:
+        # #30: exclude_unset reaches into nested models; the settings are one
+        # object and are stored whole, defaults included.
+        fields["pr_review"] = req.pr_review.model_dump()
+    saved = await prefs_repo.upsert(full_repo, **fields)
     return RepoPreferencesResponse(**saved)
 
 

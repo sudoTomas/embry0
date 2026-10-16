@@ -13,6 +13,7 @@ from embry0.api.schemas.jobs import JobResumeRequest
 from embry0.audit.helpers import emit_audit
 from embry0.services.answer_recorder import record_answer
 from embry0.storage.repositories.jobs import JobsRepository
+from embry0.storage.repositories.repos import UnregisteredRepoError
 
 router = APIRouter()
 
@@ -108,6 +109,31 @@ async def create_job(
         )
         job = await jobs.get(job_id)
         return job or {"job_id": job_id}
+
+    # #30: review one pull request now. Skips the repo's pr_review.enabled
+    # setting, never its other gates; the dispatcher says why when it refuses.
+    if req.pipeline == "pr-review":
+        dispatcher = getattr(request.app.state, "pr_review_dispatcher", None)
+        if dispatcher is None:
+            raise HTTPException(status_code=503, detail="pull request review is not initialized")
+        assert req.repo is not None and req.number is not None  # noqa: S101 — schema-enforced
+        try:
+            result = await dispatcher.dispatch_manual(repo=req.repo, number=req.number, actor=request_actor(request))
+        except UnregisteredRepoError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if result.reason == "repo_not_registered":
+            raise HTTPException(status_code=400, detail=f"review not started: {result.reason}")
+        if not result.dispatched or not result.job_id:
+            raise HTTPException(status_code=409, detail=f"review not started: {result.reason}")
+        await emit_audit(
+            getattr(request.app.state, "db", None),
+            "pr_review_job_created",
+            actor=request_actor(request),
+            details={"job_id": result.job_id, "repo": req.repo, "number": req.number},
+            audit_log_path=request.app.state.config.audit_log_path,
+        )
+        job = await jobs.get(result.job_id)
+        return job or {"job_id": result.job_id}
 
     # Legacy issue-to-pr path. ``task`` non-empty is enforced at the schema
     # layer (JobCreateRequest._enforce_task_for_non_qa) — assertion below is a

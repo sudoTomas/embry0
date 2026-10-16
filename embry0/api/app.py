@@ -911,6 +911,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await seed_onboarding_agent(AgentDefinitionsRepository(db))
 
+    # Seed the pull request reviewer (#30), same idempotent pattern.
+    from embry0.workflows.pr_review.agent_seed import seed_pr_reviewer_agent
+
+    await seed_pr_reviewer_agent(AgentDefinitionsRepository(db))
+
     # Insert any BUILTIN_SEED agents missing from the DB (RAV-604: agents
     # added after a deployment's first migration run — research/analysis/ops).
     # Insert-if-missing only; POST /agents/{type}/reset is the restore path.
@@ -1942,6 +1947,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             tag=config.comment_dispatch_tag,
             author_roles=config.comment_dispatch_author_roles,
         )
+
+    # #30: pull request review. Always constructed: each repo's own
+    # pr_review.enabled is the gate, and the webhook handlers find it here.
+    # GitLab gets a client only when a GitLab credential exists (gitlab_sync
+    # is built under the same condition); a GitLab comment command is then
+    # refused as gitlab_not_configured, and so is a GitLab ready event under
+    # pr_review.ready_authors "team" (reason author_not_on_team, detail
+    # gitlab_not_configured), since the author's access cannot be checked.
+    from embry0.execution.github_client import GitHubClient as _ReviewGitHubClient
+    from embry0.services.pr_review.dispatcher import PrReviewDispatcher
+    from embry0.storage.repositories.pr_reviews import PrReviewsRepository
+
+    pr_review_gitlab = None
+    if getattr(app.state, "gitlab_sync", None) is not None:
+        from embry0.execution.gitlab_client import make_gitlab_client as _review_gitlab_client
+
+        pr_review_gitlab = _review_gitlab_client(config, credential_resolver=app.state.credential_resolver)
+    app.state.pr_review_dispatcher = PrReviewDispatcher(
+        config=config,
+        repos_repo=app.state.repos_repo,
+        prefs_repo=app.state.repo_preferences_repo,
+        jobs_repo=app.state.jobs_repo,
+        reviews_repo=PrReviewsRepository(db),
+        executor=app.state.issue_executor,
+        github=_ReviewGitHubClient(
+            default_token=getattr(config, "github_token", "") or "",
+            credential_resolver=app.state.credential_resolver,
+        ),
+        gitlab=pr_review_gitlab,
+    )
 
     if config.telegram_bot_token and getattr(config, "telegram_webhook_url", ""):
         import secrets

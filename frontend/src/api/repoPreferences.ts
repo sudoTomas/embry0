@@ -8,6 +8,25 @@ export interface DevCheck {
   command: string;
 }
 
+/** #30: how deep a pull request review goes. Forks are always read_only. */
+export type PrReviewDepth = "full" | "targeted" | "read_only";
+
+/** #30: whose ready pull requests start a review on their own. */
+export type PrReviewReadyAuthors = "team" | "anyone";
+
+/** #30: per-repo pull request review settings. `model: null` = the heavy tier. */
+export interface PrReviewSettings {
+  enabled: boolean;
+  depth: PrReviewDepth;
+  model: string | null;
+  ready_authors: PrReviewReadyAuthors;
+}
+
+/** As stored: settings saved before `ready_authors` existed lack it, and read as "team". */
+export type StoredPrReviewSettings = Omit<PrReviewSettings, "ready_authors"> & {
+  ready_authors?: PrReviewReadyAuthors;
+};
+
 export interface RepoPreferences {
   repo: string;
   sandbox_profile: string | null;
@@ -19,6 +38,7 @@ export interface RepoPreferences {
   git_author_email: string | null;
   dev_checks: DevCheck[];
   base_branch: string | null;
+  pr_review: StoredPrReviewSettings | null;
   updated_at: string;
 }
 
@@ -32,6 +52,7 @@ export interface RepoPreferencesUpdate {
   git_author_email?: string | null;
   dev_checks?: DevCheck[];
   base_branch?: string | null;
+  pr_review?: PrReviewSettings;
 }
 
 export async function fetchRepoPreferences(

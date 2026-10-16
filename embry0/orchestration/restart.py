@@ -26,10 +26,11 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 # Pipelines whose graph can be resumed from a checkpoint after a restart. The
-# QA and onboard graphs fan out over sandboxes of their own that a resume would
-# have to re-enroll one by one; a QA or onboard job that had started is failed
-# instead, and is dispatched again (mirrors IssueExecutor._select_workflow).
-NOT_RESUMABLE_PIPELINES = frozenset({"qa", "onboard"})
+# QA, onboard and pr-review graphs fan out over sandboxes of their own that a
+# resume would have to re-enroll one by one; such a job that had started is
+# failed instead, and is dispatched again (mirrors
+# IssueExecutor._select_workflow).
+NOT_RESUMABLE_PIPELINES = frozenset({"qa", "onboard", "pr-review"})
 
 
 class ShutdownInterrupt(BaseException):

@@ -16,6 +16,7 @@ from embry0.workflows.issue_to_pr.noncode_agents import (
     RESEARCH_SYSTEM_PROMPT as _RESEARCH_SYSTEM_PROMPT,
 )
 from embry0.workflows.onboard.agent_seed import SYSTEM_PROMPT as _ONBOARDING_SYSTEM_PROMPT
+from embry0.workflows.pr_review.agent_seed import PR_REVIEWER_AGENT_SEED as _PR_REVIEWER_AGENT_SEED
 from embry0.workflows.qa.agent_seed import QA_AGENT_SEED as _QA_AGENT_SEED
 
 logger = structlog.get_logger(__name__)
@@ -103,6 +104,11 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "auth_mode": None,
         "mcp_servers": {},
     },
+    # #30: a copy of embry0/workflows/pr_review/agent_seed.py's seed, so the
+    # two cannot drift; a copy, so editing this entry leaves the seed alone
+    # (test_builtin_seed_holds_a_copy_of_the_reviewer_seed). is_builtin is
+    # set by seed_pr_reviewer_agent's trailing direct SQL.
+    "pr-reviewer": copy.deepcopy(_PR_REVIEWER_AGENT_SEED),
     # RAV-604: non-code agents. These run on the generic agent node
     # (workflows/issue_to_pr/generic_agent.py) — behavior lives in the
     # system prompt, not in node code. research/analysis are read-only by

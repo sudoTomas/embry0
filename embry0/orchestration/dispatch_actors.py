@@ -44,6 +44,9 @@ ANSWER_RESUME = f"{RESERVED_PREFIX}answer-resume"
 # A PR-comment follow-up whose comment payload named no author. The author
 # gate upstream makes this near-impossible; the row still gets an actor.
 PR_COMMENT = f"{RESERVED_PREFIX}pr-comment"
+# A pull request review whose trigger named nobody (#30). Rate-limited like
+# any other non-continuation actor.
+PR_REVIEW = f"{RESERVED_PREFIX}pr-review"
 
 RATE_LIMIT_EXEMPT: frozenset[str] = frozenset({WATCHER, AUTO_RETRIAGE, ANSWER_RESUME})
 

@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import unquote
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -141,17 +144,30 @@ def test_internal_material_is_not_under_docs():
     """#529: audits and RCAs live under internal/, which the public export drops.
 
     Specs and plans are different: they ship in the pull request of the work
-    they describe, under docs/superpowers/ (CLAUDE.md, "A spec or plan ships
-    with the work it describes"). A spec written for one deployment is an
-    audit-class document and stays in that deployment's private records.
+    they describe, under docs/superpowers/specs/ and docs/superpowers/plans/
+    (CLAUDE.md, "A spec or plan ships with the work it describes"). Anything
+    else under docs/superpowers/ is still refused (#44). A spec written for
+    one deployment is an audit-class document and stays in that deployment's
+    private records.
     """
-    misplaced = [
-        str(p.relative_to(ROOT))
-        for p in _markdown_files(ROOT)
-        if p.relative_to(ROOT).parts[:2] in {("docs", "audits"), ("docs", "rca")}
-    ]
+    misplaced = []
+    for p in _markdown_files(ROOT):
+        parts = p.relative_to(ROOT).parts
+        if parts[:2] in {("docs", "audits"), ("docs", "rca")}:
+            misplaced.append(str(p.relative_to(ROOT)))
+        elif parts[:2] == ("docs", "superpowers") and parts[2:3] not in {("specs",), ("plans",)}:
+            misplaced.append(str(p.relative_to(ROOT)))
     assert not misplaced, f"internal material under docs/ (move it to internal/): {misplaced}"
     # The public export has no internal/ at all; where it exists, its README
     # says what belongs there.
     internal = ROOT / "internal"
     assert not internal.exists() or (internal / "README.md").is_file(), "internal/ has no README.md"
+
+
+def test_a_stray_superpowers_document_is_still_refused(tmp_path, monkeypatch):
+    stray = tmp_path / "docs" / "superpowers" / "notes" / "x.md"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("# x\n")
+    monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
+    with pytest.raises(AssertionError, match="docs/superpowers/notes/x.md"):
+        test_internal_material_is_not_under_docs()

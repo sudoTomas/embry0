@@ -124,7 +124,9 @@ export interface JobCreateRequest {
   repo?: string | null;
   task?: string | null;
   issue_number?: number | null;
-  pipeline?: "issue-to-pr" | "qa" | "onboard" | null;
+  /** pr-review only: the pull request number (GitLab: the merge request iid). */
+  number?: number | null;
+  pipeline?: "issue-to-pr" | "qa" | "onboard" | "pr-review" | null;
   branch?: string | null;
   context?: JobContext | null;
   pipeline_template?: string | null;

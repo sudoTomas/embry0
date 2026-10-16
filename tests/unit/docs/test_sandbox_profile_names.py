@@ -24,12 +24,14 @@ _DOCS = [*sorted((ROOT / "docs").rglob("*.md")), ROOT / "README.md", ROOT / "CON
 _YAML_VALUE = re.compile(r"\bsandbox_profile:\s*([A-Za-z0-9_.-]+)")
 _SHAPED = re.compile(r"\b(?:qa|dev)-[a-z0-9]+(?:-[a-z0-9]+)*\b")
 _NOT_PROFILES = {"qa-compose", "qa-ready-check", "qa-yaml-reference"}
+# A null value selects no profile; it is not a name to check.
+_NULLS = {"null", "~"}
 
 
 def _profile_names(text: str) -> list[tuple[int, str]]:
     found: list[tuple[int, str]] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
-        found += [(lineno, m) for m in _YAML_VALUE.findall(line)]
+        found += [(lineno, m) for m in _YAML_VALUE.findall(line) if m.lower() not in _NULLS]
         if "profile" in line.lower():
             found += [
                 (lineno, m)
@@ -56,3 +58,10 @@ def test_the_guard_finds_a_stale_profile_name():
     """The guard must be able to fire: both shapes of reference are detected."""
     names = {n for _, n in _profile_names("  sandbox_profile: qa-node  # or qa-python\nper profile (qa-jvm)\n")}
     assert names == {"qa-node", "qa-python", "qa-jvm"}, f"the guard missed a profile reference: {names}"
+
+
+def test_a_null_sandbox_profile_is_not_a_name():
+    """A YAML null (or a JSON/TS null in a fixture) selects no profile, so it is not a name to check."""
+    text = "sandbox_profile: null\nsandbox_profile: NULL,\nsandbox_profile: ~\n  sandbox_profile: qa-node\n"
+    names = {n for _, n in _profile_names(text)}
+    assert names == {"qa-node"}, f"the guard read a null as a profile name: {names}"

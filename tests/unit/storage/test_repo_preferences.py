@@ -166,6 +166,7 @@ async def test_an_upsert_naming_one_field_leaves_the_others_untouched(prefs_repo
         "dev_checks": checks,
         "base_branch": "dev",
         "verification": _VERIFICATION,
+        "pr_review": _PR_REVIEW,
     }
     await prefs_repo.upsert(repo="acme/partial", **full)
     row = await prefs_repo.upsert(repo="acme/partial", language_hint="rust")
@@ -184,3 +185,26 @@ async def test_an_explicit_none_clears_a_field(prefs_repo: RepoPreferencesReposi
 async def test_an_unknown_field_is_refused(prefs_repo: RepoPreferencesRepository):
     with pytest.raises(TypeError, match="repo; DROP"):
         await prefs_repo.upsert(repo="acme/x", **{"repo; DROP": "x"})
+
+
+# ── pr_review (#30) ──────────────────────────────────────────────────────
+
+_PR_REVIEW = {"enabled": True, "depth": "targeted", "model": None}
+
+
+@pytest.mark.asyncio
+async def test_pr_review_round_trips(prefs_repo: RepoPreferencesRepository):
+    row = await prefs_repo.upsert(repo="acme/widgets", pr_review=_PR_REVIEW)
+    assert row["pr_review"] == _PR_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_an_upsert_that_does_not_mention_pr_review_keeps_it(prefs_repo: RepoPreferencesRepository):
+    await prefs_repo.upsert(repo="acme/widgets", pr_review=_PR_REVIEW)
+    row = await prefs_repo.upsert(repo="acme/widgets", sandbox_profile="python-3.13")
+    assert row["pr_review"] == _PR_REVIEW, "a save of another field wiped the review settings"
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_row_has_no_pr_review(prefs_repo: RepoPreferencesRepository):
+    assert (await prefs_repo.upsert(repo="acme/new"))["pr_review"] is None

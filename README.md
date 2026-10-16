@@ -116,6 +116,7 @@ Open the dashboard at **http://localhost:8200** and sign in with your `API_KEY`.
 | [Running QA](docs/running-qa.md) | Integrating a target repo, `qa.yaml`, gotchas, triggering and watching runs |
 | [`qa.yaml` v2 reference](docs/qa-yaml-reference.md) | Field-by-field schema reference with monorepo examples |
 | [Webhook setup](docs/webhooks.md) | Cloudflare Tunnel (production) and smee.io relay (local dev) |
+| [Pull request review](docs/pr-review.md) | Advisory reviews posted on pull and merge requests: triggers, depth, forks, re-reviews |
 | [Glossary](docs/glossary.md) | Domain vocabulary |
 | [Decision records](docs/adr/) | ADRs — the decisions the codebase embodies and the evidence behind them |
 

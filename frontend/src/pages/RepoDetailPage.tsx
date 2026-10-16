@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { FileCode2, KeyRound, ListChecks, Settings2, ShieldAlert } from "lucide-react";
+import { FileCode2, GitPullRequest, KeyRound, ListChecks, Settings2, ShieldAlert } from "lucide-react";
 import { fetchRepoDetail } from "@/api/repos";
 import { useRepoEnv } from "@/hooks/useEnvironments";
 import { useQaRunsForRepo } from "@/hooks/useQaDashboard";
@@ -8,6 +8,7 @@ import { QaConfigEditor } from "@/components/qa/QaConfigEditor";
 import { RepoAccountsSection } from "@/components/repos/RepoAccountsSection";
 import { RepoDockerAccessSection } from "@/components/repos/RepoDockerAccessSection";
 import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
+import { PullRequestReviewCard } from "@/components/environments/PullRequestReviewCard";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { Badge } from "@/components/ui/Badge";
@@ -126,6 +127,14 @@ export function RepoDetailPage() {
           <h2 className="text-lg font-semibold">Sandbox preferences</h2>
         </div>
         <RepoPreferencesSection repo={full} />
+      </section>
+
+      <section className="space-y-2">
+        <div className="flex items-center gap-2">
+          <GitPullRequest className="h-4 w-4 text-white/50" />
+          <h2 className="text-lg font-semibold">Pull request review</h2>
+        </div>
+        <PullRequestReviewCard repo={full} />
       </section>
 
       <section className="space-y-2">

@@ -31,6 +31,7 @@ def app():
         dev_checks=None,
         base_branch=None,
         verification=None,
+        pr_review=None,
     ):
         return {
             "repo": repo,
@@ -44,6 +45,7 @@ def app():
             "dev_checks": dev_checks or [],
             "base_branch": base_branch,
             "verification": verification,
+            "pr_review": pr_review,
             "updated_at": datetime.now(UTC),
         }
 
@@ -366,3 +368,133 @@ async def test_get_tolerates_an_odd_stored_verification_object(app):
         resp = await client.get("/api/v1/repos/acme/widgets/preferences")
     assert resp.status_code == 200
     assert resp.json()["verification"] == {"test_targets": "not-a-list"}
+
+
+@pytest.mark.asyncio
+async def test_put_pr_review_stores_the_whole_settings_object(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": {"enabled": True}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200, resp.text
+    kwargs = app.state.repo_preferences_repo.upsert.call_args.kwargs
+    assert kwargs == {"pr_review": {"enabled": True, "depth": "full", "model": None, "ready_authors": "team"}}, (
+        "a partial pr_review must be stored whole, and nothing else may be written"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"depth": "deep"},
+        {"enabled": "yes"},
+        {"extra": 1},
+        {"ready_authors": "everyone"},
+        {"ready_authors": "Team"},
+        {"ready_authors": None},
+        {"ready_authors": 1},
+    ],
+)
+async def test_put_pr_review_rejects_a_malformed_object(app, body):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": body},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 422, f"{body} was accepted: {resp.text}"
+    loc = resp.json()["detail"][0]["loc"]
+    # Refused inside the settings object, not as an unknown pr_review field.
+    assert loc[:2] == ["body", "pr_review"] and len(loc) == 3, f"refused at {loc}, not inside pr_review"
+
+
+@pytest.mark.asyncio
+async def test_put_pr_review_refuses_an_unpriced_model(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": {"enabled": True, "model": "grok-0-unpriced"}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 422, resp.text
+    # The model id itself contains "price", so match the route's refusal text,
+    # not pydantic's echo of the body.
+    detail = resp.json()["detail"]
+    assert isinstance(detail, str) and "no price entry" in detail, f"not refused as unpriced: {resp.text}"
+
+
+@pytest.mark.asyncio
+async def test_a_blank_pr_review_model_means_the_heavy_tier(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": {"enabled": True, "model": "   "}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200, resp.text
+    assert app.state.repo_preferences_repo.upsert.call_args.kwargs["pr_review"]["model"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ready_authors", ["team", "anyone"])
+async def test_put_pr_review_stores_who_triggers_automatic_reviews(app, ready_authors):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": {"enabled": True, "ready_authors": ready_authors}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert resp.status_code == 200, resp.text
+    stored = app.state.repo_preferences_repo.upsert.call_args.kwargs["pr_review"]
+    assert stored["ready_authors"] == ready_authors, f"stored {stored}"
+    assert resp.json()["pr_review"]["ready_authors"] == ready_authors
+
+
+@pytest.mark.asyncio
+async def test_a_put_without_ready_authors_saves_the_team_default(app):
+    # What a PUT without ready_authors stores is what a GET then reads back.
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.put(
+            "/api/v1/repos/acme/widgets/preferences",
+            json={"pr_review": {"enabled": True}},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        saved = await app.state.repo_preferences_repo.upsert.side_effect(
+            "acme/widgets", **app.state.repo_preferences_repo.upsert.call_args.kwargs
+        )
+        app.state.repo_preferences_repo.get = AsyncMock(return_value=saved)
+        resp = await client.get("/api/v1/repos/acme/widgets/preferences")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["pr_review"].get("ready_authors") == "team", f"GET returned {resp.json()['pr_review']}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.requires_postgres
+async def test_get_fills_in_team_for_a_stored_pr_review_without_ready_authors(app, db_with_migrations):
+    # A row saved before ready_authors existed, written straight through the repository.
+    from embry0.storage.repositories.repo_preferences import RepoPreferencesRepository
+
+    prefs_repo = RepoPreferencesRepository(db_with_migrations)
+    await prefs_repo.upsert("acme/widgets", pr_review={"enabled": True, "depth": "targeted", "model": None})
+    await prefs_repo.upsert("acme/gadgets", pr_review={"enabled": True, "depth": "full", "ready_authors": "anyone"})
+    await prefs_repo.upsert("acme/tools", notes="no review settings")
+    app.state.repo_preferences_repo = prefs_repo
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        legacy = (await client.get("/api/v1/repos/acme/widgets/preferences")).json()["pr_review"]
+        anyone = (await client.get("/api/v1/repos/acme/gadgets/preferences")).json()["pr_review"]
+        unset = (await client.get("/api/v1/repos/acme/tools/preferences")).json()["pr_review"]
+    assert legacy == {"enabled": True, "depth": "targeted", "model": None, "ready_authors": "team"}, (
+        f"GET returned {legacy}: a stored pr_review without ready_authors must read as team, other fields as stored"
+    )
+    assert anyone["ready_authors"] == "anyone", f"a stored anyone was rewritten: {anyone}"
+    assert unset is None, f"a repo with no pr_review gained one: {unset}"

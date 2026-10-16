@@ -37,6 +37,7 @@ from embry0.storage.repositories.traces import TracesRepository
 from embry0.trackers import github_number_of
 from embry0.workflows.issue_to_pr.graph import IssueToprWorkflow
 from embry0.workflows.onboard.graph import OnboardWorkflow
+from embry0.workflows.pr_review.graph import PrReviewWorkflow
 from embry0.workflows.qa.graph import QAWorkflow
 from embry0.workflows.registry import WorkflowRegistry
 
@@ -234,6 +235,8 @@ class IssueExecutor:
             return QAWorkflow()
         if pipeline == "onboard":
             return OnboardWorkflow()
+        if pipeline == "pr-review":
+            return PrReviewWorkflow()
         return IssueToprWorkflow()
 
     def _build_graph_config(
@@ -284,6 +287,13 @@ class IssueExecutor:
 
             job_verifications_repo = JobVerificationsRepository(self._db)
 
+        # #30: the pr-review nodes record outcomes and find the previous review here.
+        pr_reviews_repo: Any = None
+        if self._db is not None:
+            from embry0.storage.repositories.pr_reviews import PrReviewsRepository
+
+            pr_reviews_repo = PrReviewsRepository(self._db)
+
         return {
             # The stop for a graph that loops without reaching END
             # (ERR_GRAPH_RECURSION). LangGraph's default was 25 up to 1.0.5,
@@ -311,6 +321,7 @@ class IssueExecutor:
                 "pipeline_templates_repo": templates_repo,
                 "qa_configs_repo": qa_configs_repo,
                 "job_verifications_repo": job_verifications_repo,
+                "pr_reviews_repo": pr_reviews_repo,
                 "db": self._db,
                 "repo_preferences_repo": self._repo_prefs,
                 # getattr: unit tests build the executor via __new__ and set
@@ -718,6 +729,41 @@ class IssueExecutor:
                 "skip_smoke": skip_smoke,
                 "agent_models": agent_models,
             },
+        )
+        return job_id
+
+    async def start_pr_review_job(self, *, repo: str, review: dict[str, Any], dispatched_by: str) -> str:
+        """#30: an issue-less pr-review job; ``review`` is its frozen ``pipeline_config``.
+
+        Called by ``PrReviewDispatcher`` once every gate passed. The job never
+        stores ``pr_url``: the pull request is not its own, and merge sync and
+        the own-PR gate both read that column.
+        """
+        import uuid
+
+        number = review.get("number")
+        job_id = await self._jobs.create(
+            repo=repo,
+            task=f"Review {repo}#{number}: {review.get('title') or ''}".rstrip(": "),
+            pipeline_template="pr-review",
+            pipeline_config=dict(review),
+            sandbox_profile=None,
+            trace_id=f"trc-{uuid.uuid4().hex[:12]}",
+            dispatched_by=dispatched_by,
+        )
+        await emit_audit(
+            self._db,
+            "pr_review.job_created",
+            actor="system",
+            details={"job_id": job_id, "repo": repo, "number": number, "trigger": review.get("trigger")},
+            audit_log_path=self._audit_log_path,
+        )
+        logger.info("pr_review_job_created", job_id=job_id, repo=repo, number=number, trigger=review.get("trigger"))
+        self._track_task(
+            self._run_pr_review_workflow(job_id),
+            kind="pr_review_workflow_execute",
+            job_id=job_id,
+            launch={"runner": "pr-review"},
         )
         return job_id
 
@@ -1227,6 +1273,9 @@ class IssueExecutor:
                 agent_models=launch.get("agent_models"),
             )
             return
+        if runner == "pr-review":
+            await self._run_pr_review_workflow(job_id)
+            return
         issue_id = launch.get("issue_id")
         issue = (await self._issues.get(issue_id)) if issue_id else launch.get("issue")
         if not issue:
@@ -1298,6 +1347,7 @@ class IssueExecutor:
     _process_stream = _executor_run._process_stream
     _refuse_if_over_budget = _executor_run._refuse_if_over_budget
     _run_onboard_workflow = _executor_run._run_onboard_workflow
+    _run_pr_review_workflow = _executor_run._run_pr_review_workflow
     _cleanup_sandbox = _executor_run._cleanup_sandbox
     _cleanup_job_volumes = _executor_run._cleanup_job_volumes
     _load_merged_env_vars = _executor_run._load_merged_env_vars

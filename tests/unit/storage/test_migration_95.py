@@ -21,11 +21,6 @@ def test_migration_95_present_and_gapless() -> None:
     assert versions == list(range(1, len(versions) + 1))
 
 
-def test_migration_95_is_the_last_entry() -> None:
-    """The newest migration owns this assertion (it came from test_migration_94.py)."""
-    assert MIGRATIONS[-1][0] == 95, "migration 95 must add the job_logs correlation columns"
-
-
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
 async def test_append_log_event_fills_the_correlation_columns(db_with_migrations: DatabasePool) -> None:

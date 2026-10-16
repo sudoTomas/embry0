@@ -3,7 +3,7 @@
 A job the dispatch gate refuses never ran an agent turn. Before #348 every
 runner marked the job ``running`` with a ``started_at`` first and asked the
 gate second, so a refusal looked like a job that started and ran. These tests
-run each of the three runners against a real ``jobs`` row.
+run each of the four runners against a real ``jobs`` row.
 """
 
 from __future__ import annotations
@@ -46,11 +46,13 @@ async def _run(executor: IssueExecutor, runner: str, job_id: str) -> None:
         await executor._run_workflow(None, job_id, {"title": "t", "body": ""})
     elif runner == "qa":
         await executor._run_qa_workflow(job_id=job_id, repo="acme/widgets", branch="feature/x", qa_overrides={})
+    elif runner == "pr_review":
+        await executor._run_pr_review_workflow(job_id)
     else:
         await executor._run_onboard_workflow(job_id, repo="acme/widgets", branch="main", skip_smoke=True)
 
 
-RUNNERS = ["issue_to_pr", "qa", "onboard"]
+RUNNERS = ["issue_to_pr", "qa", "onboard", "pr_review"]
 
 
 @pytest.mark.parametrize("runner", RUNNERS)
