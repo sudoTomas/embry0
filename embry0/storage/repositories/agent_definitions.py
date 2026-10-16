@@ -104,8 +104,9 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "auth_mode": None,
         "mcp_servers": {},
     },
-    # #30: MUST stay in sync with embry0/workflows/pr_review/agent_seed.py
-    # (test_the_seed_is_in_sync_with_builtin_seed enforces this). is_builtin is
+    # #30: a copy of embry0/workflows/pr_review/agent_seed.py's seed, so the
+    # two cannot drift; a copy, so editing this entry leaves the seed alone
+    # (test_builtin_seed_holds_a_copy_of_the_reviewer_seed). is_builtin is
     # set by seed_pr_reviewer_agent's trailing direct SQL.
     "pr-reviewer": copy.deepcopy(_PR_REVIEWER_AGENT_SEED),
     # RAV-604: non-code agents. These run on the generic agent node

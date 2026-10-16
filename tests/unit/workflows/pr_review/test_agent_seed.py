@@ -8,19 +8,21 @@ from embry0.storage.repositories.agent_definitions import BUILTIN_SEED, AgentDef
 from embry0.workflows.pr_review.agent_seed import AGENT_TYPE, PR_REVIEWER_AGENT_SEED, seed_pr_reviewer_agent
 
 
-def test_the_seed_is_in_sync_with_builtin_seed() -> None:
-    builtin = BUILTIN_SEED[AGENT_TYPE]
-    for key in (
-        "description",
-        "model",
-        "tools",
-        "skills",
-        "system_prompt",
-        "execution_mode",
-        "auth_mode",
-        "mcp_servers",
-    ):
-        assert builtin[key] == PR_REVIEWER_AGENT_SEED[key], f"drift on {key!r}"
+def test_builtin_seed_holds_a_copy_of_the_reviewer_seed() -> None:
+    """BUILTIN_SEED's entry is built from PR_REVIEWER_AGENT_SEED, so the two agree by
+    construction; what can break is sharing. A caller that edits BUILTIN_SEED's
+    entry in place must not change what seed_pr_reviewer_agent writes."""
+    entry = BUILTIN_SEED[AGENT_TYPE]
+    canonical_tools = list(PR_REVIEWER_AGENT_SEED["tools"])
+    canonical_prompt = PR_REVIEWER_AGENT_SEED["system_prompt"]
+    try:
+        entry["tools"].append("Write")
+        entry["system_prompt"] = "edited in place"
+        assert PR_REVIEWER_AGENT_SEED["tools"] == canonical_tools, "BUILTIN_SEED shares the seed's tools list"
+        assert PR_REVIEWER_AGENT_SEED["system_prompt"] == canonical_prompt, "BUILTIN_SEED is the seed itself"
+    finally:
+        entry["tools"][:] = canonical_tools
+        entry["system_prompt"] = canonical_prompt
 
 
 def test_the_reviewer_reads_and_runs_but_never_writes() -> None:
