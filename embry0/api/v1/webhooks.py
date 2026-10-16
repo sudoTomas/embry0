@@ -392,8 +392,10 @@ _PR_ACTIONS = ("opened", "reopened", "synchronize", "closed")
 async def _handle_pull_request(request: Request, payload: dict[str, Any], action: str) -> dict[str, Any]:
     """Merge-sync bookkeeping, then the pull request review trigger (#30).
 
-    The two are independent: ``opened`` is both a delivery state and a
-    possible review trigger, ``ready_for_review`` is only the latter.
+    The two read different actions: ``opened`` is both a delivery state and
+    a possible review trigger, ``ready_for_review`` is only the latter. They
+    run in that order and are not isolated: if the bookkeeping raises, the
+    delivery fails and the review is not triggered.
     """
     result = await _record_pull_request(request, payload, action)
     review = await _pr_review(request, "handle_github_pull_request", payload, action)

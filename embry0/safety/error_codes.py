@@ -127,7 +127,7 @@ class ErrorCode(StrEnum):
     PR_REVIEW_NO_VERDICT = "ERR_PR_REVIEW_NO_VERDICT"  # the pull request reviewer ended without a readable verdict; nothing was posted (#30)
     PR_REVIEW_PUBLISH_FAILED = "ERR_PR_REVIEW_PUBLISH_FAILED"  # the forge refused the review, after the fallback (#30)
     UNEXPECTED_INTERRUPT = (
-        "ERR_UNEXPECTED_INTERRUPT"  # a graph that never asks questions (QA, onboard) paused on an interrupt
+        "ERR_UNEXPECTED_INTERRUPT"  # a graph that never asks questions (QA, onboard, pr-review) paused on an interrupt
     )
 
     # #358 — a turn-cap death must not discard the run
