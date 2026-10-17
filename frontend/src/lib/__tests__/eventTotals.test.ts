@@ -45,6 +45,28 @@ describe("reduceTotals", () => {
     expect(r.costUsd).toBeCloseTo(0.03, 6);
   });
 
+  it("starts a legacy pseudo-run at each agent_started, so turns sum over runs", () => {
+    const started = { type: "agent_started", agent: "developer", model: "m", timestamp: t } as LogEvent;
+    const legacyTurn = (n: number) => ({ type: "turn_start", turn_number: n, model: "m", timestamp: t }) as LogEvent;
+    const run = (n: number) => [started, ...Array.from({ length: n }, (_, i) => legacyTurn(i + 1))];
+    const r = reduceTotals([...run(26), ...run(43)]);
+    expect(r.turns, "two legacy runs numbered 1..26 and 1..43 must count 26 + 43 turns").toBe(69);
+  });
+
+  it("lands each legacy cost_update in the run current when it arrives and sums both", () => {
+    const started = { type: "agent_started", agent: "developer", model: "m", timestamp: t } as LogEvent;
+    const legacyTurn = (n: number) => ({ type: "turn_start", turn_number: n, model: "m", timestamp: t }) as LogEvent;
+    const legacyCost = (c: number, tin: number, tout: number) => ({ type: "cost_update", cost_usd: c, tokens_in: tin, tokens_out: tout, num_turns: 1, duration_ms: 0, duration_api_ms: 0, cache_read_tokens: 0, cache_creation_tokens: 0, timestamp: t }) as LogEvent;
+    const r = reduceTotals([
+      started, legacyTurn(1), legacyTurn(2), legacyCost(0.01, 100, 10),
+      started, legacyTurn(1), legacyCost(0.02, 200, 20),
+    ]);
+    expect(r.costUsd).toBeCloseTo(0.03, 6);
+    expect(r.tokensIn).toBe(300);
+    expect(r.tokensOut).toBe(30);
+    expect(r.turns).toBe(3);
+  });
+
   it("sums cost and turns over two runs of one retried node", () => {
     const dev = (e: LogEvent) => ({ ...e, node: "developer" }) as LogEvent;
     const r = reduceTotals([
