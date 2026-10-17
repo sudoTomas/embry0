@@ -529,6 +529,23 @@ async def test_context_proxy_on_flags_job_and_renders_drilldown():
     assert "mcp__context__logs_query" in task
     assert "acme-backend, acme-frontend" in task
     assert "30 queries" in task
+    assert "a * stands for" not in task
+
+
+@pytest.mark.asyncio
+async def test_drilldown_explains_a_pattern_entry():
+    """Slot containers are allowlisted as acme-backend*; the agent is
+    told to query the full name its excerpts show, not the pattern."""
+    cfg = _config(
+        context_proxy_enabled=True,
+        context_proxy_container_allowlist="acme-backend*, acme-frontend",
+    )
+    job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}
+    svc = _service(config=cfg, lines=["[api] e1", "[api] e2", "[api] e3"], job_result=job)
+    await svc.run_once()
+    task = svc._jobs.create.await_args.kwargs["task"]
+    assert "acme-backend*, acme-frontend (a * stands for" in task
+    assert "query the full name your excerpts show" in task
 
 
 @pytest.mark.asyncio
