@@ -174,6 +174,38 @@ curl -X POST http://localhost:8200/api/v1/credentials/import-env \
 
 GitHub also returns `cached`, `truncated_env_keys` (an env key, or `credential:<label>` when a registry listing was cut short), and an advisory `push` (GitHub's `permissions.push` for the token's user, not what a fine-grained PAT grants). GitLab returns `cached` and `configured` (`false`, with an empty project list, when the deployment has no GitLab credential — not an error).
 
+## Hosts
+
+The machines that run the code ([`docs/hosts.md`](hosts.md)). Reads need any authenticated principal and a probe needs an operator; every other mutation needs the `admin` tier and writes a `host.*` audit row.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/hosts?source=&include_removed=` | read |
+| `POST /api/v1/hosts` | admin |
+| `GET /api/v1/hosts/{id}` | read |
+| `PATCH /api/v1/hosts/{id}` | admin |
+| `DELETE /api/v1/hosts/{id}` | admin |
+| `POST /api/v1/hosts/{id}/probe` | operator |
+| `POST /api/v1/hosts/import/tailnet` | admin, body `{"confirm": true}` |
+
+```bash
+# An ssh host serving acme/widgets, with its logs in journald
+curl -X POST http://localhost:8200/api/v1/hosts \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"name": "web-1", "transport": "ssh", "address": "web-1.example.com:22", "roles": ["app"],
+       "log_source": {"kind": "journald", "selector": "widgets.service"},
+       "repos": [{"repo": "acme/widgets", "role": "app"}]}'
+
+# One host per device of the tailnet bound at global scope
+curl -X POST http://localhost:8200/api/v1/hosts/import/tailnet \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"confirm": true}'
+```
+
+`GET /api/v1/repos/{repo}` lists the repository's hosts under `hosts`, each with its `role`.
+
 ## Organizations
 
 The forge owners embry0 maintains as a whole ([ADR 0010](adr/0010-organizations.md)). Reads need any authenticated principal; every mutation needs the `admin` tier and writes an `organization.*` audit row. Registering an owner changes nothing for any repository until a person acts.

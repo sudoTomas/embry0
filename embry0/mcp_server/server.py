@@ -6,8 +6,9 @@ Run via the ``embry0-mcp`` console script (stdio transport). Configure with
 Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``job_answer``, ``agent_update``, ``agent_reset``, ``env_set``, ``env_delete``,
 ``merge_decide``, ``case_accept``, ``case_close``, ``repo_register``,
-``qa_config_set``, ``credential_bind``) require ``confirm=true``; without it
-they return an instructive refusal instead of acting.
+``org_register``, ``qa_config_set``, ``credential_bind``,
+``host_import_tailnet``) require ``confirm=true``; without it they return an
+instructive refusal instead of acting.
 """
 
 from __future__ import annotations
@@ -32,7 +33,8 @@ mcp = MCPServer(
         "Tools for driving the embry0 issue-to-PR / QA / research automation platform: "
         "issues, jobs (create/wait/logs/deliverables), agent definitions, pipeline "
         "templates, the log watcher, healing cases, merge approvals, per-repo environment "
-        "variables, and forge credentials (list, resolve, bind). "
+        "variables, forge credentials (list, resolve, bind), and the hosts that run the "
+        "code (list, get, probe, import from a tailnet). "
         "Destructive tools require confirm=true after explicit user approval. "
         'Two lists answer "what is open?", and they are different things: '
         'issue_list(status="open") is the work on the Issues page of the dashboard; '
@@ -719,6 +721,48 @@ async def org_register(
 
 
 @_tool
+async def host_list(source: str | None = None, include_removed: bool = False) -> dict[str, Any]:
+    """List the hosts: the machines that run the code embry0 maintains (ADR 0013). Each has a
+    name, an address, a transport (tailnet, ssh or http), roles, a log source, tags, a status
+    (active, unreachable or removed), when it was last seen, and the repositories it serves
+    with the role it plays for each. source: "manual" or "tailnet" keeps only hosts added
+    that way. include_removed=true also shows removed hosts."""
+    return await _get_client().host_list(source=source, include_removed=include_removed)
+
+
+@_tool
+async def host_get(host_id: str) -> dict[str, Any]:
+    """One host ("host-..."): address, transport, roles, log source, status, last seen, and
+    the repositories it serves."""
+    return await _get_client().host_get(host_id)
+
+
+@_tool
+async def host_probe(host_id: str, credential_id: str = "") -> dict[str, Any]:
+    """Check whether a host ("host-...") is reachable over its transport, and record the answer
+    as its status and last-seen time. A tailnet host is looked up in the tailnet's device list
+    by address or name, and is reachable when the tailnet reports it connected; an ssh or http
+    host gets a TCP connect to its port, with nothing sent. A tailnet is read with the
+    tailnet_api_key ``credential_id``, or the one bound at global scope with role tailnet when
+    empty. Returns the probe (reachable, detail) and the updated host. Changes nothing a person
+    configured. Never returns the key."""
+    return await _get_client().host_probe(host_id, credential_id=credential_id)
+
+
+@_tool
+async def host_import_tailnet(credential_id: str = "", confirm: bool = False) -> dict[str, Any]:
+    """Create or update one host per device of the tailnet, read with a tailnet_api_key
+    credential: ``credential_id``, or the one bound at global scope with role tailnet when
+    empty. A new device becomes a tailnet host; a host an earlier import made gets its address,
+    status and last-seen time refreshed; a manual host with the same name, or a host a person
+    removed, is skipped. Idempotent: a second import reports every host unchanged. Never
+    returns the key. Requires confirm=true (creates platform state)."""
+    if not confirm:
+        return _confirmation_refusal("host_import_tailnet", "import hosts from the tailnet's devices")
+    return await _get_client().host_import_tailnet(credential_id=credential_id)
+
+
+@_tool
 async def repo_list(include_inactive: bool = False) -> list[dict[str, Any]]:
     """List registered target repos (the embry0 repo registry) with a
     has_qa_config flag per repo. include_inactive=true also shows deactivated repos."""
@@ -729,8 +773,9 @@ async def repo_list(include_inactive: bool = False) -> list[dict[str, Any]]:
 async def repo_get(repo: str) -> dict[str, Any]:
     """Unified view of one registered repo — "group/name", or a GitLab
     subgroup path like "group/subgroup/project": registry row, has_qa_config
-    + last config update, preferences (sandbox profile etc.), and env
-    var/secret counts. 404s when the repo is not registered."""
+    + last config update, preferences (sandbox profile etc.), env
+    var/secret counts, and the hosts its code runs on. 404s when the repo is
+    not registered."""
     return await _get_client().repo_get(repo)
 
 

@@ -11,8 +11,11 @@ A credential has a `kind`, a `provider`, a `host`, a `label` unique per provider
 | `forge_token` | `github`, `gitlab` | clone, push, pull and merge requests, forge API calls |
 | `llm_oauth`, `llm_api_key` | `anthropic`, `xai` | agent runs |
 | `ssh_key` | `ssh` | orchestrator-side deploys (later release) |
+| `tailnet_api_key` | `tailscale` | reading a tailnet's devices to import and probe [hosts](hosts.md) |
 
 **This release stores forge tokens and LLM accounts.** `POST /api/v1/credentials` accepts `forge_token`, `llm_oauth` and `llm_api_key`. xAI `llm_oauth` is the exception: that route answers 422, and the row is created by device-code login or by `embry0 credentials import-env`. `ssh_key` is still a later release. Env values remain the last step when no binding matches.
+
+A `tailnet_api_key` is created with `POST /api/v1/credentials` at host `api.tailscale.com`, with `metadata` `{"tailnet": "<name>"}` (`-`, the key's own tailnet, when omitted); `metadata` is refused on every other kind. It binds only at global scope, with role `tailnet`, and has no env fallback. [hosts.md](hosts.md) has the scope the key needs.
 
 A credential's `host` must be the forge's own host in this release: `github.com` for GitHub, the host of `GITLAB_URL` for GitLab. Leave it empty and it defaults to that; anything else is a 422, because clone URLs and API bases are still single-host.
 

@@ -149,7 +149,7 @@ embry0 encrypts per-repo secret environment variables at rest using Fernet, keye
 openssl rand -hex 32
 ```
 
-The same key also protects the [credential registry](credentials.md) (`credentials`): forge tokens, and LLM and SSH credentials in later releases.
+The same key also protects the [credential registry](credentials.md) (`credentials`): forge tokens, and LLM and SSH credentials in later releases. Tailnet API keys, which a [hosts](hosts.md) import and probe read devices with, are registry credentials too.
 
 In production the orchestrator refuses to start without a real key; in dev mode a default is tolerated with a loud warning. The key is rotatable without orphaning anything: move the current key into `ENVIRONMENT_SECRET_KEYS_OLD` (comma-separated, newest first), set a fresh `ENVIRONMENT_SECRET_KEY`, and restart — decryption tries every listed key while encryption always uses the current one. Replacing the key *without* carrying the old one in `ENVIRONMENT_SECRET_KEYS_OLD` makes previously encrypted values undecryptable: an env-var secret logs `secret_decryption_failed` on the next job that needs it, and a registry credential is marked `disabled` with `status_reason=decryption_failed` on its next resolution and skipped until `POST /api/v1/credentials/{id}/rotate` re-enters its secret.
 
@@ -162,6 +162,8 @@ Budget controls, context injection, and sandbox profiles are configurable via th
 - **Budget** — `GET/PUT /api/v1/config/budget`. A saved row wins over the env vars above for every budget setting; a cap of `0` means unlimited. See [architecture.md](architecture.md#budget-controls) for where each layer is enforced.
 - **Context** — `GET/PUT /api/v1/config/context` (global), `/config/context/repos/{repo}` (per-repo)
 - **Sandbox Profiles** — `CRUD /api/v1/sandbox-profiles`. A profile's `dind_enabled` only asks for the shared Docker daemon; a sandbox gets it when an admin has also granted its repo Docker access (`PUT /api/v1/repos/{repo}/docker-access`, or the repo page). Code from a granted repo can control the shared Docker daemon, including the proxies holding your tokens. Without the grant, a sandbox on such a profile (the builtin `qa-jvm` included) is refused at creation. A profile cannot weaken a sandbox's isolation: `cap_drop` must include `ALL`, `cap_add` must be empty, `security_opt` may hold only `no-new-privileges`, `base_image` must name an image in embry0's own registry without a registry host, and `extra_networks` may hold only `sandbox-internet`. The API refuses other values with a 422, and a sandbox on a stored profile that holds one is refused at creation. A sandbox's memory and CPU limits are its profile's `memory` and `cpus`; there is no global setting. The builtin profiles are re-seeded at every startup, overwriting edits, so set different limits on a profile of your own.
+
+- **Hosts**: `GET/POST /api/v1/hosts`, `GET/PATCH/DELETE /api/v1/hosts/{id}`, `POST /api/v1/hosts/{id}/probe` and `POST /api/v1/hosts/import/tailnet`. The machines that run the code, how embry0 reaches each one, where its logs come from, and which repositories it serves. A tailnet import and a tailnet probe read devices with a `tailnet_api_key` credential bound at global scope with role `tailnet`; no environment variable configures it. See [hosts.md](hosts.md).
 
 See [api.md](api.md) for request examples.
 

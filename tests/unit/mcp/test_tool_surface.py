@@ -76,6 +76,10 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
         'var_type: string = "config"',
     ],
     "health": [],
+    "host_get": ["host_id: string"],
+    "host_import_tailnet": ["confirm: boolean = false", 'credential_id: string = ""'],
+    "host_list": ["include_removed: boolean = false", "source: string|null = null"],
+    "host_probe": ['credential_id: string = ""', "host_id: string"],
     "issue_create": [
         "auto_triage: boolean = true",
         'body: string = ""',
@@ -218,6 +222,7 @@ async def test_every_confirm_gated_tool_defaults_to_refusing():
         "credential_bind",
         "env_delete",
         "env_set",
+        "host_import_tailnet",
         "job_answer",
         "job_cancel",
         "job_resume",
