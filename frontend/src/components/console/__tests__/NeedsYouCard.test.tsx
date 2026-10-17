@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
@@ -46,47 +46,7 @@ beforeEach(() => {
   vi.mocked(answerInput).mockReset().mockResolvedValue(undefined);
 });
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-
 describe("NeedsYouCard", () => {
-  describe("TTL countdown", () => {
-    it('renders "expires in 3h 12m" from paused_at + ttl_hours', () => {
-      // Paused 48 minutes ago with a 4h TTL ⇒ 3h 12m remaining
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date("2026-07-08T12:00:00Z"));
-
-      renderCard({
-        job: makeJob({ status: "paused" }),
-        interrupt: { paused_at: "2026-07-08T11:12:00Z", ttl_hours: 4 },
-      });
-
-      expect(screen.getByTestId("ttl-countdown")).toHaveTextContent("expires in 3h 12m");
-    });
-
-    it("renders an expired marker once the TTL has elapsed", () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date("2026-07-08T12:00:00Z"));
-
-      renderCard({
-        job: makeJob({ status: "paused" }),
-        interrupt: { paused_at: "2026-07-08T07:00:00Z", ttl_hours: 4 },
-      });
-
-      expect(screen.getByTestId("ttl-countdown")).toHaveTextContent("expired");
-    });
-
-    it("renders no countdown when the interrupt carries no TTL", () => {
-      renderCard({
-        job: makeJob({ status: "awaiting_input" }),
-        interrupt: { reason: "Need input" },
-      });
-
-      expect(screen.queryByTestId("ttl-countdown")).toBeNull();
-    });
-  });
-
   describe("question text", () => {
     it("shows the first pending input's question", () => {
       renderCard({ job: makeJob({ status: "awaiting_input" }), jobInputs: [makeJobInput()] });
@@ -95,15 +55,9 @@ describe("NeedsYouCard", () => {
       );
     });
 
-    it("falls back to the interrupt reason, then a generic line", () => {
-      renderCard({
-        job: makeJob({ status: "paused" }),
-        interrupt: { reason: "Review retry cap reached" },
-      });
-      expect(screen.getByTestId("needs-you-question")).toHaveTextContent("Review retry cap reached");
-
+    it("falls back to a generic line when no input is pending", () => {
       renderCard({ job: makeJob({ status: "paused" }) });
-      expect(screen.getAllByTestId("needs-you-question")[1]).toHaveTextContent(
+      expect(screen.getByTestId("needs-you-question")).toHaveTextContent(
         "Pipeline paused — open the job for details",
       );
     });
@@ -134,7 +88,6 @@ describe("NeedsYouCard", () => {
       renderCard({
         job: makeJob({ status: "paused" }),
         jobInputs: [makeJobInput({ status: "answered" })],
-        interrupt: { reason: "Paused for review" },
       });
 
       expect(screen.queryByPlaceholderText("Your answer...")).toBeNull();

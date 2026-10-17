@@ -51,11 +51,11 @@ export function JobDetailPage() {
   const { data: job, isLoading, isError, refetch } = useJob(jobId);
   const { data: jobInputs } = useJobInputs(jobId ?? "");
 
-  const { events, isConnected, latestCost } = useJobLogs(jobId);
-  const { agents, activeAgents, completedAgents, pendingAgents, prUrl, interruptData } = useAgentStates(
-    events,
-    job?.status,
-  );
+  const { events, isConnected, latestCost, pipelineGraph } = useJobLogs(jobId);
+  const { agents, prUrl, interruptData } = useAgentStates(events, job?.status, pipelineGraph);
+  const activeAgents = agents.filter((a) => a.status === "running");
+  const completedAgents = agents.filter((a) => a.status === "completed" || a.status === "failed");
+  const pendingAgents = agents.filter((a) => a.status === "pending");
 
   // Traces tab state
   const [traceFilters, setTraceFilters] = useState<{ agent_type?: string; result?: string }>({});
@@ -76,7 +76,7 @@ export function JobDetailPage() {
   const displayCost = Math.max(liveCost, latestCost, job?.total_cost_usd ?? 0);
 
   // Phase counter
-  const totalPhases = agents.length + pendingAgents.length;
+  const totalPhases = agents.length;
   const completedPhases = completedAgents.length;
 
   const currentOperation = jobToOperation(agents);
@@ -253,7 +253,6 @@ export function JobDetailPage() {
       {/* Awaiting input */}
       {job.status === "awaiting_input" && (
         <AwaitingInputCard
-          pendingInputs={{}}
           jobInputs={jobInputs ?? []}
           jobId={job.job_id}
         />
@@ -278,7 +277,7 @@ export function JobDetailPage() {
             {completedAgents.length > 0 && (
               <div className={`grid gap-2 ${completedAgents.length >= 3 ? "grid-cols-3" : completedAgents.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
                 {completedAgents.map((agent) => (
-                  <AgentCard key={`${agent.node}-${agent.retryLabel || ""}`} agent={agent} />
+                  <AgentCard key={agent.runId} agent={agent} />
                 ))}
               </div>
             )}
@@ -287,7 +286,7 @@ export function JobDetailPage() {
             {activeAgents.length > 0 && (
               <div className={`grid gap-2 ${activeAgents.length >= 2 ? "grid-cols-2" : "grid-cols-1"}`}>
                 {activeAgents.map((agent) => (
-                  <AgentCard key={`${agent.node}-active`} agent={agent} expanded />
+                  <AgentCard key={agent.runId} agent={agent} expanded />
                 ))}
               </div>
             )}
@@ -296,7 +295,7 @@ export function JobDetailPage() {
             {pendingAgents.length > 0 && (
               <div className={`grid gap-2 ${pendingAgents.length >= 3 ? "grid-cols-3" : pendingAgents.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
                 {pendingAgents.map((agent) => (
-                  <AgentCard key={`${agent.node}-pending`} agent={agent} />
+                  <AgentCard key={agent.runId} agent={agent} />
                 ))}
               </div>
             )}

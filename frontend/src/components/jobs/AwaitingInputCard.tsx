@@ -2,19 +2,16 @@ import { PauseCircle } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { QuestionsForm } from "@/components/jobs/QuestionsForm";
 import { answerInput } from "@/api/inputs";
-import type { AwaitingInputEvent } from "@/lib/types";
 import type { JobInput } from "@/lib/types";
 
 interface AwaitingInputCardProps {
-  pendingInputs: Record<string, AwaitingInputEvent>;
   jobInputs: JobInput[];
   jobId: string;
 }
 
-export function AwaitingInputCard({ pendingInputs, jobInputs, jobId }: AwaitingInputCardProps) {
+export function AwaitingInputCard({ jobInputs, jobId }: AwaitingInputCardProps) {
   const queryClient = useQueryClient();
 
-  const pendingList = Object.values(pendingInputs);
   // Plan B Task 6: surface auto_answered rows alongside pending so the user
   // can review and override the agent's suggestion before the pipeline moves
   // on. We still gate "is the form interactive" on having at least one
@@ -23,8 +20,8 @@ export function AwaitingInputCard({ pendingInputs, jobInputs, jobId }: AwaitingI
   const autoAnswered = (jobInputs ?? []).filter((i) => i.status === "auto_answered");
   const renderable = [...pending, ...autoAnswered];
 
-  // Nothing to show: no renderable job inputs and no in-flight events.
-  if (renderable.length === 0 && pendingList.length === 0) return null;
+  // Nothing to show: no renderable job inputs.
+  if (renderable.length === 0) return null;
 
   // Map JobInput → QuestionsForm's PendingInput shape, forwarding the new
   // ask-user metadata so the form can render the override affordance.
@@ -64,17 +61,6 @@ export function AwaitingInputCard({ pendingInputs, jobInputs, jobId }: AwaitingI
           <p className="text-sm text-white/40">The pipeline needs more information to continue</p>
         </div>
       </div>
-
-      {/* Fallback: surface in-flight question events when no JobInput rows exist yet */}
-      {renderable.length === 0 && pendingList.length > 0 && (
-        <div className="space-y-2 mb-4">
-          {pendingList.map((input) => (
-            <div key={input.input_id} className="px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/10 text-sm text-amber-200">
-              {input.question}
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* Batched multi-question form (pending + auto_answered with override) */}
       {renderable.length > 0 && (

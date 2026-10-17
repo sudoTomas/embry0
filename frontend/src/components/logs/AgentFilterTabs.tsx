@@ -1,9 +1,9 @@
 import { cn } from "@/lib/utils";
 import { ROLE_COLORS } from "@/lib/constants";
-import type { NodeStateEvent } from "@/lib/types/events";
+import type { NodeLiveState } from "@/lib/pipeline-live";
 
 interface AgentFilterTabsProps {
-  nodeStates: Record<string, NodeStateEvent>;
+  nodeStates: Record<string, NodeLiveState>;
   selectedNodeId: string | null;
   onSelect: (nodeId: string | null) => void;
 }

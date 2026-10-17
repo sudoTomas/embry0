@@ -262,3 +262,21 @@ describe("useJobEventStream replay cursor (spec 3.5, #38)", () => {
     expect(result.current.isComplete).toBe(true);
   });
 });
+
+describe("useJobEventStream wire normalization", () => {
+  it("delivers a legacy live row under contract names", async () => {
+    const { onEvent } = harness();
+    await flushConnect();
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage({
+        type: "tool_result", tool_use_id: "t1", content: "ok", is_error: false, node_id: "developer",
+        timestamp: "t1", event_seq: 3,
+      });
+    });
+    expect(onEvent).toHaveBeenCalledWith({
+      type: "tool_result", tool_id: "t1", content: "ok", is_error: false, node: "developer",
+      timestamp: "t1", event_seq: 3,
+    });
+  });
+});

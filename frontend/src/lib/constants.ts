@@ -95,13 +95,6 @@ export const ROLE_BG_COLORS: Record<string, string> = {
   triage: "bg-role-triage",
 };
 
-export const ROLE_BORDER_COLORS: Record<string, string> = {
-  explorer: "border-l-role-explorer",
-  developer: "border-l-role-developer",
-  validator: "border-l-role-validator",
-  triage: "border-l-role-triage",
-};
-
 export const ROLE_LABELS: Record<string, string> = {
   explorer: "Explorer",
   developer: "Developer",

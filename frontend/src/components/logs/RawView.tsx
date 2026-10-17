@@ -5,42 +5,74 @@ interface RawViewProps {
   events: LogEvent[];
 }
 
-function eventToText(event: LogEvent): string {
+/** Fields every event may carry; the fallback JSON leaves them out. */
+const BASE_FIELDS = new Set([
+  "type", "timestamp", "job_id", "event_seq", "prev_seq", "run_id", "node", "agent", "parent_tool_use_id",
+]);
+
+function formatTime(timestamp: string): string {
+  if (!timestamp) return "--:--:--";
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? "--:--:--" : date.toLocaleTimeString();
+}
+
+function usd(value: number | null): string {
+  return value == null ? "unpriced" : `$${value.toFixed(4)}`;
+}
+
+/** Pre-contract node rows carry no attempt. */
+function attemptOf(attempt: unknown): string {
+  return typeof attempt === "number" ? ` attempt ${attempt}` : "";
+}
+
+/** The headline field of each event type; compact JSON for the rest. */
+function eventSummary(event: LogEvent): string {
   switch (event.type) {
-    case "tool_start":
-      return `[tool] ${event.tool} starting...`;
-    case "tool_end":
-      return `[tool] ${event.tool} ${event.error ? "FAILED" : "done"}\n${event.output ?? ""}`;
     case "text":
-      return event.text ?? "";
-    case "system":
-      return `[system] ${event.message ?? ""}`;
-    case "error":
-      return `[ERROR] ${event.message ?? ""}`;
-    case "cost_update":
-      return `[cost] $${event.cost_usd?.toFixed(4)} | tokens: ${event.tokens_in}↓ ${event.tokens_out}↑`;
-    case "complete":
-      return `[complete] cost=$${event.cost_usd?.toFixed(4)} turns=${event.turns} error=${event.is_error}`;
+    case "thinking":
+      return event.text.slice(0, 80);
+    case "tool_call":
+      return `${event.tool_name} ${event.summary}`;
+    case "tool_result":
+      return `${event.tool_id} ${event.is_error ? "error" : "ok"}`;
     case "progress":
-      return `[progress] ${event.step}: ${event.status} — ${event.detail ?? ""}`;
+    case "system":
+    case "error":
+    case "job_failed":
+      return event.message;
     case "turn_start":
-      return `[turn] Turn started`;
+      return `turn ${event.turn_number}`;
+    case "turn_usage":
+      return `tokens ${event.input_tokens}↓ ${event.output_tokens}↑ · ${usd(event.cost_usd)}`;
+    case "cost_update":
+      return `${usd(event.cost_usd)} · tokens ${event.tokens_in}↓ ${event.tokens_out}↑`;
+    case "node_started":
+      return `${event.node ?? ""}${attemptOf(event.attempt)}`;
+    case "node_completed":
+      return `${event.node ?? ""}${attemptOf(event.attempt)}${event.action ? ` ${event.action}` : ""}`;
+    case "agent_started":
+      return [event.agent, event.model].filter(Boolean).join(" ");
     case "subagent_start":
-      return `[subagent] ${event.name} starting...`;
+      return event.name;
     case "subagent_end":
-      return `[subagent] ${event.name} completed`;
-    default:
-      return `[${event.type}] ${JSON.stringify(event)}`;
+      return event.tool_id;
+    case "job_finished":
+      return event.status;
+    default: {
+      const payload = Object.fromEntries(Object.entries(event).filter(([key]) => !BASE_FIELDS.has(key)));
+      return JSON.stringify(payload);
+    }
   }
 }
 
 function RawEventRow({ event }: { event: LogEvent }) {
   return (
-    <div className="py-0.5 whitespace-pre-wrap">
+    <div className="py-0.5 whitespace-pre-wrap" data-testid="raw-row">
       <span className="text-muted-foreground select-none">
-        {new Date(event.timestamp).toLocaleTimeString()}{" "}
+        {formatTime(event.timestamp)}{" "}
       </span>
-      {eventToText(event)}
+      {event.event_seq != null && <span className="text-muted-foreground">#{event.event_seq} </span>}
+      {event.type} {eventSummary(event)}
     </div>
   );
 }

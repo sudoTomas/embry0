@@ -1,0 +1,381 @@
+[
+  {
+    "event_seq": 1000,
+    "graph": {
+      "description": "Analyze the repository and write its QA config",
+      "edges": [
+        {
+          "edge_id": "init_onboard->analyze",
+          "edge_type": "flow",
+          "source": "init_onboard",
+          "target": "analyze"
+        },
+        {
+          "edge_id": "analyze->validate",
+          "edge_type": "flow",
+          "source": "analyze",
+          "target": "validate"
+        },
+        {
+          "edge_id": "validate->smoke",
+          "edge_type": "flow",
+          "source": "validate",
+          "target": "smoke"
+        },
+        {
+          "edge_id": "smoke->write_config",
+          "edge_type": "flow",
+          "source": "smoke",
+          "target": "write_config"
+        },
+        {
+          "edge_id": "write_config->cleanup",
+          "edge_type": "flow",
+          "source": "write_config",
+          "target": "cleanup"
+        },
+        {
+          "edge_id": "validate->analyze",
+          "edge_type": "feedback",
+          "source": "validate",
+          "target": "analyze"
+        },
+        {
+          "edge_id": "smoke->analyze",
+          "edge_type": "feedback",
+          "source": "smoke",
+          "target": "analyze"
+        },
+        {
+          "edge_id": "validate->cleanup",
+          "edge_type": "flow",
+          "source": "validate",
+          "target": "cleanup"
+        },
+        {
+          "edge_id": "smoke->cleanup",
+          "edge_type": "flow",
+          "source": "smoke",
+          "target": "cleanup"
+        }
+      ],
+      "graph_id": "onboard-job-fixture-onboarding",
+      "metadata": {
+        "created_by": "auto",
+        "max_total_budget_usd": 0,
+        "max_total_loops": 0,
+        "template_id": null
+      },
+      "name": "onboarding",
+      "nodes": [
+        {
+          "agent_type": "onboarding",
+          "label": "Init",
+          "node_id": "init_onboard",
+          "physical_node": "init_onboard",
+          "position": {
+            "x": 40,
+            "y": 120
+          }
+        },
+        {
+          "agent_type": "onboarding",
+          "label": "Analyze",
+          "node_id": "analyze",
+          "physical_node": "analyze",
+          "position": {
+            "x": 270,
+            "y": 120
+          }
+        },
+        {
+          "agent_type": "onboarding",
+          "label": "Validate",
+          "node_id": "validate",
+          "physical_node": "validate",
+          "position": {
+            "x": 500,
+            "y": 120
+          }
+        },
+        {
+          "agent_type": "onboarding",
+          "label": "Smoke",
+          "node_id": "smoke",
+          "physical_node": "smoke",
+          "position": {
+            "x": 730,
+            "y": 120
+          }
+        },
+        {
+          "agent_type": "onboarding",
+          "label": "Write config",
+          "node_id": "write_config",
+          "physical_node": "write_config",
+          "position": {
+            "x": 960,
+            "y": 120
+          }
+        },
+        {
+          "agent_type": "onboarding",
+          "label": "Cleanup",
+          "node_id": "cleanup",
+          "physical_node": "cleanup",
+          "position": {
+            "x": 1190,
+            "y": 120
+          }
+        }
+      ]
+    },
+    "job_id": "job-fixture-onboarding",
+    "node": "init_onboard",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "type": "pipeline_graph"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1003,
+    "job_id": "job-fixture-onboarding",
+    "node": "init_onboard",
+    "prev_seq": 1000,
+    "timestamp": "2026-01-01T00:00:01Z",
+    "type": "node_started"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1006,
+    "job_id": "job-fixture-onboarding",
+    "node": "init_onboard",
+    "ok": true,
+    "prev_seq": 1003,
+    "timestamp": "2026-01-01T00:00:02Z",
+    "type": "node_completed"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1009,
+    "job_id": "job-fixture-onboarding",
+    "node": "analyze",
+    "prev_seq": 1006,
+    "timestamp": "2026-01-01T00:00:03Z",
+    "type": "node_started"
+  },
+  {
+    "agent": "onboarding",
+    "event_seq": 1012,
+    "job_id": "job-fixture-onboarding",
+    "max_turns": 30,
+    "model": "claude-sonnet-5-5",
+    "node": "analyze",
+    "prev_seq": 1009,
+    "run_id": "run-fixture-onboard-1",
+    "timestamp": "2026-01-01T00:00:04Z",
+    "type": "agent_started"
+  },
+  {
+    "agent": "onboarding",
+    "event_seq": 1015,
+    "job_id": "job-fixture-onboarding",
+    "model": "claude-sonnet-5-5",
+    "node": "analyze",
+    "prev_seq": 1012,
+    "run_id": "run-fixture-onboard-1",
+    "timestamp": "2026-01-01T00:00:05Z",
+    "turn_number": 1,
+    "type": "turn_start"
+  },
+  {
+    "agent": "onboarding",
+    "event_seq": 1018,
+    "job_id": "job-fixture-onboarding",
+    "node": "analyze",
+    "prev_seq": 1015,
+    "run_id": "run-fixture-onboard-1",
+    "summary": "Glob package.json",
+    "timestamp": "2026-01-01T00:00:06Z",
+    "tool_id": "toolu_fx_ob1",
+    "tool_input": {
+      "pattern": "**/package.json"
+    },
+    "tool_name": "Glob",
+    "type": "tool_call"
+  },
+  {
+    "agent": "onboarding",
+    "content": "apps/web/package.json",
+    "event_seq": 1021,
+    "is_error": false,
+    "job_id": "job-fixture-onboarding",
+    "node": "analyze",
+    "prev_seq": 1018,
+    "run_id": "run-fixture-onboard-1",
+    "timestamp": "2026-01-01T00:00:07Z",
+    "tool_id": "toolu_fx_ob1",
+    "type": "tool_result"
+  },
+  {
+    "agent": "onboarding",
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "cost_usd": 0.009,
+    "duration_api_ms": 11000,
+    "duration_ms": 12000,
+    "event_seq": 1024,
+    "job_id": "job-fixture-onboarding",
+    "node": "analyze",
+    "num_turns": 1,
+    "prev_seq": 1021,
+    "run_id": "run-fixture-onboard-1",
+    "timestamp": "2026-01-01T00:00:08Z",
+    "tokens_in": 3000,
+    "tokens_out": 200,
+    "type": "cost_update"
+  },
+  {
+    "agent": "onboarding",
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "cost_usd": 0.009,
+    "duration_ms": 12000,
+    "error_code": null,
+    "error_message": "",
+    "event_seq": 1027,
+    "input_tokens": 3000,
+    "is_error": false,
+    "job_id": "job-fixture-onboarding",
+    "node": "analyze",
+    "output": "one app: web",
+    "output_tokens": 200,
+    "policy_denials": {},
+    "prev_seq": 1024,
+    "run_id": "run-fixture-onboard-1",
+    "timestamp": "2026-01-01T00:00:09Z",
+    "tools_called": {
+      "Glob": 1
+    },
+    "type": "agent_completed"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1030,
+    "job_id": "job-fixture-onboarding",
+    "node": "analyze",
+    "ok": true,
+    "prev_seq": 1027,
+    "timestamp": "2026-01-01T00:00:10Z",
+    "type": "node_completed"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1033,
+    "job_id": "job-fixture-onboarding",
+    "node": "validate",
+    "prev_seq": 1030,
+    "timestamp": "2026-01-01T00:00:11Z",
+    "type": "node_started"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1036,
+    "job_id": "job-fixture-onboarding",
+    "node": "validate",
+    "ok": true,
+    "prev_seq": 1033,
+    "timestamp": "2026-01-01T00:00:12Z",
+    "type": "node_completed"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1039,
+    "job_id": "job-fixture-onboarding",
+    "node": "smoke",
+    "prev_seq": 1036,
+    "timestamp": "2026-01-01T00:00:13Z",
+    "type": "node_started"
+  },
+  {
+    "app": "web",
+    "event_seq": 1042,
+    "job_id": "job-fixture-onboarding",
+    "message": "Booting web",
+    "node": "smoke",
+    "prev_seq": 1039,
+    "timestamp": "2026-01-01T00:00:14Z",
+    "type": "progress"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1045,
+    "job_id": "job-fixture-onboarding",
+    "node": "smoke",
+    "ok": true,
+    "prev_seq": 1042,
+    "timestamp": "2026-01-01T00:00:15Z",
+    "type": "node_completed"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1048,
+    "job_id": "job-fixture-onboarding",
+    "node": "write_config",
+    "prev_seq": 1045,
+    "timestamp": "2026-01-01T00:00:16Z",
+    "type": "node_started"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1051,
+    "job_id": "job-fixture-onboarding",
+    "node": "write_config",
+    "ok": true,
+    "prev_seq": 1048,
+    "timestamp": "2026-01-01T00:00:17Z",
+    "type": "node_completed"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1054,
+    "job_id": "job-fixture-onboarding",
+    "node": "cleanup",
+    "prev_seq": 1051,
+    "timestamp": "2026-01-01T00:00:18Z",
+    "type": "node_started"
+  },
+  {
+    "agent": "onboarding",
+    "attempt": 1,
+    "event_seq": 1057,
+    "job_id": "job-fixture-onboarding",
+    "node": "cleanup",
+    "ok": true,
+    "prev_seq": 1054,
+    "timestamp": "2026-01-01T00:00:19Z",
+    "type": "node_completed"
+  },
+  {
+    "error_code": null,
+    "error_message": null,
+    "event_seq": 1060,
+    "job_id": "job-fixture-onboarding",
+    "pr_url": null,
+    "prev_seq": 1057,
+    "status": "completed",
+    "timestamp": "2026-01-01T00:00:20Z",
+    "total_cost_usd": 0.009,
+    "type": "job_finished"
+  }
+]

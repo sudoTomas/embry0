@@ -1,51 +1,39 @@
 import { useRef, useState } from "react";
 import type { LogEvent } from "@/lib/types";
 import { useJobEventStream } from "./useJobEventStream";
-import { getNodeId } from "./useAgentStates";
+import { eventNode } from "@/lib/wire";
+import { applyTotals, emptyTotals, totalsOf } from "@/lib/eventTotals";
 
 /** Truncation cap for the one-line activity ticker (matches the defensive
  * summarization cap in ActivityPage.summarizeDetail). */
 const MAX_ACTIVITY_LENGTH = 80;
-
-/** Input keys probed, in order, for a representative tool-call argument
- * (e.g. the file an Edit touched or the command Bash ran). */
-const TOOL_INPUT_KEYS = ["file_path", "path", "command", "pattern", "url", "query"];
 
 export interface UseLiveJobSummaryResult {
   /** Latest meaningful event as a one-liner: the latest `progress` event
    * message, falling back to a summarized tool call. Null until either
    * arrives. */
   lastActivity: string | null;
+  /** Job totals summed across runs (lib/eventTotals). */
   latestCost: number;
   latestTokensIn: number;
   latestTokensOut: number;
   /** Node id of the latest started pipeline stage/agent, null before the
    * first stage starts. */
   currentNode: string | null;
-  /** 1-based start count of the current node — renders ultracode-style as
-   * `node#attempt` (e.g. `review#2`). Same counting as useAgentStates. */
+  /** 1-based attempt of the current node from `node_started.attempt` —
+   * renders ultracode-style as `node#attempt` (e.g. `review#2`). Legacy rows
+   * without `attempt` fall back to counting the node's starts. */
   attempt: number;
   isConnected: boolean;
   isComplete: boolean;
 }
 
-/** Summarize a tool invocation defensively — malformed inputs degrade to the
- * bare tool name, never throw. Format per the live-console spec:
- * `tool_call · Edit apps/recruit/notes.ts`. */
-function summarizeToolCall(toolName: string, input: unknown): string {
-  let detail = "";
-  if (typeof input === "string") {
-    // The contract's tool_call.summary is already the one-line detail.
-    detail = input;
-  } else if (input && typeof input === "object" && !Array.isArray(input)) {
-    for (const key of TOOL_INPUT_KEYS) {
-      const value = (input as Record<string, unknown>)[key];
-      if (typeof value === "string" && value.length > 0) {
-        detail = value;
-        break;
-      }
-    }
-  }
+/** Summarize a tool invocation from the contract's `tool_call.summary`, the
+ * backend's one-line detail (the file an Edit touched, the command Bash ran).
+ * An empty summary degrades to the bare tool name. Format per the
+ * live-console spec: `tool_call · Edit apps/recruit/notes.ts`. */
+function summarizeToolCall(toolName: string, summary: string): string {
+  let detail = summary;
   if (detail.length > MAX_ACTIVITY_LENGTH) {
     detail = `${detail.slice(0, MAX_ACTIVITY_LENGTH)}…`;
   }
@@ -56,6 +44,7 @@ function summarizeToolCall(toolName: string, input: unknown): string {
 interface LiveSummarySnapshot {
   lastProgress: string | null;
   lastToolCall: string | null;
+  /** Filled from the totals reducer at publish time. */
   cost: number;
   tokensIn: number;
   tokensOut: number;
@@ -85,8 +74,9 @@ function emptySnapshot(): LiveSummarySnapshot {
  */
 export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryResult {
   const snapshotRef = useRef<LiveSummarySnapshot>(emptySnapshot());
-  // Per-node start counts, mirroring useAgentStates' retry tracking: a
-  // node's attempt number is how many times it has started.
+  const totalsRef = useRef(emptyTotals());
+  // Per-node start counts, the attempt fallback for legacy node_started rows
+  // that carry no `attempt`.
   const nodeStartCountsRef = useRef(new Map<string, number>());
   const flushTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [summary, setSummary] = useState<LiveSummarySnapshot>(emptySnapshot());
@@ -94,51 +84,41 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
 
   const applyEvent = (event: LogEvent) => {
     const snapshot = snapshotRef.current;
+    applyTotals(totalsRef.current, event);
     switch (event.type) {
       case "progress":
         snapshot.lastProgress = event.message;
         break;
       case "tool_call":
-        // Contract name first, legacy name second (spec section 6), until #41.
-        snapshot.lastToolCall = summarizeToolCall(event.tool_name, event.summary ?? event.input);
+        snapshot.lastToolCall = summarizeToolCall(event.tool_name, event.summary);
         break;
-      case "tool_start":
-        // Legacy tool event shape (field is `tool`, not `tool_name`) —
-        // handled alongside tool_call like useAgentStates does.
-        snapshot.lastToolCall = summarizeToolCall(event.tool, event.input);
-        break;
-      case "cost_update":
-        snapshot.cost = event.cost_usd;
-        snapshot.tokensIn = event.tokens_in;
-        snapshot.tokensOut = event.tokens_out;
-        break;
-      case "complete":
-        if (event.cost_usd != null) snapshot.cost = event.cost_usd;
-        if (event.tokens_in != null) snapshot.tokensIn = event.tokens_in;
-        if (event.tokens_out != null) snapshot.tokensOut = event.tokens_out;
-        break;
-      case "node_started":
-      case "pipeline_stage_started": {
-        const node = getNodeId(event);
+      case "node_started": {
+        const node = eventNode(event);
         if (node) {
           const startCount = (nodeStartCountsRef.current.get(node) || 0) + 1;
           nodeStartCountsRef.current.set(node, startCount);
           snapshot.currentNode = node;
-          snapshot.attempt = startCount;
+          snapshot.attempt = typeof event.attempt === "number" ? event.attempt : startCount;
         }
         break;
       }
       case "agent_started": {
-        // Points at the active node but does not restart it, so the attempt
-        // count is looked up rather than incremented.
-        const node = getNodeId(event);
-        if (node) {
-          snapshot.currentNode = node;
-          snapshot.attempt = nodeStartCountsRef.current.get(node) || 1;
-        }
+        // Points at the active node; the attempt comes from node_started only.
+        const node = eventNode(event);
+        if (node) snapshot.currentNode = node;
         break;
       }
     }
+  };
+
+  const publish = () => {
+    const totals = totalsOf(totalsRef.current);
+    setSummary({
+      ...snapshotRef.current,
+      cost: totals.costUsd,
+      tokensIn: totals.tokensIn,
+      tokensOut: totals.tokensOut,
+    });
   };
 
   const flushNow = () => {
@@ -146,7 +126,7 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
       clearTimeout(flushTimeoutRef.current);
       flushTimeoutRef.current = undefined;
     }
-    setSummary({ ...snapshotRef.current });
+    publish();
   };
 
   const { isConnected, isComplete } = useJobEventStream(
@@ -159,7 +139,7 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
         // one per event.
         if (!flushTimeoutRef.current) {
           flushTimeoutRef.current = setTimeout(() => {
-            setSummary({ ...snapshotRef.current });
+            publish();
             flushTimeoutRef.current = undefined;
           }, 50);
         }
@@ -181,6 +161,7 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
         clearTimeout(flushTimeoutRef.current);
         flushTimeoutRef.current = undefined;
         snapshotRef.current = emptySnapshot();
+        totalsRef.current = emptyTotals();
         nodeStartCountsRef.current = new Map();
         setSummary(emptySnapshot());
         setHasEvents(false);

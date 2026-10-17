@@ -5,24 +5,55 @@ import {
   Bot,
   Wrench,
   Brain,
-  MessageSquare,
   AlertCircle,
 } from "lucide-react";
 import { cn, highlightJson } from "@/lib/utils";
-import type {
-  LogEvent,
-  ConversationContentBlock,
-  ConversationToolUseBlock,
-  ConversationToolResultBlock,
-} from "@/lib/types";
+import type { LogEvent } from "@/lib/types";
 
 interface ConversationViewProps {
   events: LogEvent[];
 }
 
+interface ConversationTextBlock {
+  type: "text";
+  text: string;
+}
+
+interface ConversationThinkingBlock {
+  type: "thinking";
+  thinking: string;
+}
+
+interface ConversationToolUseBlock {
+  type: "tool_use";
+  id: string;
+  name: string;
+  summary: string;
+  input: Record<string, unknown>;
+}
+
+interface ConversationToolResultBlock {
+  type: "tool_result";
+  tool_use_id: string;
+  content: string;
+  is_error: boolean;
+}
+
+type ConversationContentBlock =
+  | ConversationTextBlock
+  | ConversationThinkingBlock
+  | ConversationToolUseBlock
+  | ConversationToolResultBlock;
+
 /** A single conversation turn grouped from events. */
 interface ConversationTurn {
-  turnNumber: number;
+  /** The run's own turn_number; null for events before the run's first turn_start (pre-contract rows). */
+  turnNumber: number | null;
+  /** `Run N · node · agent`, set on the first turn of each run. */
+  divider?: string;
+  runId?: string;
+  node?: string;
+  agent?: string;
   assistantBlocks: ConversationContentBlock[];
   userBlocks: ConversationContentBlock[];
   model?: string;
@@ -37,106 +68,75 @@ export function ConversationView({ events }: ConversationViewProps) {
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [turnsShown, setTurnsShown] = useState(INITIAL_TURNS_SHOWN);
 
-  // Extract the initial prompt from agent_started event
-  // The "prompt" field is a legacy extra field on agent_started not in the spec type;
-  // access it via bracket notation with a type assertion.
-  const initialPrompt = useMemo(() => {
-    const started = events.find((e) => e.type === "agent_started");
-    return started ? (started as unknown as { prompt?: string }).prompt : undefined;
-  }, [events]);
-
-  // Group events into turns. Supports both legacy `conversation_message` events
-  // and new sandbox event types (turn_start, thinking, text, tool_call, tool_result).
+  // Group events into turns: turn_start opens one for its run, and the
+  // thinking, text, tool_call and tool_result events of that run go into it.
+  // A tool_result joins the turn that holds its tool_call.
   const turns = useMemo(() => {
-    const turnMap = new Map<string, ConversationTurn>();
-    let currentTurnKey: string | null = null;
-    let currentTurnNum = 0;
+    const result: ConversationTurn[] = [];
+    const currentByRun = new Map<string, ConversationTurn>();
+    const turnByToolId = new Map<string, ConversationTurn>();
+
+    const open = (event: LogEvent, turnNumber: number | null, model?: string) => {
+      const turn: ConversationTurn = {
+        turnNumber,
+        runId: event.run_id,
+        node: event.node,
+        agent: event.agent,
+        assistantBlocks: [],
+        userBlocks: [],
+        timestamp: event.timestamp,
+        model,
+      };
+      result.push(turn);
+      currentByRun.set(event.run_id ?? "", turn);
+      return turn;
+    };
+    const turnFor = (event: LogEvent) => currentByRun.get(event.run_id ?? "") ?? open(event, null);
 
     for (const event of events) {
-      // Legacy path: conversation_message events
-      if (event.type === "conversation_message") {
-        const turnNum = event.turn_number ?? 0;
-        const key = `legacy-${turnNum}`;
-        const role = event.role;
-        const content = event.content;
-        if (!Array.isArray(content)) continue;
-        let turn = turnMap.get(key);
-        if (!turn) {
-          turn = {
-            turnNumber: turnNum,
-            assistantBlocks: [],
-            userBlocks: [],
-            timestamp: event.timestamp,
-            model: event.model,
-          };
-          turnMap.set(key, turn);
-        }
-        if (role === "assistant") {
-          turn.assistantBlocks.push(...(content as ConversationContentBlock[]));
-          if (event.model) turn.model = event.model;
-        } else if (role === "user") {
-          turn.userBlocks.push(...(content as ConversationContentBlock[]));
-        }
-        continue;
-      }
-
-      // New path: turn_start opens a new turn, subsequent events go into it
-      if (event.type === "turn_start") {
-        currentTurnNum++;
-        currentTurnKey = `new-${currentTurnNum}-${event.timestamp}`;
-        turnMap.set(currentTurnKey, {
-          turnNumber: currentTurnNum,
-          assistantBlocks: [],
-          userBlocks: [],
-          timestamp: event.timestamp,
-          model: event.model,
-        });
-        continue;
-      }
-
-      if (!currentTurnKey) continue;
-      const turn = turnMap.get(currentTurnKey);
-      if (!turn) continue;
-
       switch (event.type) {
-        case "thinking": {
-          // ThinkingEvent.text is the backend field name
-          if (event.text) {
-            turn.assistantBlocks.push({ type: "thinking", thinking: event.text });
-          }
+        case "turn_start":
+          open(event, event.turn_number, event.model);
           break;
-        }
-        case "text": {
-          // TextEvent.text is the backend field name
-          if (event.text) {
-            turn.assistantBlocks.push({ type: "text", text: event.text });
-          }
+        case "thinking":
+          if (event.text) turnFor(event).assistantBlocks.push({ type: "thinking", thinking: event.text });
           break;
-        }
+        case "text":
+          if (event.text) turnFor(event).assistantBlocks.push({ type: "text", text: event.text });
+          break;
         case "tool_call": {
+          const turn = turnFor(event);
           turn.assistantBlocks.push({
             type: "tool_use",
             id: event.tool_id,
             name: event.tool_name,
-            // Contract name first, legacy second (spec section 6), until #41;
-            // this block renders the full input as JSON, so tool_input is its counterpart.
-            input: event.tool_input ?? event.input,
-          } as ConversationContentBlock);
+            summary: event.summary,
+            input: event.tool_input,
+          });
+          turnByToolId.set(event.tool_id, turn);
           break;
         }
-        case "tool_result": {
-          turn.userBlocks.push({
+        case "tool_result":
+          (turnByToolId.get(event.tool_id) ?? turnFor(event)).userBlocks.push({
             type: "tool_result",
-            tool_use_id: event.tool_id ?? event.tool_use_id,
+            tool_use_id: event.tool_id,
             content: event.content,
             is_error: event.is_error,
-          } as ConversationContentBlock);
+          });
           break;
-        }
       }
     }
 
-    return Array.from(turnMap.values()).sort((a, b) => a.turnNumber - b.turnNumber);
+    const runNumbers = new Map<string, number>();
+    let previousRunId: string | undefined;
+    for (const turn of result) {
+      if (turn.runId && turn.runId !== previousRunId) {
+        if (!runNumbers.has(turn.runId)) runNumbers.set(turn.runId, runNumbers.size + 1);
+        turn.divider = [`Run ${runNumbers.get(turn.runId)}`, turn.node, turn.agent].filter(Boolean).join(" · ");
+      }
+      previousRunId = turn.runId;
+    }
+    return result;
   }, [events]);
 
   const hasMore = turnsShown < turns.length;
@@ -178,42 +178,9 @@ export function ConversationView({ events }: ConversationViewProps) {
         </button>
       )}
 
-      {initialPrompt && (
-        <PromptBanner prompt={initialPrompt} />
-      )}
-
-      {visibleTurns.map((turn) => (
-        <TurnCard key={turn.turnNumber} turn={turn} />
+      {visibleTurns.map((turn, i) => (
+        <TurnCard key={turns.length - visibleTurns.length + i} turn={turn} />
       ))}
-    </div>
-  );
-}
-
-function PromptBanner({ prompt }: { prompt: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const isLong = prompt.length > 500;
-
-  return (
-    <div className="border border-border rounded-md bg-muted/30 mb-3">
-      <button
-        className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-muted/50 cursor-pointer"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <MessageSquare className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-        <span className="font-medium text-muted-foreground">System Prompt</span>
-        {isLong && (
-          expanded
-            ? <ChevronDown className="h-3.5 w-3.5 ml-auto shrink-0" />
-            : <ChevronRight className="h-3.5 w-3.5 ml-auto shrink-0" />
-        )}
-      </button>
-      {(expanded || !isLong) && (
-        <div className="px-3 pb-2">
-          <pre className="text-xs font-mono whitespace-pre-wrap text-muted-foreground max-h-60 overflow-y-auto">
-            {prompt}
-          </pre>
-        </div>
-      )}
     </div>
   );
 }
@@ -221,11 +188,18 @@ function PromptBanner({ prompt }: { prompt: string }) {
 function TurnCard({ turn }: { turn: ConversationTurn }) {
   return (
     <div className="space-y-1">
+      {turn.divider && (
+        <div className="flex items-center gap-2 pt-3">
+          <div className="h-px flex-1 bg-border" />
+          <span className="text-xs text-muted-foreground font-mono">{turn.divider}</span>
+          <div className="h-px flex-1 bg-border" />
+        </div>
+      )}
       {/* Turn separator */}
       <div className="flex items-center gap-2 pt-2">
         <div className="h-px flex-1 bg-border/40" />
         <span className="text-[10px] text-muted-foreground font-mono">
-          Turn {turn.turnNumber}
+          {turn.turnNumber == null ? "No turn marker" : <>Turn {turn.turnNumber}</>}
           {turn.model && <span className="ml-1.5 opacity-60">{turn.model}</span>}
         </span>
         <div className="h-px flex-1 bg-border/40" />
@@ -335,6 +309,7 @@ function ToolUseBlockView({ block }: { block: ConversationToolUseBlock }) {
         }
         <Wrench className="h-3 w-3 text-primary shrink-0" />
         <span className="font-mono font-medium text-primary">{block.name}</span>
+        {block.summary && <span className="font-mono text-muted-foreground truncate">{block.summary}</span>}
       </button>
       {expanded && (
         <div className="px-2.5 pb-2 border-t border-border/30">
@@ -351,14 +326,10 @@ function ToolUseBlockView({ block }: { block: ConversationToolUseBlock }) {
 
 function ToolResultBlockView({ block }: { block: ConversationToolResultBlock }) {
   const [expanded, setExpanded] = useState(false);
-  const content = typeof block.content === "string"
-    ? block.content
-    : block.content != null
-      ? JSON.stringify(block.content, null, 2)
-      : "(empty)";
+  const content = block.content;
 
   const isLong = content.length > 200;
-  const isError = block.is_error === true;
+  const isError = block.is_error;
 
   return (
     <div className={cn("border rounded-md", isError ? "border-destructive/30" : "border-border/50")}>

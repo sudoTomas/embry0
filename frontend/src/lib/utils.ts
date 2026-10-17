@@ -79,7 +79,7 @@ export function highlightJson(json: string): Array<{ text: string; className: st
     if (match[1] != null) {
       // Key (quoted string before colon)
       segments.push({ text: match[1], className: "text-primary" });
-      segments.push({ text: ": ", className: "text-muted-foreground" });
+      segments.push({ text: ":", className: "text-muted-foreground" });
     } else if (match[2] != null) {
       // String value
       segments.push({ text: match[2], className: "text-success" });
