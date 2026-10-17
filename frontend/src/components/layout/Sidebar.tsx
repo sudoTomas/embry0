@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useAwaitingIndicator } from "@/hooks/useAwaitingIndicator";
+import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { APP_NAME } from "@/lib/branding";
 import type { LucideIcon } from "lucide-react";
@@ -106,12 +107,15 @@ function NavItemLink({
   item,
   sidebarOpen,
   badge,
+  onNavigate,
 }: {
   item: NavItem;
   sidebarOpen: boolean;
   /** Attention count rendered as an amber pill (dot when collapsed). Hidden
    * at zero — used for the Console entry's awaiting-input count. */
   badge?: number;
+  /** Phone drawer: close it once a destination is picked. */
+  onNavigate?: () => void;
 }) {
   const { path, label, icon: Icon, accentColor } = item;
   const showBadge = badge != null && badge > 0;
@@ -121,6 +125,7 @@ function NavItemLink({
       key={path}
       to={path}
       end={path === "/"}
+      onClick={onNavigate}
       className={({ isActive }) =>
         cn(
           "relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
@@ -183,7 +188,16 @@ function NavItemLink({
 }
 
 export function Sidebar() {
-  const sidebarOpen = useLayoutStore((s) => s.sidebarOpen);
+  const desktopOpen = useLayoutStore((s) => s.sidebarOpen);
+  const drawerOpen = useLayoutStore((s) => s.drawerOpen);
+  const setDrawerOpen = useLayoutStore((s) => s.setDrawerOpen);
+  // Phone width: the sidebar is a drawer over the content, closed until the
+  // top-bar menu button opens it, and closed again by a backdrop tap or a
+  // navigation. Before this, the 224px column stayed beside a 390px screen
+  // and left about 140px for the page.
+  const narrow = useIsNarrow();
+  const sidebarOpen = narrow ? true : desktopOpen;
+  const closeDrawer = () => setDrawerOpen(false);
   // RAV-1056: admin-only entries render for admin sessions or API-key mode
   // (the master key is admin-equivalent). Backend enforces independently.
   const authMode = useAuthStore((s) => s.authMode);
@@ -194,11 +208,15 @@ export function Sidebar() {
   // every route, so the title stays honest app-wide.
   const awaitingCount = useAwaitingIndicator();
 
-  return (
+  if (narrow && !drawerOpen) return null;
+
+  const aside = (
     <aside
+      data-testid="sidebar"
+      data-mode={narrow ? "drawer" : "column"}
       className={cn(
         "flex flex-col border-r border-white/[0.06] bg-[#0c1015] transition-all duration-200",
-        sidebarOpen ? "w-56" : "w-14"
+        narrow ? "fixed inset-y-0 left-0 z-50 w-64 shadow-2xl" : sidebarOpen ? "w-56" : "w-14"
       )}
     >
       <div className="flex h-14 items-center gap-2 border-b px-3">
@@ -247,6 +265,7 @@ export function Sidebar() {
                   item={item}
                   sidebarOpen={sidebarOpen}
                   badge={item.path === "/console" ? awaitingCount : undefined}
+                  onNavigate={narrow ? closeDrawer : undefined}
                 />
               ))}
             </div>
@@ -254,5 +273,18 @@ export function Sidebar() {
         ))}
       </nav>
     </aside>
+  );
+
+  if (!narrow) return aside;
+  return (
+    <>
+      <div
+        data-testid="sidebar-backdrop"
+        role="presentation"
+        onClick={closeDrawer}
+        className="fixed inset-0 z-40 bg-black/60"
+      />
+      {aside}
+    </>
   );
 }

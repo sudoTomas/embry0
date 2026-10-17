@@ -5,6 +5,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { ssoLogout } from "@/components/auth/AuthGate";
 import { Button } from "@/components/ui/Button";
 import { Embry0Mark } from "@/components/divine/Embry0Mark";
+import { useIsNarrow } from "@/hooks/useIsNarrow";
 
 const breadcrumbMap: Record<string, string> = {
   // "Overview" matches the sidebar label — the RAV-1058 IA sweep retired the
@@ -39,7 +40,15 @@ const secondSegmentMap: Record<string, string> = {
 };
 
 export function TopBar() {
-  const { sidebarOpen, toggleSidebar } = useLayoutStore();
+  const { sidebarOpen, drawerOpen, toggleSidebar, toggleDrawer } = useLayoutStore();
+  // Phone width: the button opens and closes the drawer; desktop: it widens
+  // and narrows the column.
+  const narrow = useIsNarrow();
+  const panelOpen = narrow ? drawerOpen : sidebarOpen;
+  const onToggle = narrow ? toggleDrawer : toggleSidebar;
+  const toggleLabel = narrow
+    ? panelOpen ? "Close menu" : "Open menu"
+    : panelOpen ? "Close sidebar" : "Open sidebar";
   const location = useLocation();
   const authMode = useAuthStore((s) => s.authMode);
   const user = useAuthStore((s) => s.user);
@@ -51,8 +60,8 @@ export function TopBar() {
       className="flex h-14 items-center gap-4 border-b border-white/[0.06] px-4"
       style={{ background: 'linear-gradient(180deg, rgba(12,16,21,0.95) 0%, rgba(9,9,11,0.95) 100%)' }}
     >
-      <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}>
-        {sidebarOpen ? (
+      <Button variant="ghost" size="icon" onClick={onToggle} aria-label={toggleLabel}>
+        {panelOpen ? (
           <PanelLeftClose className="h-4 w-4" />
         ) : (
           <PanelLeftOpen className="h-4 w-4" />
@@ -75,7 +84,10 @@ export function TopBar() {
       </nav>
       {authMode === "session" && user && (
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs text-white/50" title={`tier: ${user.tier}`}>
+          <span
+            className="max-w-[40vw] truncate text-xs text-white/50 sm:max-w-none"
+            title={`${user.email} (tier: ${user.tier})`}
+          >
             {user.email}
           </span>
           <Button variant="ghost" size="icon" onClick={() => void ssoLogout()} aria-label="Sign out">
