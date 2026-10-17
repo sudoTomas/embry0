@@ -233,15 +233,28 @@ export function useAgentStates(
       }
     }
 
-    // Pending cards are the graph's nodes that have not started. deriveNodeStates
-    // only reports nodes some event touched, so an absent entry is pending too.
-    if (graph && !isTerminalStatus(jobStatus)) {
+    // Graph nodes without a run card of their own get one card in their derived
+    // state: pending for the nodes that have not started (deriveNodeStates only
+    // reports nodes some event touched, so an absent entry is pending too), and
+    // running/completed/failed for a node no agent runs on (QA, onboarding
+    // steps), which would otherwise vanish from the Pipeline tab once it starts.
+    if (graph) {
       const states = deriveNodeStates(graph, events, jobStatus);
+      const withRun = new Set(agents.map((a) => a.node));
+      const terminal = isTerminalStatus(jobStatus);
       for (const n of graph.nodes) {
         const st = states[n.node_id];
-        if (st && st.state !== "pending" && st.state !== "ready") continue;
         const physical = (n as { physical_node?: string }).physical_node ?? n.node_id;
-        agents.push(makeAgentState(`pending:${n.node_id}`, physical, st?.agent_type ?? n.agent_type, 0, "pending"));
+        const agentType = st?.agent_type ?? n.agent_type;
+        if (!st || st.state === "pending" || st.state === "ready") {
+          if (!terminal) agents.push(makeAgentState(`pending:${n.node_id}`, physical, agentType, 0, "pending"));
+          continue;
+        }
+        if (withRun.has(physical)) continue;
+        const card = makeAgentState(`node:${n.node_id}`, physical, agentType, st.iteration, st.state);
+        card.costUsd = st.cost_usd;
+        card.durationMs = st.duration_seconds * 1000;
+        agents.push(card);
       }
     }
 

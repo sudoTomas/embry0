@@ -2,12 +2,19 @@ import { describe, expect, it } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useAgentStates } from "../useAgentStates";
 import type { LogEvent, PipelineGraph } from "@/lib/types";
-import { loadFixture } from "@/lib/__tests__/fixtures";
+import { loadFixture, type FixtureName } from "@/lib/__tests__/fixtures";
 
 const t = "2026-10-15T00:00:00Z";
 
 function run(events: unknown[], jobStatus?: string, graph?: PipelineGraph | null) {
   return renderHook(() => useAgentStates(events as LogEvent[], jobStatus, graph)).result.current;
+}
+
+function fixtureWithGraph(name: FixtureName): { events: LogEvent[]; graph: PipelineGraph } {
+  const events = loadFixture(name);
+  const graphEvent = events.find((e) => e.type === "pipeline_graph");
+  if (graphEvent?.type !== "pipeline_graph") throw new Error(`${name} has no pipeline_graph`);
+  return { events, graph: graphEvent.graph };
 }
 
 const started = (node: string, runId: string, attempt = 1) => [
@@ -201,5 +208,45 @@ describe("useAgentStates", () => {
     const { agents } = run(loadFixture("legacy-rows"));
     expect(agents.map((a) => a.node), "a pre-contract job must not lose its agent cards").toEqual(["developer", "review"]);
     expect(agents[0].toolCalls).toMatchObject([{ tool_id: "legacy-1", input: "ls -la", result: "total 0" }]);
+  });
+
+  it("agentless nodes: every graph node of a completed QA job keeps one completed card", () => {
+    const { events, graph } = fixtureWithGraph("qa");
+    const { agents } = run(events, "completed", graph);
+    expect(
+      agents.map((a) => [a.node, a.status]),
+      "a node with no agent run must keep a card once it has started",
+    ).toEqual(graph.nodes.map((n) => [n.physical_node ?? n.node_id, "completed"]));
+    expect(agents.every((a) => a.toolCalls.length === 0)).toBe(true);
+  });
+
+  it("agentless nodes: a running QA node's card is running, the next one pending", () => {
+    const { events, graph } = fixtureWithGraph("qa");
+    const upToOrchestrate = events.slice(0, events.findIndex((e) => e.type === "qa_apps_resolved"));
+    const { agents } = run(upToOrchestrate, "running", graph);
+    expect(agents.map((a) => [a.node, a.status]), "a started agentless node vanished").toEqual([
+      ["init_orchestrator", "completed"],
+      ["orchestrate_qa", "running"],
+      ["qa_report", "pending"],
+    ]);
+  });
+
+  it("agentless nodes: onboarding's non-agent nodes have cards, its agent node only its run", () => {
+    const { events, graph } = fixtureWithGraph("onboarding");
+    const { agents } = run(events, "completed", graph);
+    for (const n of graph.nodes) {
+      const cards = agents.filter((a) => a.node === (n.physical_node ?? n.node_id));
+      expect(cards, `${n.node_id} must have exactly one card`).toHaveLength(1);
+      expect(cards[0].status).toBe("completed");
+    }
+    expect(agents.find((a) => a.node === "analyze")?.runId, "the analyze card is its run").toBe("run-fixture-onboard-1");
+  });
+
+  it("agentless nodes: nodes with runs get no extra card", () => {
+    const { events, graph } = fixtureWithGraph("issue-to-pr");
+    const { agents } = run(events, "completed", graph);
+    expect(agents.map((a) => a.runId), "a node with a run must not also get a graph card").toEqual([
+      "run-fixture-1", "run-fixture-2", "run-fixture-3", "run-fixture-4",
+    ]);
   });
 });
