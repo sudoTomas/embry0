@@ -20,6 +20,11 @@ function usd(value: number | null): string {
   return value == null ? "unpriced" : `$${value.toFixed(4)}`;
 }
 
+/** Pre-contract node rows carry no attempt. */
+function attemptOf(attempt: unknown): string {
+  return typeof attempt === "number" ? ` attempt ${attempt}` : "";
+}
+
 /** The headline field of each event type; compact JSON for the rest. */
 function eventSummary(event: LogEvent): string {
   switch (event.type) {
@@ -42,9 +47,11 @@ function eventSummary(event: LogEvent): string {
     case "cost_update":
       return `${usd(event.cost_usd)} · tokens ${event.tokens_in}↓ ${event.tokens_out}↑`;
     case "node_started":
-      return `${event.node ?? ""} attempt ${event.attempt}`;
+      return `${event.node ?? ""}${attemptOf(event.attempt)}`;
     case "node_completed":
-      return `${event.node ?? ""} attempt ${event.attempt}${event.action ? ` ${event.action}` : ""}`;
+      return `${event.node ?? ""}${attemptOf(event.attempt)}${event.action ? ` ${event.action}` : ""}`;
+    case "agent_started":
+      return [event.agent, event.model].filter(Boolean).join(" ");
     case "subagent_start":
       return event.name;
     case "subagent_end":

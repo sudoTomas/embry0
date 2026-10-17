@@ -1,4 +1,4 @@
-import type { LogEvent, ContractEventType } from "@/lib/types/events";
+import type { LogEvent } from "@/lib/types/events";
 import { EVENT_FIELDS } from "@/lib/types/events";
 
 /** Field names pre-contract rows used (spec section 6). Never part of the contract interfaces. */
@@ -27,12 +27,17 @@ export function normalizeWireEvent(raw: unknown): LogEvent {
   if (!isRecord(raw) || typeof raw.type !== "string") {
     return { type: "system", message: typeof raw === "string" ? raw : JSON.stringify(raw), timestamp: "" };
   }
-  const { error, input, tool_use_id, node_id, ...rest } = raw as Record<string, unknown> & LegacyWire;
+  const { input, tool_use_id, node_id, ...rest } = raw as Record<string, unknown> & LegacyWire;
   const ev: Record<string, unknown> = { ...rest };
 
   if (typeof node_id === "string" && typeof ev.node !== "string") ev.node = node_id;
   if (ev.type === "error") {
-    if (typeof ev.message !== "string") ev.message = typeof error === "string" ? error : JSON.stringify(error ?? "");
+    // `error` is a legacy field only on an error row; node_completed's `error` is contract.
+    const { error } = ev as LegacyWire;
+    delete ev.error;
+    if (typeof ev.message !== "string") {
+      ev.message = typeof error === "object" && error !== null ? JSON.stringify(error) : String(error ?? "");
+    }
   }
   if (ev.type === "tool_call" && typeof ev.summary !== "string") {
     ev.summary = typeof input === "string" ? input : "";
@@ -42,14 +47,14 @@ export function normalizeWireEvent(raw: unknown): LogEvent {
   }
   if (typeof ev.timestamp !== "string") ev.timestamp = "";
 
+  const seq = typeof ev.event_seq === "number" ? { event_seq: ev.event_seq } : {};
   if (ev.type === "raw") {
-    return { type: "system", message: String(ev.message ?? ""), timestamp: "", ...(typeof ev.event_seq === "number" ? { event_seq: ev.event_seq } : {}) };
+    return { type: "system", message: String(ev.message ?? ""), timestamp: "", ...seq };
   }
   if (!KNOWN_TYPES.has(ev.type as string)) {
-    const seq = typeof ev.event_seq === "number" ? { event_seq: ev.event_seq } : {};
     return { type: "system", message: `[${String(ev.type)}] ${JSON.stringify(ev)}`, timestamp: String(ev.timestamp), ...seq };
   }
-  return ev as unknown as Extract<LogEvent, { type: ContractEventType }>;
+  return ev as unknown as LogEvent;
 }
 
 /** The LangGraph node an event belongs to; "" for job-level events. */

@@ -52,6 +52,22 @@ describe("RawView", () => {
     expect(toolRow?.textContent ?? "", "the legacy tool_call row lost its summary").toContain("Bash ls -la");
   });
 
+  it("pre-contract job: no row prints undefined or an empty payload", () => {
+    renderVirtual(<RawView events={loadFixture("legacy-rows")} />);
+    const rows = screen.getAllByTestId("raw-row");
+    expect(document.body.textContent, "a legacy row printed undefined").not.toContain("undefined");
+    const started = rows.find((r) => r.textContent?.includes("#10"));
+    expect(started?.textContent ?? "", "a legacy node_started without attempt").toMatch(/node_started developer$/);
+    const agent = rows.find((r) => r.textContent?.includes("#13"));
+    expect(agent?.textContent ?? "", "a legacy agent_started has no headline").toMatch(/agent_started developer$/);
+  });
+
+  it("an agent_started row names its agent and model", () => {
+    renderVirtual(<RawView events={loadFixture("issue-to-pr")} />);
+    const row = screen.getAllByTestId("raw-row").find((r) => r.textContent?.includes("agent_started"));
+    expect(row?.textContent ?? "", "the agent_started headline").toContain("agent_started triage claude-sonnet-5-5");
+  });
+
   it("an undecodable row renders as a system line with #seq and its text", () => {
     renderVirtual(<RawView events={loadFixture("legacy-rows")} />);
     const row = screen.getAllByTestId("raw-row").find((r) => r.textContent?.includes("this line was never JSON"));

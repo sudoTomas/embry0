@@ -13,6 +13,16 @@ describe("normalizeWireEvent", () => {
     expect(out).not.toHaveProperty("error");
   });
 
+  it("a legacy error row with neither message nor error gets an empty message", () => {
+    const out = normalizeWireEvent({ type: "error", timestamp: "t" });
+    expect(out, "a missing legacy error must not become two quote characters").toMatchObject({ type: "error", message: "" });
+  });
+
+  it("passes node_completed's contract `error` field through unchanged", () => {
+    const ev = { type: "node_completed", node: "developer", attempt: 1, error: "budget exceeded", timestamp: "t", event_seq: 4 };
+    expect(normalizeWireEvent(ev), "the normalizer stripped a contract field").toEqual(ev);
+  });
+
   it("maps a legacy tool_call's string `input` to `summary`", () => {
     const out = normalizeWireEvent({
       type: "tool_call", tool_id: "t1", tool_name: "Bash", input: "ls -la",
