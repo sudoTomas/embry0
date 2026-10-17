@@ -727,6 +727,12 @@ async def _init_app_state(
     # sync, the PR webhook or the healing ledger normalise a URL through them.
     configure_repo_renames(app_config.repo_renames)
     app.state.repos_repo = ReposRepository(db, default_forge=app_config.default_forge)
+    from embry0.storage.repositories.organizations import OrganizationsRepository
+
+    app.state.organizations_repo = OrganizationsRepository(db)
+    from embry0.storage.repositories.org_repos import OrgReposRepository
+
+    app.state.org_repos_repo = OrgReposRepository(db)
     app.state.qa_configs_repo = RepoQAConfigsRepository(db, default_forge=app_config.default_forge)
     app.state.qa_app_results_repo = QAAppResultsRepository(db)
     app.state.qa_image_tags_repo = QAImageTagsRepository(db)
@@ -2184,6 +2190,7 @@ def _register_routers(app: FastAPI) -> None:
         jobs,
         logs,
         merge_approvals,
+        organizations,
         pipeline_templates,
         qa_artifacts,
         qa_config,
@@ -2270,6 +2277,7 @@ def _register_routers(app: FastAPI) -> None:
     # subgroups) which would otherwise shadow them. Pinned by
     # tests/unit/api/test_repos_route_order.py.
     app.include_router(repos.router, prefix="/api/v1", tags=["repos"], dependencies=auth_deps)
+    app.include_router(organizations.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     app.include_router(github.router, prefix="/api/v1", tags=["github"], dependencies=auth_deps)
     app.include_router(gitlab.router, prefix="/api/v1", tags=["gitlab"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])

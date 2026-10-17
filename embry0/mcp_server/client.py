@@ -530,6 +530,28 @@ class Embry0Client:
 
     # ------------------------------------------------------------- repos / qa config (RAV-1251)
 
+    async def org_list(self, *, include_removed: bool = False) -> dict[str, Any]:
+        params = {"include_removed": "true"} if include_removed else None
+        return _as_dict(await self._request("GET", "/api/v1/orgs", params=params))
+
+    async def org_get(self, owner: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/orgs/{owner}"))
+
+    async def org_register(
+        self,
+        owner: str,
+        forge: str = "github",
+        credential_id: str = "",
+        display_name: str = "",
+        probe: bool = True,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"owner": owner, "forge": forge, "probe": probe}
+        if credential_id:
+            body["credential_id"] = credential_id
+        if display_name:
+            body["display_name"] = display_name
+        return _as_dict(await self._request("POST", "/api/v1/orgs", body=body))
+
     async def repo_list(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
         params = {"include_inactive": "true"} if include_inactive else None
         return _as_list(await self._request("GET", "/api/v1/repos", params=params))
