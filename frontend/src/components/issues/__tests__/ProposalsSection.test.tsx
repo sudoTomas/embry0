@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router";
 
 const mockFetchProposals = vi.fn();
 const mockAcceptCase = vi.fn();
@@ -53,6 +54,26 @@ const GITLAB_DRAFT = {
   tracker: { kind: "gitlab", key: "7", url: "https://gitlab.example.com/acme/gateway/-/issues/7" },
 };
 
+// ADR 0011: an organization's need, filed on the owner because it covers several repositories.
+const ORG_NEED = {
+  id: "hc-org",
+  repo: "acme",
+  title: "Register 3 repositories",
+  origin: "org",
+  stage: "detected",
+  severity: null,
+  tracker: null,
+  timestamps: { detected_at: new Date(Date.now() - 3 * HOUR).toISOString() },
+};
+
+// The same kind of need on one repository: filed on that repository.
+const ORG_NEED_ONE_REPO = {
+  ...ORG_NEED,
+  id: "hc-org-one",
+  repo: "acme/api",
+  title: "Add the webhook to 1 repository",
+};
+
 function page(cases: unknown[]) {
   return { cases, total: cases.length, limit: 50, next_cursor: null };
 }
@@ -60,9 +81,11 @@ function page(cases: unknown[]) {
 function renderSection() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={client}>
-      <ProposalsSection />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <ProposalsSection />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -197,6 +220,46 @@ describe("ProposalsSection", () => {
     const gitlab = await row("Queue consumer restarts in a loop");
     expect(within(gitlab).queryByRole("link")).not.toBeInTheDocument();
     expect(within(gitlab).getByText("Accept by label in GitLab")).toBeInTheDocument();
+  });
+
+  it("shows an organization need with no ticket, sends the person to its organization, and offers Dismiss", async () => {
+    mockFetchProposals.mockResolvedValue(page([ORG_NEED, GITHUB_DRAFT]));
+    renderSection();
+    const need = await row("Register 3 repositories");
+    expect(within(need).getByText("Organization need")).toBeInTheDocument();
+    expect(within(need).getByRole("link", { name: "Answer on acme" })).toHaveAttribute("href", "/orgs/acme");
+    expect(within(need).queryByRole("button", { name: "Accept" })).not.toBeInTheDocument();
+    expect(within(need).queryByText(/accept by label/i)).not.toBeInTheDocument();
+    expect(within(need).queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    // A watcher draft beside it is unchanged.
+    expect(within(await row("Cleanup fails when the daemon is down")).getByRole("button", { name: "Reject" })).toBeInTheDocument();
+  });
+
+  it("links a need filed on a bare owner to its organization, never to a repository", async () => {
+    mockFetchProposals.mockResolvedValue(page([ORG_NEED, ORG_NEED_ONE_REPO]));
+    renderSection();
+    const owner = await row("Register 3 repositories");
+    const hrefs = within(owner)
+      .getAllByRole("link")
+      .map((a) => a.getAttribute("href"));
+    expect(hrefs).toEqual(["/orgs/acme", "/orgs/acme"]);
+    expect(within(owner).getByRole("link", { name: "acme" })).toHaveAttribute("href", "/orgs/acme");
+
+    const one = await row("Add the webhook to 1 repository");
+    expect(within(one).getByText("acme/api").closest("a")).toBeNull();
+    expect(within(one).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual(["/orgs/acme"]);
+  });
+
+  it("dismisses an organization need without talking about a ticket", async () => {
+    mockFetchProposals.mockResolvedValue(page([ORG_NEED]));
+    mockRejectCase.mockResolvedValue(undefined);
+    renderSection();
+    await userEvent.click(within(await row("Register 3 repositories")).getByRole("button", { name: "Dismiss" }));
+    expect(confirmSpy.mock.calls[0][0]).toBe(
+      'Dismiss "Register 3 repositories"? It stays dismissed on the acme needs list until someone reopens it.',
+    );
+    await waitFor(() => expect(mockRejectCase).toHaveBeenCalledWith("hc-org"));
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith("Dismissed. Reopen it from the acme needs list."));
   });
 
   it("says so when the list cannot be loaded, instead of looking empty", async () => {

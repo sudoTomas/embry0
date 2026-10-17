@@ -55,6 +55,33 @@ async def test_github_org_admin_token_reads_and_manages_hooks() -> None:
 
 
 @pytest.mark.asyncio
+async def test_github_private_repositories_are_counted_once() -> None:
+    """An org admin's token gets both private counts, which read the same
+    repositories; adding both counted every private repository twice."""
+    record = {
+        "login": "acme",
+        "type": "Organization",
+        "public_repos": 3,
+        "total_private_repos": 9,
+        "owned_private_repos": 9,
+        "private_gists": 0,
+        "plan": {"name": "team", "private_repos": 999999},
+    }
+    forge = FakeForge(
+        {
+            "/user": _Resp(200, {"login": "ops-bot"}),
+            "/orgs/acme": _Resp(200, record),
+            "/orgs/acme/repos": _Resp(200, [{"full_name": "acme/backend"}]),
+        }
+    )
+    assert (await probe_github("acme", "tok", client=forge)).repo_count == 12
+    forge.routes["/orgs/acme"] = _Resp(200, {"login": "acme", "public_repos": 5})
+    assert (await probe_github("acme", "tok", client=forge)).repo_count == 5, "public only, when that is all it says"
+    forge.routes["/orgs/acme"] = _Resp(200, {"login": "acme"})
+    assert (await probe_github("acme", "tok", client=forge)).repo_count is None
+
+
+@pytest.mark.asyncio
 async def test_github_token_without_hook_grant_is_read_only() -> None:
     forge = FakeForge(
         {

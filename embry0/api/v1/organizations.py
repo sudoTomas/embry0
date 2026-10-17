@@ -200,13 +200,17 @@ def _facts_repo(request: Request) -> OrgReposRepository:
 
 
 def _hook_origins(request: Request) -> tuple[str, ...]:
+    """Where this deployment's webhooks point: WEBHOOK_PUBLIC_URL, the one
+    public base URL forges deliver to, or nothing when it is unset or a
+    loopback address no forge can reach, and discovery then reads a
+    repository's hooks as unknown, not absent.
+
+    The SSO and dashboard origins are not webhook origins: the public
+    dashboard answers 404 on webhook paths, so a hook there reaches nothing.
+    """
     config = getattr(request.app.state, "config", None)
-    origins = (
-        str(getattr(config, "sso_public_origin", "") or ""),
-        str(getattr(config, "dashboard_public_url", "") or ""),
-        str(getattr(config, "webhook_public_url", "") or ""),
-    )
-    return tuple(o.rstrip("/") for o in origins if o)
+    origin = org_discovery.public_origin(str(getattr(config, "webhook_public_url", "") or ""))
+    return (origin,) if origin else ()
 
 
 def _tracker_map(request: Request) -> dict[str, str]:
@@ -225,25 +229,51 @@ def embry0_state_lookup(request: Request) -> org_discovery.StateLookup:
     repos_repo = getattr(st, "repos_repo", None)
     qa_repo = getattr(st, "qa_configs_repo", None)
     stacks_repo = getattr(st, "watcher_stacks_repo", None)
+    env_repo = getattr(st, "env_repo", None)
     mapped = set(_tracker_map(request).values())
+    default_deploy_logql = str(getattr(getattr(st, "config", None), "watcher_deploy_logql", "") or "")
+    global_keys: list[str] | None = None
+
+    async def env_keys_set(repo: str) -> list[str]:
+        """The variable names embry0 already holds for the repository, its
+        own and the global ones. Names only: a value never enters the facts."""
+        nonlocal global_keys
+        if env_repo is None:
+            return []
+        if global_keys is None:
+            global_keys = [str(v["key"]) for v in await env_repo.get_global()]
+        own = [str(v["key"]) for v in await env_repo.get_repo(repo)]
+        return sorted({*global_keys, *own})
 
     async def lookup(repo: str) -> dict[str, Any]:
         row = await repos_repo.get(repo) if repos_repo is not None else None
         qa = await qa_repo.get(repo) if qa_repo is not None else None
         stack = await stacks_repo.get(repo) if stacks_repo is not None else None
+        settings = dict(getattr(stack, "settings", None) or {})
         return {
             "registered": row is not None,
             "active": bool(row and row.get("active")),
             "qa_config": qa is not None,
             "watcher_stack": stack is not None,
+            # Whether confirm-healed can anchor a fix: the stack names a deploy
+            # query, or the deployment has a global one.
+            "deploy_marker": bool(stack is not None and (settings.get("deploy_logql") or default_deploy_logql)),
             "tracker_mapped": repo in mapped,
+            "env_keys_set": await env_keys_set(repo),
         }
 
     return lookup
 
 
 async def run_discovery(
-    request: Request, owner: str, forge: str, token: str, owner_kind: str | None, run_id: str
+    request: Request,
+    owner: str,
+    forge: str,
+    token: str,
+    owner_kind: str | None,
+    run_id: str,
+    *,
+    owner_says: int | None = None,
 ) -> None:
     facts_repo = _facts_repo(request)
     orgs_repo = _repo(request)
@@ -268,13 +298,27 @@ async def run_discovery(
         )
         for facts in found:
             await facts_repo.upsert_fact(facts, run_id=run_id)
-        summary = org_discovery.summarize(found)
+        summary = org_discovery.summarize(found, owner_says=owner_says)
         await facts_repo.finish_run(run_id, summary=summary)
         await orgs_repo.mark_discovered(owner, repo_count=summary["repos"])
-        logger.info("org_discovery_done", owner=owner, run_id=run_id, **summary)
+        logger.info(
+            "org_discovery_done", owner=owner, run_id=run_id, **{k: v for k, v in summary.items() if k != "count_gap"}
+        )
     except Exception as exc:  # noqa: BLE001 - the run row carries the failure
         logger.warning("org_discovery_failed", owner=owner, run_id=run_id, error=type(exc).__name__)
         await facts_repo.finish_run(run_id, error=f"{type(exc).__name__}: {str(exc)[:200]}")
+        return
+    # The needs are synced here, when the run finishes, and never on a plain
+    # read. A failure is its own log line, never the run's: the run is left
+    # unsynced, so the next GET /orgs/{owner}/needs catches up once.
+    from embry0.api.v1.org_needs import needs_service
+
+    service = needs_service(request, required=False)
+    if service is not None:
+        try:
+            await service.sync(owner)
+        except Exception as exc:  # noqa: BLE001 - logged, the run is already done
+            logger.warning("org_needs_sync_failed", owner=owner, run_id=run_id, error=type(exc).__name__)
 
 
 @router.post("/orgs/{owner}/discover", status_code=202, dependencies=[require_admin])
@@ -295,8 +339,12 @@ async def discover_organization(owner: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail=f"discovery {running['id']} is already running for {owner}")
     token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
     run = await facts_repo.start_run(org.owner)
-    owner_kind = org.access.get("owner_kind") if isinstance(org.access, dict) else None
-    task = asyncio.create_task(run_discovery(request, org.owner, org.forge, token, owner_kind, run["id"]))
+    access = org.access if isinstance(org.access, dict) else {}
+    owner_kind = access.get("owner_kind")
+    owner_says = access.get("repo_count") if isinstance(access.get("repo_count"), int) else None
+    task = asyncio.create_task(
+        run_discovery(request, org.owner, org.forge, token, owner_kind, run["id"], owner_says=owner_says)
+    )
     tasks = getattr(request.app.state, "org_discovery_tasks", None)
     if tasks is None:
         tasks = request.app.state.org_discovery_tasks = set()

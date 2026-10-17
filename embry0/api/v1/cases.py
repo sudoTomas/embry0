@@ -90,8 +90,9 @@ async def list_cases(
     drops closed cases; ``total`` counts every case matching the filters.
 
     ``awaiting_decision`` is "what is waiting for a person": watcher drafts
-    with a ticket that nobody has accepted or rejected, and findings a
-    ``not_healed`` verdict sent back for a retry nobody has accepted yet.
+    with a ticket that nobody has accepted or rejected, findings a
+    ``not_healed`` verdict sent back for a retry nobody has accepted yet,
+    and organization needs (origin ``org``) waiting for a person.
     ``open_only`` is not that — it also returns alerts, findings with no
     ticket yet, and every merged, deployed and verified case, none of which
     anyone can act on here.
