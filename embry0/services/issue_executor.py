@@ -675,14 +675,20 @@ class IssueExecutor:
     async def start_onboard_job(
         self,
         repo: str,
-        branch: str,
+        branch: str | None = None,
         skip_smoke: bool = False,
         agent_models: dict[str, str] | None = None,
         dispatched_by: str | None = None,
     ) -> str:
         """EMB-50: issue-less onboard job — analyze ``repo`` and generate its
-        qa.yaml v2 into the external config store. Returns the new job id."""
+        qa.yaml v2 into the external config store. Returns the new job id.
+
+        Without a ``branch`` the job analyzes the repo's base branch (its
+        preference, else the forge's default branch, else "main"; #29)."""
         import uuid
+
+        if not branch:
+            branch = await _executor_outcomes._repo_base_branch(self, repo)
 
         trace_id = f"trc-{uuid.uuid4().hex[:12]}"
         pipeline_config: dict[str, Any] = {

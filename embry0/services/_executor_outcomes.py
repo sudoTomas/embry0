@@ -228,7 +228,18 @@ async def _base_branch_for_change_request(self: IssueExecutor, repo: str, result
     from_state = str(result.get("base_branch") or "")
     if from_state:
         return from_state
+    logger.info("change_request_base_branch_absent", repo=repo)
+    return await _repo_base_branch(self, repo)
 
+
+async def _repo_base_branch(self: IssueExecutor, repo: str) -> str:
+    """``repo``'s base branch: its preference, else the forge default, else "main".
+
+    The executor-side counterpart of ``init_node``'s lookup, for callers that
+    have no workflow state to read it from: the change-request fallback
+    above, and an onboard job started without a branch (#29). Never raises
+    and never returns empty.
+    """
     from embry0.services.base_branch import resolve_base_branch
 
     config = getattr(self, "_config", None)
@@ -239,11 +250,12 @@ async def _base_branch_for_change_request(self: IssueExecutor, repo: str, result
         # which forge API is asked for a default branch — that is how a
         # GitLab repo ends up targeting a GitHub project's "main". Skip the
         # forge step entirely; the preference (or "main") still answers, and
-        # _open_change_request below refuses the request anyway, so this
+        # _open_change_request below refuses the request anyway (as an
+        # onboard job's init node fails an unregistered repo), so this
         # value is never actually used on that path. Raising here instead
         # would abort _handle_workflow_result before the terminal job status
         # is written — the run would hang in "running" forever.
-        logger.warning("change_request_base_branch_forge_unresolved", repo=repo, exc_info=True)
+        logger.warning("repo_base_branch_forge_unresolved", repo=repo, exc_info=True)
         forge = ""
     gitlab_client: Any = None
     github_client: Any = None
@@ -261,7 +273,7 @@ async def _base_branch_for_change_request(self: IssueExecutor, repo: str, result
             # or per-owner/namespace env token counts, not only the default.
             has_token = bool(await forge_token(resolver, repo, forge, default))
         except Exception:
-            logger.warning("change_request_base_branch_token_lookup_failed", repo=repo, exc_info=True)
+            logger.warning("repo_base_branch_token_lookup_failed", repo=repo, exc_info=True)
     if forge == "gitlab":
         if has_token:
             # Never a raw GitLabClient: the factory is what loads the private
@@ -275,7 +287,6 @@ async def _base_branch_for_change_request(self: IssueExecutor, repo: str, result
 
             github_client = GitHubClient(default_token=github_default, credential_resolver=resolver)
 
-    logger.info("change_request_base_branch_absent", repo=repo, forge=forge)
     return await resolve_base_branch(
         repo=repo,
         forge=forge,

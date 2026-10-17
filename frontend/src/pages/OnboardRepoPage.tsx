@@ -7,6 +7,8 @@ import { useGitHubRepos } from "@/hooks/useGitHub";
 import { useSandboxProfiles } from "@/hooks/useSandboxProfiles";
 import type { BootstrapRequest, BootstrapResult } from "@/api/bootstrap";
 import { RepoSelector } from "@/components/issues/RepoSelector";
+import { OnboardAgentForm } from "@/components/repos/OnboardAgentForm";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button, buttonVariants } from "@/components/ui/Button";
@@ -29,6 +31,8 @@ export function OnboardRepoPage() {
   const { data: profiles = [] } = useSandboxProfiles();
 
   const [state, setState] = useState<PageState>({ kind: "form" });
+  // Held here, not in <Tabs>, so "Onboard another repo" returns to the manual tab.
+  const [mode, setMode] = useState(() => (params.get("mode") === "manual" ? "manual" : "agent"));
   const [repo, setRepo] = useState(() => params.get("repo") ?? "");
   const [app, setApp] = useState("");
   const [bootCommand, setBootCommand] = useState("");
@@ -174,153 +178,169 @@ export function OnboardRepoPage() {
       </Link>
       <h1 className="text-2xl font-bold">Onboard a repo</h1>
       <p className="text-sm text-white/60">
-        Verifies the GitHub repo, registers a starter qa.yaml (v2) in the external config store,
-        and optionally seeds sandbox preferences. Everything is refinable in the QA config editor
-        afterward.
+        Stores the repo&apos;s QA config (qa.yaml v2) in embry0. Let the onboarding agent work it out
+        from the code, or write a starter config yourself. Everything is refinable in the QA config
+        editor afterward.
       </p>
 
-      <form
-        className="space-y-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit(false);
-        }}
-      >
-        <Card className="p-4 space-y-3">
-          <div>
-            <h3 className="text-sm font-semibold">Repository</h3>
-            <p className="text-xs text-muted-foreground mt-1">
-              Must be reachable with the configured GitHub token.
-            </p>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="onboard-repo">Repo (owner/name)</Label>
-            <RepoSelector value={repo} onChange={setRepo} repos={repoOptions} placeholder="owner/name" />
-          </div>
-        </Card>
-
-        <Card className="p-4 space-y-3">
-          <div>
-            <h3 className="text-sm font-semibold">App (optional)</h3>
-            <p className="text-xs text-muted-foreground mt-1">
-              Declare the app QA should boot. Leave blank to register a config with{" "}
-              <code>qa_required: never</code> — QA skips cleanly until an app is declared.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label htmlFor="onboard-app">App name</Label>
-              <Input
-                id="onboard-app"
-                value={app}
-                onChange={(e) => setApp(e.target.value)}
-                placeholder="web"
-                disabled={pending}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="onboard-boot">Boot command</Label>
-              <Input
-                id="onboard-boot"
-                className="font-mono"
-                value={bootCommand}
-                onChange={(e) => setBootCommand(e.target.value)}
-                placeholder="npm ci && npm run dev"
-                disabled={pending}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="onboard-frontend-url">Frontend URL</Label>
-              <Input
-                id="onboard-frontend-url"
-                value={frontendUrl}
-                onChange={(e) => setFrontendUrl(e.target.value)}
-                placeholder="http://localhost:3000"
-                disabled={pending}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="onboard-ready-url">Ready-check URL</Label>
-              <Input
-                id="onboard-ready-url"
-                value={readyCheckUrl}
-                onChange={(e) => setReadyCheckUrl(e.target.value)}
-                placeholder="defaults to the frontend URL"
-                disabled={pending}
-              />
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-4 space-y-3">
-          <div>
-            <h3 className="text-sm font-semibold">Sandbox (optional)</h3>
-            <p className="text-xs text-muted-foreground mt-1">
-              Seed a sandbox-profile preference for this repo. Leave as default to let triage pick.
-            </p>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="onboard-profile">Sandbox profile</Label>
-            <Select
-              id="onboard-profile"
-              value={sandboxProfile}
-              onChange={(e) => setSandboxProfile(e.target.value)}
-              disabled={pending}
-            >
-              <option value="">(default)</option>
-              {profiles.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-        </Card>
-
-        {fieldError && (
-          <p className="text-sm text-destructive" data-testid="bootstrap-field-error">
-            {fieldError}
+      <Tabs defaultValue="agent" value={mode} onValueChange={setMode} className="space-y-3">
+        <TabsList>
+          <TabsTrigger value="agent">Analyze with the onboarding agent</TabsTrigger>
+          <TabsTrigger value="manual">Configure manually</TabsTrigger>
+        </TabsList>
+        <TabsContent value="agent">
+          <OnboardAgentForm initialRepo={params.get("repo") ?? ""} />
+        </TabsContent>
+        <TabsContent value="manual">
+          <p className="text-sm text-white/60 mb-4">
+            Verifies the repo, registers a starter qa.yaml (v2), and optionally seeds sandbox
+            preferences.
           </p>
-        )}
-        {serverError && (
-          <p className="text-sm text-destructive" data-testid="bootstrap-error">
-            {serverError}
-          </p>
-        )}
-        {forceDetail && (
-          <div
-            className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2"
-            data-testid="bootstrap-force-panel"
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submit(false);
+            }}
           >
-            <p className="text-sm text-amber-200">{forceDetail}</p>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                onClick={() => submit(true)}
-                disabled={pending}
-                data-testid="bootstrap-force-overwrite"
-              >
-                Overwrite
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setForceDetail(null)}
-                disabled={pending}
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
-        )}
+            <Card className="p-4 space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold">Repository</h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  The manual form verifies the repo through the GitHub API, so it takes GitHub repos
+                  only. Onboard a GitLab repo with the onboarding agent.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="onboard-repo">Repo (owner/name)</Label>
+                <RepoSelector value={repo} onChange={setRepo} repos={repoOptions} placeholder="owner/name" />
+              </div>
+            </Card>
 
-        <Button type="submit" disabled={pending || !repo.trim()} data-testid="bootstrap-submit">
-          {pending ? "Bootstrapping… (contacting GitHub)" : "Bootstrap repo"}
-        </Button>
-      </form>
+            <Card className="p-4 space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold">App (optional)</h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Declare the app QA should boot. Leave blank to register a config with{" "}
+                  <code>qa_required: never</code> — QA skips cleanly until an app is declared.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="onboard-app">App name</Label>
+                  <Input
+                    id="onboard-app"
+                    value={app}
+                    onChange={(e) => setApp(e.target.value)}
+                    placeholder="web"
+                    disabled={pending}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="onboard-boot">Boot command</Label>
+                  <Input
+                    id="onboard-boot"
+                    className="font-mono"
+                    value={bootCommand}
+                    onChange={(e) => setBootCommand(e.target.value)}
+                    placeholder="npm ci && npm run dev"
+                    disabled={pending}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="onboard-frontend-url">Frontend URL</Label>
+                  <Input
+                    id="onboard-frontend-url"
+                    value={frontendUrl}
+                    onChange={(e) => setFrontendUrl(e.target.value)}
+                    placeholder="http://localhost:3000"
+                    disabled={pending}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="onboard-ready-url">Ready-check URL</Label>
+                  <Input
+                    id="onboard-ready-url"
+                    value={readyCheckUrl}
+                    onChange={(e) => setReadyCheckUrl(e.target.value)}
+                    placeholder="defaults to the frontend URL"
+                    disabled={pending}
+                  />
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-4 space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold">Sandbox (optional)</h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Seed a sandbox-profile preference for this repo. Leave as default to let triage pick.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="onboard-profile">Sandbox profile</Label>
+                <Select
+                  id="onboard-profile"
+                  value={sandboxProfile}
+                  onChange={(e) => setSandboxProfile(e.target.value)}
+                  disabled={pending}
+                >
+                  <option value="">(default)</option>
+                  {profiles.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </Card>
+
+            {fieldError && (
+              <p className="text-sm text-destructive" data-testid="bootstrap-field-error">
+                {fieldError}
+              </p>
+            )}
+            {serverError && (
+              <p className="text-sm text-destructive" data-testid="bootstrap-error">
+                {serverError}
+              </p>
+            )}
+            {forceDetail && (
+              <div
+                className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2"
+                data-testid="bootstrap-force-panel"
+              >
+                <p className="text-sm text-amber-200">{forceDetail}</p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => submit(true)}
+                    disabled={pending}
+                    data-testid="bootstrap-force-overwrite"
+                  >
+                    Overwrite
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setForceDetail(null)}
+                    disabled={pending}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <Button type="submit" disabled={pending || !repo.trim()} data-testid="bootstrap-submit">
+              {pending ? "Bootstrapping… (contacting GitHub)" : "Bootstrap repo"}
+            </Button>
+          </form>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

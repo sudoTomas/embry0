@@ -83,16 +83,16 @@ async def create_job(
         return job or {"job_id": job_id}
 
     # EMB-50: onboard pipeline — analyze the repo + generate its qa.yaml into
-    # the external config store. Issue-less, like qa; branch defaults to main.
+    # the external config store. Issue-less, like qa. Without a branch the
+    # executor resolves the repo's base branch (#29).
     if req.pipeline == "onboard":
         executor = getattr(request.app.state, "issue_executor", None)
         if executor is None:
             raise HTTPException(status_code=503, detail="executor not initialized")
-        branch = req.branch or "main"
         try:
             job_id = await executor.start_onboard_job(
                 repo=req.repo,
-                branch=branch,
+                branch=req.branch or None,
                 skip_smoke=req.skip_smoke,
                 agent_models=req.agent_models,
                 dispatched_by=request_actor(request),
@@ -104,7 +104,7 @@ async def create_job(
             getattr(request.app.state, "db", None),
             "onboard_job_created",
             actor=request_actor(request),
-            details={"job_id": job_id, "repo": req.repo, "branch": branch},
+            details={"job_id": job_id, "repo": req.repo, "branch": req.branch or None},
             audit_log_path=config.audit_log_path,
         )
         job = await jobs.get(job_id)

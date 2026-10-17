@@ -140,7 +140,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
               className={cn(buttonVariants({ size: "sm" }))}
               data-testid="qa-config-bootstrap-cta"
             >
-              Bootstrap this repo
+              Onboard this repo
             </Link>
             <Button
               variant="outline"

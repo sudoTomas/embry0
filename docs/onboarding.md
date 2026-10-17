@@ -44,7 +44,7 @@ For a repo that already has code, the onboarding agent generates the QA
 config instead of you writing it:
 
 ```bash
-embry0 onboard acme/existing-service [--branch main] [--no-smoke]
+embry0 onboard acme/existing-service [--branch dev] [--no-smoke]
 ```
 
 It clones the repo read-only, detects the workspace layout / boot commands
@@ -52,6 +52,20 @@ It clones the repo read-only, detects the workspace layout / boot commands
 smoke-tests it (boot + ready checks only, no QA agent), and writes it to
 the store — iterating on failures up to 3 rounds. Present in store =
 validated.
+
+The repo must be registered (GitHub or GitLab). Without `--branch` the
+agent analyzes the repo's base branch: its `base_branch` preference, else
+the forge's default branch, else `main`.
+
+From the dashboard: **Repos → Onboard repo → Analyze with the onboarding
+agent** starts the same job and opens its job page, where the rounds
+stream like any other job. A completed job links to the stored config; a
+failed one shows its error and links to the manual form (the agent's
+draft is not kept after a failed run).
+
+API equivalent: `POST /api/v1/jobs` with `{"pipeline": "onboard", "repo":
+..., "branch": ..., "skip_smoke": ...}`; `branch` and `skip_smoke` are
+optional.
 
 ## Editing a stored config later
 

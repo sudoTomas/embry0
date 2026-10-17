@@ -20,6 +20,7 @@ import { TracesTable } from "@/components/traces/TracesTable";
 import { CostBreakdownTable } from "@/components/jobs/CostBreakdownTable";
 import { AgentFailuresCard } from "@/components/jobs/AgentFailuresCard";
 import { DeliverablesCard } from "@/components/jobs/DeliverablesCard";
+import { OnboardOutcomeCard } from "@/components/jobs/OnboardOutcomeCard";
 import { QATab } from "@/components/qa/QATab";
 import { resumeJob, discardJob } from "@/api/jobs";
 
@@ -226,6 +227,8 @@ export function JobDetailPage() {
           )}
         </div>
       )}
+
+      <OnboardOutcomeCard job={job} />
 
       <AgentFailuresCard failures={job.agent_failures} />
 
