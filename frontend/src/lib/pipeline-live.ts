@@ -1,6 +1,6 @@
 import type { LogEvent, PipelineGraph } from "@/lib/types";
 import { eventNode } from "@/lib/wire";
-import { isTerminalStatus } from "@/lib/jobStatus";
+import { isSuccessfulTerminal, isTerminalStatus } from "@/lib/jobStatus";
 
 /** A graph node's live state, derived from the event log by deriveNodeStates. */
 export interface NodeLiveState {
@@ -31,8 +31,9 @@ const QA_EVENT_TYPES = new Set([
   "qa_agent_transient_retry",
 ]);
 
-function physicalOf(node: PipelineGraph["nodes"][number]): string {
-  return (node as { physical_node?: string }).physical_node ?? node.node_id;
+/** The LangGraph node whose events represent a graph node. */
+export function physicalOf(node: PipelineGraph["nodes"][number]): string {
+  return node.physical_node ?? node.node_id;
 }
 
 export function deriveNodeStates(
@@ -167,7 +168,7 @@ export function deriveNodeStates(
   // interrupted by the terminal transition (same orphan rule the job
   // detail page applies).
   if (isTerminalStatus(jobStatus)) {
-    const ok = jobStatus === "completed" || jobStatus === "pr_merged" || jobStatus === "skipped";
+    const ok = isSuccessfulTerminal(jobStatus);
     for (const st of Object.values(states)) {
       if (st.state === "running") {
         st.state = ok ? "completed" : "failed";

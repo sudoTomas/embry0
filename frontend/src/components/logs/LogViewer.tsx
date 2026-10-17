@@ -51,7 +51,7 @@ export function LogViewer({
           <ConversationView events={events} />
         </TabsContent>
         <TabsContent value="structured">
-          <StructuredView events={events} />
+          <StructuredView events={events} isComplete={isComplete} />
         </TabsContent>
         <TabsContent value="raw">
           <RawView events={events} />

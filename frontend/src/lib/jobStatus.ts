@@ -9,3 +9,8 @@ export const TERMINAL_JOB_STATUSES: ReadonlySet<string> = new Set([
 export function isTerminalStatus(status?: string): boolean {
   return status !== undefined && TERMINAL_JOB_STATUSES.has(status);
 }
+
+/** The terminal statuses a job reaches by succeeding: a node still running then finished with it. */
+export function isSuccessfulTerminal(status?: string): boolean {
+  return status === "completed" || status === "pr_merged" || status === "skipped";
+}

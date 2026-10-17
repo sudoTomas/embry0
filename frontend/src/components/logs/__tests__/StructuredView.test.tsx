@@ -83,6 +83,15 @@ describe("StructuredView", () => {
     expect(toolButton("Glob"), "the orphaned call was dropped").not.toBeNull();
   });
 
+  it("a call whose result was lost is not Running... once the job is complete", () => {
+    const lost: LogEvent = { type: "tool_call", timestamp: "", tool_id: "toolu_lost", tool_name: "Glob", summary: "", tool_input: {} };
+    const { unmount } = renderVirtual(<StructuredView events={[lost]} isComplete={false} />);
+    expect(screen.queryByText("Running..."), "an unanswered call on a live job is running").not.toBeNull();
+    unmount();
+    renderVirtual(<StructuredView events={[lost]} isComplete />);
+    expect(screen.queryByText("Running..."), "a finished job's unanswered call still pulses Running...").toBeNull();
+  });
+
   it("pre-contract job: the error line shows its text and the tool call renders", () => {
     renderVirtual(<StructuredView events={loadFixture("legacy-rows")} />);
     expect(screen.queryByText("legacy boom"), "the legacy error text is missing").not.toBeNull();

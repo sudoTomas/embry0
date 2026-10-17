@@ -8,6 +8,8 @@ import type { LogEvent } from "@/lib/types";
 
 interface StructuredViewProps {
   events: LogEvent[];
+  /** The job has finished: a call with no result will never get one. */
+  isComplete?: boolean;
 }
 
 interface ToolCall {
@@ -29,7 +31,7 @@ type StructuredItem =
   | { kind: "error"; message: string; code?: string; timestamp: string }
   | { kind: "agent-transition"; role: string; name: string; timestamp: string };
 
-export function StructuredView({ events }: StructuredViewProps) {
+export function StructuredView({ events, isComplete = false }: StructuredViewProps) {
   const items = useMemo(() => {
     const result: StructuredItem[] = [];
     // Results and subagent names are looked up by tool_id, so build those maps first.
@@ -52,7 +54,8 @@ export function StructuredView({ events }: StructuredViewProps) {
             input: event.tool_input,
             output: res?.content,
             error: res?.is_error,
-            isActive: !res,
+            // A result lost to a bus overflow or an orphaned run never arrives.
+            isActive: !res && !isComplete,
             toolUseId: event.tool_id,
             children: [],
           };
@@ -120,7 +123,7 @@ export function StructuredView({ events }: StructuredViewProps) {
       }
     }
     return result;
-  }, [events]);
+  }, [events, isComplete]);
 
   return (
     <Virtuoso

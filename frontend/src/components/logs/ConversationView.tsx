@@ -35,8 +35,8 @@ interface ConversationToolUseBlock {
 interface ConversationToolResultBlock {
   type: "tool_result";
   tool_use_id: string;
-  content: string | Record<string, unknown>[] | null;
-  is_error: boolean | null;
+  content: string;
+  is_error: boolean;
 }
 
 type ConversationContentBlock =
@@ -99,7 +99,6 @@ export function ConversationView({ events }: ConversationViewProps) {
           open(event, event.turn_number, event.model);
           break;
         case "thinking":
-          // ThinkingEvent.text is the backend field name
           if (event.text) turnFor(event).assistantBlocks.push({ type: "thinking", thinking: event.text });
           break;
         case "text":
@@ -327,14 +326,10 @@ function ToolUseBlockView({ block }: { block: ConversationToolUseBlock }) {
 
 function ToolResultBlockView({ block }: { block: ConversationToolResultBlock }) {
   const [expanded, setExpanded] = useState(false);
-  const content = typeof block.content === "string"
-    ? block.content
-    : block.content != null
-      ? JSON.stringify(block.content, null, 2)
-      : "(empty)";
+  const content = block.content;
 
   const isLong = content.length > 200;
-  const isError = block.is_error === true;
+  const isError = block.is_error;
 
   return (
     <div className={cn("border rounded-md", isError ? "border-destructive/30" : "border-border/50")}>

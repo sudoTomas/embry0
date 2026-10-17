@@ -141,14 +141,18 @@ describe("useAgentStates", () => {
         timestamp: t,
       },
     ]);
-    expect(interruptData).toEqual({
+    expect(interruptData, "only the fields the paused banner reads").toEqual({
       reason: "awaiting_human_merge",
-      message: "Approve?",
       retry_count: 2,
-      options: ["approve"],
       latest_review: "nit",
-      questions: undefined,
     });
+  });
+
+  it("a review error standing in for the latest review is labelled as one", () => {
+    const { interruptData } = run([
+      { type: "interrupt", node: "review", reason: "review_failed", summary: { review_error: "reviewer timed out" }, timestamp: t },
+    ]);
+    expect(interruptData?.latest_review, "a review error must not read as a review").toBe("Review error: reviewer timed out");
   });
 
   it("a legacy event without run_id attaches to the latest state for its node", () => {

@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import type { LogEvent, PipelineGraph } from "@/lib/types";
 import { eventNode } from "@/lib/wire";
-import { isTerminalStatus } from "@/lib/jobStatus";
-import { deriveNodeStates } from "@/lib/pipeline-live";
+import { isSuccessfulTerminal, isTerminalStatus } from "@/lib/jobStatus";
+import { deriveNodeStates, physicalOf } from "@/lib/pipeline-live";
 
 export type AgentStatus = "pending" | "running" | "completed" | "failed";
 
@@ -19,14 +19,11 @@ export interface ToolCallEntry {
   subagent?: { name: string; is_error?: boolean };
 }
 
-/** Built from the contract's `interrupt.reason`, `questions` and `summary.*`. */
+/** Built from the contract's `interrupt.reason` and `summary.*`: the fields the paused banner reads. */
 export interface InterruptData {
   reason?: string;
-  message?: string;
   retry_count?: number;
   latest_review?: string;
-  options?: string[];
-  questions?: Record<string, unknown>[];
 }
 
 /** One agent run (`run_id`); a retried node is a second state, not a replacement. */
@@ -102,13 +99,11 @@ export function useAgentStates(
         return;
       }
       if (event.type === "interrupt") {
+        const reviewError = event.summary?.review_error;
         interruptData = {
           reason: event.reason ?? event.summary?.reason,
-          message: event.summary?.message,
           retry_count: event.summary?.retry_count,
-          options: event.summary?.options,
-          latest_review: event.summary?.latest_review ?? event.summary?.review_error,
-          questions: event.questions,
+          latest_review: event.summary?.latest_review ?? (reviewError ? `Review error: ${reviewError}` : undefined),
         };
         return;
       }
@@ -224,7 +219,7 @@ export function useAgentStates(
     if (isTerminalStatus(jobStatus)) {
       for (const agent of agents) {
         if (agent.status === "running") {
-          const ok = jobStatus === "completed" || jobStatus === "pr_merged" || jobStatus === "skipped";
+          const ok = isSuccessfulTerminal(jobStatus);
           agent.status = ok ? "completed" : "failed";
           if (!agent.summary) {
             agent.summary = ok ? "" : "Agent did not complete (orphaned)";
@@ -244,7 +239,7 @@ export function useAgentStates(
       const terminal = isTerminalStatus(jobStatus);
       for (const n of graph.nodes) {
         const st = states[n.node_id];
-        const physical = (n as { physical_node?: string }).physical_node ?? n.node_id;
+        const physical = physicalOf(n);
         const agentType = st?.agent_type ?? n.agent_type;
         if (!st || st.state === "pending" || st.state === "ready") {
           if (!terminal) agents.push(makeAgentState(`pending:${n.node_id}`, physical, agentType, 0, "pending"));

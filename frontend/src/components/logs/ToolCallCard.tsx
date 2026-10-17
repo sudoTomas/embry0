@@ -6,8 +6,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { cn, highlightJson } from "@/lib/utils";
-import { ROLE_COLORS, ROLE_BORDER_COLORS, ROLE_LABELS } from "@/lib/constants";
-import { ROLE_ICON_MAP } from "@/lib/roleIcons";
 
 interface ToolCallCardProps {
   tool: string;
@@ -15,7 +13,6 @@ interface ToolCallCardProps {
   output?: string;
   error?: boolean;
   isActive: boolean;
-  role?: string;
   /** Calls a subagent made under this one, shown indented in the expanded body. */
   children?: ReactNode;
 }
@@ -33,13 +30,8 @@ function HighlightedJson({ value }: { value: string }) {
   );
 }
 
-export function ToolCallCard({ tool, input, output, error, isActive, role, children }: ToolCallCardProps) {
+export function ToolCallCard({ tool, input, output, error, isActive, children }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
-
-  const borderColor = role ? ROLE_BORDER_COLORS[role] : undefined;
-  const textColor = role ? ROLE_COLORS[role] : undefined;
-  const label = role ? ROLE_LABELS[role] : undefined;
-  const IconComponent = role ? ROLE_ICON_MAP[role] : undefined;
 
   const jsonInput = JSON.stringify(input, null, 2);
 
@@ -49,8 +41,6 @@ export function ToolCallCard({ tool, input, output, error, isActive, role, child
         "border rounded-md overflow-hidden",
         error ? "border-destructive/50" : "border-border",
         isActive && "border-primary/50",
-        borderColor && "border-l-[3px]",
-        borderColor,
       )}
     >
       <button
@@ -63,13 +53,6 @@ export function ToolCallCard({ tool, input, output, error, isActive, role, child
           <ChevronRight className="h-3.5 w-3.5 shrink-0" />
         )}
         <span className="font-mono font-medium text-primary">{tool}</span>
-
-        {role && label && (
-          <span className={cn("inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-sm bg-muted/50", textColor)}>
-            {IconComponent && <IconComponent className="h-3 w-3" />}
-            {label}
-          </span>
-        )}
 
         {!isActive &&
           (error ? (
