@@ -591,6 +591,12 @@ class Embry0Client:
     async def org_webhook_install(self, owner: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/webhook"))
 
+    async def org_act(
+        self, owner: str, action: str, repos: list[str], *, dry_run: bool = False, force: bool = False
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"action": action, "repos": list(repos), "dry_run": dry_run, "force": force}
+        return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/actions", body=body))
+
     async def repo_list(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
         params = {"include_inactive": "true"} if include_inactive else None
         return _as_list(await self._request("GET", "/api/v1/repos", params=params))

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from embry0.api.deps import get_jobs_repo, request_actor
-from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.repo_allowlist import enforce_repo_allowlist, refusal_detail
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
 from embry0.api.schemas.jobs import JobResumeRequest
 from embry0.audit.helpers import emit_audit
@@ -22,34 +22,108 @@ class AnswerJobInputRequest(BaseModel):
     answer: str
 
 
+CREATE_A_JOB = "create a job"
+
+
+async def _check_agent_models(request: Request, agent_models: dict[str, str] | None) -> None:
+    # RAV-1297: explicit per-agent model overrides must name enabled models —
+    # a clear 422 at submit beats the runtime tier-fallback substituting one.
+    # Fail-open when the repo isn't wired (minimal test apps).
+    if agent_models:
+        from embry0.services.model_enablement import UnpricedModelError, ensure_models_priced
+
+        try:
+            ensure_models_priced(agent_models.values())
+        except UnpricedModelError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    provider_repo = getattr(request.app.state, "provider_repo", None)
+    if agent_models and provider_repo is not None:
+        from embry0.services.model_enablement import DisabledModelError, ensure_models_enabled
+
+        try:
+            await ensure_models_enabled(agent_models.values(), provider_repo)
+        except DisabledModelError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def onboard_refusal(request: Request, repo: str) -> str | None:
+    """What :func:`start_onboard_job` would refuse the caller with on ``repo`` (no agent
+    model overrides), or None; no log and no audit row. A dry run answers with this."""
+    detail = refusal_detail(request, repo, action=CREATE_A_JOB)
+    if detail is not None:
+        return detail
+    if getattr(request.app.state, "issue_executor", None) is None:
+        return "executor not initialized"
+    return None
+
+
+async def start_onboard_job(
+    request: Request,
+    *,
+    repo: str,
+    branch: str,
+    skip_smoke: bool = False,
+    agent_models: dict[str, str] | None = None,
+) -> str:
+    """EMB-50: start an onboard job after every check ``POST /jobs`` runs first.
+
+    The calling key's repository allowlist, the agent model overrides and
+    the executor, then the dispatch and its ``onboard_job_created`` audit
+    row naming the caller. ``POST /jobs {"pipeline": "onboard"}`` and the
+    organization onboard action both start their jobs here, so the action
+    cannot start a job the caller's key could not start through the route.
+    Raises HTTPException as the route answers.
+    """
+    await enforce_repo_allowlist(request, repo, action=CREATE_A_JOB)
+    await _check_agent_models(request, agent_models)
+    executor = getattr(request.app.state, "issue_executor", None)
+    if executor is None:
+        raise HTTPException(status_code=503, detail="executor not initialized")
+    try:
+        job_id: str = await executor.start_onboard_job(
+            repo=repo,
+            branch=branch,
+            skip_smoke=skip_smoke,
+            agent_models=agent_models,
+            dispatched_by=request_actor(request),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    config = request.app.state.config
+    await emit_audit(
+        getattr(request.app.state, "db", None),
+        "onboard_job_created",
+        actor=request_actor(request),
+        details={"job_id": job_id, "repo": repo, "branch": branch},
+        audit_log_path=config.audit_log_path,
+    )
+    return job_id
+
+
 @router.post("/jobs", status_code=201)
 async def create_job(
     req: JobCreateRequest, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)
 ) -> dict[str, Any]:
+    # EMB-50: onboard pipeline — analyze the repo + generate its qa.yaml into
+    # the external config store. Issue-less, like qa; branch defaults to main.
+    # Its checks live in start_onboard_job, which the organization onboard
+    # action shares.
+    if req.pipeline == "onboard":
+        assert req.repo is not None  # noqa: S101 — schema-enforced for onboard
+        job_id = await start_onboard_job(
+            request,
+            repo=req.repo,
+            branch=req.branch or "main",
+            skip_smoke=req.skip_smoke,
+            agent_models=req.agent_models,
+        )
+        job = await jobs.get(job_id)
+        return job or {"job_id": job_id}
+
     # The schema has folded `repo` into `context` for git jobs; a non-git job
     # names no repository, which a repository-restricted key may not start.
-    await enforce_repo_allowlist(
-        request, req.repo or (req.context.repo if req.context else None), action="create a job"
-    )
-
-    # RAV-1297: explicit per-agent model overrides must name enabled models —
-    # a clear 422 at submit beats the runtime tier-fallback substituting one.
-    # Fail-open when the repo isn't wired (minimal test apps).
-    if req.agent_models:
-        from embry0.services.model_enablement import UnpricedModelError, ensure_models_priced
-
-        try:
-            ensure_models_priced(req.agent_models.values())
-        except UnpricedModelError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-    provider_repo = getattr(request.app.state, "provider_repo", None)
-    if req.agent_models and provider_repo is not None:
-        from embry0.services.model_enablement import DisabledModelError, ensure_models_enabled
-
-        try:
-            await ensure_models_enabled(req.agent_models.values(), provider_repo)
-        except DisabledModelError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await enforce_repo_allowlist(request, req.repo or (req.context.repo if req.context else None), action=CREATE_A_JOB)
+    await _check_agent_models(request, req.agent_models)
 
     # QA pipeline takes a different code path: no triage, no issue, dispatched
     # via IssueExecutor.start_job which seeds the QA initial state.
@@ -77,34 +151,6 @@ async def create_job(
             "qa_job_created",
             actor=request_actor(request),
             details={"job_id": job_id, "repo": req.repo, "branch": req.branch},
-            audit_log_path=config.audit_log_path,
-        )
-        job = await jobs.get(job_id)
-        return job or {"job_id": job_id}
-
-    # EMB-50: onboard pipeline — analyze the repo + generate its qa.yaml into
-    # the external config store. Issue-less, like qa; branch defaults to main.
-    if req.pipeline == "onboard":
-        executor = getattr(request.app.state, "issue_executor", None)
-        if executor is None:
-            raise HTTPException(status_code=503, detail="executor not initialized")
-        branch = req.branch or "main"
-        try:
-            job_id = await executor.start_onboard_job(
-                repo=req.repo,
-                branch=branch,
-                skip_smoke=req.skip_smoke,
-                agent_models=req.agent_models,
-                dispatched_by=request_actor(request),
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        config = request.app.state.config
-        await emit_audit(
-            getattr(request.app.state, "db", None),
-            "onboard_job_created",
-            actor=request_actor(request),
-            details={"job_id": job_id, "repo": req.repo, "branch": branch},
             audit_log_path=config.audit_log_path,
         )
         job = await jobs.get(job_id)

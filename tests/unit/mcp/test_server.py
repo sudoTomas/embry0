@@ -52,6 +52,7 @@ EXPECTED_TOOLS = {
     "host_probe",
     "host_import_tailnet",
     "org_webhook_install",
+    "org_act",
     "qa_config_get",
     "qa_config_set",
     "credential_list",
@@ -74,6 +75,7 @@ CONFIRM_GATED = {
     "org_register",
     "host_import_tailnet",
     "org_webhook_install",
+    "org_act",
     "qa_config_set",
     "credential_bind",
 }
@@ -117,6 +119,8 @@ async def test_confirm_gated_tools_refuse_without_confirm(fake_client):
         await server.repo_register("acme/widgets"),
         await server.org_register("acme"),
         await server.org_webhook_install("acme"),
+        await server.org_act("acme", "register", ["acme/widgets"]),
+        await server.org_act("acme", "hook", ["acme/widgets"], dry_run=True),
         await server.qa_config_set("acme/widgets", "version: 2"),
         await server.host_import_tailnet(),
         await server.credential_bind("acme/widgets", "cred-000000000009"),
@@ -141,6 +145,7 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
     assert await server.repo_register("acme/widgets", confirm=True) == {"called": "repo_register"}
     assert await server.org_register("acme", confirm=True) == {"called": "org_register"}
     assert await server.org_webhook_install("acme", confirm=True) == {"called": "org_webhook_install"}
+    assert await server.org_act("acme", "register", ["acme/widgets"], confirm=True) == {"called": "org_act"}
     assert await server.qa_config_set("acme/widgets", "version: 2", confirm=True) == {"called": "qa_config_set"}
     assert await server.host_import_tailnet(confirm=True) == {"called": "host_import_tailnet"}
     assert await server.credential_bind(
@@ -162,6 +167,7 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
         "repo_register",
         "org_register",
         "org_webhook_install",
+        "org_act",
         "qa_config_set",
         "host_import_tailnet",
         "credential_bind",
@@ -190,6 +196,18 @@ async def test_host_import_tailnet_refusal_names_the_action(fake_client):
     assert refusal["error"] == "confirmation_required"
     assert "import hosts" in refusal["message"] and "host_import_tailnet" in refusal["message"]
     assert fake_client.calls == []
+
+
+async def test_org_act_needs_confirm_even_for_a_dry_run(fake_client):
+    refusal = await server.org_act("acme", "hook", ["acme/widgets"], dry_run=True)
+    assert refusal["error"] == "confirmation_required"
+    assert fake_client.calls == []
+    assert await server.org_act("acme", "hook", ["acme/widgets"], dry_run=True, confirm=True) == {"called": "org_act"}
+    assert await server.org_act("acme", "onboard", ["acme/widgets"], force=True, confirm=True) == {"called": "org_act"}
+    assert fake_client.calls == [
+        ("org_act", ("acme", "hook", ["acme/widgets"]), {"dry_run": True, "force": False}),
+        ("org_act", ("acme", "onboard", ["acme/widgets"]), {"dry_run": False, "force": True}),
+    ]
 
 
 async def test_read_tools_pass_through(fake_client):

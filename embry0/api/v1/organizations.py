@@ -372,10 +372,19 @@ async def discover_organization(owner: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
     if org.status != "active":
         raise HTTPException(status_code=409, detail=f"organization {owner} is {org.status}")
-    facts_repo = _facts_repo(request)
-    running = await facts_repo.running_run(org.owner)
+    running = await _facts_repo(request).running_run(org.owner)
     if running is not None:
         raise HTTPException(status_code=409, detail=f"discovery {running['id']} is already running for {owner}")
+    return await start_discovery(request, org)
+
+
+async def start_discovery(request: Request, org: Organization) -> dict[str, Any]:
+    """Start one discovery run for an active ``org`` in the background and return its run row.
+
+    This endpoint and the organization actions (a rediscovery after a change)
+    both start runs here. The caller has checked that none is running.
+    """
+    facts_repo = _facts_repo(request)
     token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
     run = await facts_repo.start_run(org.owner)
     access = org.access if isinstance(org.access, dict) else {}
