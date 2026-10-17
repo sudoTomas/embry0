@@ -406,6 +406,22 @@ def test_each_turn_emits_turn_usage_priced_with_cache_tokens(env, monkeypatch):
     assert types.index("turn_usage") < types.index("tool_call")
 
 
+def test_run_cost_prices_cache_tokens_like_the_sdk_path(env, monkeypatch):
+    # _compute_cost ignored cache reads/writes while price_usage prices them, so
+    # cost_update and the summed turn_usage disagreed on every cached run.
+    _install(monkeypatch, [_Resp([_Block("text", text="ok")], "end_turn", _Usage(100, 20, 10_000, 1_000))])
+    events = []
+    out = _run(_invocation(), events)
+    from embry0.agents.providers import price_usage
+
+    expected = price_usage(
+        "grok-4.5", input_tokens=100, output_tokens=20, cache_read_tokens=10_000, cache_creation_tokens=1_000
+    )
+    assert out.cost_usd == pytest.approx(expected), f"cost {out.cost_usd} ignores cache tokens; expected {expected}"
+    cost_update = [e for e in events if e["type"] == "cost_update"][-1]
+    assert cost_update["cost_usd"] == pytest.approx(expected)
+
+
 def test_client_closed(env, monkeypatch):
     client = _install(monkeypatch, [_Resp([_Block("text", text="x")], "end_turn")])
     _run(_invocation(), [])

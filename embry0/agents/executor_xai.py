@@ -51,7 +51,7 @@ from embry0.agents.mcp_client import (
     summarize_content,
 )
 from embry0.agents.output_text import FinalText
-from embry0.agents.providers import price_usage, provider_for_model
+from embry0.agents.providers import price_usage
 from embry0.agents.xai_tools import BUILTIN_TOOL_NAMES, execute_tool, tool_defs
 from embry0.execution import events
 from embry0.execution.agent_runner import AgentOutput
@@ -115,20 +115,27 @@ def _make_mcp_client(server_name: str, server_cfg: Any) -> McpStdioClient:
     )
 
 
-def _compute_cost(model: str, input_tokens: int, output_tokens: int) -> float | None:
+def _compute_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+) -> float | None:
     """Cost from provider pricing (xAI compat layer returns no total_cost_usd).
 
     None when the model has no price entry (#219): the price table is the only
     accounting this executor has, so an unpriced model is an error to record,
-    never a silent $0. The resolver refuses such a model before the run; this
-    is the last line if one gets here anyway.
+    never a silent $0. Prices cache reads and writes with the same factors as
+    the SDK path, so cost_update agrees with the summed turn_usage.
     """
-    prov = provider_for_model(model)
-    rates = prov.pricing_usd_per_mtok.get(model) if prov is not None else None
-    if not rates:
-        return None
-    in_rate, out_rate = rates
-    return (input_tokens / 1_000_000) * in_rate + (output_tokens / 1_000_000) * out_rate
+    return price_usage(
+        model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_creation_tokens=cache_creation_tokens,
+    )
 
 
 def _block_type(block: Any) -> str:
@@ -375,7 +382,13 @@ class DirectXaiExecutor:
             error_code = ErrorCode.AGENT_MAX_TURNS.value
 
         elapsed_ms = int((time.time() - started) * 1000)
-        priced = _compute_cost(invocation.model, totals["in"], totals["out"])
+        priced = _compute_cost(
+            invocation.model,
+            totals["in"],
+            totals["out"],
+            totals["cache_read"],
+            totals["cache_creation"],
+        )
         cost = priced if priced is not None else 0.0
         if priced is None:
             unpriced_message = (
