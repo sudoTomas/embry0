@@ -1,6 +1,7 @@
 import { NavLink } from "react-router";
 import {
   Bot,
+  Building2,
   CircleDot,
   Container,
   Cpu,
@@ -68,6 +69,8 @@ const NAV_GROUPS: readonly NavGroup[] = [
       { path: "/pipelines", label: "Pipelines", icon: Workflow },
       // RAV-1301: central registry + token-discovered Add-repo flow.
       { path: "/repos", label: "Repos", icon: FolderGit2 },
+      // ADR 0010: a forge owner maintained as a whole, next to the per-repo registry.
+      { path: "/orgs", label: "Organizations", icon: Building2 },
       { path: "/qa/repos", label: "QA", icon: ShieldCheck },
     ],
   },

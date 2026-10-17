@@ -41,6 +41,17 @@ class OrganizationBody(BaseModel):
     probe: bool = Field(default=True, description="call the forge to learn what the credential can do before storing")
 
 
+class ProbeBody(BaseModel):
+    owner: str = Field(
+        min_length=1, max_length=200, description="the forge owner: a GitHub organization or user, or a GitLab group"
+    )
+    forge: str = Field(default="github", pattern="^(github|gitlab)$")
+    credential_id: str | None = Field(
+        default=None,
+        description="a forge_token credential from the registry; absent means the environment token for this owner",
+    )
+
+
 class StatusBody(BaseModel):
     status: str = Field(pattern="^(active|paused|removed)$")
 
@@ -96,6 +107,13 @@ async def _token_for(request: Request, owner: str, forge: str, credential_id: st
     return token, f"env:{key}"
 
 
+def _owner_name(raw: str) -> str:
+    owner = raw.strip().lower()
+    if "/" in owner:
+        raise HTTPException(status_code=422, detail="an organization is a forge owner, with no slash")
+    return owner
+
+
 async def probe_access(request: Request, owner: str, forge: str, token: str) -> AccessProbe:
     config = getattr(request.app.state, "config", None)
     if forge == "gitlab":
@@ -116,6 +134,21 @@ async def list_organizations(request: Request, include_removed: bool = False) ->
     return {"organizations": [o.to_dict() for o in orgs], "forges": list(FORGES), "statuses": list(STATUSES)}
 
 
+# Declared before every /orgs/{owner} route, so "probe" is never read as an owner.
+@router.post("/orgs/probe", dependencies=[require_admin])
+async def probe_organization(body: ProbeBody, request: Request) -> dict[str, Any]:
+    """Ask the forge what a credential can do at an owner, and store nothing.
+
+    The same probe ``POST /orgs`` runs before it registers, so an operator
+    sees the answer before committing. A credential that cannot list the
+    owner is an answer here (``read`` false), not a refusal.
+    """
+    owner = _owner_name(body.owner)
+    token, source = await _token_for(request, owner, body.forge, body.credential_id)
+    probe = await probe_access(request, owner, body.forge, token)
+    return {**probe.to_dict(), "source": source}
+
+
 @router.get("/orgs/{owner}")
 async def get_organization(owner: str, request: Request) -> dict[str, Any]:
     org = await _repo(request).get(owner)
@@ -129,9 +162,7 @@ async def register_organization(body: OrganizationBody, request: Request) -> dic
     """Register an owner. With ``probe`` on, the forge is asked what the
     credential can do there first, and an owner the credential cannot even
     list is refused with the probe's own words."""
-    owner = body.owner.strip().lower()
-    if "/" in owner:
-        raise HTTPException(status_code=422, detail="an organization is a forge owner, with no slash")
+    owner = _owner_name(body.owner)
     access: dict[str, Any] = {}
     repo_count: int | None = None
     if body.probe:

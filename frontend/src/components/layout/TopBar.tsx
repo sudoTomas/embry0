@@ -25,6 +25,7 @@ const breadcrumbMap: Record<string, string> = {
   about: "About",
   admin: "Admin",
   repos: "Repos",
+  orgs: "Organizations",
   // Both routes fell back to the app name, so the crumb read "embry0 / embry0".
   credentials: "Credentials",
   providers: "LLM Providers",
@@ -55,7 +56,9 @@ export function TopBar() {
   const location = useLocation();
   const authMode = useAuthStore((s) => s.authMode);
   const user = useAuthStore((s) => s.user);
-  const pathSegments = location.pathname.split("/").filter(Boolean);
+  // A "-" segment marks an app route under a name space (the organization
+  // wizard at /orgs/-/new), never a name, so the crumb skips it.
+  const pathSegments = location.pathname.split("/").filter((s) => s !== "" && s !== "-");
   const currentPage = breadcrumbMap[pathSegments[0] ?? ""] ?? "embry0";
 
   return (

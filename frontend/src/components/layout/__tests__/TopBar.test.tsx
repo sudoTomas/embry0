@@ -44,6 +44,14 @@ describe("TopBar breadcrumbs (RAV-1058 IA sweep)", () => {
     expect(breadcrumb().queryByText("embry0", { selector: "span:not([data-testid])" })).toBeNull();
   });
 
+  it("labels the wizard at /orgs/-/new as Organizations, matching the sidebar", () => {
+    renderAt("/orgs/-/new");
+    expect(breadcrumb().getByText("Organizations")).toBeInTheDocument();
+    // "-" marks an app route, not a name, so the crumb skips it.
+    expect(breadcrumb().getByText("new")).toBeInTheDocument();
+    expect(breadcrumb().queryByText("-")).toBeNull();
+  });
+
   it("labels /providers as LLM Providers, matching the sidebar", () => {
     renderAt("/providers");
     expect(breadcrumb().getByText("LLM Providers")).toBeInTheDocument();

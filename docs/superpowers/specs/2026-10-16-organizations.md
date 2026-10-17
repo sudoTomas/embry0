@@ -1,6 +1,6 @@
 # Organizations: hold the owner, discover its repositories, say what embry0 needs
 
-Status: slices 1, 2, 3 and 5 of 8 built (ADR 0010, ADR 0011), plus the organization webhook (ADR 0012).
+Status: slices 1, 2, 3, 5 and 6 of 8 built (ADR 0010, ADR 0011), plus the organization webhook (ADR 0012). Slices 4, 7 and 8 are not built.
 
 ## Problem
 
@@ -12,8 +12,8 @@ A person adds a forge owner and embry0 works out, repository by repository, what
 
 ## Shape
 
-1. `organizations` (this slice): owner, forge, credential, probe result (`access`), repo count, status, settings. `POST /orgs` probes the credential against the owner with real forge calls and refuses an owner the credential cannot list. `GET /orgs`, `GET /orgs/{owner}`, `POST /orgs/{owner}/probe`, `PUT /orgs/{owner}/status`. MCP: `org_list`, `org_get`, `org_register` (confirm).
-2. `org_repo_facts` (this slice): one row per repository, replaced on each run: archived, private, fork, default branch, language, pushed_at, open issues, and in `facts`: manifests, compose file, tests dir, CI, frontend, boot hint (dev or start script, else compose), env keys from an env example, webhook visibility and presence (a hook whose URL starts with this deployment's public origin), plus embry0's own state (registered, active, QA config, watcher stack, tracker mapping). `POST /orgs/{owner}/discover` runs the scan in the orchestrator process as a tracked task, one per owner at a time, with an `org_discovery_runs` ledger row carrying progress, summary and error; `GET /orgs/{owner}/repos` and `GET /orgs/{owner}/runs` read them. A tracked task rather than a sandboxed job: the scan is host-side code against the forge API, with no model and no clone, so the job machinery would add a sandbox for nothing. Deploy markers and open PR counts are not read in this slice. GitLab discovery is refused with a clear error until a later slice.
+1. `organizations`: owner, forge, credential, probe result (`access`), repo count, status, settings. `POST /orgs` probes the credential against the owner with real forge calls and refuses an owner the credential cannot list. `GET /orgs`, `GET /orgs/{owner}`, `POST /orgs/{owner}/probe`, `PUT /orgs/{owner}/status`. MCP: `org_list`, `org_get`, `org_register` (confirm).
+2. `org_repo_facts`: one row per repository, replaced on each run: archived, private, fork, default branch, language, pushed_at, open issues, and in `facts`: manifests, compose file, tests dir, CI, frontend, boot hint (dev or start script, else compose), env keys from an env example, webhook visibility and presence (a hook whose URL starts with this deployment's public origin), plus embry0's own state (registered, active, QA config, watcher stack, tracker mapping). `POST /orgs/{owner}/discover` runs the scan in the orchestrator process as a tracked task, one per owner at a time, with an `org_discovery_runs` ledger row carrying progress, summary and error; `GET /orgs/{owner}/repos` and `GET /orgs/{owner}/runs` read them. A tracked task rather than a sandboxed job: the scan is host-side code against the forge API, with no model and no clone, so the job machinery would add a sandbox for nothing. Deploy markers and open PR counts are not read by discovery. GitLab discovery is refused with a clear error until a later slice.
 3. `org_needs`: the aggregated list a person must act on, each need also a case awaiting decision so the overview can show it. Kinds: the closed vocabulary `KINDS` in `embry0/services/org_needs.py` (`not_registered`, `no_webhook`, `onboarding_candidate`, `not_watched`, `no_qa_config`, `access_limited`, `env_values_needed`, `no_log_source`, `no_deploy_marker`, `count_gap`, `hook_origin_unknown`).
 4. An org-scout agent writes one sentence per repository and the needs narrative, from the facts only.
 5. Actions: register selected repositories, install webhooks where the probe found hook access, start onboarding jobs for repositories with a boot hint, create disabled watcher stacks (`register`, `hook`, `onboard`, `watch`). Every action idempotent; a second run is a no-op. Applying the default tracker is not built.
@@ -24,12 +24,12 @@ A person adds a forge owner and embry0 works out, repository by repository, what
 ## Rules
 
 - The probe trusts only real calls. `permissions` on a repository reflects the user, not the grant.
-- A push grant is proven only by writing a ref, as a separate explicit action; this slice leaves `push` as `null`.
+- A push grant is proven only by writing a ref, as a separate explicit action; slice 1 leaves `push` as `null`.
 - Registering an owner changes nothing for any repository until a person acts.
 - Owner is stored lowercase. A slash is a repository, refused.
-- GitLab: read and identity are probed in this slice; webhook access is reported as not probed.
+- GitLab: read and identity are probed in slice 1; webhook access is reported as not probed.
 
-## Verification for this slice
+## Verification (slices 1 and 2)
 
 - `tests/unit/services/test_organizations_probe.py`: org-admin token reads and manages hooks; a scoped token is read-only; an invisible owner is not readable; a GitLab group reads with hooks unprobed; the probe never asks for `permissions`.
 - `tests/unit/api/v1/test_organizations_api.py`: registry credential probed and stored with its source; env token fallback named by key; unreadable owner refused and not stored; non-forge credential refused; `probe: false` stores as given; slash refused; status and removed filtering; re-probe rewrites access.

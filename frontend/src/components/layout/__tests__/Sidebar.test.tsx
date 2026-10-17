@@ -95,7 +95,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     ]);
   });
 
-  it("Pipelines & QA section contains Pipelines, Repos, QA (RAV-1301 central registry)", () => {
+  it("Pipelines & QA section contains Pipelines, Repos, Organizations, QA (central registry, ADR 0010)", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Pipelines & QA" })
       .parentElement as HTMLElement;
@@ -103,6 +103,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     expect(links.map((a) => a.textContent?.trim())).toEqual([
       "Pipelines",
       "Repos",
+      "Organizations",
       "QA",
     ]);
   });
@@ -134,6 +135,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
       Jobs: "/jobs",
       Pipelines: "/pipelines",
       Repos: "/repos",
+      Organizations: "/orgs",
       QA: "/qa/repos",
       "LLM Providers": "/providers",
       Watcher: "/watcher",

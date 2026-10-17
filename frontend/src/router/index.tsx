@@ -32,6 +32,9 @@ const QaRepoConfigPage = lazy(() => import("../pages/QaRepoConfigPage").then(m =
 const OnboardRepoPage = lazy(() => import("../pages/OnboardRepoPage").then(m => ({ default: m.OnboardRepoPage })));
 const ReposPage = lazy(() => import("../pages/ReposPage").then(m => ({ default: m.ReposPage })));
 const RepoDetailPage = lazy(() => import("../pages/RepoDetailPage").then(m => ({ default: m.RepoDetailPage })));
+const OrganizationsPage = lazy(() => import("../pages/OrganizationsPage").then(m => ({ default: m.OrganizationsPage })));
+const OrgWizardPage = lazy(() => import("../pages/OrgWizardPage").then(m => ({ default: m.OrgWizardPage })));
+const OrganizationPage = lazy(() => import("../pages/OrganizationPage").then(m => ({ default: m.OrganizationPage })));
 const ProvidersPage = lazy(() => import("../pages/ProvidersPage").then(m => ({ default: m.ProvidersPage })));
 const WatcherPage = lazy(() => import("../pages/WatcherPage").then(m => ({ default: m.WatcherPage })));
 const LogsPage = lazy(() => import("../pages/LogsPage").then(m => ({ default: m.LogsPage })));
@@ -70,6 +73,9 @@ export const router = createBrowserRouter([
       { path: "repos", element: <ErrorBoundary inline><Suspense fallback={fallback}><ReposPage /></Suspense></ErrorBoundary> },
       { path: "repos/onboard", element: <ErrorBoundary inline><Suspense fallback={fallback}><OnboardRepoPage /></Suspense></ErrorBoundary> },
       { path: "repos/*", element: <ErrorBoundary inline><Suspense fallback={fallback}><RepoDetailPage /></Suspense></ErrorBoundary> },
+      { path: "orgs", element: <ErrorBoundary inline><Suspense fallback={fallback}><OrganizationsPage /></Suspense></ErrorBoundary> },
+      { path: "orgs/-/new", element: <ErrorBoundary inline><Suspense fallback={fallback}><OrgWizardPage /></Suspense></ErrorBoundary> },
+      { path: "orgs/:owner", element: <ErrorBoundary inline><Suspense fallback={fallback}><OrganizationPage /></Suspense></ErrorBoundary> },
       { path: "qa/runs/:runId", element: <ErrorBoundary inline><Suspense fallback={fallback}><QaRunDetailPage /></Suspense></ErrorBoundary> },
       { path: "qa/runs/:runId/affected", element: <ErrorBoundary inline><Suspense fallback={fallback}><QaAffectedSetPage /></Suspense></ErrorBoundary> },
       { path: "watcher", element: <ErrorBoundary inline><Suspense fallback={fallback}><WatcherPage /></Suspense></ErrorBoundary> },
