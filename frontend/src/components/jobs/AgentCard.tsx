@@ -45,6 +45,7 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
               {formatDuration(liveDurationMs)}
               {agent.costUsd > 0 && <span> &middot; ${agent.costUsd.toFixed(2)}</span>}
               {agent.summary && <span> &middot; {agent.summary}</span>}
+              {agent.status === "failed" && agent.errorCode && <span> &middot; {agent.errorCode}</span>}
             </div>
           )}
         </div>
@@ -76,7 +77,7 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
               </span>
             )}
             {agent.retryLabel && <span className="text-[10px] text-amber-400">{agent.retryLabel}</span>}
-            {!isActive && agent.status === "completed" && <span className="text-[10px] text-green-400">\u2713 Completed</span>}
+            {!isActive && agent.status === "completed" && <span className="text-[10px] text-green-400">{"\u2713"} Completed</span>}
           </div>
           <div className="text-[10px] text-white/40 mt-0.5">
             {formatDuration(liveDurationMs)}
@@ -92,6 +93,9 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
       {agent.summary && (
         <div className={`px-4 py-2 text-xs ${colors.text} opacity-80 ${colors.bg}`}>
           {agent.summary}
+          {agent.status === "failed" && agent.errorCode && (
+            <span className="text-[10px] text-white/40"> &middot; {agent.errorCode}</span>
+          )}
         </div>
       )}
 
