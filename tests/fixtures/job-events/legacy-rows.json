@@ -1,0 +1,61 @@
+[
+  {
+    "event_seq": 10,
+    "node": "developer",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "type": "node_started"
+  },
+  {
+    "agent": "developer",
+    "event_seq": 13,
+    "timestamp": "2026-01-01T00:00:00Z",
+    "type": "agent_started"
+  },
+  {
+    "event_seq": 16,
+    "input": "ls -la",
+    "node": "developer",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "tool_id": "legacy-1",
+    "tool_input": {
+      "command": "ls -la"
+    },
+    "tool_name": "Bash",
+    "type": "tool_call"
+  },
+  {
+    "content": "total 0",
+    "event_seq": 19,
+    "is_error": false,
+    "node": "developer",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "tool_use_id": "legacy-1",
+    "type": "tool_result"
+  },
+  {
+    "error": "legacy boom",
+    "event_seq": 22,
+    "timestamp": "2026-01-01T00:00:00Z",
+    "type": "error"
+  },
+  {
+    "event_seq": 25,
+    "message": "this line was never JSON",
+    "type": "raw"
+  },
+  {
+    "event_seq": 28,
+    "pr_url": "https://forge.example.test/org/repo/pull/9",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "type": "pipeline_stage_completed"
+  },
+  {
+    "cost_usd": 0.01,
+    "event_seq": 31,
+    "num_turns": 1,
+    "timestamp": "2026-01-01T00:00:00Z",
+    "tokens_in": 10,
+    "tokens_out": 5,
+    "type": "cost_update"
+  }
+]
