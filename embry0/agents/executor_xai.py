@@ -51,7 +51,7 @@ from embry0.agents.mcp_client import (
     summarize_content,
 )
 from embry0.agents.output_text import FinalText
-from embry0.agents.providers import provider_for_model
+from embry0.agents.providers import price_usage, provider_for_model
 from embry0.agents.xai_tools import BUILTIN_TOOL_NAMES, execute_tool, tool_defs
 from embry0.execution import events
 from embry0.execution.agent_runner import AgentOutput
@@ -237,6 +237,28 @@ class DirectXaiExecutor:
                     totals["cache_creation"] += int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
 
                 writer(events.turn_start(turn_number=turn, model=invocation.model, **ids))
+                if usage is not None:
+                    turn_in = int(getattr(usage, "input_tokens", 0) or 0)
+                    turn_out = int(getattr(usage, "output_tokens", 0) or 0)
+                    turn_cr = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+                    turn_cc = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+                    writer(
+                        events.turn_usage(
+                            input_tokens=turn_in,
+                            output_tokens=turn_out,
+                            cache_read_tokens=turn_cr,
+                            cache_creation_tokens=turn_cc,
+                            cost_usd=price_usage(
+                                invocation.model,
+                                input_tokens=turn_in,
+                                output_tokens=turn_out,
+                                cache_read_tokens=turn_cr,
+                                cache_creation_tokens=turn_cc,
+                            ),
+                            model=invocation.model,
+                            **ids,
+                        )
+                    )
 
                 content = list(getattr(resp, "content", []) or [])
                 assistant_text = ""
