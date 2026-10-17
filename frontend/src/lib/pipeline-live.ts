@@ -1,10 +1,22 @@
-import type { LogEvent, NodeStateEvent, PipelineGraph } from "@/lib/types";
-import { getNodeId } from "@/hooks/useAgentStates";
+import type { LogEvent, PipelineGraph } from "@/lib/types";
+import { eventNode } from "@/lib/wire";
+import { TERMINAL_JOB_STATUSES } from "@/lib/jobStatus";
+
+/** A graph node's live state, derived from the event log by deriveNodeStates. */
+export interface NodeLiveState {
+  node_id: string;
+  agent_type: string;
+  state: "pending" | "ready" | "running" | "completed" | "failed";
+  iteration: number;
+  cost_usd: number;
+  turns: number;
+  duration_seconds: number;
+}
 
 // RAV-1285: the backend emits the job's real pipeline graph (from the
-// route_plan snapshot) but no per-node `node_state` events — the live
+// route_plan snapshot) but no per-node state events — the live
 // signals are the node_started/node_completed/error events the log stream
-// already carries. This derives NodeStateEvent-shaped entries for the
+// already carries. This derives NodeLiveState entries for the
 // graph view from those, using each graph node's `physical_node` (the
 // LangGraph node whose events represent it). The QA chain inside an
 // issue-to-pr job is the special case: its one graph node is lit by qa_*
@@ -16,18 +28,6 @@ const QA_EVENT_TYPES = new Set([
   "qa_subtask_started",
   "qa_subtask_finished",
   "qa_subtask_status",
-  // The QA bus's name for the same event; kept until #41 retires it.
-  "subtask_status",
-]);
-
-const TERMINAL_JOB_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "expired",
-  "pr_merged",
-  "pr_closed",
-  "skipped",
 ]);
 
 function physicalOf(node: PipelineGraph["nodes"][number]): string {
@@ -38,7 +38,7 @@ export function deriveNodeStates(
   graph: PipelineGraph | null,
   events: LogEvent[],
   jobStatus?: string,
-): Record<string, NodeStateEvent> {
+): Record<string, NodeLiveState> {
   if (!graph || graph.nodes.length === 0) return {};
 
   // Physical name → graph node ids, in declaration order (a multi-step
@@ -51,16 +51,14 @@ export function deriveNodeStates(
   }
   const agentTypeById = new Map(graph.nodes.map((n) => [n.node_id, n.agent_type]));
 
-  const states: Record<string, NodeStateEvent> = {};
+  const states: Record<string, NodeLiveState> = {};
   const startCounts = new Map<string, number>();
   const runningNodeByPhysical = new Map<string, string>();
   const startedAtByNode = new Map<string, string>();
 
-  const upsert = (nodeId: string, patch: Partial<NodeStateEvent>) => {
+  const upsert = (nodeId: string, patch: Partial<NodeLiveState>) => {
     const prev = states[nodeId];
     states[nodeId] = {
-      type: "node_state",
-      timestamp: patch.timestamp ?? prev?.timestamp ?? "",
       node_id: nodeId,
       agent_type: agentTypeById.get(nodeId) ?? nodeId,
       state: prev?.state ?? "pending",
@@ -72,10 +70,10 @@ export function deriveNodeStates(
     };
   };
 
-  const completeRunningQa = (timestamp: string) => {
+  const completeRunningQa = () => {
     const qaNode = runningNodeByPhysical.get("qa");
     if (qaNode && states[qaNode]?.state === "running") {
-      upsert(qaNode, { state: "completed", timestamp });
+      upsert(qaNode, { state: "completed" });
       runningNodeByPhysical.delete("qa");
     }
   };
@@ -89,7 +87,7 @@ export function deriveNodeStates(
         if (states[qaIds[0]]?.state !== "running") {
           startedAtByNode.set(qaIds[0], timestamp);
         }
-        upsert(qaIds[0], { state: "running", timestamp });
+        upsert(qaIds[0], { state: "running" });
         runningNodeByPhysical.set("qa", qaIds[0]);
       }
       continue;
@@ -100,18 +98,18 @@ export function deriveNodeStates(
       // currently running (the stream is single-agent-at-a-time).
       const running = [...runningNodeByPhysical.values()].at(-1);
       if (running) {
-        upsert(running, { cost_usd: event.cost_usd, turns: event.num_turns, timestamp });
+        upsert(running, { cost_usd: event.cost_usd, turns: event.num_turns });
       }
       continue;
     }
 
-    const phys = getNodeId(event);
+    const phys = eventNode(event);
     if (!phys) continue;
 
     if (event.type === "node_started") {
       // Any later stage starting means the QA chain (which emits no
       // node_completed of its own) is done.
-      if (phys !== "qa") completeRunningQa(timestamp);
+      if (phys !== "qa") completeRunningQa();
       const ids = byPhysical.get(phys);
       if (!ids) continue;
       const count = startCounts.get(phys) ?? 0;
@@ -124,7 +122,6 @@ export function deriveNodeStates(
       upsert(target, {
         state: "running",
         iteration: states[target] ? (states[target].iteration ?? 1) + (states[target].state !== "pending" ? 1 : 0) : 1,
-        timestamp,
       });
     } else if (event.type === "node_completed") {
       const target = runningNodeByPhysical.get(phys);
@@ -134,12 +131,12 @@ export function deriveNodeStates(
         startedAt && timestamp
           ? Math.max(0, (new Date(timestamp).getTime() - new Date(startedAt).getTime()) / 1000)
           : 0;
-      upsert(target, { state: "completed", duration_seconds: duration, timestamp });
+      upsert(target, { state: "completed", duration_seconds: duration });
       runningNodeByPhysical.delete(phys);
     } else if (event.type === "error") {
       const target = runningNodeByPhysical.get(phys);
       if (target) {
-        upsert(target, { state: "failed", timestamp });
+        upsert(target, { state: "failed" });
         runningNodeByPhysical.delete(phys);
       }
     }

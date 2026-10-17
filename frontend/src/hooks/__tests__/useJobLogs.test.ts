@@ -203,19 +203,23 @@ describe("useJobLogs", () => {
     expect(result.current.events[1].type).toBe("job_finished");
   });
 
-  it("marks isComplete and flushes a complete event immediately when job_finished follows", async () => {
+  it("marks isComplete and flushes a cost_update immediately when job_finished follows", async () => {
     const { result } = renderHook(() => useJobLogs("job-abc"));
     await flushConnect();
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
       lastCreatedWs!.simulateMessage({
-        type: "complete",
+        type: "cost_update",
         timestamp: "t1",
         cost_usd: 0.05,
+        duration_ms: 1000,
+        duration_api_ms: 800,
+        num_turns: 3,
         tokens_in: 100,
         tokens_out: 200,
-        turns: 3,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
         event_seq: 1,
       });
       lastCreatedWs!.simulateMessage({
@@ -232,7 +236,7 @@ describe("useJobLogs", () => {
 
     expect(result.current.isComplete).toBe(true);
     expect(result.current.events).toHaveLength(2);
-    expect(result.current.events[0].type).toBe("complete");
+    expect(result.current.events[0].type).toBe("cost_update");
     expect(result.current.events[1].type).toBe("job_finished");
   });
 
@@ -349,28 +353,6 @@ describe("useJobLogs", () => {
     expect(result.current.latestTokensIn).toBe(500);
     expect(result.current.latestTokensOut).toBe(250);
     expect(result.current.latestTurns).toBe(7);
-  });
-
-  it("tracks cost fields from complete event", async () => {
-    const { result } = renderHook(() => useJobLogs("job-abc"));
-    await flushConnect();
-
-    await act(async () => {
-      lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({
-        type: "complete",
-        timestamp: "t1",
-        cost_usd: 0.042,
-        tokens_in: 1000,
-        tokens_out: 400,
-        turns: 5,
-      });
-    });
-
-    expect(result.current.latestCost).toBe(0.042);
-    expect(result.current.latestTokensIn).toBe(1000);
-    expect(result.current.latestTokensOut).toBe(400);
-    expect(result.current.latestTurns).toBe(5);
   });
 
   it("does not update cost for non-cost event types", async () => {

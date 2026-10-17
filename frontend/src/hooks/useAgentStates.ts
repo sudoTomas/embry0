@@ -1,13 +1,7 @@
 import { useMemo } from "react";
-import type {
-  LogEvent,
-  NodeStartedEvent,
-  PipelineStageStartedEvent,
-  PipelineStageCompletedEvent,
-  NodeCompletedEvent,
-  InterruptEvent,
-  AwaitingInputEvent,
-} from "@/lib/types";
+import type { LogEvent, NodeStartedContract } from "@/lib/types";
+import { eventNode } from "@/lib/wire";
+import { isTerminalStatus } from "@/lib/jobStatus";
 
 export type AgentStatus = "pending" | "running" | "completed" | "failed";
 
@@ -25,8 +19,6 @@ export interface InterruptData {
   retry_count?: number;
   latest_review?: string;
   options?: string[];
-  paused_at?: string;
-  ttl_hours?: number;
 }
 
 export interface AgentState {
@@ -47,31 +39,10 @@ export interface AgentState {
   model?: string;
 }
 
-/** Extract the node identifier from any event variant that carries it.
- *
- * The orchestrator's stream writer emits ``{"type": "node_started", "node": "init"}``
- * (field is ``node``); a few graph-layer events use ``node_id`` instead. Accept
- * both so the AgentCard pipeline view actually populates — without this, every
- * node_started event slipped through silently and triage/developer/review all
- * appeared as "Waiting" forever.
- *
- * Exported for reuse by useLiveJobSummary, which tracks the current node the
- * same way.
- */
-export function getNodeId(event: LogEvent): string {
-  if ("node_id" in event && typeof event.node_id === "string") {
-    return event.node_id;
-  }
-  if ("node" in event && typeof (event as { node?: unknown }).node === "string") {
-    return (event as { node: string }).node;
-  }
-  return "";
-}
-
 /** Build an initial AgentState for a node. */
 function makeAgentState(
   node: string,
-  event: NodeStartedEvent | PipelineStageStartedEvent,
+  event: NodeStartedContract,
   retryCount: number,
 ): AgentState {
   return {
@@ -89,7 +60,6 @@ function makeAgentState(
     toolCallCount: 0,
     summary: "",
     retryLabel: retryCount > 1 ? `Retry ${retryCount - 1}` : undefined,
-    model: event.model,
   };
 }
 
@@ -106,7 +76,8 @@ export function useAgentStates(
 } {
   return useMemo(() => {
     const agentMap = new Map<string, AgentState>();
-    let prUrl: string | null = null;
+    // Only pr_created carries a PR URL; nothing reads it here yet.
+    const prUrl: string | null = null;
     let interruptData: InterruptData | null = null;
     const nodeOrder: string[] = [];
 
@@ -114,44 +85,17 @@ export function useAgentStates(
     const nodeStartCounts = new Map<string, number>();
 
     for (const event of events) {
-      const node = getNodeId(event);
+      const node = eventNode(event);
 
-      if (event.type === "pipeline_stage_completed") {
-        const ev = event as PipelineStageCompletedEvent;
-        if (ev.pr_url) prUrl = ev.pr_url;
-      }
-
-      // Detect interrupt / awaiting_input as interrupt data
-      if (event.type === "awaiting_input") {
-        const ev = event as AwaitingInputEvent;
-        interruptData = {
-          reason: ev.question,
-          options: ev.options ?? undefined,
-        };
-      }
       if (event.type === "interrupt") {
-        const ev = event as InterruptEvent;
         interruptData = {
-          reason: ev.reason,
-          retry_count: ev.retry_count,
-          latest_review: ev.latest_review,
-          options: ev.options,
-          paused_at: ev.paused_at,
-          ttl_hours: ev.ttl_hours,
+          reason: event.reason,
+          retry_count: event.summary?.retry_count,
+          latest_review: event.summary?.latest_review,
+          options: event.summary?.options,
         };
       }
 
-      if (event.type === "pipeline_stage_started" && node) {
-        const startCount = (nodeStartCounts.get(node) || 0) + 1;
-        nodeStartCounts.set(node, startCount);
-
-        if (!agentMap.has(node)) {
-          nodeOrder.push(node);
-        }
-        agentMap.set(node, makeAgentState(node, event as PipelineStageStartedEvent, startCount));
-      }
-
-      // Also handle legacy node_started events
       if (event.type === "node_started" && node) {
         const startCount = (nodeStartCounts.get(node) || 0) + 1;
         nodeStartCounts.set(node, startCount);
@@ -159,7 +103,7 @@ export function useAgentStates(
         if (!agentMap.has(node)) {
           nodeOrder.push(node);
         }
-        agentMap.set(node, makeAgentState(node, event as NodeStartedEvent, startCount));
+        agentMap.set(node, makeAgentState(node, event, startCount));
       }
 
       const agent = agentMap.get(node);
@@ -168,66 +112,30 @@ export function useAgentStates(
       agent.events.push(event);
 
       switch (event.type) {
-        case "pipeline_stage_completed": {
-          const ev = event as PipelineStageCompletedEvent;
-          agent.status = "completed";
-          if (ev.action) agent.summary = ev.action;
-          // Compute duration if not set by cost_update
-          if (agent.durationMs === 0 && agent.startedAt && ev.timestamp) {
-            agent.durationMs = new Date(ev.timestamp).getTime() - new Date(agent.startedAt).getTime();
-          }
-          break;
-        }
         case "node_completed": {
-          const ev = event as NodeCompletedEvent;
           agent.status = "completed";
-          if (ev.action) agent.summary = ev.action;
+          if (event.action) agent.summary = event.action;
           // Compute duration if not set by cost_update
-          if (agent.durationMs === 0 && agent.startedAt && ev.timestamp) {
-            agent.durationMs = new Date(ev.timestamp).getTime() - new Date(agent.startedAt).getTime();
+          if (agent.durationMs === 0 && agent.startedAt && event.timestamp) {
+            agent.durationMs = new Date(event.timestamp).getTime() - new Date(agent.startedAt).getTime();
           }
           break;
         }
-        case "tool_call": {
-          // Contract name first, legacy name second (spec section 6), until #41.
-          const summary = event.summary ?? event.input;
+        case "tool_call":
           agent.toolCalls.push({
             tool_name: event.tool_name,
             tool_id: event.tool_id,
-            input: typeof summary === "string" ? summary : JSON.stringify(summary ?? ""),
-            timestamp: event.timestamp,
-          });
-          agent.toolCallCount++;
-          break;
-        }
-        case "tool_start":
-          agent.toolCalls.push({
-            tool_name: event.tool,
-            tool_id: event.tool_use_id ?? "",
-            input: typeof event.input === "string"
-              ? event.input
-              : JSON.stringify(event.input ?? ""),
+            input: event.summary,
             timestamp: event.timestamp,
           });
           agent.toolCallCount++;
           break;
         case "tool_result": {
-          const toolId = event.tool_id ?? event.tool_use_id;
-          if (toolId) {
-            const tc = agent.toolCalls.find((t) => t.tool_id === toolId);
+          if (event.tool_id) {
+            const tc = agent.toolCalls.find((t) => t.tool_id === event.tool_id);
             if (tc) {
               tc.result = event.content;
               tc.is_error = event.is_error;
-            }
-          }
-          break;
-        }
-        case "tool_end": {
-          if (event.tool_use_id) {
-            const tc = agent.toolCalls.find((t) => t.tool_id === event.tool_use_id);
-            if (tc) {
-              // tool_end carries duration but not result content — leave result as-is
-              tc.is_error = false;
             }
           }
           break;
@@ -276,16 +184,7 @@ export function useAgentStates(
 
     // If the job is in a terminal state, mark any "running" agents as failed
     // (they were orphaned by an orchestrator restart or crash and never completed).
-    const terminalStatuses = new Set([
-      "failed",
-      "cancelled",
-      "expired",
-      "completed",
-      "pr_merged",
-      "pr_closed",
-      "skipped",
-    ]);
-    if (jobStatus && terminalStatuses.has(jobStatus)) {
+    if (isTerminalStatus(jobStatus)) {
       for (const agent of agents) {
         if (agent.status === "running") {
           const ok = jobStatus === "completed" || jobStatus === "pr_merged" || jobStatus === "skipped";

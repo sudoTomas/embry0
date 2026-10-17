@@ -2,11 +2,8 @@ import { ReactFlow, ReactFlowProvider, Background, type Node, type Edge } from "
 import "@xyflow/react/dist/style.css";
 import { useMemo, useCallback } from "react";
 import { deserializeGraph, getAgentColor, getAgentCategory } from "@/lib/graph-utils";
-import type {
-  PipelineGraph,
-  NodeStateEvent,
-  FeedbackTriggeredEvent,
-} from "@/lib/types";
+import type { PipelineGraph } from "@/lib/types";
+import type { NodeLiveState } from "@/lib/pipeline-live";
 import type { NodeProps } from "@xyflow/react";
 
 // ---------------------------------------------------------------------------
@@ -85,13 +82,12 @@ function LiveAgentNode({ data }: NodeProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Merge node states + feedback into React Flow data
+// Merge node states into React Flow data
 // ---------------------------------------------------------------------------
 
 function buildFlowData(
   graph: PipelineGraph,
-  nodeStates: Record<string, NodeStateEvent>,
-  feedbackStates: Record<string, FeedbackTriggeredEvent>,
+  nodeStates: Record<string, NodeLiveState>,
 ): { nodes: Node[]; edges: Edge[] } {
   const { nodes: baseNodes, edges: baseEdges } = deserializeGraph(graph);
 
@@ -111,34 +107,7 @@ function buildFlowData(
     },
   }));
 
-  const edges: Edge[] = baseEdges.map((e) => {
-    const fb = feedbackStates[e.id];
-    const isFeedbackActive = !!fb;
-
-    if (isFeedbackActive) {
-      return {
-        ...e,
-        animated: true,
-        style: { stroke: "#f87171", strokeWidth: 2, strokeDasharray: "6 4" },
-        label: `loop ${fb.iteration}/${fb.max_loops ?? "?"}`,
-        labelStyle: {
-          fill: "#f87171",
-          fontSize: 10,
-          fontWeight: 600,
-        },
-        labelBgStyle: {
-          fill: "#1a1d2e",
-          fillOpacity: 0.9,
-        },
-        labelBgPadding: [4, 2] as [number, number],
-        labelShowBg: true,
-      };
-    }
-
-    return e;
-  });
-
-  return { nodes, edges };
+  return { nodes, edges: baseEdges };
 }
 
 // ---------------------------------------------------------------------------
@@ -147,8 +116,7 @@ function buildFlowData(
 
 export interface PipelineGraphViewProps {
   graph: PipelineGraph | null;
-  nodeStates: Record<string, NodeStateEvent>;
-  feedbackStates: Record<string, FeedbackTriggeredEvent>;
+  nodeStates: Record<string, NodeLiveState>;
   onNodeSelect?: (nodeId: string | null) => void;
 }
 
@@ -165,13 +133,12 @@ const nodeTypes = { liveAgentNode: LiveAgentNode };
 function PipelineGraphViewInner({
   graph,
   nodeStates,
-  feedbackStates,
   onNodeSelect,
 }: PipelineGraphViewProps) {
   const { nodes, edges } = useMemo(() => {
     if (!graph) return { nodes: [], edges: [] };
-    return buildFlowData(graph, nodeStates, feedbackStates);
-  }, [graph, nodeStates, feedbackStates]);
+    return buildFlowData(graph, nodeStates);
+  }, [graph, nodeStates]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {

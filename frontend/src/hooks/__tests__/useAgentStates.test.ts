@@ -27,15 +27,16 @@ describe("useAgentStates tool-call pairing", () => {
     expect(developer.toolCalls[0]).toMatchObject({ tool_id: "t1", input: "ls -la", result: "ok", is_error: false });
   });
 
-  it("still reads the legacy names (input, tool_use_id) for events persisted before the contract", () => {
+  it("reads summary and tool_id only; legacy names are the wire normalizer's job", () => {
     const events = [
-      { type: "node_started", node: "developer", timestamp: ts },
-      { type: "tool_call", node: "developer", tool_name: "Read", tool_id: "t2", input: { path: "a.py" }, timestamp: ts },
+      { type: "node_started", node: "developer", attempt: 1, timestamp: ts },
+      { type: "tool_call", node: "developer", tool_name: "Read", tool_id: "t2", summary: "a.py", input: "stale", tool_input: {}, timestamp: ts },
       { type: "tool_result", node: "developer", tool_use_id: "t2", content: "text", is_error: true, timestamp: ts },
     ] as unknown as LogEvent[];
 
     const { result } = renderHook(() => useAgentStates(events));
     const [developer] = result.current.agents;
-    expect(developer.toolCalls[0]).toMatchObject({ tool_id: "t2", input: '{"path":"a.py"}', result: "text", is_error: true });
+    expect(developer.toolCalls[0]).toMatchObject({ tool_id: "t2", input: "a.py" });
+    expect(developer.toolCalls[0].result, "a result keyed only by tool_use_id must not pair").toBeUndefined();
   });
 });

@@ -4,10 +4,11 @@ import { useJobLogs } from "@/hooks/useJobLogs";
 import { useJob } from "@/hooks/useJobs";
 import { useJobInputs } from "@/hooks/useInputs";
 import { deriveNodeStates } from "@/lib/pipeline-live";
+import { isTerminalStatus } from "@/lib/jobStatus";
+import { eventNode } from "@/lib/wire";
 import { LogViewer } from "@/components/logs/LogViewer";
 import { PipelineGraphView } from "@/components/pipeline/PipelineGraphView";
 import { AgentFilterTabs } from "@/components/logs/AgentFilterTabs";
-import { InputForm } from "@/components/jobs/InputForm";
 import { AutoAnswerCard } from "@/components/jobs/AutoAnswerCard";
 import { Button } from "@/components/ui/Button";
 import { ArrowLeft, X } from "lucide-react";
@@ -23,9 +24,6 @@ export function JobLogsPage() {
     latestTokensOut,
     latestTurns,
     pipelineGraph,
-    nodeStates,
-    feedbackStates,
-    pendingInputs,
   } = useJobLogs(jobId);
 
   // Load job data for completion detection. RAV-1285: the graph arrives on
@@ -34,19 +32,13 @@ export function JobLogsPage() {
   // node_started/node_completed/qa_* events the stream already carries.
   const { data: job } = useJob(jobId);
   const effectiveGraph = pipelineGraph ?? null;
-  const jobFinished = job?.status === "completed" || job?.status === "failed";
+  const jobFinished = isTerminalStatus(job?.status);
   const effectiveIsComplete = isComplete || jobFinished;
   const effectiveCost = latestCost || job?.total_cost_usd || 0;
 
-  const derivedNodeStates = useMemo(
+  const nodeStates = useMemo(
     () => deriveNodeStates(effectiveGraph, events, job?.status),
     [effectiveGraph, events, job?.status],
-  );
-  // Explicit node_state events (none emitted today, but the contract exists)
-  // win over derivation.
-  const mergedNodeStates = useMemo(
-    () => ({ ...derivedNodeStates, ...nodeStates }),
-    [derivedNodeStates, nodeStates],
   );
 
   const { data: jobInputs } = useJobInputs(jobId ?? "");
@@ -61,11 +53,11 @@ export function JobLogsPage() {
   const filteredEvents = useMemo(() => {
     if (!selectedNodeId) return events;
     return events.filter((e) => {
-      const nodeId = "node_id" in e ? (e as { node_id?: string }).node_id : undefined;
-      // Show events that match the selected node_id
+      const nodeId = eventNode(e);
+      // Show events that match the selected node
       if (nodeId === selectedNodeId) return true;
-      // Always show stream-level events (complete, stream_end, job_finished, error without node_id)
-      if (!nodeId && (e.type === "complete" || e.type === "stream_end" || e.type === "job_finished" || e.type === "error")) return true;
+      // Always show stream-level events (job_failed, job_finished, error without a node)
+      if (!nodeId && (e.type === "job_failed" || e.type === "job_finished" || e.type === "error")) return true;
       return false;
     });
   }, [events, selectedNodeId]);
@@ -102,8 +94,7 @@ export function JobLogsPage() {
         {effectiveGraph ? (
           <PipelineGraphView
             graph={effectiveGraph}
-            nodeStates={mergedNodeStates}
-            feedbackStates={feedbackStates}
+            nodeStates={nodeStates}
             onNodeSelect={handleNodeSelect}
           />
         ) : (
@@ -118,17 +109,6 @@ export function JobLogsPage() {
         )}
       </div>
 
-      {/* Pending input forms */}
-      {Object.values(pendingInputs).length > 0 && jobInputs && (
-        <div className="space-y-3">
-          {jobInputs
-            .filter((inp) => inp.status === "pending" && pendingInputs[inp.input_id])
-            .map((inp) => (
-              <InputForm key={inp.input_id} input={inp} jobId={jobId!} />
-            ))}
-        </div>
-      )}
-
       {/* Auto-answered inputs */}
       {jobInputs && jobInputs.filter((inp) => inp.status === "auto_answered" || (inp.status === "answered" && inp.auto_answer != null)).length > 0 && (
         <div className="space-y-2">
@@ -141,7 +121,7 @@ export function JobLogsPage() {
       )}
 
       <AgentFilterTabs
-        nodeStates={mergedNodeStates}
+        nodeStates={nodeStates}
         selectedNodeId={selectedNodeId}
         onSelect={handleNodeSelect}
       />

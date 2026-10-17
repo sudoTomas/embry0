@@ -253,7 +253,6 @@ export function JobDetailPage() {
       {/* Awaiting input */}
       {job.status === "awaiting_input" && (
         <AwaitingInputCard
-          pendingInputs={{}}
           jobInputs={jobInputs ?? []}
           jobId={job.job_id}
         />

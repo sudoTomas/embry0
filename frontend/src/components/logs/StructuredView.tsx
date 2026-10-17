@@ -30,7 +30,6 @@ type StructuredItem =
 export function StructuredView({ events }: StructuredViewProps) {
   const items = useMemo(() => {
     const result: StructuredItem[] = [];
-    const activeTools = new Map<string, number>();
     let currentRole: string | undefined;
 
     for (const event of events) {
@@ -48,65 +47,20 @@ export function StructuredView({ events }: StructuredViewProps) {
           }
           break;
         }
-        case "subagent_end": {
-          // Push a system message for subagent completion
-          result.push({
-            kind: "system",
-            message: `Subagent "${event.name}" completed`,
-            timestamp: event.timestamp,
-          });
-          // Clear current role when the matching agent ends
-          const endRole = extractRole(event.name ?? "");
-          if (endRole === currentRole) {
-            currentRole = undefined;
-          }
+        case "subagent_end":
+          result.push({ kind: "system", message: "Subagent completed", timestamp: event.timestamp });
           break;
-        }
-        case "tool_start": {
-          const tc: ToolCall = {
-            tool: event.tool ?? "unknown",
-            input: (event.input as Record<string, unknown>) ?? {},
-            isActive: true,
-            toolUseId: event.tool_use_id ?? "",
-            role: currentRole,
-          };
-          const idx = result.length;
-          result.push({ kind: "tool", data: tc });
-          if (event.tool_use_id) activeTools.set(event.tool_use_id, idx);
-          break;
-        }
-        case "tool_end": {
-          const idx = event.tool_use_id ? activeTools.get(event.tool_use_id) : undefined;
-          if (idx != null && result[idx]?.kind === "tool") {
-            const tc = (result[idx] as { kind: "tool"; data: ToolCall }).data;
-            tc.output = event.output;
-            tc.error = event.error;
-            tc.isActive = false;
-          }
-          if (event.tool_use_id) activeTools.delete(event.tool_use_id);
-          break;
-        }
         case "text":
           if (event.text) {
             result.push({ kind: "text", content: event.text, timestamp: event.timestamp });
           }
           break;
         case "error":
-          result.push({ kind: "error", message: event.message ?? "", timestamp: event.timestamp });
+          result.push({ kind: "error", message: event.message, timestamp: event.timestamp });
           break;
         case "system":
         case "progress":
-        case "complete":
-          result.push({
-            kind: "system",
-            message:
-              event.type === "complete"
-                ? `Agent completed \u2014 ${event.is_error ? "with errors" : "successfully"}`
-                : event.type === "progress"
-                  ? `${event.step}: ${event.status}`
-                  : event.message ?? "",
-            timestamp: event.timestamp,
-          });
+          result.push({ kind: "system", message: event.message, timestamp: event.timestamp });
           break;
       }
     }

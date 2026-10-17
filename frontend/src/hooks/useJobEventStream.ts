@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import type { LogEvent } from "@/lib/types";
 import { fetchJobLogEvents } from "@/api/logs";
 import { fetchJobEventsToken } from "@/api/jobs";
+import { normalizeWireEvent } from "@/lib/wire";
 
 const MAX_RECONNECT_RETRIES = 10;
 /** RFC 6455 normal closure: the server ended the stream on purpose (spec 3.5). */
@@ -31,16 +32,6 @@ export interface JobEventStreamHandlers {
 export interface JobEventStreamResult {
   isConnected: boolean;
   isComplete: boolean;
-}
-
-function seqOf(event: LogEvent): number | undefined {
-  const seq = (event as { event_seq?: unknown }).event_seq;
-  return typeof seq === "number" ? seq : undefined;
-}
-
-function prevSeqOf(event: LogEvent): number | undefined {
-  const prev = (event as { prev_seq?: unknown }).prev_seq;
-  return typeof prev === "number" ? prev : undefined;
 }
 
 /**
@@ -95,7 +86,7 @@ export function useJobEventStream(
   /** Deliver one event unless its seq was already delivered; advance the cursor. */
   const deliver = useCallback(
     (event: LogEvent) => {
-      const seq = seqOf(event);
+      const seq = event.event_seq;
       if (seq !== undefined) {
         if (seq <= lastSeqRef.current) return;
         lastSeqRef.current = seq;
@@ -108,13 +99,13 @@ export function useJobEventStream(
 
   const applyLive = useCallback(
     (event: LogEvent, currentJobId: string) => {
-      const seq = seqOf(event);
+      const seq = event.event_seq;
       if (seq !== undefined && seq <= lastSeqRef.current) return; // replayed duplicate
       if (fillRef.current) {
         queuedRef.current.push(event); // a fill owns the order until it lands
         return;
       }
-      const prevSeq = prevSeqOf(event);
+      const prevSeq = event.prev_seq;
       const gap = prevSeq !== undefined && lastSeqRef.current > 0 && prevSeq > lastSeqRef.current;
       if (!gap) {
         deliver(event);
@@ -179,7 +170,7 @@ export function useJobEventStream(
 
       ws.onmessage = (e) => {
         try {
-          const event: LogEvent = JSON.parse(e.data);
+          const event = normalizeWireEvent(JSON.parse(e.data));
           applyLive(event, jobId);
         } catch {
           // Ignore malformed messages
@@ -240,7 +231,7 @@ export function useJobEventStream(
         const persisted = await fetchJobLogEvents(jobId, 0);
         if (persisted.length > 0) {
           for (const ev of persisted) {
-            const seq = seqOf(ev);
+            const seq = ev.event_seq;
             if (seq !== undefined && seq > lastSeqRef.current) lastSeqRef.current = seq;
           }
           if (persisted.some((ev) => ev.type === "job_finished")) {

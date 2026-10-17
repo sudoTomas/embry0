@@ -195,7 +195,8 @@ describe("useLiveJobSummary", () => {
         timestamp: "t1",
         tool_name: "Edit",
         tool_id: "tc-1",
-        input: { file_path: "apps/recruit/notes.ts" },
+        summary: "apps/recruit/notes.ts",
+        tool_input: { file_path: "apps/recruit/notes.ts" },
       });
     });
     await flushBatch();
@@ -215,30 +216,13 @@ describe("useLiveJobSummary", () => {
         timestamp: "t2",
         tool_name: "Bash",
         tool_id: "tc-1",
-        input: { command: "npm test" },
+        summary: "npm test",
+        tool_input: { command: "npm test" },
       });
     });
     await flushBatch();
 
     expect(result.current.lastActivity).toBe("Implementing fix");
-  });
-
-  it("summarizes legacy tool_start events (tool field, not tool_name)", async () => {
-    const { result } = renderHook(() => useLiveJobSummary("job-abc"));
-    await flushConnect();
-
-    await act(async () => {
-      lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({
-        type: "tool_start",
-        timestamp: "t1",
-        tool: "Bash",
-        input: { command: "npx vitest run" },
-      });
-    });
-    await flushBatch();
-
-    expect(result.current.lastActivity).toBe("tool_call · Bash npx vitest run");
   });
 
   it("degrades to the bare tool name on malformed tool_call input", async () => {
@@ -272,7 +256,8 @@ describe("useLiveJobSummary", () => {
         timestamp: "t1",
         tool_name: "Edit",
         tool_id: "tc-1",
-        input: { file_path: longPath },
+        summary: longPath,
+        tool_input: { file_path: longPath },
       });
     });
     await flushBatch();
@@ -302,40 +287,6 @@ describe("useLiveJobSummary", () => {
     expect(result.current.latestTokensOut).toBe(250);
   });
 
-  it("tracks cost fields from a complete event and marks isComplete with an immediate flush on job_finished", async () => {
-    const { result } = renderHook(() => useLiveJobSummary("job-abc"));
-    await flushConnect();
-
-    await act(async () => {
-      lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({
-        type: "complete",
-        timestamp: "t1",
-        cost_usd: 0.042,
-        tokens_in: 1000,
-        tokens_out: 400,
-        turns: 5,
-        event_seq: 1,
-      });
-      lastCreatedWs!.simulateMessage({
-        type: "job_finished",
-        timestamp: "t2",
-        status: "completed",
-        error_code: null,
-        error_message: null,
-        pr_url: null,
-        total_cost_usd: 0.042,
-        event_seq: 2,
-      });
-    });
-
-    // job_finished triggers an immediate flush without needing to advance timers
-    expect(result.current.isComplete).toBe(true);
-    expect(result.current.latestCost).toBe(0.042);
-    expect(result.current.latestTokensIn).toBe(1000);
-    expect(result.current.latestTokensOut).toBe(400);
-  });
-
   it("marks isComplete and flushes pending activity immediately on job_finished", async () => {
     const { result } = renderHook(() => useLiveJobSummary("job-abc"));
     await flushConnect();
@@ -359,13 +310,12 @@ describe("useLiveJobSummary", () => {
     expect(result.current.lastActivity).toBe("Wrapping up");
   });
 
-  it("tracks currentNode and attempt from node_started events, accepting both node and node_id fields", async () => {
+  it("tracks currentNode and attempt from node_started events", async () => {
     const { result } = renderHook(() => useLiveJobSummary("job-abc"));
     await flushConnect();
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      // Stream-writer shape uses `node`; graph-layer shape uses `node_id`
       lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node: "triage" });
     });
     await flushBatch();
@@ -374,7 +324,7 @@ describe("useLiveJobSummary", () => {
     expect(result.current.attempt).toBe(1);
 
     await act(async () => {
-      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t2", node_id: "review" });
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t2", node: "review" });
     });
     await flushBatch();
 
@@ -388,8 +338,8 @@ describe("useLiveJobSummary", () => {
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "pipeline_stage_started", timestamp: "t1", node_id: "review" });
-      lastCreatedWs!.simulateMessage({ type: "pipeline_stage_started", timestamp: "t2", node_id: "review" });
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node: "review", attempt: 1 });
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t2", node: "review", attempt: 2 });
     });
     await flushBatch();
 
@@ -403,8 +353,8 @@ describe("useLiveJobSummary", () => {
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node_id: "developer" });
-      lastCreatedWs!.simulateMessage({ type: "agent_started", timestamp: "t2", node_id: "developer" });
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node: "developer" });
+      lastCreatedWs!.simulateMessage({ type: "agent_started", timestamp: "t2", node: "developer" });
     });
     await flushBatch();
 
@@ -420,7 +370,7 @@ describe("useLiveJobSummary", () => {
     // Initial connection with some events
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node_id: "developer" });
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node: "developer" });
       lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t2", message: "Editing files" });
     });
     await flushBatch();
@@ -498,10 +448,9 @@ describe("useLiveJobSummary", () => {
 
   it("loads persisted events via the REST fallback when the WS never connects", async () => {
     vi.mocked(fetchJobLogEvents).mockResolvedValue([
-      { type: "node_started", timestamp: "t1", node_id: "developer" },
+      { type: "node_started", timestamp: "t1", node: "developer" },
       { type: "progress", timestamp: "t2", message: "Finished implementation" },
       { type: "cost_update", timestamp: "t3", cost_usd: 0.5, tokens_in: 200, tokens_out: 100, num_turns: 4 },
-      { type: "complete", timestamp: "t4", cost_usd: 0.6 },
       {
         type: "job_finished",
         timestamp: "t5",
@@ -524,7 +473,7 @@ describe("useLiveJobSummary", () => {
     expect(fetchJobLogEvents).toHaveBeenCalledWith("job-done", 0);
     expect(result.current.lastActivity).toBe("Finished implementation");
     expect(result.current.currentNode).toBe("developer");
-    expect(result.current.latestCost).toBe(0.6);
+    expect(result.current.latestCost).toBe(0.5);
     expect(result.current.latestTokensIn).toBe(200);
     expect(result.current.latestTokensOut).toBe(100);
     expect(result.current.isComplete).toBe(true);
@@ -555,7 +504,7 @@ describe("useLiveJobSummary", () => {
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node_id: "review" });
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node: "review" });
       lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t2", message: "Reviewing" });
       lastCreatedWs!.simulateMessage({
         type: "cost_update",

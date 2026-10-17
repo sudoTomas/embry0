@@ -38,7 +38,7 @@ interface NeedsYouCardProps {
   job: JobResponse;
   /** Interrupt payload (paused/awaiting jobs) — drives the TTL countdown and
    * the question fallback when no JobInput rows exist yet. */
-  interrupt?: InterruptData | null;
+  interrupt?: (InterruptData & { paused_at?: string; ttl_hours?: number }) | null;
   /** Persisted input rows; pending/auto_answered ones feed the inline form. */
   jobInputs?: JobInput[];
 }

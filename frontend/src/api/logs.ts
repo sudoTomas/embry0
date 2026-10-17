@@ -1,9 +1,10 @@
 import { api } from "./client";
 import type { LogEvent } from "@/lib/types/events";
+import { normalizeWireEvent } from "@/lib/wire";
 import type { LogsContainersResponse, LogsQueryParams, LogsQueryResponse } from "@/lib/types";
 
 interface LogEventsPage {
-  events: LogEvent[];
+  events: unknown[];
   next_since_seq?: number;
   has_more?: boolean;
 }
@@ -16,7 +17,7 @@ export async function fetchJobLogEvents(jobId: string, sinceSeq = 0): Promise<Lo
     const { data } = await api.get<LogEventsPage>(`/jobs/${jobId}/logs/events`, {
       params: { since_seq: cursor, limit: 1000 },
     });
-    events.push(...data.events);
+    events.push(...data.events.map(normalizeWireEvent));
     const next = data.next_since_seq;
     if (!data.has_more || typeof next !== "number" || next <= cursor) return events;
     cursor = next;

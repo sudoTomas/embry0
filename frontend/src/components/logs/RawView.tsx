@@ -7,10 +7,6 @@ interface RawViewProps {
 
 function eventToText(event: LogEvent): string {
   switch (event.type) {
-    case "tool_start":
-      return `[tool] ${event.tool} starting...`;
-    case "tool_end":
-      return `[tool] ${event.tool} ${event.error ? "FAILED" : "done"}\n${event.output ?? ""}`;
     case "text":
       return event.text ?? "";
     case "system":
@@ -19,16 +15,14 @@ function eventToText(event: LogEvent): string {
       return `[ERROR] ${event.message ?? ""}`;
     case "cost_update":
       return `[cost] $${event.cost_usd?.toFixed(4)} | tokens: ${event.tokens_in}↓ ${event.tokens_out}↑`;
-    case "complete":
-      return `[complete] cost=$${event.cost_usd?.toFixed(4)} turns=${event.turns} error=${event.is_error}`;
     case "progress":
-      return `[progress] ${event.step}: ${event.status} — ${event.detail ?? ""}`;
+      return `[progress] ${event.message}`;
     case "turn_start":
       return `[turn] Turn started`;
     case "subagent_start":
       return `[subagent] ${event.name} starting...`;
     case "subagent_end":
-      return `[subagent] ${event.name} completed`;
+      return `[subagent] Subagent ${event.tool_id} ended`;
     default:
       return `[${event.type}] ${JSON.stringify(event)}`;
   }

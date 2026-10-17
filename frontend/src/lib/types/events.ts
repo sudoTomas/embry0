@@ -1,96 +1,11 @@
 /**
- * The event contract, mirrored from embry0/execution/events.py.
- *
- * `ContractEvent` is the union the backend emits. `EVENT_FIELDS` is the same
- * contract as data; src/lib/types/__tests__/events.contract.test.ts compares
- * it with docs/contracts/events.json, and the `satisfies` clause below makes
- * `tsc -b` fail when an interface and its row disagree. The legacy union is
- * still exported as `LogEvent` until the reducers adopt the contract (#41).
+ * One union, mirrored from docs/contracts/events.json (embry0/execution/events.py);
+ * see spec 3.1. `EVENT_FIELDS` is the same contract as data;
+ * src/lib/types/__tests__/events.contract.test.ts compares it with the JSON, and
+ * the guards at the end make `tsc -b` fail when an interface and its row disagree.
  */
 
-export type {
-  LegacyLogEvent as LogEvent,
-  LogEventDU,
-  // legacy variants the reducers still import, unchanged
-  TextEvent,
-  ThinkingEvent,
-  ToolCallEvent,
-  ToolResultEvent,
-  ToolStartEvent,
-  ToolEndEvent,
-  CostUpdateEvent,
-  CompleteEvent,
-  StreamEndEvent,
-  PipelineGraphEventDU,
-  NodeStateEvent,
-  NodeStartedEvent,
-  NodeCompletedEvent,
-  FeedbackTriggeredEvent,
-  FeedbackResolvedEvent,
-  PipelineStageStartedEvent,
-  PipelineStageCompletedEvent,
-  AwaitingInputEvent,
-  AutoAnsweredEvent,
-  InputResumedEvent,
-  ConversationContentBlock,
-  ConversationTextBlock,
-  ConversationThinkingBlock,
-  ConversationToolUseBlock,
-  ConversationToolResultBlock,
-  ConversationMessageEvent,
-  InterruptEvent,
-  PrCreatedEvent,
-  AgentStartedEvent,
-  AgentCompletedEvent,
-  TurnStartEvent,
-  SubagentStartEvent,
-  SubagentEndEvent,
-  ProgressEvent,
-  ErrorEvent,
-  SystemEvent,
-  FindingPublishedEvent,
-  JobFinishedEvent,
-} from "./events-discriminated";
-
-export type LogEventType =
-  | "text"
-  | "tool_start"
-  | "tool_end"
-  | "tool_call"
-  | "tool_result"
-  | "thinking"
-  | "cost_update"
-  | "turn_start"
-  | "subagent_start"
-  | "subagent_end"
-  | "progress"
-  | "error"
-  | "complete"
-  | "system"
-  | "stream_end"
-  | "pipeline_graph"
-  | "node_state"
-  | "node_started"
-  | "node_completed"
-  | "feedback_triggered"
-  | "feedback_resolved"
-  | "awaiting_input"
-  | "auto_answered"
-  | "input_resumed"
-  | "conversation_message"
-  | "agent_started"
-  | "agent_completed"
-  | "pipeline_stage_started"
-  | "pipeline_stage_completed"
-  | "pr_created"
-  | "interrupt"
-  | "finding_published"
-  | "job_finished";
-
-/** Back-compat alias: PipelineGraphEvent → PipelineGraphEventDU */
-export type { PipelineGraphEventDU as PipelineGraphEvent } from "./events-discriminated";
-
-// ---- the contract -----------------------------------------------------------
+import type { PipelineGraph } from "./pipelines";
 
 export interface ContractBase {
   type: string;
@@ -142,9 +57,20 @@ export interface NodeStartedContract extends ContractBase { type: "node_started"
 export interface NodeCompletedContract extends ContractBase {
   type: "node_completed"; attempt: number; action?: string; job_kind?: string; template?: string; deliverables?: number; ok?: boolean; round?: number; error?: string;
 }
-export interface PipelineGraphContract extends ContractBase { type: "pipeline_graph"; graph: Record<string, unknown> }
+export interface PipelineGraphContract extends ContractBase { type: "pipeline_graph"; graph: PipelineGraph }
 export interface ProgressContract extends ContractBase { type: "progress"; message: string; app?: string }
-export interface InterruptContract extends ContractBase { type: "interrupt"; reason?: string; questions?: Record<string, unknown>[]; summary?: Record<string, unknown> }
+/** What the issue-to-pr interrupts put in `interrupt.summary` (embry0/workflows/issue_to_pr/nodes/_interrupts.py). */
+export interface InterruptSummary {
+  message?: string;
+  reason?: string;
+  pr_url?: string;
+  retry_count?: number;
+  options?: string[];
+  latest_review?: string;
+  review_error?: string;
+  [key: string]: unknown;
+}
+export interface InterruptContract extends ContractBase { type: "interrupt"; reason?: string; questions?: Record<string, unknown>[]; summary?: InterruptSummary }
 export interface AgentPausedForInputContract extends ContractBase { type: "agent_paused_for_input"; count: number }
 export interface ReviewDecisionContract extends ContractBase { type: "review_decision"; decision: string | null; summary: string | null; duplicates_open_pr?: Record<string, unknown> }
 export interface ValidationResultContract extends ContractBase { type: "validation_result"; validation: Record<string, unknown> }
@@ -176,6 +102,9 @@ export type ContractEvent =
   | QaSubtaskStatusContract | QaAgentTransientRetryContract | SystemContract | JobFailedContract | JobFinishedContract;
 
 export type ContractEventType = ContractEvent["type"];
+
+/** The exported name of the one union; twenty files import it. */
+export type LogEvent = ContractEvent;
 
 type Fields = { required: readonly string[]; optional: readonly string[] };
 
