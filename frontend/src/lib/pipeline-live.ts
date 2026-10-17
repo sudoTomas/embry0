@@ -1,6 +1,6 @@
 import type { LogEvent, PipelineGraph } from "@/lib/types";
 import { eventNode } from "@/lib/wire";
-import { TERMINAL_JOB_STATUSES } from "@/lib/jobStatus";
+import { isTerminalStatus } from "@/lib/jobStatus";
 
 /** A graph node's live state, derived from the event log by deriveNodeStates. */
 export interface NodeLiveState {
@@ -95,9 +95,13 @@ export function deriveNodeStates(
     }
 
     if (event.type === "cost_update") {
-      // cost_update carries no node — attribute to whichever node is
-      // currently running (the stream is single-agent-at-a-time).
-      const running = [...runningNodeByPhysical.values()].at(-1);
+      // Attribute to the graph node currently running on the event's own
+      // physical node; a legacy row without `node` falls back to whichever
+      // node is running last (the stream was single-agent-at-a-time).
+      const own = eventNode(event);
+      const running = own
+        ? runningNodeByPhysical.get(own)
+        : [...runningNodeByPhysical.values()].at(-1);
       if (running) {
         upsert(running, { cost_usd: event.cost_usd, turns: event.num_turns });
       }
@@ -115,14 +119,17 @@ export function deriveNodeStates(
       if (!ids) continue;
       const count = startCounts.get(phys) ?? 0;
       // Starts map onto this physical's nodes in order; once exhausted, a
-      // re-start is a retry of the last one (iteration++).
+      // re-start is a retry of the last one.
       const target = ids[Math.min(count, ids.length - 1)];
       startCounts.set(phys, count + 1);
       runningNodeByPhysical.set(phys, target);
       startedAtByNode.set(target, timestamp);
+      // The event's `attempt` is the iteration; legacy rows without one
+      // fall back to counting re-starts.
+      const counted = states[target] ? states[target].iteration + (states[target].state !== "pending" ? 1 : 0) : 1;
       upsert(target, {
         state: "running",
-        iteration: states[target] ? (states[target].iteration ?? 1) + (states[target].state !== "pending" ? 1 : 0) : 1,
+        iteration: typeof event.attempt === "number" ? event.attempt : counted,
       });
     } else if (event.type === "node_completed") {
       const target = runningNodeByPhysical.get(phys);
@@ -146,7 +153,7 @@ export function deriveNodeStates(
   // A finished job leaves no node running — anything still "running" was
   // interrupted by the terminal transition (same orphan rule the job
   // detail page applies).
-  if (jobStatus && TERMINAL_JOB_STATUSES.has(jobStatus)) {
+  if (isTerminalStatus(jobStatus)) {
     const ok = jobStatus === "completed" || jobStatus === "pr_merged" || jobStatus === "skipped";
     for (const st of Object.values(states)) {
       if (st.state === "running") {

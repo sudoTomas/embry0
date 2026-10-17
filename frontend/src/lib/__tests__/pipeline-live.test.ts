@@ -105,6 +105,37 @@ describe("deriveNodeStates (RAV-1285)", () => {
     expect(states["res-2"].state).toBe("running");
   });
 
+  it("a node_started with attempt 2 sets iteration 2 without counting starts", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "developer", attempt: 2 }),
+    ]);
+    expect(states.developer.iteration, "iteration comes from the event's attempt").toBe(2);
+  });
+
+  it("a node_started without attempt falls back to counting starts", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "developer" }),
+      ev({ type: "node_completed", node: "developer" }),
+      ev({ type: "node_started", node: "developer" }),
+    ]);
+    expect(states.developer.iteration, "legacy rows count starts").toBe(2);
+  });
+
+  it("a cost_update is attributed to its own node, not the last running one", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "developer", attempt: 1 }),
+      ev({ type: "node_started", node: "review", attempt: 1 }),
+      ev({ type: "cost_update", node: "developer", cost_usd: 0.5, num_turns: 3 }),
+    ]);
+    expect(states.developer.cost_usd, "developer's cost_update lands on developer").toBe(0.5);
+    expect(states.reviewer.cost_usd, "the reviewer did not spend developer's cost").toBe(0);
+  });
+
+  it("a partial job closes its running node", () => {
+    const states = deriveNodeStates(GRAPH, [ev({ type: "node_started", node: "developer" })], "partial");
+    expect(states.developer.state, "partial is terminal").not.toBe("running");
+  });
+
   it("returns empty for a missing graph", () => {
     expect(deriveNodeStates(null, [ev({ type: "node_started", node: "triage" })])).toEqual({});
   });
