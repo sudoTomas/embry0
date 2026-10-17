@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   ChevronRight,
   ChevronDown,
@@ -16,6 +16,8 @@ interface ToolCallCardProps {
   error?: boolean;
   isActive: boolean;
   role?: string;
+  /** Calls a subagent made under this one, shown indented in the expanded body. */
+  children?: ReactNode;
 }
 
 function HighlightedJson({ value }: { value: string }) {
@@ -31,7 +33,7 @@ function HighlightedJson({ value }: { value: string }) {
   );
 }
 
-export function ToolCallCard({ tool, input, output, error, isActive, role }: ToolCallCardProps) {
+export function ToolCallCard({ tool, input, output, error, isActive, role, children }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const borderColor = role ? ROLE_BORDER_COLORS[role] : undefined;
@@ -98,6 +100,9 @@ export function ToolCallCard({ tool, input, output, error, isActive, role }: Too
                 {error ? output : <HighlightedOutput value={output} />}
               </pre>
             </div>
+          )}
+          {children && (
+            <div className="px-3 py-2 pl-6 space-y-1 border-t border-border/50">{children}</div>
           )}
         </div>
       )}
