@@ -2197,6 +2197,7 @@ def _register_routers(app: FastAPI) -> None:
         jobs,
         logs,
         merge_approvals,
+        org_actions,
         org_needs,
         organizations,
         pipeline_templates,
@@ -2289,6 +2290,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(org_needs.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     # ADR 0013: the hosts that run the code (reads and probes operator-tier; writes admin-tier in-route).
     app.include_router(hosts.router, prefix="/api/v1", tags=["hosts"], dependencies=auth_deps)
+    app.include_router(org_actions.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     app.include_router(github.router, prefix="/api/v1", tags=["github"], dependencies=auth_deps)
     app.include_router(gitlab.router, prefix="/api/v1", tags=["gitlab"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])

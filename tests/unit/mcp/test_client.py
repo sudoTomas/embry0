@@ -549,6 +549,18 @@ async def test_case_accept_path():
     assert json.loads(handler.seen[0].content) == {"accepted_by": "Alex"}
 
 
+async def test_org_act_path_and_body():
+    handler = capture({("POST", "/api/v1/orgs/acme/actions"): {"owner": "acme", "action": "watch", "results": []}})
+    client = make_client(handler)
+    assert (await client.org_act("acme", "watch", ["acme/widgets"], dry_run=True))["action"] == "watch"
+    assert json.loads(handler.seen[0].content) == {
+        "action": "watch",
+        "repos": ["acme/widgets"],
+        "dry_run": True,
+        "force": False,
+    }
+
+
 async def test_merge_approval_paths():
     handler = capture(
         {

@@ -43,6 +43,35 @@ def _repo(request: Request) -> WatcherStacksRepository:
     return cast("WatcherStacksRepository", repository)
 
 
+async def save_stack(
+    request: Request, stack: WatcherStack, *, ignored_settings: list[str] | None = None
+) -> WatcherStack:
+    """Store ``stack`` and write its ``watcher_stack_updated`` audit row.
+
+    The one write path for a stack: ``PUT /watcher/stacks/{owner}/{name}``
+    and the organization watch action both store through it. A stack the
+    table refuses is a 422.
+    """
+    try:
+        stored = await _repo(request).upsert(stack)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    config = request.app.state.config
+    await emit_audit(
+        getattr(request.app.state, "db", None),
+        "watcher_stack_updated",
+        actor=request_actor(request),
+        details={
+            "repo": stack.repo,
+            "tracker": stored.tracker,
+            "enabled": stored.enabled,
+            "ignored_settings": list(ignored_settings or []),
+        },
+        audit_log_path=getattr(config, "audit_log_path", None),
+    )
+    return stored
+
+
 @router.get("/watcher/stacks")
 async def list_stacks(request: Request, enabled_only: bool = False) -> dict[str, Any]:
     stacks = await _repo(request).list_all(enabled_only=enabled_only)
@@ -63,27 +92,17 @@ async def put_stack(owner: str, name: str, body: StackBody, request: Request) ->
     dropped rather than stored — the response shows what was kept."""
     repo = f"{owner}/{name}"
     unknown = sorted(set(body.settings) - set(OVERRIDABLE))
-    try:
-        stored = await _repo(request).upsert(
-            WatcherStack(
-                repo=repo,
-                logql=body.logql,
-                tracker=body.tracker,
-                tracker_target=body.tracker_target,
-                settings=body.settings,
-                enabled=body.enabled,
-            )
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-
-    config = request.app.state.config
-    await emit_audit(
-        getattr(request.app.state, "db", None),
-        "watcher_stack_updated",
-        actor=request_actor(request),
-        details={"repo": repo, "tracker": stored.tracker, "enabled": stored.enabled, "ignored_settings": unknown},
-        audit_log_path=getattr(config, "audit_log_path", None),
+    stored = await save_stack(
+        request,
+        WatcherStack(
+            repo=repo,
+            logql=body.logql,
+            tracker=body.tracker,
+            tracker_target=body.tracker_target,
+            settings=body.settings,
+            enabled=body.enabled,
+        ),
+        ignored_settings=unknown,
     )
     return {**stored.to_dict(), "ignored_settings": unknown}
 

@@ -235,6 +235,7 @@ class JobsRepository:
         issue_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        pipeline_template: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """List jobs with optional filters. Returns (rows, total_count)."""
         conditions: list[str] = []
@@ -252,6 +253,10 @@ class JobsRepository:
         if issue_id:
             conditions.append(f"issue_id = ${idx}")
             args.append(issue_id)
+            idx += 1
+        if pipeline_template:
+            conditions.append(f"pipeline_template = ${idx}")
+            args.append(pipeline_template)
             idx += 1
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
