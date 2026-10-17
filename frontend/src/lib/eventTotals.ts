@@ -4,7 +4,8 @@ import type { LogEvent } from "@/lib/types";
  * delta and wins over its `turn_usage` partials; a run with no `cost_update`
  * yet contributes its partials (a `null` turn cost counts as 0). Turns are the
  * highest top-level `turn_start.turn_number` per run. Events without `run_id`
- * (pre-contract rows) form one pseudo-run. */
+ * (pre-contract rows) form a pseudo-run per `agent_started`, as
+ * `useAgentStates` keys them; rows before any `agent_started` share `""`. */
 export interface Totals { costUsd: number; tokensIn: number; tokensOut: number; turns: number }
 
 interface RunTotals {
@@ -15,11 +16,11 @@ interface RunTotals {
   maxTurn: number;
 }
 
-export interface TotalsState { runs: Map<string, RunTotals> }
+export interface TotalsState { runs: Map<string, RunTotals>; legacyRun: string; legacyCount: number }
 
-export const emptyTotals = (): TotalsState => ({ runs: new Map() });
+export const emptyTotals = (): TotalsState => ({ runs: new Map(), legacyRun: "", legacyCount: 0 });
 
-const runOf = (e: LogEvent) => (typeof e.run_id === "string" ? e.run_id : "");
+const runOf = (state: TotalsState, e: LogEvent) => (typeof e.run_id === "string" ? e.run_id : state.legacyRun);
 
 const getRun = (state: TotalsState, id: string): RunTotals => {
   let r = state.runs.get(id);
@@ -30,14 +31,18 @@ const getRun = (state: TotalsState, id: string): RunTotals => {
 /** Mutates and returns `state`; callers that need immutability copy the Map first. */
 export function applyTotals(state: TotalsState, event: LogEvent): TotalsState {
   switch (event.type) {
+    case "agent_started": {
+      if (typeof event.run_id !== "string") state.legacyRun = `legacy:${++state.legacyCount}`;
+      return state;
+    }
     case "cost_update": {
-      const r = getRun(state, runOf(event));
+      const r = getRun(state, runOf(state, event));
       const prev = r.settled ?? { cost: 0, tokensIn: 0, tokensOut: 0 };
       r.settled = { cost: prev.cost + event.cost_usd, tokensIn: prev.tokensIn + event.tokens_in, tokensOut: prev.tokensOut + event.tokens_out };
       return state;
     }
     case "turn_usage": {
-      const r = getRun(state, runOf(event));
+      const r = getRun(state, runOf(state, event));
       r.partialCost += event.cost_usd ?? 0;
       r.partialIn += event.input_tokens;
       r.partialOut += event.output_tokens;
@@ -47,7 +52,7 @@ export function applyTotals(state: TotalsState, event: LogEvent): TotalsState {
       // The contract allows `parent_tool_use_id` on any event; the executor sets it
       // on no `turn_start`, so this is defence only.
       if (event.parent_tool_use_id) return state;
-      const r = getRun(state, runOf(event));
+      const r = getRun(state, runOf(state, event));
       if (event.turn_number > r.maxTurn) r.maxTurn = event.turn_number;
       return state;
     }

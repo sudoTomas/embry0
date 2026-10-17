@@ -30,6 +30,19 @@ describe("AgentCard", () => {
     expect(screen.getByText("✓ Completed")).toBeInTheDocument();
   });
 
+  it.each([false, true])("names the graph node beside an agent that differs from it (expanded: %s)", (expanded) => {
+    const qa: AgentState = { ...fixtureAgents()[1], agent: "qa", node: "orchestrate_qa" };
+    render(<AgentCard agent={qa} expanded={expanded} />);
+    expect(screen.getByText("qa")).toBeInTheDocument();
+    expect(screen.queryByText("orchestrate_qa"), "a card whose node differs from its agent must name the node").not.toBeNull();
+  });
+
+  it.each([false, true])("shows the name once when the node equals the agent (expanded: %s)", (expanded) => {
+    const dev: AgentState = { ...fixtureAgents()[1], agent: "developer", node: "developer" };
+    render(<AgentCard agent={dev} expanded={expanded} />);
+    expect(screen.getAllByText("developer"), "agent === node must not repeat the name").toHaveLength(1);
+  });
+
   it("shows a failed run's error code after its summary", () => {
     const failed: AgentState = {
       ...fixtureAgents()[1],
