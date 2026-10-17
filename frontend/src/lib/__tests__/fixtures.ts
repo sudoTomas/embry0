@@ -13,8 +13,3 @@ export type FixtureName = keyof typeof RAW;
 export function loadFixture(name: FixtureName): LogEvent[] {
   return (JSON.parse(RAW[name]) as unknown[]).map(normalizeWireEvent);
 }
-
-/** The fixture as the API sends it (before normalization), for tests of the wire itself. */
-export function loadRawFixture(name: FixtureName): unknown[] {
-  return JSON.parse(RAW[name]) as unknown[];
-}

@@ -22,11 +22,9 @@ describe("reduceTotals", () => {
     const partial = reduceTotals([cost("r1", 0.004, 100, 10, 1), usage("r2", 0.02, 500, 50), usage("r2", 0.01, 300, 30)]);
     expect(partial.costUsd).toBeCloseTo(0.034, 6);
     expect(partial.tokensIn).toBe(900);
-    expect(partial.runsInFlight).toBe(1);
     const settled = reduceTotals([cost("r1", 0.004, 100, 10, 1), usage("r2", 0.02, 500, 50), usage("r2", 0.01, 300, 30), cost("r2", 0.048, 1000, 100, 2)]);
     expect(settled.costUsd).toBeCloseTo(0.052, 6);
     expect(settled.tokensIn).toBe(1100);
-    expect(settled.runsInFlight).toBe(0);
   });
 
   it("treats a null turn_usage cost as 0 and still counts its tokens", () => {
@@ -59,7 +57,7 @@ describe("reduceTotals", () => {
     expect(r.turns).toBe(5);
   });
 
-  it("does not count a subagent's turn_start towards its run's turns", () => {
+  it("defence only: a turn_start carrying parent_tool_use_id (the executor emits none) is not counted", () => {
     const sub = { ...turn("r1", 4), parent_tool_use_id: "toolu-parent" } as LogEvent;
     const r = reduceTotals([turn("r1", 1), turn("r1", 2), sub]);
     expect(r.turns).toBe(2);
@@ -74,6 +72,5 @@ describe("reduceTotals", () => {
     expect(r.tokensIn).toBe(1200 + 12000 + 2000 + 900);
     expect(r.tokensOut).toBe(80 + 1000 + 150 + 60);
     expect(r.turns).toBe(5);
-    expect(r.runsInFlight).toBe(0);
   });
 });

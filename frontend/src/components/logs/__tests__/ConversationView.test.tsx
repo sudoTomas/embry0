@@ -9,9 +9,7 @@ describe("ConversationView", () => {
     const header = screen.queryByText("Read README.md");
     expect(header, "the tool header lacks the summary").not.toBeNull();
     fireEvent.click(header!);
-    // highlightJson emits ": " after a key and keeps the source space too, so collapse whitespace.
-    const text = (document.body.textContent ?? "").replace(/\s+/g, " ");
-    expect(text, "the tool body lacks its tool_input").toContain('"file_path": "README.md"');
+    expect(document.body.textContent, "the tool body lacks its tool_input").toContain('"file_path": "README.md"');
   });
 
   it("numbers turns within each run", () => {

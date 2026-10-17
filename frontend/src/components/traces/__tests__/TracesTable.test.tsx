@@ -8,7 +8,6 @@ vi.mock("@/api/agents", () => ({
 }));
 
 import { fetchAgents } from "@/api/agents";
-import { RESULT_COLORS } from "@/lib/constants";
 import type { AgentDefinition } from "@/lib/types/agents";
 import type { TraceResponse } from "@/lib/types";
 import { TracesTable } from "../TracesTable";
@@ -48,13 +47,8 @@ function makeTrace(overrides: Partial<TraceResponse>): TraceResponse {
 const TRACES: TraceResponse[] = [
   makeTrace({ trace_id: "run-fixture-1", agent_type: "triage", result: "success" }),
   makeTrace({ trace_id: "run-fixture-2", agent_type: "developer", result: "error" }),
-  makeTrace({ trace_id: "run-fixture-3", agent_type: "reviewer", result: "running" }),
+  makeTrace({ trace_id: "run-fixture-long-trace-id-3", agent_type: "reviewer", result: "running" }),
 ];
-
-/** The component's own truncation rule for the Trace cell. */
-function shownId(id: string): string {
-  return id.length > 20 ? `${id.slice(0, 20)}...` : id;
-}
 
 function renderTable() {
   const qc = new QueryClient({
@@ -90,11 +84,11 @@ beforeEach(() => {
 });
 
 describe("TracesTable", () => {
-  it("renders every trace id the way the Trace cell truncates it", () => {
+  it("renders short trace ids whole and truncates one over 20 characters", () => {
     renderTable();
-    for (const t of TRACES) {
-      expect(screen.getByText(shownId(t.trace_id))).toBeInTheDocument();
-    }
+    expect(screen.getByText("run-fixture-1")).toBeInTheDocument();
+    expect(screen.getByText("run-fixture-2")).toBeInTheDocument();
+    expect(screen.getByText("run-fixture-long-tra...")).toBeInTheDocument();
   });
 
   it("colors each result cell with the storage result value's class", () => {
@@ -110,7 +104,6 @@ describe("TracesTable", () => {
       const row = screen.getByRole("button", { name: `View trace ${t.trace_id}` });
       const cell = within(row).getByText(t.result);
       expect(cell.tagName).toBe("TD");
-      expect(cell).toHaveClass(RESULT_COLORS[t.result]);
       expect(cell).toHaveClass(expected[t.result]);
     }
   });

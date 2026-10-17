@@ -5,7 +5,7 @@ import type { LogEvent } from "@/lib/types";
  * yet contributes its partials (a `null` turn cost counts as 0). Turns are the
  * highest top-level `turn_start.turn_number` per run. Events without `run_id`
  * (pre-contract rows) form one pseudo-run. */
-export interface Totals { costUsd: number; tokensIn: number; tokensOut: number; turns: number; runsInFlight: number }
+export interface Totals { costUsd: number; tokensIn: number; tokensOut: number; turns: number }
 
 interface RunTotals {
   settled?: { cost: number; tokensIn: number; tokensOut: number };
@@ -44,7 +44,8 @@ export function applyTotals(state: TotalsState, event: LogEvent): TotalsState {
       return state;
     }
     case "turn_start": {
-      // A subagent numbers its own turns; only the run's top-level turns count.
+      // The contract allows `parent_tool_use_id` on any event; the executor sets it
+      // on no `turn_start`, so this is defence only.
       if (event.parent_tool_use_id) return state;
       const r = getRun(state, runOf(event));
       if (event.turn_number > r.maxTurn) r.maxTurn = event.turn_number;
@@ -56,10 +57,10 @@ export function applyTotals(state: TotalsState, event: LogEvent): TotalsState {
 }
 
 export function totalsOf(state: TotalsState): Totals {
-  const out: Totals = { costUsd: 0, tokensIn: 0, tokensOut: 0, turns: 0, runsInFlight: 0 };
+  const out: Totals = { costUsd: 0, tokensIn: 0, tokensOut: 0, turns: 0 };
   for (const r of state.runs.values()) {
     if (r.settled) { out.costUsd += r.settled.cost; out.tokensIn += r.settled.tokensIn; out.tokensOut += r.settled.tokensOut; }
-    else if (r.partialIn || r.partialOut || r.partialCost) { out.costUsd += r.partialCost; out.tokensIn += r.partialIn; out.tokensOut += r.partialOut; out.runsInFlight += 1; }
+    else if (r.partialIn || r.partialOut || r.partialCost) { out.costUsd += r.partialCost; out.tokensIn += r.partialIn; out.tokensOut += r.partialOut; }
     out.turns += r.maxTurn;
   }
   return out;

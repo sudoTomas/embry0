@@ -42,8 +42,11 @@ describe("AgentCard", () => {
     expect(screen.queryByText(/ERR_TOOL_DENIED/), "a failed card must show its error code").not.toBeNull();
   });
 
-  it("labels a retried run with its attempt", () => {
-    render(<AgentCard agent={{ ...fixtureAgents()[1], attempt: 2, retryLabel: "attempt 2" }} />);
+  it("labels the fixture's retried developer run with its attempt", () => {
+    const [first, retry] = fixtureAgents().filter((a) => a.node === "developer");
+    render(<AgentCard agent={retry} />);
     expect(screen.getByText("attempt 2")).toBeInTheDocument();
+    render(<AgentCard agent={first} />);
+    expect(screen.getAllByText(/attempt \d/), "the first attempt carries no label").toHaveLength(1);
   });
 });
