@@ -13,7 +13,9 @@ function renderVirtual(ui: ReactElement, itemCount = 200) {
   );
 }
 
-const toolButton = (name: string) => screen.queryByRole("button", { name: new RegExp(`^${name}(?![a-z])`) });
+// The first card for a tool; the fixture's retried developer run calls Bash a second time.
+const toolButton = (name: string) =>
+  screen.queryAllByRole("button", { name: new RegExp(`^${name}(?![a-z])`) })[0] ?? null;
 
 describe("StructuredView", () => {
   it("renders a card per top-level tool call; subagent calls nest inside their parent", () => {
@@ -52,7 +54,7 @@ describe("StructuredView", () => {
 
   it("marks turns by their turn_number", () => {
     renderVirtual(<StructuredView events={loadFixture("issue-to-pr")} />);
-    expect(screen.queryAllByText("Turn 1"), "Turn 1 markers (one per run)").toHaveLength(3);
+    expect(screen.queryAllByText("Turn 1"), "Turn 1 markers (one per run)").toHaveLength(4);
     expect(screen.queryAllByText("Turn 2"), "the developer run's Turn 2 marker").toHaveLength(1);
   });
 

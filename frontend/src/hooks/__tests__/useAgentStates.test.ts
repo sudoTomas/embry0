@@ -98,14 +98,23 @@ describe("useAgentStates", () => {
     expect(noGraph.agents.filter((a) => a.status === "pending"), "no graph means no pending cards").toEqual([]);
   });
 
-  it("an error event marks the run failed with its message and code", () => {
+  it("a run-ending error marks the run failed with its message and code", () => {
     const { agents } = run([
       ...started("developer", "r1"),
-      { type: "error", node: "developer", run_id: "r1", message: "Tool denied", code: "ERR_TOOL_DENIED", timestamp: t },
+      { type: "error", node: "developer", run_id: "r1", message: "Agent crashed", code: "ERR_AGENT_CRASHED", timestamp: t },
     ]);
     expect(agents[0].status).toBe("failed");
-    expect(agents[0].summary).toBe("Tool denied");
-    expect(agents[0].errorCode, "the error's code must reach the card").toBe("ERR_TOOL_DENIED");
+    expect(agents[0].summary).toBe("Agent crashed");
+    expect(agents[0].errorCode, "the error's code must reach the card").toBe("ERR_AGENT_CRASHED");
+  });
+
+  it("a tool-level error (tool_name set) leaves the run running", () => {
+    const { agents } = run([
+      ...started("developer", "r1"),
+      { type: "error", node: "developer", run_id: "r1", message: "Tool denied", code: "ERR_TOOL_DENIED", tool_name: "Bash", timestamp: t },
+    ]);
+    expect(agents[0].status, "a recoverable tool denial must not fail the card").toBe("running");
+    expect(agents[0].errorCode).toBeUndefined();
   });
 
   it("prUrl comes from pr_created", () => {
@@ -160,18 +169,37 @@ describe("useAgentStates", () => {
     expect(ok.agents[0].summary).toBe("done");
   });
 
-  it("the issue-to-pr fixture yields three runs in node order with the fixture's costs", () => {
+  it("the issue-to-pr fixture yields four runs in node order with the fixture's costs", () => {
     const { agents } = run(loadFixture("issue-to-pr"));
-    expect(agents.map((a) => a.runId)).toEqual(["run-fixture-1", "run-fixture-2", "run-fixture-3"]);
-    expect(agents.map((a) => a.node)).toEqual(["triage", "developer", "review"]);
-    expect(agents.map((a) => a.costUsd)).toEqual([0.0042, 0.048, 0.003]);
+    expect(agents.map((a) => a.runId)).toEqual(["run-fixture-1", "run-fixture-2", "run-fixture-3", "run-fixture-4"]);
+    expect(agents.map((a) => a.node)).toEqual(["triage", "developer", "developer", "review"]);
+    expect(agents.map((a) => a.costUsd)).toEqual([0.0042, 0.048, 0.0068, 0.003]);
     expect(agents[1].toolCalls.map((c) => c.tool_name), "Grep must nest under Task").toEqual(["Task", "Bash", "Edit"]);
     expect(agents[1].toolCalls[0].children).toHaveLength(1);
   });
 
+  it("the issue-to-pr fixture's retried developer is two cards, each with its own calls", () => {
+    const { agents } = run(loadFixture("issue-to-pr"));
+    const dev = agents.filter((a) => a.node === "developer");
+    expect(dev, "the retried developer must be two cards").toHaveLength(2);
+    expect(dev.map((a) => a.attempt)).toEqual([1, 2]);
+    expect(dev[1].retryLabel).toBe("attempt 2");
+    expect(dev[1].toolCalls.map((c) => c.input), "attempt 2 keeps its own call").toEqual(["pytest -q"]);
+  });
+
+  it("the legacy-rows fixture: the reviewer's rows (node = agent type) attach to its card", () => {
+    const { agents } = run(loadFixture("legacy-rows"));
+    const reviewer = agents.find((a) => a.node === "review");
+    expect(reviewer, "no reviewer card").toBeDefined();
+    expect(reviewer!.toolCalls, "the legacy reviewer's tool call did not attach").toMatchObject([
+      { tool_id: "legacy-2", input: "cli.py", result: "import argparse" },
+    ]);
+    expect(reviewer!.costUsd, "the legacy reviewer's cost did not attach").toBe(0.02);
+  });
+
   it("a pre-contract agent_started without run_id still gets a card for its node", () => {
     const { agents } = run(loadFixture("legacy-rows"));
-    expect(agents.map((a) => a.node), "a pre-contract job must not lose its agent card").toEqual(["developer"]);
+    expect(agents.map((a) => a.node), "a pre-contract job must not lose its agent cards").toEqual(["developer", "review"]);
     expect(agents[0].toolCalls).toMatchObject([{ tool_id: "legacy-1", input: "ls -la", result: "total 0" }]);
   });
 });

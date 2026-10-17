@@ -218,12 +218,69 @@ def issue_to_pr() -> list[dict[str, Any]]:
         )
     )
     s.add(ev.node_completed(node="developer", attempt=1, agent="developer", ok=True, deliverables=0))
+    # developer again: a retried node is a second run of the same node
+    s.add(ev.node_started(node="developer", attempt=2, agent="developer"))
+    r3 = dict(run_id="run-fixture-3", node="developer", agent="developer")
+    s.add(ev.agent_started(model="claude-opus-5-5", max_turns=50, **r3))
+    s.add(ev.turn_start(turn_number=1, model="claude-opus-5-5", **r3))
+    s.add(
+        ev.tool_call(
+            tool_id="toolu_fx_04",
+            tool_name="Bash",
+            summary="pytest -q",
+            tool_input={"command": "pytest -q"},
+            **r3,
+        )
+    )
+    s.add(ev.tool_result(tool_id="toolu_fx_04", content="3 passed", is_error=False, **r3))
+    s.add(
+        ev.turn_usage(
+            input_tokens=2000,
+            output_tokens=150,
+            cache_read_tokens=1000,
+            cache_creation_tokens=0,
+            cost_usd=0.0068,
+            model="claude-opus-5-5",
+            **r3,
+        )
+    )
+    s.add(
+        ev.cost_update(
+            cost_usd=0.0068,
+            duration_ms=9000,
+            duration_api_ms=8000,
+            num_turns=1,
+            tokens_in=2000,
+            tokens_out=150,
+            cache_read_tokens=1000,
+            cache_creation_tokens=0,
+            **r3,
+        )
+    )
+    s.add(
+        ev.agent_completed(
+            is_error=False,
+            error_code=None,
+            error_message="",
+            output="The tests pass.",
+            cost_usd=0.0068,
+            duration_ms=9000,
+            tools_called={"Bash": 1},
+            policy_denials={},
+            input_tokens=2000,
+            output_tokens=150,
+            cache_read_tokens=1000,
+            cache_creation_tokens=0,
+            **r3,
+        )
+    )
+    s.add(ev.node_completed(node="developer", attempt=2, agent="developer", ok=True, deliverables=0))
     # review, then a human interrupt, then the PR
     s.add(ev.node_started(node="review", attempt=1, agent="reviewer"))
-    r3 = dict(run_id="run-fixture-3", node="review", agent="reviewer")
-    s.add(ev.agent_started(model="claude-sonnet-5-5", max_turns=20, **r3))
-    s.add(ev.turn_start(turn_number=1, model="claude-sonnet-5-5", **r3))
-    s.add(ev.text(text="LGTM with one nit.", **r3))
+    r4 = dict(run_id="run-fixture-4", node="review", agent="reviewer")
+    s.add(ev.agent_started(model="claude-sonnet-5-5", max_turns=20, **r4))
+    s.add(ev.turn_start(turn_number=1, model="claude-sonnet-5-5", **r4))
+    s.add(ev.text(text="LGTM with one nit.", **r4))
     s.add(
         ev.cost_update(
             cost_usd=0.003,
@@ -234,7 +291,7 @@ def issue_to_pr() -> list[dict[str, Any]]:
             tokens_out=60,
             cache_read_tokens=0,
             cache_creation_tokens=0,
-            **r3,
+            **r4,
         )
     )
     s.add(
@@ -251,7 +308,7 @@ def issue_to_pr() -> list[dict[str, Any]]:
             output_tokens=60,
             cache_read_tokens=0,
             cache_creation_tokens=0,
-            **r3,
+            **r4,
         )
     )
     s.add(ev.review_decision(decision="approve", summary="LGTM with one nit.", node="review"))
@@ -279,7 +336,7 @@ def issue_to_pr() -> list[dict[str, Any]]:
             error_code=None,
             error_message=None,
             pr_url="https://forge.example.test/org/repo/pull/1",
-            total_cost_usd=0.0552,
+            total_cost_usd=0.062,
         )
     )
     return s.events
@@ -407,6 +464,39 @@ def legacy_rows() -> list[dict[str, Any]]:
             "num_turns": 1,
             "timestamp": t,
             "event_seq": 31,
+        },
+        # The old executor stamped node = agent type on what a run emitted, so the
+        # reviewer's rows say "reviewer" while its node_started says "review".
+        {"type": "node_started", "node": "review", "timestamp": t, "event_seq": 34},
+        {"type": "agent_started", "agent": "reviewer", "timestamp": t, "event_seq": 37},
+        {
+            "type": "tool_call",
+            "tool_id": "legacy-2",
+            "tool_name": "Read",
+            "input": "cli.py",
+            "tool_input": {"file_path": "cli.py"},
+            "node": "reviewer",
+            "timestamp": t,
+            "event_seq": 40,
+        },
+        {
+            "type": "tool_result",
+            "tool_use_id": "legacy-2",
+            "content": "import argparse",
+            "is_error": False,
+            "node": "reviewer",
+            "timestamp": t,
+            "event_seq": 43,
+        },
+        {
+            "type": "cost_update",
+            "cost_usd": 0.02,
+            "tokens_in": 20,
+            "tokens_out": 8,
+            "num_turns": 1,
+            "node": "reviewer",
+            "timestamp": t,
+            "event_seq": 46,
         },
     ]
 

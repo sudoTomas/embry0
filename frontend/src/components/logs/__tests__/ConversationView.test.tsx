@@ -16,14 +16,15 @@ describe("ConversationView", () => {
 
   it("numbers turns within each run", () => {
     render(<ConversationView events={loadFixture("issue-to-pr")} />);
-    expect(screen.queryAllByText("Turn 1"), "Turn 1 once per run").toHaveLength(3);
+    expect(screen.queryAllByText("Turn 1"), "Turn 1 once per run").toHaveLength(4);
     expect(screen.queryAllByText("Turn 2"), "only the developer run has a Turn 2").toHaveLength(1);
   });
 
   it("separates runs with a divider naming node and agent", () => {
     render(<ConversationView events={loadFixture("issue-to-pr")} />);
     expect(screen.queryByText("Run 2 · developer · developer"), "no divider before the developer run").not.toBeNull();
-    expect(screen.queryByText("Run 3 · review · reviewer"), "no divider before the review run").not.toBeNull();
+    expect(screen.queryByText("Run 3 · developer · developer"), "no divider before the retried developer run").not.toBeNull();
+    expect(screen.queryByText("Run 4 · review · reviewer"), "no divider before the review run").not.toBeNull();
   });
 
   it("pre-contract job: the tool call shows its summary", () => {

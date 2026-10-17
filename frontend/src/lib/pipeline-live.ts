@@ -96,12 +96,16 @@ export function deriveNodeStates(
 
     if (event.type === "cost_update") {
       // Attribute to the graph node currently running on the event's own
-      // physical node; a legacy row without `node` falls back to whichever
-      // node is running last (the stream was single-agent-at-a-time).
+      // physical node. A pre-contract row has no run_id and either no `node`
+      // or the agent type as `node` (the old executor stamped
+      // `node = agent_type`, so a reviewer row says `reviewer` while its
+      // node_started says `review`); it falls back to whichever node is
+      // running last (the stream was single-agent-at-a-time).
       const own = eventNode(event);
+      const lastRunning = [...runningNodeByPhysical.values()].at(-1);
       const running = own
-        ? runningNodeByPhysical.get(own)
-        : [...runningNodeByPhysical.values()].at(-1);
+        ? (runningNodeByPhysical.get(own) ?? (event.run_id ? undefined : lastRunning))
+        : lastRunning;
       if (running) {
         // One cost_update per run, carrying that run's delta: a retried
         // node's attempts add up.
@@ -145,14 +149,17 @@ export function deriveNodeStates(
         startedAt && timestamp
           ? Math.max(0, (new Date(timestamp).getTime() - new Date(startedAt).getTime()) / 1000)
           : 0;
-      upsert(target, { state: "completed", duration_seconds: duration });
+      // A run-ending error already failed the node; completing it must not hide that.
+      const state = states[target]?.state === "failed" ? "failed" : "completed";
+      upsert(target, { state, duration_seconds: duration });
       runningNodeByPhysical.delete(phys);
     } else if (event.type === "error") {
+      // An error naming a tool is a recoverable denial: the run goes on.
+      if (event.tool_name) continue;
+      // Fail the node but keep it running-registered, so the run's later
+      // cost_update and node_completed still land on it.
       const target = runningNodeByPhysical.get(phys);
-      if (target) {
-        upsert(target, { state: "failed" });
-        runningNodeByPhysical.delete(phys);
-      }
+      if (target) upsert(target, { state: "failed" });
     }
   }
 

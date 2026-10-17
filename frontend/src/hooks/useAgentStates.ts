@@ -119,8 +119,10 @@ export function useAgentStates(
         return;
       }
       if (event.type === "agent_started") {
-        // A pre-contract agent_started carries neither run_id nor (always) node;
-        // it still opens a card, for the node that last started.
+        // A pre-contract agent_started carries neither run_id nor node; it opens
+        // a card for the node that last started. The old executor stamped that
+        // run's later rows with `node` = agent type (`reviewer` under `review`),
+        // so the legacy run is also found under its agent.
         const runNode = node || lastStartedNode;
         const runId = event.run_id ?? `legacy:${index}`;
         const state = makeAgentState(runId, runNode, event.agent ?? runNode, attemptByNode.get(runNode) ?? 1, "running");
@@ -128,6 +130,7 @@ export function useAgentStates(
         state.startedAt = event.timestamp;
         runs.set(runId, state);
         latestRunByNode.set(runNode, runId);
+        if (!event.run_id && event.agent) latestRunByNode.set(event.agent, runId);
         state.events.push(event);
         return;
       }
@@ -202,6 +205,8 @@ export function useAgentStates(
           agent.durationMs = event.duration_ms;
           break;
         case "error":
+          // An error naming a tool is a recoverable denial: the run goes on.
+          if (event.tool_name) break;
           agent.status = "failed";
           agent.summary = event.message;
           agent.errorCode = event.code;

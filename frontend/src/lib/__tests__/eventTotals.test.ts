@@ -68,12 +68,12 @@ describe("reduceTotals", () => {
   it("matches job_finished.total_cost_usd over the issue-to-pr fixture", () => {
     const events = loadFixture("issue-to-pr");
     const finished = events.find((e) => e.type === "job_finished");
-    expect(finished?.type === "job_finished" && finished.total_cost_usd).toBeCloseTo(0.0552, 6);
+    expect(finished?.type === "job_finished" && finished.total_cost_usd).toBeCloseTo(0.062, 6);
     const r = reduceTotals(events);
-    expect(r.costUsd).toBeCloseTo(0.0552, 6);
-    expect(r.tokensIn).toBe(1200 + 12000 + 900);
-    expect(r.tokensOut).toBe(80 + 1000 + 60);
-    expect(r.turns).toBe(4);
+    expect(r.costUsd).toBeCloseTo(0.062, 6);
+    expect(r.tokensIn).toBe(1200 + 12000 + 2000 + 900);
+    expect(r.tokensOut).toBe(80 + 1000 + 150 + 60);
+    expect(r.turns).toBe(5);
     expect(r.runsInFlight).toBe(0);
   });
 });

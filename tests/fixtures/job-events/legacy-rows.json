@@ -57,5 +57,48 @@
     "tokens_in": 10,
     "tokens_out": 5,
     "type": "cost_update"
+  },
+  {
+    "event_seq": 34,
+    "node": "review",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "type": "node_started"
+  },
+  {
+    "agent": "reviewer",
+    "event_seq": 37,
+    "timestamp": "2026-01-01T00:00:00Z",
+    "type": "agent_started"
+  },
+  {
+    "event_seq": 40,
+    "input": "cli.py",
+    "node": "reviewer",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "tool_id": "legacy-2",
+    "tool_input": {
+      "file_path": "cli.py"
+    },
+    "tool_name": "Read",
+    "type": "tool_call"
+  },
+  {
+    "content": "import argparse",
+    "event_seq": 43,
+    "is_error": false,
+    "node": "reviewer",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "tool_use_id": "legacy-2",
+    "type": "tool_result"
+  },
+  {
+    "cost_usd": 0.02,
+    "event_seq": 46,
+    "node": "reviewer",
+    "num_turns": 1,
+    "timestamp": "2026-01-01T00:00:00Z",
+    "tokens_in": 20,
+    "tokens_out": 8,
+    "type": "cost_update"
   }
 ]
