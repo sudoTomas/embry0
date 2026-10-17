@@ -171,10 +171,11 @@ RESERVED_ENV_PREFIXES: Final[tuple[str, ...]] = (
 #             (a file the CLI loads into its Bash tool's environment).
 #   BUN_    - the agent CLI's runtime: BUN_OPTIONS, and BUN_CONFIG_VERBOSE_FETCH,
 #             which logs the CLI's requests.
+#   GROK_   - Grok Build: auth provider command, endpoint overrides, home/config paths.
 # Kept apart from RESERVED_ENV_PREFIXES: config_lint reads that tuple as "the
 # orchestrator injects this family, so skip typo checks", and a CLAUDE_ typo
 # in the orchestrator's own env must still be reported.
-HOOK_ENV_PREFIXES: Final[tuple[str, ...]] = ("GIT_", "CLAUDE_", "BUN_")
+HOOK_ENV_PREFIXES: Final[tuple[str, ...]] = ("GIT_", "CLAUDE_", "BUN_", "GROK_")
 
 
 @dataclass(frozen=True)
