@@ -103,7 +103,13 @@ export function deriveNodeStates(
         ? runningNodeByPhysical.get(own)
         : [...runningNodeByPhysical.values()].at(-1);
       if (running) {
-        upsert(running, { cost_usd: event.cost_usd, turns: event.num_turns });
+        // One cost_update per run, carrying that run's delta: a retried
+        // node's attempts add up.
+        const prev = states[running];
+        upsert(running, {
+          cost_usd: (prev?.cost_usd ?? 0) + event.cost_usd,
+          turns: (prev?.turns ?? 0) + event.num_turns,
+        });
       }
       continue;
     }

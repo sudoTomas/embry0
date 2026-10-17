@@ -131,6 +131,18 @@ describe("deriveNodeStates (RAV-1285)", () => {
     expect(states.reviewer.cost_usd, "the reviewer did not spend developer's cost").toBe(0);
   });
 
+  it("a retried node's cost and turns sum its runs' cost_update deltas", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "developer", attempt: 1 }),
+      ev({ type: "cost_update", node: "developer", cost_usd: 0.5, num_turns: 3 }),
+      ev({ type: "node_completed", node: "developer", attempt: 1 }),
+      ev({ type: "node_started", node: "developer", attempt: 2 }),
+      ev({ type: "cost_update", node: "developer", cost_usd: 0.25, num_turns: 2 }),
+    ]);
+    expect(states.developer.cost_usd, "cost_update is a per-run delta; attempts add up").toBe(0.75);
+    expect(states.developer.turns, "turns add up across attempts").toBe(5);
+  });
+
   it("a partial job closes its running node", () => {
     const states = deriveNodeStates(GRAPH, [ev({ type: "node_started", node: "developer" })], "partial");
     expect(states.developer.state, "partial is terminal").not.toBe("running");
