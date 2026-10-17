@@ -1,6 +1,6 @@
 # Organizations: hold the owner, discover its repositories, say what embry0 needs
 
-Status: slices 1, 2 and 3 of 8 built (ADR 0010, ADR 0011).
+Status: slices 1, 2 and 3 of 8 built (ADR 0010, ADR 0011), plus the organization webhook (ADR 0012).
 
 ## Problem
 

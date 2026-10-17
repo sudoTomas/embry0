@@ -144,6 +144,7 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
         "decision: string",
     ],
     "org_get": ["owner: string"],
+    "org_webhook_install": ["confirm: boolean = false", "owner: string"],
     "org_list": ["include_removed: boolean = false"],
     "org_needs": ["owner: string"],
     "org_register": [
@@ -228,6 +229,7 @@ async def test_every_confirm_gated_tool_defaults_to_refusing():
         "job_resume",
         "merge_decide",
         "org_register",
+        "org_webhook_install",
         "qa_config_set",
         "repo_register",
     }

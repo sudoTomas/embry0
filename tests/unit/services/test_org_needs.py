@@ -438,6 +438,25 @@ async def test_a_repository_the_newest_run_did_not_list_needs_nothing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_repository_only_the_webhook_receiver_recorded_is_not_registered() -> None:
+    """ADR 0012: an organization webhook delivery for a repository no run has
+    listed leaves a fact row no run stamped. It is not registered as far as
+    embry0 knows, and nothing else is known of it."""
+    service, needs, cases = _service(ROWS)
+    facts = service._facts  # type: ignore[attr-defined]
+    bare = {"owner": "acme", "run_id": None, "archived": False}
+    facts.rows.append({**bare, "repo": "acme/new", "facts": {"registered": False, "webhook_events": 1}})
+    # Registered by the gate (auto_register), never discovered: no need is guessed from facts nobody saw.
+    facts.rows.append({**bare, "repo": "acme/joined", "facts": {"registered": True, "active": True}})
+    listing = await service.sync("acme")
+    by_kind = {n["kind"]: n for n in listing["needs"]}
+    assert by_kind["not_registered"]["repos"] == ["acme/api", "acme/new"]
+    assert [n["kind"] for n in listing["needs"] if "acme/new" in n["repos"]] == ["not_registered"]
+    assert not any("acme/joined" in n["repos"] for n in listing["needs"])
+    assert listing["run_id"] == "odr-1"
+
+
+@pytest.mark.asyncio
 async def test_closing_the_case_elsewhere_dismisses_the_need_and_it_stays_dismissed() -> None:
     """Rejecting the case on the Proposals list is the same answer as
     dismissing the need: the next sync keeps it dismissed and files nothing."""

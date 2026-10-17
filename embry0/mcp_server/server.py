@@ -6,9 +6,9 @@ Run via the ``embry0-mcp`` console script (stdio transport). Configure with
 Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``job_answer``, ``agent_update``, ``agent_reset``, ``env_set``, ``env_delete``,
 ``merge_decide``, ``case_accept``, ``case_close``, ``repo_register``,
-``org_register``, ``qa_config_set``, ``credential_bind``,
-``host_import_tailnet``) require ``confirm=true``; without it they return an
-instructive refusal instead of acting.
+``org_register``, ``org_webhook_install``, ``qa_config_set``,
+``credential_bind``, ``host_import_tailnet``) require ``confirm=true``; without
+it they return an instructive refusal instead of acting.
 """
 
 from __future__ import annotations
@@ -760,6 +760,19 @@ async def host_import_tailnet(credential_id: str = "", confirm: bool = False) ->
     if not confirm:
         return _confirmation_refusal("host_import_tailnet", "import hosts from the tailnet's devices")
     return await _get_client().host_import_tailnet(credential_id=credential_id)
+
+
+@_tool
+async def org_webhook_install(owner: str, confirm: bool = False) -> dict[str, Any]:
+    """Install one GitHub webhook on the organization itself, firing for every
+    repository under ``owner`` (present and future) and pointing at this
+    deployment's public webhook route, signed with its webhook secret. Refused
+    unless the stored credential was probed able to manage hooks. Idempotent:
+    a hook already pointing here answers outcome=already. Requires confirm=true
+    (writes to the forge)."""
+    if not confirm:
+        return _confirmation_refusal("org_webhook_install", f"install an organization webhook on {owner!r}")
+    return await _get_client().org_webhook_install(owner)
 
 
 @_tool

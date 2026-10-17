@@ -5,7 +5,7 @@ import pytest
 from embry0.services.org_discovery import RepoFacts
 from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import run_migrations
-from embry0.storage.repositories.org_repos import OrgReposRepository
+from embry0.storage.repositories.org_repos import WEBHOOK_DELIVERY_IDS_KEPT, OrgReposRepository
 from embry0.storage.repositories.organizations import OrganizationsRepository
 
 pytestmark = pytest.mark.requires_postgres
@@ -91,3 +91,131 @@ async def test_facts_replace_per_repo_and_runs_keep_history(facts_repo: OrgRepos
     assert [r["repo"] for r in await facts_repo.list_for_owner("acme", include_archived=False)] == ["acme/web"]
     runs = await facts_repo.list_runs("acme")
     assert [r["status"] for r in runs] == ["error", "done"]
+
+
+@pytest.mark.asyncio
+async def test_patch_merges_settings_and_keeps_the_rest(orgs_repo: OrganizationsRepository) -> None:
+    await orgs_repo.register("acme", "github", settings={"tracker": "github"}, display_name="Acme")
+    patched = await orgs_repo.patch("Acme", settings={"auto_register": True})
+    assert patched is not None
+    assert patched.settings == {"tracker": "github", "auto_register": True}
+    assert patched.display_name == "Acme"
+    renamed = await orgs_repo.patch("acme", display_name="Acme Inc")
+    assert renamed is not None and renamed.display_name == "Acme Inc"
+    assert renamed.settings == {"tracker": "github", "auto_register": True}
+    assert await orgs_repo.patch("nobody", settings={"auto_register": True}) is None
+
+
+@pytest.mark.asyncio
+async def test_note_webhook_event_creates_a_bare_fact_row_and_counts_deliveries(
+    facts_repo: OrgReposRepository,
+) -> None:
+    created = await facts_repo.note_webhook_event(
+        "Acme", "acme/widgets", event="issues", action="opened", delivery_id="d-1", registered=False
+    )
+    again = await facts_repo.note_webhook_event(
+        "acme", "acme/widgets", event="push", action="", delivery_id="d-2", registered=False
+    )
+    assert (created, again) == (True, False), "only the first delivery creates the row"
+    rows = await facts_repo.list_for_owner("acme")
+    assert [r["repo"] for r in rows] == ["acme/widgets"]
+    assert rows[0]["run_id"] is None
+    assert rows[0]["facts"] == {
+        "registered": False,
+        "webhook_events": 2,
+        "last_webhook_event": {"event": "push", "action": "", "delivery_id": "d-2"},
+        "webhook_delivery_ids": ["d-1", "d-2"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_redelivery_is_counted_once(facts_repo: OrgReposRepository) -> None:
+    for delivery in ("d-1", "d-1", "d-2", "d-1", "d-2"):
+        await facts_repo.note_webhook_event(
+            "acme", "acme/widgets", event="issues", action="opened", delivery_id=delivery, registered=False
+        )
+    facts = (await facts_repo.list_for_owner("acme"))[0]["facts"]
+    assert facts["webhook_events"] == 2
+    assert facts["webhook_delivery_ids"] == ["d-1", "d-2"]
+    assert facts["last_webhook_event"]["delivery_id"] == "d-2"
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_without_an_id_is_counted_every_time(facts_repo: OrgReposRepository) -> None:
+    for delivery in (None, "d-1", None):
+        await facts_repo.note_webhook_event(
+            "acme", "acme/widgets", event="issues", action="opened", delivery_id=delivery, registered=False
+        )
+    facts = (await facts_repo.list_for_owner("acme"))[0]["facts"]
+    assert facts["webhook_events"] == 3
+    assert facts["webhook_delivery_ids"] == ["d-1"]
+
+
+@pytest.mark.asyncio
+async def test_the_remembered_delivery_ids_are_bounded_to_the_latest(facts_repo: OrgReposRepository) -> None:
+    total = WEBHOOK_DELIVERY_IDS_KEPT + 3
+    for n in range(total):
+        await facts_repo.note_webhook_event(
+            "acme", "acme/widgets", event="issues", action="opened", delivery_id=f"d-{n}", registered=False
+        )
+    facts = (await facts_repo.list_for_owner("acme"))[0]["facts"]
+    assert facts["webhook_events"] == total
+    assert facts["webhook_delivery_ids"] == [f"d-{n}" for n in range(3, total)]
+    await facts_repo.note_webhook_event(
+        "acme", "acme/widgets", event="issues", action="opened", delivery_id=f"d-{total - 1}", registered=False
+    )
+    assert (await facts_repo.list_for_owner("acme"))[0]["facts"]["webhook_events"] == total
+
+
+@pytest.mark.asyncio
+async def test_note_webhook_event_keeps_discovery_facts_and_marks_a_registration(
+    facts_repo: OrgReposRepository,
+) -> None:
+    run = await facts_repo.start_run("acme")
+    await facts_repo.upsert_fact(
+        RepoFacts(owner="acme", repo="acme/widgets", default_branch="main", facts={"registered": False, "ci": True}),
+        run_id=run["id"],
+    )
+    before = (await facts_repo.list_for_owner("acme"))[0]
+    await facts_repo.note_webhook_event(
+        "acme", "acme/widgets", event="issues", action="opened", delivery_id=None, registered=True
+    )
+    after = (await facts_repo.list_for_owner("acme"))[0]
+    assert after["run_id"] == run["id"]
+    assert after["default_branch"] == "main"
+    assert after["seen_at"] == before["seen_at"]
+    assert after["facts"] == {
+        "ci": True,
+        "registered": True,
+        "active": True,
+        "webhook_events": 1,
+        "last_webhook_event": {"event": "issues", "action": "opened", "delivery_id": None},
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_rescan_replaces_discovery_facts_but_keeps_the_delivery_record(
+    facts_repo: OrgReposRepository,
+) -> None:
+    await facts_repo.note_webhook_event(
+        "acme", "acme/widgets", event="issues", action="opened", delivery_id="d-1", registered=False
+    )
+    run = await facts_repo.start_run("acme")
+    await facts_repo.upsert_fact(
+        RepoFacts(owner="acme", repo="acme/widgets", default_branch="main", facts={"registered": True, "ci": False}),
+        run_id=run["id"],
+    )
+    row = (await facts_repo.list_for_owner("acme"))[0]
+    assert row["run_id"] == run["id"]
+    assert row["facts"] == {
+        "registered": True,
+        "ci": False,
+        "webhook_events": 1,
+        "last_webhook_event": {"event": "issues", "action": "opened", "delivery_id": "d-1"},
+        "webhook_delivery_ids": ["d-1"],
+    }
+    # The kept ids still dedupe after the rescan.
+    await facts_repo.note_webhook_event(
+        "acme", "acme/widgets", event="issues", action="opened", delivery_id="d-1", registered=False
+    )
+    assert (await facts_repo.list_for_owner("acme"))[0]["facts"]["webhook_events"] == 1

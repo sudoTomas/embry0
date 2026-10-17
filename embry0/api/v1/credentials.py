@@ -632,23 +632,41 @@ async def set_repo_credentials(full_repo: str, req: BindingsSet, request: Reques
         except ValueError as exc:  # DEFAULT_FORGE empty: the repo needs an explicit forge first
             raise HTTPException(status_code=422, detail=str(exc)) from None
     try:
-        await st.credentials_repo.replace_bindings(
-            "repo",
-            full_repo.lower(),
+        await bind_repo_credentials(
+            request,
+            full_repo,
             [b.model_dump() for b in req.bindings],
-            created_by=request_actor(request),
             repo_forge=row["forge"],
+            actor=request_actor(request),
         )
     except BindingValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    await _audit(
-        request,
+    return await get_repo_credentials(full_repo, request)
+
+
+async def bind_repo_credentials(
+    request: Request, full_repo: str, bindings: list[dict[str, Any]], *, repo_forge: str, actor: str
+) -> None:
+    """Replace one repository's credential bindings, audit it and drop the
+    resolver's cache.
+
+    The one path a repository binding takes: this API, and a webhook delivery
+    that auto-registers a repository under an organization (ADR 0012). Raises
+    :class:`BindingValidationError`, having written nothing, when a binding
+    does not fit the repository.
+    """
+    scope_value = full_repo.lower()
+    st = _state(request)
+    await st.credentials_repo.replace_bindings("repo", scope_value, bindings, created_by=actor, repo_forge=repo_forge)
+    await emit_audit(
+        st.db,
         "credential.bound",
-        {
+        actor=actor,
+        details={
             "scope_kind": "repo",
-            "scope_value": full_repo.lower(),
-            "credential_ids": [b.credential_id for b in req.bindings],
+            "scope_value": scope_value,
+            "credential_ids": [b["credential_id"] for b in bindings],
         },
+        audit_log_path=st.config.audit_log_path,
     )
     _invalidate_resolver(request)
-    return await get_repo_credentials(full_repo, request)

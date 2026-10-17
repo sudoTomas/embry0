@@ -10,6 +10,7 @@ there. Discovery, the needs list and the wizard build on it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -21,6 +22,25 @@ logger = structlog.get_logger(__name__)
 
 FORGES = ("github", "gitlab")
 STATUSES = ("active", "paused", "removed")
+
+# The settings an organization row may carry, with the type each one takes.
+# auto_register: a webhook delivery for a repository under this owner that is
+# not registered registers it, bound to the organization's credential, before
+# the delivery is handled, instead of only recording the need.
+SETTINGS: dict[str, type] = {"auto_register": bool}
+
+
+def validate_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
+    """The settings a PATCH may write: known keys, right types, nothing else."""
+    out: dict[str, Any] = {}
+    for key, value in settings.items():
+        expected = SETTINGS.get(key)
+        if expected is None:
+            raise ValueError(f"unknown setting {key!r}; known settings: {', '.join(sorted(SETTINGS))}")
+        if type(value) is not expected:
+            raise ValueError(f"setting {key!r} must be {expected.__name__}")
+        out[key] = value
+    return out
 
 
 @dataclass

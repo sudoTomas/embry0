@@ -18,10 +18,14 @@ import structlog
 from fastapi import APIRouter, Header, Request
 
 from embry0.api.trigger_context import adopt_linear_sync, linear_trigger_context, resolve_trigger_labels
+from embry0.api.v1.credentials import bind_repo_credentials
+from embry0.api.v1.org_needs import needs_service
 from embry0.api.webhook_ingress import SignatureScheme, parse_webhook_body, verify_webhook
+from embry0.audit.helpers import emit_audit
 from embry0.notifications.inbound_dispatch import apply_inbound_directives
 from embry0.notifications.inbound_parser import parse_answer_directives
 from embry0.services.answer_recorder import record_answer
+from embry0.services.organizations import Organization
 from embry0.services.pr_review.triggers import has_review_command
 from embry0.trackers import TriggerContext, actor_of
 from embry0.trackers.author_association import check_comment_author, parse_author_roles
@@ -155,10 +159,129 @@ async def github_webhook(
     event_type = x_github_event
     logger.info("webhook_received", event_type=event_type, action=action)
 
+    # Additive (ADR 0012): the gate may record and register, but every
+    # delivery goes on to the handlers below exactly as it would without it.
+    auto_registered = await _organization_gate(request, payload, event_type, action)
+
     handler = _GITHUB_EVENT_HANDLERS.get(event_type)
     if handler is None:
-        return {"status": "ignored", "event": event_type, "action": action}
-    return await handler(request, payload, action)
+        result: dict[str, Any] = {"status": "ignored", "event": event_type, "action": action}
+    else:
+        result = await handler(request, payload, action)
+    return {**result, "auto_registered": auto_registered} if auto_registered else result
+
+
+async def _organization_gate(request: Request, payload: dict[str, Any], event_type: str, action: str) -> str | None:
+    """A delivery for a repository embry0 does not know, under an owner it does (ADR 0012).
+
+    An organization webhook fires for every repository under the owner, so
+    deliveries arrive for repositories nobody registered. For an owner that is
+    a registered, active GitHub organization the delivery is recorded on the
+    repository's fact row, which is the need ``not_registered``; with the
+    organization's ``auto_register`` setting on, the repository is registered
+    under it, and bound to its credential, first.
+
+    Additive: the delivery then reaches the same handlers it reaches without
+    organizations, and a failure in here is logged, never answered as an
+    error. Returns the repository when it was just registered, else ``None``.
+    """
+    try:
+        return await _record_organization_delivery(request, payload, event_type, action)
+    except Exception:
+        logger.warning("webhook_organization_gate_failed", event_type=event_type, action=action, exc_info=True)
+        return None
+
+
+async def _record_organization_delivery(
+    request: Request, payload: dict[str, Any], event_type: str, action: str
+) -> str | None:
+    state = request.app.state
+    orgs_repo = getattr(state, "organizations_repo", None)
+    repos_repo = getattr(state, "repos_repo", None)
+    if orgs_repo is None or repos_repo is None:
+        return None
+    repo_name = str((payload.get("repository") or {}).get("full_name") or "")
+    if "/" not in repo_name:
+        return None
+    if await repos_repo.registered_as(repo_name):
+        return None
+    org = await orgs_repo.get(repo_name.split("/", 1)[0])
+    # This is the GitHub receiver: a GitLab group that happens to share the
+    # owner's name is a different owner.
+    if org is None or org.status != "active" or org.forge != "github":
+        return None
+
+    auto = org.settings.get("auto_register") is True
+    delivery_id = request.headers.get("X-GitHub-Delivery")
+    if auto:
+        await repos_repo.register(
+            repo_name, notes=f"registered from a webhook delivery under organization {org.owner}", forge=org.forge
+        )
+        await emit_audit(
+            getattr(state, "db", None),
+            "repo.auto_register",
+            actor="webhook",
+            details={"repo": repo_name, "owner": org.owner, "event": event_type, "delivery_id": delivery_id},
+        )
+    facts_repo = getattr(state, "org_repos_repo", None)
+    created = False
+    if facts_repo is not None:
+        created = bool(
+            await facts_repo.note_webhook_event(
+                org.owner, repo_name, event=event_type, action=action, delivery_id=delivery_id, registered=auto
+            )
+        )
+    if auto:
+        await _bind_organization_credential(request, repo_name, org)
+    if created or auto:
+        # A repository the needs list did not know, or one it named as not
+        # registered: the same sync a finished discovery run makes.
+        await _sync_organization_needs(request, org.owner)
+    if not auto:
+        logger.info(
+            "webhook_repo_not_registered", repo=repo_name, owner=org.owner, event_type=event_type, action=action
+        )
+        return None
+    logger.info("webhook_repo_auto_registered", repo=repo_name, owner=org.owner, event_type=event_type)
+    return repo_name
+
+
+async def _sync_organization_needs(request: Request, owner: str) -> None:
+    """Bring the owner's needs in line with what the gate just wrote (ADR 0011).
+
+    A repository the forge delivers for and no run has listed becomes the need
+    ``not_registered`` with its case awaiting a decision now, not after the
+    next discovery run; a repository the gate registered leaves that need. A
+    failure is logged and left to the next run's sync: the delivery goes on.
+    """
+    service = needs_service(request, required=False)
+    if service is None:
+        return
+    try:
+        await service.sync(owner)
+    except Exception:
+        logger.warning("org_needs_sync_failed", owner=owner, source="webhook", exc_info=True)
+
+
+async def _bind_organization_credential(request: Request, repo_name: str, org: Organization) -> None:
+    """Bind the organization's credential to a repository the gate just
+    registered, as ``PUT /repos/{repo}/credentials`` would.
+
+    A repository that already has a forge binding keeps it: someone chose it.
+    Its other bindings are kept as they are.
+    """
+    credentials_repo = getattr(request.app.state, "credentials_repo", None)
+    if credentials_repo is None or not org.credential_id:
+        return
+    existing = await credentials_repo.bindings_for_scope("repo", repo_name.lower())
+    if any(b["role"] == "forge" for b in existing):
+        return
+    keep = [
+        {"credential_id": b["credential_id"], "role": b["role"], "pinned": b["pinned"], "priority": b["priority"]}
+        for b in existing
+    ]
+    forge = {"credential_id": org.credential_id, "role": "forge", "pinned": False, "priority": 0}
+    await bind_repo_credentials(request, repo_name, [*keep, forge], repo_forge=org.forge, actor="webhook")
 
 
 async def _pr_review(request: Request, method: str, *args: Any) -> dict[str, Any] | None:

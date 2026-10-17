@@ -75,6 +75,30 @@ GitHub signs each delivery with `X-Hub-Signature-256: sha256=<hex HMAC>`. A job 
 
 **Pull request review (#30).** With review turned on for the repository, `pull_request` (`ready_for_review`, or `opened` as non-draft) and an `issue_comment` on a pull request with a line starting `/embry0 review` start an advisory review that embry0 posts on the pull request; by default a ready pull request is reviewed only when its author has write access (the repository's `pr_review.ready_authors`). Such a comment is only a review request, never an `/answer` or a follow-up. The `pull_request` events also keep feeding merge sync, as before. See [pull request review](pr-review.md).
 
+### Organization webhooks (GitHub)
+
+A repository webhook is one more decision per repository. When the owner is registered as an organization ([ADR 0010](adr/0010-organizations.md)), embry0 installs one webhook on the organization itself, which GitHub fires for every repository under it, present and future ([ADR 0012](adr/0012-organization-webhook.md)).
+
+What it needs:
+
+- `WEBHOOK_PUBLIC_URL` in the root `.env`: the public origin the forge posts to, with no path (for Option A above, `https://webhooks.example.com`). The hook is installed pointing at `<WEBHOOK_PUBLIC_URL>/api/v1/webhook`. The dashboard origin is not a fallback: its public vhost answers 404 on the webhook routes on purpose.
+- `GITHUB_WEBHOOK_SECRET` set. The organization hook is created with it, so deliveries verify like repository ones.
+- A credential the probe found can manage hooks (`access.hooks` on the organization). The probe measures that on one repository; creating the hook on the organization also needs organization hook administration (`admin:org_hook` on a classic token, the organization Webhooks permission with write access on a fine-grained one). Without it GitHub hides the organization's hooks and the install answers 502 saying so. A user account has no owner-level webhooks, so it is refused.
+
+Install it with `POST /api/v1/orgs/{owner}/webhook` (admin), or the MCP tool `org_webhook_install(owner, confirm=true)`. The call is idempotent: a hook already pointing at the target answers `outcome: already` and writes nothing. `GET /api/v1/orgs/{owner}/webhook` asks GitHub whether a hook points here (`installed`, `hook`, `target_url`) and lists every organization hook the credential can see; a hook that points elsewhere is listed by its origin only, because such URLs often carry another service's token. The events subscribed are `issues`, `issue_comment`, `pull_request` and `workflow_run`, the four the receiver handles.
+
+The receiver's organization gate is additive: every delivery reaches the same handlers it would reach without organizations. What the gate adds for a delivery for a repository that is not registered depends on the owner:
+
+| Owner | What the gate adds |
+|---|---|
+| No organization row; a paused or removed organization; a GitLab group with the same name | Nothing. |
+| A registered, active GitHub organization | A record on the repository's fact row: `facts.registered = false`, `facts.webhook_events`, `facts.last_webhook_event` and `facts.webhook_delivery_ids` (a later discovery run keeps these keys). The needs list reads this row as the need `not_registered`; when the delivery creates the row (no discovery run has listed the repository), the gate runs the needs sync a finished run makes, so the need and its case awaiting a decision appear at once. `webhook_events` counts each `X-GitHub-Delivery` once: a redelivery of one of the last 50 deliveries is not counted again. |
+| The same, with `settings.auto_register` true | First, the repository is registered under the organization's forge and the audit log gets `repo.auto_register`; when the organization has a credential, it is bound to the repository as its forge credential through the same path as `PUT /api/v1/repos/{repo}/credentials`, unless the repository already has a forge binding. The fact row records `registered = true`, the gate runs the needs sync so the repository leaves the `not_registered` need, and the response carries `auto_registered`. |
+
+A failure inside the gate (the database went away, say) is logged as `webhook_organization_gate_failed` and the delivery is handled as if the gate were not there; it never turns into a 500.
+
+`auto_register` is off by default. Turn it on with `PATCH /api/v1/orgs/{owner}` and the body `{"settings": {"auto_register": true}}`; the settings a PATCH accepts are a closed list, so an unknown key is refused with 422. A registered repository is never touched by this gate, whatever the owner.
+
 ### Linear
 
 Linear workspace → Settings → API → Webhooks → New webhook:

@@ -17,6 +17,7 @@ Closing that case anywhere is the same answer as dismissing the need.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -77,13 +78,21 @@ def _action(kind: str, **params: Any) -> dict[str, Any]:
     return {"type": kind, "params": params}
 
 
-def derive_needs(owner: str, rows: list[dict[str, Any]], *, summary: dict[str, Any] | None = None) -> list[Need]:
+def derive_needs(
+    owner: str,
+    rows: list[dict[str, Any]],
+    *,
+    summary: dict[str, Any] | None = None,
+    delivered: Sequence[str] = (),
+) -> list[Need]:
     """Needs from the fact rows of one owner's newest discovery run.
 
     ``rows`` are that run's :meth:`OrgReposRepository.list_for_owner` rows;
     ``summary`` is its summary. Archived repositories need nothing. Each rule
     reads facts only; a fact the credential could not see (``None``) never
-    counts as a yes or a no.
+    counts as a yes or a no. ``delivered`` are repositories only the webhook
+    receiver has recorded (ADR 0012): no run listed them, so each is not
+    registered as far as embry0 knows, and nothing else is known of it.
     """
     by_kind: dict[str, list[str]] = {kind: [] for kind in KINDS}
     env_missing: dict[str, list[str]] = {}
@@ -135,6 +144,9 @@ def derive_needs(owner: str, rows: list[dict[str, Any]], *, summary: dict[str, A
             if keys:
                 env_missing[repo] = keys
                 by_kind["env_values_needed"].append(repo)
+
+    listed = {repo.lower() for repo in by_kind["not_registered"]}
+    by_kind["not_registered"].extend(repo for repo in delivered if repo.lower() not in listed)
 
     needs: list[Need] = []
 
@@ -391,10 +403,16 @@ class OrgNeedsService:
 
     async def _derive(self, owner: str, run: dict[str, Any]) -> None:
         # Fact rows are one per repository, stamped with the run that last saw
-        # it; a repository this run did not list is gone, not still there.
-        rows = [r for r in await self._facts.list_for_owner(owner) if r.get("run_id") == run["id"]]
+        # it; a repository this run did not list is gone, not still there. A
+        # row no run has stamped is the webhook receiver's (ADR 0012): the
+        # forge delivered for a repository before any run listed it.
+        facts = await self._facts.list_for_owner(owner)
+        rows = [r for r in facts if r.get("run_id") == run["id"]]
+        delivered = [
+            str(r["repo"]) for r in facts if r.get("run_id") is None and not (r.get("facts") or {}).get("registered")
+        ]
         kept: list[str] = []
-        for need in derive_needs(owner, rows, summary=run.get("summary") or {}):
+        for need in derive_needs(owner, rows, summary=run.get("summary") or {}, delivered=delivered):
             row = await self._needs.upsert(owner, need, run_id=run["id"])
             kept.append(row["id"])
             if row["status"] == "done":
