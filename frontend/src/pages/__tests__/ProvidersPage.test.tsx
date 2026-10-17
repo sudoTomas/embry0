@@ -84,6 +84,38 @@ beforeEach(() => {
 });
 
 describe("ProvidersPage", () => {
+  it("shows each provider's last connection test", async () => {
+    mockFetchModelsCatalog.mockResolvedValue({
+      ...CATALOG,
+      providers: [
+        { ...CATALOG.providers[0], last_probe: { status: "unauthorized", checked_at: "2026-01-02T03:04:05+00:00" } },
+        { ...CATALOG.providers[1], last_probe: null },
+      ],
+    });
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    const line = within(anthropic).getByTestId("provider-last-probe");
+    expect(line).toHaveTextContent("Last test: Unauthorized");
+    expect(within(line).getByText(/2026/).getAttribute("dateTime")).toBe("2026-01-02T03:04:05+00:00");
+    const xai = screen.getByTestId("provider-card-xai");
+    expect(within(xai).getByTestId("provider-last-probe")).toHaveTextContent("Last test: never");
+  });
+
+  it("shows no last-test line when the backend does not report one", async () => {
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    expect(within(anthropic).queryByTestId("provider-last-probe")).not.toBeInTheDocument();
+  });
+
+  it("refreshes the catalog after a connection test so the last test updates", async () => {
+    mockTestCatalogProvider.mockResolvedValue({ provider: "anthropic", status: "ok", checks: [] });
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    const before = mockFetchModelsCatalog.mock.calls.length;
+    await userEvent.click(within(anthropic).getByRole("button", { name: "Test connection" }));
+    await waitFor(() => expect(mockFetchModelsCatalog.mock.calls.length).toBeGreaterThan(before));
+  });
+
   it("renders every catalog provider with availability and credential source", async () => {
     renderPage();
     const anthropic = await screen.findByTestId("provider-card-anthropic");

@@ -87,3 +87,25 @@ async def test_delete_older_than_malformed_tag_returns_zero():
     db.execute = AsyncMock(return_value="")
     repo = AuditRepository(db)
     assert await repo.delete_older_than(SINCE) == 0
+
+
+@pytest.mark.asyncio
+async def test_latest_entry_filters_on_one_details_key_newest_first():
+    db = MagicMock()
+    db.fetchrow = AsyncMock(return_value={"id": 3, "details": {"provider": "xai", "status": "ok"}})
+    repo = AuditRepository(db)
+    row = await repo.latest_entry("provider_connection_tested", detail_key="provider", detail_value="xai")
+    sql = db.fetchrow.call_args.args[0]
+    assert "WHERE action = $1 AND details ->> $2::text = $3" in sql
+    assert "ORDER BY created_at DESC, id DESC" in sql
+    assert "LIMIT 1" in sql
+    assert "trace_id" not in sql
+    assert db.fetchrow.call_args.args[1:] == ("provider_connection_tested", "provider", "xai")
+    assert row == {"id": 3, "details": {"provider": "xai", "status": "ok"}}
+
+
+@pytest.mark.asyncio
+async def test_latest_entry_none_when_no_row_matches():
+    db = MagicMock()
+    db.fetchrow = AsyncMock(return_value=None)
+    assert await AuditRepository(db).latest_entry("a", detail_key="k", detail_value="v") is None

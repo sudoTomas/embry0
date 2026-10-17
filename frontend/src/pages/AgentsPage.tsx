@@ -4,6 +4,7 @@ import { Bot, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
 import { IconBox } from "@/components/ui/IconBox";
 import { useAgents, useDeleteAgent, useResetAgent } from "@/hooks/useAgents";
 import type { AgentDefinition } from "@/lib/types/agents";
@@ -100,6 +101,7 @@ export function AgentsPage() {
                   <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Type</th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Description</th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Model</th>
+                  <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Provider</th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Tools</th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Skills</th>
                   <th className="text-right px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Actions</th>
@@ -144,6 +146,27 @@ export function AgentsPage() {
                     {/* Model */}
                     <td className="px-6 py-3">
                       <span className="text-sm font-mono text-white/60">{agent.model}</span>
+                    </td>
+
+                    {/* Provider: the catalog provider the model routes to, and
+                        whether it has a credential now (GET /agents). */}
+                    <td className="px-6 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-white/60">{agent.provider ?? "none"}</span>
+                        {agent.provider_ready === true && <Badge tone="success">ready</Badge>}
+                        {agent.provider_ready === false && (
+                          <Badge
+                            tone="error"
+                            title={
+                              agent.provider
+                                ? "No credential is configured for this provider"
+                                : "No configured provider serves this model"
+                            }
+                          >
+                            not ready
+                          </Badge>
+                        )}
+                      </div>
                     </td>
 
                     {/* Tools count */}

@@ -113,6 +113,47 @@ Limits, stated rather than fixed:
 - **Not verified on grok-4.7.** The verification run below was done for
   `grok-4.5` only.
 
+## Provider readiness
+
+A model is served by the catalogue provider whose id prefix it carries:
+`claude-` for Anthropic, `grok-` for xAI. Whether that provider can run it
+depends on a credential: for Anthropic `CLAUDE_CODE_OAUTH_TOKEN` or
+`ANTHROPIC_API_KEY`, for xAI `XAI_API_KEY` or the OAuth proxy, or for either a
+row in the credential registry. The runtime notices a missing credential only
+when the agent runs, after the job was dispatched. Two surfaces answer before
+that, from the same sources (`embry0/services/provider_readiness.py`):
+
+- `GET /config/models` carries per provider `available`, `credential_source`,
+  `model_prefixes` and `last_probe`. `last_probe` is the outcome of the newest
+  "Test connection" run (`POST /config/providers/{name}/test`) as
+  `{"status", "checked_at"}`, or `null` when none was run or retention pruned
+  it. It is read back from the audit log entry the test writes
+  (`provider_connection_tested`), so it survives a restart. A credential whose
+  last test failed still counts as available: the two facts are reported side
+  by side, not merged. The LLM Providers page shows all of them.
+- `GET /agents` and `GET /agents/{type}` carry `provider` (the catalogue
+  provider the agent's `model` routes to, `null` when no prefix matches) and
+  `provider_ready` for every agent. The Agents page shows them as a column.
+- The agent form names the provider of the chosen model, a custom id
+  included, and whether it is ready; it matches by `model_prefixes`, the rule
+  the backend routes by. The model picker offers every tier and catalogue
+  model plus the free-text custom id. A model whose provider is not ready is
+  labelled "(no credential)" and cannot be picked anew; an agent already
+  saved on one opens on it, with the not-ready badge beside it. Readiness is
+  what the API process sees, and credentials may be injected only where jobs
+  run, so the picker marks a model rather than hiding it.
+
+`AGENT_MODEL_PROVIDER_CHECK=true` turns the answer into a gate: creating or
+updating an agent definition (`POST /agents`, `PUT /agents/{type}`, the MCP
+`agent_update` tool) whose model has no ready provider is refused with a 422
+that names the provider and the model, or says that no configured provider
+serves the model. It runs after the price and enablement checks. Off, the
+default, nothing changes: the save succeeds and the job fails at run time.
+
+The gate reads the agent definition's own `model`. The default model and the
+tier models, which can replace it at run time, are checked for catalogue
+membership and price by `PUT /config/provider`, not for readiness.
+
 ## Turn and time budgets
 
 Every agent's `max_turns` and `timeout_seconds` are sized for Claude. A

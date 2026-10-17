@@ -9,6 +9,7 @@ embry0 uses environment variables for infrastructure config and API endpoints fo
 | `DEFAULT_AUTH_MODE` | `oauth` | How agents authenticate to Anthropic: `oauth` (a Claude subscription token) or `api_key`. A repo, job or agent can override it; see [Agent execution & auth modes](#agent-execution--auth-modes) |
 | `ANTHROPIC_API_KEY` | — | API key, for `DEFAULT_AUTH_MODE=api_key`. Served to jobs when no [credential registry](credentials.md) account is usable |
 | `CLAUDE_CODE_OAUTH_TOKEN` | — | OAuth token, for the default `DEFAULT_AUTH_MODE=oauth`; generate with `claude setup-token` |
+| `AGENT_MODEL_PROVIDER_CHECK` | `false` | Refuse to save an agent definition (`POST /agents`, `PUT /agents/{type}`, the MCP `agent_update` tool) whose model routes to a provider with no credential configured, or to no catalogue provider at all, with a 422 that names the provider. Off, the save succeeds and the job fails when it runs. `GET /agents` reports `provider` and `provider_ready` per agent either way; see [provider readiness](providers.md#provider-readiness) |
 | `GITHUB_TOKEN` | — | GitHub personal access token |
 | `GITHUB_WEBHOOK_SECRET` | — | HMAC secret for webhook verification |
 | `AUTH_DEV_MODE` | `false` | Turn API authentication off (HTTP, admin gate, WebSocket, SSE). The only setting that allows an empty `API_KEY`. For a local-only instance; startup refuses it when SSO is configured or the root `.env` carries a tunnel token. NEVER use in production. |

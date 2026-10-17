@@ -37,5 +37,10 @@ export function useModelsCatalog() {
 }
 
 export function useTestCatalogProvider() {
-  return useMutation({ mutationFn: (name: string) => testCatalogProvider(name) });
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => testCatalogProvider(name),
+    // The test is audited and GET /config/models reports it back as last_probe.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["config", "models"] }),
+  });
 }

@@ -272,6 +272,17 @@ async def test_agent_update_sends_only_provided_fields():
     assert json.loads(handler.seen[0].content) == {"model": "m2"}
 
 
+async def test_agent_update_surfaces_the_provider_readiness_refusal():
+    """The MCP tool saves through PUT /agents/{type}; its 422 reaches the caller verbatim."""
+    detail = "provider 'xai' is not ready to run model 'grok-4.5': no credential is configured for it."
+    handler = capture({("PUT", "/api/v1/agents/developer"): (422, {"detail": detail})})
+    client = make_client(handler)
+    with pytest.raises(Embry0APIError) as exc_info:
+        await client.agent_update("developer", model="grok-4.5")
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == detail
+
+
 async def test_env_set_reveals_existing_secrets_before_rewrite():
     existing = {
         "variables": [
