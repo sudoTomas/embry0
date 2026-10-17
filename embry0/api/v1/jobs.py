@@ -198,16 +198,46 @@ async def create_job(
     return job or {"job_id": job_id}
 
 
+BRIEF_TASK_CHARS = 200
+
+
+def _brief_task(task: str) -> tuple[str, bool]:
+    """The first line of a task, cut to ``BRIEF_TASK_CHARS``.
+
+    A job's task is its whole prompt. A watcher analysis job's prompt is the
+    log briefing it analysed, tens of thousands of characters, and a list page
+    of twenty such jobs carried close to a megabyte of text the table clipped
+    to one cell. Lists ask for the brief form; the full text stays on
+    ``GET /jobs/{job_id}``.
+    """
+    first_line = task.split("\n", 1)[0]
+    cut = first_line[:BRIEF_TASK_CHARS]
+    if cut == task:
+        return task, False
+    return cut.rstrip() + "…", True
+
+
 @router.get("/jobs")
 async def list_jobs(
     status: str | None = None,
     repo: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    brief: bool = Query(
+        default=False,
+        description=(
+            "Cut each task to its first line, at most 200 characters, and set "
+            "task_truncated. The full text is on GET /jobs/{job_id}."
+        ),
+    ),
     jobs: JobsRepository = Depends(get_jobs_repo),
 ) -> JobListResponse:
     rows, total = await jobs.list_all(status=status, repo=repo, limit=limit, offset=offset)
-    return JobListResponse(jobs=[JobResponse(**r) for r in rows], total=total, offset=offset, limit=limit)
+    items = [JobResponse(**r) for r in rows]
+    if brief:
+        for item in items:
+            item.task, item.task_truncated = _brief_task(item.task)
+    return JobListResponse(jobs=items, total=total, offset=offset, limit=limit)
 
 
 @router.get("/jobs/{job_id}")

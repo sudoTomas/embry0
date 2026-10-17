@@ -2,7 +2,10 @@ import { api } from "./client";
 import type { JobCreateRequest, JobFilters, JobListResponse, JobResponse } from "@/lib/types";
 
 export async function fetchJobs(filters: JobFilters = {}): Promise<JobListResponse> {
-  const { data } = await api.get("/jobs", { params: filters });
+  // Lists show one line per job, so ask for brief tasks: a watcher analysis
+  // job's task is its whole log briefing, and a page of them weighed close
+  // to a megabyte. The detail page fetches the full text by id.
+  const { data } = await api.get("/jobs", { params: { ...filters, brief: true } });
   return data;
 }
 

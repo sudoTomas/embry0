@@ -36,6 +36,9 @@ export interface JobResponse {
   /** Null for non-git jobs (http/local/none contexts). */
   repo: string | null;
   task: string;
+  /** True on list rows fetched with `brief`: `task` is the first line, cut to
+   * 200 characters. The full text comes from the job detail endpoint. */
+  task_truncated?: boolean;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
