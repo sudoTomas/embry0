@@ -117,6 +117,9 @@ async def get_repo(full_repo: str, request: Request) -> dict[str, Any]:
     config_row = await configs_repo.get(full)
     prefs = await prefs_repo.get(full)
     env_vars = await env_repo.get_repo(full)
+    # ADR 0013: the machines this repo's code runs on, each with its role for the repo.
+    hosts_repo = getattr(request.app.state, "hosts_repo", None)
+    hosts = await hosts_repo.hosts_for_repo(full) if hosts_repo is not None else []
     return {
         **row,
         "has_qa_config": config_row is not None,
@@ -125,6 +128,7 @@ async def get_repo(full_repo: str, request: Request) -> dict[str, Any]:
         "preferences": prefs,
         "env_var_count": len(env_vars),
         "env_secret_count": sum(1 for v in env_vars if v.get("var_type") == "secret"),
+        "hosts": hosts,
     }
 
 

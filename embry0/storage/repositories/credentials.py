@@ -20,20 +20,23 @@ from embry0.storage.database import DatabasePool
 
 logger = structlog.get_logger(__name__)
 
-KINDS = ("forge_token", "llm_oauth", "llm_api_key", "ssh_key")
-PROVIDERS = ("github", "gitlab", "anthropic", "xai", "ssh")
+KINDS = ("forge_token", "llm_oauth", "llm_api_key", "ssh_key", "tailnet_api_key")
+PROVIDERS = ("github", "gitlab", "anthropic", "xai", "ssh", "tailscale")
 FORGE_PROVIDERS = ("github", "gitlab")
-ROLES = ("forge", "llm", "deploy")
+ROLES = ("forge", "llm", "deploy", "tailnet")
 SCOPE_KINDS = ("repo", "owner", "host", "global")
 KIND_FOR_ROLE: dict[str, set[str]] = {
     "forge": {"forge_token"},
     "llm": {"llm_oauth", "llm_api_key"},
     "deploy": {"ssh_key"},
+    # ADR 0013: the key embry0 reads a tailnet's devices with, to find and probe hosts.
+    "tailnet": {"tailnet_api_key"},
 }
 SCOPES_FOR_ROLE: dict[str, set[str]] = {
     "forge": {"repo", "owner", "host", "global"},
     "llm": {"repo", "owner", "global"},
     "deploy": {"host"},
+    "tailnet": {"global"},
 }
 
 
@@ -49,7 +52,7 @@ KEEP = _Keep()
 _PUBLIC_COLUMNS = (
     "id, kind, provider, host, label, git_author_name, git_author_email, public_material, "
     "masked_preview, verified_login, status, status_reason, quarantined_until, created_by, "
-    "created_at, updated_at, rotated_at, last_used_at"
+    "created_at, updated_at, rotated_at, last_used_at, metadata"
 )
 _ALL_COLUMNS = _PUBLIC_COLUMNS + ", secret_ciphertext"
 
@@ -108,7 +111,9 @@ class CredentialsRepository:
         git_author_name: str | None = None,
         git_author_email: str | None = None,
         public_material: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """``metadata`` holds non-secret settings that go with the secret (a tailnet key's tailnet)."""
         if kind not in KINDS:
             raise ValueError(f"unknown credential kind {kind!r}")
         if provider not in PROVIDERS:
@@ -117,8 +122,8 @@ class CredentialsRepository:
         row = await self._db.fetchrow(
             f"""
             INSERT INTO credentials (id, kind, provider, host, label, git_author_name, git_author_email,
-                                     secret_ciphertext, public_material, masked_preview, created_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                                     secret_ciphertext, public_material, masked_preview, created_by, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
             RETURNING {_PUBLIC_COLUMNS}
             """,
             cid,
@@ -132,6 +137,7 @@ class CredentialsRepository:
             public_material,
             masked_preview,
             created_by,
+            dict(metadata or {}),
         )
         assert row is not None, "INSERT ... RETURNING must return a row"
         logger.info("credential_created", credential_id=cid, provider=provider, label=label, kind=kind)

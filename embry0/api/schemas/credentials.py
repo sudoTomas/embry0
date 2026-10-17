@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from embry0.api.schemas.repo_preferences import validate_git_author_email
 
 _LABEL = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+# A tailnet's name as the tailnet API takes it in a path: "-" (the key's own
+# tailnet) or an organization name such as "example.com".
+_TAILNET = re.compile(r"^(-|[A-Za-z0-9][A-Za-z0-9._@+-]{0,252})$")
 
 
 def _stripped_secret(v: str) -> str:
@@ -26,13 +30,16 @@ def _stripped_secret(v: str) -> str:
 class CredentialCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["forge_token", "llm_oauth", "llm_api_key"]  # ssh_key opens in a later slice
-    provider: Literal["github", "gitlab", "anthropic", "xai"]
+    kind: Literal["forge_token", "llm_oauth", "llm_api_key", "tailnet_api_key"]  # ssh_key opens in a later slice
+    provider: Literal["github", "gitlab", "anthropic", "xai", "tailscale"]
     host: str = ""  # "" means the provider's default host
     label: str = Field(min_length=1, max_length=64, pattern=_LABEL)
     secret: str = Field(min_length=1)
     git_author_name: str | None = None
     git_author_email: str | None = None
+    # Non-secret settings stored with the secret. Only tailnet_api_key takes
+    # any: {"tailnet": "<name>"}, "-" (the key's own tailnet) when omitted.
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("secret")
     @classmethod
@@ -52,6 +59,18 @@ class CredentialCreate(BaseModel):
             raise ValueError("forge_token credentials must use provider github or gitlab")
         if self.kind in ("llm_oauth", "llm_api_key") and not llm:
             raise ValueError(f"{self.kind} credentials must use provider anthropic or xai")
+        if (self.kind == "tailnet_api_key") != (self.provider == "tailscale"):
+            raise ValueError("tailnet_api_key credentials use provider tailscale, and tailscale takes no other kind")
+        if self.kind == "tailnet_api_key":
+            unknown = sorted(set(self.metadata) - {"tailnet"})
+            if unknown:
+                raise ValueError(f"tailnet_api_key metadata takes only 'tailnet', got {unknown}")
+            tailnet = self.metadata.get("tailnet", "-")
+            if not isinstance(tailnet, str) or not _TAILNET.match(tailnet):
+                raise ValueError("metadata.tailnet must be '-' or a tailnet name of letters, digits and . _ @ + -")
+            self.metadata = {"tailnet": tailnet}
+        elif self.metadata:
+            raise ValueError("metadata is only accepted for tailnet_api_key credentials")
         # The secret is a JSON refresh payload; the single-line rule rejects it.
         # Device-code login and the importer are the only writers.
         if self.provider == "xai" and self.kind == "llm_oauth":
@@ -97,7 +116,7 @@ class BindingInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     credential_id: str = Field(pattern=r"^cred-[0-9a-f]{12}$")
-    role: Literal["forge", "llm", "deploy"]
+    role: Literal["forge", "llm", "deploy", "tailnet"]
     pinned: bool = False
     priority: int = 0
 
@@ -137,6 +156,7 @@ class CredentialOut(BaseModel):
     updated_at: datetime | str | None = None
     rotated_at: datetime | str | None = None
     last_used_at: datetime | str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ResolveOut(BaseModel):

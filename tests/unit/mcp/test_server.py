@@ -47,6 +47,10 @@ EXPECTED_TOOLS = {
     "org_get",
     "org_needs",
     "org_register",
+    "host_list",
+    "host_get",
+    "host_probe",
+    "host_import_tailnet",
     "qa_config_get",
     "qa_config_set",
     "credential_list",
@@ -67,6 +71,7 @@ CONFIRM_GATED = {
     "env_delete",
     "repo_register",
     "org_register",
+    "host_import_tailnet",
     "qa_config_set",
     "credential_bind",
 }
@@ -110,6 +115,7 @@ async def test_confirm_gated_tools_refuse_without_confirm(fake_client):
         await server.repo_register("acme/widgets"),
         await server.org_register("acme"),
         await server.qa_config_set("acme/widgets", "version: 2"),
+        await server.host_import_tailnet(),
         await server.credential_bind("acme/widgets", "cred-000000000009"),
     ]
     for refusal in refusals:
@@ -132,6 +138,7 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
     assert await server.repo_register("acme/widgets", confirm=True) == {"called": "repo_register"}
     assert await server.org_register("acme", confirm=True) == {"called": "org_register"}
     assert await server.qa_config_set("acme/widgets", "version: 2", confirm=True) == {"called": "qa_config_set"}
+    assert await server.host_import_tailnet(confirm=True) == {"called": "host_import_tailnet"}
     assert await server.credential_bind(
         "acme/widgets", "cred-000000000009", role="forge", pinned=True, confirm=True
     ) == {"called": "credential_bind"}
@@ -151,8 +158,33 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
         "repo_register",
         "org_register",
         "qa_config_set",
+        "host_import_tailnet",
         "credential_bind",
     ]
+
+
+async def test_host_tools_pass_through(fake_client):
+    assert await server.host_list(source="tailnet") == {"called": "host_list"}
+    assert await server.host_get("host-0123456789ab") == {"called": "host_get"}
+    assert await server.host_probe("host-0123456789ab") == {"called": "host_probe"}
+    assert await server.host_probe("host-0123456789ab", credential_id="cred-000000000009") == {"called": "host_probe"}
+    assert await server.host_import_tailnet(credential_id="cred-000000000009", confirm=True) == {
+        "called": "host_import_tailnet"
+    }
+    assert fake_client.calls == [
+        ("host_list", (), {"source": "tailnet", "include_removed": False}),
+        ("host_get", ("host-0123456789ab",), {}),
+        ("host_probe", ("host-0123456789ab",), {"credential_id": ""}),
+        ("host_probe", ("host-0123456789ab",), {"credential_id": "cred-000000000009"}),
+        ("host_import_tailnet", (), {"credential_id": "cred-000000000009"}),
+    ]
+
+
+async def test_host_import_tailnet_refusal_names_the_action(fake_client):
+    refusal = await server.host_import_tailnet(credential_id="cred-000000000009")
+    assert refusal["error"] == "confirmation_required"
+    assert "import hosts" in refusal["message"] and "host_import_tailnet" in refusal["message"]
+    assert fake_client.calls == []
 
 
 async def test_read_tools_pass_through(fake_client):

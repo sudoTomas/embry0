@@ -65,6 +65,16 @@ _REPO_PATH_RE = re.compile(rf"^{_REPO_SEGMENT}(?:/{_REPO_SEGMENT})+\Z")
 _REPO_PATH_ERROR = "repo must be 'group/name' or 'group/subgroup/name'"
 
 
+_HOST_ID_RE = re.compile(r"^host-[0-9a-f]{12}\Z")
+
+
+def _host_id(host_id: str) -> str:
+    """A host id as the API mints it (``host-`` and 12 hex digits), so nothing else reaches the URL."""
+    if not _HOST_ID_RE.match(host_id):
+        raise Embry0APIError(422, f"host_id must look like 'host-0123456789ab', got {host_id!r}")
+    return host_id
+
+
 def _repo_path(repo: str) -> str:
     r"""Validate a repo path and return it verbatim for use in a URL.
 
@@ -554,6 +564,29 @@ class Embry0Client:
         if display_name:
             body["display_name"] = display_name
         return _as_dict(await self._request("POST", "/api/v1/orgs", body=body))
+
+    # ------------------------------------------------------------- hosts (ADR 0013)
+
+    async def host_list(self, *, source: str | None = None, include_removed: bool = False) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if source:
+            params["source"] = source
+        if include_removed:
+            params["include_removed"] = "true"
+        return _as_dict(await self._request("GET", "/api/v1/hosts", params=params or None))
+
+    async def host_get(self, host_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/hosts/{_host_id(host_id)}"))
+
+    async def host_probe(self, host_id: str, credential_id: str = "") -> dict[str, Any]:
+        body = {"credential_id": credential_id} if credential_id else None
+        return _as_dict(await self._request("POST", f"/api/v1/hosts/{_host_id(host_id)}/probe", body=body))
+
+    async def host_import_tailnet(self, credential_id: str = "") -> dict[str, Any]:
+        body: dict[str, Any] = {"confirm": True}
+        if credential_id:
+            body["credential_id"] = credential_id
+        return _as_dict(await self._request("POST", "/api/v1/hosts/import/tailnet", body=body))
 
     async def repo_list(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
         params = {"include_inactive": "true"} if include_inactive else None

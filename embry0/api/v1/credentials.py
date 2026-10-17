@@ -39,6 +39,7 @@ from embry0.services.credentials.import_env import import_from_env
 from embry0.services.credentials.preview import masked_preview
 from embry0.services.credentials.providers import default_host
 from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
+from embry0.services.hosts import TAILNET_API_BASE
 from embry0.storage.repositories.credentials import (
     BindingValidationError,
     CredentialBoundError,
@@ -47,6 +48,8 @@ from embry0.storage.repositories.credentials import (
 from embry0.storage.repositories.repos import UnregisteredRepoError
 
 router = APIRouter()
+
+TAILNET_API_HOST = urlparse(TAILNET_API_BASE).hostname or ""
 
 
 def _state(request: Request) -> Any:
@@ -64,6 +67,8 @@ def _repo_path(value: str) -> str:
 def _expected_host(config: Any, provider: str) -> str:
     if provider in ("anthropic", "xai"):
         return default_host(provider)
+    if provider == "tailscale":
+        return TAILNET_API_HOST
     if provider == "gitlab":
         return (urlparse(str(getattr(config, "gitlab_url", "") or "")).hostname or "gitlab.com").lower()
     return "github.com"
@@ -180,6 +185,7 @@ async def create_credential(req: CredentialCreate, request: Request) -> Credenti
             created_by=request_actor(request),
             git_author_name=req.git_author_name,
             git_author_email=req.git_author_email,
+            metadata=req.metadata,
         )
     except asyncpg.UniqueViolationError:
         raise HTTPException(

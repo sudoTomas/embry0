@@ -2765,6 +2765,69 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'ADR 0011: one need per owner, kind and repository set, derived from the newest discovery run; status and case_id are the person''s answer and survive rediscovery.';
         """,
     ),
+    (
+        100,
+        "hosts, repo_hosts and the tailnet_api_key credential kind — the machines that run the code (ADR 0013)",
+        # A host is where a repository's code runs: the facts a maintainer
+        # needs after a merge (the logs, whether the deploy landed) live on
+        # machines, not in repositories. `name` is unique ignoring case, so
+        # a tailnet import can find the host it made before; a removed host
+        # keeps its row, so an import does not bring it back. `log_source`
+        # is {kind: journald|docker|loki, selector} or NULL.
+        #
+        # repo_hosts says which repositories a host serves and as what
+        # (`role`); `repo` is the lowercase path, the form credential
+        # bindings use.
+        #
+        # The credential registry gains the `tailnet_api_key` kind (provider
+        # `tailscale`), bound at global scope with the `tailnet` role, and a
+        # `metadata` column for non-secret settings that go with a secret:
+        # the tailnet a key reads. The CHECKs on kind, provider and role are
+        # the auto-named column constraints of migration 86.
+        """
+        CREATE TABLE IF NOT EXISTS hosts (
+            id            TEXT PRIMARY KEY,
+            name          TEXT NOT NULL,
+            address       TEXT NOT NULL DEFAULT '',
+            transport     TEXT NOT NULL CHECK (transport IN ('tailnet', 'ssh', 'http')),
+            roles         JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(roles) = 'array'),
+            log_source    JSONB CHECK (
+                log_source IS NULL
+                OR (jsonb_typeof(log_source) = 'object' AND log_source->>'kind' IN ('journald', 'docker', 'loki'))
+            ),
+            tags          JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(tags) = 'array'),
+            source        TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'tailnet')),
+            last_seen_at  TIMESTAMPTZ,
+            status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'unreachable', 'removed')),
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS hosts_name_unique ON hosts (lower(name));
+
+        CREATE TABLE IF NOT EXISTS repo_hosts (
+            repo        TEXT NOT NULL,
+            host_id     TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+            role        TEXT NOT NULL DEFAULT 'app',
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (repo, host_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_hosts_host ON repo_hosts (host_id);
+
+        COMMENT ON TABLE hosts IS
+            'ADR 0013: a machine that runs code embry0 maintains. transport = how embry0 reaches it; log_source = where its logs come from; source = manual or a tailnet import.';
+
+        ALTER TABLE credentials ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+        ALTER TABLE credentials DROP CONSTRAINT IF EXISTS credentials_kind_check;
+        ALTER TABLE credentials ADD CONSTRAINT credentials_kind_check
+            CHECK (kind IN ('forge_token', 'llm_oauth', 'llm_api_key', 'ssh_key', 'tailnet_api_key'));
+        ALTER TABLE credentials DROP CONSTRAINT IF EXISTS credentials_provider_check;
+        ALTER TABLE credentials ADD CONSTRAINT credentials_provider_check
+            CHECK (provider IN ('github', 'gitlab', 'anthropic', 'xai', 'ssh', 'tailscale'));
+        ALTER TABLE credential_bindings DROP CONSTRAINT IF EXISTS credential_bindings_role_check;
+        ALTER TABLE credential_bindings ADD CONSTRAINT credential_bindings_role_check
+            CHECK (role IN ('forge', 'llm', 'deploy', 'tailnet'));
+        """,
+    ),
 ]
 
 

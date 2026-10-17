@@ -736,6 +736,9 @@ async def _init_app_state(
     from embry0.storage.repositories.org_needs import OrgNeedsRepository
 
     app.state.org_needs_repo = OrgNeedsRepository(db)
+    from embry0.storage.repositories.hosts import HostsRepository
+
+    app.state.hosts_repo = HostsRepository(db)
     app.state.qa_configs_repo = RepoQAConfigsRepository(db, default_forge=app_config.default_forge)
     app.state.qa_app_results_repo = QAAppResultsRepository(db)
     app.state.qa_image_tags_repo = QAImageTagsRepository(db)
@@ -2188,6 +2191,7 @@ def _register_routers(app: FastAPI) -> None:
         github,
         gitlab,
         health,
+        hosts,
         internal_qa,
         issues,
         jobs,
@@ -2283,6 +2287,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(repos.router, prefix="/api/v1", tags=["repos"], dependencies=auth_deps)
     app.include_router(organizations.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     app.include_router(org_needs.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
+    # ADR 0013: the hosts that run the code (reads and probes operator-tier; writes admin-tier in-route).
+    app.include_router(hosts.router, prefix="/api/v1", tags=["hosts"], dependencies=auth_deps)
     app.include_router(github.router, prefix="/api/v1", tags=["github"], dependencies=auth_deps)
     app.include_router(gitlab.router, prefix="/api/v1", tags=["gitlab"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])

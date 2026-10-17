@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -43,6 +43,8 @@ class ResolvedCredential:
     git_author_email: str | None
     source: str
     trace: tuple[str, ...]
+    # Non-secret settings stored with the secret: the tailnet a tailnet_api_key reads.
+    metadata: Mapping[str, Any] = field(default_factory=dict, compare=False, hash=False)
 
     def __repr__(self) -> str:  # never leak the secret through a stray log
         return f"ResolvedCredential(id={self.id!r}, label={self.label!r}, provider={self.provider!r}, source={self.source!r})"
@@ -282,6 +284,60 @@ class CredentialResolver:
         prefix = "GITLAB_TOKEN" if forge == "gitlab" else "GITHUB_TOKEN"
         default = str(getattr(self._config, f"{forge}_token", "") or "")
         return bool(default) or any(k.startswith(prefix + "__") and v for k, v in self._environ.items())
+
+    # -- tailnet ----------------------------------------------------------------
+
+    async def resolve_tailnet(self, *, credential_id: str | None = None) -> ResolvedCredential:
+        """The tailnet API key embry0 reads devices with (ADR 0013).
+
+        ``credential_id`` names one; otherwise the ``tailnet`` binding at
+        global scope, the only scope that role takes. There is no env
+        fallback. The tailnet it reads is ``metadata["tailnet"]``.
+        """
+        trace: list[str] = []
+        if credential_id:
+            row = await self._repo.get(credential_id)
+            if row is None:
+                raise CredentialMissingError(f"no credential {credential_id!r}")
+            if row["kind"] != "tailnet_api_key":
+                raise CredentialUnavailableError(f"credential '{row['label']}' is not a tailnet_api_key")
+            rows = [row]
+            trace.append(f"explicit:{credential_id}")
+        else:
+            rows = await self._repo.candidates(
+                scope_kind="global", scope_value="", role="tailnet", provider="tailscale"
+            )
+        for row in rows:
+            why = self._availability(row)
+            if why:
+                trace.append(f"global: -> {row['label']} skipped ({why})")
+                if credential_id:
+                    raise CredentialUnavailableError(f"credential '{row['label']}' is {why}")
+                continue
+            secret = await self._decrypt_or_disable(row)
+            if secret is None:
+                trace.append(f"global: -> {row['label']} skipped (decryption_failed)")
+                if credential_id:
+                    raise CredentialUnavailableError(f"credential '{row['label']}' cannot be decrypted; rotate it")
+                continue
+            trace.append(f"global: -> {row['label']}")
+            return ResolvedCredential(
+                id=str(row["id"]),
+                kind=str(row["kind"]),
+                provider=str(row["provider"]),
+                host=str(row["host"]),
+                label=str(row["label"]),
+                secret=secret,
+                git_author_name=None,
+                git_author_email=None,
+                source="registry",
+                trace=tuple(trace),
+                metadata=dict(row.get("metadata") or {}),
+            )
+        raise CredentialMissingError(
+            "no tailnet credential: create a tailnet_api_key credential and bind it at global scope "
+            f"with role tailnet (trace: {'; '.join(trace) or 'global: -> none'})"
+        )
 
     # -- llm --------------------------------------------------------------------
 
