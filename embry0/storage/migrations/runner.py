@@ -2645,6 +2645,41 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             '#30: when the review landed on the forge. NULL = not (yet) posted.';
         """,
     ),
+    (
+        97,
+        "organizations — the forge owners embry0 maintains as a whole (ADR 0010)",
+        # Every sense embry0 has (webhook or tracker intake, log watching, QA)
+        # is switched on per repository, so an owner with dozens of
+        # repositories is dozens of decisions nobody takes. The organization
+        # is the row that makes the owner the unit: its forge, the credential
+        # embry0 acts with, and what that credential can do there (`access`,
+        # written by the probe). Discovery, the needs list and the wizard
+        # hang from it.
+        #
+        # `owner` is stored lowercase, the way the forges compare it. The
+        # credential is a soft reference: deleting the credential leaves the
+        # organization, with no way to act, which the needs list reports.
+        """
+        CREATE TABLE IF NOT EXISTS organizations (
+            owner          TEXT PRIMARY KEY,
+            forge          TEXT NOT NULL CHECK (forge IN ('github', 'gitlab')),
+            credential_id  TEXT REFERENCES credentials(id) ON DELETE SET NULL,
+            display_name   TEXT,
+            settings       JSONB NOT NULL DEFAULT '{}'::jsonb,
+            access         JSONB NOT NULL DEFAULT '{}'::jsonb,
+            repo_count     INTEGER,
+            discovered_at  TIMESTAMPTZ,
+            status         TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active', 'paused', 'removed')),
+            created_by     TEXT,
+            created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        COMMENT ON TABLE organizations IS
+            'ADR 0010: a forge owner embry0 maintains as a whole. access = what the credential can do there, from the probe; settings = defaults for repositories under it.';
+        """,
+    ),
 ]
 
 

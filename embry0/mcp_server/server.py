@@ -670,6 +670,41 @@ async def env_delete(key: str, repo: str | None = None, confirm: bool = False) -
 
 
 @_tool
+async def org_list(include_removed: bool = False) -> dict[str, Any]:
+    """List the organizations embry0 maintains: forge owners with the credential
+    embry0 acts with and what the probe found it can do there (ADR 0010)."""
+    return await _get_client().org_list(include_removed=include_removed)
+
+
+@_tool
+async def org_get(owner: str) -> dict[str, Any]:
+    """One organization by owner: forge, credential, probe result, repo count, status."""
+    return await _get_client().org_get(owner)
+
+
+@_tool
+async def org_register(
+    owner: str,
+    forge: str = "github",
+    credential_id: str = "",
+    display_name: str = "",
+    probe: bool = True,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Register a forge owner (a GitHub organization or user, or a GitLab group)
+    so embry0 can discover and maintain every repository under it. With
+    ``probe`` on (default) the forge is asked what the credential can do there
+    first; an owner the credential cannot list is refused. ``credential_id``
+    names a forge_token in the registry; empty uses the environment token for
+    that owner. Idempotent. Requires confirm=true (creates platform state)."""
+    if not confirm:
+        return _confirmation_refusal("org_register", f"register organization {owner!r} on {forge}")
+    return await _get_client().org_register(
+        owner, forge=forge, credential_id=credential_id, display_name=display_name, probe=probe
+    )
+
+
+@_tool
 async def repo_list(include_inactive: bool = False) -> list[dict[str, Any]]:
     """List registered target repos (the embry0 repo registry) with a
     has_qa_config flag per repo. include_inactive=true also shows deactivated repos."""

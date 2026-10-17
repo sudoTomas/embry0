@@ -28,6 +28,9 @@ The unit of work that enters embry0. Originates from a webhook ([forge](#forge) 
 ### Forge
 The platform that hosts a repository's git remote and its change-request surface — GitHub or GitLab. The word is the industry term for an SCM host (SourceForge begat it), chosen over "provider" (overloaded by model providers) and "platform" (means nothing). A repo has exactly **one** forge, recorded as the `forge` discriminator on the `repos` table (#162); it decides which credential proxy a sandbox enrolls with, whether job completion opens a pull request or a merge request (`_open_change_request`), and which API client comments on the change. Not the same thing as a [tracker](#tracker): a repo's code can live on one forge while its issues live in a separate tracker. (2026-08)
 
+### Organization
+A forge owner embry0 maintains as a whole: a GitHub organization or user, or a GitLab group, held as a row in `organizations` (ADR 0010) with its [forge](#forge), the [credential](#credential) embry0 acts with there, and `access`, what the probe learned that credential can do by calling the forge. A discovery run (`org_discovery_runs`) reads every repository under the owner into one fact row per repository (`org_repo_facts`). Registering an organization changes nothing for any repository until a person acts. See [ADR 0010](adr/0010-organizations.md). (2026-10)
+
 ### Tracker
 The system an [issue](#issue) originates from and is written back to — GitHub Issues, GitLab Issues, or Linear. Recorded per-issue as the generic `tracker` / `tracker_key` / `tracker_url` columns (migration 60): `tracker_key` is TEXT so Linear's `ENG-123` identifiers fold in alongside the forges' integer numbers. A [forge](#forge) always implies a same-named tracker, but a tracker need not be a forge — Linear hosts no git remotes, which is exactly why the two concepts are separate. (2026-08)
 

@@ -40,3 +40,4 @@ If your work contradicts a record here, say so explicitly rather than silently o
 | [0007](0007-git-proxy-forwards-smart-http.md) | The git-proxy forwards git smart HTTP for the job's repository; the forge token never reaches the sandbox | accepted (2026-10-08) |
 | [0008](0008-llm-credential-in-sandbox-env.md) | The agent's LLM credential is in the sandbox env; the command denylist and the CLI's permission rules do not protect it | accepted (2026-10-08) |
 | [0009](0009-git-proxy-scopes-push-to-the-jobs-branch.md) | The git-proxy lets a push touch the job's own branch only: no other ref, no deletion | accepted (2026-10-10) |
+| [0010](0010-organizations.md) | The organization is the unit embry0 maintains | accepted (2026-10-16) |
