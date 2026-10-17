@@ -31,6 +31,11 @@ export interface AgentDefinition {
   auth_mode?: AgentAuthMode | null;
   mcp_servers?: Record<string, unknown> | null;
   is_builtin: boolean;
+  /** Catalog provider the model routes to by id prefix; null when none does.
+   * Absent on a backend that predates the field. */
+  provider?: string | null;
+  /** The provider has a credential configured right now. */
+  provider_ready?: boolean;
   created_at?: string;
   updated_at?: string;
 }

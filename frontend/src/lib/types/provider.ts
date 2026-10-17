@@ -39,7 +39,19 @@ export interface CatalogProvider {
   credential_source: string | null;
   /** True for the runtime default provider (Anthropic). */
   default: boolean;
+  /** Model id prefixes this provider serves. Absent on an older backend. */
+  model_prefixes?: string[];
+  /** The most recent "Test connection" outcome, null when never run.
+   * Absent on an older backend. */
+  last_probe?: ProviderLastProbe | null;
   models: CatalogModel[];
+}
+
+export interface ProviderLastProbe {
+  /** A probe status word: ok, unauthorized, entitlement_refused, ... */
+  status: string;
+  /** ISO 8601 timestamp of the test. */
+  checked_at: string;
 }
 
 export interface ModelsCatalog {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
@@ -10,6 +10,7 @@ import {
 } from "@/components/divine/operations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
@@ -17,6 +18,7 @@ import { Textarea } from "@/components/ui/Textarea";
 import { TagInput } from "@/components/ui/TagInput";
 import { useAgent, useCreateAgent, useUpdateAgent } from "@/hooks/useAgents";
 import { useModels } from "@/hooks/useModels";
+import { providerForModel } from "@/lib/providers";
 import type { AgentCreateRequest, AgentUpdateRequest } from "@/lib/types/agents";
 
 const AVAILABLE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
@@ -63,7 +65,34 @@ export function AgentFormPage() {
 
   const isEdit = !!typeParam && typeParam !== "new";
   const { data: existing, isLoading } = useAgent(isEdit ? typeParam : null);
-  const { models: knownModels, isLoading: modelsLoading } = useModels();
+  const { models: knownModels, providers, isLoading: modelsLoading } = useModels();
+  // The picker offers every tier and catalogue model, whatever credentials
+  // this API process sees: they may be injected only where jobs run. A model
+  // whose provider is not ready here is marked "(no credential)" and cannot be
+  // picked anew; an agent already saved on one still opens on it.
+  // Operator-disabled models stay out, as in useModels. Without the catalog
+  // (older backend) the list stays as useModels built it.
+  const offeredModels = useMemo(
+    () =>
+      providers.length === 0
+        ? knownModels
+        : [
+            ...new Set([
+              ...knownModels,
+              ...providers.flatMap((p) => p.models.filter((m) => m.enabled !== false).map((m) => m.model)),
+            ]),
+          ],
+    [knownModels, providers],
+  );
+  const notReadyModels = useMemo(
+    () =>
+      new Set(
+        providers.length === 0
+          ? []
+          : offeredModels.filter((m) => providerForModel(m, providers)?.available !== true),
+      ),
+    [offeredModels, providers],
+  );
 
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
@@ -73,7 +102,7 @@ export function AgentFormPage() {
   // Populate form when editing an existing agent
   useEffect(() => {
     if (!existing) return;
-    const isCustomModel = !knownModels.includes(existing.model);
+    const isCustomModel = !offeredModels.includes(existing.model);
     const mcp = existing.mcp_servers;
     setForm({
       type: existing.type,
@@ -87,9 +116,38 @@ export function AgentFormPage() {
       auth_mode: existing.auth_mode ?? "",
       mcpServersText: mcp && Object.keys(mcp).length > 0 ? JSON.stringify(mcp, null, 2) : "",
     });
-  }, [existing, knownModels]);
+  }, [existing, offeredModels]);
+
+  // A new agent starts on DEFAULT_MODEL. When the picker does not offer it as
+  // a choice, start on the first model it does, so the select shows what will
+  // be saved; Custom... when none is ready.
+  useEffect(() => {
+    if (isEdit || modelsLoading) return;
+    const selectable = (m: string) => offeredModels.includes(m) && !notReadyModels.has(m);
+    setForm((prev) =>
+      prev.model === "__custom__" || selectable(prev.model)
+        ? prev
+        : { ...prev, model: offeredModels.find(selectable) ?? "__custom__" },
+    );
+  }, [isEdit, modelsLoading, offeredModels, notReadyModels]);
 
   const resolvedModel = form.model === "__custom__" ? form.customModel : form.model;
+
+  // Which provider serves the chosen model and whether it can run it now: from
+  // the catalog by id prefix, as the backend routes, so it follows the picker
+  // and the custom id. Without the catalog, the saved model's answer from
+  // GET /agents/{type}.
+  const chosenProvider: { name: string | null; ready: boolean } | null = (() => {
+    if (!resolvedModel.trim()) return null;
+    if (providers.length > 0) {
+      const provider = providerForModel(resolvedModel, providers);
+      return { name: provider?.name ?? null, ready: provider?.available === true };
+    }
+    if (isEdit && existing && resolvedModel === existing.model && existing.provider_ready !== undefined) {
+      return { name: existing.provider ?? null, ready: existing.provider_ready };
+    }
+    return null;
+  })();
 
   const handleToolToggle = (tool: string) => {
     setForm((prev) => ({
@@ -270,9 +328,14 @@ export function AgentFormPage() {
                 className="mt-1"
                 disabled={modelsLoading}
               >
-                {knownModels.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
+                {offeredModels.map((m) => {
+                  const notReady = notReadyModels.has(m);
+                  return (
+                    <option key={m} value={m} disabled={notReady && m !== existing?.model}>
+                      {notReady ? `${m} (no credential)` : m}
+                    </option>
+                  );
+                })}
                 <option value="__custom__">Custom...</option>
               </Select>
               {form.model === "__custom__" && (
@@ -282,6 +345,34 @@ export function AgentFormPage() {
                   value={form.customModel}
                   onChange={(e) => setForm((prev) => ({ ...prev, customModel: e.target.value }))}
                 />
+              )}
+              {chosenProvider && (
+                <p
+                  className="mt-1 flex items-center gap-2 text-xs text-white/40"
+                  data-testid="model-provider-readiness"
+                >
+                  {chosenProvider.name ? (
+                    <span>
+                      Provider: <span className="font-mono">{chosenProvider.name}</span>
+                    </span>
+                  ) : (
+                    <span>No configured provider serves this model</span>
+                  )}
+                  {chosenProvider.ready ? (
+                    <Badge tone="success">ready</Badge>
+                  ) : (
+                    <Badge
+                      tone="error"
+                      title={
+                        chosenProvider.name
+                          ? "No credential is configured for this provider"
+                          : "No configured provider serves this model"
+                      }
+                    >
+                      not ready
+                    </Badge>
+                  )}
+                </p>
               )}
             </div>
 

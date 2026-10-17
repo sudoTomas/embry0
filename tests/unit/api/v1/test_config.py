@@ -374,3 +374,36 @@ async def test_provider_live_test_xai_entitlement_hint(app, monkeypatch):
         )
     assert resp.status_code == 200
     assert resp.json()["status"] == "entitlement_refused"
+
+
+# --- provider readiness: prefixes and the last live test per provider ---
+
+
+@pytest.mark.asyncio
+async def test_catalog_carries_model_prefixes_and_no_last_probe_without_audit(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        data = (await client.get("/api/v1/config/models")).json()
+    by_name = {p["name"]: p for p in data["providers"]}
+    assert by_name["anthropic"]["model_prefixes"] == ["claude-"]
+    assert by_name["xai"]["model_prefixes"] == ["grok-"]
+    assert by_name["anthropic"]["last_probe"] is None
+    assert by_name["xai"]["last_probe"] is None
+
+
+@pytest.mark.asyncio
+async def test_catalog_reports_the_last_connection_test_per_provider(app):
+    from datetime import UTC, datetime
+
+    tested_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    rows = {"xai": {"details": {"provider": "xai", "status": "entitlement_refused"}, "created_at": tested_at}}
+    audit = MagicMock()
+    audit.latest_entry = AsyncMock(side_effect=lambda action, *, detail_key, detail_value: rows.get(detail_value))
+    app.state.audit_repo = audit
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        data = (await client.get("/api/v1/config/models")).json()
+    by_name = {p["name"]: p for p in data["providers"]}
+    assert by_name["xai"]["last_probe"] == {"status": "entitlement_refused", "checked_at": tested_at.isoformat()}
+    assert by_name["anthropic"]["last_probe"] is None
+    assert {call.args[0] for call in audit.latest_entry.await_args_list} == {"provider_connection_tested"}

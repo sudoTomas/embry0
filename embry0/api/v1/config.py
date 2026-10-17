@@ -22,50 +22,13 @@ from embry0.api.schemas import (
 )
 from embry0.audit.helpers import emit_audit
 from embry0.config import Embry0Config
+from embry0.services.provider_readiness import PROBE_AUDIT_ACTION, readiness_by_provider
 from embry0.storage.repositories.budget_config import BudgetConfigRepository
 from embry0.storage.repositories.context_config import ContextConfigRepository
 from embry0.storage.repositories.integration_config import _SECRET_FIELDS, IntegrationConfigRepository
 from embry0.storage.repositories.provider_config import ProviderConfigRepository
 
 router = APIRouter()
-
-
-async def _registry_has_provider(request: Request, provider: str) -> bool:
-    repo = getattr(request.app.state, "credentials_repo", None)
-    if repo is None:
-        return False
-    return bool(await repo.any_for_provider(provider))
-
-
-async def _provider_availability(request: Request, p: Any) -> tuple[bool, str | None]:
-    """(available, credential_source) for a catalog provider.
-
-    RAV-1297: Anthropic authenticates via CLAUDE_CODE_OAUTH_TOKEN and/or
-    ANTHROPIC_API_KEY; xAI via console key or the SuperGrok OAuth proxy
-    (EMB-46 default — a provisioned refresher means grok is runnable).
-    A registry row counts only when those env sources are absent.
-    """
-    import os
-
-    if p.name == "anthropic":
-        oauth = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
-        api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-        if oauth and api_key:
-            return True, "oauth+api_key"
-        if oauth:
-            return True, "oauth"
-        if api_key:
-            return True, "api_key"
-        if await _registry_has_provider(request, "anthropic"):
-            return True, "registry"
-        return False, None
-    if os.environ.get(p.api_key_env):
-        return True, "api_key"
-    if p.name == "xai" and getattr(request.app.state, "xai_refresher", None) is not None:
-        return True, "oauth_proxy"
-    if p.name == "xai" and await _registry_has_provider(request, "xai"):
-        return True, "registry"
-    return False, None
 
 
 @router.get("/config/models")
@@ -83,6 +46,10 @@ async def get_model_config(
     The catalog is complete — Anthropic is a first-class entry, each
     provider carries its credential source, and each model an ``enabled``
     flag from provider_config.disabled_models.
+    Availability and the last live test come from
+    embry0.services.provider_readiness, the same answer GET /agents reports
+    per agent; ``model_prefixes`` lets a client name the provider of any
+    model id, a custom one included.
     Used by the frontend model selectors (AgentFormPage, JobAdvancedFields
     via useModels) and the LLM Providers page.
     """
@@ -94,17 +61,23 @@ async def get_model_config(
 
     provider_cfg = await provider_repo.get()
     disabled = set(provider_cfg.get("disabled_models") or [])
+    readiness = await readiness_by_provider(request.app.state, with_last_probe=True)
 
     providers = []
     for p in CATALOG_PROVIDERS:
-        available, credential_source = await _provider_availability(request, p)
+        state = readiness[p.name]
+        probe = state.last_probe
         providers.append(
             {
                 "name": p.name,
                 "base_url": p.base_url,
-                "available": available,
-                "credential_source": credential_source,
+                "available": state.ready,
+                "credential_source": state.credential_source,
                 "default": p.name == "anthropic",
+                "model_prefixes": list(p.model_prefixes),
+                "last_probe": (
+                    {"status": probe.status, "checked_at": probe.checked_at.isoformat()} if probe is not None else None
+                ),
                 "models": [
                     {
                         "model": m,
@@ -384,7 +357,7 @@ async def test_catalog_provider(
     # Outcome only — never credentials or raw provider payloads.
     await emit_audit(
         db,
-        "provider_connection_tested",
+        PROBE_AUDIT_ACTION,
         actor=request_actor(request),
         details={"provider": provider_name, "status": status},
         audit_log_path=getattr(config, "audit_log_path", None),

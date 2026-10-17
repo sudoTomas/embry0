@@ -12,6 +12,11 @@ from embry0.services.model_enablement import (
     ensure_models_enabled,
     ensure_models_priced,
 )
+from embry0.services.provider_readiness import (
+    ProviderNotReadyError,
+    annotate_agents,
+    ensure_model_provider_ready,
+)
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 
 router = APIRouter()
@@ -31,25 +36,43 @@ async def _reject_if_disabled(request: Request, model: str | None) -> None:
     except UnpricedModelError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     provider_repo = getattr(request.app.state, "provider_repo", None)
-    if provider_repo is None:
-        return
-    try:
-        await ensure_models_enabled([model], provider_repo)
-    except DisabledModelError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if provider_repo is not None:
+        try:
+            await ensure_models_enabled([model], provider_repo)
+        except DisabledModelError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # Opt-in (AGENT_MODEL_PROVIDER_CHECK): a model whose provider has no
+    # credential would only fail once the job runs. Refuse it here, naming
+    # the provider. Off by default, so an install keeps today's behavior.
+    config = getattr(request.app.state, "config", None)
+    if getattr(config, "agent_model_provider_check", False):
+        try:
+            await ensure_model_provider_ready(model, request.app.state)
+        except ProviderNotReadyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/agents")
-async def list_agents(repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo)) -> list[dict[str, Any]]:
-    return await repo.list_all()
+async def list_agents(
+    request: Request,
+    repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
+) -> list[dict[str, Any]]:
+    """Every agent definition, each with the provider its model routes to and
+    whether that provider has a credential right now (``provider``, ``provider_ready``)."""
+    return await annotate_agents(await repo.list_all(), request.app.state)
 
 
 @router.get("/agents/{agent_type}")
-async def get_agent(agent_type: str, repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo)) -> dict[str, Any]:
+async def get_agent(
+    agent_type: str,
+    request: Request,
+    repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
+) -> dict[str, Any]:
     agent = await repo.get(agent_type)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent type not found")
-    return agent
+    [annotated] = await annotate_agents([agent], request.app.state)
+    return annotated
 
 
 @router.post("/agents", status_code=201, dependencies=[require_admin])

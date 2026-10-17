@@ -385,6 +385,11 @@ class Embry0Config(BaseSettings):
     model_heavy: str = "claude-opus-5"
     model_medium: str = "claude-sonnet-5"
     model_light: str = "claude-haiku-4-5"
+    # Refuse to save an agent definition whose model routes to a provider
+    # with no credential configured, or to no catalog provider at all. Off
+    # by default: the save succeeds and the job fails when it runs, as
+    # before. See embry0/services/provider_readiness.py, docs/providers.md.
+    agent_model_provider_check: bool = False
 
     # Budget
     # Fallback only: budget_config (DB row > env) is the source of truth

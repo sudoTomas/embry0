@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { PageError } from "@/components/PageError";
+import { formatDate } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 import {
   useModelsCatalog,
@@ -106,6 +107,19 @@ function ProviderCard({
             "none configured"
           )}
         </p>
+        {provider.last_probe !== undefined && (
+          <p className="text-xs text-muted-foreground" data-testid="provider-last-probe">
+            Last test:{" "}
+            {provider.last_probe ? (
+              <>
+                {PROBE_STATUS_LABELS[provider.last_probe.status] ?? provider.last_probe.status},{" "}
+                <time dateTime={provider.last_probe.checked_at}>{formatDate(provider.last_probe.checked_at)}</time>
+              </>
+            ) : (
+              "never"
+            )}
+          </p>
+        )}
       </CardHeader>
       <CardContent>
         {probe && (

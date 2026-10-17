@@ -124,3 +124,26 @@ describe("useModels — RAV-1297 enablement", () => {
     expect(result.current.models).toContain("grok-legacy");
   });
 });
+
+describe("useModels provider catalog", () => {
+  it("returns the providers next to the model list", async () => {
+    const xai = {
+      name: "xai",
+      base_url: "https://api.x.ai",
+      available: false,
+      model_prefixes: ["grok-"],
+      models: [{ model: "grok-4.5", pricing_usd_per_mtok: { input: 2, output: 6 } }],
+    };
+    vi.mocked(api.get).mockResolvedValue({
+      data: { heavy: "claude-opus-5", medium: "claude-sonnet-5", light: "claude-haiku-4-5", providers: [xai] },
+    });
+    const { result } = renderHook(() => useModels(), { wrapper });
+    await waitFor(() => expect(result.current.providers).toEqual([xai]));
+  });
+
+  it("returns no providers before the catalog loads", () => {
+    vi.mocked(api.get).mockReturnValue(new Promise(() => {}));
+    const { result } = renderHook(() => useModels(), { wrapper });
+    expect(result.current.providers).toEqual([]);
+  });
+});

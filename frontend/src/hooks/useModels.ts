@@ -10,10 +10,12 @@ interface ProviderModel {
   pricing_usd_per_mtok: { input: number | null; output: number | null };
 }
 
-interface ProviderCatalog {
+export interface ProviderCatalog {
   name: string;
   base_url: string;
   available: boolean;
+  /** Model id prefixes the provider serves; absent on an older backend. */
+  model_prefixes?: string[];
   models: ProviderModel[];
 }
 
@@ -24,13 +26,15 @@ interface ModelsConfig {
   providers?: ProviderCatalog[];
 }
 
+const NO_PROVIDERS: ProviderCatalog[] = [];
+
 const FALLBACK_MODELS = [
   "claude-opus-5",
   "claude-sonnet-5",
   "claude-haiku-4-5",
 ];
 
-export function useModels(): { models: string[]; isLoading: boolean } {
+export function useModels(): { models: string[]; providers: ProviderCatalog[]; isLoading: boolean } {
   const { data, isLoading } = useQuery({
     queryKey: ["config", "models"],
     queryFn: async () => {
@@ -58,5 +62,9 @@ export function useModels(): { models: string[]; isLoading: boolean } {
     return [...new Set([data.heavy, data.medium, data.light, ...providerModels])];
   }, [data]);
 
-  return { models, isLoading };
+  // The catalog itself, for consumers that name the provider of a model
+  // (AgentFormPage). Empty until it loads or on a backend without it.
+  const providers = data?.providers ?? NO_PROVIDERS;
+
+  return { models, providers, isLoading };
 }
