@@ -2680,6 +2680,47 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'ADR 0010: a forge owner embry0 maintains as a whole. access = what the credential can do there, from the probe; settings = defaults for repositories under it.';
         """,
     ),
+    (
+        98,
+        "org_repo_facts and org_discovery_runs — what discovery found under an owner (ADR 0010, slice 2)",
+        # One fact row per repository, replaced on every run (the forge is the
+        # source of truth, so history lives in the runs ledger, not in old
+        # facts). `repo` is the key every other table scopes by, so a
+        # repository that moves owners keeps one row. `facts` holds what a
+        # person needs to decide: boot hint, frontend, tests, CI, env keys,
+        # webhook visibility and presence, and embry0's own state (registered,
+        # QA config, watcher stack, tracker mapping).
+        """
+        CREATE TABLE IF NOT EXISTS org_repo_facts (
+            owner           TEXT NOT NULL,
+            repo            TEXT PRIMARY KEY,
+            run_id          TEXT,
+            archived        BOOLEAN NOT NULL DEFAULT FALSE,
+            private         BOOLEAN NOT NULL DEFAULT FALSE,
+            fork            BOOLEAN NOT NULL DEFAULT FALSE,
+            default_branch  TEXT,
+            language        TEXT,
+            pushed_at       TIMESTAMPTZ,
+            open_issues     INTEGER,
+            facts           JSONB NOT NULL DEFAULT '{}'::jsonb,
+            seen_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_repo_facts_owner ON org_repo_facts (owner, pushed_at DESC);
+
+        CREATE TABLE IF NOT EXISTS org_discovery_runs (
+            id           TEXT PRIMARY KEY,
+            owner        TEXT NOT NULL,
+            status       TEXT NOT NULL CHECK (status IN ('running', 'done', 'error')),
+            repos_total  INTEGER,
+            repos_seen   INTEGER NOT NULL DEFAULT 0,
+            summary      JSONB NOT NULL DEFAULT '{}'::jsonb,
+            error        TEXT,
+            started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            finished_at  TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_discovery_runs_owner ON org_discovery_runs (owner, started_at DESC);
+        """,
+    ),
 ]
 
 

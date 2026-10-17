@@ -730,6 +730,9 @@ async def _init_app_state(
     from embry0.storage.repositories.organizations import OrganizationsRepository
 
     app.state.organizations_repo = OrganizationsRepository(db)
+    from embry0.storage.repositories.org_repos import OrgReposRepository
+
+    app.state.org_repos_repo = OrgReposRepository(db)
     app.state.qa_configs_repo = RepoQAConfigsRepository(db, default_forge=app_config.default_forge)
     app.state.qa_app_results_repo = QAAppResultsRepository(db)
     app.state.qa_image_tags_repo = QAImageTagsRepository(db)

@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from embry0.api.app import create_app
 from embry0.api.v1 import organizations as organizations_api
 from embry0.config import Embry0Config
+from embry0.services.org_discovery import RepoFacts
 from embry0.services.organizations import FORGES, STATUSES, AccessProbe, Organization
 
 
@@ -57,6 +58,59 @@ class FakeOrgsRepo:
         org.status = status
         return org
 
+    async def mark_discovered(self, owner: str, *, repo_count: int, when: Any = None) -> Organization | None:
+        org = self.orgs.get(owner.lower())
+        if org is not None:
+            org.repo_count = repo_count
+        return org
+
+
+class FakeFactsRepo:
+    def __init__(self) -> None:
+        self.facts: dict[str, dict[str, Any]] = {}
+        self.runs: list[dict[str, Any]] = []
+
+    async def upsert_fact(self, facts: RepoFacts, *, run_id: str) -> None:
+        self.facts[facts.repo] = {**facts.to_dict(), "run_id": run_id}
+
+    async def list_for_owner(self, owner: str, *, include_archived: bool = True) -> list[dict[str, Any]]:
+        return [
+            f for f in self.facts.values() if f["owner"] == owner.lower() and (include_archived or not f["archived"])
+        ]
+
+    async def start_run(self, owner: str) -> dict[str, Any]:
+        run = {
+            "id": f"odr-{len(self.runs) + 1}",
+            "owner": owner,
+            "status": "running",
+            "repos_total": None,
+            "repos_seen": 0,
+            "summary": {},
+            "error": None,
+        }
+        self.runs.append(run)
+        return run
+
+    async def progress(self, run_id: str, *, seen: int, total: int) -> None:
+        for r in self.runs:
+            if r["id"] == run_id:
+                r["repos_seen"], r["repos_total"] = seen, total
+
+    async def finish_run(
+        self, run_id: str, *, summary: dict[str, Any] | None = None, error: str | None = None
+    ) -> dict[str, Any] | None:
+        for r in self.runs:
+            if r["id"] == run_id:
+                r.update(status="error" if error else "done", summary=dict(summary or {}), error=error)
+                return r
+        return None
+
+    async def running_run(self, owner: str) -> dict[str, Any] | None:
+        return next((r for r in self.runs if r["owner"] == owner.lower() and r["status"] == "running"), None)
+
+    async def list_runs(self, owner: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        return [r for r in self.runs if r["owner"] == owner.lower()][-limit:]
+
 
 class FakeCredentials:
     def __init__(self, rows: dict[str, dict[str, Any]]) -> None:
@@ -76,6 +130,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     config = Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_token="env-token")
     app = create_app(config)
     app.state.organizations_repo = FakeOrgsRepo()
+    app.state.org_repos_repo = FakeFactsRepo()
     app.state.credentials_repo = FakeCredentials(
         {
             "cred-ok": {
@@ -229,3 +284,50 @@ async def test_reprobe_writes_an_audit_row(app: Any, monkeypatch: pytest.MonkeyP
     assert probes[0]["source"] == "env:GITHUB_TOKEN__ACME"
     assert probes[0]["read"] is True and "hooks" in probes[0]
 
+
+@pytest.mark.asyncio
+async def test_discover_runs_in_the_background_and_stores_facts(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from embry0.api.v1 import organizations as api_module
+    from embry0.services import org_discovery
+
+    async def fake_discover(client: Any, owner: str, **kw: Any) -> list[RepoFacts]:
+        await kw["progress"](1, 1)
+        state = await kw["embry0_state"]("acme/web")
+        return [RepoFacts(owner=owner, repo="acme/web", facts={"frontend": True, **state})]
+
+    monkeypatch.setattr(org_discovery, "discover", fake_discover)
+    app.state.repos_repo = None
+    async with _client(app) as client:
+        await client.post("/api/v1/orgs", json={"owner": "acme", "probe": False})
+        started = await client.post("/api/v1/orgs/acme/discover")
+        assert started.status_code == 202, started.text
+        run_id = started.json()["id"]
+        for _ in range(50):
+            runs = (await client.get("/api/v1/orgs/acme/runs")).json()["runs"]
+            if runs and runs[-1]["status"] != "running":
+                break
+            await asyncio.sleep(0.01)
+        repos = await client.get("/api/v1/orgs/acme/repos")
+        org = await client.get("/api/v1/orgs/acme")
+    assert runs[-1]["id"] == run_id and runs[-1]["status"] == "done", runs
+    assert runs[-1]["summary"]["repos"] == 1 and runs[-1]["repos_seen"] == 1
+    assert repos.json()["count"] == 1 and repos.json()["repos"][0]["facts"]["frontend"] is True
+    assert repos.json()["repos"][0]["facts"]["registered"] is False
+    assert org.json()["repo_count"] == 1
+    assert api_module is not None
+
+
+@pytest.mark.asyncio
+async def test_discover_refuses_a_second_run_and_a_paused_owner(app: Any) -> None:
+    async with _client(app) as client:
+        await client.post("/api/v1/orgs", json={"owner": "acme", "probe": False})
+        await app.state.org_repos_repo.start_run("acme")
+        busy = await client.post("/api/v1/orgs/acme/discover")
+        await client.put("/api/v1/orgs/acme/status", json={"status": "paused"})
+        paused = await client.post("/api/v1/orgs/acme/discover")
+        missing = await client.post("/api/v1/orgs/nobody/discover")
+    assert busy.status_code == 409 and "already running" in busy.json()["detail"]
+    assert paused.status_code == 409
+    assert missing.status_code == 404

@@ -7,17 +7,23 @@ spend at every repository under it.
 
 from __future__ import annotations
 
+import asyncio
+import json
 from typing import Any, cast
 
+import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.audit.helpers import emit_audit
+from embry0.services import org_discovery
 from embry0.services import organizations as org_service
 from embry0.services.organizations import FORGES, STATUSES, AccessProbe
+from embry0.storage.repositories.org_repos import OrgReposRepository
 from embry0.storage.repositories.organizations import OrganizationsRepository
 
+logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
@@ -181,3 +187,140 @@ async def set_organization_status(owner: str, body: StatusBody, request: Request
         details={"owner": org.owner, "status": body.status},
     )
     return org.to_dict()
+
+
+# ---- discovery (slice 2) ----
+
+
+def _facts_repo(request: Request) -> OrgReposRepository:
+    repository = getattr(request.app.state, "org_repos_repo", None)
+    if repository is None:
+        raise HTTPException(status_code=503, detail="organization storage not initialized")
+    return cast("OrgReposRepository", repository)
+
+
+def _hook_origins(request: Request) -> tuple[str, ...]:
+    config = getattr(request.app.state, "config", None)
+    origins = (
+        str(getattr(config, "sso_public_origin", "") or ""),
+        str(getattr(config, "dashboard_public_url", "") or ""),
+        str(getattr(config, "webhook_public_url", "") or ""),
+    )
+    return tuple(o.rstrip("/") for o in origins if o)
+
+
+def _tracker_map(request: Request) -> dict[str, str]:
+    config = getattr(request.app.state, "config", None)
+    raw = str(getattr(config, "linear_repo_map", "") or "")
+    try:
+        data = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+
+def embry0_state_lookup(request: Request) -> org_discovery.StateLookup:
+    """What embry0 already knows about a repository, from its own tables."""
+    st = request.app.state
+    repos_repo = getattr(st, "repos_repo", None)
+    qa_repo = getattr(st, "qa_configs_repo", None)
+    stacks_repo = getattr(st, "watcher_stacks_repo", None)
+    mapped = set(_tracker_map(request).values())
+
+    async def lookup(repo: str) -> dict[str, Any]:
+        row = await repos_repo.get(repo) if repos_repo is not None else None
+        qa = await qa_repo.get(repo) if qa_repo is not None else None
+        stack = await stacks_repo.get(repo) if stacks_repo is not None else None
+        return {
+            "registered": row is not None,
+            "active": bool(row and row.get("active")),
+            "qa_config": qa is not None,
+            "watcher_stack": stack is not None,
+            "tracker_mapped": repo in mapped,
+        }
+
+    return lookup
+
+
+async def run_discovery(
+    request: Request, owner: str, forge: str, token: str, owner_kind: str | None, run_id: str
+) -> None:
+    facts_repo = _facts_repo(request)
+    orgs_repo = _repo(request)
+    try:
+        client: Any
+        if forge == "gitlab":
+            raise RuntimeError("GitLab discovery is not in this release")
+        from embry0.execution.github_client import GitHubClient
+
+        client = GitHubClient(default_token=token, max_attempts=2)
+
+        async def progress(seen: int, total: int) -> None:
+            await facts_repo.progress(run_id, seen=seen, total=total)
+
+        found = await org_discovery.discover(
+            client,
+            owner,
+            owner_kind=owner_kind,
+            hook_origins=_hook_origins(request),
+            embry0_state=embry0_state_lookup(request),
+            progress=progress,
+        )
+        for facts in found:
+            await facts_repo.upsert_fact(facts, run_id=run_id)
+        summary = org_discovery.summarize(found)
+        await facts_repo.finish_run(run_id, summary=summary)
+        await orgs_repo.mark_discovered(owner, repo_count=summary["repos"])
+        logger.info("org_discovery_done", owner=owner, run_id=run_id, **summary)
+    except Exception as exc:  # noqa: BLE001 - the run row carries the failure
+        logger.warning("org_discovery_failed", owner=owner, run_id=run_id, error=type(exc).__name__)
+        await facts_repo.finish_run(run_id, error=f"{type(exc).__name__}: {str(exc)[:200]}")
+
+
+@router.post("/orgs/{owner}/discover", status_code=202, dependencies=[require_admin])
+async def discover_organization(owner: str, request: Request) -> dict[str, Any]:
+    """Walk every repository under the owner and store one fact row each.
+
+    Runs in the orchestrator process and returns the run at once; poll
+    ``GET /orgs/{owner}/runs`` for progress. One run per owner at a time.
+    """
+    org = await _repo(request).get(owner)
+    if org is None:
+        raise HTTPException(status_code=404, detail=f"no organization {owner}")
+    if org.status != "active":
+        raise HTTPException(status_code=409, detail=f"organization {owner} is {org.status}")
+    facts_repo = _facts_repo(request)
+    running = await facts_repo.running_run(org.owner)
+    if running is not None:
+        raise HTTPException(status_code=409, detail=f"discovery {running['id']} is already running for {owner}")
+    token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
+    run = await facts_repo.start_run(org.owner)
+    owner_kind = org.access.get("owner_kind") if isinstance(org.access, dict) else None
+    task = asyncio.create_task(run_discovery(request, org.owner, org.forge, token, owner_kind, run["id"]))
+    tasks = getattr(request.app.state, "org_discovery_tasks", None)
+    if tasks is None:
+        tasks = request.app.state.org_discovery_tasks = set()
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+    await emit_audit(
+        getattr(request.app.state, "db", None),
+        "organization.discover",
+        actor=request_actor(request),
+        details={"owner": org.owner, "run_id": run["id"]},
+    )
+    return run
+
+
+@router.get("/orgs/{owner}/repos")
+async def organization_repositories(owner: str, request: Request, include_archived: bool = True) -> dict[str, Any]:
+    if await _repo(request).get(owner) is None:
+        raise HTTPException(status_code=404, detail=f"no organization {owner}")
+    rows = await _facts_repo(request).list_for_owner(owner, include_archived=include_archived)
+    return {"owner": owner.lower(), "repos": rows, "count": len(rows)}
+
+
+@router.get("/orgs/{owner}/runs")
+async def organization_runs(owner: str, request: Request, limit: int = 20) -> dict[str, Any]:
+    if await _repo(request).get(owner) is None:
+        raise HTTPException(status_code=404, detail=f"no organization {owner}")
+    return {"owner": owner.lower(), "runs": await _facts_repo(request).list_runs(owner, limit=max(1, min(limit, 100)))}

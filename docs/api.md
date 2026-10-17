@@ -174,6 +174,23 @@ curl -X POST http://localhost:8200/api/v1/credentials/import-env \
 
 GitHub also returns `cached`, `truncated_env_keys` (an env key, or `credential:<label>` when a registry listing was cut short), and an advisory `push` (GitHub's `permissions.push` for the token's user, not what a fine-grained PAT grants). GitLab returns `cached` and `configured` (`false`, with an empty project list, when the deployment has no GitLab credential — not an error).
 
+## Organizations
+
+The forge owners embry0 maintains as a whole ([ADR 0010](adr/0010-organizations.md)). Reads need any authenticated principal; every mutation needs the `admin` tier and writes an `organization.*` audit row. Registering an owner changes nothing for any repository until a person acts.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/orgs` | read |
+| `GET /api/v1/orgs/{owner}` | read |
+| `POST /api/v1/orgs` | admin |
+| `POST /api/v1/orgs/{owner}/probe` | admin |
+| `PUT /api/v1/orgs/{owner}/status` | admin |
+| `POST /api/v1/orgs/{owner}/discover` | admin |
+| `GET /api/v1/orgs/{owner}/repos` | read |
+| `GET /api/v1/orgs/{owner}/runs` | read |
+
+`POST /api/v1/orgs/{owner}/discover` answers 202 and starts one discovery run for the owner; a request while a run is in progress, or for a paused or removed owner, answers 409, and an unknown owner 404. Poll `GET /api/v1/orgs/{owner}/runs` until the newest run is `done` or `error`. `GET /api/v1/orgs/{owner}/repos` returns one fact row per repository, replaced on each run, and `runs` keeps the history of every run with its progress and summary.
+
 ## Repository preferences
 
 ```bash
