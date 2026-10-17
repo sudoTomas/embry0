@@ -1297,11 +1297,17 @@ class WatcherService:
         """Rendered {drilldown} block, empty when the context-proxy is off."""
         if not self._context_proxy_on():
             return ""
+        from embry0.execution.proxy.container_allowlist import is_pattern
         from embry0.execution.proxy.context_proxy import MAX_LIMIT, MAX_SINCE_MINUTES
 
-        containers = ", ".join(
-            c.strip() for c in str(self._config.context_proxy_container_allowlist).split(",") if c.strip()
-        )
+        entries = [c.strip() for c in str(self._config.context_proxy_container_allowlist).split(",") if c.strip()]
+        containers = ", ".join(entries)
+        if any(is_pattern(entry) for entry in entries):
+            # RAV-3096: containers named per release (blue/green slots) are allowlisted by pattern.
+            containers += (
+                " (a * stands for any run of letters, digits, - or _ in a container name, such as a"
+                " deploy slot: query the full name your excerpts show)"
+            )
         return _DRILLDOWN_SECTION.format(
             containers=containers,
             since_cap=MAX_SINCE_MINUTES,

@@ -244,3 +244,50 @@ async def test_deploy_services_alone_resolves_evidence_but_grants_nothing() -> N
     assert ev is not None and ev.services == ("acme-ml",)
     assert ev.signature == "" and ev.samples == ()
     assert log_scope(ev.as_state()) == []
+
+
+# ---- RAV-3096: allowlist patterns (containers named per release) ----------
+
+_SLOTS = ["acme-backend*", "acme-frontend"]
+
+_SLOT_TICKET = """[ENG-2001] fix: lead export 502s after the blue/green switch
+
+## Evidence
+
+acme-backend-leads-green logged 6x; acme-backend-green proxied it:
+
+```
+502 Bad Gateway from http://acme-backend-leads-green:3101/api/v1/leads/export
+```
+
+## Impact
+
+acme-backend-blue (the previous slot) was already retired.
+"""
+
+
+def test_services_named_in_resolves_pattern_entries_to_the_names_written() -> None:
+    text = "acme-backend-green and ACME-FRONTEND failed; not xacme-backend-blue, not acme-ml-green"
+    assert services_named_in(text, _SLOTS) == ["acme-backend-green", "acme-frontend"]
+    # An exact entry is still not a prefix.
+    assert services_named_in("acme-frontend-old", _SLOTS) == []
+
+
+async def test_ticket_evidence_names_slot_containers_through_a_pattern() -> None:
+    ev = await resolve_case_evidence(job_id="j", issue_id=None, ticket_text=_SLOT_TICKET, allowlist=_SLOTS, cases=None)
+    assert ev is not None
+    # The Evidence section only: the retired slot under Impact is not granted.
+    assert ev.services == ("acme-backend-green", "acme-backend-leads-green")
+    assert log_scope(ev.as_state()) == ["acme-backend-green", "acme-backend-leads-green"]
+
+
+async def test_case_deploy_services_resolve_through_a_pattern() -> None:
+    case = {
+        "id": "c",
+        "signature": "502 Bad Gateway",
+        "deploy_services": ["acme-backend-b-blue", "acme-backend*", "db"],
+    }
+    ev = await resolve_case_evidence(
+        job_id="j", issue_id=None, ticket_text="fix it", allowlist=_SLOTS, cases=_Cases(by_job={"j": case})
+    )
+    assert ev is not None and ev.services == ("acme-backend-b-blue",)

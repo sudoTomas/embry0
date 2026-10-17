@@ -32,6 +32,7 @@ from typing import Any, Protocol
 
 import structlog
 
+from embry0.execution.proxy.container_allowlist import ContainerAllowlist
 from embry0.safety.redaction import redact_bounded, redact_log_text
 
 logger = structlog.get_logger(__name__)
@@ -100,13 +101,12 @@ def acceptance_criteria_in(text: str) -> str:
 
 
 def services_named_in(text: str, allowlist: Sequence[str]) -> list[str]:
-    """Allowlisted container names that appear in ``text`` as whole names."""
-    found: list[str] = []
-    for name in allowlist:
-        clean = name.strip()
-        if clean and re.search(rf"(?<![\w-]){re.escape(clean)}(?![\w-])", text or "", re.IGNORECASE):
-            found.append(clean)
-    return sorted(set(found))
+    """Allowlisted container names that appear in ``text`` as whole names.
+
+    An exact entry counts in its own spelling; a name a pattern entry admits
+    (``shop-api*`` and ``shop-api-green``) counts as the ticket wrote it.
+    """
+    return ContainerAllowlist(allowlist).names_in(text or "")
 
 
 def _samples(section: str, redact: Callable[[str], str]) -> tuple[str, ...]:
@@ -161,10 +161,11 @@ async def resolve_case_evidence(
         # A signature is a search key: cut short it would match the wrong thing.
         if len(raw_signature) <= MAX_SIGNATURE_CHARS:
             signature = redact(raw_signature)
-        allowed = {name.strip().lower(): name.strip() for name in allowlist if name.strip()}
+        allowed = ContainerAllowlist(allowlist)
         for service in case.get("deploy_services") or []:
-            if str(service).strip().lower() in allowed:
-                services.add(allowed[str(service).strip().lower()])
+            name = allowed.resolve(str(service))
+            if name is not None:
+                services.add(name)
 
     return CaseEvidence(
         source="case" if case is not None else "ticket",
