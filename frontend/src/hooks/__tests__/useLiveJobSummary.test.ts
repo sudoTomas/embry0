@@ -265,26 +265,53 @@ describe("useLiveJobSummary", () => {
     expect(result.current.lastActivity).toBe(`tool_call · Edit ${"a".repeat(80)}…`);
   });
 
-  it("tracks cost fields from cost_update event", async () => {
+  it("sums cost_update deltas across runs instead of keeping the last one", async () => {
+    const { result } = renderHook(() => useLiveJobSummary("job-abc"));
+    await flushConnect();
+
+    const costUpdate = (run: string, cost: number, tin: number, tout: number) => ({
+      type: "cost_update", timestamp: "t1", run_id: run, cost_usd: cost, tokens_in: tin, tokens_out: tout,
+      num_turns: 1, duration_ms: 1, duration_api_ms: 1, cache_read_tokens: 0, cache_creation_tokens: 0,
+    });
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage(costUpdate("run-1", 0.1, 500, 250));
+      lastCreatedWs!.simulateMessage(costUpdate("run-2", 0.2, 100, 50));
+    });
+    await flushBatch();
+
+    expect(result.current.latestCost).toBeCloseTo(0.3, 6);
+    expect(result.current.latestTokensIn).toBe(600);
+    expect(result.current.latestTokensOut).toBe(300);
+  });
+
+  it("adds turn_usage partials until the run's cost_update lands", async () => {
     const { result } = renderHook(() => useLiveJobSummary("job-abc"));
     await flushConnect();
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
       lastCreatedWs!.simulateMessage({
-        type: "cost_update",
-        timestamp: "t1",
-        cost_usd: 0.123,
-        tokens_in: 500,
-        tokens_out: 250,
-        num_turns: 7,
+        type: "turn_usage", timestamp: "t1", run_id: "run-1", cost_usd: 0.02, input_tokens: 300,
+        output_tokens: 30, cache_read_tokens: 0, cache_creation_tokens: 0, model: "m",
       });
     });
     await flushBatch();
 
-    expect(result.current.latestCost).toBe(0.123);
-    expect(result.current.latestTokensIn).toBe(500);
-    expect(result.current.latestTokensOut).toBe(250);
+    expect(result.current.latestCost).toBeCloseTo(0.02, 6);
+    expect(result.current.latestTokensIn).toBe(300);
+
+    await act(async () => {
+      lastCreatedWs!.simulateMessage({
+        type: "cost_update", timestamp: "t2", run_id: "run-1", cost_usd: 0.05, tokens_in: 600, tokens_out: 60,
+        num_turns: 2, duration_ms: 1, duration_api_ms: 1, cache_read_tokens: 0, cache_creation_tokens: 0,
+      });
+    });
+    await flushBatch();
+
+    expect(result.current.latestCost).toBeCloseTo(0.05, 6);
+    expect(result.current.latestTokensIn).toBe(600);
+    expect(result.current.latestTokensOut).toBe(60);
   });
 
   it("marks isComplete and flushes pending activity immediately on job_finished", async () => {
@@ -332,14 +359,29 @@ describe("useLiveJobSummary", () => {
     expect(result.current.attempt).toBe(1);
   });
 
-  it("increments the attempt number when the same node restarts", async () => {
+  it("takes the attempt number from node_started", async () => {
+    const { result } = renderHook(() => useLiveJobSummary("job-abc"));
+    await flushConnect();
+
+    // The stream may join mid-job: the first node_started it sees can be a retry.
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node: "review", attempt: 2 });
+    });
+    await flushBatch();
+
+    expect(result.current.currentNode).toBe("review");
+    expect(result.current.attempt).toBe(2);
+  });
+
+  it("falls back to counting starts when node_started carries no attempt", async () => {
     const { result } = renderHook(() => useLiveJobSummary("job-abc"));
     await flushConnect();
 
     await act(async () => {
       lastCreatedWs!.simulateOpen();
-      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node: "review", attempt: 1 });
-      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t2", node: "review", attempt: 2 });
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node: "review" });
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t2", node: "review" });
     });
     await flushBatch();
 

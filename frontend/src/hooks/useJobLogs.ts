@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { LogEvent, PipelineGraph } from "@/lib/types";
+import { applyTotals, emptyTotals, reduceTotals, totalsOf, type Totals } from "@/lib/eventTotals";
 import { useJobEventStream } from "./useJobEventStream";
 
 interface UseJobLogsResult {
   events: LogEvent[];
   isConnected: boolean;
   isComplete: boolean;
+  /** Job totals summed across runs (lib/eventTotals), not the last event's values. */
   latestCost: number;
   latestTokensIn: number;
   latestTokensOut: number;
+  /** Top-level turns summed over runs, from `turn_start`. */
   latestTurns: number;
   pipelineGraph: PipelineGraph | null;
 }
@@ -17,10 +20,8 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
   const eventsRef = useRef<LogEvent[]>([]);
   const [events, setEvents] = useState<LogEvent[]>([]);
   const flushTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const [cost, setCost] = useState(0);
-  const [tokensIn, setTokensIn] = useState(0);
-  const [tokensOut, setTokensOut] = useState(0);
-  const [turns, setTurns] = useState(0);
+  const totalsRef = useRef(emptyTotals());
+  const [totals, setTotals] = useState<Totals>(() => totalsOf(emptyTotals()));
   const [pipelineGraph, setPipelineGraph] = useState<PipelineGraph | null>(null);
   const [fallbackEvents, setFallbackEvents] = useState<LogEvent[]>([]);
 
@@ -29,18 +30,13 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
     {
       onEvent: (event) => {
         eventsRef.current.push(event);
+        applyTotals(totalsRef.current, event);
         if (!flushTimeoutRef.current) {
           flushTimeoutRef.current = setTimeout(() => {
             setEvents([...eventsRef.current]);
+            setTotals(totalsOf(totalsRef.current));
             flushTimeoutRef.current = undefined;
           }, 50);
-        }
-
-        if (event.type === "cost_update") {
-          setCost(event.cost_usd);
-          setTokensIn(event.tokens_in);
-          setTokensOut(event.tokens_out);
-          setTurns(event.num_turns);
         }
 
         // Graph-specific events
@@ -55,6 +51,7 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
           flushTimeoutRef.current = undefined;
         }
         setEvents([...eventsRef.current]);
+        setTotals(totalsOf(totalsRef.current));
       },
       onFallbackEvents: (persisted) => {
         setFallbackEvents(persisted);
@@ -65,41 +62,38 @@ export function useJobLogs(jobId: string | undefined): UseJobLogsResult {
         eventsRef.current = [];
         setEvents([]);
         setFallbackEvents([]);
-        setCost(0);
-        setTokensIn(0);
-        setTokensOut(0);
-        setTurns(0);
+        totalsRef.current = emptyTotals();
+        setTotals(totalsOf(totalsRef.current));
         setPipelineGraph(null);
       },
     },
     events.length > 0,
   );
 
-  // Process fallback events for the graph and cost (isComplete for
-  // persisted terminal events is handled inside useJobEventStream)
+  // Process fallback events for the graph (isComplete for persisted terminal
+  // events is handled inside useJobEventStream)
   useEffect(() => {
     if (fallbackEvents.length === 0) return;
     for (const event of fallbackEvents) {
       if (event.type === "pipeline_graph") {
         setPipelineGraph(event.graph);
       }
-      if (event.type === "cost_update") {
-        setCost(event.cost_usd);
-        setTokensIn(event.tokens_in);
-        setTokensOut(event.tokens_out);
-        setTurns(event.num_turns);
-      }
     }
   }, [fallbackEvents]);
+
+  // Totals follow whichever event list is shown: the live stream, or the
+  // persisted log when the WS never connected.
+  const fallbackTotals = useMemo(() => reduceTotals(fallbackEvents), [fallbackEvents]);
+  const shownTotals = events.length > 0 ? totals : fallbackTotals;
 
   return {
     events: events.length > 0 ? events : fallbackEvents,
     isConnected,
     isComplete,
-    latestCost: cost,
-    latestTokensIn: tokensIn,
-    latestTokensOut: tokensOut,
-    latestTurns: turns,
+    latestCost: shownTotals.costUsd,
+    latestTokensIn: shownTotals.tokensIn,
+    latestTokensOut: shownTotals.tokensOut,
+    latestTurns: shownTotals.turns,
     pipelineGraph,
   };
 }
