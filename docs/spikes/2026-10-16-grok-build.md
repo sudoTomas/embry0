@@ -1,13 +1,14 @@
 # Spike: Grok Build as the grok executor (#42)
 
-**Verdict: GREEN on all six restated criteria, on route B with `api_backend = "responses"`; the swap (#43) is gated on two open decisions.**
+**Verdict: GREEN on all six restated criteria, on route B with `api_backend = "responses"`; the swap (#43) was gated on two decisions, both taken on 2026-10-17 (below).**
 
 Green means Grok Build can run as a sandbox executor through the unchanged
 xai-proxy, and its stream feeds the Claude path's parser. It does not mean
 the swap is safe as it stands. Ring 3 would move from an in-process,
 fail-closed check to a hook that Grok Build lets through on crash or
-timeout. Which runtime Grok Build would replace is also undecided. Both
-are product decisions (OD1, OD2 below), and neither is taken.
+timeout. Which runtime Grok Build would replace was also open. Both
+are product decisions (OD1, OD2 below), both taken on 2026-10-17:
+no swap for now.
 
 Plan: [`docs/superpowers/plans/2026-10-16-trace-fidelity-plan-d.md`](../superpowers/plans/2026-10-16-trace-fidelity-plan-d.md).
 Criteria: [spec section 4](../superpowers/specs/2026-10-15-trace-fidelity-design.md#4-grok-build-spike),
@@ -363,3 +364,51 @@ material). Run in order:
 4. **S4.** `parse_capture.py` (offline, `PYTHONPATH` on this tree) for
    the parse, adapter count and scrub; `controls.py` for the mutations
    that show each assertion can fail.
+
+## Decisions taken (2026-10-17)
+
+- **OD1: no swap for now.** Grok Build replaces neither runtime. Grok
+  keeps running on `SdkAgentExecutor` by default, and `DirectXaiExecutor`
+  stays as the opt-in fallback, so its conformance work (per-turn
+  `turn_usage`, cache-token pricing) lands.
+- **OD2: a fail-open Ring 3 is not acceptable** on the grok path. The
+  in-process, fail-closed check stays the boundary.
+- **#43 is closed as not planned.**
+
+### Does the harness improve the model?
+
+No public head-to-head puts the same grok model in Grok Build and in
+Claude Code, OpenCode or a raw loop under one evaluator, effort and
+benchmark; Artificial Analysis runs Grok only in Grok Build and lists its
+harness comparison as "coming soon". The closest indirect evidence is
+DeepSWE v1.1, run both ways: grok-4.6 scores 65.2% in the bash-only
+mini-SWE-agent and 65% in Grok Build, no difference; grok-4.7 scores 71%
+against 73%, but at a different effort level and from a different
+evaluator, so the gap is noise-sized. xAI says its 4.x models were
+trained alongside Cursor and on SFT trajectories "across ... agent
+harnesses"; it does not claim post-training on Grok Build's own traces,
+and it uses mini-SWE-agent for its own DeepSWE headline. The one model
+with a published same-model, multi-harness table, DeepSeek-V4.1-Flash,
+did best in the minimal harness, with Claude Code the best third-party
+CLI. Harnesses do matter on long terminal workflows: the Terminal-Bench 2
+leaderboard shows double-digit point swings for one model across
+harnesses. On cost the
+evidence points the other way: Artificial Analysis measured Grok Build
+with grok-4.7 at 14.3M tokens and about 163 turns per task, about 4.5
+times the 3.2M tokens of Codex with GPT-6.1, and Grok Build adds a title
+and a summary call to every run. Nothing here shows a coding uplift that
+would justify a weaker Ring 3.
+
+Sources: https://artificialanalysis.ai/agents/coding-agents,
+https://artificialanalysis.ai/agents/coding-agents/comparisons/codex-vs-grok-build,
+https://artificialanalysis.ai/articles/benchmarking-grok-4-7,
+https://media.x.ai/v1/website/4p7card-5eccc980.pdf,
+https://x.ai/news/grok-4-5,
+https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash,
+https://langchain.com/blog/improving-deep-agents-with-harness-engineering,
+https://www.tbench.ai/leaderboard.
+
+**Revisit when** an A/B on the same issues (same model and effort on
+every arm, merge or tests-pass rate as the primary metric) shows Grok
+Build ahead by more than the run-to-run spread, or Grok Build gains a
+fail-closed hook or a native deny API that can carry Ring 3's policy.
