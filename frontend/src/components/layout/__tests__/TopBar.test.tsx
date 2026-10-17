@@ -38,6 +38,17 @@ describe("TopBar breadcrumbs (RAV-1058 IA sweep)", () => {
     expect(breadcrumb().getByText("Onboard")).toBeInTheDocument();
   });
 
+  it("labels /credentials as Credentials, not the app name", () => {
+    renderAt("/credentials");
+    expect(breadcrumb().getByText("Credentials")).toBeInTheDocument();
+    expect(breadcrumb().queryByText("embry0", { selector: "span:not([data-testid])" })).toBeNull();
+  });
+
+  it("labels /providers as LLM Providers, matching the sidebar", () => {
+    renderAt("/providers");
+    expect(breadcrumb().getByText("LLM Providers")).toBeInTheDocument();
+  });
+
   it("keeps dynamic second segments raw", () => {
     renderAt("/jobs/job-abc123");
     expect(breadcrumb().getByText("Jobs")).toBeInTheDocument();
