@@ -28,6 +28,7 @@ const QA_EVENT_TYPES = new Set([
   "qa_subtask_started",
   "qa_subtask_finished",
   "qa_subtask_status",
+  "qa_agent_transient_retry",
 ]);
 
 function physicalOf(node: PipelineGraph["nodes"][number]): string {
@@ -155,4 +156,29 @@ export function deriveNodeStates(
   }
 
   return states;
+}
+
+/**
+ * The events the logs page shows for one selected graph node. Events carry the
+ * LangGraph node (`review` for a `reviewer` graph node, `generic_agent` for
+ * research/analysis/ops steps), so the selection is resolved to its graph
+ * node's `physical_node` first. Graph nodes sharing one physical node show the
+ * same events; the qa physical also collects every qa_* event; job-level events
+ * (no `node`) are always kept. An id the graph does not know, or a selection
+ * with no graph, keeps only the job-level events.
+ */
+export function filterEventsForNode(
+  graph: PipelineGraph | null,
+  events: LogEvent[],
+  selectedNodeId: string | null,
+): LogEvent[] {
+  if (!selectedNodeId) return events;
+  const selected = graph?.nodes.find((n) => n.node_id === selectedNodeId);
+  const physical = selected ? physicalOf(selected) : null;
+  return events.filter((e) => {
+    const node = eventNode(e);
+    if (node === "") return true;
+    if (physical === null) return false;
+    return node === physical || (physical === "qa" && QA_EVENT_TYPES.has(e.type));
+  });
 }

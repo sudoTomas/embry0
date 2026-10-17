@@ -3,9 +3,8 @@ import { useParams, Link } from "react-router";
 import { useJobLogs } from "@/hooks/useJobLogs";
 import { useJob } from "@/hooks/useJobs";
 import { useJobInputs } from "@/hooks/useInputs";
-import { deriveNodeStates } from "@/lib/pipeline-live";
+import { deriveNodeStates, filterEventsForNode } from "@/lib/pipeline-live";
 import { isTerminalStatus } from "@/lib/jobStatus";
-import { eventNode } from "@/lib/wire";
 import { LogViewer } from "@/components/logs/LogViewer";
 import { PipelineGraphView } from "@/components/pipeline/PipelineGraphView";
 import { AgentFilterTabs } from "@/components/logs/AgentFilterTabs";
@@ -49,18 +48,11 @@ export function JobLogsPage() {
     setSelectedNodeId(nodeId);
   }, []);
 
-  // Filter events by selected node when click-to-filter is active
-  const filteredEvents = useMemo(() => {
-    if (!selectedNodeId) return events;
-    return events.filter((e) => {
-      const nodeId = eventNode(e);
-      // Show events that match the selected node
-      if (nodeId === selectedNodeId) return true;
-      // Always show stream-level events (job_failed, job_finished, error without a node)
-      if (!nodeId && (e.type === "job_failed" || e.type === "job_finished" || e.type === "error")) return true;
-      return false;
-    });
-  }, [events, selectedNodeId]);
+  // The selected id is a graph node id; events carry the LangGraph node.
+  const filteredEvents = useMemo(
+    () => filterEventsForNode(effectiveGraph, events, selectedNodeId),
+    [effectiveGraph, events, selectedNodeId],
+  );
 
   // Find the label for the selected node
   const selectedNodeLabel = useMemo(() => {
@@ -99,8 +91,8 @@ export function JobLogsPage() {
           />
         ) : (
           <div className="text-center text-white/20 py-8 text-sm">
-            Waiting for the pipeline graph (emitted when triage routes the
-            job). Jobs that predate the live graph have none — use the{" "}
+            The pipeline graph appears once the job's first node emits it.
+            Jobs that predate the live graph have none — use the{" "}
             <Link to={`/jobs/${jobId}`} className="underline hover:text-white/40">
               job detail page
             </Link>{" "}
