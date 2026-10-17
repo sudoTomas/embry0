@@ -107,6 +107,29 @@ class OrganizationsRepository:
         )
         return _org(row) if row else None
 
+    async def patch(
+        self, owner: str, *, display_name: str | None = None, settings: dict[str, Any] | None = None
+    ) -> Organization | None:
+        """Change the name and merge ``settings`` into the stored ones.
+
+        A merge, not a replacement: a PATCH that sets ``auto_register`` leaves
+        every other setting as it was. ``None`` leaves a field alone.
+        """
+        row = await self._db.fetchrow(
+            f"""
+            UPDATE organizations
+               SET display_name = COALESCE($2, display_name),
+                   settings = settings || $3::jsonb,
+                   updated_at = NOW()
+             WHERE owner = $1
+            RETURNING {_COLUMNS}
+            """,
+            owner.strip().lower(),
+            display_name,
+            dict(settings or {}),
+        )
+        return _org(row) if row else None
+
     async def mark_discovered(
         self, owner: str, *, repo_count: int, when: datetime | None = None
     ) -> Organization | None:

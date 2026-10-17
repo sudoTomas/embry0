@@ -51,6 +51,7 @@ EXPECTED_TOOLS = {
     "host_get",
     "host_probe",
     "host_import_tailnet",
+    "org_webhook_install",
     "qa_config_get",
     "qa_config_set",
     "credential_list",
@@ -72,6 +73,7 @@ CONFIRM_GATED = {
     "repo_register",
     "org_register",
     "host_import_tailnet",
+    "org_webhook_install",
     "qa_config_set",
     "credential_bind",
 }
@@ -114,6 +116,7 @@ async def test_confirm_gated_tools_refuse_without_confirm(fake_client):
         await server.env_delete("K"),
         await server.repo_register("acme/widgets"),
         await server.org_register("acme"),
+        await server.org_webhook_install("acme"),
         await server.qa_config_set("acme/widgets", "version: 2"),
         await server.host_import_tailnet(),
         await server.credential_bind("acme/widgets", "cred-000000000009"),
@@ -137,6 +140,7 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
     assert await server.env_delete("K", confirm=True) == {"called": "env_delete"}
     assert await server.repo_register("acme/widgets", confirm=True) == {"called": "repo_register"}
     assert await server.org_register("acme", confirm=True) == {"called": "org_register"}
+    assert await server.org_webhook_install("acme", confirm=True) == {"called": "org_webhook_install"}
     assert await server.qa_config_set("acme/widgets", "version: 2", confirm=True) == {"called": "qa_config_set"}
     assert await server.host_import_tailnet(confirm=True) == {"called": "host_import_tailnet"}
     assert await server.credential_bind(
@@ -157,6 +161,7 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
         "env_delete",
         "repo_register",
         "org_register",
+        "org_webhook_install",
         "qa_config_set",
         "host_import_tailnet",
         "credential_bind",

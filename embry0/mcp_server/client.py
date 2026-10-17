@@ -588,6 +588,9 @@ class Embry0Client:
             body["credential_id"] = credential_id
         return _as_dict(await self._request("POST", "/api/v1/hosts/import/tailnet", body=body))
 
+    async def org_webhook_install(self, owner: str) -> dict[str, Any]:
+        return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/webhook"))
+
     async def repo_list(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
         params = {"include_inactive": "true"} if include_inactive else None
         return _as_list(await self._request("GET", "/api/v1/repos", params=params))

@@ -13,13 +13,13 @@ from typing import Any, cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.audit.helpers import emit_audit
-from embry0.services import org_discovery
+from embry0.services import org_discovery, org_webhooks
 from embry0.services import organizations as org_service
-from embry0.services.organizations import FORGES, STATUSES, AccessProbe
+from embry0.services.organizations import FORGES, STATUSES, AccessProbe, Organization
 from embry0.storage.repositories.org_repos import OrgReposRepository
 from embry0.storage.repositories.organizations import OrganizationsRepository
 
@@ -43,6 +43,17 @@ class OrganizationBody(BaseModel):
 
 class StatusBody(BaseModel):
     status: str = Field(pattern="^(active|paused|removed)$")
+
+
+class PatchBody(BaseModel):
+    # forbid: {"auto_register": true} at the top level is a mistake that would
+    # otherwise answer 200 and change nothing.
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, max_length=200)
+    settings: dict[str, Any] | None = Field(
+        default=None, description="settings to set, merged into the stored ones; an unknown key is refused"
+    )
 
 
 def _repo(request: Request) -> OrganizationsRepository:
@@ -171,6 +182,34 @@ async def reprobe_organization(owner: str, request: Request) -> dict[str, Any]:
         "organization.probe",
         actor=request_actor(request),
         details={"owner": org.owner, "source": source, "read": probe.read, "hooks": probe.hooks},
+    )
+    return (updated or org).to_dict()
+
+
+@router.patch("/orgs/{owner}", dependencies=[require_admin])
+async def patch_organization(owner: str, body: PatchBody, request: Request) -> dict[str, Any]:
+    """Change the display name, or settings such as ``auto_register``.
+
+    Settings merge: the keys given are set, the rest stay. Only the keys in
+    :data:`embry0.services.organizations.SETTINGS` are accepted, with their
+    types, so a typo cannot sit in the row as a setting nothing reads.
+    """
+    repository = _repo(request)
+    org = await repository.get(owner)
+    if org is None:
+        raise HTTPException(status_code=404, detail=f"no organization {owner}")
+    settings: dict[str, Any] | None = None
+    if body.settings is not None:
+        try:
+            settings = org_service.validate_settings(body.settings)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    updated = await repository.patch(org.owner, display_name=body.display_name, settings=settings)
+    await emit_audit(
+        getattr(request.app.state, "db", None),
+        "organization.patch",
+        actor=request_actor(request),
+        details={"owner": org.owner, "settings": settings, "display_name": body.display_name},
     )
     return (updated or org).to_dict()
 
@@ -357,6 +396,107 @@ async def discover_organization(owner: str, request: Request) -> dict[str, Any]:
         details={"owner": org.owner, "run_id": run["id"]},
     )
     return run
+
+
+# ---- the organization webhook (ADR 0012) ----
+
+
+def webhook_origin(request: Request) -> str | None:
+    """The public origin the forges deliver webhooks to, or ``None`` when it
+    is unset or a loopback address no forge can reach.
+
+    Only ``WEBHOOK_PUBLIC_URL``, read by :func:`_hook_origins` as discovery
+    reads it: the dashboard origin is not a fallback, because its vhost
+    answers 404 on the webhook routes on purpose.
+    """
+    origins = _hook_origins(request)
+    return origins[0] if origins else None
+
+
+def make_forge_client(request: Request, org: Organization, token: str) -> Any:
+    """The client the webhook routes call the forge with. A module function so
+    tests swap in a fake."""
+    from embry0.execution.github_client import GitHubClient
+
+    return GitHubClient(default_token=token, max_attempts=2)
+
+
+async def _org_for_hooks(request: Request, owner: str) -> tuple[Organization, Any]:
+    org = await _repo(request).get(owner)
+    if org is None:
+        raise HTTPException(status_code=404, detail=f"no organization {owner}")
+    if org.forge != "github":
+        raise HTTPException(status_code=422, detail="organization webhooks are a GitHub feature in this release")
+    token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
+    return org, make_forge_client(request, org, token)
+
+
+@router.get("/orgs/{owner}/webhook")
+async def get_organization_webhook(owner: str, request: Request) -> dict[str, Any]:
+    """Whether a webhook on the organization points at this deployment, and
+    every organization webhook the credential can see, by asking the forge.
+
+    A hook that points elsewhere is listed by its origin only: such URLs often
+    carry another service's token, and this route is not admin-only.
+    """
+    org, client = await _org_for_hooks(request, owner)
+    origin = webhook_origin(request)
+    target = org_webhooks.hook_target(origin) if origin else None
+    hooks = await org_webhooks.list_org_hooks(client, org.owner)
+    hook = org_webhooks.hook_pointing_at(hooks, target) if hooks and target else None
+    ours = target.rstrip("/") if target else None
+    return {
+        "owner": org.owner,
+        "installed": hook is not None,
+        "hook": hook.to_dict() if hook else None,
+        "target_url": target,
+        "hooks_visible": hooks is not None,
+        "hooks": [h.to_dict(origin_only=h.url.rstrip("/") != ours) for h in hooks or []],
+    }
+
+
+@router.post("/orgs/{owner}/webhook", dependencies=[require_admin])
+async def install_organization_webhook(owner: str, request: Request) -> dict[str, Any]:
+    """Install one webhook on the organization itself, for every repository
+    under it, pointing at ``WEBHOOK_PUBLIC_URL`` and signed with the GitHub
+    webhook secret. Refused unless the probe found the credential can manage
+    hooks. Idempotent: a hook already pointing here is ``already``.
+    """
+    org, client = await _org_for_hooks(request, owner)
+    if org.status != "active":
+        raise HTTPException(status_code=409, detail=f"organization {owner} is {org.status}")
+    if org.access.get("owner_kind") == "user":
+        raise HTTPException(
+            status_code=422, detail=f"{owner} is a user account: GitHub has no owner-level webhooks for one"
+        )
+    if org.access.get("hooks") is not True:
+        raise HTTPException(
+            status_code=422,
+            detail=f"the probe did not find hook administration for {owner}; grant it and probe again",
+        )
+    origin = webhook_origin(request)
+    if origin is None:
+        raise HTTPException(
+            status_code=422,
+            detail="no public webhook origin: set WEBHOOK_PUBLIC_URL to an address the forge can reach, not loopback",
+        )
+    config = getattr(request.app.state, "config", None)
+    secret = str(getattr(config, "github_webhook_secret", "") or "")
+    if not secret:
+        raise HTTPException(
+            status_code=422, detail="GITHUB_WEBHOOK_SECRET is empty: an organization webhook must be signed"
+        )
+    target = org_webhooks.hook_target(origin)
+    result = await org_webhooks.install_org_hook(client, org.owner, target=target, secret=secret)
+    await emit_audit(
+        getattr(request.app.state, "db", None),
+        "organization.webhook_install",
+        actor=request_actor(request),
+        details={"owner": org.owner, "outcome": result.outcome, "hook_id": result.hook.id if result.hook else None},
+    )
+    if result.outcome == "failed":
+        raise HTTPException(status_code=502, detail=result.detail)
+    return {"owner": org.owner, "target_url": target, **result.to_dict()}
 
 
 @router.get("/orgs/{owner}/repos")

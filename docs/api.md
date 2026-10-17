@@ -223,10 +223,15 @@ The forge owners embry0 maintains as a whole ([ADR 0010](adr/0010-organizations.
 | `GET /api/v1/orgs/{owner}/needs` | read |
 | `POST /api/v1/orgs/{owner}/needs/{id}/dismiss` | admin |
 | `POST /api/v1/orgs/{owner}/needs/{id}/reopen` | admin |
+| `PATCH /api/v1/orgs/{owner}` | admin |
+| `GET /api/v1/orgs/{owner}/webhook` | read |
+| `POST /api/v1/orgs/{owner}/webhook` | admin |
 
 `POST /api/v1/orgs/{owner}/discover` answers 202 and starts one discovery run for the owner; a request while a run is in progress, or for a paused or removed owner, answers 409, and an unknown owner 404. Poll `GET /api/v1/orgs/{owner}/runs` until the newest run is `done` or `error`. `GET /api/v1/orgs/{owner}/repos` returns one fact row per repository, replaced on each run, and `runs` keeps the history of every run with its progress and summary.
 
 `GET /api/v1/orgs/{owner}/needs` is the needs list ([ADR 0011](adr/0011-organization-needs.md)): what embry0 still needs from a person to maintain the owner, derived from the newest finished discovery run, one need per kind and repository set. `dismiss` and `reopen` keep a person's answer across rediscovery. Each open need is also a healing case with origin `org`, listed by `GET /api/v1/cases?awaiting_decision=true` ([Healing cases](#healing-cases)); closing that case dismisses the need.
+
+`PATCH /api/v1/orgs/{owner}` sets `display_name` and merges `settings` from a closed list (`auto_register`, a boolean, off by default); an unknown key or a wrong type answers 422. `GET` and `POST /api/v1/orgs/{owner}/webhook` inspect and install the organization's one GitHub webhook, and the receiver's gate handles deliveries for repositories nobody registered ([webhooks.md](webhooks.md#organization-webhooks-github), [ADR 0012](adr/0012-organization-webhook.md)).
 
 ## Repository preferences
 

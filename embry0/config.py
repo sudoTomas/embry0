@@ -510,12 +510,14 @@ class Embry0Config(BaseSettings):
     dashboard_public_url: str = "http://localhost:8200"
 
     # The public base URL forges deliver webhooks to (a webhooks tunnel
-    # hostname); GitHub's hook URL is <it>/api/v1/webhook. Organization
-    # discovery (ADR 0011) counts a hook as pointing here only when its URL
-    # starts with it. The dashboard and SSO origins above are not webhook
-    # origins: the public dashboard answers 404 on webhook paths. Empty: a
-    # repository's hooks are unknown, not absent; so is a loopback address,
-    # which no forge can deliver to.
+    # hostname, no path). It is the install target of an organization
+    # webhook (<it>/api/v1/webhook, ADR 0012), and the only origin
+    # organization discovery (ADR 0011) counts as "points here": a hook
+    # points here only when its URL starts with it. The dashboard and SSO
+    # origins above are not webhook origins: the public dashboard answers
+    # 404 on webhook paths. Empty or a loopback address (no forge can
+    # deliver there): organization webhooks cannot be installed and a
+    # repository's hooks are unknown, not absent.
     webhook_public_url: str = ""
 
     # Auth0 SSO (RAV-1069). All-or-nothing: sso_enabled requires every core
