@@ -94,6 +94,9 @@ class Origin(StrEnum):
     WEBHOOK = "webhook"
     ALERT = "alert"
     CI = "ci"
+    # ADR 0011: a need of an organization, filed so the awaiting-decision
+    # list shows it; answered by dismissing or acting on the need.
+    ORG = "org"
 
 
 class ResolutionPath(StrEnum):

@@ -1,6 +1,6 @@
 # Organizations: hold the owner, discover its repositories, say what embry0 needs
 
-Status: slices 1 and 2 of 8 shipped with this document (ADR 0010).
+Status: slices 1, 2 and 3 of 8 built (ADR 0010, ADR 0011).
 
 ## Problem
 
@@ -14,7 +14,7 @@ A person adds a forge owner and embry0 works out, repository by repository, what
 
 1. `organizations` (this slice): owner, forge, credential, probe result (`access`), repo count, status, settings. `POST /orgs` probes the credential against the owner with real forge calls and refuses an owner the credential cannot list. `GET /orgs`, `GET /orgs/{owner}`, `POST /orgs/{owner}/probe`, `PUT /orgs/{owner}/status`. MCP: `org_list`, `org_get`, `org_register` (confirm).
 2. `org_repo_facts` (this slice): one row per repository, replaced on each run: archived, private, fork, default branch, language, pushed_at, open issues, and in `facts`: manifests, compose file, tests dir, CI, frontend, boot hint (dev or start script, else compose), env keys from an env example, webhook visibility and presence (a hook whose URL starts with this deployment's public origin), plus embry0's own state (registered, active, QA config, watcher stack, tracker mapping). `POST /orgs/{owner}/discover` runs the scan in the orchestrator process as a tracked task, one per owner at a time, with an `org_discovery_runs` ledger row carrying progress, summary and error; `GET /orgs/{owner}/repos` and `GET /orgs/{owner}/runs` read them. A tracked task rather than a sandboxed job: the scan is host-side code against the forge API, with no model and no clone, so the job machinery would add a sandbox for nothing. Deploy markers and open PR counts are not read in this slice. GitLab discovery is refused with a clear error until a later slice.
-3. `org_needs`: the aggregated list a person must act on, each need also a case awaiting decision so the overview can show it. Kinds: token scope, tracker choice, onboarding candidates, log source missing, deploy marker missing, env values needed, budget.
+3. `org_needs`: the aggregated list a person must act on, each need also a case awaiting decision so the overview can show it. Kinds: the closed vocabulary `KINDS` in `embry0/services/org_needs.py` (`not_registered`, `no_webhook`, `onboarding_candidate`, `not_watched`, `no_qa_config`, `access_limited`, `env_values_needed`, `no_log_source`, `no_deploy_marker`, `count_gap`, `hook_origin_unknown`).
 4. An org-scout agent writes one sentence per repository and the needs narrative, from the facts only.
 5. Actions: register selected repositories, install webhooks where the probe found hook access, start onboarding jobs for repositories with a boot hint, create disabled watcher stacks, apply the default tracker. Every action idempotent; a second run is a no-op.
 6. Wizard in the dashboard: credential, discovery with live progress, report with one chip per sense, actions with a summary. An organization page keeps the report.

@@ -537,6 +537,9 @@ class Embry0Client:
     async def org_get(self, owner: str) -> dict[str, Any]:
         return _as_dict(await self._request("GET", f"/api/v1/orgs/{owner}"))
 
+    async def org_needs(self, owner: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/orgs/{owner}/needs"))
+
     async def org_register(
         self,
         owner: str,

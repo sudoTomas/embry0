@@ -36,9 +36,10 @@ mcp = MCPServer(
         "Destructive tools require confirm=true after explicit user approval. "
         'Two lists answer "what is open?", and they are different things: '
         'issue_list(status="open") is the work on the Issues page of the dashboard; '
-        "case_list(awaiting_decision=true) is the watcher's draft tickets waiting for a "
-        "person to accept or reject. case_list(open_only=true) is neither: it is every "
-        "finding not yet closed, including ones already merged, deployed and verified."
+        "case_list(awaiting_decision=true) is what waits for a person: the watcher's draft "
+        "tickets to accept or reject, and organization needs to answer or dismiss. "
+        "case_list(open_only=true) is neither: it is every finding not yet closed, "
+        "including ones already merged, deployed and verified."
     ),
 )
 
@@ -508,13 +509,15 @@ async def case_list(
     case can be verified or closed with no fix at all (self_resolved, non_code).
 
     Filters: repo ("group/name"), stage (detected|tracked|accepted|pr_open|merged|
-    deployed|verified|closed), origin (watcher|human|webhook|alert|ci), resolution_path
+    deployed|verified|closed), origin (watcher|human|webhook|alert|ci|org), resolution_path
     (embry0|out_of_band|cancelled|non_code|self_resolved|abandoned), healed_verdict
     (pending|healed|not_healed|inconclusive|regressed), fix_deployed (true/false — use
     THIS, not stage=verified, to find findings a shipped fix healed), awaiting_decision
     (use THIS for "what needs a decision?": watcher drafts with a ticket that nobody has
-    accepted or rejected, and findings whose shipped fix did not heal them, sent back
-    for a retry nobody has accepted yet), open_only (every case whose stage is not closed — that
+    accepted or rejected, findings whose shipped fix did not heal them, sent back for a
+    retry nobody has accepted yet, and organization needs waiting for a person, origin
+    org: org_needs reads them, closing the case dismisses one, none is ever accepted),
+    open_only (every case whose stage is not closed — that
     includes merged, deployed and verified cases, alerts and findings with no ticket, so
     it answers neither "what is open on the dashboard?", which is
     issue_list(status="open"), nor "what needs a decision?"). limit max 200."""
@@ -680,6 +683,17 @@ async def org_list(include_removed: bool = False) -> dict[str, Any]:
 async def org_get(owner: str) -> dict[str, Any]:
     """One organization by owner: forge, credential, probe result, repo count, status."""
     return await _get_client().org_get(owner)
+
+
+@_tool
+async def org_needs(owner: str) -> dict[str, Any]:
+    """What embry0 still needs to maintain one organization, from its newest
+    discovery run: each need's kind (not_registered, no_webhook,
+    onboarding_candidate, not_watched, no_qa_config, access_limited,
+    env_values_needed, no_log_source, no_deploy_marker, count_gap,
+    hook_origin_unknown), the repositories it covers, the action that answers
+    it, its status (open, done, dismissed) and its healing case. Read-only."""
+    return await _get_client().org_needs(owner)
 
 
 @_tool

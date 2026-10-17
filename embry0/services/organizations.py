@@ -98,16 +98,22 @@ def _json(resp: Any) -> Any:
 
 
 def _count(body: Any) -> int | None:
+    """Public plus private repositories, from an owner record.
+
+    ``total_private_repos`` and ``owned_private_repos`` are two readings of
+    the same private repositories (GitHub sends both, usually equal), so one
+    of them is added, never both: the owned count when present, since the
+    owner's repositories are what discovery lists.
+    """
     if not isinstance(body, dict):
         return None
-    total = 0
-    seen = False
-    for key in ("public_repos", "total_private_repos", "owned_private_repos"):
-        value = body.get(key)
-        if isinstance(value, int):
-            total += value
-            seen = True
-    return total if seen else None
+    public = body.get("public_repos")
+    private = next(
+        (body[key] for key in ("owned_private_repos", "total_private_repos") if isinstance(body.get(key), int)), None
+    )
+    if not isinstance(public, int) and private is None:
+        return None
+    return (public if isinstance(public, int) else 0) + (private or 0)
 
 
 async def probe_github(owner: str, token: str, *, client: _Client | None = None) -> AccessProbe:

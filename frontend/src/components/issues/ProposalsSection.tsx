@@ -1,6 +1,7 @@
 import { isAxiosError } from "axios";
 import { formatDistanceToNow } from "date-fns";
 import { ExternalLink } from "lucide-react";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { useAcceptProposal, useProposals, useRejectProposal } from "@/hooks/useProposals";
@@ -30,16 +31,36 @@ function detailOf(error: unknown, fallback: string): string {
   return typeof detail === "string" ? detail : fallback;
 }
 
+/**
+ * An organization's need (ADR 0011) waits here too. It has no ticket and is
+ * never accepted into a fix: it is answered on the organization page, and
+ * dismissing it here is the same answer as dismissing it there.
+ */
+function isOrgNeed(proposal: HealingCase): boolean {
+  return proposal.origin === "org";
+}
+
+/** A need is filed on its repository, or on the bare owner when it covers several (or none). */
+function ownerOf(proposal: HealingCase): string {
+  return proposal.repo.split("/")[0];
+}
+
+/** Whether the case is filed on a bare owner rather than a repository. */
+function onOwner(proposal: HealingCase): boolean {
+  return !proposal.repo.includes("/");
+}
+
 /** When the draft was filed — for a finding that waited for a slot, later than when it was detected. */
 function filedAt(proposal: HealingCase): string {
   return proposal.timestamps.tracked_at ?? proposal.timestamps.detected_at;
 }
 
 /**
- * Draft tickets the watcher filed that nobody has answered. They are healing
- * cases, not issues — an issue exists only once a draft is accepted — so they
- * sit above the issue list rather than in it. Renders nothing when there are
- * none: the Issues page of a deployment with no watcher is unchanged.
+ * What waits for a person: draft tickets the watcher filed that nobody has
+ * answered, and organization needs. They are healing cases, not issues — an
+ * issue exists only once a draft is accepted — so they sit above the issue
+ * list rather than in it. Renders nothing when there are none: the Issues page
+ * of a deployment with no watcher and no organization is unchanged.
  */
 export function ProposalsSection() {
   const proposals = useProposals();
@@ -72,6 +93,16 @@ export function ProposalsSection() {
     });
   };
 
+  const handleDismiss = (proposal: HealingCase) => {
+    const owner = ownerOf(proposal);
+    if (!confirm(`Dismiss "${proposal.title}"? It stays dismissed on the ${owner} needs list until someone reopens it.`))
+      return;
+    reject.mutate(proposal.id, {
+      onSuccess: () => toast.success(`Dismissed. Reopen it from the ${owner} needs list.`),
+      onError: (e) => toast.error(detailOf(e, "Could not dismiss the need")),
+    });
+  };
+
   const handleReject = (proposal: HealingCase) => {
     const ticket = proposal.tracker?.key ?? "the ticket";
     const where = trackerName(proposal.tracker?.kind);
@@ -99,7 +130,7 @@ export function ProposalsSection() {
           {proposals.data?.total ?? rows.length}
         </span>
         <p className="text-sm text-muted-foreground">
-          Draft tickets the watcher filed. Nothing runs until one is accepted.
+          Draft tickets the watcher filed, and what organizations still need. Nothing runs until one is accepted.
         </p>
       </div>
 
@@ -126,10 +157,22 @@ export function ProposalsSection() {
                     <div className="truncate" title={proposal.title}>
                       {proposal.title}
                     </div>
-                    <div className="truncate font-mono text-xs text-muted-foreground">{proposal.repo}</div>
+                    {isOrgNeed(proposal) && onOwner(proposal) ? (
+                      // A bare owner is no repository: it links to its organization.
+                      <Link
+                        to={`/orgs/${encodeURIComponent(proposal.repo)}`}
+                        className="block truncate font-mono text-xs text-muted-foreground hover:underline"
+                      >
+                        {proposal.repo}
+                      </Link>
+                    ) : (
+                      <div className="truncate font-mono text-xs text-muted-foreground">{proposal.repo}</div>
+                    )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2">
-                    {tracker?.url ? (
+                    {isOrgNeed(proposal) ? (
+                      <span className="text-muted-foreground">Organization need</span>
+                    ) : tracker?.url ? (
                       <a
                         href={tracker.url}
                         target="_blank"
@@ -151,7 +194,14 @@ export function ProposalsSection() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-2">
                     <div className="flex items-center justify-end gap-2">
-                      {tracker && ACCEPTED_HERE.has(tracker.kind) ? (
+                      {isOrgNeed(proposal) ? (
+                        <Link
+                          to={`/orgs/${encodeURIComponent(ownerOf(proposal))}`}
+                          className="text-xs text-primary hover:underline"
+                        >
+                          Answer on {ownerOf(proposal)}
+                        </Link>
+                      ) : tracker && ACCEPTED_HERE.has(tracker.kind) ? (
                         <Button size="sm" disabled={busy} onClick={() => handleAccept(proposal)}>
                           Accept
                         </Button>
@@ -170,9 +220,15 @@ export function ProposalsSection() {
                           Accept by label in {trackerName(tracker?.kind)}
                         </span>
                       )}
-                      <Button size="sm" variant="outline" disabled={busy} onClick={() => handleReject(proposal)}>
-                        Reject
-                      </Button>
+                      {isOrgNeed(proposal) ? (
+                        <Button size="sm" variant="outline" disabled={busy} onClick={() => handleDismiss(proposal)}>
+                          Dismiss
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="outline" disabled={busy} onClick={() => handleReject(proposal)}>
+                          Reject
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>

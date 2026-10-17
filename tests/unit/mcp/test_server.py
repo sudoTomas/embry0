@@ -45,6 +45,7 @@ EXPECTED_TOOLS = {
     "repo_register",
     "org_list",
     "org_get",
+    "org_needs",
     "org_register",
     "qa_config_get",
     "qa_config_set",
@@ -191,6 +192,17 @@ async def test_repo_read_tools_pass_through(fake_client):
     # qa_config_get wraps the raw yaml text in a dict for the MCP surface.
     out = await server.qa_config_get("acme/widgets")
     assert out == {"repo": "acme/widgets", "yaml_text": {"called": "qa_config_get"}}
+
+
+async def test_org_read_tools_pass_through(fake_client):
+    assert await server.org_list() == {"called": "org_list"}
+    assert await server.org_get("acme") == {"called": "org_get"}
+    assert await server.org_needs("acme") == {"called": "org_needs"}
+    assert fake_client.calls == [
+        ("org_list", (), {"include_removed": False}),
+        ("org_get", ("acme",), {}),
+        ("org_needs", ("acme",), {}),
+    ]
 
 
 async def test_credential_read_tools_pass_through(fake_client):

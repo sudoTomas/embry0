@@ -331,3 +331,50 @@ async def test_discover_refuses_a_second_run_and_a_paused_owner(app: Any) -> Non
     assert busy.status_code == 409 and "already running" in busy.json()["detail"]
     assert paused.status_code == 409
     assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("", ()),
+        ("http://127.0.0.1:8200", ()),
+        ("http://localhost:8200/", ()),
+        ("http://[::1]:8200", ()),
+        ("http://0.0.0.0", ()),
+        ("https://hooks.example.com/", ("https://hooks.example.com",)),
+    ],
+)
+async def test_discovery_reads_hooks_as_unknown_under_an_unset_or_loopback_origin(
+    app: Any, monkeypatch: pytest.MonkeyPatch, url: str, expected: tuple[str, ...]
+) -> None:
+    """No forge delivers to a loopback address, so a hook there cannot be this
+    deployment's: discovery gets no origin, reads hooks as unknown and the
+    needs list files hook_origin_unknown, as for an unset WEBHOOK_PUBLIC_URL."""
+    import asyncio
+
+    from embry0.services import org_discovery
+
+    seen: list[tuple[str, ...]] = []
+
+    async def fake_discover(client: Any, owner: str, **kw: Any) -> list[RepoFacts]:
+        seen.append(kw["hook_origins"])
+        return []
+
+    monkeypatch.setattr(org_discovery, "discover", fake_discover)
+    app.state.repos_repo = None
+    app.state.config = Embry0Config(
+        _env_file=None, auth_dev_mode=True, webhook_dev_mode=True, github_token="env-token", webhook_public_url=url
+    )
+    async with _client(app) as client:
+        await client.post("/api/v1/orgs", json={"owner": "acme", "probe": False})
+        started = await client.post("/api/v1/orgs/acme/discover")
+        assert started.status_code == 202, started.text
+        for _ in range(50):
+            if seen:
+                break
+            await asyncio.sleep(0.01)
+    assert seen == [expected], f"WEBHOOK_PUBLIC_URL={url!r} gave discovery the origins {seen}"
+    hooks = [{"config": {"url": "http://127.0.0.1:8200/api/v1/webhook"}}]
+    if not expected:
+        assert org_discovery.hook_state(hooks, seen[0]) is None, "hooks must read as unknown, not absent"

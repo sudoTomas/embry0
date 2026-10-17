@@ -141,6 +141,7 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
     ],
     "org_get": ["owner: string"],
     "org_list": ["include_removed: boolean = false"],
+    "org_needs": ["owner: string"],
     "org_register": [
         "confirm: boolean = false",
         'credential_id: string = ""',

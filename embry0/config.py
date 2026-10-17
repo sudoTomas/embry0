@@ -509,6 +509,15 @@ class Embry0Config(BaseSettings):
     # nginx-served dashboard port.
     dashboard_public_url: str = "http://localhost:8200"
 
+    # The public base URL forges deliver webhooks to (a webhooks tunnel
+    # hostname); GitHub's hook URL is <it>/api/v1/webhook. Organization
+    # discovery (ADR 0011) counts a hook as pointing here only when its URL
+    # starts with it. The dashboard and SSO origins above are not webhook
+    # origins: the public dashboard answers 404 on webhook paths. Empty: a
+    # repository's hooks are unknown, not absent; so is a loopback address,
+    # which no forge can deliver to.
+    webhook_public_url: str = ""
+
     # Auth0 SSO (RAV-1069). All-or-nothing: sso_enabled requires every core
     # field, INCLUDING the roles claim, and a partial set refuses startup (see
     # _check_sso_config in app.py). The claim is the namespace your tenant's

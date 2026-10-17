@@ -733,6 +733,9 @@ async def _init_app_state(
     from embry0.storage.repositories.org_repos import OrgReposRepository
 
     app.state.org_repos_repo = OrgReposRepository(db)
+    from embry0.storage.repositories.org_needs import OrgNeedsRepository
+
+    app.state.org_needs_repo = OrgNeedsRepository(db)
     app.state.qa_configs_repo = RepoQAConfigsRepository(db, default_forge=app_config.default_forge)
     app.state.qa_app_results_repo = QAAppResultsRepository(db)
     app.state.qa_image_tags_repo = QAImageTagsRepository(db)
@@ -2190,6 +2193,7 @@ def _register_routers(app: FastAPI) -> None:
         jobs,
         logs,
         merge_approvals,
+        org_needs,
         organizations,
         pipeline_templates,
         qa_artifacts,
@@ -2278,6 +2282,7 @@ def _register_routers(app: FastAPI) -> None:
     # tests/unit/api/test_repos_route_order.py.
     app.include_router(repos.router, prefix="/api/v1", tags=["repos"], dependencies=auth_deps)
     app.include_router(organizations.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
+    app.include_router(org_needs.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     app.include_router(github.router, prefix="/api/v1", tags=["github"], dependencies=auth_deps)
     app.include_router(gitlab.router, prefix="/api/v1", tags=["gitlab"], dependencies=auth_deps)
     app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])

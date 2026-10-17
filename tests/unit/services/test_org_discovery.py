@@ -9,12 +9,17 @@ from typing import Any
 import pytest
 
 from embry0.services.org_discovery import (
+    RepoFacts,
+    count_gap,
     discover,
     env_keys,
+    hook_hosts,
     hook_points_here,
+    hook_state,
     manifest_facts,
     scan_repository,
     summarize,
+    ui_evidence,
 )
 
 
@@ -175,9 +180,183 @@ async def test_discover_folds_in_embry0_state_and_reports_progress() -> None:
         "registered": 1,
         "hooked": 1,
         "hooks_not_visible": 1,
+        "hooks_unknown": 0,
         "qa_config": 0,
         "watched": 1,
         "tracker_mapped": 0,
         "frontend": 1,
         "boot_hint": 2,
     }
+
+
+# ---- recorded payloads: a static site and a Python app with a public/ folder ----
+
+# A GitHub repository record whose language is HTML (a static site, no manifest).
+SITE = {
+    "name": "site",
+    "full_name": "acme/site",
+    "default_branch": "main",
+    "language": "HTML",
+    "pushed_at": "2026-10-10T10:00:00Z",
+    "private": False,
+    "fork": False,
+    "visibility": "public",
+}
+# A Python service that serves a built UI from public/index.html.
+PORTAL = {
+    "name": "portal",
+    "full_name": "acme/portal",
+    "default_branch": "main",
+    "language": "Python",
+    "private": True,
+    "visibility": "internal",
+}
+HOOKS_PAYLOAD = [
+    {
+        "type": "Repository",
+        "id": 501,
+        "name": "web",
+        "active": True,
+        "events": ["issues", "pull_request"],
+        "config": {"content_type": "json", "insecure_ssl": "0", "url": "https://hooks.example.net/api/v1/webhook"},
+    },
+    {
+        "type": "Repository",
+        "id": 502,
+        "name": "web",
+        "active": True,
+        "events": ["push"],
+        "config": {"content_type": "form", "url": "https://ci.example.org/github"},
+    },
+]
+
+
+def forge_with_sites() -> FakeForge:
+    return FakeForge(
+        {
+            "/repos/acme/site/contents/": _Resp(
+                200, [{"name": "index.html", "type": "file"}, {"name": "css", "type": "dir"}]
+            ),
+            "/repos/acme/site/hooks": _Resp(200, HOOKS_PAYLOAD),
+            "/repos/acme/portal/contents/": _Resp(
+                200,
+                [
+                    {"name": "pyproject.toml", "type": "file"},
+                    {"name": "public", "type": "dir"},
+                    {"name": "app", "type": "dir"},
+                ],
+            ),
+            "/repos/acme/portal/contents/public": _Resp(
+                200, [{"name": "index.html", "type": "file"}, {"name": "assets", "type": "dir"}]
+            ),
+            "/repos/acme/portal/hooks": _Resp(200, HOOKS_PAYLOAD),
+        },
+        [SITE, PORTAL],
+    )
+
+
+def test_ui_evidence_prefers_the_strongest_sign() -> None:
+    assert ui_evidence(language="Python", names={}, frontend_dependency=True, static_index=None) == "dependency"
+    assert ui_evidence(language="HTML", names={}, frontend_dependency=False, static_index=None) == "language"
+    assert (
+        ui_evidence(language="Go", names={"index.html": "file"}, frontend_dependency=False, static_index=None)
+        == "index.html"
+    )
+    assert (
+        ui_evidence(language="Python", names={}, frontend_dependency=False, static_index="static/index.html")
+        == "static/index.html"
+    )
+    assert ui_evidence(language="Java", names={"pom.xml": "file"}, frontend_dependency=False, static_index=None) is None
+
+
+@pytest.mark.asyncio
+async def test_a_static_site_and_a_public_index_count_as_a_ui() -> None:
+    f = forge_with_sites()
+    site = await scan_repository(f, "acme", SITE, hook_origins=("https://hooks.example.net",))
+    assert site.facts["frontend"] is True and site.facts["ui_evidence"] == "language"
+    assert site.facts["manifests"] == []
+    portal = await scan_repository(f, "acme", PORTAL, hook_origins=("https://hooks.example.net",))
+    assert portal.facts["frontend"] is True and portal.facts["ui_evidence"] == "public/index.html"
+    assert portal.internal is True and portal.private is True
+    assert "/repos/acme/portal/contents/public" in f.asked
+    # The static directories are only listed when nothing else says UI.
+    assert not any(p.startswith("/repos/acme/site/contents/css") for p in f.asked)
+
+
+@pytest.mark.asyncio
+async def test_hooks_compare_against_the_webhook_url() -> None:
+    f = forge_with_sites()
+    seen = await scan_repository(f, "acme", SITE, hook_origins=("https://hooks.example.net",))
+    assert seen.facts["hook_present"] is True and seen.facts["hook_count"] == 2
+    assert seen.facts["hook_hosts"] == ["ci.example.org", "hooks.example.net"]
+    missed = await scan_repository(f, "acme", SITE, hook_origins=("https://embry0.example.com",))
+    assert missed.facts["hook_present"] is False and missed.facts["hook_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_hooks_without_a_webhook_url_are_unknown_not_absent() -> None:
+    """Hooks can point at a webhooks hostname configured outside the
+    repository, so reading them as absent would report hooked 0 while hooks
+    exist. Unless WEBHOOK_PUBLIC_URL names it, a repository's hooks are
+    unknown, and the needs list asks for the setting."""
+    f = forge_with_sites()
+    facts = await scan_repository(f, "acme", SITE, hook_origins=())
+    assert facts.facts["hooks_visible"] is True
+    assert facts.facts["hook_present"] is None
+    assert facts.facts["hook_count"] == 2
+    named = await scan_repository(f, "acme", SITE, hook_origins=("https://hooks.example.net",))
+    assert named.facts["hook_present"] is True
+    f.routes["/repos/acme/site/hooks"] = _Resp(200, [])
+    bare = await scan_repository(f, "acme", SITE, hook_origins=())
+    assert bare.facts["hook_present"] is False, "no hooks at all is absent whatever the setting"
+    assert bare.facts["hook_count"] == 0 and bare.facts["hook_hosts"] == []
+
+
+def test_hook_state_and_hosts() -> None:
+    ours = {"config": {"url": "https://hooks.example.net/api/v1/webhook?token=abc"}}
+    other = {"config": {"url": "https://ci.example.org/hook?secret=xyz"}}
+    url = ("https://hooks.example.net",)
+    assert hook_state([ours, other], url) is True
+    assert hook_state([other], url) is False
+    assert hook_state([other], ()) is None, "no webhook URL to compare against: unknown"
+    assert hook_state([ours], ("",)) is None
+    assert hook_state([], ()) is False
+    assert hook_state(["junk"], ()) is False
+    assert hook_hosts([ours, other, ours, {"config": {}}, "junk"]) == ["ci.example.org", "hooks.example.net"]
+    assert not any("token" in h or "secret" in h for h in hook_hosts([ours, other])), "hosts only, never a query"
+
+
+def test_count_gap_explains_what_the_numbers_allow() -> None:
+    facts = [
+        RepoFacts(owner="acme", repo="acme/web", private=True),
+        RepoFacts(owner="acme", repo="acme/api", private=True, internal=True),
+        RepoFacts(owner="acme", repo="acme/site"),
+        RepoFacts(owner="acme", repo="acme/old", archived=True, fork=True),
+    ]
+    agree = count_gap(facts, 4)
+    assert agree["gap"] == 0 and agree["explained_by"] == "the owner record and the listing agree"
+    counted = (agree["public"], agree["private"], agree["internal"], agree["forks"], agree["archived"])
+    assert counted == (2, 1, 1, 1, 1), "public, private and internal are disjoint"
+    public_only = count_gap(facts, 2)
+    assert public_only["gap"] == -2 and "public repositories only" in public_only["explained_by"]
+    no_internal = count_gap(facts, 3)
+    assert no_internal["explained_by"] == "the owner record does not count internal repositories"
+    doubled = count_gap(facts, 6)
+    assert doubled["gap"] == 2 and "counts private repositories twice" in doubled["explained_by"]
+    unseen = count_gap(facts, 7)
+    assert unseen["gap"] == 3 and unseen["explained_by"] is None
+    assert "count_gap" not in summarize(facts)
+    assert summarize(facts, owner_says=7)["count_gap"] == unseen
+
+
+def test_count_gap_reads_forks_and_archived_apart() -> None:
+    facts = [
+        RepoFacts(owner="acme", repo="acme/a"),
+        RepoFacts(owner="acme", repo="acme/b", fork=True),
+        RepoFacts(owner="acme", repo="acme/c", fork=True),
+        RepoFacts(owner="acme", repo="acme/d", archived=True),
+    ]
+    assert count_gap(facts, 2)["explained_by"] == "the owner record does not count forks"
+    assert count_gap(facts, 3)["explained_by"] == "the owner record does not count archived repositories"
+    assert count_gap(facts, 1)["explained_by"] == "the owner record counts neither forks nor archived repositories"
+    assert count_gap(facts, 9)["explained_by"] is None

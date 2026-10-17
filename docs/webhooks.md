@@ -50,6 +50,14 @@ You should see at least one `Registered tunnel connection` log line. Webhooks po
 
 **Tearing down:** `docker compose stop cloudflared`, then delete the tunnel and its DNS record in the Cloudflare dashboard.
 
+**5. Tell embry0 its webhook URL.** The hostname above is configured outside the repository, so set it in the root `.env`:
+
+```bash
+WEBHOOK_PUBLIC_URL=https://webhooks.example.com
+```
+
+It is the one public base URL forges deliver webhooks to (GitHub's hook URL is `<it>/api/v1/webhook`). Organization discovery ([ADR 0011](adr/0011-organization-needs.md)) counts a repository's hook as pointing here only when its URL starts with it. `DASHBOARD_PUBLIC_URL` and `SSO_PUBLIC_ORIGIN` are not webhook origins: the public dashboard answers 404 on webhook paths. Until `WEBHOOK_PUBLIC_URL` is set, a repository's hooks are recorded as unknown rather than absent, and the organization's needs list files one `hook_origin_unknown` need that asks for the setting and names the hosts the hooks deliver to. A repository with no hooks at all reads as absent either way.
+
 ## Per-forge configuration
 
 ### GitHub

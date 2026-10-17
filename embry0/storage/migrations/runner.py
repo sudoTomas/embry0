@@ -38,8 +38,9 @@ logger = structlog.get_logger(__name__)
 # but FIXED: changing it breaks mutual exclusion against replicas still
 # running the old value mid-rollout. Advisory-lock keys share one global,
 # database-wide namespace, so any future advisory lock in embry0 MUST pick a
-# different key and be registered here (grep `pg_advisory` for the roster —
-# this is currently the only one).
+# different key and be registered here (grep `pg_advisory` for the roster).
+# The others hash a prefixed text key with hashtextextended:
+# `qa_image_tags:<repo>` and `org_needs:<owner>`.
 MIGRATIONS_ADVISORY_LOCK_KEY = 0x656D62727930
 
 # Acquisition is usually instantaneous; anything slower means another replica
@@ -2719,6 +2720,49 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             finished_at  TIMESTAMPTZ
         );
         CREATE INDEX IF NOT EXISTS idx_org_discovery_runs_owner ON org_discovery_runs (owner, started_at DESC);
+        """,
+    ),
+    (
+        99,
+        "org_needs — what embry0 still needs to maintain an owner (ADR 0011)",
+        # A need is derived from the newest run's fact rows every time; the
+        # row exists so a person's answer survives rediscovery. The key is
+        # (owner, kind, signature), the signature being the set of
+        # repositories the need covers: the same question again finds its row
+        # and keeps its status and case; a different set is a new question.
+        # case_id is the healing case (origin 'org') that puts the need on
+        # the awaiting-decision list; deleting a case clears it and keeps
+        # the need. org_needs_synced names the run each owner's needs were
+        # last synced from: a run syncs them when it finishes, and a read
+        # catches up only when the newest finished run is not that one.
+        """
+        CREATE TABLE IF NOT EXISTS org_needs (
+            id          TEXT PRIMARY KEY,
+            owner       TEXT NOT NULL,
+            run_id      TEXT,
+            kind        TEXT NOT NULL,
+            signature   TEXT NOT NULL,
+            title       TEXT NOT NULL,
+            detail      TEXT NOT NULL DEFAULT '',
+            repos       JSONB NOT NULL DEFAULT '[]'::jsonb,
+            action      JSONB NOT NULL DEFAULT '{}'::jsonb,
+            status      TEXT NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open', 'done', 'dismissed')),
+            case_id     TEXT REFERENCES healing_cases(id) ON DELETE SET NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (owner, kind, signature)
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_needs_owner ON org_needs (owner, status);
+
+        CREATE TABLE IF NOT EXISTS org_needs_synced (
+            owner       TEXT PRIMARY KEY,
+            run_id      TEXT NOT NULL,
+            synced_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        COMMENT ON TABLE org_needs IS
+            'ADR 0011: one need per owner, kind and repository set, derived from the newest discovery run; status and case_id are the person''s answer and survive rediscovery.';
         """,
     ),
 ]
