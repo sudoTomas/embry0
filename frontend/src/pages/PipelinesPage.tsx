@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { Plus, GitBranch, Calendar, ChevronRight } from "lucide-react";
 import { PipelineEditor } from "@/components/pipeline-editor/PipelineEditor";
+import { Button } from "@/components/ui/Button";
 import { useTemplates } from "@/hooks/usePipelines";
 import { fetchTemplate } from "@/api/pipelines";
 import type { PipelineGraph, PipelineTemplateSummary } from "@/lib/types";
@@ -79,14 +80,10 @@ function LandingView({
           <h1 className="text-xl font-semibold text-white">Pipelines</h1>
           <p className="text-xs text-white/40 mt-0.5">Design and manage agent pipeline templates</p>
         </div>
-        <button
-          type="button"
-          onClick={onNewPipeline}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-        >
+        <Button type="button" onClick={onNewPipeline} data-testid="new-pipeline">
           <Plus size={15} />
           New Pipeline
-        </button>
+        </Button>
       </div>
 
       {/* Body */}
