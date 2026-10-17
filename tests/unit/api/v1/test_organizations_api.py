@@ -242,6 +242,68 @@ async def test_slash_is_a_repository_not_an_owner(app: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_probe_answers_what_the_credential_can_do_and_stores_nothing(app: Any) -> None:
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/probe", json={"owner": "Acme", "credential_id": "cred-ok"})
+        listing = await client.get("/api/v1/orgs")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["read"] is True and body["hooks"] is True and body["push"] is None
+    assert body["identity"] == "acme-bot" and body["owner_kind"] == "organization"
+    assert body["repo_count"] == 12 and body["sample_repo"] == "acme/backend"
+    assert body["detail"] == "can list repositories"
+    assert body["source"] == "registry:acme-bot"
+    assert app.state.probes == [("acme", "github", "registry-token")]
+    assert app.state.organizations_repo.orgs == {}
+    assert app.state.org_repos_repo.runs == []
+    assert listing.json()["organizations"] == []
+
+
+@pytest.mark.asyncio
+async def test_probe_answers_an_owner_the_credential_cannot_list_instead_of_refusing(app: Any) -> None:
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/probe", json={"owner": "ghost"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["read"] is False
+    assert resp.json()["detail"] == "acme is not visible"
+    assert resp.json()["source"] == "env:GITHUB_TOKEN__GHOST"
+    assert app.state.organizations_repo.orgs == {}
+
+
+@pytest.mark.asyncio
+async def test_probe_with_an_unknown_credential_is_404_with_a_detail(app: Any) -> None:
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/probe", json={"owner": "acme", "credential_id": "cred-gone"})
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "credential not found"
+    assert app.state.probes == []
+    assert app.state.organizations_repo.orgs == {}
+
+
+@pytest.mark.asyncio
+async def test_probe_refuses_a_slash_and_an_unknown_forge(app: Any) -> None:
+    async with _client(app) as client:
+        slash = await client.post("/api/v1/orgs/probe", json={"owner": "acme/backend"})
+        forge = await client.post("/api/v1/orgs/probe", json={"owner": "acme", "forge": "bitbucket"})
+    assert slash.status_code == 422 and "no slash" in slash.json()["detail"]
+    assert forge.status_code == 422
+    assert app.state.probes == []
+
+
+def test_probe_is_admin_tier_and_declared_before_every_owner_route() -> None:
+    from fastapi.routing import APIRoute
+
+    from embry0.api.deps import require_admin
+
+    routes = [r for r in organizations_api.router.routes if isinstance(r, APIRoute)]
+    probe = next(r for r in routes if r.path == "/orgs/probe")
+    assert probe.methods == {"POST"}
+    assert [d.dependency for d in probe.dependencies] == [require_admin.dependency]
+    first_owner_route = next(i for i, r in enumerate(routes) if r.path.startswith("/orgs/{owner}"))
+    assert routes.index(probe) < first_owner_route
+
+
+@pytest.mark.asyncio
 async def test_status_and_removed_filtering(app: Any) -> None:
     async with _client(app) as client:
         await client.post("/api/v1/orgs", json={"owner": "acme", "probe": False})

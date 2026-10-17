@@ -53,6 +53,33 @@ smoke-tests it (boot + ready checks only, no QA agent), and writes it to
 the store — iterating on failures up to 3 rounds. Present in store =
 validated.
 
+## A whole owner: the Organizations wizard
+
+In the dashboard, **Organizations** (next to Repos) adds a GitHub
+organization or user, or a GitLab group, in four steps:
+
+1. **Connect**: the owner, the forge, and the credential to act with, a
+   forge token from the registry or the environment token for that owner.
+   **Probe** (`POST /api/v1/orgs/probe`, admin) asks the forge what the
+   credential can do there (read, hooks, push) and how many repositories it
+   sees, and stores nothing. It is the same probe registering runs.
+2. **Discover**: registers the owner (`POST /api/v1/orgs`), then reads
+   every repository under it (`POST /api/v1/orgs/{owner}/discover`), with
+   its progress shown as it goes.
+3. **Report**: one row per repository, with a chip for each sense embry0
+   has for it (intake, registry, QA, watch, tracker, UI, boot), filterable
+   by name or by a missing sense, and the needs list grouped by kind.
+4. **Act**: tick the needs embry0 can do itself (register, hook, onboard,
+   watch), preview them as a dry run, then apply them.
+
+Registering an owner changes nothing for any repository until a need is
+applied ([ADR 0010](adr/0010-organizations.md)). The wizard lives at
+`/orgs/-/new`, and each organization keeps a page at `/orgs/<owner>` with
+the latest discovery, a Rediscover button and the same act panel; no owner
+name starts with `-`, so an owner named `new` keeps its page too. A server
+without the probe, needs or actions route (FastAPI's own 404 or 405) says
+so in place of that step instead of failing; any other error is shown.
+
 ## Editing a stored config later
 
 ```bash

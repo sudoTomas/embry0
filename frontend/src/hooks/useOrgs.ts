@@ -1,0 +1,76 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  discoverOrganization,
+  dismissNeed,
+  fetchOrganization,
+  fetchOrganizationNeeds,
+  fetchOrganizationRepos,
+  fetchOrganizationRuns,
+  fetchOrganizations,
+  reopenNeed,
+  type DiscoveryRun,
+} from "@/api/orgs";
+
+/** While a discovery run is going, its progress is read this often. */
+export const RUN_POLL_MS = 1_500;
+
+export function useOrganizations() {
+  return useQuery({ queryKey: ["orgs"], queryFn: fetchOrganizations });
+}
+
+export function useOrganization(owner: string) {
+  return useQuery({
+    queryKey: ["orgs", owner],
+    queryFn: () => fetchOrganization(owner),
+    enabled: !!owner,
+    retry: false,
+  });
+}
+
+/** Runs, newest first; polls while the newest one is running. */
+export function useOrganizationRuns(owner: string, enabled = true) {
+  return useQuery({
+    queryKey: ["orgs", owner, "runs"],
+    queryFn: () => fetchOrganizationRuns(owner),
+    enabled: !!owner && enabled,
+    refetchInterval: (query) => {
+      const runs = query.state.data as DiscoveryRun[] | undefined;
+      return runs?.[0]?.status === "running" ? RUN_POLL_MS : false;
+    },
+  });
+}
+
+export function useOrganizationRepos(owner: string, enabled = true) {
+  return useQuery({
+    queryKey: ["orgs", owner, "repos"],
+    queryFn: () => fetchOrganizationRepos(owner),
+    enabled: !!owner && enabled,
+  });
+}
+
+/** `data === null` means the server has no needs endpoint yet. */
+export function useOrganizationNeeds(owner: string, enabled = true) {
+  return useQuery({
+    queryKey: ["orgs", owner, "needs"],
+    queryFn: () => fetchOrganizationNeeds(owner),
+    enabled: !!owner && enabled,
+  });
+}
+
+export function useDiscoverOrganization(owner: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => discoverOrganization(owner),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["orgs", owner, "runs"] }),
+  });
+}
+
+/** Dismiss or reopen one need; the list is read again either way. */
+export function useNeedStatus(owner: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, dismiss }: { id: string; dismiss: boolean }) =>
+      dismiss ? dismissNeed(owner, id) : reopenNeed(owner, id),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["orgs", owner, "needs"] }),
+  });
+}

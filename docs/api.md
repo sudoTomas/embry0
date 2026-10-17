@@ -227,6 +227,7 @@ The forge owners embry0 maintains as a whole ([ADR 0010](adr/0010-organizations.
 | `GET /api/v1/orgs/{owner}/webhook` | read |
 | `POST /api/v1/orgs/{owner}/webhook` | admin |
 | `POST /api/v1/orgs/{owner}/actions` | admin |
+| `POST /api/v1/orgs/probe` | admin, stores nothing |
 
 `POST /api/v1/orgs/{owner}/discover` answers 202 and starts one discovery run for the owner; a request while a run is in progress, or for a paused or removed owner, answers 409, and an unknown owner 404. Poll `GET /api/v1/orgs/{owner}/runs` until the newest run is `done` or `error`. `GET /api/v1/orgs/{owner}/repos` returns one fact row per repository, replaced on each run, and `runs` keeps the history of every run with its progress and summary.
 

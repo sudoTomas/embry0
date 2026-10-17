@@ -101,6 +101,12 @@ describe("ReposPage (RAV-1301)", () => {
     expect(labels).toContain("octo/no-push (public, GITHUB_TOKEN, push?)");
   });
 
+  it("points to Organizations in one line", async () => {
+    renderPage();
+    const pointer = await screen.findByTestId("repos-orgs-pointer");
+    expect(pointer.querySelector("a")).toHaveAttribute("href", "/orgs");
+  });
+
   it("flags a repo an admin granted Docker access, and only that one (#522)", async () => {
     mockFetchRepos.mockResolvedValue([
       ...REGISTERED,
