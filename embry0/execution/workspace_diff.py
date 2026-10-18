@@ -20,6 +20,14 @@ logger = structlog.get_logger(__name__)
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
 
 
+class WorkspaceDiffUnavailable(RuntimeError):
+    """A strict diff could not be computed: the base fetch or ``git diff`` failed.
+
+    Distinct from an empty diff, which is an answer: the branch changed
+    nothing against its base.
+    """
+
+
 async def resolve_base_branch(
     *,
     docker: Any,
@@ -66,6 +74,7 @@ async def compute_changed_files_via_diff(
     docker: Any,
     container_id: str,
     base_branch: str,
+    strict: bool = False,
 ) -> list[str]:
     """Run `git diff --name-only origin/<base_branch>...HEAD` in the sandbox.
 
@@ -80,6 +89,11 @@ async def compute_changed_files_via_diff(
     Returns repo-root-relative paths as strings. Empty list on any failure
     (logged at WARNING) — callers treat empty as "no scoping available"
     (QA: every app affected; review: unscoped prompt).
+
+    ``strict=True`` is for a caller that must tell a failed diff from an
+    empty one (QA app selection, #65): a fetch failure or a non-zero
+    ``git diff`` exit (no merge base, unknown ref) raises
+    ``WorkspaceDiffUnavailable`` instead of returning ``[]``.
 
     The base branch must exist remotely. We `git fetch origin <base_branch>
     --depth=50` first (depth covers most short-lived PRs).
@@ -102,14 +116,14 @@ async def compute_changed_files_via_diff(
             error=str(exc),
             msg="git fetch failed; skipping diff",
         )
+        if strict:
+            raise WorkspaceDiffUnavailable(f"git fetch origin {base_branch} failed: {exc}") from exc
         return []
 
-    # Step 2: actual diff.
-    diff_cmd = [
-        "bash",
-        "-c",
-        f"cd /workspace && git diff --name-only origin/{shlex.quote(base_branch)}...HEAD || true",
-    ]
+    # Step 2: actual diff. Strict mode drops `|| true` so a git failure
+    # surfaces as run_cmd's non-zero-exit RuntimeError.
+    diff_shell = f"cd /workspace && git diff --name-only origin/{shlex.quote(base_branch)}...HEAD"
+    diff_cmd = ["bash", "-c", diff_shell if strict else f"{diff_shell} || true"]
     try:
         raw = await docker.run_cmd(
             docker.build_exec_cmd(container_id, diff_cmd),
@@ -121,6 +135,8 @@ async def compute_changed_files_via_diff(
             base_branch=base_branch,
             error=str(exc),
         )
+        if strict:
+            raise WorkspaceDiffUnavailable(f"git diff against origin/{base_branch} failed: {exc}") from exc
         return []
 
     if not raw:

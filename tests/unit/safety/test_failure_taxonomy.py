@@ -278,11 +278,20 @@ def test_a_classified_failure_does_not_log_unclassified():
         ({"infra_apps": ["a"], "failed_apps": ["b"]}, ErrorCode.QA_INFRA),
         ({"failed_apps": ["b"], "inconclusive_apps": ["c"]}, ErrorCode.QA_FAILED),
         ({"inconclusive_apps": ["c"]}, ErrorCode.QA_INCONCLUSIVE),
+        ({"qa_error_code": "ERR_QA_NO_APPS"}, ErrorCode.QA_NO_APPS),
         ({}, ErrorCode.QA_NO_VERDICT),
     ],
 )
 def test_standalone_qa_outcomes(kwargs, expected):
     assert classify_qa_outcome(**kwargs) is expected
+
+
+def test_no_apps_is_a_configuration_error_with_public_text():
+    from embry0.notifications.public_errors import public_error_message
+    from embry0.safety.error_codes import ERROR_CATEGORIES, FailureCategory
+
+    assert ERROR_CATEGORIES[ErrorCode.QA_NO_APPS] is FailureCategory.CONFIG
+    assert "no app" in public_error_message("ERR_QA_NO_APPS")
 
 
 def test_an_unknown_qa_code_from_state_is_not_trusted():

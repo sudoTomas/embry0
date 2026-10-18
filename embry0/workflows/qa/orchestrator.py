@@ -27,6 +27,7 @@ from langgraph.config import get_stream_writer
 from embry0.execution import events
 from embry0.orchestration.budget import BudgetOverrunError, resolve_job_cap
 from embry0.orchestration.nodes.agent import evaluate_job_cap
+from embry0.safety.error_codes import ErrorCode
 from embry0.workflows.pipeline_graphs import qa_pipeline_graph
 from embry0.workflows.qa._orchestrator_workspace import (
     compute_changed_files_via_diff,
@@ -37,6 +38,7 @@ from embry0.workflows.qa._subtask_env import build_qa_sandbox_env
 from embry0.workflows.qa.orchestrator_helpers import (
     OrchestratorOutcome,
     _outcome_to_dict,
+    affected_app_names,
     fan_out_subtasks,
     gate_deployed_apps,
     resolve_apps_to_qa,
@@ -194,6 +196,7 @@ async def _init_orchestrator_node_impl(
     container_id: str | None = None
     lockfile_text: str = ""
     changed_files: list[str] = []
+    changed_files_unavailable = False
     staging_path_str: str | None = None
     try:
         container_id, sandbox_token = await sandbox_mgr.create(
@@ -305,10 +308,13 @@ async def _init_orchestrator_node_impl(
             )
 
         try:
+            # strict: a failed fetch or diff raises instead of reading as an
+            # empty diff, so the empty-selection reason stays truthful (#65).
             changed_files = await compute_changed_files_via_diff(
                 docker=docker,
                 container_id=container_id,
                 base_branch=filter_parsed.base_branch,
+                strict=True,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -317,6 +323,7 @@ async def _init_orchestrator_node_impl(
                 error=str(exc),
             )
             changed_files = []
+            changed_files_unavailable = True
 
         staging_dir = _staging_dir_for(job_id)
         try:
@@ -445,6 +452,10 @@ async def _init_orchestrator_node_impl(
     out: dict[str, Any] = {"qa": qa}
     # Phase 3 additions
     qa["changed_files"] = list(changed_files)
+    qa["changed_files_unavailable"] = changed_files_unavailable
+    # #65: the report node dispatches on the forge this node already resolved
+    # for the clone, instead of assuming GitHub.
+    qa["forge"] = forge
     if staging_path_str:
         out["repo_root"] = staging_path_str
     # Spec 1A §3.7: publish the resolved base so downstream nodes (and the
@@ -599,6 +610,8 @@ async def _qa_orchestrator_node_impl(
             "qa_skipped_qa_required_never",
             parent_run_id=state.get("job_id"),
         )
+        writer(events.qa_apps_resolved(apps=[]))
+        writer(events.progress(message="QA skipped: qa_required is never", node="orchestrate_qa"))
         return {"qa": qa_state}
 
     # Phase-C: force-all-apps short-circuit. Either the per-repo qa_required
@@ -672,6 +685,8 @@ async def _qa_orchestrator_node_impl(
     # 3. Resolve apps to QA.
     changed_files_str = qa_state.get("changed_files") or []
     changed_files = [Path(p) for p in changed_files_str]
+    affected_managed: list[str] = []
+    provider_affected: list[str] = []
     if force_all_apps:
         # Bypass affected-set; QA every declared app. validate_against_qa_config
         # already errored out on apps that don't exist in the workspace, so
@@ -688,8 +703,10 @@ async def _qa_orchestrator_node_impl(
         # always run when QA runs — a diff cannot be mapped onto an
         # externally running instance, and the run's value there is
         # liveness + regression against the live deployment (EMB-27).
-        affected_managed = resolve_apps_to_qa(provider, cfg, changed_files=changed_files) if provider else []
+        provider_affected = affected_app_names(provider, cfg, changed_files=changed_files) if provider else []
+        affected_managed = sorted(set(provider_affected) & set(cfg.apps))
         apps = sorted(set(affected_managed) | set(gate_deployed_apps(cfg, deployed_apps, changed_files)))
+    dropped: list[str] = []
     if qa_state.get("exclude_deployed_apps"):
         # #298: a branch job never QAs a deployed target — the deployed site
         # does not contain the branch, so its verdict says nothing about the
@@ -801,12 +818,77 @@ async def _qa_orchestrator_node_impl(
         return {"qa": qa_state}
 
     if not apps:
+        declared = sorted(cfg.apps.keys())
+        # A failed or empty diff outranks the deployed exclusion only while a
+        # managed app exists for the diff to have selected; an all-deployed
+        # branch job has nothing to verify in-sandbox whatever the diff was
+        # (#298).
+        has_managed = bool(cfg.managed_app_names())
+        if qa_state.get("changed_files_unavailable") and has_managed:
+            reason = "diff_unavailable"
+        elif not changed_files_str and has_managed:
+            reason = "no_change_context"
+        elif dropped:
+            reason = "deployed_apps_excluded"
+        elif not changed_files_str:
+            reason = "no_change_context"
+        else:
+            reason = "diff_touched_no_declared_app"
+        logger.info(
+            "qa_no_apps_to_qa",
+            parent_run_id=state.get("job_id"),
+            reason=reason,
+            declared_apps=declared,
+            provider_affected=provider_affected,
+            n_changed_files=len(changed_files_str),
+        )
+        writer(events.qa_apps_resolved(apps=[]))
+        if reason in ("diff_unavailable", "no_change_context"):
+            if reason == "diff_unavailable":
+                msg = (
+                    "QA selected no app: the diff against the base branch could not be computed "
+                    "(fetch or merge base failed), so no app could be matched "
+                    f"(declared: {declared}). Check base_branch and the provider's affected_filter, "
+                    "or pass force_all_apps on the job."
+                )
+            else:
+                msg = (
+                    "QA selected no app: the diff against the base branch is empty and no declared app is "
+                    f"always on (declared: {declared}; provider-affected: {provider_affected}). "
+                    "Set qa_required: always, pass force_all_apps on the job, or declare an app without prefixes."
+                )
+            writer(events.progress(message=msg, node="orchestrate_qa"))
+            outcome = OrchestratorOutcome(
+                overall_status="failed",
+                apps_to_qa=[],
+                failure_summary=msg,
+                validation_warnings=warnings,
+            )
+            qa_state["outcome"] = _outcome_to_dict(outcome)
+            qa_state["per_app_results"] = []
+            qa_state["error_code"] = ErrorCode.QA_NO_APPS.value
+            qa_state["error_message"] = msg
+            qa_state["final_status"] = "failed"
+            return {"qa": qa_state}
+        if reason == "deployed_apps_excluded":
+            msg = (
+                "QA selected no app: every selected app is a deployed target and this is a branch job, "
+                f"which never QAs deployed targets (dropped: {dropped})."
+            )
+        else:
+            msg = (
+                f"QA selected no app: the change touched no declared app (declared: {declared}; "
+                f"provider-affected: {provider_affected}; changed files: {len(changed_files_str)})."
+            )
+        writer(events.progress(message=msg, node="orchestrate_qa"))
         outcome = OrchestratorOutcome(
             overall_status="passed",
             apps_to_qa=[],
-            validation_warnings=warnings,
+            validation_warnings=[*warnings, msg],
         )
         qa_state["outcome"] = _outcome_to_dict(outcome)
+        # qa_report_node renders qa["validation_warnings"], not the outcome's.
+        qa_state["validation_warnings"] = [*warnings, msg]
         qa_state["per_app_results"] = []
         qa_state["final_status"] = "passed"
         return {"qa": qa_state}

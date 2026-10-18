@@ -70,3 +70,100 @@ def test_the_issue_to_pr_graph_uses_the_branch_variant_and_standalone_qa_does_no
 
     assert IssueToprWorkflow().compile().nodes["orchestrate_qa"].bound.afunc is _branch_qa_orchestrator_node
     assert QAWorkflow().compile().nodes["orchestrate_qa"].bound.afunc is qa_orchestrator_node
+
+
+@pytest.mark.parametrize(
+    "qa_extra",
+    [
+        {},
+        {"changed_files": []},
+        {"changed_files": [], "changed_files_unavailable": True},
+    ],
+    ids=["diff", "empty-diff", "diff-unavailable"],
+)
+@pytest.mark.asyncio
+async def test_dropping_every_deployed_app_passes_with_its_own_reason(
+    monkeypatch: pytest.MonkeyPatch, qa_extra: dict
+) -> None:
+    """A branch job whose selection was only deployed targets has nothing to
+    verify in-sandbox (#298): it passes, and says why, whatever the diff was."""
+    _no_subtasks(monkeypatch)
+    out = await qa_orchestrator_node(_state(exclude_deployed_apps=True, **qa_extra), {"configurable": {}})
+    qa = out["qa"]
+    assert qa["final_status"] == "passed", f"an all-deployed branch job failed: {qa.get('error_message')}"
+    assert qa.get("error_code") is None
+    reasons = [w for w in qa["validation_warnings"] if w.startswith("QA selected no app")]
+    assert reasons, f"the pass carries no empty-selection reason: {qa['validation_warnings']}"
+    assert "every selected app is a deployed target" in reasons[0], f"misleading reason: {reasons[0]}"
+    assert "dropped: ['web']" in reasons[0], reasons[0]
+
+
+_MIXED = """
+version: 2
+workspace_provider:
+  type: npm-workspaces-turbo
+defaults:
+  sandbox_profile: qa-external
+apps:
+  api:
+    boot_command: "echo started"
+    frontend_url: "http://localhost:3000"
+    ready_checks:
+      - http: "http://localhost:3000"
+  web:
+    target: deployed
+    frontend_url: "http://app.internal.example:8080/"
+    ready_checks:
+      - http: "http://app.internal.example:8080/health"
+"""
+
+
+def _mixed_state(monkeypatch: pytest.MonkeyPatch, *, changed_files_unavailable: bool) -> dict:
+    """A branch job on a managed `api` + deployed `web` config, with an empty diff."""
+    from pathlib import Path
+
+    from embry0.workspace_providers import AffectedSet, WorkspaceApp
+    from embry0.workspace_providers.fakes import FakeWorkspaceProvider
+
+    provider = FakeWorkspaceProvider(
+        apps=[WorkspaceApp("api", Path("apps/api"), "@x/api")],
+        packages=[],
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+    )
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator.load_provider", lambda name, root, config: provider)
+    _no_subtasks(monkeypatch)
+    state = _state(exclude_deployed_apps=True, changed_files=[], changed_files_unavailable=changed_files_unavailable)
+    state["qa"]["qa_yaml_v2_raw"] = _MIXED
+    return state
+
+
+@pytest.mark.asyncio
+async def test_a_failed_diff_still_fails_when_a_managed_app_could_have_been_selected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dropping the deployed app must not hide that the diff, which selects the
+    managed apps, never ran."""
+    state = _mixed_state(monkeypatch, changed_files_unavailable=True)
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    qa = out["qa"]
+    # Precondition: the deployed app was selected and then dropped.
+    assert any("skipped web" in w for w in qa["validation_warnings"]), qa["validation_warnings"]
+    assert qa["final_status"] == "failed", "a failed diff was hidden behind the deployed-app exclusion"
+    assert qa["error_code"] == "ERR_QA_NO_APPS"
+    assert "could not be computed" in qa["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_diff_still_fails_when_a_managed_app_could_have_been_selected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The deployed app kept on the empty diff and then dropped must not turn
+    the vacuous run from #65 into a pass while a managed app is declared."""
+    state = _mixed_state(monkeypatch, changed_files_unavailable=False)
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    qa = out["qa"]
+    # Precondition: the deployed app was selected and then dropped.
+    assert any("skipped web" in w for w in qa["validation_warnings"]), qa["validation_warnings"]
+    assert qa["final_status"] == "failed", "an empty diff was hidden behind the deployed-app exclusion"
+    assert qa["error_code"] == "ERR_QA_NO_APPS"
+    assert "is empty" in qa["error_message"], qa["error_message"]

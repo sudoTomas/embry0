@@ -301,6 +301,10 @@ class JobState(TypedDict, total=False):
     ]  # typed job context; None → treat as git for back-compat
     task: Annotated[str, FoldingLastValue]
     issue_number: Annotated[int | None, FoldingLastValue]
+    # The forge-native issue number (GitHub number or GitLab iid), None for
+    # a Linear issue. issue_number stays GitHub-only for its GitHub-shaped
+    # readers; the QA report reads this one to write on either forge (#65).
+    forge_issue_number: Annotated[int | None, FoldingLastValue]
     issue_id: Annotated[str | None, FoldingLastValue]
     # EMB-39: labels from the originating issue (empty for standalone QA
     # jobs). Feeds conditional-criteria `labels:` predicates in the QA

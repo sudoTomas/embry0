@@ -69,3 +69,25 @@ async def test_run_workflow_labels_default_empty():
     issue = {"title": "T", "body": "", "repo": "foo/bar", "github_number": 7}
     await executor._run_workflow("iss-1", "job-1", issue)
     assert captured["initial_state"]["issue_labels"] == []
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_seeds_the_forge_issue_number_of_a_gitlab_issue():
+    captured: dict = {}
+    executor = _make_executor(captured)
+    issue = {"title": "T", "body": "", "repo": "foo/bar", "tracker": "gitlab", "tracker_key": "7"}
+    await executor._run_workflow("iss-1", "job-1", issue)
+    state = captured["initial_state"]
+    assert state.get("forge_issue_number") == 7, f"GitLab iid not seeded: {state.get('forge_issue_number')!r}"
+    assert state["issue_number"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_seeds_no_forge_issue_number_for_a_linear_issue():
+    captured: dict = {}
+    executor = _make_executor(captured)
+    issue = {"title": "T", "body": "", "repo": "foo/bar", "tracker": "linear", "tracker_key": "ENG-7"}
+    await executor._run_workflow("iss-1", "job-1", issue)
+    state = captured["initial_state"]
+    assert "forge_issue_number" in state, "forge_issue_number missing from the initial state"
+    assert state["forge_issue_number"] is None

@@ -161,9 +161,8 @@ class QAAppResultsRepository:
     async def list_for_job(self, job_id: str) -> list[QAAppResultRow]:
         """Return all per-app rows for one job, sorted by app_name.
 
-        Used by the orchestrator's report node to render the sticky PR comment
-        and the aggregate GitHub check (Tasks 23-25) and by the dashboard
-        in Phase 4.
+        Used by the orchestrator's report node to render the sticky QA comment
+        on the job's forge (Tasks 23-25) and by the dashboard in Phase 4.
         """
         sql = """
         SELECT job_id, app_name, status, duration_ms, cache_hits,

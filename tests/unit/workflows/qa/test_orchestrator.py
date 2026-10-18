@@ -84,6 +84,24 @@ def test_resolve_apps_to_qa_filters_out_apps_not_in_qa_yaml():
     assert apps == ["hub"]  # ghost dropped
 
 
+def test_affected_app_names_keeps_an_app_resolve_apps_to_qa_drops():
+    from embry0.workflows.qa.orchestrator_helpers import affected_app_names
+
+    cfg = parse_qa_yaml_v2(_QA_YAML)
+    provider = FakeWorkspaceProvider(
+        apps=[
+            WorkspaceApp("hub", Path("apps/hub"), "@x/hub"),
+            WorkspaceApp("ghost", Path("apps/ghost"), "@x/ghost"),
+        ],
+        packages=[],
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset({"@x/hub", "@x/ghost"})),
+    )
+    assert affected_app_names(provider, cfg, changed_files=[]) == ["ghost", "hub"], (
+        "affected_app_names must not intersect with the declared apps"
+    )
+    assert resolve_apps_to_qa(provider, cfg, changed_files=[]) == ["hub"]
+
+
 def test_validate_against_qa_config_fails_fast_on_unknown_app():
     cfg = parse_qa_yaml_v2(_QA_YAML)
     provider = FakeWorkspaceProvider(
@@ -111,6 +129,20 @@ def test_validate_against_qa_config_separates_warnings_from_errors():
     errors, warnings = validate_against_qa_config(provider, cfg)
     assert len(errors) == 1
     assert len(warnings) == 1
+
+
+def test_validate_against_qa_config_treats_unprefixed_message_as_error():
+    """A provider that forgets the prefix must fail the run, not be ignored."""
+    cfg = parse_qa_yaml_v2(_QA_YAML)
+    provider = FakeWorkspaceProvider(
+        apps=[],
+        packages=[],
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+        validate_warnings=["qa.yaml app 'hub' is not declared in the provider config"],
+    )
+    errors, warnings = validate_against_qa_config(provider, cfg)
+    assert errors == ["qa.yaml app 'hub' is not declared in the provider config"], "unprefixed message was dropped"
+    assert warnings == []
 
 
 import asyncio  # noqa: E402
@@ -460,22 +492,30 @@ async def test_orchestrator_node_failed_subtask_without_summary_still_notes_app(
     assert "no per-app failure summary recorded" in summary
 
 
-@pytest.mark.asyncio
-async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatch):
+def _empty_selection_setup(monkeypatch, *, undeclared_affected_app: bool = False):
     from pathlib import Path
 
+    from embry0.workflows.qa import orchestrator as orch
     from embry0.workspace_providers import AffectedSet, WorkspaceApp
     from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
+    apps = [WorkspaceApp("hub", Path("apps/hub"), "@x/hub")]
+    affected: frozenset[str] = frozenset()
+    if undeclared_affected_app:
+        # Workspace app the provider reports as affected, but qa.yaml does not declare.
+        apps.append(WorkspaceApp("ghost", Path("apps/ghost"), "@x/ghost"))
+        affected = frozenset({"@x/ghost"})
     fake_provider = FakeWorkspaceProvider(
-        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        apps=apps,
         packages=[],
-        affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+        affected_result=AffectedSet(affected, affected, affected),
     )
     monkeypatch.setattr(
         "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
+    events_out: list[dict] = []
+    monkeypatch.setattr(orch, "get_stream_writer", lambda: events_out.append)
 
     repo_mock = AsyncMock()
     repo_mock.upsert_with_boot_phase = AsyncMock()
@@ -489,10 +529,60 @@ async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatc
         },
     }
     config = {"configurable": {"qa_app_results_repo": repo_mock}}
+    return state, config, repo_mock, events_out
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_node_fails_when_no_apps_and_no_change_context(monkeypatch):
+    """Empty diff + empty selection is the vacuous pass from #65: it must fail."""
+    state, config, repo_mock, events_out = _empty_selection_setup(monkeypatch)
     out = await qa_orchestrator_node(state, config)
-    assert out["qa"]["outcome"]["overall_status"] == "passed"
-    assert out["qa"]["apps_to_qa"] == []
+    qa = out["qa"]
+    assert qa["final_status"] == "failed", "a run that selected no app and had no change context passed"
+    assert qa["outcome"]["overall_status"] == "failed"
+    assert qa["error_code"] == "ERR_QA_NO_APPS"
+    assert "force_all_apps" in qa["error_message"]
+    assert qa["apps_to_qa"] == []
+    assert any(e["type"] == "qa_apps_resolved" and e["apps"] == [] for e in events_out), (
+        "qa_apps_resolved was not emitted for the empty selection"
+    )
+    assert any(e["type"] == "progress" and "no app" in e["message"] for e in events_out)
     assert repo_mock.upsert_with_boot_phase.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_node_fails_with_its_own_reason_when_the_diff_was_unavailable(monkeypatch):
+    """A failed diff is not an empty one: the message must not claim the diff is empty."""
+    state, config, _repo_mock, events_out = _empty_selection_setup(monkeypatch)
+    state["qa"]["changed_files_unavailable"] = True
+    out = await qa_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["final_status"] == "failed"
+    assert qa["outcome"]["overall_status"] == "failed"
+    assert qa["error_code"] == "ERR_QA_NO_APPS"
+    assert "could not be computed" in qa["error_message"], (
+        f"a failed diff is reported as something else: {qa['error_message']}"
+    )
+    assert "is empty" not in qa["error_message"]
+    assert any(e["type"] == "progress" and "could not be computed" in e["message"] for e in events_out)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_node_passes_with_reason_when_diff_touched_no_declared_app(monkeypatch):
+    state, config, _repo_mock, events_out = _empty_selection_setup(monkeypatch, undeclared_affected_app=True)
+    state["qa"]["changed_files"] = ["apps/ghost/page.tsx"]
+    out = await qa_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["final_status"] == "passed"
+    assert qa["outcome"]["overall_status"] == "passed"
+    reasons = [w for w in qa["outcome"]["validation_warnings"] if "touched no declared app" in w]
+    assert reasons, "the pass carries no reason"
+    assert "ghost" in reasons[0], f"the reason does not name the undeclared affected app: {reasons[0]}"
+    assert any(e["type"] == "qa_apps_resolved" and e["apps"] == [] for e in events_out)
+    # The report node renders qa["validation_warnings"], not the outcome's copy.
+    assert reasons[0] in qa["validation_warnings"], (
+        f"the reason never reaches the sticky comment: {qa['validation_warnings']}"
+    )
 
 
 @pytest.mark.asyncio
@@ -591,6 +681,11 @@ async def test_orchestrator_node_qa_required_never_short_circuits(monkeypatch):
 
     monkeypatch.setattr("embry0.workflows.qa.orchestrator.load_provider", crash_load_provider)
 
+    from embry0.workflows.qa import orchestrator as orch
+
+    events_out: list[dict] = []
+    monkeypatch.setattr(orch, "get_stream_writer", lambda: events_out.append)
+
     state = {
         "job_id": "run-never",
         "repo": "org/repo",
@@ -608,6 +703,9 @@ async def test_orchestrator_node_qa_required_never_short_circuits(monkeypatch):
     assert qa["apps_to_qa"] == []
     assert qa["per_app_results"] == []
     assert qa["final_status"] == "passed"
+    assert any(e["type"] == "qa_apps_resolved" and e["apps"] == [] for e in events_out), (
+        "qa_required: never left the stream silent"
+    )
 
 
 # ── B5: prebaked image tag flows through orchestrator → fan_out → run_subtask ─
@@ -1042,6 +1140,7 @@ async def test_init_orchestrator_populates_changed_files_and_repo_root(tmp_path,
     # Staged files exist.
     assert (tmp_path / "embry0-workspace-job-1" / "package.json").is_file()
     assert (tmp_path / "embry0-workspace-job-1" / "apps" / "hub" / "package.json").is_file()
+    assert out["qa"].get("forge") == "github", "init_orchestrator did not publish the forge for the report node"
 
 
 # ---------------------------------------------------------------------------
