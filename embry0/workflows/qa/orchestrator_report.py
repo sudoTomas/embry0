@@ -35,7 +35,9 @@ State reads:
   - state['qa']['validation_warnings']
   - state['qa']['forge']           ("github" | "gitlab"; resolved if absent)
   - state['repo']                  ('owner/repo')
-  - state['issue_number']          (the PR/issue number; None skips the write)
+  - state['forge_issue_number']    (GitHub number / GitLab iid; None skips the write)
+  - state['issue_number']          (fallback when forge_issue_number is absent:
+                                    states written before it existed)
   - state.get('attempt_number', 1) (used as run_number in the comment)
 
 Failures here log warnings but DO NOT fail the run — final_status was set by
@@ -120,12 +122,14 @@ async def qa_report_node(
     validation_warnings = qa_state.get("validation_warnings") or []
 
     repo = state.get("repo")
-    issue_number = state.get("issue_number")
+    # forge_issue_number carries a GitLab iid too; issue_number is GitHub-only
+    # and is read only for states written before the forge-neutral key.
+    number = state["forge_issue_number"] if "forge_issue_number" in state else state.get("issue_number")
     run_number = int(state.get("attempt_number") or 1)
     overall_status = outcome.get("overall_status") or "infra_error"
     failure_summary = outcome.get("failure_summary")
 
-    if issue_number is None or not repo:
+    if number is None or not repo:
         # A standalone QA job has no issue or pull request to comment on;
         # the dashboard and the job row carry its verdict.
         logger.info("qa_report_skipped_no_change_request", repo=repo)
@@ -155,11 +159,9 @@ async def qa_report_node(
 
         try:
             client = make_gitlab_client(configurable.get("embry0_config"), credential_resolver=resolver)
-            await client.upsert_sticky_issue_note(repo, int(issue_number), body, marker=COMMENT_MARKER)
+            await client.upsert_sticky_issue_note(repo, int(number), body, marker=COMMENT_MARKER)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "qa_comment_upsert_failed", forge="gitlab", repo=repo, issue_number=issue_number, error=str(exc)
-            )
+            logger.warning("qa_comment_upsert_failed", forge="gitlab", repo=repo, issue_number=number, error=str(exc))
         writer(events.node_completed(node="qa_report"))
         return {}
 
@@ -183,12 +185,12 @@ async def qa_report_node(
         await upsert_sticky_comment(
             github_token=github_token,
             repo=repo,
-            issue_number=issue_number,
+            issue_number=number,
             body=body,
             client=GitHubClient(default_token=default_token or "", credential_resolver=resolver),
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("qa_comment_upsert_failed", forge="github", repo=repo, issue_number=issue_number, error=str(exc))
+        logger.warning("qa_comment_upsert_failed", forge="github", repo=repo, issue_number=number, error=str(exc))
 
     writer(events.node_completed(node="qa_report"))
     return {}

@@ -22,7 +22,7 @@ from embry0.services._cost import resolve_job_total_cost
 from embry0.services.healing.lifecycle import Origin
 from embry0.services.healing.recorder import record_case_event
 from embry0.storage.repositories.jobs import StatusTransitionConflict
-from embry0.trackers import github_number_of, linear_identifier_of
+from embry0.trackers import forge_number_of, github_number_of, linear_identifier_of
 
 logger = structlog.get_logger(__name__)
 
@@ -955,6 +955,7 @@ async def _run_workflow(
             "repo": issue.get("repo") or "",
             "task": issue["title"] + ("\n\n" + issue["body"] if issue.get("body") else ""),
             "issue_number": github_number_of(issue),
+            "forge_issue_number": forge_number_of(issue),
             # EMB-39: issue labels feed conditional-criteria `labels:`
             # predicates in the QA orchestrator.
             "issue_labels": list(issue.get("labels") or []),

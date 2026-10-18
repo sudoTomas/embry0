@@ -257,6 +257,25 @@ async def test_gitlab_forge_writes_a_sticky_issue_note(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_gitlab_note_targets_the_forge_issue_number(monkeypatch):
+    # A GitLab-tracked issue has no GitHub number: the executor seeds
+    # issue_number=None and the iid under forge_issue_number.
+    fake_client = AsyncMock()
+    fake_client.upsert_sticky_issue_note = AsyncMock(return_value=5)
+    monkeypatch.setattr("embry0.execution.gitlab_client.make_gitlab_client", lambda *a, **kw: fake_client)
+    state = _state(forge="gitlab")
+    state["issue_number"] = None
+    state["forge_issue_number"] = 7
+
+    await qa_report_node(state, {"configurable": {}})
+
+    assert fake_client.upsert_sticky_issue_note.await_count == 1, (
+        "a GitLab issue (issue_number None, forge_issue_number 7) got no note"
+    )
+    assert fake_client.upsert_sticky_issue_note.await_args.args[1] == 7
+
+
+@pytest.mark.asyncio
 async def test_legacy_state_without_forge_resolves_it_from_the_registry(monkeypatch):
     fake_client = AsyncMock()
     fake_client.upsert_sticky_issue_note = AsyncMock(return_value=5)
