@@ -58,15 +58,17 @@ def test_list_form_apps_always_affected():
     assert result.apps_to_qa == frozenset({"hub", "leads"})
 
 
-def test_validate_flags_undeclared_qa_yaml_apps():
-    warnings = _p(CFG).validate(["hub", "ghost"])
-    assert len(warnings) == 1
-    assert "ghost" in warnings[0]
+def test_validate_flags_undeclared_qa_yaml_apps_as_errors():
+    messages = _p(CFG).validate(["hub", "ghost"])
+    assert len(messages) == 1
+    assert "ghost" in messages[0]
+    assert messages[0].startswith("error: "), f"unprefixed message is dropped by the orchestrator: {messages[0]!r}"
 
 
-def test_validate_empty_config_errors():
-    warnings = _p({}).validate(["hub"])
-    assert warnings and "no apps declared" in warnings[0]
+def test_validate_empty_config_is_an_error():
+    messages = _p({}).validate(["hub"])
+    assert messages and "no apps declared" in messages[0]
+    assert messages[0].startswith("error: "), f"unprefixed message is dropped by the orchestrator: {messages[0]!r}"
 
 
 # ---------------------------------------------------------------------------

@@ -108,12 +108,13 @@ class StaticAppsProvider:
     def validate(self, apps_declared_in_qa_config: list[str]) -> list[str]:
         if not self.config.apps:
             return [
-                "static-apps provider has no apps declared — set "
+                "error: static-apps provider has no apps declared — set "
                 "workspace_provider.config.apps to the runnable app names"
             ]
         declared = set(self.config.apps)
         return [
-            f"qa.yaml app {name!r} is not declared in the static-apps provider config (declared: {sorted(declared)})"
+            f"error: qa.yaml app {name!r} is not declared in the static-apps provider config "
+            f"(declared: {sorted(declared)}) — the apps: keys must be the provider's app names"
             for name in apps_declared_in_qa_config
             if name not in declared
         ]

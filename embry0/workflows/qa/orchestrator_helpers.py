@@ -85,15 +85,33 @@ def validate_against_qa_config(
 
     Errors block the orchestrator from fanning out (run becomes infra_error
     with a clear message). Warnings are surfaced in the PR comment but do
-    not gate.
+    not gate. A message that starts with neither ``error:`` nor
+    ``warning:`` is classified as an error (fail closed), so a provider
+    that forgets the prefix cannot be ignored.
 
     ``app_names`` restricts validation to a subset of declared apps — the
     orchestrator passes only ``target: managed`` apps, since deployed apps
     are not workspace packages (EMB-27). Default (None) validates all.
     """
     messages = provider.validate(list(config.apps.keys()) if app_names is None else list(app_names))
-    errors = [m for m in messages if m.lower().startswith("error:")]
-    warnings = [m for m in messages if m.lower().startswith("warning:")]
+    errors: list[str] = []
+    warnings: list[str] = []
+    for message in messages:
+        lowered = message.lower()
+        if lowered.startswith("error:"):
+            errors.append(message)
+        elif lowered.startswith("warning:"):
+            warnings.append(message)
+        else:
+            # Fail closed: a message the provider did not classify used to be
+            # dropped here, which let a misconfigured repository pass QA with
+            # nothing selected (#65).
+            logger.warning(
+                "qa_validate_message_unprefixed",
+                provider=getattr(provider, "name", type(provider).__name__),
+                message=message,
+            )
+            errors.append(message)
     return errors, warnings
 
 

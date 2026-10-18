@@ -113,6 +113,20 @@ def test_validate_against_qa_config_separates_warnings_from_errors():
     assert len(warnings) == 1
 
 
+def test_validate_against_qa_config_treats_unprefixed_message_as_error():
+    """A provider that forgets the prefix must fail the run, not be ignored."""
+    cfg = parse_qa_yaml_v2(_QA_YAML)
+    provider = FakeWorkspaceProvider(
+        apps=[],
+        packages=[],
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+        validate_warnings=["qa.yaml app 'hub' is not declared in the provider config"],
+    )
+    errors, warnings = validate_against_qa_config(provider, cfg)
+    assert errors == ["qa.yaml app 'hub' is not declared in the provider config"], "unprefixed message was dropped"
+    assert warnings == []
+
+
 import asyncio  # noqa: E402
 
 from embry0.workflows.qa.orchestrator_helpers import fan_out_subtasks  # noqa: E402
