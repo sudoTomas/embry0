@@ -445,6 +445,9 @@ async def _init_orchestrator_node_impl(
     out: dict[str, Any] = {"qa": qa}
     # Phase 3 additions
     qa["changed_files"] = list(changed_files)
+    # #65: the report node dispatches on the forge this node already resolved
+    # for the clone, instead of assuming GitHub.
+    qa["forge"] = forge
     if staging_path_str:
         out["repo_root"] = staging_path_str
     # Spec 1A §3.7: publish the resolved base so downstream nodes (and the

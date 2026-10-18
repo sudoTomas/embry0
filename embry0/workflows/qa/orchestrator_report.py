@@ -1,8 +1,11 @@
 """qa_report_node — orchestrator-side aggregation report.
 
 Runs after qa_orchestrator_node has aggregated per-app results. Writes the
-sticky PR comment with the aggregate verdict and per-app breakdown
-(idempotent, by COMMENT_MARKER).
+sticky comment with the aggregate verdict and per-app breakdown
+(idempotent, by COMMENT_MARKER) on the forge init_orchestrator_node resolved
+(`state['qa']['forge']`): a GitHub issue comment or a GitLab issue note. A
+job with no issue number (a standalone QA job) has nothing to comment on
+and skips.
 
 The sticky comment is the only QA reporting surface. This node used to also
 write an aggregate `embry0/qa` GitHub Check Run, but GitHub's Checks API
@@ -13,26 +16,30 @@ and was removed rather than retried. The comment already carries the same
 verdict, per-app status, durations and failure detail.
 
 Persistence to qa_app_results was done by qa_orchestrator_node already.
-This node is purely the GitHub-facing reporting surface.
+This node is purely the forge-facing reporting surface.
 
 Configurable deps:
   - github_token (str): orchestrator-side default token, fed in via
     config['configurable']. Resolved per repo through `forge_token` (the
     credential registry when `credential_resolver` is in configurable, else
     the GITHUB_TOKEN__<OWNER> env override) before use; falls back to this
-    default when no repo-specific token is found.
+    default when no repo-specific token is found. GitHub only.
+  - embry0_config, credential_resolver: build the GitLab client
+    (`make_gitlab_client`) for a GitLab forge.
+  - repos_repo: resolves the forge when state predates `qa.forge`.
 
 State reads:
   - state['qa']['outcome']         (dict from OrchestratorOutcome)
   - state['qa']['per_app_results'] (list of SubTaskResult.to_dict())
   - state['qa']['apps_to_qa']      (list[str])
   - state['qa']['validation_warnings']
+  - state['qa']['forge']           ("github" | "gitlab"; resolved if absent)
   - state['repo']                  ('owner/repo')
-  - state['issue_number']          (the PR number for issue→PR jobs)
+  - state['issue_number']          (the PR/issue number; None skips the write)
   - state.get('attempt_number', 1) (used as run_number in the comment)
 
 Failures here log warnings but DO NOT fail the run — final_status was set by
-the orchestrator already, and a missing GitHub-side surface is not a QA verdict.
+the orchestrator already, and a missing forge-side surface is not a QA verdict.
 
 Security boundary: the `github_token` is orchestrator-side only, resolved
 per repo (see `forge_token`), and MUST NOT be propagated into
@@ -52,7 +59,8 @@ from langgraph.config import get_stream_writer
 
 from embry0.execution import events
 from embry0.execution.github_client import GitHubClient
-from embry0.notifications.qa_comment import render_qa_comment, upsert_sticky_comment
+from embry0.notifications.qa_comment import COMMENT_MARKER, render_qa_comment, upsert_sticky_comment
+from embry0.services.forge_resolver import resolve_forge
 from embry0.workflows.qa.subtask_result_schema import (
     CacheHits,
     SubTaskResult,
@@ -91,7 +99,7 @@ async def qa_report_node(
     state: dict[str, Any],
     config: RunnableConfig,
 ) -> dict[str, Any]:
-    """Write the sticky QA PR comment.
+    """Write the sticky QA comment on the job's forge.
 
     Best-effort: failures are logged and the run continues. final_status is
     already set by qa_orchestrator_node; this node is reporting only.
@@ -117,56 +125,70 @@ async def qa_report_node(
     overall_status = outcome.get("overall_status") or "infra_error"
     failure_summary = outcome.get("failure_summary")
 
-    default_token = configurable.get("github_token")
+    if issue_number is None or not repo:
+        # A standalone QA job has no issue or pull request to comment on;
+        # the dashboard and the job row carry its verdict.
+        logger.info("qa_report_skipped_no_change_request", repo=repo)
+        writer(events.node_completed(node="qa_report"))
+        return {}
+
     resolver = configurable.get("credential_resolver")
+    forge = qa_state.get("forge")
+    if not forge:
+        try:
+            forge = await resolve_forge(configurable.get("repos_repo"), repo, job_id=str(state.get("job_id") or ""))
+        except Exception:
+            logger.warning("qa_report_forge_lookup_failed", repo=repo, exc_info=True)
+            forge = "github"
+
+    body = render_qa_comment(
+        run_number=run_number,
+        overall_status=overall_status,
+        apps_to_qa=apps_to_qa,
+        results=_hydrate_results(per_app),
+        failure_summary=failure_summary,
+        validation_warnings=validation_warnings,
+    )
+
+    if forge == "gitlab":
+        from embry0.execution.gitlab_client import make_gitlab_client
+
+        try:
+            client = make_gitlab_client(configurable.get("embry0_config"), credential_resolver=resolver)
+            await client.upsert_sticky_issue_note(repo, int(issue_number), body, marker=COMMENT_MARKER)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "qa_comment_upsert_failed", forge="gitlab", repo=repo, issue_number=issue_number, error=str(exc)
+            )
+        writer(events.node_completed(node="qa_report"))
+        return {}
+
+    default_token = configurable.get("github_token")
     from embry0.services.credentials.resolver import forge_token
 
     try:
-        github_token = await forge_token(resolver, repo or "", "github", default_token or "") or default_token
+        github_token = await forge_token(resolver, repo, "github", default_token or "") or default_token
     except Exception:
         # E.g. a pinned credential that is unavailable: reporting never fails the run.
         logger.warning("qa_report_token_lookup_failed", repo=repo, exc_info=True)
         github_token = ""
-
-    # If we have no GitHub token or no repo, skip the write — log a warning.
-    if not github_token or not repo:
-        logger.warning(
-            "qa_report_skipped_no_github_token_or_repo",
-            has_token=bool(github_token),
-            repo=repo,
-        )
+    if not github_token:
+        logger.warning("qa_report_skipped_no_forge_token", forge="github", repo=repo)
         writer(events.node_completed(node="qa_report"))
         return {}
 
-    results = _hydrate_results(per_app)
-
-    # Sticky PR comment
-    if issue_number is not None:
-        body = render_qa_comment(
-            run_number=run_number,
-            overall_status=overall_status,
-            apps_to_qa=apps_to_qa,
-            results=results,
-            failure_summary=failure_summary,
-            validation_warnings=validation_warnings,
+    try:
+        # The client carries the resolver, so the token sent is the one
+        # resolved above — not a second, env-only lookup inside the client.
+        await upsert_sticky_comment(
+            github_token=github_token,
+            repo=repo,
+            issue_number=issue_number,
+            body=body,
+            client=GitHubClient(default_token=default_token or "", credential_resolver=resolver),
         )
-        try:
-            # The client carries the resolver, so the token sent is the one
-            # resolved above — not a second, env-only lookup inside the client.
-            await upsert_sticky_comment(
-                github_token=github_token,
-                repo=repo,
-                issue_number=issue_number,
-                body=body,
-                client=GitHubClient(default_token=default_token or "", credential_resolver=resolver),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "qa_comment_upsert_failed",
-                repo=repo,
-                issue_number=issue_number,
-                error=str(exc),
-            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("qa_comment_upsert_failed", forge="github", repo=repo, issue_number=issue_number, error=str(exc))
 
     writer(events.node_completed(node="qa_report"))
     return {}

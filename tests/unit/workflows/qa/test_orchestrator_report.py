@@ -190,9 +190,9 @@ async def test_sticky_comment_client_sends_the_resolved_token(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_run_without_a_repo_writes_nothing_and_looks_up_a_string(monkeypatch):
-    """forge_token takes a str: a missing repo is looked up as "" (resolve_forge treats
-    None and "" alike), and the node still skips the write."""
+async def test_a_run_without_a_repo_writes_nothing_and_looks_up_no_token(monkeypatch):
+    """A missing repo leaves nothing to comment on: the node skips before any
+    token lookup."""
     from types import SimpleNamespace
 
     written_comment = AsyncMock(return_value=99)
@@ -206,4 +206,99 @@ async def test_a_run_without_a_repo_writes_nothing_and_looks_up_a_string(monkeyp
 
     assert out == {}
     written_comment.assert_not_awaited()
-    assert resolver.resolve_forge.await_args.args == ("", "github"), resolver.resolve_forge.await_args
+    resolver.resolve_forge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_standalone_job_without_change_request_skips_before_any_token_lookup(monkeypatch):
+    import structlog.testing
+
+    async def no_lookup(*a, **kw):
+        raise AssertionError("token lookup must not happen without an issue number")
+
+    monkeypatch.setattr("embry0.services.credentials.resolver.forge_token", no_lookup)
+    written_comment = AsyncMock()
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_report.upsert_sticky_comment", written_comment)
+    state = _state(forge="gitlab")
+    state["issue_number"] = None
+    with structlog.testing.capture_logs() as logs:
+        out = await qa_report_node(state, {"configurable": {"github_token": "tok"}})
+    assert out == {}
+    written_comment.assert_not_awaited()
+    assert any(log["event"] == "qa_report_skipped_no_change_request" for log in logs), [log["event"] for log in logs]
+
+
+@pytest.mark.asyncio
+async def test_gitlab_forge_writes_a_sticky_issue_note(monkeypatch):
+    fake_client = AsyncMock()
+    fake_client.upsert_sticky_issue_note = AsyncMock(return_value=5)
+    made: dict = {}
+
+    def fake_make(config, credential_resolver=None, **kw):
+        made["config"] = config
+        made["resolver"] = credential_resolver
+        return fake_client
+
+    monkeypatch.setattr("embry0.execution.gitlab_client.make_gitlab_client", fake_make)
+    github_comment = AsyncMock()
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_report.upsert_sticky_comment", github_comment)
+
+    sentinel_config, sentinel_resolver = object(), object()
+    out = await qa_report_node(
+        _state(forge="gitlab"),
+        {"configurable": {"embry0_config": sentinel_config, "credential_resolver": sentinel_resolver}},
+    )
+    assert out == {}
+    github_comment.assert_not_awaited()
+    fake_client.upsert_sticky_issue_note.assert_awaited_once()
+    kwargs = fake_client.upsert_sticky_issue_note.await_args
+    assert kwargs.args[:2] == ("org/repo", 42) or (kwargs.kwargs.get("repo"), kwargs.kwargs.get("iid")) == (
+        "org/repo",
+        42,
+    )
+    assert "hub" in (kwargs.args[2] if len(kwargs.args) > 2 else kwargs.kwargs["body"])
+    assert made["config"] is sentinel_config and made["resolver"] is sentinel_resolver
+
+
+@pytest.mark.asyncio
+async def test_legacy_state_without_forge_resolves_it_from_the_registry(monkeypatch):
+    fake_client = AsyncMock()
+    fake_client.upsert_sticky_issue_note = AsyncMock(return_value=5)
+    monkeypatch.setattr("embry0.execution.gitlab_client.make_gitlab_client", lambda *a, **kw: fake_client)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_report.upsert_sticky_comment", AsyncMock())
+
+    async def resolve(repos_repo, repo, *, job_id=""):
+        assert repos_repo == "the-registry"
+        return "gitlab"
+
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_report.resolve_forge", resolve)
+    state = _state()
+    assert "forge" not in state["qa"]
+    await qa_report_node(state, {"configurable": {"repos_repo": "the-registry"}})
+    fake_client.upsert_sticky_issue_note.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gitlab_note_failure_is_logged_not_raised(monkeypatch):
+    import structlog.testing
+
+    fake_client = AsyncMock()
+    fake_client.upsert_sticky_issue_note = AsyncMock(side_effect=RuntimeError("gitlab 502"))
+    monkeypatch.setattr("embry0.execution.gitlab_client.make_gitlab_client", lambda *a, **kw: fake_client)
+    with structlog.testing.capture_logs() as logs:
+        out = await qa_report_node(_state(forge="gitlab"), {"configurable": {}})
+    assert out == {}
+    assert any(log["event"] == "qa_comment_upsert_failed" and log.get("forge") == "gitlab" for log in logs)
+
+
+@pytest.mark.asyncio
+async def test_github_without_token_logs_a_forge_neutral_skip(monkeypatch):
+    import structlog.testing
+
+    written_comment = AsyncMock()
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_report.upsert_sticky_comment", written_comment)
+    with structlog.testing.capture_logs() as logs:
+        await qa_report_node(_state(forge="github"), {"configurable": {}})
+    written_comment.assert_not_awaited()
+    skip = [log for log in logs if log["event"] == "qa_report_skipped_no_forge_token"]
+    assert skip and skip[0]["forge"] == "github", [log["event"] for log in logs]

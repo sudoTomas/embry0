@@ -1056,6 +1056,7 @@ async def test_init_orchestrator_populates_changed_files_and_repo_root(tmp_path,
     # Staged files exist.
     assert (tmp_path / "embry0-workspace-job-1" / "package.json").is_file()
     assert (tmp_path / "embry0-workspace-job-1" / "apps" / "hub" / "package.json").is_file()
+    assert out["qa"].get("forge") == "github", "init_orchestrator did not publish the forge for the report node"
 
 
 # ---------------------------------------------------------------------------
