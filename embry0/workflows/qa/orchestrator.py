@@ -27,6 +27,7 @@ from langgraph.config import get_stream_writer
 from embry0.execution import events
 from embry0.orchestration.budget import BudgetOverrunError, resolve_job_cap
 from embry0.orchestration.nodes.agent import evaluate_job_cap
+from embry0.safety.error_codes import ErrorCode
 from embry0.workflows.pipeline_graphs import qa_pipeline_graph
 from embry0.workflows.qa._orchestrator_workspace import (
     compute_changed_files_via_diff,
@@ -602,6 +603,8 @@ async def _qa_orchestrator_node_impl(
             "qa_skipped_qa_required_never",
             parent_run_id=state.get("job_id"),
         )
+        writer(events.qa_apps_resolved(apps=[]))
+        writer(events.progress(message="QA skipped: qa_required is never", node="orchestrate_qa"))
         return {"qa": qa_state}
 
     # Phase-C: force-all-apps short-circuit. Either the per-repo qa_required
@@ -675,6 +678,7 @@ async def _qa_orchestrator_node_impl(
     # 3. Resolve apps to QA.
     changed_files_str = qa_state.get("changed_files") or []
     changed_files = [Path(p) for p in changed_files_str]
+    affected_managed: list[str] = []
     if force_all_apps:
         # Bypass affected-set; QA every declared app. validate_against_qa_config
         # already errored out on apps that don't exist in the workspace, so
@@ -804,10 +808,46 @@ async def _qa_orchestrator_node_impl(
         return {"qa": qa_state}
 
     if not apps:
+        declared = sorted(cfg.apps.keys())
+        provider_affected = sorted(affected_managed) if not force_all_apps else []
+        reason = "no_change_context" if not changed_files_str else "diff_touched_no_declared_app"
+        logger.info(
+            "qa_no_apps_to_qa",
+            parent_run_id=state.get("job_id"),
+            reason=reason,
+            declared_apps=declared,
+            provider_affected=provider_affected,
+            n_changed_files=len(changed_files_str),
+        )
+        writer(events.qa_apps_resolved(apps=[]))
+        if reason == "no_change_context":
+            msg = (
+                "QA selected no app: the diff against the base branch is empty and no declared app is "
+                f"always on (declared: {declared}; provider-affected: {provider_affected}). "
+                "Set qa_required: always, pass force_all_apps on the job, or declare an app without prefixes."
+            )
+            writer(events.progress(message=msg, node="orchestrate_qa"))
+            outcome = OrchestratorOutcome(
+                overall_status="failed",
+                apps_to_qa=[],
+                failure_summary=msg,
+                validation_warnings=warnings,
+            )
+            qa_state["outcome"] = _outcome_to_dict(outcome)
+            qa_state["per_app_results"] = []
+            qa_state["error_code"] = ErrorCode.QA_NO_APPS.value
+            qa_state["error_message"] = msg
+            qa_state["final_status"] = "failed"
+            return {"qa": qa_state}
+        msg = (
+            f"QA selected no app: the change touched no declared app (declared: {declared}; "
+            f"provider-affected: {provider_affected}; changed files: {len(changed_files_str)})."
+        )
+        writer(events.progress(message=msg, node="orchestrate_qa"))
         outcome = OrchestratorOutcome(
             overall_status="passed",
             apps_to_qa=[],
-            validation_warnings=warnings,
+            validation_warnings=[*warnings, msg],
         )
         qa_state["outcome"] = _outcome_to_dict(outcome)
         qa_state["per_app_results"] = []

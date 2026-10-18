@@ -118,6 +118,7 @@ class ErrorCode(StrEnum):
     QA_INFRA = "ERR_QA_INFRA"  # standalone QA could not judge an app: boot / seed / sandbox failure
     QA_INCONCLUSIVE = "ERR_QA_INCONCLUSIVE"  # standalone QA ended with no pass and no hard failure
     QA_CONFIG_INVALID = "ERR_QA_CONFIG_INVALID"  # the stored qa.yaml / job overrides were rejected before fan-out
+    QA_NO_APPS = "ERR_QA_NO_APPS"  # QA selected no app: the diff was empty and no declared app is always on (#65)
     QA_NO_VERDICT = "ERR_QA_NO_VERDICT"  # the QA graph ended without a per-app verdict or a reason
     QA_BUDGET_EXHAUSTED = "ERR_QA_BUDGET_EXHAUSTED"  # QA retry budget spent on infra / transient failures
     QA_IDLE = "ERR_QA_IDLE"  # the QA agent idled out
@@ -230,6 +231,7 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.QA_INFRA: _C.INFRA,
     ErrorCode.QA_INCONCLUSIVE: _C.VERIFICATION,
     ErrorCode.QA_CONFIG_INVALID: _C.CONFIG,
+    ErrorCode.QA_NO_APPS: _C.CONFIG,
     ErrorCode.QA_NO_VERDICT: _C.INFRA,
     ErrorCode.QA_BUDGET_EXHAUSTED: _C.INFRA,
     ErrorCode.QA_IDLE: _C.AGENT,

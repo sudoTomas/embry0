@@ -44,8 +44,10 @@ retired `apps/<name>/.embry0/app.yaml` tree files).
    base and computes the **affected set** — which declared apps changed, directly
    or via a changed shared package.
 4. With `qa_required: auto`, only the affected apps are QA'd; the orchestrator
-   validates the affected set against your `apps:` keys (any affected app **not**
-   declared under `apps:` is silently skipped), then fans out up to
+   validates the affected set against your `apps:` keys (an affected app **not**
+   declared under `apps:` is skipped, with a line in the QA comment and a
+   `qa_no_apps_to_qa` log entry when nothing is left; a run with an empty diff
+   that selects nothing fails with `ERR_QA_NO_APPS`), then fans out up to
    `parallelism.max_concurrent_apps` at a time. Each app is booted with its
    `boot_command`, waited on via `ready_checks`, optionally seeded and e2e-tested,
    then the QA agent drives `frontend_url` against the acceptance criteria.
@@ -95,6 +97,9 @@ workspace_provider:
 # or the short form (every app always affected):
 #   config: { apps: [hub, leads] }
 ```
+
+The `apps:` keys must be the names declared here (`hub`, `leads` above). A key
+the provider does not declare fails the run with `ERR_QA_CONFIG_INVALID`.
 
 `npm-workspaces-turbo` `config` keys (see the toy-monorepo fixture):
 
@@ -524,7 +529,9 @@ config noise doesn't.
 
 - **Unknown keys fail.** `extra="forbid"` everywhere — a typo is a parse error.
 - **`app_name` must match the provider.** A declared app the provider never
-  reports is inert; an affected app you didn't declare is silently skipped.
+  reports is inert; an affected app you didn't declare is skipped and named in
+  the comment; when that leaves nothing on a run with no diff, the run fails
+  with `ERR_QA_NO_APPS`.
 - **`frontend_url` resolves inside the sandbox.** In `dind`, use a container
   hostname, not `localhost:<host_port>`.
 - **`ready_checks`/`acceptance_criteria` replace, they don't merge.** Re-state

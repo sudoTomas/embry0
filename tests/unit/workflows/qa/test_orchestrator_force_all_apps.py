@@ -155,9 +155,9 @@ async def test_force_all_apps_state_flag_runs_all_apps(monkeypatch, fake_provide
 
 
 @pytest.mark.asyncio
-async def test_qa_required_auto_with_no_diff_still_short_circuits(monkeypatch, fake_provider):
-    """Regression: qa_required: auto + empty affected set still short-circuits
-    to 'no apps to QA'. Force-all paths are opt-in, not the default."""
+async def test_qa_required_auto_with_no_diff_fails_with_no_apps(monkeypatch, fake_provider):
+    """Regression: qa_required: auto + empty diff + empty affected set does not
+    fan out (force-all paths are opt-in), and fails with ERR_QA_NO_APPS (#65)."""
     monkeypatch.setattr(
         "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
@@ -185,7 +185,8 @@ async def test_qa_required_auto_with_no_diff_still_short_circuits(monkeypatch, f
     out = await qa_orchestrator_node(state, config)
     qa = out["qa"]
     assert qa["apps_to_qa"] == []
-    assert qa["outcome"]["overall_status"] == "passed"
+    assert qa["final_status"] == "failed", "auto + empty diff + empty selection must not pass"
+    assert qa["error_code"] == "ERR_QA_NO_APPS"
 
 
 # -------- Conditional criteria under force_all_apps (EMB-39) --------

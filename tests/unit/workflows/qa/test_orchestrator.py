@@ -474,10 +474,10 @@ async def test_orchestrator_node_failed_subtask_without_summary_still_notes_app(
     assert "no per-app failure summary recorded" in summary
 
 
-@pytest.mark.asyncio
-async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatch):
+def _empty_selection_setup(monkeypatch):
     from pathlib import Path
 
+    from embry0.workflows.qa import orchestrator as orch
     from embry0.workspace_providers import AffectedSet, WorkspaceApp
     from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
@@ -490,6 +490,8 @@ async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatc
         "embry0.workflows.qa.orchestrator.load_provider",
         lambda name, root, config: fake_provider,
     )
+    events_out: list[dict] = []
+    monkeypatch.setattr(orch, "get_stream_writer", lambda: events_out.append)
 
     repo_mock = AsyncMock()
     repo_mock.upsert_with_boot_phase = AsyncMock()
@@ -503,10 +505,39 @@ async def test_orchestrator_node_short_circuits_when_no_apps_affected(monkeypatc
         },
     }
     config = {"configurable": {"qa_app_results_repo": repo_mock}}
+    return state, config, repo_mock, events_out
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_node_fails_when_no_apps_and_no_change_context(monkeypatch):
+    """Empty diff + empty selection is the vacuous pass from #65: it must fail."""
+    state, config, repo_mock, events_out = _empty_selection_setup(monkeypatch)
     out = await qa_orchestrator_node(state, config)
-    assert out["qa"]["outcome"]["overall_status"] == "passed"
-    assert out["qa"]["apps_to_qa"] == []
+    qa = out["qa"]
+    assert qa["final_status"] == "failed", "a run that selected no app and had no change context passed"
+    assert qa["outcome"]["overall_status"] == "failed"
+    assert qa["error_code"] == "ERR_QA_NO_APPS"
+    assert "force_all_apps" in qa["error_message"]
+    assert qa["apps_to_qa"] == []
+    assert any(e["type"] == "qa_apps_resolved" and e["apps"] == [] for e in events_out), (
+        "qa_apps_resolved was not emitted for the empty selection"
+    )
+    assert any(e["type"] == "progress" and "no app" in e["message"] for e in events_out)
     assert repo_mock.upsert_with_boot_phase.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_node_passes_with_reason_when_diff_touched_no_declared_app(monkeypatch):
+    state, config, _repo_mock, events_out = _empty_selection_setup(monkeypatch)
+    state["qa"]["changed_files"] = ["docs/readme.md"]
+    out = await qa_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["final_status"] == "passed"
+    assert qa["outcome"]["overall_status"] == "passed"
+    assert any("touched no declared app" in w for w in qa["outcome"]["validation_warnings"]), (
+        "the pass carries no reason"
+    )
+    assert any(e["type"] == "qa_apps_resolved" and e["apps"] == [] for e in events_out)
 
 
 @pytest.mark.asyncio
@@ -605,6 +636,11 @@ async def test_orchestrator_node_qa_required_never_short_circuits(monkeypatch):
 
     monkeypatch.setattr("embry0.workflows.qa.orchestrator.load_provider", crash_load_provider)
 
+    from embry0.workflows.qa import orchestrator as orch
+
+    events_out: list[dict] = []
+    monkeypatch.setattr(orch, "get_stream_writer", lambda: events_out.append)
+
     state = {
         "job_id": "run-never",
         "repo": "org/repo",
@@ -622,6 +658,9 @@ async def test_orchestrator_node_qa_required_never_short_circuits(monkeypatch):
     assert qa["apps_to_qa"] == []
     assert qa["per_app_results"] == []
     assert qa["final_status"] == "passed"
+    assert any(e["type"] == "qa_apps_resolved" and e["apps"] == [] for e in events_out), (
+        "qa_required: never left the stream silent"
+    )
 
 
 # ── B5: prebaked image tag flows through orchestrator → fan_out → run_subtask ─
