@@ -309,6 +309,9 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
         ErrorCode.TRIAGE_QA_ACTION_INVALID,
     ),
     ("embry0.workflows.qa._glob_match:GlobPatternError", ErrorCode.QA_CONFIG_INVALID),
+    # Caught by the QA init node, which fails the run as "no app selected"
+    # with an accurate reason (#65); the code here is what that run ends with.
+    ("embry0.execution.workspace_diff:WorkspaceDiffUnavailable", ErrorCode.QA_NO_APPS),
     ("embry0.workspace_init.base:LocalContextDeniedError", ErrorCode.LOCAL_CONTEXT_DENIED),
     ("embry0.workspace_init.base:HttpFetchError", ErrorCode.HTTP_FETCH_FAILED),
     ("embry0.workspace_init.base:WorkspaceInitError", ErrorCode.SANDBOX_INIT),
