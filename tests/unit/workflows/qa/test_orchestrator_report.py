@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
+from embry0.notifications.qa_comment import COMMENT_MARKER
 from embry0.workflows.qa.orchestrator_report import qa_report_node
 
 
@@ -250,13 +251,8 @@ async def test_gitlab_forge_writes_a_sticky_issue_note(monkeypatch):
     )
     assert out == {}
     github_comment.assert_not_awaited()
-    fake_client.upsert_sticky_issue_note.assert_awaited_once()
-    kwargs = fake_client.upsert_sticky_issue_note.await_args
-    assert kwargs.args[:2] == ("org/repo", 42) or (kwargs.kwargs.get("repo"), kwargs.kwargs.get("iid")) == (
-        "org/repo",
-        42,
-    )
-    assert "hub" in (kwargs.args[2] if len(kwargs.args) > 2 else kwargs.kwargs["body"])
+    fake_client.upsert_sticky_issue_note.assert_awaited_once_with("org/repo", 42, ANY, marker=COMMENT_MARKER)
+    assert "hub" in fake_client.upsert_sticky_issue_note.await_args.args[2]
     assert made["config"] is sentinel_config and made["resolver"] is sentinel_resolver
 
 
@@ -302,3 +298,24 @@ async def test_github_without_token_logs_a_forge_neutral_skip(monkeypatch):
     written_comment.assert_not_awaited()
     skip = [log for log in logs if log["event"] == "qa_report_skipped_no_forge_token"]
     assert skip and skip[0]["forge"] == "github", [log["event"] for log in logs]
+
+
+@pytest.mark.asyncio
+async def test_forge_lookup_failure_falls_back_to_github(monkeypatch):
+    import structlog.testing
+
+    written_comment = AsyncMock(return_value=99)
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_report.upsert_sticky_comment", written_comment)
+
+    async def broken_resolve(*a, **kw):
+        raise RuntimeError("registry down")
+
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_report.resolve_forge", broken_resolve)
+    state = _state()
+    assert "forge" not in state["qa"]
+    with structlog.testing.capture_logs() as logs:
+        out = await qa_report_node(state, {"configurable": {"github_token": "tok"}})
+    assert out == {}
+    written_comment.assert_awaited_once()
+    assert written_comment.await_args.kwargs["github_token"] == "tok"
+    assert any(log["event"] == "qa_report_forge_lookup_failed" for log in logs), [log["event"] for log in logs]
