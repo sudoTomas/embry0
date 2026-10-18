@@ -706,6 +706,7 @@ async def _qa_orchestrator_node_impl(
         provider_affected = affected_app_names(provider, cfg, changed_files=changed_files) if provider else []
         affected_managed = sorted(set(provider_affected) & set(cfg.apps))
         apps = sorted(set(affected_managed) | set(gate_deployed_apps(cfg, deployed_apps, changed_files)))
+    dropped: list[str] = []
     if qa_state.get("exclude_deployed_apps"):
         # #298: a branch job never QAs a deployed target — the deployed site
         # does not contain the branch, so its verdict says nothing about the
@@ -818,8 +819,13 @@ async def _qa_orchestrator_node_impl(
 
     if not apps:
         declared = sorted(cfg.apps.keys())
-        if qa_state.get("changed_files_unavailable"):
+        # A failed diff outranks the deployed exclusion only while a managed
+        # app exists for the diff to have selected; an all-deployed branch
+        # job has nothing to verify in-sandbox whatever the diff was (#298).
+        if qa_state.get("changed_files_unavailable") and cfg.managed_app_names():
             reason = "diff_unavailable"
+        elif dropped:
+            reason = "deployed_apps_excluded"
         elif not changed_files_str:
             reason = "no_change_context"
         else:
@@ -860,10 +866,16 @@ async def _qa_orchestrator_node_impl(
             qa_state["error_message"] = msg
             qa_state["final_status"] = "failed"
             return {"qa": qa_state}
-        msg = (
-            f"QA selected no app: the change touched no declared app (declared: {declared}; "
-            f"provider-affected: {provider_affected}; changed files: {len(changed_files_str)})."
-        )
+        if reason == "deployed_apps_excluded":
+            msg = (
+                "QA selected no app: every selected app is a deployed target and this is a branch job, "
+                f"which never QAs deployed targets (dropped: {dropped})."
+            )
+        else:
+            msg = (
+                f"QA selected no app: the change touched no declared app (declared: {declared}; "
+                f"provider-affected: {provider_affected}; changed files: {len(changed_files_str)})."
+            )
         writer(events.progress(message=msg, node="orchestrate_qa"))
         outcome = OrchestratorOutcome(
             overall_status="passed",
