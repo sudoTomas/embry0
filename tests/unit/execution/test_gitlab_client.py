@@ -275,6 +275,36 @@ async def test_upsert_sticky_issue_note_raises_on_rejected_read_without_posting(
     assert methods == ["GET"], f"a rejected notes read must not create a note, got {methods}"
 
 
+async def test_upsert_sticky_issue_note_sends_the_create_once():
+    methods: list[str] = []
+
+    def handler(request):
+        methods.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
+        return httpx.Response(502, json={"message": "bad gateway"})
+
+    client = _client(handler)
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.upsert_sticky_issue_note("g/p", 11, "x", marker="m")
+    assert methods == ["GET", "POST"], f"a create answered 502 must not be retried, got {methods}"
+    assert client.slept == [], f"no retry backoff expected, slept {client.slept}"
+
+
+async def test_upsert_sticky_issue_note_raises_on_rejected_update_without_posting():
+    methods: list[str] = []
+
+    def handler(request):
+        methods.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(200, json=[{"id": 3, "body": "m old"}])
+        return httpx.Response(403, json={"message": "forbidden"})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await _client(handler).upsert_sticky_issue_note("g/p", 11, "x", marker="m")
+    assert methods == ["GET", "PUT"], f"a rejected update must not fall back to a create, got {methods}"
+
+
 # --- inherited transport behaviour -----------------------------------------
 
 
