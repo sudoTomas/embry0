@@ -94,3 +94,52 @@ async def test_resolver_takes_first_line_of_multiline_output() -> None:
     # only the first parsed line counts.
     docker = _docker("master\nsomething-else\n")
     assert await resolve_base_branch(docker=docker, container_id="c1") == "master"
+
+
+def _diff_docker(*, fetch_error: Exception | None = None, diff_error: Exception | None = None) -> Mock:
+    """run_cmd raises RuntimeError on a non-zero exit, as DockerClient.run_cmd does."""
+    docker = Mock()
+    docker.build_exec_cmd = Mock(side_effect=lambda cid, cmd: ["exec", cid, *cmd])
+
+    async def _run(cmd, timeout=60):
+        shell = cmd[-1]
+        if "git fetch" in shell and fetch_error is not None:
+            raise fetch_error
+        if "git diff" in shell and diff_error is not None:
+            raise diff_error
+        return ""
+
+    docker.run_cmd = AsyncMock(side_effect=_run)
+    return docker
+
+
+@pytest.mark.asyncio
+async def test_strict_diff_raises_when_the_fetch_fails() -> None:
+    from embry0.execution.workspace_diff import WorkspaceDiffUnavailable
+
+    docker = _diff_docker(fetch_error=RuntimeError("couldn't find remote ref main"))
+    with pytest.raises(WorkspaceDiffUnavailable, match="couldn't find remote ref"):
+        await compute_changed_files_via_diff(docker=docker, container_id="c1", base_branch="main", strict=True)
+
+
+@pytest.mark.asyncio
+async def test_strict_diff_raises_when_git_diff_exits_non_zero() -> None:
+    from embry0.execution.workspace_diff import WorkspaceDiffUnavailable
+
+    docker = _diff_docker(diff_error=RuntimeError("fatal: no merge base"))
+    with pytest.raises(WorkspaceDiffUnavailable, match="no merge base"):
+        await compute_changed_files_via_diff(docker=docker, container_id="c1", base_branch="main", strict=True)
+    diff_shell = docker.run_cmd.await_args_list[1].args[0][-1]
+    assert "|| true" not in diff_shell, f"a strict diff must let git's exit status surface: {diff_shell}"
+
+
+@pytest.mark.asyncio
+async def test_non_strict_diff_still_returns_empty_on_either_failure() -> None:
+    for docker in (
+        _diff_docker(fetch_error=RuntimeError("fetch failed")),
+        _diff_docker(diff_error=RuntimeError("diff failed")),
+    ):
+        assert await compute_changed_files_via_diff(docker=docker, container_id="c1", base_branch="main") == []
+    docker = _diff_docker()
+    await compute_changed_files_via_diff(docker=docker, container_id="c1", base_branch="main")
+    assert "|| true" in docker.run_cmd.await_args_list[1].args[0][-1], "non-strict diff must keep `|| true`"

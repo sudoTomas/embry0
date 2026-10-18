@@ -551,6 +551,23 @@ async def test_orchestrator_node_fails_when_no_apps_and_no_change_context(monkey
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_node_fails_with_its_own_reason_when_the_diff_was_unavailable(monkeypatch):
+    """A failed diff is not an empty one: the message must not claim the diff is empty."""
+    state, config, _repo_mock, events_out = _empty_selection_setup(monkeypatch)
+    state["qa"]["changed_files_unavailable"] = True
+    out = await qa_orchestrator_node(state, config)
+    qa = out["qa"]
+    assert qa["final_status"] == "failed"
+    assert qa["outcome"]["overall_status"] == "failed"
+    assert qa["error_code"] == "ERR_QA_NO_APPS"
+    assert "could not be computed" in qa["error_message"], (
+        f"a failed diff is reported as something else: {qa['error_message']}"
+    )
+    assert "is empty" not in qa["error_message"]
+    assert any(e["type"] == "progress" and "could not be computed" in e["message"] for e in events_out)
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_node_passes_with_reason_when_diff_touched_no_declared_app(monkeypatch):
     state, config, _repo_mock, events_out = _empty_selection_setup(monkeypatch, undeclared_affected_app=True)
     state["qa"]["changed_files"] = ["apps/ghost/page.tsx"]

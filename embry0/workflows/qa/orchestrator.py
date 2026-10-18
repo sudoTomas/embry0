@@ -196,6 +196,7 @@ async def _init_orchestrator_node_impl(
     container_id: str | None = None
     lockfile_text: str = ""
     changed_files: list[str] = []
+    changed_files_unavailable = False
     staging_path_str: str | None = None
     try:
         container_id, sandbox_token = await sandbox_mgr.create(
@@ -307,10 +308,13 @@ async def _init_orchestrator_node_impl(
             )
 
         try:
+            # strict: a failed fetch or diff raises instead of reading as an
+            # empty diff, so the empty-selection reason stays truthful (#65).
             changed_files = await compute_changed_files_via_diff(
                 docker=docker,
                 container_id=container_id,
                 base_branch=filter_parsed.base_branch,
+                strict=True,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -319,6 +323,7 @@ async def _init_orchestrator_node_impl(
                 error=str(exc),
             )
             changed_files = []
+            changed_files_unavailable = True
 
         staging_dir = _staging_dir_for(job_id)
         try:
@@ -447,6 +452,7 @@ async def _init_orchestrator_node_impl(
     out: dict[str, Any] = {"qa": qa}
     # Phase 3 additions
     qa["changed_files"] = list(changed_files)
+    qa["changed_files_unavailable"] = changed_files_unavailable
     # #65: the report node dispatches on the forge this node already resolved
     # for the clone, instead of assuming GitHub.
     qa["forge"] = forge
@@ -812,7 +818,12 @@ async def _qa_orchestrator_node_impl(
 
     if not apps:
         declared = sorted(cfg.apps.keys())
-        reason = "no_change_context" if not changed_files_str else "diff_touched_no_declared_app"
+        if qa_state.get("changed_files_unavailable"):
+            reason = "diff_unavailable"
+        elif not changed_files_str:
+            reason = "no_change_context"
+        else:
+            reason = "diff_touched_no_declared_app"
         logger.info(
             "qa_no_apps_to_qa",
             parent_run_id=state.get("job_id"),
@@ -822,12 +833,20 @@ async def _qa_orchestrator_node_impl(
             n_changed_files=len(changed_files_str),
         )
         writer(events.qa_apps_resolved(apps=[]))
-        if reason == "no_change_context":
-            msg = (
-                "QA selected no app: the diff against the base branch is empty and no declared app is "
-                f"always on (declared: {declared}; provider-affected: {provider_affected}). "
-                "Set qa_required: always, pass force_all_apps on the job, or declare an app without prefixes."
-            )
+        if reason in ("diff_unavailable", "no_change_context"):
+            if reason == "diff_unavailable":
+                msg = (
+                    "QA selected no app: the diff against the base branch could not be computed "
+                    "(fetch or merge base failed), so no app could be matched "
+                    f"(declared: {declared}). Check base_branch and the provider's affected_filter, "
+                    "or pass force_all_apps on the job."
+                )
+            else:
+                msg = (
+                    "QA selected no app: the diff against the base branch is empty and no declared app is "
+                    f"always on (declared: {declared}; provider-affected: {provider_affected}). "
+                    "Set qa_required: always, pass force_all_apps on the job, or declare an app without prefixes."
+                )
             writer(events.progress(message=msg, node="orchestrate_qa"))
             outcome = OrchestratorOutcome(
                 overall_status="failed",
