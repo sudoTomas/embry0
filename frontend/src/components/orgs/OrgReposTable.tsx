@@ -115,6 +115,11 @@ export function OrgReposTable({ repos }: { repos: readonly OrgRepoFacts[] }) {
                     <Link to={`/repos/${r.repo}`} className="font-medium hover:underline" data-testid="org-repo-link">
                       {r.repo}
                     </Link>
+                    {r.maintain_hint && (
+                      <span className="max-w-md text-xs text-muted-foreground" data-testid="org-repo-hint">
+                        {r.maintain_hint}
+                      </span>
+                    )}
                     {r.facts.registered === true && (
                       <Link
                         to={`/qa/repos/${encodeURIComponent(r.repo)}/config`}

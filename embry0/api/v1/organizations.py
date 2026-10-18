@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.audit.helpers import emit_audit
-from embry0.services import org_discovery, org_webhooks
+from embry0.services import org_discovery, org_maintain, org_webhooks
 from embry0.services import organizations as org_service
 from embry0.services.organizations import FORGES, STATUSES, AccessProbe, Organization
 from embry0.storage.repositories.org_repos import OrgReposRepository
@@ -541,10 +541,20 @@ async def install_organization_webhook(owner: str, request: Request) -> dict[str
 
 @router.get("/orgs/{owner}/repos")
 async def organization_repositories(owner: str, request: Request, include_archived: bool = True) -> dict[str, Any]:
-    if await _repo(request).get(owner) is None:
+    """One fact row per repository, each with ``maintain_hint``, the sentence on
+    what it takes embry0 to maintain it, and ``maintain_steps``, the actions
+    that sentence names in the order they are taken (ADR 0014). Both are read
+    from the row's facts and the organization's probe by rules, never a model.
+    """
+    org = await _repo(request).get(owner)
+    if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
-    rows = await _facts_repo(request).list_for_owner(owner, include_archived=include_archived)
-    return {"owner": owner.lower(), "repos": rows, "count": len(rows)}
+    facts_repo = _facts_repo(request)
+    rows = await facts_repo.list_for_owner(owner, include_archived=include_archived)
+    current = org_maintain.current_runs(await facts_repo.list_runs(owner))
+    access = org.access if isinstance(org.access, dict) else {}
+    repos = [{**row, **org_maintain.maintain_hint(row, access, current=current).to_dict()} for row in rows]
+    return {"owner": owner.lower(), "repos": repos, "count": len(repos)}
 
 
 @router.get("/orgs/{owner}/runs")
