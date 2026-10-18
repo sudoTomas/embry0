@@ -145,11 +145,17 @@ class GitLabClient(ForgeClient):
         The GitLab twin of ``embry0.notifications.qa_comment.upsert_sticky_comment``:
         the earliest marked note is updated (later duplicates are left alone), and
         a missing one is created. Returns the note id; raises ``HTTPStatusError``
-        when the write is rejected.
+        when the notes read or the write is rejected, so a failed read never
+        creates a duplicate note.
         """
         path = self.project_path(repo, f"/issues/{iid}/notes")
         notes = await self.paginate(
-            path, repo=repo, params={"sort": "asc", "order_by": "created_at"}, per_page=100, max_pages=20
+            path,
+            repo=repo,
+            params={"sort": "asc", "order_by": "created_at"},
+            per_page=100,
+            max_pages=20,
+            strict=True,
         )
         existing = next(
             (int(note["id"]) for note in notes if isinstance(note, dict) and marker in (note.get("body") or "")),

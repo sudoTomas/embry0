@@ -261,6 +261,20 @@ async def test_upsert_sticky_issue_note_raises_on_rejected_write():
         await _client(handler).upsert_sticky_issue_note("g/p", 11, "x", marker="m")
 
 
+async def test_upsert_sticky_issue_note_raises_on_rejected_read_without_posting():
+    methods: list[str] = []
+
+    def handler(request):
+        methods.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(403, json={"message": "forbidden"})
+        return httpx.Response(201, json={"id": 1})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await _client(handler).upsert_sticky_issue_note("g/p", 11, "x", marker="m")
+    assert methods == ["GET"], f"a rejected notes read must not create a note, got {methods}"
+
+
 # --- inherited transport behaviour -----------------------------------------
 
 
