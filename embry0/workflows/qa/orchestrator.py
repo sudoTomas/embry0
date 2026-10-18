@@ -819,11 +819,15 @@ async def _qa_orchestrator_node_impl(
 
     if not apps:
         declared = sorted(cfg.apps.keys())
-        # A failed diff outranks the deployed exclusion only while a managed
-        # app exists for the diff to have selected; an all-deployed branch
-        # job has nothing to verify in-sandbox whatever the diff was (#298).
-        if qa_state.get("changed_files_unavailable") and cfg.managed_app_names():
+        # A failed or empty diff outranks the deployed exclusion only while a
+        # managed app exists for the diff to have selected; an all-deployed
+        # branch job has nothing to verify in-sandbox whatever the diff was
+        # (#298).
+        has_managed = bool(cfg.managed_app_names())
+        if qa_state.get("changed_files_unavailable") and has_managed:
             reason = "diff_unavailable"
+        elif not changed_files_str and has_managed:
+            reason = "no_change_context"
         elif dropped:
             reason = "deployed_apps_excluded"
         elif not changed_files_str:

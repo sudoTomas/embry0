@@ -118,12 +118,8 @@ apps:
 """
 
 
-@pytest.mark.asyncio
-async def test_a_failed_diff_still_fails_when_a_managed_app_could_have_been_selected(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Dropping the deployed app must not hide that the diff, which selects the
-    managed apps, never ran."""
+def _mixed_state(monkeypatch: pytest.MonkeyPatch, *, changed_files_unavailable: bool) -> dict:
+    """A branch job on a managed `api` + deployed `web` config, with an empty diff."""
     from pathlib import Path
 
     from embry0.workspace_providers import AffectedSet, WorkspaceApp
@@ -136,8 +132,18 @@ async def test_a_failed_diff_still_fails_when_a_managed_app_could_have_been_sele
     )
     monkeypatch.setattr("embry0.workflows.qa.orchestrator.load_provider", lambda name, root, config: provider)
     _no_subtasks(monkeypatch)
-    state = _state(exclude_deployed_apps=True, changed_files=[], changed_files_unavailable=True)
+    state = _state(exclude_deployed_apps=True, changed_files=[], changed_files_unavailable=changed_files_unavailable)
     state["qa"]["qa_yaml_v2_raw"] = _MIXED
+    return state
+
+
+@pytest.mark.asyncio
+async def test_a_failed_diff_still_fails_when_a_managed_app_could_have_been_selected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dropping the deployed app must not hide that the diff, which selects the
+    managed apps, never ran."""
+    state = _mixed_state(monkeypatch, changed_files_unavailable=True)
     out = await qa_orchestrator_node(state, {"configurable": {}})
     qa = out["qa"]
     # Precondition: the deployed app was selected and then dropped.
@@ -145,3 +151,19 @@ async def test_a_failed_diff_still_fails_when_a_managed_app_could_have_been_sele
     assert qa["final_status"] == "failed", "a failed diff was hidden behind the deployed-app exclusion"
     assert qa["error_code"] == "ERR_QA_NO_APPS"
     assert "could not be computed" in qa["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_diff_still_fails_when_a_managed_app_could_have_been_selected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The deployed app kept on the empty diff and then dropped must not turn
+    the vacuous run from #65 into a pass while a managed app is declared."""
+    state = _mixed_state(monkeypatch, changed_files_unavailable=False)
+    out = await qa_orchestrator_node(state, {"configurable": {}})
+    qa = out["qa"]
+    # Precondition: the deployed app was selected and then dropped.
+    assert any("skipped web" in w for w in qa["validation_warnings"]), qa["validation_warnings"]
+    assert qa["final_status"] == "failed", "an empty diff was hidden behind the deployed-app exclusion"
+    assert qa["error_code"] == "ERR_QA_NO_APPS"
+    assert "is empty" in qa["error_message"], qa["error_message"]

@@ -49,7 +49,8 @@ retired `apps/<name>/.embry0/app.yaml` tree files).
    comment and a `qa_no_apps_to_qa` log line name the undeclared apps; a run
    that selects nothing fails with `ERR_QA_NO_APPS` when its diff is empty or
    could not be computed, because the fetch or the merge base failed; a branch
-   job whose selection was only deployed targets passes instead), then fans out up to
+   job whose selection was only deployed targets passes instead when the config
+   declares no managed app), then fans out up to
    `parallelism.max_concurrent_apps` at a time. Each app is booted with its
    `boot_command`, waited on via `ready_checks`, optionally seeded and e2e-tested,
    then the QA agent drives `frontend_url` against the acceptance criteria.
