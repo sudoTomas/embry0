@@ -38,6 +38,7 @@ from embry0.workflows.qa._subtask_env import build_qa_sandbox_env
 from embry0.workflows.qa.orchestrator_helpers import (
     OrchestratorOutcome,
     _outcome_to_dict,
+    affected_app_names,
     fan_out_subtasks,
     gate_deployed_apps,
     resolve_apps_to_qa,
@@ -679,6 +680,7 @@ async def _qa_orchestrator_node_impl(
     changed_files_str = qa_state.get("changed_files") or []
     changed_files = [Path(p) for p in changed_files_str]
     affected_managed: list[str] = []
+    provider_affected: list[str] = []
     if force_all_apps:
         # Bypass affected-set; QA every declared app. validate_against_qa_config
         # already errored out on apps that don't exist in the workspace, so
@@ -695,7 +697,8 @@ async def _qa_orchestrator_node_impl(
         # always run when QA runs — a diff cannot be mapped onto an
         # externally running instance, and the run's value there is
         # liveness + regression against the live deployment (EMB-27).
-        affected_managed = resolve_apps_to_qa(provider, cfg, changed_files=changed_files) if provider else []
+        provider_affected = affected_app_names(provider, cfg, changed_files=changed_files) if provider else []
+        affected_managed = sorted(set(provider_affected) & set(cfg.apps))
         apps = sorted(set(affected_managed) | set(gate_deployed_apps(cfg, deployed_apps, changed_files)))
     if qa_state.get("exclude_deployed_apps"):
         # #298: a branch job never QAs a deployed target — the deployed site
@@ -809,7 +812,6 @@ async def _qa_orchestrator_node_impl(
 
     if not apps:
         declared = sorted(cfg.apps.keys())
-        provider_affected = sorted(affected_managed) if not force_all_apps else []
         reason = "no_change_context" if not changed_files_str else "diff_touched_no_declared_app"
         logger.info(
             "qa_no_apps_to_qa",

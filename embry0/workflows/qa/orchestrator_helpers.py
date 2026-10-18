@@ -6,6 +6,7 @@ functions. This module contains no LangGraph nodes.
 Exports:
   - OrchestratorOutcome  — dataclass for the final orchestrator result.
   - _outcome_to_dict(outcome) — serialise OrchestratorOutcome to a plain dict.
+  - affected_app_names(provider, config, changed_files) — provider-affected app names, declared or not.
   - resolve_apps_to_qa(provider, config, changed_files) — compute apps to run QA on.
   - validate_against_qa_config(provider, config) — validate qa.yaml vs workspace.
   - fan_out_subtasks(...) — run sub-tasks in parallel with a concurrency cap.
@@ -46,6 +47,26 @@ class OrchestratorOutcome:
     validation_warnings: list[str] = field(default_factory=list)
 
 
+def affected_app_names(
+    provider: WorkspaceProvider,
+    config: QAYamlConfigV2,
+    changed_files: list[Path],
+) -> list[str]:
+    """The app names the workspace_provider says are affected, translated
+    from package_name to app name — NOT intersected with config.apps:, so
+    an affected app qa.yaml does not declare is still named."""
+    no_cascade = frozenset(name for name, entry in config.packages.items() if entry.no_cascade)
+    affected = provider.affected(
+        changed_files=list(changed_files),
+        no_cascade_packages=no_cascade,
+    )
+
+    workspace_apps, _ = provider.discover()
+    pkg_to_app_name = {a.package_name: a.name for a in workspace_apps}
+
+    return sorted({pkg_to_app_name[pkg] for pkg in affected.apps_to_qa if pkg in pkg_to_app_name})
+
+
 def resolve_apps_to_qa(
     provider: WorkspaceProvider,
     config: QAYamlConfigV2,
@@ -61,19 +82,8 @@ def resolve_apps_to_qa(
     Any provider-affected apps that aren't declared in qa.yaml are silently
     skipped (validate() will surface them as warnings via the comment).
     """
-    no_cascade = frozenset(name for name, entry in config.packages.items() if entry.no_cascade)
-    affected = provider.affected(
-        changed_files=list(changed_files),
-        no_cascade_packages=no_cascade,
-    )
-
-    workspace_apps, _ = provider.discover()
-    pkg_to_app_name = {a.package_name: a.name for a in workspace_apps}
-
-    affected_app_names = {pkg_to_app_name[pkg] for pkg in affected.apps_to_qa if pkg in pkg_to_app_name}
-
     declared = set(config.apps.keys())
-    return sorted(affected_app_names & declared)
+    return sorted(set(affected_app_names(provider, config, changed_files)) & declared)
 
 
 def validate_against_qa_config(

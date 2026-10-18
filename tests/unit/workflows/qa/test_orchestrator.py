@@ -84,6 +84,24 @@ def test_resolve_apps_to_qa_filters_out_apps_not_in_qa_yaml():
     assert apps == ["hub"]  # ghost dropped
 
 
+def test_affected_app_names_keeps_an_app_resolve_apps_to_qa_drops():
+    from embry0.workflows.qa.orchestrator_helpers import affected_app_names
+
+    cfg = parse_qa_yaml_v2(_QA_YAML)
+    provider = FakeWorkspaceProvider(
+        apps=[
+            WorkspaceApp("hub", Path("apps/hub"), "@x/hub"),
+            WorkspaceApp("ghost", Path("apps/ghost"), "@x/ghost"),
+        ],
+        packages=[],
+        affected_result=AffectedSet(frozenset(), frozenset(), frozenset({"@x/hub", "@x/ghost"})),
+    )
+    assert affected_app_names(provider, cfg, changed_files=[]) == ["ghost", "hub"], (
+        "affected_app_names must not intersect with the declared apps"
+    )
+    assert resolve_apps_to_qa(provider, cfg, changed_files=[]) == ["hub"]
+
+
 def test_validate_against_qa_config_fails_fast_on_unknown_app():
     cfg = parse_qa_yaml_v2(_QA_YAML)
     provider = FakeWorkspaceProvider(
@@ -474,17 +492,23 @@ async def test_orchestrator_node_failed_subtask_without_summary_still_notes_app(
     assert "no per-app failure summary recorded" in summary
 
 
-def _empty_selection_setup(monkeypatch):
+def _empty_selection_setup(monkeypatch, *, undeclared_affected_app: bool = False):
     from pathlib import Path
 
     from embry0.workflows.qa import orchestrator as orch
     from embry0.workspace_providers import AffectedSet, WorkspaceApp
     from embry0.workspace_providers.fakes import FakeWorkspaceProvider
 
+    apps = [WorkspaceApp("hub", Path("apps/hub"), "@x/hub")]
+    affected: frozenset[str] = frozenset()
+    if undeclared_affected_app:
+        # Workspace app the provider reports as affected, but qa.yaml does not declare.
+        apps.append(WorkspaceApp("ghost", Path("apps/ghost"), "@x/ghost"))
+        affected = frozenset({"@x/ghost"})
     fake_provider = FakeWorkspaceProvider(
-        apps=[WorkspaceApp("hub", Path("apps/hub"), "@x/hub")],
+        apps=apps,
         packages=[],
-        affected_result=AffectedSet(frozenset(), frozenset(), frozenset()),
+        affected_result=AffectedSet(affected, affected, affected),
     )
     monkeypatch.setattr(
         "embry0.workflows.qa.orchestrator.load_provider",
@@ -528,15 +552,15 @@ async def test_orchestrator_node_fails_when_no_apps_and_no_change_context(monkey
 
 @pytest.mark.asyncio
 async def test_orchestrator_node_passes_with_reason_when_diff_touched_no_declared_app(monkeypatch):
-    state, config, _repo_mock, events_out = _empty_selection_setup(monkeypatch)
-    state["qa"]["changed_files"] = ["docs/readme.md"]
+    state, config, _repo_mock, events_out = _empty_selection_setup(monkeypatch, undeclared_affected_app=True)
+    state["qa"]["changed_files"] = ["apps/ghost/page.tsx"]
     out = await qa_orchestrator_node(state, config)
     qa = out["qa"]
     assert qa["final_status"] == "passed"
     assert qa["outcome"]["overall_status"] == "passed"
-    assert any("touched no declared app" in w for w in qa["outcome"]["validation_warnings"]), (
-        "the pass carries no reason"
-    )
+    reasons = [w for w in qa["outcome"]["validation_warnings"] if "touched no declared app" in w]
+    assert reasons, "the pass carries no reason"
+    assert "ghost" in reasons[0], f"the reason does not name the undeclared affected app: {reasons[0]}"
     assert any(e["type"] == "qa_apps_resolved" and e["apps"] == [] for e in events_out)
 
 
