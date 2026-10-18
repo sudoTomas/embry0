@@ -562,6 +562,10 @@ async def test_orchestrator_node_passes_with_reason_when_diff_touched_no_declare
     assert reasons, "the pass carries no reason"
     assert "ghost" in reasons[0], f"the reason does not name the undeclared affected app: {reasons[0]}"
     assert any(e["type"] == "qa_apps_resolved" and e["apps"] == [] for e in events_out)
+    # The report node renders qa["validation_warnings"], not the outcome's copy.
+    assert reasons[0] in qa["validation_warnings"], (
+        f"the reason never reaches the sticky comment: {qa['validation_warnings']}"
+    )
 
 
 @pytest.mark.asyncio

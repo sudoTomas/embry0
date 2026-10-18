@@ -852,6 +852,8 @@ async def _qa_orchestrator_node_impl(
             validation_warnings=[*warnings, msg],
         )
         qa_state["outcome"] = _outcome_to_dict(outcome)
+        # qa_report_node renders qa["validation_warnings"], not the outcome's.
+        qa_state["validation_warnings"] = [*warnings, msg]
         qa_state["per_app_results"] = []
         qa_state["final_status"] = "passed"
         return {"qa": qa_state}
