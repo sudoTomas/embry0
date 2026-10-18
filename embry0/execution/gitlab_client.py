@@ -139,6 +139,31 @@ class GitLabClient(ForgeClient):
         )
         return resp.status_code in (200, 201)
 
+    async def upsert_sticky_issue_note(self, repo: str, iid: int, body: str, *, marker: str) -> int:
+        """Create or update the one note on an issue whose body carries ``marker``.
+
+        The GitLab twin of ``embry0.notifications.qa_comment.upsert_sticky_comment``:
+        the earliest marked note is updated (later duplicates are left alone), and
+        a missing one is created. Returns the note id; raises ``HTTPStatusError``
+        when the write is rejected.
+        """
+        path = self.project_path(repo, f"/issues/{iid}/notes")
+        notes = await self.paginate(
+            path, repo=repo, params={"sort": "asc", "order_by": "created_at"}, per_page=100, max_pages=20
+        )
+        existing = next(
+            (int(note["id"]) for note in notes if isinstance(note, dict) and marker in (note.get("body") or "")),
+            None,
+        )
+        if existing is not None:
+            resp = await self.put(f"{path}/{existing}", repo=repo, json={"body": body})
+            resp.raise_for_status()
+            return existing
+        # Sent once: a note GitLab accepted and answered 502 must not be posted twice.
+        resp = await self.post(path, repo=repo, json={"body": body}, retry_transient=False)
+        resp.raise_for_status()
+        return int(resp.json()["id"])
+
     async def post_mr_note(self, repo: str, iid: int, body: str, *, retry_transient: bool = False) -> ForgeWrite:
         """Post a note on a merge request; what the forge answered.
 

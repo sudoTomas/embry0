@@ -202,6 +202,65 @@ async def test_create_issue_note_reports_failure():
     assert await _client(handler).create_issue_note("g/p", 11, "hello") is False
 
 
+async def test_upsert_sticky_issue_note_creates_when_no_marked_note():
+    import json as json_mod
+
+    calls: list[tuple[str, str, dict | None]] = []
+
+    def handler(request):
+        body = json_mod.loads(request.content) if request.content else None
+        calls.append((request.method, str(request.url), body))
+        if request.method == "GET":
+            return httpx.Response(200, json=[{"id": 1, "body": "unrelated"}])
+        return httpx.Response(201, json={"id": 7})
+
+    note_id = await _client(handler).upsert_sticky_issue_note("g/p", 11, "<!-- m -->new", marker="<!-- m -->")
+    assert note_id == 7
+    assert [c[0] for c in calls] == ["GET", "POST"], f"expected a lookup then a create, got {calls}"
+    assert calls[1][1].endswith("/projects/g%2Fp/issues/11/notes")
+    assert calls[1][2] == {"body": "<!-- m -->new"}
+
+
+async def test_upsert_sticky_issue_note_updates_the_earliest_marked_note():
+    import json as json_mod
+
+    calls: list[tuple[str, str, dict | None]] = []
+
+    def handler(request):
+        body = json_mod.loads(request.content) if request.content else None
+        calls.append((request.method, str(request.url), body))
+        if request.method == "GET":
+            return httpx.Response(200, json=[{"id": 3, "body": "<!-- m -->old"}, {"id": 9, "body": "<!-- m -->dup"}])
+        return httpx.Response(200, json={"id": 3})
+
+    note_id = await _client(handler).upsert_sticky_issue_note("g/p", 11, "<!-- m -->new", marker="<!-- m -->")
+    assert note_id == 3
+    assert [c[0] for c in calls] == ["GET", "PUT"], f"expected a lookup then an update, got {calls}"
+    assert calls[1][1].endswith("/projects/g%2Fp/issues/11/notes/3")
+    assert calls[1][2] == {"body": "<!-- m -->new"}
+
+
+async def test_upsert_sticky_issue_note_lists_notes_oldest_first():
+    def handler(request):
+        if request.method == "GET":
+            assert request.url.params["sort"] == "asc", "notes must be listed oldest first"
+            assert request.url.params["order_by"] == "created_at"
+            return httpx.Response(200, json=[])
+        return httpx.Response(201, json={"id": 1})
+
+    assert await _client(handler).upsert_sticky_issue_note("g/p", 11, "x", marker="m") == 1
+
+
+async def test_upsert_sticky_issue_note_raises_on_rejected_write():
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
+        return httpx.Response(403, json={"message": "forbidden"})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await _client(handler).upsert_sticky_issue_note("g/p", 11, "x", marker="m")
+
+
 # --- inherited transport behaviour -----------------------------------------
 
 
