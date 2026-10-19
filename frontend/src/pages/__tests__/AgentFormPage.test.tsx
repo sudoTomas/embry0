@@ -137,7 +137,7 @@ describe("AgentFormPage provider readiness without the catalog", () => {
     });
     renderEdit();
     const hint = screen.getByTestId("model-provider-readiness");
-    expect(hint).toHaveTextContent("xai");
+    expect(hint).toHaveTextContent("xAI");
     expect(hint).toHaveTextContent("Not ready");
   });
 
@@ -148,7 +148,7 @@ describe("AgentFormPage provider readiness without the catalog", () => {
     });
     renderEdit();
     const hint = screen.getByTestId("model-provider-readiness");
-    expect(hint).toHaveTextContent("anthropic");
+    expect(hint).toHaveTextContent("Anthropic");
     expect(hint).toHaveTextContent("Ready");
     expect(hint).not.toHaveTextContent("Not ready");
   });
@@ -200,7 +200,7 @@ describe("AgentFormPage provider readiness from the catalog", () => {
     expect(option("grok-4.5")).toBeEnabled();
     expect(option("grok-4.7")).toBeDisabled();
     const hint = screen.getByTestId("model-provider-readiness");
-    expect(hint).toHaveTextContent("xai");
+    expect(hint).toHaveTextContent("xAI");
     expect(hint).toHaveTextContent("Not ready");
   });
 
@@ -218,7 +218,7 @@ describe("AgentFormPage provider readiness from the catalog", () => {
     expect(option("claude-opus-5")).toBeEnabled();
     expect(option("claude-haiku-4-5")).toBeDisabled();
     const hint = screen.getByTestId("model-provider-readiness");
-    expect(hint).toHaveTextContent("anthropic");
+    expect(hint).toHaveTextContent("Anthropic");
     expect(hint).toHaveTextContent("Not ready");
   });
 
@@ -236,7 +236,7 @@ describe("AgentFormPage provider readiness from the catalog", () => {
     const user = userEvent.setup();
     renderEdit();
     const hint = () => screen.getByTestId("model-provider-readiness");
-    expect(hint()).toHaveTextContent("anthropic");
+    expect(hint()).toHaveTextContent("Anthropic");
     expect(hint()).not.toHaveTextContent("Not ready");
 
     await user.selectOptions(screen.getByLabelText("Model"), "__custom__");
@@ -244,7 +244,7 @@ describe("AgentFormPage provider readiness from the catalog", () => {
 
     const custom = screen.getByPlaceholderText("Enter model ID");
     await user.type(custom, "grok-4.5");
-    expect(hint()).toHaveTextContent("xai");
+    expect(hint()).toHaveTextContent("xAI");
     expect(hint()).toHaveTextContent("Not ready");
 
     await user.clear(custom);

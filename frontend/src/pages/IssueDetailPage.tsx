@@ -20,7 +20,7 @@ import { updateIssueNotificationChannels } from "@/api/issues";
 import { useIssue, useIssueActivity, useTriageIssue, useSyncIssue, useDeleteIssue, useUpdateIssue } from "@/hooks/useIssues";
 import { formatDate } from "@/lib/utils";
 import { formatCost } from "@/lib/utils";
-import { statusLabel } from "@/lib/status";
+import { providerLabel, statusLabel } from "@/lib/status";
 import type { NotificationChannel } from "@/lib/types";
 
 const NOTIFICATION_CHANNELS = ["dashboard", "telegram", "github", "linear", "gitlab", "slack"] as NotificationChannel[];
@@ -363,7 +363,7 @@ export function IssueDetailPage(): JSX.Element {
               {/* Tracker link (GitHub / GitLab / Linear) */}
               {(issue.github_sync_enabled || issue.tracker) && (
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1.5 capitalize">{issue.tracker ?? "GitHub"}</p>
+                  <p className="text-xs text-muted-foreground mb-1.5">{providerLabel(issue.tracker ?? "github")}</p>
                   <div className="space-y-1">
                     {issue.tracker_key && (
                       <div className="flex items-center gap-1.5">
@@ -405,7 +405,7 @@ export function IssueDetailPage(): JSX.Element {
                         onChange={() => toggleChannel(ch)}
                         className="rounded border-white/20"
                       />
-                      <span className="capitalize">{ch}</span>
+                      <span>{providerLabel(ch)}</span>
                     </label>
                   ))}
                 </div>
@@ -413,7 +413,7 @@ export function IssueDetailPage(): JSX.Element {
                   .filter((tracker) => channels.includes(tracker) && issue.tracker !== tracker)
                   .map((tracker) => (
                     <p key={tracker} className="text-xs text-amber-400 mt-1.5">
-                      No <span className="capitalize">{tracker}</span> issue linked — comment dispatch will be a
+                      No {providerLabel(tracker)} issue linked — comment dispatch will be a
                       no-op.
                     </p>
                   ))}

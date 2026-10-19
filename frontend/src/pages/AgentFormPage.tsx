@@ -19,6 +19,7 @@ import { TagInput } from "@/components/ui/TagInput";
 import { useAgent, useCreateAgent, useUpdateAgent } from "@/hooks/useAgents";
 import { useModels } from "@/hooks/useModels";
 import { providerForModel } from "@/lib/providers";
+import { providerLabel } from "@/lib/status";
 import type { AgentCreateRequest, AgentUpdateRequest } from "@/lib/types/agents";
 
 const AVAILABLE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
@@ -353,7 +354,7 @@ export function AgentFormPage() {
                 >
                   {chosenProvider.name ? (
                     <span>
-                      Provider: <span className="font-mono">{chosenProvider.name}</span>
+                      Provider: {providerLabel(chosenProvider.name)}
                     </span>
                   ) : (
                     <span>No configured provider serves this model</span>

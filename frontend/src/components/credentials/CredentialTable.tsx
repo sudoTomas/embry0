@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Tooltip } from "@/components/ui/Tooltip";
 import type { Credential, CredentialKind } from "@/lib/types/credentials";
 import { cn, formatDateTime } from "@/lib/utils";
-import { sentenceCase } from "@/lib/status";
+import { providerLabel, sentenceCase } from "@/lib/status";
 
 export interface CredentialTableProps {
   credentials: Credential[];
@@ -141,13 +141,13 @@ export function CredentialTable({
                 >
                   <td>
                     <div className="text-foreground">{credential.label}</div>
-                    <div className="text-xs text-muted-foreground sm:hidden">{credential.provider}</div>
+                    <div className="text-xs text-muted-foreground sm:hidden">{providerLabel(credential.provider)}</div>
                     {credential.verified_login && (
                       <div className="text-xs text-muted-foreground">{credential.verified_login}</div>
                     )}
                   </td>
                   <td className="hidden sm:table-cell">
-                    <div>{credential.provider}</div>
+                    <div>{providerLabel(credential.provider)}</div>
                     <div className="text-xs text-muted-foreground">
                       {credential.provider === "anthropic" || credential.provider === "xai"
                         ? KIND_LABELS[credential.kind] ?? sentenceCase(credential.kind)

@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { PageError } from "@/components/PageError";
 import { formatDate } from "@/lib/utils";
-import { sentenceCase } from "@/lib/status";
+import { providerLabel, sentenceCase } from "@/lib/status";
 import { useAuthStore } from "@/stores/authStore";
 import {
   useModelsCatalog,
@@ -84,8 +84,8 @@ function ProviderCard({
     testProvider.mutate(provider.name, {
       onSuccess: (result) => {
         setProbe(result);
-        if (result.status === "ok") toast.success(`${provider.name}: connection OK`);
-        else toast.error(`${provider.name}: ${PROBE_STATUS_LABELS[result.status] ?? result.status}`);
+        if (result.status === "ok") toast.success(`${providerLabel(provider.name)}: connection OK`);
+        else toast.error(`${providerLabel(provider.name)}: ${PROBE_STATUS_LABELS[result.status] ?? result.status}`);
       },
       onError: (e) => toast.error(`Test failed: ${e.message}`),
     });
@@ -96,7 +96,7 @@ function ProviderCard({
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <CardTitle className="text-section capitalize">{provider.name}</CardTitle>
+            <CardTitle className="text-section">{providerLabel(provider.name)}</CardTitle>
             {provider.default && <Badge tone="gold">Default provider</Badge>}
             {provider.available ? (
               <Badge tone="success">Available</Badge>

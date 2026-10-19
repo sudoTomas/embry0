@@ -70,6 +70,24 @@ export function sentenceCase(raw: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+/**
+ * Provider, forge and tracker names as their makers spell them. The one map:
+ * a provider card, a credential row or an agent's provider never shows the
+ * stored identifier (`xai`) or a capitalised guess at it (`Xai`).
+ */
+export const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  xai: "xAI",
+  openai: "OpenAI",
+  github: "GitHub",
+  gitlab: "GitLab",
+};
+
+/** A provider name in words; one the map does not know reads in sentence case. */
+export function providerLabel(name: string): string {
+  return PROVIDER_LABELS[name.toLowerCase()] ?? sentenceCase(name);
+}
+
 export function statusLabel(status: string | null | undefined): string {
   if (!status) return "Unknown";
   return STATUS[status.toLowerCase()]?.label ?? sentenceCase(status);

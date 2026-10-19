@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { providerLabel } from "@/lib/status";
 import { IconBox } from "@/components/ui/IconBox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { useAgents, useDeleteAgent, useResetAgent } from "@/hooks/useAgents";
@@ -169,7 +170,7 @@ export function AgentsPage() {
                             whether it has a credential now (GET /agents). */}
                         <td>
                           <div className="flex items-center gap-2">
-                            <span className="hidden text-sm text-white/60 sm:inline">{agent.provider ?? "none"}</span>
+                            <span className="hidden text-sm text-white/60 sm:inline">{agent.provider ? providerLabel(agent.provider) : "None"}</span>
                             {agent.provider_ready === true && <Badge tone="success">Ready</Badge>}
                             {agent.provider_ready === false && (
                               <Badge

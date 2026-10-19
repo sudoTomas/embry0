@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { statusLabel, statusTone } from "../status";
+import { providerLabel, statusLabel, statusTone } from "../status";
 
 describe("statusLabel — readable words for every status, in one place", () => {
   it.each([
@@ -39,5 +39,18 @@ describe("statusTone", () => {
   it("falls back to neutral for an unknown status", () => {
     expect(statusTone("something_newer")).toBe("neutral");
     expect(statusTone(undefined)).toBe("neutral");
+  });
+});
+
+describe("providerLabel — provider names as their makers spell them", () => {
+  it.each([
+    ["anthropic", "Anthropic"],
+    ["xai", "xAI"],
+    ["openai", "OpenAI"],
+    ["github", "GitHub"],
+    ["GitLab", "GitLab"],
+    ["telegram", "Telegram"],
+  ])("%s -> %s", (raw, words) => {
+    expect(providerLabel(raw)).toBe(words);
   });
 });

@@ -8,6 +8,7 @@ import { Select } from "@/components/ui/Select";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useCredentials, useRepoCredentials, useSetRepoCredentials } from "@/hooks/useCredentials";
 import type { Binding, BindingInput, RepoCredentials } from "@/lib/types/credentials";
+import { providerLabel } from "@/lib/status";
 import { useAuthStore } from "@/stores/authStore";
 
 const NONE_VALUE = "";
@@ -230,7 +231,7 @@ function LlmProviderRow({
   onSelect(credentialId: string): void;
   onPin(pinned: boolean): void;
 }) {
-  const label = provider === "anthropic" ? "Anthropic account" : "xAI account";
+  const label = `${providerLabel(provider)} account`;
   const selectId = `repo-llm-${provider}`;
   const select = (
     <Select
@@ -284,7 +285,7 @@ function LlmAccount({
   provider: LlmName;
 }) {
   if (value == null) {
-    return <p className="text-sm text-muted-foreground">No {provider} account resolved.</p>;
+    return <p className="text-sm text-muted-foreground">No {providerLabel(provider)} account resolved.</p>;
   }
   if ("error" in value && value.error) {
     return <p className="text-sm text-destructive">{value.error}</p>;

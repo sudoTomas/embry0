@@ -51,7 +51,7 @@ describe("CredentialTable", () => {
       id: "cred-00000000000b", provider: "xai", kind: "llm_api_key", host: "", label: "grok-key",
     })]} isAdmin {...handlers()} />);
     const row = screen.getByTestId("credential-row");
-    expect(row).toHaveTextContent("xai");
+    expect(row).toHaveTextContent("xAI");
     // The kind reads in words, never as the stored identifier.
     expect(row).toHaveTextContent("API key");
     expect(row).not.toHaveTextContent("llm_api_key");
