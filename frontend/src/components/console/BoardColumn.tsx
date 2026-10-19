@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { tick } from "@/lib/motion";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useGlideRef } from "@/hooks/useGlide";
 import type { BoardColumnConfig, BoardColumnTint } from "@/lib/boardColumns";
@@ -15,6 +16,9 @@ interface BoardColumnProps {
   count: number;
   /** First-load skeleton — true until the first successful jobs poll. */
   isLoading?: boolean;
+  /** The board's filters. A count that changes with them was cut, not
+   * changed, so the pill does not tick. */
+  paintKey?: string;
   children?: ReactNode;
 }
 
@@ -25,8 +29,19 @@ interface BoardColumnProps {
  * quiet dashed placeholder when empty, so the actionable Needs You lane
  * stays visible even with nothing in it.
  */
-export function BoardColumn({ column, count, isLoading = false, children }: BoardColumnProps) {
+export function BoardColumn({ column, count, isLoading = false, paintKey = "", children }: BoardColumnProps) {
   const tint = TINT_CLASSES[column.tint];
+  // The count ticks when a poll changes it: not on the first paint (the
+  // load that fills the lane), not when the filters cut the board anew.
+  const pillRef = useRef<HTMLSpanElement>(null);
+  const shown = useRef({ count, isLoading, paintKey });
+  useEffect(() => {
+    const prev = shown.current;
+    shown.current = { count, isLoading, paintKey };
+    if (count !== prev.count && !isLoading && !prev.isLoading && paintKey === prev.paintKey) {
+      tick(pillRef.current);
+    }
+  }, [count, isLoading, paintKey]);
   // Where lanes stack (narrow screens), a lane that gains a card moves the
   // lanes below it; their headers travel with their cards, never ahead.
   const headerRef = useGlideRef(`lane:${column.id}`);
@@ -38,6 +53,7 @@ export function BoardColumn({ column, count, isLoading = false, children }: Boar
           {column.label}
         </span>
         <span
+          ref={pillRef}
           data-testid="count-pill"
           className={cn(
             "rounded-full px-1.5 py-0.5 text-[10px] font-mono",

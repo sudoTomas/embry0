@@ -301,9 +301,13 @@ describe("ConsolePage — New Job launch flow", () => {
   });
 });
 
-describe("ConsolePage — cards glide between lanes", () => {
+describe("ConsolePage — motion when a poll moves a job", () => {
   const LANE_ORDER = ["needs_you", "queued", "running", "done", "failed"];
   let animated: { el: HTMLElement; keyframes: Keyframe[] }[] = [];
+  /** Cards travelling, as opposed to counts ticking. */
+  const glides = () => animated.filter((a) => String(a.keyframes[0].transform).startsWith("translate("));
+  const ticked = () =>
+    animated.filter((a) => String(a.keyframes[0].transform).startsWith("scale(")).map((a) => a.el);
 
   /** jsdom lays nothing out: a card's place is its lane (300 px apart) and
    * its turn within the lane (120 px apart). */
@@ -337,7 +341,7 @@ describe("ConsolePage — cards glide between lanes", () => {
     delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
   });
 
-  it("glides a job's card to its new lane when a poll moves it", async () => {
+  it("glides a job's card to its new lane when a poll moves it, ticking both counts", async () => {
     mockFetchJobs.mockResolvedValue(
       jobList([makeJob({ job_id: "move0001aaaa", status: "pending", task: "Moving task" })]),
     );
@@ -351,12 +355,16 @@ describe("ConsolePage — cards glide between lanes", () => {
     await client.invalidateQueries({ queryKey: ["jobs"] });
     expect(await within(screen.getByTestId("board-column-running")).findByText("Moving task")).toBeInTheDocument();
 
-    expect(animated).toHaveLength(1);
-    expect(animated[0].el).toBe(glideItemOf("Moving task"));
-    expect(animated[0].keyframes[0]).toEqual({ transform: "translate(-300px, 0px)" });
+    expect(glides()).toHaveLength(1);
+    expect(glides()[0].el).toBe(glideItemOf("Moving task"));
+    expect(glides()[0].keyframes[0]).toEqual({ transform: "translate(-300px, 0px)" });
+    expect(ticked()).toEqual([
+      within(screen.getByTestId("board-column-queued")).getByTestId("count-pill"),
+      within(screen.getByTestId("board-column-running")).getByTestId("count-pill"),
+    ]);
   });
 
-  it("glides nothing when a filter change reflows the board", async () => {
+  it("glides nothing and ticks no count when a filter change reflows the board", async () => {
     const first = makeJob({ job_id: "one00001aaaa", repo: "acme/one", task: "First task" });
     const second = makeJob({ job_id: "two00001aaaa", repo: "acme/two", task: "Second task" });
     mockFetchJobs.mockImplementation(async (filters) =>

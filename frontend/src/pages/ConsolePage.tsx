@@ -64,7 +64,7 @@ export function ConsolePage() {
   const [showCreate, setShowCreate] = useState(false);
   const glide = useGlide();
   // A filter change cuts the board differently; no job moved, so it paints
-  // afresh and nothing glides.
+  // afresh: nothing glides and no lane's count ticks.
   const paintKey = `${statusFilter ?? ""}|${repoFilter ?? ""}`;
 
   const setParam = useCallback(
@@ -200,6 +200,7 @@ export function ConsolePage() {
                   column={column}
                   count={lanes[column.id].length}
                   isLoading={isLoading}
+                  paintKey={paintKey}
                 >
                   {laneCards(column.id)}
                 </BoardColumn>

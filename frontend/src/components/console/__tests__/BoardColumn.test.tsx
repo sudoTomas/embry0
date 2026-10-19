@@ -1,9 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { BoardColumn } from "../BoardColumn";
 import { GlideBoard } from "../GlideBoard";
 import { createGlide } from "@/hooks/useGlide";
+import { tick } from "@/lib/motion";
 import type { BoardColumnConfig } from "@/lib/boardColumns";
+
+vi.mock("@/lib/motion", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/motion")>()),
+  tick: vi.fn(),
+}));
 
 const NEEDS_YOU: BoardColumnConfig = { id: "needs_you", label: "Needs you", tint: "amber" };
 const DONE: BoardColumnConfig = { id: "done", label: "Done", tint: "success" };
@@ -77,5 +83,35 @@ describe("BoardColumn", () => {
 
     expect(attach).toHaveBeenCalledWith("lane:running", screen.getByText("Running").parentElement);
     expect(attach).toHaveBeenCalledWith("lane:running:empty", screen.getByTestId("empty-lane"));
+  });
+
+  describe("count tick", () => {
+    beforeEach(() => vi.mocked(tick).mockClear());
+
+    it("ticks the count pill when a poll changes the count", () => {
+      const { rerender } = render(<BoardColumn column={RUNNING} count={1} />);
+      rerender(<BoardColumn column={RUNNING} count={2} />);
+
+      expect(tick).toHaveBeenCalledTimes(1);
+      expect(tick).toHaveBeenCalledWith(screen.getByTestId("count-pill"));
+    });
+
+    it("does not tick on the first paint", () => {
+      const { rerender } = render(<BoardColumn column={RUNNING} count={0} isLoading />);
+      rerender(<BoardColumn column={RUNNING} count={3} />);
+      expect(tick).not.toHaveBeenCalled();
+    });
+
+    it("does not tick when the filters change the count", () => {
+      const { rerender } = render(<BoardColumn column={RUNNING} count={3} paintKey="|" />);
+      rerender(<BoardColumn column={RUNNING} count={1} paintKey="running|" />);
+      expect(tick).not.toHaveBeenCalled();
+    });
+
+    it("does not tick when a poll leaves the count as it was", () => {
+      const { rerender } = render(<BoardColumn column={RUNNING} count={2} />);
+      rerender(<BoardColumn column={RUNNING} count={2} />);
+      expect(tick).not.toHaveBeenCalled();
+    });
   });
 });
