@@ -79,9 +79,24 @@ describe("accessible names", () => {
     expect(screen.getByRole("button", { name: "Hide secret" })).toBeInTheDocument();
   });
 
-  it("the box an agent's question is answered in is named by the question", () => {
-    render(<QuestionsForm inputs={[{ id: "q1", question: "Which database?", status: "pending" }]} onAnswer={vi.fn()} />);
-    expect(screen.getByRole("textbox", { name: "Which database?" })).toBeInTheDocument();
+  it("the box an agent's question is answered in has a short name and the question as its description", () => {
+    // A question can run to hundreds of characters; as the field's name a
+    // screen reader would read it twice, once as text and once as the name.
+    const question = `Which database should the migration target? ${"Context. ".repeat(60)}`;
+    render(
+      <QuestionsForm
+        inputs={[
+          { id: "q1", question, status: "pending" },
+          { id: "q2", question: "Which branch?", options: ["main", "develop"], status: "pending" },
+        ]}
+        onAnswer={vi.fn()}
+      />,
+    );
+    const box = screen.getByRole("textbox", { name: "Your answer" });
+    expect(box).toHaveAccessibleDescription(/Which database should the migration target\?/);
+    const select = screen.getByRole("combobox", { name: "Your answer" });
+    expect(select).toHaveAccessibleDescription(/Which branch\?/);
+    expect(select).not.toHaveAccessibleDescription(/Which database/);
   });
 
   it("the Jobs list's row actions are named links and buttons, none nested", () => {
