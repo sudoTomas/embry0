@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { Building2, Plus } from "lucide-react";
 import type { Organization } from "@/api/orgs";
 import { AccessChips } from "@/components/orgs/AccessChips";
+import { OrgCredential } from "@/components/orgs/OrgCredential";
 import { TABLE_BOX, TD, TH } from "@/components/orgs/styles";
 import { PageError } from "@/components/PageError";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
@@ -10,10 +11,9 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useCredentials } from "@/hooks/useCredentials";
 import { useOrganizations } from "@/hooks/useOrgs";
-import { ORG_WIZARD_PATH, credentialLabel, envTokenKey } from "@/lib/orgs";
+import { ORG_WIZARD_PATH } from "@/lib/orgs";
 import { providerLabel, statusLabel } from "@/lib/status";
 import { cn, formatDateTime } from "@/lib/utils";
-import type { Credential } from "@/lib/types/credentials";
 
 const STATUS_TONE: Record<Organization["status"], BadgeTone> = {
   active: "success",
@@ -26,22 +26,6 @@ function AddButton() {
     <Link to={ORG_WIZARD_PATH} className={cn(buttonVariants({ size: "sm" }))} data-testid="add-org-cta">
       <Plus className="h-4 w-4" /> Add organization
     </Link>
-  );
-}
-
-/** The account an organization acts with. Identifiers (a credential's label,
- * the environment variable a token comes from) read in mono; the words
- * around them do not. */
-function CredentialCell({ org, credentials }: { org: Organization; credentials: readonly Credential[] | undefined }) {
-  if (org.credential_id) {
-    return <span className="font-mono text-xs">{credentialLabel(org, credentials)}</span>;
-  }
-  const key = envTokenKey(org);
-  return (
-    <span className="whitespace-nowrap">
-      Environment token
-      {key && <span className="ml-1.5 font-mono text-xs text-fg-secondary">{key}</span>}
-    </span>
   );
 }
 
@@ -117,7 +101,7 @@ export function OrganizationsPage() {
                     <Badge tone="neutral">{providerLabel(org.forge)}</Badge>
                   </td>
                   <td className={cn(TD, "hidden text-white/70 sm:table-cell")}>
-                    <CredentialCell org={org} credentials={credentials.data} />
+                    <OrgCredential org={org} credentials={credentials.data} nowrap />
                   </td>
                   <td className={cn(TD, "hidden sm:table-cell")}>
                     <AccessChips access={org.access} />

@@ -5,7 +5,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // The organization page spends its one gold on Apply, the action that
 // changes things. Need counts and action chips are labels, so they are
-// neutral; a running discovery is a live state, so it reads in blue.
+// neutral; a running discovery is a live state, so it reads in blue. The
+// token an organization reads from is an identifier, so it is mono, as on
+// the /orgs list.
 const api = { org: vi.fn(), runs: vi.fn(), repos: vi.fn(), needs: vi.fn() };
 vi.mock("@/api/orgs", async () => {
   const actual = await vi.importActual<typeof import("@/api/orgs")>("@/api/orgs");
@@ -87,5 +89,22 @@ describe("OrganizationPage golden touch", () => {
     const running = screen.getByTestId("discovery-running");
     expect(within(running).getByText("Running").className).toContain("text-info");
     expect(describeEls(goldElements(running))).toEqual([]);
+  });
+});
+
+describe("OrganizationPage header", () => {
+  it("prints the environment token key in mono, as the /orgs list does", async () => {
+    renderPage();
+    const meta = await screen.findByTestId("org-meta");
+    expect(meta.textContent).toMatch(/^Environment token\s*GITHUB_TOKEN__ACME · 12 repositories/);
+    expect(meta.textContent).not.toContain("environment (");
+    expect(within(meta).getByText("GITHUB_TOKEN__ACME").className).toContain("font-mono");
+  });
+
+  it("prints a stored credential's name in mono", async () => {
+    api.org.mockResolvedValue(org({ credential_id: "cred-1" }));
+    renderPage();
+    const meta = await screen.findByTestId("org-meta");
+    expect(within(meta).getByText("cred-1").className).toContain("font-mono");
   });
 });
