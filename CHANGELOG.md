@@ -44,4 +44,21 @@ describes what embry0 does rather than listing changes.
   deployment's logs into draft issues ([docs/self-watching.md](docs/self-watching.md));
   merge approvals ask a human in a chat before embry0 merges a pull request it
   opened ([docs/merge-approvals.md](docs/merge-approvals.md)).
+- **Specialist agents.** Eight read-only built-in agents, each run only when
+  a job names its pipeline template, that return one report on a repository:
+  kintsugi, gardener, interrogator, why, how, blast-radius, comment-sicko and
+  design-auditor ([docs/specialist-agents.md](docs/specialist-agents.md)).
 - **MCP server** (`embry0-mcp`, and `embry0-mcp-http` for the hosted endpoint).
+
+### Upgrade notes
+
+- **Reserved names.** The specialist agents reserve eight agent names
+  (`kintsugi`, `gardener`, `interrogator`, `why`, `how`, `blast-radius`,
+  `comment-sicko`, `design-auditor`) and eight pipeline template names
+  (`kintsugi-trace`, `garden`, `interrogate`, `why`, `how`, `blast-radius`,
+  `comment-pass`, `design-audit`). The template seeder upserts by name, so a
+  deployment's own template with one of those names is overwritten at the
+  first start: duplicate it under another name before you upgrade. A custom
+  agent with one of those names is kept, and its specialist template runs it
+  in place of the built-in
+  ([reserved names](docs/specialist-agents.md#reserved-names)).

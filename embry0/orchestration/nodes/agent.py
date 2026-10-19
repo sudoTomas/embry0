@@ -70,6 +70,17 @@ DEFAULT_AGENT_MAX_TURNS: dict[str, int] = {
     # job budget bounds cost, not the turn cap).
     "analysis": 40,
     "ops": 40,
+    # The read-only specialists. kintsugi runs every gate it can find and
+    # reads code against its docs, so it gets the most; the explainers and
+    # the comment pass are bounded read-and-report passes.
+    "kintsugi": 60,
+    "interrogator": 40,
+    "blast-radius": 40,
+    "design-auditor": 40,
+    "gardener": 30,
+    "why": 30,
+    "how": 30,
+    "comment-sicko": 25,
 }
 
 

@@ -56,7 +56,8 @@ not).
 `default_model` in the provider settings (Settings → LLM Providers →
 "Default model", or `PUT /api/v1/config/provider`) is the model every agent
 type runs on — triage, developer, review, QA, analysis, research, ops,
-onboarding — unless something more specific names another. Empty means no
+onboarding and the [specialist agents](specialist-agents.md) — unless something
+more specific names another. Empty means no
 default: each agent keeps the model of its own definition.
 
 A model is resolved per agent run. Later wins:

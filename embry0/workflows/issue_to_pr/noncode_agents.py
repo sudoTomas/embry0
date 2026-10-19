@@ -15,7 +15,9 @@ developer/review-shaped); the prompts direct them to state assumptions
 instead.
 """
 
-_DELIVERABLE_CONTRACT = """
+# Shared by every agent on the generic node, the specialists in
+# specialist_agents.py included.
+DELIVERABLE_CONTRACT = """
 ## Deliverable contract
 
 Your FINAL message is the job's deliverable — it is stored verbatim as the
@@ -67,7 +69,7 @@ inspection only (searching, counting, extracting text).
 - **Findings** — the substance, organized by question or theme, with \
 citations to the source material.
 - **Open questions** — what the available sources could not answer.
-{_DELIVERABLE_CONTRACT}"""
+{DELIVERABLE_CONTRACT}"""
 
 ANALYSIS_SYSTEM_PROMPT = f"""You are embry0's analysis agent. A job has been \
 routed to you because it asks for structured examination of a codebase, \
@@ -91,7 +93,7 @@ findings by impact, not by discovery order.
 - **Summary** — 2-4 bullets: the state of what you analyzed.
 - **Findings** — evidence-backed, most important first.
 - **Recommendations** — concrete next actions, each tied to a finding.
-{_DELIVERABLE_CONTRACT}"""
+{DELIVERABLE_CONTRACT}"""
 
 OPS_SYSTEM_PROMPT = f"""You are embry0's ops agent. A job has been routed to \
 you because it asks for an operational task over the workspace — batch file \
@@ -116,4 +118,4 @@ part and list the rest as manual follow-ups.
 - **Result** — 1-3 bullets: what was accomplished.
 - **Actions taken** — each operation: what/where/verification outcome.
 - **Follow-ups** — anything requiring action outside this sandbox.
-{_DELIVERABLE_CONTRACT}{_ARTIFACT_CONTRACT}"""
+{DELIVERABLE_CONTRACT}{_ARTIFACT_CONTRACT}"""
