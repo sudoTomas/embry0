@@ -306,13 +306,12 @@ export function AgentDetailPopup({
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        className="w-[560px] max-h-[85vh] overflow-y-auto rounded-lg"
+        className="pipeline-popup-in w-[560px] max-h-[85vh] overflow-y-auto rounded-lg"
         onClick={(e) => e.stopPropagation()}
         style={{
           border: `1px solid ${color}33`,
           background: "var(--color-surface)",
           boxShadow: "0 25px 50px rgb(0 0 0 / 0.5)",
-          animation: "popup-in 0.25s ease-out",
         }}
       >
         {/* -------- Header -------- */}

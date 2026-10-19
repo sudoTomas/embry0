@@ -370,6 +370,21 @@ body[data-divine="off"] .motion-mark * {
   }
 }
 
+/* ----- motion: pipeline editor ----- */
+/* An agent's or an edge's detail popup opens rising in from a little
+   smaller and lower (components/pipeline-editor). The keyframes live here,
+   not in a popup's own <style>, so each popup has its entrance whichever
+   other popup is mounted. */
+@keyframes pipeline-popup-in {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pipeline-popup-in {
+    animation: pipeline-popup-in var(--motion-base) var(--ease-standard);
+  }
+}
+
 /* ===== end motion ===== */
 
 /* Density mode custom properties */
