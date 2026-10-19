@@ -20,6 +20,11 @@ describe("stateFor (a run)", () => {
     expect(stateFor({ status: "running", events: [call("1"), text()] })).toBe("tool");
     expect(stateFor({ status: "running", events: [call("1"), result("1"), text()] })).toBe("thinking");
   });
+  it("matches results to calls by tool_id", () => {
+    expect(stateFor({ status: "running", events: [call("1"), call("2"), result("1")] })).toBe("tool");
+    expect(stateFor({ status: "running", events: [call("1"), result("x")] })).toBe("tool");
+    expect(stateFor({ status: "running", events: [result("1"), call("1")] })).toBe("tool");
+  });
 });
 
 describe("stateForNode (a graph node)", () => {
