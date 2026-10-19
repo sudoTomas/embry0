@@ -179,6 +179,14 @@ function ProviderCard({
                       {isDefault && (
                         <span className="ml-2 text-xs text-muted-foreground">(default model)</span>
                       )}
+                      {m.tool_calling === false && (
+                        <span
+                          className="ml-2 text-xs text-muted-foreground"
+                          title="No tool calling on this provider's API: only an agent without tools can run on it"
+                        >
+                          (chat-only)
+                        </span>
+                      )}
                     </td>
                     <td className="hidden sm:table-cell">{fmtPrice(m.pricing_usd_per_mtok.input)}</td>
                     <td className="hidden sm:table-cell">{fmtPrice(m.pricing_usd_per_mtok.output)}</td>
