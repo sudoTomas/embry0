@@ -35,6 +35,7 @@ from embry0.workflows.qa._orchestrator_workspace import (
     stage_workspace_for_provider,
 )
 from embry0.workflows.qa._subtask_env import build_qa_sandbox_env
+from embry0.workflows.qa.capabilities import profile_has_browser
 from embry0.workflows.qa.orchestrator_helpers import (
     OrchestratorOutcome,
     _outcome_to_dict,
@@ -972,8 +973,8 @@ async def _qa_orchestrator_node_impl(
                 profile = None
             if profile is None:
                 continue
-            base_image = str(profile.get("base_image") or "")
-            if "embry0-sandbox-qa" not in base_image:
+            if not profile_has_browser(profile):
+                base_image = str(profile.get("base_image") or "")
                 browserless.append(
                     f"app {rc.app_name!r}: profile {rc.sandbox_profile!r} "
                     f"(base_image {base_image!r}) has no browser, but the QA agent "

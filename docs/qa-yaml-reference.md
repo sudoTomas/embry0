@@ -19,6 +19,16 @@ retired `apps/<name>/.embry0/app.yaml` tree files).
 > and onboarding/bootstrap (below). A repo with no stored config fails QA
 > runs with a clear "no QA config stored in embry0" error.
 >
+> **Checking it first.** `POST /api/v1/repos/{owner}/{repo}/qa-config/check`
+> takes the same raw body and stores nothing. Beyond the schema, it reports
+> what every run would stop on: a `sandbox_profile` that does not exist or
+> has no browser, a `workspace_provider.type` that is not installed, and an
+> app with no ready check. It answers `{ok, problems, warnings, summary}`.
+> The warnings name what a person should confirm first, such as an address
+> outside the test computer or a missing Docker access grant. A refused
+> `PUT` leads its 422 detail with one plain sentence per error, then
+> `Technical details:` and the schema's own text.
+>
 > **Onboarding an existing repo (EMB-50):** `embry0 onboard <owner/repo>`
 > runs the onboarding agent — it analyzes the repo, drafts this document,
 > validates it (schema + a boot/ready-check smoke run), and stores it in
