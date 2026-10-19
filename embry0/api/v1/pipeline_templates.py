@@ -114,11 +114,12 @@ async def update_template(
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    # A missing template is a 404 before any check of the body: its names are measured against it.
+    stored = await repo.get(template_id)
+    if not stored:
+        raise HTTPException(status_code=404, detail="Template not found")
     if not updates:
-        template = await repo.get(template_id)
-        if not template:
-            raise HTTPException(status_code=404, detail="Template not found")
-        return template
+        return stored
     if "graph_definition" in updates:
         problems = validate_graph_definition(str(template_id), updates["graph_definition"])
         if problems:
@@ -127,7 +128,7 @@ async def update_template(
     warnings: list[str] = []
     if "graph_definition" in updates:
         # Only the names this save adds are checked; names the stored template has keep working.
-        already = _stored_added_skills(await repo.get(template_id))
+        already = _stored_added_skills(stored)
         warnings = await _check_template_skills(request, updates["graph_definition"], already=already)
     updated = await repo.update(template_id, **updates)
     if not updated:

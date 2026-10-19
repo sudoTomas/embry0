@@ -276,3 +276,20 @@ async def test_updating_a_missing_template_is_404(app):
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
     assert r.status_code == 404, r.text
+
+
+@pytest.mark.asyncio
+async def test_updating_a_missing_template_with_an_unknown_skill_is_404(app):
+    """Existence comes first: a 422 about the body would send the caller to fix a template that is not there."""
+    app.state.templates_repo.get = AsyncMock(return_value=None)
+    app.state.templates_repo.update = AsyncMock(return_value=None)
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans")
+    graph = _graph_with_developer({"config": {"skills": {"add": ["nope:x"]}}})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/v1/pipelines/templates/nope",
+            json={"graph_definition": graph},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 404, r.text
+    app.state.templates_repo.update.assert_not_awaited()

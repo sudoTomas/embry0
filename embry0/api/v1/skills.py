@@ -44,7 +44,7 @@ async def _run_sync(sync: SkillSourceSync, source_id: str) -> None:
     """A sync records its own failures on the row; a concurrent one is simply already doing the work."""
     try:
         await sync.sync(source_id)
-    except SkillSyncBusy:
+    except SkillSyncBusy:  # defensive: sync() coalesces a second request and does not raise this today
         logger.warning("skill_source_sync_busy", source_id=source_id)
     except Exception:
         logger.exception("skill_sync_crashed", source_id=source_id)
