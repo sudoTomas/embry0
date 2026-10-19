@@ -739,6 +739,11 @@ async def _init_app_state(
     from embry0.storage.repositories.hosts import HostsRepository
 
     app.state.hosts_repo = HostsRepository(db)
+    from embry0.storage.repositories.standards import RepoStandardStateRepository, StandardsRepository
+
+    # ADR 0014: an owner's versioned standards and each repository's mode under them.
+    app.state.standards_repo = StandardsRepository(db)
+    app.state.repo_standard_state_repo = RepoStandardStateRepository(db)
     app.state.qa_configs_repo = RepoQAConfigsRepository(db, default_forge=app_config.default_forge)
     app.state.qa_app_results_repo = QAAppResultsRepository(db)
     app.state.qa_image_tags_repo = QAImageTagsRepository(db)
@@ -2211,6 +2216,7 @@ def _register_routers(app: FastAPI) -> None:
         repos,
         sandbox_profiles,
         sandboxes,
+        standards,
         stats,
         telegram,
         traces,
@@ -2290,6 +2296,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(org_needs.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     # ADR 0013: the hosts that run the code (reads and probes operator-tier; writes admin-tier in-route).
     app.include_router(hosts.router, prefix="/api/v1", tags=["hosts"], dependencies=auth_deps)
+    # ADR 0014: organization standards (reads and audits operator-tier; writes admin-tier in-route).
+    app.include_router(standards.router, prefix="/api/v1", tags=["standards"], dependencies=auth_deps)
     app.include_router(org_actions.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     app.include_router(github.router, prefix="/api/v1", tags=["github"], dependencies=auth_deps)
     app.include_router(gitlab.router, prefix="/api/v1", tags=["gitlab"], dependencies=auth_deps)

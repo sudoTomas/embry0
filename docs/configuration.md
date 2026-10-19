@@ -165,6 +165,8 @@ Budget controls, context injection, and sandbox profiles are configurable via th
 
 - **Hosts**: `GET/POST /api/v1/hosts`, `GET/PATCH/DELETE /api/v1/hosts/{id}`, `POST /api/v1/hosts/{id}/probe` and `POST /api/v1/hosts/import/tailnet`. The machines that run the code, how embry0 reaches each one, where its logs come from, and which repositories it serves. A tailnet import and a tailnet probe read devices with a `tailnet_api_key` credential bound at global scope with role `tailnet`; no environment variable configures it. See [hosts.md](hosts.md).
 
+- **Standards**: `GET /api/v1/standards/{owner}`, `GET/PUT /api/v1/standards/{owner}/{kind}`, `GET /api/v1/standards/{owner}/{kind}/versions`, `GET/PUT /api/v1/standards/{owner}/{kind}/repos/{repo}` and `POST /api/v1/standards/{owner}/{kind}/audit/{repo}`. An owner's versioned standards (schema and values), each repository's mode under them, and audits against them. An organization's values are configuration stored here; no environment variable configures them. See [standards.md](standards.md).
+
 See [api.md](api.md) for request examples.
 
 ## Agent execution & auth modes

@@ -40,7 +40,7 @@ logger = structlog.get_logger(__name__)
 # database-wide namespace, so any future advisory lock in embry0 MUST pick a
 # different key and be registered here (grep `pg_advisory` for the roster).
 # The others hash a prefixed text key with hashtextextended:
-# `qa_image_tags:<repo>` and `org_needs:<owner>`.
+# `qa_image_tags:<repo>`, `org_needs:<owner>` and `standards:<owner>:<kind>`.
 MIGRATIONS_ADVISORY_LOCK_KEY = 0x656D62727930
 
 # Acquisition is usually instantaneous; anything slower means another replica
@@ -2826,6 +2826,66 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ALTER TABLE credential_bindings DROP CONSTRAINT IF EXISTS credential_bindings_role_check;
         ALTER TABLE credential_bindings ADD CONSTRAINT credential_bindings_role_check
             CHECK (role IN ('forge', 'llm', 'deploy', 'tailnet'));
+        """,
+    ),
+    (
+        101,
+        "standards and repo_standard_state — an owner's versioned standards and each repository's place under them (ADR 0014)",
+        # A standard is one version of an owner's standard of one kind: the
+        # schema (the roles, type scale and rules every standard of the kind
+        # names) and the values (this owner's fill of the roles), with prose
+        # and the references it was measured from. A write makes a new
+        # version and supersedes the active one; the partial unique index
+        # keeps one active version per owner and kind, and the superseded
+        # versions are the history. `owner` is the forge owner, lowercase as
+        # organizations store it, with no foreign key: a standard may be
+        # written before its organization is registered.
+        #
+        # repo_standard_state is a repository's place under its owner's
+        # standard of a kind: a mode (off until an admin says otherwise, so
+        # nothing changes for any repository), the newest audit started, and
+        # the score and finding count of the newest audit that completed.
+        # last_audit_job_id is SET NULL when its job row is purged, so the
+        # score outlives the job.
+        """
+        CREATE TABLE IF NOT EXISTS standards (
+            id            TEXT PRIMARY KEY,
+            owner         TEXT NOT NULL,
+            kind          TEXT NOT NULL CHECK (kind IN ('design')),
+            version       INTEGER NOT NULL CHECK (version >= 1),
+            status        TEXT NOT NULL CHECK (status IN ('draft', 'active', 'superseded')),
+            schema        JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(schema) = 'object'),
+            values        JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(values) = 'object'),
+            prose         TEXT NOT NULL DEFAULT '',
+            "references"  JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof("references") = 'array'),
+            created_by    TEXT,
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (owner, kind, version)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS standards_one_active ON standards (owner, kind) WHERE status = 'active';
+
+        CREATE TABLE IF NOT EXISTS repo_standard_state (
+            repo               TEXT NOT NULL,
+            owner              TEXT NOT NULL,
+            kind               TEXT NOT NULL CHECK (kind IN ('design')),
+            mode               TEXT NOT NULL DEFAULT 'off' CHECK (mode IN ('off', 'advise', 'enforce')),
+            last_audit_at      TIMESTAMPTZ,
+            last_audit_job_id  TEXT REFERENCES jobs(job_id) ON DELETE SET NULL,
+            score              INTEGER CHECK (score IS NULL OR score BETWEEN 0 AND 100),
+            findings_open      INTEGER NOT NULL DEFAULT 0 CHECK (findings_open >= 0),
+            exceptions         JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(exceptions) = 'array'),
+            created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (repo, kind)
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_standard_state_owner ON repo_standard_state (owner, kind);
+        CREATE INDEX IF NOT EXISTS idx_repo_standard_state_audit_job
+            ON repo_standard_state (last_audit_job_id) WHERE last_audit_job_id IS NOT NULL;
+
+        COMMENT ON TABLE standards IS
+            'ADR 0014: one version of an owner''s standard of one kind. schema = the shape every standard of the kind shares (roles, type scale, rules); values = this owner''s fill of the roles. One active version per owner and kind.';
+        COMMENT ON TABLE repo_standard_state IS
+            'ADR 0014: a repository''s place under its owner''s standard of one kind. mode off = never audited; score and findings_open = the newest completed audit, at last_audit_at; last_audit_job_id = the newest audit started.';
         """,
     ),
 ]
