@@ -402,15 +402,17 @@ class Embry0Client:
 
     # ------------------------------------------------------------------ watcher
 
-    async def watcher_runs(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        return _as_list(await self._request("GET", "/api/v1/watcher/runs", params={"limit": limit}))
+    async def watcher_runs(self, *, limit: int = 50, stack: str | None = None) -> list[dict[str, Any]]:
+        params = _drop_none({"limit": limit, "stack": stack})
+        return _as_list(await self._request("GET", "/api/v1/watcher/runs", params=params))
 
-    async def watcher_trigger(self, *, timeout: float = 900.0) -> dict[str, Any]:
+    async def watcher_trigger(self, *, timeout: float = 900.0, stack: str | None = None) -> dict[str, Any]:
         # A tick runs its LLM analysis job synchronously inside the request —
         # real ticks take minutes, so the client default timeout would always
         # trip. The tick keeps running server-side either way; a long
         # per-request read timeout lets the caller actually see the summary.
-        return _as_dict(await self._request("POST", "/api/v1/watcher/run", timeout=timeout))
+        params = _drop_none({"stack": stack})
+        return _as_dict(await self._request("POST", "/api/v1/watcher/run", params=params, timeout=timeout))
 
     # ------------------------------------------------------------------- cases
 

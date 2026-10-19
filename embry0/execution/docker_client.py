@@ -295,6 +295,10 @@ class DockerClient:
         """Build `docker inspect` printing whether a container is running (``true``/``false``)."""
         return [*self._build_base_cmd(), "inspect", "--format", "{{.State.Running}}", container]
 
+    def build_inspect_id_cmd(self, container: str) -> list[str]:
+        """Build `docker inspect` printing a container's full ID, from its name or a short ID."""
+        return [*self._build_base_cmd(), "inspect", "--format", "{{.Id}}", container]
+
     def build_stop_cmd(self, container: str, timeout: int = 10) -> list[str]:
         """Build `docker stop` command."""
         cmd = self._build_base_cmd()

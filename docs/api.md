@@ -409,7 +409,8 @@ other repository:
   `POST /issues/{id}/inputs/{input_id}/answer` and `DELETE /issues/{id}`
   (the issue and each child issue it cancels);
 - `POST /cases/{id}/accept`, `POST /merge-approvals/{id}/decide`,
-  `POST /watcher/run` (the stack ticked), `POST /qa/images/build` and
+  `POST /watcher/run` (the stack ticked; with none named, every watched
+  stack, all checked before any ticks), `POST /qa/images/build` and
   `POST /repos/bootstrap`.
 
 The MCP tools reach embry0 through these routes with the caller's key, so

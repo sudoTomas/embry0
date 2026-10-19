@@ -259,6 +259,10 @@ async def test_org_act_needs_confirm_even_for_a_dry_run(fake_client):
 async def test_read_tools_pass_through(fake_client):
     assert await server.health() == {"called": "health"}
     assert await server.watcher_trigger() == {"called": "watcher_trigger"}
+    assert await server.watcher_trigger(stack="acme/api") == {"called": "watcher_trigger"}
+    assert fake_client.calls[-1][2] == {"timeout": 900.0, "stack": "acme/api"}
+    assert await server.watcher_runs(stack="acme/api") == {"called": "watcher_runs"}
+    assert fake_client.calls[-1][2] == {"limit": 50, "stack": "acme/api"}
     assert await server.job_wait("j1", timeout=1.0) == {"called": "job_wait"}
     name, _, kwargs = fake_client.calls[-1]
     assert name == "job_wait"
