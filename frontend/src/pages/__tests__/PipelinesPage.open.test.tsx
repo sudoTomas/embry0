@@ -166,3 +166,15 @@ describe("picking a template in the editor's Templates drawer", () => {
     expect(saveButton()).toHaveClass("bg-primary");
   });
 });
+
+// On a phone the toolbar wraps: the name takes its own row and Templates, Save
+// and Save As stay inside the viewport instead of running off its right edge.
+describe("the pipeline editor's toolbar on a phone", () => {
+  it("wraps below sm, the name on a row of its own", async () => {
+    const name = await openFromList(/Quick fix/);
+    const toolbar = screen.getByTestId("pipeline-toolbar");
+    expect(toolbar).toHaveClass("flex-wrap", "sm:flex-nowrap");
+    expect(name).toHaveClass("w-full", "sm:w-64");
+    expect(screen.getByTestId("pipeline-actions")).toHaveClass("flex-wrap");
+  });
+});

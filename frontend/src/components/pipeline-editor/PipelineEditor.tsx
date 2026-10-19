@@ -235,14 +235,18 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
       </div>
     </div>
   ) : (
-    /* Page header */
-    <div className="h-14 shrink-0 border-b border-white/[0.08] flex items-center justify-between px-4 bg-surface">
-      <div className="flex flex-col">
+    /* Page header. On a phone it wraps: the name on a row of its own, the
+       actions under it, so Templates, Save and Save As stay in view. */
+    <div
+      data-testid="pipeline-toolbar"
+      className="shrink-0 border-b border-white/[0.08] flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2 bg-surface sm:h-14 sm:flex-nowrap sm:py-0"
+    >
+      <div className="flex w-full flex-col sm:w-auto">
         <input
           type="text"
           value={pipelineName}
           onChange={(e) => setPipelineName(e.target.value)}
-          className="bg-transparent border-none text-base font-semibold text-white outline-none focus:ring-1 focus:ring-white/20 rounded px-1.5 py-0.5 -ml-1.5 w-64"
+          className="bg-transparent border-none text-base font-semibold text-white outline-none focus:ring-1 focus:ring-white/20 rounded px-1.5 py-0.5 -ml-1.5 w-full sm:w-64"
           placeholder="Pipeline name..."
         />
         {isBuiltin && (
@@ -251,7 +255,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
           </p>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div data-testid="pipeline-actions" className="flex flex-wrap items-center gap-2">
         <span className="relative inline-flex">
           <button
             type="button"
