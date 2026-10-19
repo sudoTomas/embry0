@@ -96,3 +96,15 @@ describe("RepoPreferencesSection base branch", () => {
     expect(screen.getByLabelText("Base branch")).toHaveValue("");
   });
 });
+
+describe("RepoPreferencesSection heading", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseRepoPreferences.mockReturnValue({ data: PREFS, isLoading: false });
+  });
+
+  it("heads the section in sentence case, like every other section title", () => {
+    renderSection();
+    expect(screen.getByRole("heading", { name: "Sandbox preferences" })).toBeInTheDocument();
+  });
+});
