@@ -159,6 +159,10 @@ RESERVED_ENV_PREFIXES: Final[tuple[str, ...]] = (
     # #425: GIT_CONFIG_GLOBAL/SYSTEM/COUNT/KEY_n/VALUE_n all override ~/.gitconfig,
     # where the sandbox's git proxy config lives.
     "GIT_CONFIG_",
+    # The OpenAI-compatible providers' key and base URL (docs/providers.md): a repo
+    # value would swap the account an agent bills, or send its whole conversation to
+    # another server. Namespaced so a repository's own OPENAI_API_KEY stays its own.
+    "EMBRY0_LLM_",
 )
 
 
