@@ -25,7 +25,7 @@ import { formatDate } from "@/lib/utils";
 
 const SCOPE_TONES: Record<ApiKey["scope"], BadgeTone> = {
   admin: "gold",
-  operate: "info",
+  operate: "neutral",
   merge: "warning",
   read: "neutral",
 };
@@ -249,29 +249,29 @@ export default function ApiKeysTab() {
 
       {keys.data && keys.data.length > 0 && (
         <div className="embry0-card overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-white/[0.06] text-left text-xs uppercase text-muted-foreground">
-                <th className="px-4 py-2.5">Name</th>
-                <th className="px-4 py-2.5">Key</th>
-                <th className="px-4 py-2.5">Scope</th>
-                <th className="px-4 py-2.5">Repositories</th>
-                {isAdmin && <th className="px-4 py-2.5">Owner</th>}
-                <th className="px-4 py-2.5">Last used</th>
-                <th className="px-4 py-2.5">Expires</th>
-                <th className="px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5 text-right">Actions</th>
+              <tr>
+                <th>Name</th>
+                <th>Key</th>
+                <th>Scope</th>
+                <th>Repositories</th>
+                {isAdmin && <th>Owner</th>}
+                <th>Last used</th>
+                <th>Expires</th>
+                <th>Status</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {keys.data.map((k) => (
-                <tr key={k.id} className="border-b border-white/[0.04]">
-                  <td className="px-4 py-2.5">{k.name}</td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{k.prefix}…</td>
-                  <td className="px-4 py-2.5">
+                <tr key={k.id}>
+                  <td>{k.name}</td>
+                  <td className="font-mono text-xs text-muted-foreground">{k.prefix}…</td>
+                  <td>
                     <Badge tone={SCOPE_TONES[k.scope]}>{k.scope}</Badge>
                   </td>
-                  <td className="px-4 py-2.5 text-xs" data-testid={`key-repos-${k.id}`}>
+                  <td className="text-xs" data-testid={`key-repos-${k.id}`}>
                     {k.allowed_repos ? (
                       <span className="font-mono">{k.allowed_repos.join(", ")}</span>
                     ) : (
@@ -279,25 +279,25 @@ export default function ApiKeysTab() {
                     )}
                   </td>
                   {isAdmin && (
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                      {k.service ? <Badge tone="neutral">service</Badge> : (k.user_id ?? "—")}
+                    <td className="text-xs text-muted-foreground">
+                      {k.service ? <Badge tone="neutral">Service</Badge> : (k.user_id ?? "—")}
                     </td>
                   )}
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                  <td className="text-xs text-muted-foreground">
                     {k.last_used_at ? formatDate(k.last_used_at) : "never"}
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                  <td className="text-xs text-muted-foreground">
                     {k.expires_at ? formatDate(k.expires_at) : "—"}
                   </td>
-                  <td className="px-4 py-2.5">
-                    {k.revoked_at ? <Badge tone="error">revoked</Badge> : <Badge tone="success">active</Badge>}
+                  <td>
+                    {k.revoked_at ? <Badge tone="error">Revoked</Badge> : <Badge tone="success">Active</Badge>}
                   </td>
-                  <td className="px-4 py-2.5">
+                  <td>
                     <div className="flex justify-end">
                       {!k.revoked_at && (
                         <Button
                           variant="ghost"
-                          size="sm"
+                          size="xs"
                           title="Change the repositories this key may start work on"
                           disabled={reposMut.isPending}
                           onClick={() => {
@@ -316,7 +316,7 @@ export default function ApiKeysTab() {
                       {!k.revoked_at && (
                         <Button
                           variant="ghost"
-                          size="sm"
+                          size="xs"
                           title="Revoke this key"
                           disabled={revokeMut.isPending}
                           onClick={() => {

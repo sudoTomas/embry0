@@ -8,11 +8,12 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
+import { statusLabel } from "@/lib/status";
 import { formatDate } from "@/lib/utils";
 
 const TIER_TONES: Record<AdminUser["tier"], BadgeTone> = {
   admin: "gold",
-  operator: "info",
+  operator: "neutral",
   none: "neutral",
 };
 
@@ -52,7 +53,7 @@ export function UsersAdminPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <UsersRound size={18} className="text-primary" />
-          <h1 className="font-display text-lg font-semibold">Users</h1>
+          <h1 className="text-xl font-bold">Users</h1>
           {users.data && (
             <span className="text-sm text-muted-foreground">{users.data.total}</span>
           )}
@@ -73,39 +74,41 @@ export function UsersAdminPage() {
 
       {users.data && users.data.users.length > 0 && (
         <div className="embry0-card overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-white/[0.06] text-left text-xs uppercase text-muted-foreground">
-                <th className="px-4 py-2.5">User</th>
-                <th className="px-4 py-2.5">Tier</th>
-                <th className="px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5">Logins</th>
-                <th className="px-4 py-2.5">Last login</th>
-                <th className="px-4 py-2.5 text-right">Actions</th>
+              <tr>
+                <th>User</th>
+                <th className="hidden sm:table-cell">Tier</th>
+                <th>Status</th>
+                <th className="hidden sm:table-cell">Logins</th>
+                <th className="hidden sm:table-cell">Last login</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {users.data.users.map((u) => (
-                <tr key={u.id} className="border-b border-white/[0.04]">
-                  <td className="px-4 py-2.5">
-                    <div className="text-foreground">{u.email}</div>
-                    {u.name && <div className="text-xs text-muted-foreground">{u.name}</div>}
+                <tr key={u.id}>
+                  {/* Below sm the email truncates and tier, logins and last
+                      login step aside, so status and the actions stay in view. */}
+                  <td className="w-full max-w-0 sm:w-auto sm:max-w-none">
+                    <div className="truncate text-foreground" title={u.email}>{u.email}</div>
+                    {u.name && <div className="truncate text-xs text-muted-foreground">{u.name}</div>}
                   </td>
-                  <td className="px-4 py-2.5">
-                    <Badge tone={TIER_TONES[u.tier]}>{u.tier}</Badge>
+                  <td className="hidden sm:table-cell">
+                    <Badge tone={TIER_TONES[u.tier]}>{statusLabel(u.tier)}</Badge>
                   </td>
-                  <td className="px-4 py-2.5">
-                    {u.disabled ? <Badge tone="error">disabled</Badge> : <Badge tone="success">active</Badge>}
+                  <td>
+                    {u.disabled ? <Badge tone="error">Disabled</Badge> : <Badge tone="success">Active</Badge>}
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-xs">{u.login_count}</td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                  <td className="hidden font-mono text-xs sm:table-cell">{u.login_count}</td>
+                  <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">
                     {u.last_login_at ? formatDate(u.last_login_at) : "—"}
                   </td>
-                  <td className="px-4 py-2.5">
+                  <td>
                     <div className="flex items-center justify-end gap-1.5">
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="xs"
                         title="Sign this user out of every session"
                         disabled={logoutMut.isPending}
                         onClick={() => {
@@ -118,7 +121,7 @@ export function UsersAdminPage() {
                       </Button>
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="xs"
                         title={u.disabled ? "Re-enable access" : "Disable access (regardless of Auth0 role)"}
                         disabled={disableMut.isPending}
                         onClick={() => {

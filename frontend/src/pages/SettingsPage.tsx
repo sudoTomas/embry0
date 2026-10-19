@@ -6,8 +6,8 @@ import ApiKeysTab from "./settings/ApiKeysTab";
 
 export function SettingsPage() {
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
-      <h1 className="text-3xl font-bold">Settings</h1>
+    <div className="space-y-6 max-w-5xl">
+      <h1 className="text-xl font-bold">Settings</h1>
       <Tabs defaultValue="general">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>

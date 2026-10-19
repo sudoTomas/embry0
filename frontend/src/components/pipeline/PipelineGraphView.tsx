@@ -24,19 +24,18 @@ function LiveAgentNode({ data }: NodeProps) {
   const opacity = state === "pending" ? 0.4 : state === "completed" ? 0.8 : state === "failed" ? 0.7 : 1;
   const borderColor =
     state === "failed"
-      ? "#ef4444"
+      ? "var(--color-red)"
       : state === "running"
         ? color
         : state === "completed"
           ? `${color}90`
           : "rgba(255,255,255,0.15)";
-  const glow = state === "running" ? `0 0 24px ${color}40, 0 0 8px ${color}20` : undefined;
   const runningClass = state === "running" ? "animate-pulse-glow" : "";
 
   return (
     <div
-      className={`rounded-lg border-2 px-3 py-2.5 min-w-[150px] bg-[#1a1d2e] ${runningClass}`}
-      style={{ borderColor, opacity, boxShadow: glow }}
+      className={`rounded-lg border-2 px-3 py-2.5 min-w-[150px] bg-overlay ${runningClass}`}
+      style={{ borderColor, opacity }}
     >
       <div className="flex justify-between items-center">
         <div>
@@ -46,7 +45,7 @@ function LiveAgentNode({ data }: NodeProps) {
           >
             {category}
           </div>
-          <div className="text-[13px] font-semibold text-slate-200 mt-0.5">
+          <div className="text-[13px] font-semibold text-fg mt-0.5">
             {label}
           </div>
         </div>
@@ -55,10 +54,10 @@ function LiveAgentNode({ data }: NodeProps) {
             <span className="animate-spin inline-block text-amber-400">&#x27F3;</span>
           )}
           {state === "completed" && (
-            <span className="text-green-400">&#x2713;</span>
+            <span className="text-success">&#x2713;</span>
           )}
           {state === "failed" && (
-            <span className="text-red-400">&#x2717;</span>
+            <span className="text-destructive">&#x2717;</span>
           )}
         </div>
       </div>
@@ -160,7 +159,7 @@ function PipelineGraphViewInner({
   }
 
   return (
-    <div className="h-[40vh] w-full rounded-lg overflow-hidden bg-[#0f1120]">
+    <div className="h-[40vh] w-full rounded-lg overflow-hidden bg-page">
       <ReactFlow
         nodes={nodes}
         edges={edges}

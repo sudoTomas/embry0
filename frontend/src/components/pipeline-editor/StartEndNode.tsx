@@ -34,7 +34,7 @@ export function StartEndNode({ data, selected }: NodeProps) {
           <Handle
             type="target"
             position={Position.Left}
-            className="!w-2 !h-2 !bg-[#0f1419]"
+            className="!w-2 !h-2 !bg-surface"
             style={{ border: "2px solid #d4af37", top: "50%" }}
           />
         )}
@@ -73,7 +73,7 @@ export function StartEndNode({ data, selected }: NodeProps) {
           <Handle
             type="source"
             position={Position.Right}
-            className="!w-2 !h-2 !bg-[#0f1419]"
+            className="!w-2 !h-2 !bg-surface"
             style={{ border: "2px solid #d4af37", top: "50%" }}
           />
         )}

@@ -47,13 +47,13 @@ export function TracesTable({
         {/* Filters */}
         <div className="flex items-center gap-3 border-b border-border px-4 py-3">
           <FilterSelect
-            label="Agent"
+            label="Agents"
             value={filters.agent_type}
             options={agentOptions}
             onChange={(agent_type) => onFilterChange({ ...filters, agent_type })}
           />
           <FilterSelect
-            label="Result"
+            label="Results"
             value={filters.result}
             options={["success", "error", "running"]}
             onChange={(result) => onFilterChange({ ...filters, result })}
@@ -62,19 +62,19 @@ export function TracesTable({
 
         {/* Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-border text-muted-foreground">
-                <th scope="col" className="w-8 px-2 py-3" />
-                <th scope="col" className="text-left px-4 py-3">Trace</th>
-                <th scope="col" className="text-left px-4 py-3">Agent</th>
-                <th scope="col" className="text-left px-4 py-3">Model</th>
-                <th scope="col" className="text-left px-4 py-3">Result</th>
-                <th scope="col" className="text-right px-4 py-3">Cost</th>
-                <th scope="col" className="text-right px-4 py-3">Tokens</th>
-                <th scope="col" className="text-right px-4 py-3">Duration</th>
-                <th scope="col" className="text-right px-4 py-3">Tools</th>
-                <th scope="col" className="text-right px-4 py-3">Timestamp</th>
+              <tr>
+                <th scope="col" className="w-8" />
+                <th scope="col">Trace</th>
+                <th scope="col">Agent</th>
+                <th scope="col">Model</th>
+                <th scope="col">Result</th>
+                <th scope="col" className="text-right">Cost</th>
+                <th scope="col" className="text-right">Tokens</th>
+                <th scope="col" className="text-right">Duration</th>
+                <th scope="col" className="text-right">Tools</th>
+                <th scope="col" className="text-right">Timestamp</th>
               </tr>
             </thead>
             <tbody>
@@ -92,7 +92,7 @@ export function TracesTable({
               })}
               {traces.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={10} className="py-8 text-center text-muted-foreground">
                     No traces found
                   </td>
                 </tr>
@@ -142,35 +142,35 @@ function TraceRow({
         aria-label={`View trace ${trace.trace_id}`}
         aria-expanded={isSelected}
       >
-        <td className="px-2 py-3 text-muted-foreground">
+        <td className="text-muted-foreground">
           <ChevronDown
             className={`h-4 w-4 transition-transform ${isSelected ? "rotate-0" : "-rotate-90"}`}
           />
         </td>
-        <td className="px-4 py-3 font-mono text-xs" title={trace.trace_id}>
+        <td className="font-mono text-xs" title={trace.trace_id}>
           {trace.trace_id.length > 20 ? `${trace.trace_id.slice(0, 20)}...` : trace.trace_id}
         </td>
-        <td className="px-4 py-3 capitalize">{trace.agent_type}</td>
-        <td className="px-4 py-3 font-mono text-xs">{trace.model}</td>
-        <td className={`px-4 py-3 capitalize ${RESULT_COLORS[trace.result] ?? ""}`}>
+        <td className="capitalize">{trace.agent_type}</td>
+        <td className="font-mono text-xs">{trace.model}</td>
+        <td className={`capitalize ${RESULT_COLORS[trace.result] ?? ""}`}>
           {trace.result}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums">
+        <td className="text-right tabular-nums">
           {trace.cost_usd != null ? formatCost(trace.cost_usd) : "\u2014"}
         </td>
         <td
-          className="px-4 py-3 text-right tabular-nums"
+          className="text-right tabular-nums"
           title={`in ${trace.input_tokens ?? 0} / out ${trace.output_tokens ?? 0} / cache read ${trace.cache_read_tokens ?? 0}`}
         >
           {(trace.input_tokens ?? 0) + (trace.output_tokens ?? 0) > 0
             ? `${formatTokens(trace.input_tokens)} / ${formatTokens(trace.output_tokens)}`
             : "\u2014"}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums">
+        <td className="text-right tabular-nums">
           {durationSeconds != null ? `${durationSeconds.toFixed(1)}s` : "\u2014"}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums">{toolCount || "\u2014"}</td>
-        <td className="px-4 py-3 text-right text-muted-foreground">
+        <td className="text-right tabular-nums">{toolCount || "\u2014"}</td>
+        <td className="text-right text-muted-foreground">
           {formatDate(trace.created_at)}
         </td>
       </tr>

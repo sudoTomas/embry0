@@ -6,7 +6,7 @@ function Skeleton({ className }: { className?: string }) {
 
 export function StatCardSkeleton() {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-[#111318] p-5">
+    <div className="rounded-lg border border-border bg-surface p-4">
       <Skeleton className="h-3 w-24 mb-3" />
       <Skeleton className="h-8 w-16" />
     </div>

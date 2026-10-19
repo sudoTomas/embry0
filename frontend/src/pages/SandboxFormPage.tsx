@@ -220,7 +220,7 @@ export function SandboxFormPage() {
             <OperationGlyph operation="ferment" size={36} titled />
           </span>
           <div className="flex flex-col">
-            <h1 className="text-2xl font-bold leading-tight">
+            <h1 className="text-xl font-bold leading-tight">
               {isEditMode ? `Edit "${name}"` : "New Sandbox Profile"}
             </h1>
             <span className="text-[10px] uppercase tracking-[0.18em] text-primary/65 font-mono mt-0.5">
@@ -252,10 +252,10 @@ export function SandboxFormPage() {
 
       {/* Builtin notice */}
       {isBuiltin && (
-        <div className="flex items-start gap-2.5 px-4 py-3 rounded-md bg-cyan-500/[0.06] border border-cyan-500/20 text-sm text-cyan-100/80">
-          <Info className="w-4 h-4 mt-0.5 shrink-0 text-cyan-300" />
+        <div className="flex items-start gap-2.5 px-4 py-3 rounded-md bg-overlay border border-border text-sm text-fg-secondary">
+          <Info className="w-4 h-4 mt-0.5 shrink-0 text-fg-muted" />
           <div>
-            This is a builtin profile. Its fields are read-only here. To revert
+            This is a built-in profile. Its fields are read-only here. To revert
             any local changes that drift from the built-in defaults, use{" "}
             <span className="font-semibold">Reset to Default</span>.
           </div>
@@ -419,7 +419,7 @@ export function SandboxFormPage() {
               checked={form.dind_enabled}
               onChange={(e) => setField("dind_enabled", e.target.checked)}
               disabled={isBuiltin}
-              className="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-cyan-500 focus:ring-cyan-500/50 disabled:opacity-50"
+              className="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-primary focus:ring-ring disabled:opacity-50"
             />
             <div>
               <Label htmlFor="dind_enabled" className="cursor-pointer">DinD enabled</Label>
@@ -439,7 +439,7 @@ export function SandboxFormPage() {
               checked={form.extra_networks.includes(INTERNET_NETWORK)}
               onChange={(e) => setField("extra_networks", e.target.checked ? [INTERNET_NETWORK] : [])}
               disabled={isBuiltin}
-              className="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-cyan-500 focus:ring-cyan-500/50 disabled:opacity-50"
+              className="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 text-primary focus:ring-ring disabled:opacity-50"
             />
             <div>
               <Label htmlFor="internet_egress" className="cursor-pointer">Internet egress (sandbox-internet)</Label>
@@ -485,7 +485,7 @@ export function SandboxFormPage() {
               Non-secret env vars set by the profile. Stored as a JSON object of string values.
             </p>
             {!envDefaultsValid && (
-              <p className="text-xs text-red-400 mt-1">
+              <p className="text-xs text-destructive mt-1">
                 Invalid JSON — must be a flat object of string values, e.g. {`{"KEY": "value"}`}.
               </p>
             )}
@@ -507,7 +507,7 @@ export function SandboxFormPage() {
               externally deployed app by its vhost name. The "dind" alias is reserved.
             </p>
             {!extraHostsValid && (
-              <p className="text-xs text-red-400 mt-1">
+              <p className="text-xs text-destructive mt-1">
                 Invalid JSON — must be a flat object mapping hostnames to IP strings.
               </p>
             )}

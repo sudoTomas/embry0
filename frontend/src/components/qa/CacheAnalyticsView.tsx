@@ -56,7 +56,7 @@ function HitRatioBar({ stats }: { stats: CacheLayerStats }) {
         aria-valuemax={100}
       >
         <div
-          className="h-full rounded-full bg-emerald-500/70 transition-[width]"
+          className="h-full rounded-full bg-success/70 transition-[width]"
           style={{ width: `${widthPct}%` }}
         />
       </div>
@@ -80,7 +80,7 @@ export function CacheAnalyticsView({ repo, windowDays = 30 }: Props) {
   return (
     <div className="space-y-4 p-6" data-testid="cache-analytics-view">
       <header className="space-y-1">
-        <h1 className="text-2xl font-bold font-mono">{data.repo}</h1>
+        <h1 className="text-xl font-bold font-mono">{data.repo}</h1>
         <p className="text-sm text-white/60">
           Cache analytics · last {data.window_days} days · {data.total_runs} runs
           · {data.total_subtasks} sub-tasks
@@ -91,7 +91,7 @@ export function CacheAnalyticsView({ repo, windowDays = 30 }: Props) {
         className="space-y-3 rounded-md border bg-card p-4"
         data-testid="cache-layers-section"
       >
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
+        <h2 className="label-caps">
           Hit ratios
         </h2>
         {data.layers.map((layer) => (

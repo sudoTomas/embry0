@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { formatDate } from "@/lib/utils";
-import { ACTION_ICONS, ACTION_LABELS, formatDetails } from "@/lib/auditLabels";
+import { ACTION_ICONS, ACTION_LABELS, actionLabel, formatDetails } from "@/lib/auditLabels";
 
 const WINDOW_OPTIONS = [
   { hours: 0, label: "All time" },
@@ -56,7 +56,7 @@ export function AuditPage() {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <ScrollText size={18} className="text-primary" />
-        <h1 className="font-display text-lg font-semibold">Audit</h1>
+        <h1 className="text-xl font-bold">Audit</h1>
         {audit.data && <span className="text-sm text-muted-foreground">{audit.data.total}</span>}
       </div>
       <p className="text-sm text-muted-foreground">
@@ -77,6 +77,7 @@ export function AuditPage() {
                 label="Actions"
                 value={actionFilter}
                 options={Object.keys(ACTION_LABELS)}
+                optionLabel={actionLabel}
                 onChange={(v) => {
                   setActionFilter(v);
                   setOffset(0);
@@ -116,33 +117,33 @@ export function AuditPage() {
               />
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="data-table">
                   <thead>
-                    <tr className="border-b border-white/[0.06] text-left text-xs uppercase text-muted-foreground">
-                      <th className="px-4 py-2.5">Event</th>
-                      <th className="px-4 py-2.5">Actor</th>
-                      <th className="px-4 py-2.5">Issue</th>
-                      <th className="px-4 py-2.5 text-right">When</th>
+                    <tr>
+                      <th>Event</th>
+                      <th className="hidden sm:table-cell">Actor</th>
+                      <th className="hidden sm:table-cell">Issue</th>
+                      <th className="text-right">When</th>
                     </tr>
                   </thead>
                   <tbody>
                     {audit.data.entries.map((entry) => {
                       const detail = formatDetails(entry.action, entry.details);
                       return (
-                        <tr key={entry.id} className="border-b border-white/[0.04]">
-                          <td className="px-4 py-2.5">
+                        <tr key={entry.id}>
+                          <td>
                             <div className="flex items-baseline gap-1.5">
                               <span className="text-sm">{ACTION_ICONS[entry.action] ?? "●"}</span>
-                              <span className="font-medium text-white/80">
-                                {ACTION_LABELS[entry.action] ?? entry.action}
+                              <span className="whitespace-nowrap font-medium text-white/80">
+                                {actionLabel(entry.action)}
                               </span>
                               {detail && (
-                                <span className="text-xs font-mono text-muted-foreground">{detail}</span>
+                                <span className="hidden truncate text-xs font-mono text-muted-foreground sm:inline">{detail}</span>
                               )}
                             </div>
                           </td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{entry.actor}</td>
-                          <td className="px-4 py-2.5 font-mono text-xs">
+                          <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">{entry.actor}</td>
+                          <td className="hidden font-mono text-xs sm:table-cell">
                             {entry.issue_id ? (
                               <Link to={`/issues/${entry.issue_id}`} className="text-primary hover:underline">
                                 {entry.issue_id.slice(0, 12)}
@@ -151,7 +152,7 @@ export function AuditPage() {
                               "—"
                             )}
                           </td>
-                          <td className="px-4 py-2.5 text-right text-xs text-muted-foreground">
+                          <td className="whitespace-nowrap text-right text-xs text-muted-foreground">
                             {formatDate(entry.created_at)}
                           </td>
                         </tr>

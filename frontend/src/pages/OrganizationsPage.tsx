@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useCredentials } from "@/hooks/useCredentials";
 import { useOrganizations } from "@/hooks/useOrgs";
 import { ORG_WIZARD_PATH, credentialLabel } from "@/lib/orgs";
+import { statusLabel } from "@/lib/status";
 import { cn, formatDate } from "@/lib/utils";
 
 const STATUS_TONE: Record<Organization["status"], BadgeTone> = {
@@ -53,7 +54,7 @@ export function OrganizationsPage() {
     <div className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Organizations</h1>
+          <h1 className="text-xl font-bold">Organizations</h1>
           <p className="text-sm text-white/60">
             A GitHub organization or user, or a GitLab group, that embry0 looks after as a whole.
           </p>
@@ -72,40 +73,42 @@ export function OrganizationsPage() {
         </EmptyState>
       ) : (
         <div className={TABLE_BOX}>
-          <table className="w-full min-w-[820px] text-sm" data-testid="orgs-table">
+          {/* Below sm the forge, credential, access and discovery columns step
+              aside, so the owner, its repo count and its status fit a phone. */}
+          <table className="data-table sm:min-w-[820px]" data-testid="orgs-table">
             <thead>
-              <tr className="border-b border-white/[0.06]">
+              <tr>
                 <th scope="col" className={TH}>Owner</th>
-                <th scope="col" className={TH}>Forge</th>
-                <th scope="col" className={TH}>Credential</th>
-                <th scope="col" className={TH}>Access</th>
+                <th scope="col" className={cn(TH, "hidden sm:table-cell")}>Forge</th>
+                <th scope="col" className={cn(TH, "hidden sm:table-cell")}>Credential</th>
+                <th scope="col" className={cn(TH, "hidden sm:table-cell")}>Access</th>
                 <th scope="col" className={cn(TH, "text-right")}>Repos</th>
-                <th scope="col" className={TH}>Discovered</th>
+                <th scope="col" className={cn(TH, "hidden sm:table-cell")}>Discovered</th>
                 <th scope="col" className={TH}>Status</th>
               </tr>
             </thead>
             <tbody>
               {orgs.data.map((org) => (
-                <tr key={org.owner} className="border-b border-white/[0.04] last:border-0" data-testid="org-row">
+                <tr key={org.owner} data-testid="org-row">
                   <td className={TD}>
                     <Link to={`/orgs/${org.owner}`} className="font-medium hover:underline" data-testid="org-link">
                       {org.owner}
                     </Link>
                     {org.display_name && <div className="text-xs text-muted-foreground">{org.display_name}</div>}
                   </td>
-                  <td className={TD}>
+                  <td className={cn(TD, "hidden sm:table-cell")}>
                     <Badge tone="neutral">{org.forge === "gitlab" ? "GitLab" : "GitHub"}</Badge>
                   </td>
-                  <td className={cn(TD, "text-white/70")}>{credentialLabel(org, credentials.data)}</td>
-                  <td className={TD}>
+                  <td className={cn(TD, "hidden text-white/70 sm:table-cell")}>{credentialLabel(org, credentials.data)}</td>
+                  <td className={cn(TD, "hidden sm:table-cell")}>
                     <AccessChips access={org.access} />
                   </td>
                   <td className={cn(TD, "text-right font-mono")}>{org.repo_count ?? "-"}</td>
-                  <td className={cn(TD, "whitespace-nowrap text-white/60")}>
+                  <td className={cn(TD, "hidden whitespace-nowrap text-white/60 sm:table-cell")}>
                     {org.discovered_at ? formatDate(org.discovered_at) : "never"}
                   </td>
                   <td className={TD}>
-                    <Badge tone={STATUS_TONE[org.status] ?? "neutral"}>{org.status}</Badge>
+                    <Badge tone={STATUS_TONE[org.status] ?? "neutral"}>{statusLabel(org.status)}</Badge>
                   </td>
                 </tr>
               ))}

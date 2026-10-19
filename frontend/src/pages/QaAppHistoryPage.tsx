@@ -24,14 +24,14 @@ export function QaAppHistoryPage() {
   const passing = data.filter((h) => h.status === "passed").length;
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4">
       <Link
         to={`/qa/repos/${encodeURIComponent(repo)}`}
         className="text-sm text-white/50 hover:underline"
       >
         ← {repo}
       </Link>
-      <h1 className="text-2xl font-bold">{app}</h1>
+      <h1 className="text-xl font-bold">{app}</h1>
       <p className="text-sm text-white/60">
         Last {data.length} runs · {passing} passed · {data.length - passing} failed
       </p>
@@ -43,35 +43,35 @@ export function QaAppHistoryPage() {
         />
       ) : (
         <div className="overflow-hidden rounded-md border bg-card">
-          <table className="w-full text-sm">
-            <thead className="bg-card text-left text-xs uppercase text-white/40">
+          <table className="data-table">
+            <thead>
               <tr>
-                <th className="px-4 py-2">Run</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2">Duration</th>
-                <th className="px-4 py-2">When</th>
-                <th className="px-4 py-2">Failure</th>
+                <th>Run</th>
+                <th>Status</th>
+                <th>Duration</th>
+                <th>When</th>
+                <th>Failure</th>
               </tr>
             </thead>
             <tbody>
               {data.map((h) => (
-                <tr key={h.job_id} className="border-t border-white/5">
-                  <td className="px-4 py-2 font-mono">
+                <tr key={h.job_id}>
+                  <td className="font-mono">
                     <Link
                       to={`/qa/runs/${encodeURIComponent(h.job_id)}`}
-                      className="text-cyan-300 hover:underline"
+                      className="text-primary hover:underline"
                     >
                       {h.job_id}
                     </Link>
                   </td>
-                  <td className="px-4 py-2">
+                  <td>
                     <RunStatusBadge status={h.status} />
                   </td>
-                  <td className="px-4 py-2 text-white/70">{formatDuration(h.duration_ms)}</td>
-                  <td className="px-4 py-2 text-white/40">
+                  <td className="text-white/70">{formatDuration(h.duration_ms)}</td>
+                  <td className="text-white/40">
                     {new Date(h.started_at).toLocaleString()}
                   </td>
-                  <td className="px-4 py-2 text-destructive">
+                  <td className="text-destructive">
                     {h.failure_summary || ""}
                   </td>
                 </tr>

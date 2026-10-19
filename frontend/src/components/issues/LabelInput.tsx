@@ -32,7 +32,7 @@ export function LabelInput({ value, onChange, suggestions = [] }: LabelInputProp
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5">
         {value.map((label) => (
-          <span key={label} className="inline-flex items-center gap-1 rounded-md bg-zinc-700/50 px-2 py-0.5 text-xs text-zinc-300">
+          <span key={label} className="inline-flex items-center gap-1 rounded-md bg-overlay px-2 py-0.5 text-xs text-fg-secondary">
             {label}
             <button type="button" onClick={() => removeLabel(label)} className="hover:text-white"><X size={12} /></button>
           </span>

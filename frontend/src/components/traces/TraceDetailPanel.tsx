@@ -10,7 +10,7 @@ interface TraceDetailPanelProps {
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+    <h3 className="label-caps mb-2">
       {children}
     </h3>
   );
@@ -75,21 +75,21 @@ export function TraceDetailPanel({ trace, onClose }: TraceDetailPanelProps) {
               </SectionLabel>
               {toolEntries.length > 0 ? (
                 <div className="rounded-md border border-border bg-background overflow-hidden">
-                  <table className="w-full text-sm">
+                  <table className="data-table">
                     <thead>
-                      <tr className="border-b border-border text-xs text-muted-foreground">
-                        <th className="text-left px-3 py-1.5">Tool</th>
-                        <th className="text-right px-3 py-1.5">Calls</th>
+                      <tr>
+                        <th>Tool</th>
+                        <th className="text-right">Calls</th>
                       </tr>
                     </thead>
                     <tbody>
                       {toolEntries.map(([tool, count]) => (
                         <tr
                           key={tool}
-                          className="border-b border-border/50 last:border-b-0"
+                          className="last:border-b-0"
                         >
-                          <td className="px-3 py-1.5 font-mono text-xs">{tool}</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{count}</td>
+                          <td className="font-mono text-xs">{tool}</td>
+                          <td className="text-right tabular-nums">{count}</td>
                         </tr>
                       ))}
                     </tbody>

@@ -18,7 +18,7 @@ interface BoardColumnProps {
 }
 
 /**
- * One board lane. Lowercase label + count pill (dimming at zero), tinted per
+ * One board lane. Sentence-case label + count pill (dimming at zero), tinted per
  * the lane config (Needs You amber, Done success — the Speculum lane-tint
  * idiom in embry0's own tokens). Renders skeleton cards on first load and a
  * quiet dashed placeholder when empty, so the actionable Needs You lane
@@ -29,7 +29,7 @@ export function BoardColumn({ column, count, isLoading = false, children }: Boar
   return (
     <div className="flex min-w-0 flex-col gap-2" data-testid={`board-column-${column.id}`}>
       <div className="flex items-center gap-2 px-1">
-        <span className={cn("text-xs font-semibold lowercase tracking-wide", tint.label)}>
+        <span className={cn("text-xs font-semibold tracking-wide", tint.label)}>
           {column.label}
         </span>
         <span
@@ -54,7 +54,7 @@ export function BoardColumn({ column, count, isLoading = false, children }: Boar
             data-testid="empty-lane"
             className="rounded-lg border border-dashed border-white/[0.06] py-6 text-center text-xs text-white/20"
           >
-            empty
+            Empty
           </div>
         ) : (
           children

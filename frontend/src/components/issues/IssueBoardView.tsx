@@ -64,9 +64,9 @@ export function IssueBoardView({ issues, onStatusChange }: IssueBoardViewProps) 
         return (
           <div
             key={status}
-            className={`rounded-xl border flex flex-col min-h-[200px] transition-colors ${
+            className={`rounded-lg border flex flex-col min-h-[200px] transition-colors ${
               isOver
-                ? "border-cyan-500/50 bg-cyan-500/[0.05]"
+                ? "border-primary/50 bg-primary-dim"
                 : "bg-card/50 border-white/[0.05]"
             }`}
             onDragOver={(e) => handleDragOver(e, status)}

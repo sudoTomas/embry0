@@ -6,12 +6,12 @@ import { answerInput } from "@/api/inputs";
 import type { JobInput, JobResponse } from "@/lib/types";
 import { ConsoleCardShell } from "./ConsoleCardShell";
 
-/** AwaitingInputCard's amber-glow treatment, reused verbatim so the board's
- * actionable cards read the same as the JobDetailPage banner. */
+/** AwaitingInputCard's amber treatment, reused verbatim so the board's
+ * actionable cards read the same as the JobDetailPage banner: the surface with
+ * an amber border, no glow. */
 const AMBER_GLOW = {
-  background: "linear-gradient(135deg, rgba(245,158,11,0.05), rgba(9,9,11,0.98))",
-  border: "1px solid rgba(245,158,11,0.2)",
-  boxShadow: "0 0 20px rgba(245,158,11,0.05)",
+  background: "var(--color-surface)",
+  border: "1px solid color-mix(in srgb, var(--color-amber) 35%, transparent)",
 } as const;
 
 interface NeedsYouCardProps {

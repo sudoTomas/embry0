@@ -1,7 +1,10 @@
 // Shared audit-event presentation maps (RAV-1056 Phase C) — lifted from
 // IssueActivityFeed and extended with the global-audit event vocabulary.
 // Backend event names span two conventions (dotted `issue.*`/`user.*` vs
-// snake `*_config_updated`); unknown actions fall back to the raw string.
+// snake `*_config_updated`); unknown actions fall back to sentence case
+// (`actionLabel`), never the raw string.
+
+import { sentenceCase } from "./status";
 
 export const ACTION_ICONS: Record<string, string> = {
   "issue.created": "✦",
@@ -27,6 +30,8 @@ export const ACTION_ICONS: Record<string, string> = {
   context_config_updated: "⚙",
   context_config_deleted: "✕",
   provider_config_tested: "⚙",
+  watcher_stack_updated: "⚙",
+  watcher_stack_deleted: "✕",
 };
 
 export const ACTION_LABELS: Record<string, string> = {
@@ -53,7 +58,15 @@ export const ACTION_LABELS: Record<string, string> = {
   context_config_updated: "Context updated",
   context_config_deleted: "Context deleted",
   provider_config_tested: "Provider tested",
+  watcher_stack_updated: "Watcher stack updated",
+  watcher_stack_deleted: "Watcher stack deleted",
 };
+
+/** The words for an audit action; an action this map does not know yet reads
+ * in sentence case rather than as its identifier. */
+export function actionLabel(action: string): string {
+  return ACTION_LABELS[action] ?? sentenceCase(action);
+}
 
 export function formatDetails(action: string, details: Record<string, unknown>): string {
   if (action === "issue.status_changed") {

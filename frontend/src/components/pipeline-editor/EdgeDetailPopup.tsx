@@ -89,9 +89,9 @@ export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProp
         {/* Card */}
         <div
           className={cn(
-            "edge-detail-popup-card w-[400px] rounded-2xl bg-[#0f1419] overflow-y-auto",
+            "edge-detail-popup-card w-[400px] rounded-lg bg-surface overflow-y-auto",
             isFeedback
-              ? "border border-red-400/20"
+              ? "border border-destructive/20"
               : "border border-white/[0.08]",
           )}
           style={{
@@ -108,7 +108,7 @@ export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProp
                 className={cn(
                   "inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider",
                   isFeedback
-                    ? "bg-red-500/10 text-red-400/80 border border-red-500/20"
+                    ? "bg-destructive/10 text-destructive/80 border border-destructive/20"
                     : "bg-white/[0.06] text-white/40 border border-white/[0.08]",
                 )}
               >

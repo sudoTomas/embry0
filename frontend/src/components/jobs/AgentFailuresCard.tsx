@@ -19,9 +19,9 @@ export function AgentFailuresCard({ failures }: { failures?: AgentFailure[] | nu
         {failures.map((f) => (
           <div key={f.trace_id} data-testid="agent-failure">
             <div className="text-xs text-white/60">
-              <span className="font-medium">{f.agent_type}</span>
+              <span className="font-mono">{f.agent_type}</span>
               {f.error_code && (
-                <span className="ml-2 font-mono text-red-300/70">{f.error_code}</span>
+                <span className="ml-2 font-mono text-destructive/70">{f.error_code}</span>
               )}
             </div>
             {f.result_summary && (

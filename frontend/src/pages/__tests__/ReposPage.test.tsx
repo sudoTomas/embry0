@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -101,6 +101,19 @@ describe("ReposPage (RAV-1301)", () => {
     expect(labels).toContain("octo/no-push (public, GITHUB_TOKEN, push?)");
   });
 
+  it("lays the registry out as a table with a head row, like every record list", async () => {
+    renderPage();
+    const list = await screen.findByTestId("registered-repos-list");
+    const heads = within(list).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(heads).toEqual(["Repository", "Forge", "QA config", "Actions"]);
+    const row = within(list).getByTestId("registered-repo-row");
+    expect(row.tagName).toBe("TR");
+    expect(within(row).getByRole("link", { name: "Config" })).toHaveAttribute(
+      "href",
+      "/qa/repos/acme%2Fregistered/config",
+    );
+  });
+
   it("points to Organizations in one line", async () => {
     renderPage();
     const pointer = await screen.findByTestId("repos-orgs-pointer");
@@ -156,7 +169,7 @@ describe("ReposPage (RAV-1301)", () => {
     renderPage();
     fireEvent.click(await screen.findByTestId("add-repo-manual-toggle"));
     const input = screen.getByTestId("add-repo-manual-input");
-    expect(screen.getByText(/unverified/)).toBeInTheDocument();
+    expect(screen.getByText(/Unverified/)).toBeInTheDocument();
 
     fireEvent.change(input, { target: { value: "not-a-repo" } });
     expect(screen.getByTestId("add-repo-register")).toBeDisabled();

@@ -1,26 +1,41 @@
 import { cn } from "@/lib/utils";
 
+/** A tile that is a status takes that status's colour on its border and value. */
+export type TileTone = "neutral" | "running" | "attention" | "good" | "bad";
+
 interface VitalsTileProps {
   label: string;
   value: string;
+  /** A second, smaller fact under the label ("7 queued"). */
+  detail?: string;
   trend?: string;
+  tone?: TileTone;
   className?: string;
 }
 
-export function VitalsTile({ label, value, trend, className }: VitalsTileProps) {
+const TONE: Record<TileTone, { border: string; value: string }> = {
+  neutral: { border: "border-border", value: "text-fg" },
+  running: { border: "border-info/40", value: "text-info" },
+  attention: { border: "border-warning/40", value: "text-warning" },
+  good: { border: "border-success/40", value: "text-success" },
+  bad: { border: "border-destructive/40", value: "text-destructive" },
+};
+
+/** The family stat tile: the value on top, the label under it, sentence case. */
+export function VitalsTile({ label, value, detail, trend, tone = "neutral", className }: VitalsTileProps) {
   return (
     <div
       className={cn(
-        "rounded-lg border border-border bg-card px-4 py-3",
+        "h-full rounded-lg border bg-card px-3.5 py-2.5",
+        TONE[tone].border,
         className,
       )}
     >
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-1 font-display text-2xl font-semibold text-foreground">
+      <p className={cn("truncate font-display text-tile font-bold tracking-tight tabular-nums", TONE[tone].value)}>
         {value}
       </p>
+      <p className="mt-1 truncate text-xs text-fg-muted">{label}</p>
+      {detail && <p className="truncate text-xs text-fg-secondary">{detail}</p>}
       {trend !== undefined && (
         <p
           data-slot="trend"

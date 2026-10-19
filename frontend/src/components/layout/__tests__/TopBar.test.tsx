@@ -1,65 +1,43 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { describe, it, expect, beforeEach } from "vitest";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { TopBar } from "../TopBar";
+import { useAuthStore } from "@/stores/authStore";
 
-vi.mock("@/components/divine/Embry0Mark", () => ({
-  Embry0Mark: () => <span data-testid="mark">embry0</span>,
-}));
-
-function renderAt(path: string) {
+function renderBar() {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <MemoryRouter>
       <TopBar />
     </MemoryRouter>,
   );
 }
 
-function breadcrumb() {
-  return within(screen.getByRole("navigation", { name: "Breadcrumb" }));
-}
+beforeEach(() => {
+  useAuthStore.setState({ authMode: null, user: null });
+});
 
-describe("TopBar breadcrumbs (RAV-1058 IA sweep)", () => {
-  it("labels the root as Overview, matching the sidebar", () => {
-    renderAt("/");
-    expect(breadcrumb().getByText("Overview")).toBeInTheDocument();
-    expect(breadcrumb().queryByText("Dashboard")).toBeNull();
+describe("TopBar — the family header", () => {
+  it("carries the lockup and the tagline, and no breadcrumb", () => {
+    renderBar();
+    expect(screen.getByRole("img", { name: "embry0" })).toBeInTheDocument();
+    expect(screen.getByText("Software that is alive")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
   });
 
-  it("labels /admin/audit as Admin / Audit", () => {
-    renderAt("/admin/audit");
-    expect(breadcrumb().getByText("Admin")).toBeInTheDocument();
-    expect(breadcrumb().getByText("Audit")).toBeInTheDocument();
+  it("shows the signed-in identity and a sign-out control for an SSO session", () => {
+    useAuthStore.setState({
+      authMode: "session",
+      user: { email: "operator@example.com", name: "Operator", tier: "operator" },
+    });
+    renderBar();
+    expect(screen.getByText("operator@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
   });
 
-  it("labels /repos/onboard as Repos / Onboard", () => {
-    renderAt("/repos/onboard");
-    expect(breadcrumb().getByText("Repos")).toBeInTheDocument();
-    expect(breadcrumb().getByText("Onboard")).toBeInTheDocument();
-  });
-
-  it("labels /credentials as Credentials, not the app name", () => {
-    renderAt("/credentials");
-    expect(breadcrumb().getByText("Credentials")).toBeInTheDocument();
-    expect(breadcrumb().queryByText("embry0", { selector: "span:not([data-testid])" })).toBeNull();
-  });
-
-  it("labels the wizard at /orgs/-/new as Organizations, matching the sidebar", () => {
-    renderAt("/orgs/-/new");
-    expect(breadcrumb().getByText("Organizations")).toBeInTheDocument();
-    // "-" marks an app route, not a name, so the crumb skips it.
-    expect(breadcrumb().getByText("new")).toBeInTheDocument();
-    expect(breadcrumb().queryByText("-")).toBeNull();
-  });
-
-  it("labels /providers as LLM Providers, matching the sidebar", () => {
-    renderAt("/providers");
-    expect(breadcrumb().getByText("LLM Providers")).toBeInTheDocument();
-  });
-
-  it("keeps dynamic second segments raw", () => {
-    renderAt("/jobs/job-abc123");
-    expect(breadcrumb().getByText("Jobs")).toBeInTheDocument();
-    expect(breadcrumb().getByText("job-abc123")).toBeInTheDocument();
+  it("says the session runs on an API key when there is no SSO identity", () => {
+    useAuthStore.setState({ authMode: "key", user: null });
+    renderBar();
+    expect(screen.getByText("API key")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
   });
 });

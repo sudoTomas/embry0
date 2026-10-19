@@ -46,11 +46,11 @@ export function TagInput({ value, onChange, placeholder = "Add...", suggestions,
 
   return (
     <div className={cn("relative", className, disabled && "opacity-60")}>
-      <div className="flex flex-wrap gap-1.5 rounded-md border border-white/[0.08] bg-[#0c1015] px-2 py-1.5 min-h-[36px]">
+      <div className="flex flex-wrap gap-1.5 rounded-md border border-border bg-overlay px-2 py-1.5 min-h-[36px]">
         {value.map((tag, i) => (
           <span
             key={tag}
-            className="inline-flex items-center gap-1 rounded bg-white/[0.06] px-2 py-0.5 text-xs text-white/80"
+            className="inline-flex items-center gap-1 rounded bg-white/[0.06] px-2 py-0.5 text-xs text-fg"
           >
             {tag}
             {!disabled && (
@@ -68,18 +68,18 @@ export function TagInput({ value, onChange, placeholder = "Add...", suggestions,
           onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
           placeholder={value.length === 0 ? placeholder : ""}
           disabled={disabled}
-          className="flex-1 min-w-[80px] bg-transparent text-sm outline-none text-white/80 placeholder:text-white/30 disabled:cursor-not-allowed"
+          className="flex-1 min-w-[80px] bg-transparent text-sm outline-none text-fg placeholder:text-fg-muted disabled:cursor-not-allowed"
         />
       </div>
       {!disabled && showSuggestions && filtered && filtered.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full rounded-md border border-white/[0.08] bg-[#0c1015] py-1 shadow-lg max-h-40 overflow-auto">
+        <div className="absolute z-50 mt-1 w-full rounded-md border border-border bg-overlay py-1 shadow-lg max-h-40 overflow-auto">
           {filtered.map((s) => (
             <button
               key={s}
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => addTag(s)}
-              className="w-full px-3 py-1.5 text-left text-sm text-white/70 hover:bg-white/[0.04] hover:text-white"
+              className="w-full px-3 py-1.5 text-left text-sm text-fg-secondary hover:bg-white/[0.06] hover:text-fg"
             >
               {s}
             </button>

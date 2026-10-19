@@ -18,7 +18,7 @@ export function MaskedSecretInput({ isSet, maskedValue, onChange, placeholder }:
   if (!editing && isSet) {
     return (
       <div className="flex items-center gap-2">
-        <span className="text-sm text-white/50 font-mono">{maskedValue || "••••••••"}</span>
+        <span className="text-sm text-fg-muted font-mono">{maskedValue || "••••••••"}</span>
         <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
           <Pencil className="w-3.5 h-3.5" />
           Change
@@ -40,7 +40,7 @@ export function MaskedSecretInput({ isSet, maskedValue, onChange, placeholder }:
         <button
           type="button"
           onClick={() => setVisible(!visible)}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/60"
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-muted hover:text-fg"
         >
           {visible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
         </button>

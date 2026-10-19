@@ -21,8 +21,8 @@ export function IconBox({ icon: Icon, color, size = "md", className }: IconBoxPr
     <div
       className={cn("flex items-center justify-center shrink-0", sizeClasses[size].box, className)}
       style={{
-        backgroundColor: `${color}18`,
-        border: `1px solid ${color}40`,
+        backgroundColor: `color-mix(in srgb, ${color} 10%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`,
         color,
       }}
     >

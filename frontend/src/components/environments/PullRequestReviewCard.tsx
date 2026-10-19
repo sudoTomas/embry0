@@ -97,7 +97,7 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
 
       {isLoading && <p className="text-xs text-muted-foreground">Loading review settings…</p>}
       {isError && (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-destructive">
           This repository's review settings could not be loaded, so they cannot be changed here. Reload the page to
           try again.
         </p>
@@ -113,7 +113,7 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
           onClick={() => update({ enabled: !settings.enabled })}
           className={cn(
             "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-ring",
-            settings.enabled ? "bg-cyan-500" : "bg-white/20",
+            settings.enabled ? "bg-primary" : "bg-white/20",
             "disabled:cursor-not-allowed disabled:opacity-50",
           )}
         >

@@ -20,6 +20,7 @@ import { updateIssueNotificationChannels } from "@/api/issues";
 import { useIssue, useIssueActivity, useTriageIssue, useSyncIssue, useDeleteIssue, useUpdateIssue } from "@/hooks/useIssues";
 import { formatDate } from "@/lib/utils";
 import { formatCost } from "@/lib/utils";
+import { statusLabel } from "@/lib/status";
 import type { NotificationChannel } from "@/lib/types";
 
 const NOTIFICATION_CHANNELS = ["dashboard", "telegram", "github", "linear", "gitlab", "slack"] as NotificationChannel[];
@@ -121,7 +122,7 @@ export function IssueDetailPage(): JSX.Element {
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold truncate leading-tight">{issue.title}</h1>
+            <h1 className="text-xl font-bold truncate leading-tight">{issue.title}</h1>
             {issue.active_agent && <AgentIndicator agentType={issue.active_agent} size="md" />}
           </div>
           <div className="flex items-center gap-2 mt-0.5">
@@ -272,7 +273,7 @@ export function IssueDetailPage(): JSX.Element {
                         aria-label={`View job: ${jobId}`}
                       >
                         <span className="text-xs font-mono text-muted-foreground shrink-0">{jobId}</span>
-                        <span className="text-xs text-white/60 capitalize">{status.replace("_", " ")}</span>
+                        <span className="text-xs text-white/60">{statusLabel(status)}</span>
                         {cost !== null && (
                           <span className="text-xs text-muted-foreground">{formatCost(cost)}</span>
                         )}

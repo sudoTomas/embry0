@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
@@ -79,22 +80,22 @@ describe("AgentsPage provider column", () => {
     renderPage();
     const row = rowOf("developer");
     expect(within(row).getByText("anthropic")).toBeInTheDocument();
-    expect(within(row).getByText("ready")).toBeInTheDocument();
-    expect(within(row).queryByText("not ready")).not.toBeInTheDocument();
+    expect(within(row).getByText("Ready")).toBeInTheDocument();
+    expect(within(row).queryByText("Not ready")).not.toBeInTheDocument();
   });
 
   it("marks a provider without a credential as not ready", () => {
     renderPage();
     const row = rowOf("grok-dev");
     expect(within(row).getByText("xai")).toBeInTheDocument();
-    expect(within(row).getByText("not ready")).toBeInTheDocument();
+    expect(within(row).getByText("Not ready")).toBeInTheDocument();
   });
 
   it("shows no provider for a model nothing serves", () => {
     renderPage();
     const row = rowOf("mystery");
     expect(within(row).getByText("none")).toBeInTheDocument();
-    expect(within(row).getByText("not ready")).toBeInTheDocument();
+    expect(within(row).getByText("Not ready")).toBeInTheDocument();
   });
 
   it("shows no readiness badge when the backend sends none", () => {
@@ -105,7 +106,7 @@ describe("AgentsPage provider column", () => {
     renderPage();
     const row = rowOf("developer");
     expect(within(row).queryByText("ready")).not.toBeInTheDocument();
-    expect(within(row).queryByText("not ready")).not.toBeInTheDocument();
+    expect(within(row).queryByText("Not ready")).not.toBeInTheDocument();
   });
 });
 
@@ -142,31 +143,31 @@ describe("AgentsPage specialist agents", () => {
     renderPage();
     for (const type of SPECIALISTS) {
       const row = rowOf(type);
-      expect(within(row).getByText("built-in")).toBeInTheDocument();
+      expect(within(row).getByText("Built-in")).toBeInTheDocument();
       expect(within(row).getByRole("button", { name: /reset/i })).toBeInTheDocument();
       expect(within(row).queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
     }
   });
 
-  it("keeps them under the Built-in filter and out of Custom", () => {
+  it("keeps them under the Built-in filter and out of Custom", async () => {
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Built-in" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Built-in" }));
     for (const type of SPECIALISTS) expect(rowOf(type)).toBeInTheDocument();
     expect(screen.queryByText("grok-dev", { selector: "div" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Custom" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Custom" }));
     for (const type of SPECIALISTS) {
       expect(screen.queryByText(type, { selector: "div" })).not.toBeInTheDocument();
     }
   });
 
-  it("gives each specialist its own icon and its own role color", () => {
+  it("gives each specialist its own icon on a neutral tile, never a second accent", () => {
     renderPage();
     const marks = SPECIALISTS.map((type) => within(rowOf(type)).getByTestId(`agent-mark-${type}`));
-    SPECIALISTS.forEach((type, i) => {
-      expect(marks[i].className).toContain(`text-role-${type}`);
-      expect(marks[i].className).toContain(`border-role-${type}/25`);
-    });
+    for (const mark of marks) {
+      expect(mark.className).toContain("bg-overlay");
+      expect(mark.className).not.toMatch(/text-role-|text-primary|text-blue|text-cyan/);
+    }
     const icons = marks.map((mark) => mark.querySelector("svg")?.getAttribute("class") ?? "");
     expect(icons.every((cls) => cls.includes("lucide-"))).toBe(true);
     expect(new Set(icons).size).toBe(SPECIALISTS.length);

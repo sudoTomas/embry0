@@ -14,6 +14,14 @@ import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { cn } from "@/lib/utils";
+import { sentenceCase } from "@/lib/status";
+
+/** `qa_required` from the generated qa.yaml, in words. */
+const QA_REQUIRED_LABELS: Record<string, string> = {
+  auto: "QA when the change needs it",
+  always: "QA on every change",
+  never: "QA off",
+};
 
 // Mirrors the backend's BootstrapRequest validators (embry0/api/v1/bootstrap.py)
 // so shape errors surface inline instead of as a 422 round-trip.
@@ -105,8 +113,8 @@ export function OnboardRepoPage() {
     const { result } = state;
     const enc = encodeURIComponent(result.repo);
     return (
-      <div className="space-y-4 p-6 max-w-2xl">
-        <h1 className="text-2xl font-bold">Repo onboarded</h1>
+      <div className="space-y-4 max-w-2xl">
+        <h1 className="text-xl font-bold">Repo onboarded</h1>
         <Card className="p-4 space-y-4" data-testid="bootstrap-success">
           <div className="space-y-1 text-sm">
             <p className="font-medium">{result.repo}</p>
@@ -118,9 +126,11 @@ export function OnboardRepoPage() {
                 </>
               )}
               {result.private !== null && (
-                <Badge>{result.private ? "private" : "public"}</Badge>
+                <Badge>{result.private ? "Private" : "Public"}</Badge>
               )}{" "}
-              <Badge tone="info">qa_required: {result.qa_required}</Badge>
+              <Badge title={`qa_required: ${result.qa_required}`}>
+                {QA_REQUIRED_LABELS[result.qa_required] ?? `QA ${sentenceCase(result.qa_required).toLowerCase()}`}
+              </Badge>
               {result.app && <> · app <code className="text-white/80">{result.app}</code></>}
               {result.sandbox_profile && (
                 <> · profile <code className="text-white/80">{result.sandbox_profile}</code></>
@@ -168,11 +178,11 @@ export function OnboardRepoPage() {
   }
 
   return (
-    <div className="space-y-4 p-6 max-w-2xl">
+    <div className="space-y-4 max-w-2xl">
       <Link to="/repos" className="text-sm text-white/50 hover:underline">
         ← Repos
       </Link>
-      <h1 className="text-2xl font-bold">Onboard a repo</h1>
+      <h1 className="text-xl font-bold">Onboard a repo</h1>
       <p className="text-sm text-white/60">
         Verifies the GitHub repo, registers a starter qa.yaml (v2) in the external config store,
         and optionally seeds sandbox preferences. Everything is refinable in the QA config editor

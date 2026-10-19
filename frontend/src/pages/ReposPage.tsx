@@ -14,7 +14,9 @@ import { cn } from "@/lib/utils";
 // every registered repo with its config/environment entry points. The QA
 // page keeps run cards only and links here.
 
-/** RAV-1251 registry row (moved from QaReposPage in RAV-1301). */
+/** RAV-1251 registry row (moved from QaReposPage in RAV-1301): one row of the
+ * registered-repos table. Below sm the forge column steps aside, the name
+ * truncates and the two links stack, so the QA config pill stays on screen. */
 function RegisteredRepoRow({
   repo,
   hasQaConfig,
@@ -28,45 +30,50 @@ function RegisteredRepoRow({
 }) {
   const encoded = encodeURIComponent(repo);
   return (
-    <div
-      className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-4 py-3"
-      data-testid="registered-repo-row"
-    >
-      <div className="flex items-center gap-3">
-        <Link to={`/repos/${repo}`} className="font-medium hover:underline">
-          {repo}
-        </Link>
-        {/* #169: which forge this repo lives on decides clone URL, API base
-            and credential proxy — surface it rather than leaving operators to
-            infer it from the path shape. */}
+    <tr data-testid="registered-repo-row">
+      <td className="w-full max-w-0 sm:max-w-none">
+        <div className="flex min-w-0 items-center gap-2">
+          <Link to={`/repos/${repo}`} className="truncate font-medium hover:text-primary hover:underline" title={repo}>
+            {repo}
+          </Link>
+          {/* #522: an admin grant that hands this repo's code the shared Docker daemon. */}
+          {dockerAccess && (
+            <Badge
+              tone="warning"
+              title="Code from this repo can control the shared Docker daemon, including the proxies holding your tokens."
+            >
+              Docker access
+            </Badge>
+          )}
+        </div>
+      </td>
+      {/* #169: which forge this repo lives on decides clone URL, API base and
+          credential proxy — surface it rather than leaving operators to infer
+          it from the path shape. */}
+      <td className="hidden sm:table-cell">
         <Badge tone="neutral" data-testid="repo-forge-badge">
           {forge === "gitlab" ? "GitLab" : "GitHub"}
         </Badge>
+      </td>
+      <td>
         {hasQaConfig ? (
-          <Badge tone="success">config stored</Badge>
+          <Badge tone="success">Config stored</Badge>
         ) : (
-          <Badge tone="warning">no QA config</Badge>
+          <Badge tone="warning">No QA config</Badge>
         )}
-        {/* #522: an admin grant that hands this repo's code the shared Docker daemon. */}
-        {dockerAccess && (
-          <Badge
-            tone="warning"
-            title="Code from this repo can control the shared Docker daemon, including the proxies holding your tokens."
-          >
-            Docker access
-          </Badge>
-        )}
-      </div>
-      <div className="flex items-center gap-2 text-sm">
-        <Link to={`/qa/repos/${encoded}/config`} className="text-white/60 hover:underline">
-          Config
-        </Link>
-        <span className="text-white/20">·</span>
-        <Link to={`/environments?repo=${encoded}`} className="text-white/60 hover:underline">
-          Environment
-        </Link>
-      </div>
-    </div>
+      </td>
+      <td>
+        <div className="flex flex-col items-end gap-0.5 whitespace-nowrap text-sm sm:flex-row sm:items-center sm:justify-end sm:gap-2">
+          <Link to={`/qa/repos/${encoded}/config`} className="text-fg-secondary hover:text-primary hover:underline">
+            Config
+          </Link>
+          <span className="hidden text-white/20 sm:inline" aria-hidden="true">·</span>
+          <Link to={`/environments?repo=${encoded}`} className="text-fg-secondary hover:text-primary hover:underline">
+            Environment
+          </Link>
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -79,9 +86,9 @@ export function ReposPage() {
   if (registry.isLoading || !registry.data) return <DashboardSkeleton />;
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Repos</h1>
+        <h1 className="text-xl font-bold">Repos</h1>
         <Link
           to="/repos/onboard"
           className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
@@ -103,8 +110,8 @@ export function ReposPage() {
 
       <div className="space-y-3 pt-2">
         <div className="flex items-center gap-2">
-          <FileCode2 className="h-4 w-4 text-white/50" />
-          <h2 className="text-lg font-semibold">Registered repos</h2>
+          <FileCode2 className="h-4 w-4 text-fg-muted" />
+          <h2 className="text-section font-semibold">Registered repos</h2>
         </div>
         <p className="text-sm text-white/60">
           The embry0 repo registry — every configured target repo, with its QA config and
@@ -115,16 +122,28 @@ export function ReposPage() {
             No repos registered yet — pick one from the dropdown above.
           </p>
         ) : (
-          <div className="space-y-2" data-testid="registered-repos-list">
-            {registry.data.map((r) => (
-              <RegisteredRepoRow
-                key={r.repo}
-                repo={r.repo}
-                hasQaConfig={r.has_qa_config}
-                forge={r.forge}
-                dockerAccess={r.docker_access === true}
-              />
-            ))}
+          <div className="overflow-x-auto rounded-lg border border-border" data-testid="registered-repos-list">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Repository</th>
+                  <th scope="col" className="hidden sm:table-cell">Forge</th>
+                  <th scope="col">QA config</th>
+                  <th scope="col" className="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {registry.data.map((r) => (
+                  <RegisteredRepoRow
+                    key={r.repo}
+                    repo={r.repo}
+                    hasQaConfig={r.has_qa_config}
+                    forge={r.forge}
+                    dockerAccess={r.docker_access === true}
+                  />
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

@@ -85,7 +85,7 @@ export function PausedBanner({
         <Button
           size="sm"
           onClick={() => onResume("continue_retrying", guidance || undefined)}
-          className="gap-1.5 bg-violet-600 hover:bg-violet-500 text-white border-0"
+          className="gap-1.5"
         >
           <Play className="w-3 h-3" /> Continue
         </Button>
@@ -102,7 +102,7 @@ export function PausedBanner({
           variant="ghost"
           size="sm"
           onClick={onDiscard}
-          className="gap-1.5 text-red-400/60 hover:text-red-400"
+          className="gap-1.5 text-destructive/60 hover:text-destructive"
         >
           <Trash2 className="w-3 h-3" /> Discard
         </Button>
@@ -115,13 +115,13 @@ export function PausedBanner({
             value={guidance}
             onChange={(e) => setGuidance(e.target.value)}
             placeholder="e.g., Focus on the factorial edge case, ignore the README for now..."
-            className="w-full bg-black/30 border border-white/10 rounded-md px-3 py-2 text-sm text-white/80 placeholder:text-white/20 resize-none h-20 focus:outline-none focus:border-violet-500/50"
+            className="w-full bg-black/30 border border-white/10 rounded-md px-3 py-2 text-sm text-white/80 placeholder:text-white/20 resize-none h-20 focus:outline-none focus:border-primary/50"
           />
           <div className="flex justify-end mt-2">
             <Button
               size="sm"
               onClick={() => onResume("continue_retrying", guidance)}
-              className="gap-1.5 bg-violet-600 hover:bg-violet-500 text-white border-0"
+              className="gap-1.5"
             >
               <Play className="w-3 h-3" /> Resume with Guidance
             </Button>

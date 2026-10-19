@@ -39,7 +39,7 @@ function importSummary(report: ImportEnvReport): string {
 function ReportList({ title, items }: { title: string; items: string[] }) {
   return (
     <div>
-      <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</h3>
+      <h3 className="label-caps">{title}</h3>
       {items.length === 0 ? (
         <p className="mt-1 text-sm text-muted-foreground">None</p>
       ) : (
@@ -57,17 +57,21 @@ function AdminButton({
   isAdmin,
   disabled = false,
   onClick,
+  variant = "default",
   children,
 }: {
   isAdmin: boolean;
   disabled?: boolean;
   onClick: () => void;
+  /** One primary per header: the second action is secondary. */
+  variant?: "default" | "secondary";
   children: string;
 }) {
   const button = (
     <Button
       type="button"
       size="sm"
+      variant={variant}
       disabled={!isAdmin || disabled}
       className={!isAdmin ? "pointer-events-none" : undefined}
       onClick={onClick}
@@ -186,7 +190,7 @@ export function CredentialsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Credentials</h1>
+          <h1 className="text-xl font-bold">Credentials</h1>
           <p className="mt-1 max-w-xl text-sm text-muted-foreground">
             Accounts embry0 acts as. Secrets are write-only; the env tokens are an import source.{" "}
             <a
@@ -203,6 +207,7 @@ export function CredentialsPage() {
           {isAdmin ? replaceControl : <Tooltip content="Admin scope required">{replaceControl}</Tooltip>}
           <AdminButton
             isAdmin={isAdmin}
+            variant="secondary"
             disabled={importEnv.isPending}
             onClick={() => {
               void runImport(replaceSecrets);

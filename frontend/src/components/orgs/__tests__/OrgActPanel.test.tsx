@@ -53,7 +53,7 @@ describe("OrgActPanel", () => {
     renderPanel();
     expect(within(needRow("n1")).getByTestId("org-act-checkbox")).toBeInTheDocument();
     expect(within(needRow("n3")).queryByTestId("org-act-checkbox")).toBeNull();
-    expect(needRow("n3")).toHaveTextContent("by hand");
+    expect(needRow("n3")).toHaveTextContent("By hand");
   });
 
   it("previews as a dry run, then applies the same plan, register first", async () => {
@@ -75,7 +75,7 @@ describe("OrgActPanel", () => {
     fireEvent.click(apply);
     const results = await screen.findByTestId("org-act-results");
     expect(mockRun).toHaveBeenLastCalledWith("acme", { action: "hook", repos: ["acme/a"], dry_run: false });
-    expect(within(results).getAllByText("done")).toHaveLength(3);
+    expect(within(results).getAllByText("Done")).toHaveLength(3);
   });
 
   it("asks for a new preview when the selection changes", async () => {

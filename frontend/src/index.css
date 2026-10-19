@@ -2,53 +2,92 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: #060d12;
-  --color-foreground: #fafafa;
-  --color-card: #0f1419;
-  --color-card-foreground: #fafafa;
-  --color-popover: #0f1419;
-  --color-popover-foreground: #fafafa;
+  /* ===== Family skeleton =====
+     The dark operator standard shared with the sibling dashboards: one page
+     base, one raised surface (sidebar, header, cards, table heads), one
+     overlay (inputs, menus, hover rows), three text weights, two borders, five
+     status colours with a dim wash each, and ONE accent per product. embry0's
+     accent is gold; there is no second accent. */
+  --color-page: #0a0a0f;
+  --color-surface: #14141c;
+  --color-overlay: #1e1e28;
+
+  --color-fg: rgb(255 255 255 / 0.92);
+  --color-fg-secondary: rgb(255 255 255 / 0.70);
+  --color-fg-muted: rgb(255 255 255 / 0.50);
+
+  --color-border: rgb(255 255 255 / 0.08);
+  --color-border-strong: rgb(255 255 255 / 0.16);
+
+  --color-teal: #10b981;
+  --color-teal-dim: rgb(16 185 129 / 0.12);
+  --color-amber: #f59e0b;
+  --color-amber-dim: rgb(245 158 11 / 0.12);
+  --color-red: #ef4444;
+  --color-red-dim: rgb(239 68 68 / 0.12);
+  --color-blue: #3b82f6;
+  --color-blue-dim: rgb(59 130 246 / 0.12);
+  --color-purple: #a78bfa;
+  --color-purple-dim: rgb(167 139 250 / 0.12);
+
+  /* The one accent: gold. Primary buttons, the active nav item, links, focus. */
   --color-primary: #d4af37;
-  --color-primary-foreground: #09090b;
-  --color-secondary: #1c2526;
-  --color-secondary-foreground: #fafafa;
-  --color-muted: #1c2526;
-  --color-muted-foreground: #a1a1aa;
-  --color-accent: #1c2526;
-  --color-accent-foreground: #fafafa;
-  --color-destructive: #ef4444;
-  --color-destructive-foreground: #fafafa;
-  --color-border: #1a2e2e;
-  --color-input: #1a2e2e;
-  --color-ring: #06b6d4;
-  --color-success: #22c55e;
-  --color-warning: #f59e0b;
+  --color-primary-hover: #e2c158;
+  --color-primary-dim: rgb(212 175 55 / 0.12);
+  --color-primary-foreground: #0a0a0f;
 
-  /* Agent role colors */
-  --color-role-explorer: #06b6d4;
-  --color-role-developer: #f59e0b;
-  --color-role-validator: #22c55e;
-  --color-role-triage: #a855f7;
+  /* Semantic names the components use, pointed at the skeleton above. */
+  --color-background: var(--color-page);
+  --color-foreground: var(--color-fg);
+  --color-card: var(--color-surface);
+  --color-card-foreground: var(--color-fg);
+  --color-popover: var(--color-overlay);
+  --color-popover-foreground: var(--color-fg);
+  --color-secondary: var(--color-overlay);
+  --color-secondary-foreground: var(--color-fg);
+  --color-muted: var(--color-overlay);
+  --color-muted-foreground: var(--color-fg-muted);
+  --color-destructive: var(--color-red);
+  --color-destructive-foreground: #ffffff;
+  --color-input: var(--color-border);
+  --color-ring: var(--color-primary);
+  --color-success: var(--color-teal);
+  --color-warning: var(--color-amber);
+  --color-info: var(--color-blue);
 
-  /* Specialist agent roles (lib/specialistAgents.ts). Each names a color
-     already in this palette, so the eight read distinctly without a new one. */
-  --color-role-kintsugi: var(--color-primary);
-  --color-role-gardener: var(--color-success);
-  --color-role-interrogator: var(--color-role-triage);
-  --color-role-why: var(--color-role-explorer);
-  --color-role-how: var(--color-foreground);
-  --color-role-blast-radius: var(--color-destructive);
-  --color-role-comment-sicko: var(--color-warning);
-  --color-role-design-auditor: var(--color-stage-publish);
+  /* Agent role colors (categorical, from the status palette) */
+  --color-role-explorer: var(--color-blue);
+  --color-role-developer: var(--color-amber);
+  --color-role-validator: var(--color-teal);
+  --color-role-triage: var(--color-purple);
 
-  /* Pipeline stage colors (cool → warm gradient) */
-  --color-stage-triage: #a855f7;
-  --color-stage-explore: #06b6d4;
-  --color-stage-develop: #f59e0b;
-  --color-stage-validate: #22c55e;
+  /* Pipeline stage colors (categorical) */
+  --color-stage-triage: var(--color-purple);
+  --color-stage-explore: var(--color-blue);
+  --color-stage-develop: var(--color-amber);
+  --color-stage-validate: var(--color-teal);
   --color-stage-publish: #f97316;
 
-  --radius: 0.5rem;
+  /* 8px for surfaces, 6px for small controls (rounded-lg / rounded-md). */
+  --radius: 8px;
+
+  /* Type scale on top of Tailwind's xs (12px), sm (14px) and xl (20px). */
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
+  --text-nav: 14.5px;
+  --text-nav--line-height: 22px;
+  --text-section: 15px;
+  --text-section--line-height: 22px;
+  --text-tile: 28px;
+  --text-tile--line-height: 30px;
+
+  /* Shell geometry */
+  --spacing-header: 65px;
+  --spacing-sidebar: 264px;
+  --spacing-rail: 56px;
+
+  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+  --default-transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 
   --font-sans: 'Outfit', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
@@ -64,6 +103,9 @@ body {
   background-color: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
   font-feature-settings: "tnum";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -83,12 +125,12 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-muted);
+  background: var(--color-overlay);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-muted-foreground);
+  background: var(--color-border-strong);
 }
 
 /* Density mode custom properties */
@@ -161,16 +203,10 @@ body[data-divine="off"] .divine-fallback {
   animation: pulse-glow 2s ease-in-out infinite;
 }
 
-.glow-cyan { box-shadow: 0 0 12px rgba(6, 182, 212, 0.4); }
-.glow-amber { box-shadow: 0 0 12px rgba(245, 158, 11, 0.4); }
-.glow-green { box-shadow: 0 0 12px rgba(34, 197, 94, 0.4); }
-.glow-purple { box-shadow: 0 0 12px rgba(168, 85, 247, 0.4); }
-.glow-blue { box-shadow: 0 0 12px rgba(59, 130, 246, 0.4); }
-
 /* React Flow dark theme overrides */
 .react-flow__minimap {
-  background-color: #111318 !important;
-  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background-color: var(--color-surface) !important;
+  border: 1px solid var(--color-border) !important;
   border-radius: 8px !important;
 }
 
@@ -181,15 +217,15 @@ body[data-divine="off"] .divine-fallback {
 }
 
 .react-flow__controls-button {
-  background-color: #111318 !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  fill: rgba(255, 255, 255, 0.5) !important;
+  background-color: var(--color-surface) !important;
+  border: 1px solid var(--color-border) !important;
+  fill: var(--color-fg-muted) !important;
   border-radius: 6px !important;
 }
 
 .react-flow__controls-button:hover {
-  background-color: #1a1d2e !important;
-  fill: rgba(255, 255, 255, 0.8) !important;
+  background-color: var(--color-overlay) !important;
+  fill: var(--color-fg) !important;
 }
 
 /* Entrance animations */
@@ -225,25 +261,79 @@ body[data-divine="off"] .divine-fallback {
 
 /* ===== embry0 Execution Dashboard Theme ===== */
 :root {
-  --embry0-bg-primary: #09090b;
-  --embry0-bg-card: #0f1419;
-  --embry0-accent-primary: #d4af37;
-  --embry0-glow-border: rgba(6, 182, 212, 0.15);
-  --embry0-glow-shadow: rgba(6, 182, 212, 0.05);
-  --embry0-gradient-card: linear-gradient(135deg, rgba(15, 20, 25, 0.95), rgba(9, 9, 11, 0.98));
-
-  --embry0-phase-triage: #10b981;
-  --embry0-phase-developer: #f59e0b;
-  --embry0-phase-validator: #22c55e;
-  --embry0-phase-reviewer: #ec4899;
-  --embry0-phase-output: #f43f5e;
+  --embry0-phase-triage: var(--color-teal);
+  --embry0-phase-developer: var(--color-amber);
+  --embry0-phase-validator: var(--color-teal);
+  --embry0-phase-reviewer: var(--color-purple);
+  --embry0-phase-output: var(--color-red);
 }
 
+/* A plain raised surface: no gradient, no glow, the family radius. */
 .embry0-card {
-  background: var(--embry0-gradient-card);
-  border: 1px solid var(--embry0-glow-border);
-  border-radius: 16px;
-  box-shadow: 0 0 20px var(--embry0-glow-shadow);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+/* ===== Shared table =====
+   One dense table for every list of records: uppercase muted head on the
+   surface, 14px cells on the page base, rows about 36px, a hover on the
+   overlay. Alignment and per-column type (numbers, mono ids) stay on the
+   cells; spacing, type and colour of the head live here only. */
+@layer components {
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    line-height: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+  .data-table > thead > tr > th {
+    background: var(--color-surface);
+    padding: 8px 12px;
+    font-size: var(--text-2xs);
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-fg-muted);
+    text-align: left;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .data-table > tbody {
+    background: var(--color-page);
+  }
+  .data-table > tbody > tr > td {
+    padding: 6px 12px;
+    height: 36px;
+    vertical-align: middle;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .data-table > tbody > tr:last-child > td {
+    border-bottom: 0;
+  }
+  .data-table > tbody > tr {
+    transition: background-color 150ms var(--ease-standard);
+  }
+  .data-table > tbody > tr:hover {
+    background: var(--color-overlay);
+  }
+  /* Right-aligned numeric column. */
+  .data-table .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Uppercase section label: 11px, .06em, muted. */
+  .label-caps {
+    font-size: var(--text-2xs);
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-fg-muted);
+  }
 }
 
 @keyframes embry0-flow-down {

@@ -1,4 +1,4 @@
-import { VitalsTile } from "./VitalsTile";
+import { VitalsTile, type TileTone } from "./VitalsTile";
 
 export interface SingleSourceQuery<T> {
   isError: boolean;
@@ -10,6 +10,10 @@ interface SingleSourceTileProps<T> {
   label: string;
   query: SingleSourceQuery<T>;
   format: (value: T) => string;
+  /** The status colour, chosen from the value once it is known. */
+  tone?: (value: T) => TileTone;
+  /** A second fact for the line under the label, from the same source. */
+  detail?: string;
   trend?: string;
   className?: string;
 }
@@ -30,6 +34,8 @@ export function SingleSourceTile<T>({
   label,
   query,
   format,
+  tone,
+  detail,
   trend,
   className,
 }: SingleSourceTileProps<T>) {
@@ -40,10 +46,12 @@ export function SingleSourceTile<T>({
   else value = format(query.data as T);
 
   return (
-    <div data-testid={`tile-${label}`} data-state={state}>
+    <div data-testid={`tile-${label}`} data-state={state} className="h-full">
       <VitalsTile
         label={label}
         value={value}
+        detail={state === "ready" ? detail : undefined}
+        tone={state === "ready" && tone ? tone(query.data as T) : state === "error" ? "bad" : "neutral"}
         trend={state === "ready" ? trend : undefined}
         className={className}
       />

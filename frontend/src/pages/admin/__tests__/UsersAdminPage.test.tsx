@@ -48,8 +48,8 @@ describe("UsersAdminPage", () => {
     mockFetchUsers.mockResolvedValue({ users: [USER], total: 1 });
     renderPage();
     expect(await screen.findByText("t@example.com")).toBeInTheDocument();
-    expect(screen.getByText("admin")).toBeInTheDocument();
-    expect(screen.getByText("active")).toBeInTheDocument();
+    expect(screen.getByText("Admin")).toBeInTheDocument();
+    expect(screen.getByText("Active")).toBeInTheDocument();
   });
 
   it("shows the empty state before any SSO login", async () => {

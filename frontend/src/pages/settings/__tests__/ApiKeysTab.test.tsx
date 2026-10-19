@@ -62,7 +62,7 @@ describe("ApiKeysTab", () => {
     renderTab();
     const row = (await screen.findByText("laptop-cli")).closest("tr")!;
     expect(within(row).getByText("operate")).toBeInTheDocument();
-    expect(within(row).getByText("active")).toBeInTheDocument();
+    expect(within(row).getByText("Active")).toBeInTheDocument();
   });
 
   it("caps the scope select at the operator tier", async () => {

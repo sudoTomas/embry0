@@ -51,9 +51,9 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
       headerRight={
         <span data-testid="live-indicator" className="inline-flex items-center gap-1.5 text-[10px]">
           <span
-            className={`h-1.5 w-1.5 rounded-full ${summary.isConnected ? "bg-green-400 animate-pulse" : "bg-white/20"}`}
+            className={`h-1.5 w-1.5 rounded-full ${summary.isConnected ? "bg-success animate-pulse" : "bg-white/20"}`}
           />
-          <span className={summary.isConnected ? "text-green-400" : "text-white/30"}>
+          <span className={summary.isConnected ? "text-success" : "text-white/30"}>
             {summary.isConnected ? "Live" : "Polling"}
           </span>
         </span>

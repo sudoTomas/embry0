@@ -7,6 +7,7 @@ import { IssueStatusBadge } from "./IssueStatusBadge";
 import { IssuePriorityBadge } from "./IssuePriorityBadge";
 import { AgentIndicator } from "./AgentIndicator";
 import { formatDate } from "@/lib/utils";
+import { sentenceCase, statusLabel } from "@/lib/status";
 import { useNavigate } from "react-router";
 import type { IssueResponse, IssueStatus } from "@/lib/types";
 
@@ -65,12 +66,14 @@ export function IssueListView({
             label="Statuses"
             value={filters.status}
             options={STATUS_OPTIONS}
+            optionLabel={statusLabel}
             onChange={onStatusChange}
           />
           <FilterSelect
             label="Priorities"
             value={filters.priority}
             options={PRIORITY_OPTIONS}
+            optionLabel={sentenceCase}
             onChange={onPriorityChange}
           />
           <FilterSelect
@@ -87,18 +90,19 @@ export function IssueListView({
           />
         </div>
 
+        {/* Below sm only the status and the title stay; the rest is one tap away. */}
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-border text-white/40">
-                <th scope="col" className="text-left px-4 py-3">Status</th>
-                <th scope="col" className="text-left px-4 py-3">Title</th>
-                <th scope="col" className="text-left px-4 py-3">Priority</th>
-                <th scope="col" className="text-left px-4 py-3">Labels</th>
-                <th scope="col" className="text-left px-4 py-3">Repo</th>
-                <th scope="col" className="text-right px-4 py-3">Updated</th>
-                <th scope="col" className="text-right px-4 py-3">Subtasks</th>
-                <th scope="col" className="text-right px-4 py-3">Jobs</th>
+              <tr>
+                <th scope="col">Status</th>
+                <th scope="col">Title</th>
+                <th scope="col" className="hidden sm:table-cell">Priority</th>
+                <th scope="col" className="hidden sm:table-cell">Labels</th>
+                <th scope="col" className="hidden sm:table-cell">Repo</th>
+                <th scope="col" className="hidden text-right sm:table-cell">Updated</th>
+                <th scope="col" className="hidden text-right sm:table-cell">Subtasks</th>
+                <th scope="col" className="hidden text-right sm:table-cell">Jobs</th>
               </tr>
             </thead>
             <tbody>
@@ -120,7 +124,7 @@ export function IssueListView({
                   return (
                     <tr
                       key={issue.id}
-                      className={`border-b border-white/[0.04] hover:bg-cyan-500/[0.02] transition-colors cursor-pointer ${isDimmed ? "opacity-60" : ""}`}
+                      className={`cursor-pointer ${isDimmed ? "opacity-60" : ""}`}
                       onClick={() => navigate(`/issues/${issue.id}`)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
@@ -132,51 +136,51 @@ export function IssueListView({
                       role="link"
                       aria-label={`View issue: ${issue.title}`}
                     >
-                      <td className="px-4 py-3">
+                      <td>
                         {issue.active_agent ? (
                           <AgentIndicator agentType={issue.active_agent} />
                         ) : (
                           <IssueStatusBadge status={issue.status} />
                         )}
                       </td>
-                      <td className="px-4 py-3 max-w-[280px]">
+                      <td className="w-full max-w-0 sm:w-auto sm:max-w-[280px]">
                         <span className="truncate block">{issue.title}</span>
                         {issue.children_count > 0 && (
-                          <span className="text-xs text-blue-400 mt-0.5 block">
+                          <span className="text-xs text-fg-muted mt-0.5 block">
                             {issue.children_count} subtask{issue.children_count !== 1 ? "s" : ""}
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden sm:table-cell">
                         <IssuePriorityBadge priority={issue.priority} />
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="hidden sm:table-cell">
                         <div className="flex flex-wrap gap-1">
                           {visibleLabels.map((label) => (
                             <span
                               key={label}
-                              className="inline-flex items-center rounded-md bg-zinc-700/50 px-2 py-0.5 text-xs text-zinc-300"
+                              className="inline-flex items-center rounded-md bg-overlay px-2 py-0.5 text-xs text-fg-secondary"
                             >
                               {label}
                             </span>
                           ))}
                           {extraLabels > 0 && (
-                            <span className="inline-flex items-center rounded-md bg-zinc-700/30 px-2 py-0.5 text-xs text-zinc-400">
+                            <span className="inline-flex items-center rounded-md bg-overlay px-2 py-0.5 text-xs text-fg-muted">
                               +{extraLabels}
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                      <td className="hidden font-mono text-xs text-muted-foreground sm:table-cell">
                         {issue.repo ?? "—"}
                       </td>
-                      <td className="px-4 py-3 text-right text-muted-foreground">
+                      <td className="hidden whitespace-nowrap text-right text-muted-foreground sm:table-cell">
                         {formatDate(issue.updated_at)}
                       </td>
-                      <td className="px-4 py-3 text-right text-muted-foreground">
+                      <td className="hidden text-right text-muted-foreground sm:table-cell">
                         {issue.children_count > 0 ? issue.children_count : "—"}
                       </td>
-                      <td className="px-4 py-3 text-right text-muted-foreground">
+                      <td className="hidden text-right text-muted-foreground sm:table-cell">
                         {issue.jobs_count > 0 ? issue.jobs_count : "—"}
                       </td>
                     </tr>

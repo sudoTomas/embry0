@@ -33,7 +33,9 @@ describe("DoneFailedCard", () => {
 
   it("shows the status sub-badge (distinguishing merged from completed)", () => {
     renderCard(makeJob({ status: "pr_merged", pr_url: "https://github.com/acme/widgets/pull/7" }));
-    expect(screen.getByText("pr_merged")).toBeInTheDocument();
+    // Readable words from the one status map, never the raw enum.
+    expect(screen.getByText("PR merged")).toBeInTheDocument();
+    expect(screen.queryByText("pr_merged")).toBeNull();
   });
 
   it("says what became of the PR, independent of the job status", () => {
@@ -46,7 +48,7 @@ describe("DoneFailedCard", () => {
     );
 
     expect(screen.getByTestId("pr-pill")).toHaveTextContent("PR merged");
-    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
   });
 
   it.each([
@@ -71,7 +73,7 @@ describe("DoneFailedCard", () => {
     );
 
     expect(screen.getByText("ERR_MAX_AGENT_QUESTIONS")).toBeInTheDocument();
-    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
   });
 
   it("renders no error chip when error_code is null", () => {

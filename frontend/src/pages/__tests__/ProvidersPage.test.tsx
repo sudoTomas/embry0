@@ -119,11 +119,12 @@ describe("ProvidersPage", () => {
   it("renders every catalog provider with availability and credential source", async () => {
     renderPage();
     const anthropic = await screen.findByTestId("provider-card-anthropic");
-    expect(within(anthropic).getByText("available")).toBeInTheDocument();
-    expect(within(anthropic).getByText("default provider")).toBeInTheDocument();
-    expect(within(anthropic).getByText("oauth")).toBeInTheDocument();
+    expect(within(anthropic).getByText("Available")).toBeInTheDocument();
+    expect(within(anthropic).getByText("Default provider")).toBeInTheDocument();
+    // The credential source reads in words; the identifier rides in the title.
+    expect(within(anthropic).getByText("OAuth token")).toHaveAttribute("title", "oauth");
     const xai = screen.getByTestId("provider-card-xai");
-    expect(within(xai).getByText("unavailable")).toBeInTheDocument();
+    expect(within(xai).getByText("Unavailable")).toBeInTheDocument();
     expect(within(xai).getByText(/none configured/)).toBeInTheDocument();
   });
 

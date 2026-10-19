@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Tooltip } from "@/components/ui/Tooltip";
-import type { Credential } from "@/lib/types/credentials";
+import type { Credential, CredentialKind } from "@/lib/types/credentials";
 import { cn, formatDate } from "@/lib/utils";
+import { sentenceCase } from "@/lib/status";
 
 export interface CredentialTableProps {
   credentials: Credential[];
@@ -19,7 +20,25 @@ export interface CredentialTableProps {
   verifyingId?: string | null;
 }
 
-const HEADERS = ["Label", "Provider", "Preview", "Author", "Status", "Bindings", "Last used"] as const;
+/** Below sm only the label (with its provider under it), the status and the
+ * actions stay, so a phone shows what matters without a sideways scroll. */
+const HEADERS: readonly { label: string; phone: boolean }[] = [
+  { label: "Label", phone: true },
+  { label: "Provider", phone: false },
+  { label: "Preview", phone: false },
+  { label: "Author", phone: false },
+  { label: "Status", phone: true },
+  { label: "Bindings", phone: false },
+  { label: "Last used", phone: false },
+];
+
+/** The credential kind in words, never the stored identifier. */
+const KIND_LABELS: Record<CredentialKind, string> = {
+  forge_token: "Forge token",
+  llm_oauth: "OAuth",
+  llm_api_key: "API key",
+  ssh_key: "SSH key",
+};
 
 function authorLabel(credential: Credential): string {
   const name = credential.git_author_name;
@@ -98,15 +117,15 @@ export function CredentialTable({
   return (
     <Card className="p-0">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="data-table">
           <thead>
-            <tr className="border-b border-white/[0.04] text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              {HEADERS.map((label) => (
-                <th key={label} scope="col" className="px-4 py-3">
+            <tr className="text-[11px] font-medium">
+              {HEADERS.map(({ label, phone }) => (
+                <th key={label} scope="col" className={phone ? undefined : "hidden sm:table-cell"}>
                   {label}
                 </th>
               ))}
-              <th scope="col" className="px-4 py-3 text-right">
+              <th scope="col" className="text-right">
                 Actions
               </th>
             </tr>
@@ -119,41 +138,41 @@ export function CredentialTable({
                 <tr
                   key={credential.id}
                   data-testid="credential-row"
-                  className="border-b border-white/[0.04] transition-colors hover:bg-white/[0.02]"
                 >
-                  <td className="px-4 py-3">
+                  <td>
                     <div className="text-foreground">{credential.label}</div>
+                    <div className="text-xs text-muted-foreground sm:hidden">{credential.provider}</div>
                     {credential.verified_login && (
                       <div className="text-xs text-muted-foreground">{credential.verified_login}</div>
                     )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="hidden sm:table-cell">
                     <div>{credential.provider}</div>
                     <div className="text-xs text-muted-foreground">
                       {credential.provider === "anthropic" || credential.provider === "xai"
-                        ? credential.kind
+                        ? KIND_LABELS[credential.kind] ?? sentenceCase(credential.kind)
                         : credential.host}
                     </div>
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                  <td className="hidden font-mono text-xs text-muted-foreground sm:table-cell">
                     {credential.masked_preview}
                   </td>
                   <td
                     className={cn(
-                      "px-4 py-3 text-xs",
+                      "hidden px-4 py-3 text-xs sm:table-cell",
                       author === "branding default" && "text-muted-foreground",
                     )}
                   >
                     {author}
                   </td>
-                  <td className="px-4 py-3">
+                  <td>
                     <StatusBadge credential={credential} />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="hidden sm:table-cell">
                     <Button
                       type="button"
                       variant="ghost"
-                      size="sm"
+                      size="xs"
                       className="h-8 px-2 font-mono text-xs"
                       aria-label={`Show ${credential.binding_count} bindings`}
                       onClick={() => onBindings(credential)}
@@ -161,11 +180,12 @@ export function CredentialTable({
                       {credential.binding_count}
                     </Button>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
+                  <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">
                     {credential.last_used_at ? formatDate(credential.last_used_at) : "never"}
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
+                  <td className="text-right">
+                    {/* Three to a line below sm, one line above. */}
+                    <div className="ml-auto flex max-w-[6.5rem] flex-wrap items-center justify-end gap-1 sm:max-w-none sm:flex-nowrap">
                       <GuardedAction
                         isAdmin={isAdmin}
                         label="Rotate credential"
@@ -203,7 +223,7 @@ export function CredentialTable({
                       <Button
                         type="button"
                         variant="ghost"
-                        size="icon"
+                        size="icon-sm"
                         className="h-8 w-8 text-muted-foreground"
                         data-testid="credential-bindings"
                         aria-label="Show bindings"

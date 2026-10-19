@@ -66,7 +66,7 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
   );
 
   return (
-    <div className="flex-1 min-h-0 relative" style={{ background: 'radial-gradient(circle at 50% 50%, rgba(6,182,212,0.015) 0%, transparent 60%)' }}>
+    <div className="flex-1 min-h-0 relative">
       {nodes.length === 0 && <EmptyCanvas />}
       <ReactFlow
         nodes={nodes}
@@ -82,7 +82,7 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
         edgeTypes={edgeTypes}
         fitView
         proOptions={{ hideAttribution: true }}
-        className="bg-[#0c0e12]"
+        className="bg-page"
       >
         <Background color="rgba(255,255,255,0.018)" gap={24} />
         <MiniMap className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !w-[120px] !h-[75px]" nodeColor="#ffffff20" />
@@ -175,7 +175,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
 
   const header = isModal ? (
     /* Modal header */
-    <div className="h-14 shrink-0 border-b border-white/[0.08] flex items-center justify-between px-4 bg-[#0f1117]">
+    <div className="h-14 shrink-0 border-b border-white/[0.08] flex items-center justify-between px-4 bg-surface">
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -184,7 +184,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
         >
           <X size={18} />
         </button>
-        <h2 className="text-base font-semibold text-white">Pipeline Editor</h2>
+        <h2 className="text-section font-semibold">Pipeline Editor</h2>
       </div>
       <div className="flex items-center gap-2">
         <span className="relative inline-flex">
@@ -213,7 +213,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
           type="button"
           onClick={handleApply}
           disabled={nodes.length === 0}
-          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white text-xs font-medium px-4 py-1.5 rounded-md transition-colors"
+          className="h-[30px] rounded-md bg-primary px-3.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-30"
         >
           Apply Pipeline
         </button>
@@ -221,7 +221,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
     </div>
   ) : (
     /* Page header */
-    <div className="h-14 shrink-0 border-b border-white/[0.08] flex items-center justify-between px-4 bg-[#0f1117]">
+    <div className="h-14 shrink-0 border-b border-white/[0.08] flex items-center justify-between px-4 bg-surface">
       <div className="flex items-center gap-3">
         <input
           type="text"
@@ -268,7 +268,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
           type="button"
           onClick={handleSaveAs}
           disabled={nodes.length === 0 || createMutation.isPending}
-          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white text-xs font-medium px-4 py-1.5 rounded-md transition-colors"
+          className="h-[30px] rounded-md bg-primary px-3.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-30"
         >
           Save As
         </button>
@@ -277,7 +277,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
   );
 
   return (
-    <div className={isModal ? "fixed inset-0 z-50 bg-[#09090b] flex flex-col" : "flex flex-col h-full bg-[#09090b]"}>
+    <div className={isModal ? "fixed inset-0 z-50 bg-page flex flex-col" : "flex flex-col h-full bg-page"}>
       {header}
 
       {/* Main content */}

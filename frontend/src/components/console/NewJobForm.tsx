@@ -70,7 +70,7 @@ export function NewJobForm({ onClose, knownRepos = [] }: NewJobFormProps) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">New Job</CardTitle>
+        <CardTitle className="text-lg">New job</CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">

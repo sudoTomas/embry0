@@ -35,10 +35,11 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className={`font-semibold text-xs ${colors.text}`}>{agent.agent}</span>
-            {agent.node && agent.node !== agent.agent && <span className="text-xs text-muted-foreground">{agent.node}</span>}
+            {/* The graph node id is an identifier: mono, like code, never sans prose. */}
+            {agent.node && agent.node !== agent.agent && <span className="font-mono text-2xs text-muted-foreground">{agent.node}</span>}
             {agent.retryLabel && <span className="text-[10px] text-amber-400">{agent.retryLabel}</span>}
-            {agent.status === "completed" && <span className="text-[10px] text-green-400">Done</span>}
-            {agent.status === "failed" && <span className="text-[10px] text-red-400">Failed</span>}
+            {agent.status === "completed" && <span className="text-[10px] text-success">Done</span>}
+            {agent.status === "failed" && <span className="text-[10px] text-destructive">Failed</span>}
             {agent.status === "pending" && <span className="text-[10px] text-white/30">Waiting</span>}
           </div>
           {agent.status !== "pending" && (
@@ -71,7 +72,7 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <span className={`font-semibold text-sm ${colors.text}`}>{agent.agent}</span>
-            {agent.node && agent.node !== agent.agent && <span className="text-sm text-muted-foreground">{agent.node}</span>}
+            {agent.node && agent.node !== agent.agent && <span className="font-mono text-xs text-muted-foreground">{agent.node}</span>}
             {isActive && (
               <span className="inline-flex items-center gap-1.5 text-[10px] text-amber-400">
                 <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
@@ -79,7 +80,7 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
               </span>
             )}
             {agent.retryLabel && <span className="text-[10px] text-amber-400">{agent.retryLabel}</span>}
-            {!isActive && agent.status === "completed" && <span className="text-[10px] text-green-400">{"\u2713"} Completed</span>}
+            {!isActive && agent.status === "completed" && <span className="text-[10px] text-success">{"\u2713"} Completed</span>}
           </div>
           <div className="text-[10px] text-white/40 mt-0.5">
             {formatDuration(liveDurationMs)}

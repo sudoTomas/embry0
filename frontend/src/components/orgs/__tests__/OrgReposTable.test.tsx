@@ -43,7 +43,7 @@ describe("OrgReposTable", () => {
     expect(within(widgets).getByTestId("sense-watch")).toHaveAttribute("data-state", "off");
     expect(within(gadgets).getByTestId("sense-intake")).toHaveAttribute("data-state", "unknown");
     expect(within(old).queryByTestId("sense-intake")).toBeNull();
-    expect(old).toHaveTextContent("archived");
+    expect(old).toHaveTextContent("Archived");
   });
 
   it("filters by text and by a missing sense", () => {

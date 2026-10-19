@@ -35,7 +35,7 @@ function ListSection({
   return (
     <section className="rounded-md border bg-card p-4" data-testid={testid}>
       <header className="mb-2 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
+        <h2 className="label-caps">
           {title} ({items.length})
         </h2>
       </header>
@@ -88,7 +88,7 @@ export function AffectedSetView({ runId }: Props) {
   return (
     <div className="space-y-4 p-6" data-testid="affected-set-view">
       <header className="flex flex-wrap items-baseline gap-3">
-        <h1 className="text-2xl font-bold font-mono">{data.job_id}</h1>
+        <h1 className="text-xl font-bold font-mono">{data.job_id}</h1>
         {data.force_all_apps && (
           <span
             data-testid="force-all-apps-badge"
@@ -131,7 +131,7 @@ export function AffectedSetView({ runId }: Props) {
           data-testid="conditional-groups-section"
         >
           <header className="mb-2">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
+            <h2 className="label-caps">
               Conditional criteria groups ({data.conditional_groups.length})
             </h2>
           </header>
@@ -146,7 +146,7 @@ export function AffectedSetView({ runId }: Props) {
                   className={
                     g.source === "forced"
                       ? "rounded-sm bg-amber-500/20 px-1.5 py-0.5 text-xs uppercase text-amber-300"
-                      : "rounded-sm bg-emerald-500/20 px-1.5 py-0.5 text-xs uppercase text-emerald-300"
+                      : "rounded-sm bg-success/20 px-1.5 py-0.5 text-xs uppercase text-success"
                   }
                 >
                   {g.source}
@@ -165,7 +165,7 @@ export function AffectedSetView({ runId }: Props) {
         data-testid="dep-graph-section"
       >
         <header className="mb-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
+          <h2 className="label-caps">
             Dep graph ({data.dep_graph.length})
           </h2>
         </header>

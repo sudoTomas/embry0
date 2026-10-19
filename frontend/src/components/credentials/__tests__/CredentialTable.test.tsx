@@ -18,7 +18,7 @@ describe("CredentialTable", () => {
     render(<CredentialTable credentials={[cred()]} isAdmin {...handlers()} />);
     expect(screen.getByText("alice")).toBeInTheDocument();
     expect(screen.getByText("ghp_••••••••mnop")).toBeInTheDocument();
-    expect(screen.getByText("ok")).toBeInTheDocument();
+    expect(screen.getByText("OK")).toBeInTheDocument();
     expect(screen.getByText("alice-gh")).toBeInTheDocument();
   });
 
@@ -42,8 +42,8 @@ describe("CredentialTable", () => {
       cred({ id: "cred-000000000002", label: "q", status: "quarantined", status_reason: "rate_limited", quarantined_until: "2026-09-30T10:00:00Z" }),
       cred({ id: "cred-000000000003", label: "d", status: "disabled", status_reason: "decryption_failed" }),
     ]} isAdmin {...handlers()} />);
-    expect(screen.getByText("quarantined")).toHaveAttribute("title", expect.stringContaining("rate_limited"));
-    expect(screen.getByText("disabled")).toHaveAttribute("title", expect.stringContaining("decryption_failed"));
+    expect(screen.getByText("Quarantined")).toHaveAttribute("title", expect.stringContaining("rate_limited"));
+    expect(screen.getByText("Disabled")).toHaveAttribute("title", expect.stringContaining("decryption_failed"));
   });
 
   it("shows an LLM provider together with its kind", () => {
@@ -52,7 +52,9 @@ describe("CredentialTable", () => {
     })]} isAdmin {...handlers()} />);
     const row = screen.getByTestId("credential-row");
     expect(row).toHaveTextContent("xai");
-    expect(row).toHaveTextContent("llm_api_key");
+    // The kind reads in words, never as the stored identifier.
+    expect(row).toHaveTextContent("API key");
+    expect(row).not.toHaveTextContent("llm_api_key");
   });
 
   it("renders the empty state", () => {

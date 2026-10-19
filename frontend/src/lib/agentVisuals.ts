@@ -2,8 +2,8 @@
  * Console board's stage badges, so triage/developer/review read the same
  * everywhere. */
 export const AGENT_COLORS: Record<string, { text: string; bg: string; border: string; icon: string }> = {
-  triage: { text: "text-cyan-400", bg: "bg-cyan-500/[0.04]", border: "border-cyan-500/25", icon: "\u25C9" },
-  developer: { text: "text-violet-400", bg: "bg-violet-500/[0.04]", border: "border-violet-500/25", icon: "\u270E" },
+  triage: { text: "text-purple", bg: "bg-purple-dim", border: "border-purple/25", icon: "\u25C9" },
+  developer: { text: "text-purple", bg: "bg-purple/[0.04]", border: "border-purple/25", icon: "\u270E" },
   review: { text: "text-rose-400", bg: "bg-rose-500/[0.04]", border: "border-rose-500/25", icon: "\u2611" },
 };
 

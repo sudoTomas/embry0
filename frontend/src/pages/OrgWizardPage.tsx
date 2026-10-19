@@ -84,7 +84,7 @@ function Stepper({ step }: { step: Step }) {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-3 rounded-lg border border-white/[0.06] bg-card p-4">
-      <h2 className="text-lg font-semibold">{title}</h2>
+      <h2 className="text-section font-semibold">{title}</h2>
       {children}
     </section>
   );
@@ -187,7 +187,7 @@ export function OrgWizardPage() {
         <Link to="/orgs" className="text-sm text-white/50 hover:underline">
           ← Organizations
         </Link>
-        <h1 className="text-2xl font-bold">Add organization</h1>
+        <h1 className="text-xl font-bold">Add organization</h1>
         <Stepper step={step} />
         {!isAdmin && (
           <p className="text-sm text-warning" data-testid="wizard-admin-note">

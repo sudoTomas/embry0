@@ -7,9 +7,9 @@ import { attemptArtifactPath, fetchArtifactBlob } from "@/api/qa-artifacts";
 const BLOB_URL_TTL_MS = 60_000;
 
 const STATUS_ICON: Record<QAAcceptanceResult["status"], ReactNode> = {
-  passed: <CheckCircle2 className="w-4 h-4 text-green-400" />,
-  failed: <XCircle className="w-4 h-4 text-red-400" />,
-  inconclusive: <HelpCircle className="w-4 h-4 text-yellow-400" />,
+  passed: <CheckCircle2 className="w-4 h-4 text-success" />,
+  failed: <XCircle className="w-4 h-4 text-destructive" />,
+  inconclusive: <HelpCircle className="w-4 h-4 text-warning" />,
 };
 
 interface Props {
@@ -85,24 +85,24 @@ export function QAAcceptanceResults({ jobId, attemptN, results }: Props): JSX.El
           )}
           {r.console_errors.length > 0 && (
             <details className="mt-2">
-              <summary className="text-xs text-red-300 cursor-pointer">
+              <summary className="text-xs text-destructive cursor-pointer">
                 {r.console_errors.length} console error(s)
               </summary>
               <ul className="text-xs mt-1 space-y-1 font-mono">
                 {r.console_errors.map((e, i) => (
-                  <li key={i} className="text-red-200/80">{e}</li>
+                  <li key={i} className="text-destructive/80">{e}</li>
                 ))}
               </ul>
             </details>
           )}
           {r.network_failures.length > 0 && (
             <details className="mt-2">
-              <summary className="text-xs text-orange-300 cursor-pointer">
+              <summary className="text-xs text-warning cursor-pointer">
                 {r.network_failures.length} network failure(s)
               </summary>
               <ul className="text-xs mt-1 space-y-1 font-mono">
                 {r.network_failures.map((nf, i) => (
-                  <li key={i} className="text-orange-200/80">[{nf.status}] {nf.url}</li>
+                  <li key={i} className="text-warning/80">[{nf.status}] {nf.url}</li>
                 ))}
               </ul>
             </details>

@@ -35,6 +35,7 @@ describe("AgentCard", () => {
     render(<AgentCard agent={qa} expanded={expanded} />);
     expect(screen.getByText("qa")).toBeInTheDocument();
     expect(screen.queryByText("orchestrate_qa"), "a card whose node differs from its agent must name the node").not.toBeNull();
+    expect(screen.getByText("orchestrate_qa").className, "the node id reads as code, not prose").toContain("font-mono");
   });
 
   it.each([false, true])("shows the name once when the node equals the agent (expanded: %s)", (expanded) => {

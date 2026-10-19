@@ -1,5 +1,4 @@
-import { LogOut, PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { useLocation } from "react-router";
+import { KeyRound, LogOut, Menu, X } from "lucide-react";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useAuthStore } from "@/stores/authStore";
 import { ssoLogout } from "@/components/auth/AuthGate";
@@ -7,91 +6,39 @@ import { Button } from "@/components/ui/Button";
 import { Embry0Mark } from "@/components/divine/Embry0Mark";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 
-const breadcrumbMap: Record<string, string> = {
-  // "Overview" matches the sidebar label — the RAV-1058 IA sweep retired the
-  // competing "Dashboard" name.
-  "": "Overview",
-  console: "Console",
-  jobs: "Jobs",
-  issues: "Issues",
-  agents: "Agents",
-  sandboxes: "Sandboxes",
-  pipelines: "Pipelines",
-  qa: "QA",
-  watcher: "Watcher",
-  logs: "Logs",
-  settings: "Settings",
-  environments: "Environments",
-  about: "About",
-  admin: "Admin",
-  repos: "Repos",
-  orgs: "Organizations",
-  // Both routes fell back to the app name, so the crumb read "embry0 / embry0".
-  credentials: "Credentials",
-  providers: "LLM Providers",
-};
-
-/** Known static second segments get a proper label; dynamic segments (job
- * ids, repo slugs) keep the raw mono rendering. */
-const secondSegmentMap: Record<string, string> = {
-  audit: "Audit",
-  users: "Users",
-  onboard: "Onboard",
-  operations: "Operations",
-  repos: "Repos",
-  runs: "Runs",
-  admin: "Admin",
-};
-
+/**
+ * The family header: a full-width 65px bar on the surface. The lockup and the
+ * tagline on the left, the signed-in identity and sign-out on the right. At
+ * phone width a menu button opens the sidebar drawer; at desktop width the
+ * sidebar's own chevron collapses it.
+ */
 export function TopBar() {
-  const { sidebarOpen, drawerOpen, toggleSidebar, toggleDrawer } = useLayoutStore();
-  // Phone width: the button opens and closes the drawer; desktop: it widens
-  // and narrows the column.
+  const drawerOpen = useLayoutStore((s) => s.drawerOpen);
+  const toggleDrawer = useLayoutStore((s) => s.toggleDrawer);
   const narrow = useIsNarrow();
-  const panelOpen = narrow ? drawerOpen : sidebarOpen;
-  const onToggle = narrow ? toggleDrawer : toggleSidebar;
-  const toggleLabel = narrow
-    ? panelOpen ? "Close menu" : "Open menu"
-    : panelOpen ? "Close sidebar" : "Open sidebar";
-  const location = useLocation();
   const authMode = useAuthStore((s) => s.authMode);
   const user = useAuthStore((s) => s.user);
-  // A "-" segment marks an app route under a name space (the organization
-  // wizard at /orgs/-/new), never a name, so the crumb skips it.
-  const pathSegments = location.pathname.split("/").filter((s) => s !== "" && s !== "-");
-  const currentPage = breadcrumbMap[pathSegments[0] ?? ""] ?? "embry0";
 
   return (
-    <header
-      className="flex h-14 items-center gap-4 border-b border-white/[0.06] px-4"
-      style={{ background: 'linear-gradient(180deg, rgba(12,16,21,0.95) 0%, rgba(9,9,11,0.95) 100%)' }}
-    >
-      <Button variant="ghost" size="icon" onClick={onToggle} aria-label={toggleLabel}>
-        {panelOpen ? (
-          <PanelLeftClose className="h-4 w-4" />
-        ) : (
-          <PanelLeftOpen className="h-4 w-4" />
-        )}
-      </Button>
-      <nav className="flex items-center gap-2" aria-label="Breadcrumb">
-        <Embry0Mark />
-        <span className="text-white/20 mx-1">/</span>
-        <span className="text-sm text-white/80 font-medium">{currentPage}</span>
-        {pathSegments.length > 1 && (
-          <>
-            <span className="text-white/20 mx-1.5">/</span>
-            {secondSegmentMap[pathSegments[1]] ? (
-              <span className="text-sm text-white/50 font-medium">{secondSegmentMap[pathSegments[1]]}</span>
-            ) : (
-              <span className="text-sm text-white/50 font-mono">{pathSegments[1]}</span>
-            )}
-          </>
-        )}
-      </nav>
+    <header className="flex h-header shrink-0 items-center gap-3 border-b border-border bg-surface px-3 sm:px-5">
+      {narrow && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleDrawer}
+          aria-label={drawerOpen ? "Close menu" : "Open menu"}
+        >
+          {drawerOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </Button>
+      )}
+      <Embry0Mark />
+      <span className="ml-3 hidden truncate text-sm text-fg-muted md:inline">
+        Software that is alive
+      </span>
       {authMode === "session" && user && (
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex min-w-0 items-center gap-2">
           <span
-            className="max-w-[40vw] truncate text-xs text-white/50 sm:max-w-none"
+            className="max-w-[40vw] truncate text-sm text-fg-secondary sm:max-w-none"
             title={`${user.email} (tier: ${user.tier})`}
           >
             {user.email}
@@ -100,6 +47,12 @@ export function TopBar() {
             <LogOut className="h-4 w-4" />
           </Button>
         </div>
+      )}
+      {authMode === "key" && (
+        <span className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted">
+          <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+          API key
+        </span>
       )}
     </header>
   );

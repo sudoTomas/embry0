@@ -189,7 +189,7 @@ export function AddRepoPanel() {
   return (
     <div className="space-y-3 rounded-lg border border-white/10 bg-white/[0.02] p-4" data-testid="add-repo-panel">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Add repo</h2>
+        <h2 className="text-section font-semibold">Add repo</h2>
         <Button
           type="button"
           size="sm"
@@ -261,7 +261,7 @@ export function AddRepoPanel() {
             className="max-w-xs"
             data-testid="add-repo-manual-input"
           />
-          <Badge tone="warning">unverified — not checked against any token</Badge>
+          <Badge tone="warning">Unverified — not checked against any token</Badge>
         </div>
       )}
 

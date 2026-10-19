@@ -66,9 +66,11 @@ describe("BOARD_COLUMNS", () => {
     expect(byId.running.tint).toBe("neutral");
   });
 
-  it("uses lowercase labels", () => {
+  it("uses sentence-case labels", () => {
     for (const column of BOARD_COLUMNS) {
-      expect(column.label).toBe(column.label.toLowerCase());
+      const rest = column.label.slice(1);
+      expect(column.label.charAt(0)).toBe(column.label.charAt(0).toUpperCase());
+      expect(rest).toBe(rest.toLowerCase());
     }
   });
 });
