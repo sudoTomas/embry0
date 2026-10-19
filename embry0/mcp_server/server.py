@@ -591,8 +591,9 @@ async def case_close(
     given up), "non_code" (nothing to change in code), "cancelled" (the finding was
     withdrawn), "self_resolved" (it stopped by itself), "embry0" (embry0's own merge).
     embry0 refuses (409) a case that is already closed. Closing is terminal but keeps
-    history: a later recurrence opens a new case pointing at this one. Requires
-    confirm=true."""
+    history: a later recurrence opens a new case pointing at this one. A case with
+    origin "org" is an organization need: closing it dismisses the need and needs an
+    admin-scope key. Requires confirm=true."""
     if not confirm:
         return _confirmation_refusal("case_close", f"close case {case_id} as {resolution_path or 'its existing path'}")
     return await _get_client().case_close(case_id, resolution_path=resolution_path, note=note, closed_by=closed_by)

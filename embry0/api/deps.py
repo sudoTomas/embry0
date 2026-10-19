@@ -352,6 +352,11 @@ async def authenticate_stream(request: Request, scope: str, token: str | None) -
 require_admin = Depends(_admin_dependency)
 
 
+async def ensure_admin(request: Request) -> None:
+    """The admin gate, for a route that needs admin for only some of what it acts on."""
+    await _admin_dependency(request, request.headers.get("authorization", ""))
+
+
 #: The context-proxy's service key, rotated at every boot (app.py). It is
 #: read scope, and the log routes admit it by name: the proxy forwards only
 #: allowlisted, quota'd container queries for the sandboxes enrolled with it.
