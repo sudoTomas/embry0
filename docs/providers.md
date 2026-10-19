@@ -128,8 +128,12 @@ every other provider's. The dashboard's create-credential dialog
 (Credentials, **Add credential**, kind **LLM API key**) offers every provider,
 and for `custom` asks for the base URL; a provider this deployment has not
 enabled is listed as not enabled and cannot be picked. A repository's
-**LLM accounts** card binds an account at repo scope for each enabled
-provider and names the ones that are not.
+**LLM accounts** card binds an account at repo scope. It has a row for
+each enabled provider the catalog marks available, and for any provider
+the repository is bound to or resolves an account for, so neither is
+hidden. It counts the other enabled providers in one line and names the
+ones that are not enabled. Until the catalog answers it shows Anthropic
+and xAI.
 
 The sandbox receives the key as `EMBRY0_LLM_<PROVIDER>_API_KEY`
 (`EMBRY0_LLM_OPENAI_API_KEY`, …, `EMBRY0_LLM_CUSTOM_API_KEY`) and a custom

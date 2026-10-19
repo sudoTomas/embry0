@@ -40,3 +40,30 @@ export function llmProviderStates(
     return { name, state: listed.has(name) ? "enabled" : "not_enabled" };
   });
 }
+
+/**
+ * The LLM providers a repository's Accounts card gives a row: each enabled
+ * provider the catalog marks available (it has an account somewhere), plus
+ * any provider this repository has a binding for or resolves an account for,
+ * so a provider that is bound or resolving is never hidden. Before the
+ * catalog answers, availability is unknown and Anthropic and xAI keep their
+ * rows, as llmProviderStates keeps them enabled.
+ */
+export function usableLlmProviders(
+  catalog: readonly { name: string; available?: boolean }[] | undefined,
+  bindings: readonly { role: string; provider?: string | null }[],
+  effectiveLlm: Readonly<Partial<Record<string, unknown>>> | undefined,
+): LlmProviderName[] {
+  const available = catalog
+    ? new Set(catalog.filter((provider) => provider.available === true).map((provider) => provider.name))
+    : null;
+  const bound = new Set(bindings.filter((binding) => binding.role === "llm").map((binding) => binding.provider));
+  return llmProviderStates(catalog)
+    .filter(
+      ({ name, state }) =>
+        bound.has(name) ||
+        effectiveLlm?.[name] != null ||
+        (state === "enabled" && (available === null || available.has(name))),
+    )
+    .map(({ name }) => name);
+}

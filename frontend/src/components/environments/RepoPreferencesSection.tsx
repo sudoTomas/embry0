@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -91,7 +90,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
       },
       {
         onSuccess: () => {
-          toast.success("Sandbox preferences saved");
+          toast.success("Settings saved");
           setDirty(false);
         },
         onError: (e: Error) => toastApiError(e, "Failed"),
@@ -100,11 +99,17 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
   };
 
   const handleReset = () => {
+    if (
+      !window.confirm(
+        `Clear the work machine, branch, commit author, checks before a pull request and notes for ${repo}? This also turns off pull request review. You can undo this from History.`,
+      )
+    )
+      return;
     deletePrefs.mutate(
       { fullRepo: repo },
       {
         onSuccess: () => {
-          toast.success("Sandbox preferences cleared");
+          toast.success("Settings cleared. You can undo this from History.");
           setSandboxProfile("");
           setLanguageHint("");
           setNotes("");
@@ -126,23 +131,16 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
   return (
     <Card className="p-4 space-y-4">
       <div>
-        <h3 className="text-sm font-semibold">Sandbox preferences</h3>
+        <h3 className="text-sm font-semibold">Work machine and branches</h3>
         <p className="text-xs text-muted-foreground mt-1">
-          Override the triage agent&apos;s sandbox profile pick for this repository. Leave blank to
-          let triage decide.
+          The work machine, the branch embry0 starts from and asks to merge into, the commit
+          author, and the checks it runs before a pull request.
         </p>
-        <Link
-          to={`/qa/repos/${encodeURIComponent(repo)}/config`}
-          className="text-xs text-fg hover:text-primary hover:underline mt-1 inline-block"
-          data-testid="repo-prefs-qa-config-link"
-        >
-          Edit QA config →
-        </Link>
       </div>
 
       <div className="space-y-3">
         <div className="space-y-1">
-          <Label htmlFor="repo-prefs-profile">Sandbox profile</Label>
+          <Label htmlFor="repo-prefs-profile">Work machine</Label>
           <Select
             id="repo-prefs-profile"
             value={sandboxProfile}
@@ -152,7 +150,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
               setDirty(true);
             }}
           >
-            <option value="">— triage chooses —</option>
+            <option value="">embry0&apos;s default</option>
             {profiles.map((p) => (
               <option key={p.name} value={p.name}>
                 {p.name}
@@ -310,7 +308,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
           onClick={handleReset}
           disabled={resetting || (!hasRow && !dirty)}
         >
-          {resetting ? "Clearing…" : "Reset"}
+          {resetting ? "Clearing…" : "Clear these settings"}
         </Button>
       </div>
     </Card>

@@ -152,6 +152,9 @@ export function AddRepoPanel() {
       void queryClient.invalidateQueries({ queryKey: ["github", "discoverable-repos"] });
       void queryClient.invalidateQueries({ queryKey: ["gitlab", "discoverable-projects"] });
       void queryClient.invalidateQueries({ queryKey: ["qa-dashboard"] });
+      // The repo page is where its setup starts. A full path, never encoded:
+      // the repo route is a splat, so GitLab subgroup paths keep their slashes.
+      void navigate(`/repos/${outcome.row.repo}`);
     },
     onError: (e) => toastApiError(e, "Failed to register repo"),
   });
@@ -164,7 +167,7 @@ export function AddRepoPanel() {
       void queryClient.invalidateQueries({ queryKey: ["repos"] });
       void queryClient.invalidateQueries({ queryKey: ["github", "discoverable-repos"] });
       void queryClient.invalidateQueries({ queryKey: ["gitlab", "discoverable-projects"] });
-      void navigate(`/repos/onboard?repo=${encodeURIComponent(outcome.row.repo)}`);
+      void navigate(`/repos/${outcome.row.repo}`);
     },
     onError: (e) => toastApiError(e, "Failed to register repo"),
   });
@@ -310,7 +313,7 @@ export function AddRepoPanel() {
           }
           data-testid="add-repo-register-onboard"
         >
-          {registerAndOnboard.isPending ? "Registering…" : "Register & onboard"}
+          {registerAndOnboard.isPending ? "Registering…" : "Register and set up"}
         </Button>
         <button
           type="button"

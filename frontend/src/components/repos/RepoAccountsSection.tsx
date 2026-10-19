@@ -8,15 +8,15 @@ import { Select } from "@/components/ui/Select";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useCredentials, useRepoCredentials, useSetRepoCredentials } from "@/hooks/useCredentials";
 import { useModelsCatalog } from "@/hooks/useProvider";
-import { ENABLE_SETTING, llmProviderStates, type LlmProviderName } from "@/lib/llmProviders";
+import { ENABLE_SETTING, llmProviderStates, usableLlmProviders, type LlmProviderName } from "@/lib/llmProviders";
 import type { Binding, BindingInput, RepoCredentials } from "@/lib/types/credentials";
 import { providerLabel } from "@/lib/status";
 import { useAuthStore } from "@/stores/authStore";
 
 const NONE_VALUE = "";
-const NONE_LABEL = "(none — use owner/global/env)";
-const ENV_SOURCE_TITLE = "served from the environment; run import-env";
-const PIN_COPY = "Never fall back to another account for this repo";
+const NONE_LABEL = "Use the shared account (recommended)";
+const ENV_SOURCE_TITLE = "Comes from the server's settings, not the account list";
+const PIN_COPY = "If this account is paused, stop work on this repository instead of using the shared account";
 
 type ForgeName = "github" | "gitlab";
 type ForgeEffective = NonNullable<RepoCredentials["effective"]["forge"]>;
@@ -162,7 +162,13 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
 
   const llm = repoQuery.data?.effective?.llm;
   const llmStates = llmProviderStates(catalog.data?.providers);
-  const llmRows = llmStates.filter((entry) => entry.state === "enabled").map((entry) => entry.name);
+  // A row only for a provider this repository can use; the rest are counted.
+  const llmRows = usableLlmProviders(
+    catalog.data?.providers,
+    bindings.map((binding) => ({ role: binding.role, provider: providerOf(binding) })),
+    llm,
+  );
+  const unused = llmStates.filter((entry) => entry.state === "enabled" && !llmRows.includes(entry.name)).length;
   const notEnabled = llmStates.filter((entry) => entry.state === "not_enabled").map((entry) => entry.name);
 
   return (
@@ -171,6 +177,10 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
         <h3 className="text-sm font-medium">Effective forge account</h3>
         <ForgeAccount forge={repoQuery.data?.effective?.forge} />
       </Card>
+      <div className="space-y-1">
+        <Label htmlFor="repo-bound-account">{providerLabel(forge)} account embry0 uses for this repository</Label>
+        <AdminPicker isAdmin={isAdmin}>{select}</AdminPicker>
+      </div>
       <Card className="space-y-4 p-4">
         <h3 className="text-sm font-medium">LLM accounts</h3>
         {llmRows.map((provider) => (
@@ -191,6 +201,13 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
             }}
           />
         ))}
+        {unused > 0 && (
+          <p data-testid="llm-unused" className="text-xs text-muted-foreground">
+            {unused === 1
+              ? "1 other AI company is switched on here but has no account. This repository does not use it."
+              : `${unused} other AI companies are switched on here but have no account. This repository does not use them.`}
+          </p>
+        )}
         {notEnabled.length > 0 && (
           <p data-testid="llm-not-enabled" className="text-xs text-muted-foreground">
             Not enabled in this deployment: {notEnabled.map(providerLabel).join(", ")}. Name a provider in{" "}
@@ -198,10 +215,6 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
           </p>
         )}
       </Card>
-      <div className="space-y-1">
-        <Label htmlFor="repo-bound-account">Bound account</Label>
-        <AdminPicker isAdmin={isAdmin}>{select}</AdminPicker>
-      </div>
     </div>
   );
 }
@@ -313,7 +326,7 @@ function LlmAccount({
         )}
       </div>
       <details data-testid={`llm-trace-${provider}`}>
-        <summary className="cursor-pointer text-sm text-muted-foreground">Trace</summary>
+        <summary className="cursor-pointer text-sm text-muted-foreground">Why this account?</summary>
         <ul className="mt-1 list-disc space-y-1 pl-5 font-mono text-xs text-fg-secondary">
           {trace.map((line, index) => (
             <li key={`${index}:${line}`}>{line}</li>
@@ -328,7 +341,7 @@ function AdminPicker({ isAdmin, children }: { isAdmin: boolean; children: ReactN
   if (isAdmin) return children;
   return (
     <div className="w-full [&>div]:w-full">
-      <Tooltip content="Admin scope required">{children}</Tooltip>
+      <Tooltip content="Only an admin can change accounts.">{children}</Tooltip>
     </div>
   );
 }
@@ -366,7 +379,7 @@ function ResolvedForge({ forge }: { forge: Exclude<ForgeEffective, { error: stri
         </Badge>
       </div>
       <details data-testid="repo-accounts-trace">
-        <summary className="cursor-pointer text-sm text-muted-foreground">Trace</summary>
+        <summary className="cursor-pointer text-sm text-muted-foreground">Why this account?</summary>
         <ul className="mt-1 list-disc space-y-1 pl-5 font-mono text-xs text-fg-secondary">
           {trace.map((line, index) => (
             <li key={`${index}:${line}`}>{line}</li>
