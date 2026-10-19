@@ -1321,6 +1321,31 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 73 | what became of a job's pull request, apart from how the job ended (#279, #280) | `jobs.delivery_state` (`none`/`pr_open`/`merged`/`closed`, seeded from `status` + `pr_url`), `jobs.delivery_state_at` (the forge's time; `jobs.updated_at` preserved) |
 | 74 | bound the analyses a full draft cap no longer bounds (#283) | `watcher_runs.analysed_under_full_cap` |
 | 75 | pre-built QA image base digest; exactly one active image per repo — deactivates all but the newest active row per repo, deletes nothing (#334) | `qa_image_tags.base_image`, `.base_image_digest`, `ck_qa_image_tags_base_pair`, `uq_qa_image_tags_one_active_per_repo` |
+| 76 | deterministic log clustering memory: one row per (signature, repo) behind "is this new?" and "is this getting worse?" (#289) | `log_signatures`, `idx_log_signatures_repo_last_seen`, `idx_log_signatures_repo_count` |
+| 77 | the daily digest is sent once per UTC day: the sender claims the day before it sends and keeps what it sent | `digest_deliveries` |
+| 78 | "merge this PR?" from the chat: one row per ask, pinned to the PR's head sha; the `merge` API key scope | `merge_approvals`, `uq_merge_approvals_one_pending_per_pr`, `idx_merge_approvals_job`, `api_keys_scope_check` (admits `merge`) |
+| 79 | the ask is posted once the PR's CI settles and retires itself: `closed` when the PR is merged or closed on the forge, `expired` when left untouched | `merge_approvals.posted_at`, `merge_approvals_status_check` (adds `closed`, `expired`), `idx_merge_approvals_pending_posted` |
+| 80 | data-only: unwrap the double-encoded JSON `ask` strings 78 and 79 wrote; idempotent | `merge_approvals.ask` |
+| 81 | data-only: the same unwrap for the digest payload and the clustering sample lines (#382) | `digest_deliveries.payload`, `log_signatures.sample_lines` |
+| 82 | watcher runs, known patterns and tick attempts are scoped to a stack, the ticket columns are tracker-neutral, and one open healing case per tracker ticket (#378, #317) | `watcher_runs.{repo, tracker, tracker_key, tracker_url}` (drops `linear_issue_identifier`), `idx_watcher_runs_repo_created`, `watcher_known_patterns` pkey `(fingerprint, repo)`, `watcher_tick_attempts.repo` as pkey (drops `id`), `idx_healing_cases_open_tracker` |
+| 83 | what embry0 watches, one row per stack: its LogQL, where findings are filed, and the settings that differ from the global defaults (#378, #297) | `watcher_stacks` |
+| 84 | a case accepted, attempted and given up closes as `abandoned` (#410) | `healing_cases_resolution_path_check` |
+| 85 | data-only: stamp `released_at` from `accepted_at` on drafts a human already accepted (#415) | `watcher_runs.released_at` |
+| 86 | credential registry: the accounts embry0 acts as, which one a repo, owner, host or the deployment uses per role, and the per-job ledger (spec 2026-09-29) | `credentials`, `credential_bindings`, `credential_bindings_single`, `credential_uses`, `credential_uses_job`, `credential_uses_cred` |
+| 87 | the shared Docker daemon is an admin grant per repo; a repo already on a `dind_enabled` profile keeps it (#522) | `repos.docker_access` |
+| 88 | per-key repository allowlist: NULL is any repository, an empty array is refused | `api_keys.allowed_repos`, `api_keys_allowed_repos_not_empty` |
+| 89 | data-only: `finished_at` for terminal rows written without one, from `updated_at`, with the `updated_at` trigger disabled for the pass (#345) | `jobs.finished_at` |
+| 90 | data-only: drop per-job volume rows whose job has ended or has no jobs row (#328) | `qa_volume_state` |
+| 91 | drop the per-template model map nothing read (#468) | `pipeline_templates.agent_models` (dropped) |
+| 92 | a restart recovers jobs instead of failing them (#307) | `jobs.interrupted_at`, `jobs.resume_attempts`, `jobs.launch` |
+| 93 | drop the QA trace URL column nothing set (#644) | `qa_app_results.trace_url` (dropped) |
+| 94 | how the watcher chose a case's signature: the proposal's own evidence, or the loudest cluster as the fallback (#657) | `healing_cases.signature_source` |
+| 95 | job_logs correlation columns lifted out of the JSON; a trace row is written at run start as `running` (#36) | `job_logs.{run_id, node, event_type}` (drops `agent_id`), `idx_job_logs_job_event_type`, `idx_job_logs_run_id` |
+| 96 | review a pull request when it is ready: one row per review a trigger asked for, deduped on `trigger_key` (#30) | `repo_preferences.pr_review`, `pr_reviews`, `idx_pr_reviews_trigger_key`, `idx_pr_reviews_repo_number` |
+| 97 | the forge owners embry0 maintains as a whole: forge, the credential it acts with and the probed `access` (ADR 0010) | `organizations` |
+| 98 | what discovery found under an owner: one fact row per repository, replaced on every run, plus the runs ledger (ADR 0010) | `org_repo_facts`, `idx_org_repo_facts_owner`, `org_discovery_runs`, `idx_org_discovery_runs_owner` |
+| 99 | what embry0 still needs to maintain an owner, keyed by (owner, kind, signature) so an answer survives rediscovery (ADR 0011) | `org_needs`, `idx_org_needs_owner`, `org_needs_synced` |
+| 100 | the machines that run the code, which repositories run on each, and the `tailnet_api_key` credential kind (ADR 0013) | `hosts`, `hosts_name_unique`, `repo_hosts`, `idx_repo_hosts_host`, `credentials.metadata`, `credentials_kind_check`, `credentials_provider_check`, `credential_bindings_role_check` |
 | 101 | agent identity (`display_name`, `avatar`, `color`, `tagline`, with the builtins' values written for rows still at the defaults), skill sources and inline skills | `agent_definitions.{display_name, avatar, color, tagline}`, `skill_sources`, `inline_skills` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
