@@ -2903,6 +2903,32 @@ MIGRATIONS: list[tuple[int, str, str]] = [
                                 'openai', 'openrouter', 'google', 'groq', 'deepseek', 'custom'));
         """,
     ),
+    (
+        103,
+        "repo_config_revisions: every change to a repo's test setup and preferences (ADR 0019)",
+        # One row per write that changed a repository's stored test setup
+        # (surface qa_config: the yaml text) or its preferences row (surface
+        # preferences: the row without updated_at). before is NULL when the
+        # write created the row and after is NULL when it removed it. The
+        # storage classes append in the write's own transaction and keep the
+        # newest 100 rows per repo and surface. No foreign key to repos, so
+        # the history outlives a repository's removal.
+        """
+        CREATE TABLE IF NOT EXISTS repo_config_revisions (
+            id          BIGSERIAL PRIMARY KEY,
+            repo        TEXT NOT NULL,
+            surface     TEXT NOT NULL CHECK (surface IN ('qa_config', 'preferences')),
+            before      JSONB,
+            after       JSONB,
+            actor       TEXT NOT NULL DEFAULT '',
+            source      TEXT NOT NULL DEFAULT 'person'
+                        CHECK (source IN ('person', 'bootstrap', 'onboard', 'proposal', 'restore')),
+            reason      TEXT NOT NULL DEFAULT '',
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_config_revisions_repo ON repo_config_revisions (repo, surface, id DESC);
+        """,
+    ),
 ]
 
 
