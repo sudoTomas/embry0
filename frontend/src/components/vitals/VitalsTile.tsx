@@ -1,3 +1,4 @@
+import type { Ref } from "react";
 import { cn } from "@/lib/utils";
 
 /** A tile that is a status takes that status's colour on its border and value.
@@ -12,6 +13,8 @@ interface VitalsTileProps {
   trend?: string;
   tone?: TileTone;
   className?: string;
+  /** The value line, for a caller that bumps it when the value changes. */
+  valueRef?: Ref<HTMLParagraphElement>;
 }
 
 const TONE: Record<TileTone, { border: string; value: string }> = {
@@ -23,7 +26,7 @@ const TONE: Record<TileTone, { border: string; value: string }> = {
 };
 
 /** The family stat tile: the value on top, the label under it, sentence case. */
-export function VitalsTile({ label, value, detail, trend, tone = "neutral", className }: VitalsTileProps) {
+export function VitalsTile({ label, value, detail, trend, tone = "neutral", className, valueRef }: VitalsTileProps) {
   return (
     <div
       className={cn(
@@ -32,7 +35,12 @@ export function VitalsTile({ label, value, detail, trend, tone = "neutral", clas
         className,
       )}
     >
-      <p className={cn("truncate font-display text-tile font-bold tracking-tight tabular-nums", TONE[tone].value)}>
+      {/* Scaled from its left edge, where the number starts, so a bump
+          (lib/motion's tick) grows it in place instead of sliding it. */}
+      <p
+        ref={valueRef}
+        className={cn("origin-left truncate font-display text-tile font-bold tracking-tight tabular-nums", TONE[tone].value)}
+      >
         {value}
       </p>
       <p className="mt-1 truncate text-xs text-fg-muted">{label}</p>

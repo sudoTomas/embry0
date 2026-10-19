@@ -14,8 +14,9 @@ import {
 } from "@/components/vitals";
 
 // Format helpers — kept local; they're the only translation layer between
-// raw backend numbers and tile strings.
-const formatCount = (n: number) => String(n);
+// raw backend numbers and tile strings. A tile counting up draws every step
+// through them, so a count rounds to whole numbers on the way.
+const formatCount = (n: number) => String(Math.round(n));
 const formatPercent = (n: number) => `${Math.round(n * 100)}%`;
 const formatUsd = (n: number) => `$${n.toFixed(2)}`;
 
@@ -70,6 +71,7 @@ export function DashboardPage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
           <SingleSourceTile
             label="Running"
+            turn={0}
             query={selectQuery(queue, (q) => q.running)}
             format={formatCount}
             tone={(n) => (n > 0 ? "running" : "neutral")}
@@ -79,30 +81,35 @@ export function DashboardPage() {
               the single thing on Overview to act on. */}
           <SingleSourceTile
             label="Needs you"
+            turn={1}
             query={selectQuery(queue, (q) => q.awaiting_input + q.paused)}
             format={formatCount}
             tone={(n) => (n > 0 ? "accent" : "neutral")}
           />
           <SingleSourceTile
             label="Job success"
+            turn={2}
             query={selectQuery(stats, (s) => s.job_success_rate ?? s.success_rate)}
             format={formatPercent}
           />
           {/* Distinct pull requests, not job rows — several jobs share one PR. */}
           <SingleSourceTile
             label="PRs merged"
+            turn={3}
             query={selectQuery(stats, (s) => s.delivery?.prs_merged ?? 0)}
             format={formatCount}
             tone={(n) => (n > 0 ? "good" : "neutral")}
           />
           <SingleSourceTile
             label="Cost today"
+            turn={4}
             query={selectQuery(stats, (s) => s.daily_cost_usd)}
             format={formatUsd}
             detail={stats.data ? `${formatUsd(stats.data.monthly_cost_usd)} this month` : undefined}
           />
           <SingleSourceTile
             label="Cache hit rate"
+            turn={5}
             query={selectQuery(stats, (s) => s.token_totals?.cache_hit_rate ?? 0)}
             format={formatPercent}
           />
