@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -38,7 +39,7 @@ from embry0.audit.helpers import emit_audit
 from embry0.safety.redaction import register_known_secrets
 from embry0.services.credentials.import_env import import_from_env
 from embry0.services.credentials.preview import masked_preview
-from embry0.services.credentials.providers import default_host
+from embry0.services.credentials.providers import base_url_host, default_host, llm_providers
 from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
 from embry0.services.hosts import TAILNET_API_BASE
 from embry0.storage.repositories.credentials import (
@@ -65,8 +66,10 @@ def _repo_path(value: str) -> str:
         raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
-def _expected_host(config: Any, provider: str) -> str:
-    if provider in ("anthropic", "xai"):
+def _expected_host(config: Any, provider: str, metadata: Mapping[str, Any] | None = None) -> str:
+    if provider == "custom":
+        return base_url_host(str((metadata or {}).get("base_url") or ""))
+    if provider in llm_providers():
         return default_host(provider)
     if provider == "tailscale":
         return TAILNET_API_HOST
@@ -171,7 +174,7 @@ async def list_credentials(request: Request) -> list[CredentialOut]:
 @router.post("/credentials", response_model=CredentialOut, status_code=201, dependencies=[require_admin])
 async def create_credential(req: CredentialCreate, request: Request) -> CredentialOut:
     st = _state(request)
-    expected = _expected_host(st.config, req.provider)
+    expected = _expected_host(st.config, req.provider, req.metadata)
     host = (req.host.strip() or expected).lower()
     if host != expected:
         raise HTTPException(status_code=422, detail=f"host for {req.provider} must be {expected!r} in this deployment")
@@ -601,7 +604,7 @@ async def get_repo_credentials(full_repo: str, request: Request) -> dict[str, An
     except (CredentialMissingError, CredentialUnavailableError, UnregisteredRepoError) as exc:
         effective["forge"] = {"error": str(exc)}
     llm: dict[str, Any] = {}
-    for provider in ("anthropic", "xai"):
+    for provider in llm_providers():
         try:
             resolved = await st.credential_resolver.resolve_llm(scope_value, provider)
         except CredentialMissingError:

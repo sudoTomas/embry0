@@ -2889,6 +2889,20 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             'ADR 0014: a repository''s place under its owner''s standard of one kind. mode off = never audited; score and findings_open = the newest completed audit, at last_audit_at; last_audit_job_id = the newest audit started.';
         """,
     ),
+    (
+        102,
+        "credentials.provider takes the OpenAI-compatible LLM providers (docs/providers.md)",
+        # An API key for openai, openrouter, google, groq, deepseek or a custom
+        # OpenAI-compatible endpoint is a credentials row like an xAI key. Only
+        # the provider CHECK widens: kind, bindings and uses already allow any
+        # LLM provider name.
+        """
+        ALTER TABLE credentials DROP CONSTRAINT IF EXISTS credentials_provider_check;
+        ALTER TABLE credentials ADD CONSTRAINT credentials_provider_check
+            CHECK (provider IN ('github', 'gitlab', 'anthropic', 'xai', 'ssh', 'tailscale',
+                                'openai', 'openrouter', 'google', 'groq', 'deepseek', 'custom'));
+        """,
+    ),
 ]
 
 

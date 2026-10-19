@@ -15,12 +15,6 @@ def test_migration_101_present_and_gapless() -> None:
     assert "standards" in description and "repo_standard_state" in description
 
 
-def test_migration_101_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_100.py)."""
-    assert MIGRATIONS[-1][0] == 101, "migration 101 must add standards and repo_standard_state"
-
-
 @pytest.mark.requires_postgres
 async def test_one_active_version_per_owner_and_kind(db_with_migrations: DatabasePool) -> None:
     insert = "INSERT INTO standards (id, owner, kind, version, status) VALUES ($1, 'acme', 'design', $2, $3)"
