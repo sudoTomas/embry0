@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas.repo_path import REPO_PATH_ERROR, REPO_PATH_PATTERN
+from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services import standards as standards_service
 from embry0.services.standards import (
@@ -128,7 +129,7 @@ async def _active_or_404(request: Request, owner: str, kind: str) -> Standard:
     return standard
 
 
-async def _audit(request: Request, action: str, details: dict[str, Any]) -> None:
+async def _audit(request: Request, action: AuditAction, details: dict[str, Any]) -> None:
     config = getattr(request.app.state, "config", None)
     await emit_audit(
         getattr(request.app.state, "db", None),

@@ -7,6 +7,7 @@ from typing import Any
 
 import structlog
 
+from embry0.audit.actions import AuditAction
 from embry0.storage.database import DatabasePool
 
 logger = structlog.get_logger("audit")
@@ -14,7 +15,7 @@ logger = structlog.get_logger("audit")
 
 async def emit_audit_event_db(
     db: DatabasePool,
-    action: str,
+    action: AuditAction,
     *,
     actor: str = "system",
     details: dict[str, Any] | None = None,

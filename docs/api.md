@@ -282,7 +282,7 @@ An owner with the `rediscover_hours` setting on is also rediscovered on a schedu
 
 - `register` adds the repository to the repo registry under the organization's forge, the call `POST /repos` makes. A row under any case counts as `already`.
 - `hook` creates a GitHub webhook on the repository posting to `WEBHOOK_PUBLIC_URL` + `/api/v1/webhook` with `GITHUB_WEBHOOK_SECRET`, for issues, issue comments and pull requests ([webhooks.md](webhooks.md#github)). It runs only when the owner's probe found the credential can manage webhooks, and it is skipped while `WEBHOOK_PUBLIC_URL` is unset or a loopback address, or the secret is empty. A hook in the forge's live listing whose URL starts with `WEBHOOK_PUBLIC_URL` is `already`; a hook on the dashboard's origin is not, since that vhost answers 404 on the webhook paths. GitHub only in this release.
-- `onboard` starts the onboard job ([onboarding.md](onboarding.md)) on the repository's default branch through the function `POST /jobs {"pipeline": "onboard"}` uses, so it runs the same checks (the calling key's repository allowlist among them: a repository the key may not start work on is `failed` with `repo_not_allowed`) and writes the same `onboard_job_created` audit row. A repository that is not registered is skipped (the job would fail `ERR_REPO_UNREGISTERED`); a stored QA config or an onboard job in flight is `already`; a repository whose facts carry no boot hint is skipped. When the newest onboard job completed without storing a QA config, the repository is skipped with that job's id unless the body carries `"force": true`.
+- `onboard` starts the onboard job ([onboarding.md](onboarding.md)) on the repository's default branch through the function `POST /jobs {"pipeline": "onboard"}` uses, so it runs the same checks (the calling key's repository allowlist among them: a repository the key may not start work on is `failed` with `repo_not_allowed`) and starts it under the caller's actor, which its `onboard.job_created` audit row names. A repository that is not registered is skipped (the job would fail `ERR_REPO_UNREGISTERED`); a stored QA config or an onboard job in flight is `already`; a repository whose facts carry no boot hint is skipped. When the newest onboard job completed without storing a QA config, the repository is skipped with that job's id unless the body carries `"force": true`.
 - `watch` adds a watcher stack for the repository, disabled, filing to the organization's forge, with a placeholder LogQL selector to edit before enabling. It stores through the function `PUT /watcher/stacks/{owner}/{name}` uses and writes its `watcher_stack_updated` audit row. A stack under any case counts as `already`.
 - `deactivate` sets the repository's registry row inactive, the call `PUT /repos/{repo}/active` with `{"active": false}` makes: the row stays, hidden from listings, and the same route turns it back on. It answers the `repo_vanished` need, and it reaches an archived repository too: one archived when it was last listed and deleted since is what that need proposes. An inactive row, or no row at all, is `already`.
 
@@ -405,6 +405,26 @@ curl -X PUT http://localhost:8200/api/v1/apikeys/key-0123456789ab/allowed-repos 
 
 Each change writes an `apikey.allowed_repos_changed` audit row with the list
 before and after.
+
+## Audit log
+
+```bash
+# Newest-first rows; admins see every row, other callers the rows they wrote
+curl "http://localhost:8200/api/v1/audit?action=qa.job_created&limit=50" \
+  -H "Authorization: Bearer $EMBRY0_API_KEY"
+
+# Every action a row can carry, with its label (the dashboard's filter list)
+curl http://localhost:8200/api/v1/audit/actions \
+  -H "Authorization: Bearer $EMBRY0_API_KEY"
+# -> {"actions": [{"action": "user.login", "label": "Signed in"}, ...]}
+```
+
+The action names live in one registry, `embry0/audit/actions.py`. Each
+event has one name: a QA, onboard or pull request review job writes one
+`qa.job_created`, `onboard.job_created` or `pr_review.job_created` row,
+whose actor is the job's actor. Rows written before that also carry a
+second, underscore-spelled copy (`qa_job_created`, `onboard_job_created`,
+`pr_review_job_created`); the registry does not list those.
 
 ## Sandbox visibility
 

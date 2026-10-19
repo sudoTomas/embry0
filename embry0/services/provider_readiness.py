@@ -20,11 +20,11 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 
 from embry0.agents.providers import CATALOG_PROVIDERS, ModelProvider
 
-PROBE_AUDIT_ACTION = "provider_connection_tested"
+PROBE_AUDIT_ACTION: Final = "provider_connection_tested"
 """Audit action ``POST /config/providers/{name}/test`` writes, details ``{provider, status}``."""
 
 

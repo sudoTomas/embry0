@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from embry0.api.deps import get_audit_repo, unidentified_caller_tier
 from embry0.api.session import TIER_ADMIN
+from embry0.audit.actions import AUDIT_ACTION_LABELS
 from embry0.storage.repositories.audit import AuditRepository
 
 router = APIRouter()
@@ -36,6 +37,15 @@ class AuditEntry(BaseModel):
 class AuditListResponse(BaseModel):
     entries: list[AuditEntry]
     total: int
+
+
+class AuditActionEntry(BaseModel):
+    action: str
+    label: str
+
+
+class AuditActionsResponse(BaseModel):
+    actions: list[AuditActionEntry]
 
 
 def _redact(details: dict[str, Any]) -> dict[str, Any]:
@@ -74,6 +84,18 @@ async def _caller_scope(request: Request) -> tuple[str, list[str]]:
         own = [principal.email] if principal.email else [f"key:{principal.key_name}"]
         return principal.tier, own
     return unidentified_caller_tier(request), []
+
+
+@router.get("/audit/actions")
+async def list_audit_actions() -> AuditActionsResponse:
+    """Every action an audit row can carry, with its label: the Audit filter's list.
+
+    Served from ``embry0.audit.actions``, the registry the writers are typed
+    against, so the filter can select every action that is recorded.
+    """
+    return AuditActionsResponse(
+        actions=[AuditActionEntry(action=action, label=label) for action, label in AUDIT_ACTION_LABELS.items()]
+    )
 
 
 @router.get("/audit")

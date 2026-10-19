@@ -68,8 +68,8 @@ async def start_onboard_job(
     """EMB-50: start an onboard job after every check ``POST /jobs`` runs first.
 
     The calling key's repository allowlist, the agent model overrides and
-    the executor, then the dispatch and its ``onboard_job_created`` audit
-    row naming the caller. ``POST /jobs {"pipeline": "onboard"}`` and the
+    the executor, then the dispatch under the caller's actor, which the
+    executor's ``onboard.job_created`` audit row names. ``POST /jobs {"pipeline": "onboard"}`` and the
     organization onboard action both start their jobs here, so the action
     cannot start a job the caller's key could not start through the route.
     Raises HTTPException as the route answers.
@@ -89,14 +89,6 @@ async def start_onboard_job(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    config = request.app.state.config
-    await emit_audit(
-        getattr(request.app.state, "db", None),
-        "onboard_job_created",
-        actor=request_actor(request),
-        details={"job_id": job_id, "repo": repo, "branch": branch},
-        audit_log_path=config.audit_log_path,
-    )
     return job_id
 
 
@@ -145,14 +137,6 @@ async def create_job(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        config = request.app.state.config
-        await emit_audit(
-            getattr(request.app.state, "db", None),
-            "qa_job_created",
-            actor=request_actor(request),
-            details={"job_id": job_id, "repo": req.repo, "branch": req.branch},
-            audit_log_path=config.audit_log_path,
-        )
         job = await jobs.get(job_id)
         return job or {"job_id": job_id}
 
@@ -171,13 +155,6 @@ async def create_job(
             raise HTTPException(status_code=400, detail=f"review not started: {result.reason}")
         if not result.dispatched or not result.job_id:
             raise HTTPException(status_code=409, detail=f"review not started: {result.reason}")
-        await emit_audit(
-            getattr(request.app.state, "db", None),
-            "pr_review_job_created",
-            actor=request_actor(request),
-            details={"job_id": result.job_id, "repo": req.repo, "number": req.number},
-            audit_log_path=request.app.state.config.audit_log_path,
-        )
         job = await jobs.get(result.job_id)
         return job or {"job_id": result.job_id}
 

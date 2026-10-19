@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 import embry0.services._executor_outcomes as _executor_outcomes
 import embry0.services._executor_run as _executor_run
+from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.orchestration import dispatch_actors
 from embry0.orchestration.restart import ExecutorDraining, ShutdownInterrupt
@@ -219,10 +220,10 @@ class IssueExecutor:
         decision: DispatchDecision = await gate.check(actor=actor)
         return None if decision.allowed else decision
 
-    async def _emit_audit(self, *args: Any, **kwargs: Any) -> None:
+    async def _emit_audit(self, db: Any, action: AuditAction, **kwargs: Any) -> None:
         """Late-bound ``emit_audit`` — mixin methods call through here so test
         patches on ``embry0.services.issue_executor.emit_audit`` reach them."""
-        await emit_audit(*args, **kwargs)
+        await emit_audit(db, action, **kwargs)
 
     def _select_workflow(self, pipeline: str) -> Any:
         """Pick the workflow class based on the pipeline name.
@@ -641,10 +642,11 @@ class IssueExecutor:
             dispatched_by=dispatched_by,
         )
 
+        # The one row for this job: every path that starts a QA job ends here.
         await emit_audit(
             self._db,
             "qa.job_created",
-            actor="system",
+            actor=dispatched_by or "system",
             details={"job_id": job_id, "repo": repo, "branch": branch},
             audit_log_path=self._audit_log_path,
         )
@@ -706,7 +708,7 @@ class IssueExecutor:
         await emit_audit(
             self._db,
             "onboard.job_created",
-            actor="system",
+            actor=dispatched_by or "system",
             details={"job_id": job_id, "repo": repo, "branch": branch},
             audit_log_path=self._audit_log_path,
         )
@@ -754,7 +756,7 @@ class IssueExecutor:
         await emit_audit(
             self._db,
             "pr_review.job_created",
-            actor="system",
+            actor=dispatched_by or "system",
             details={"job_id": job_id, "repo": repo, "number": number, "trigger": review.get("trigger")},
             audit_log_path=self._audit_log_path,
         )
