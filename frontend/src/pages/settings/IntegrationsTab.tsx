@@ -277,7 +277,7 @@ export default function IntegrationsTab() {
               </div>
               <p className="text-xs text-white/30 mt-1">
                 Personal API key used to read trigger issues and post job outcomes back.
-                Leave empty to fall back to LINEAR_API_KEY.
+                Leave empty to fall back to <code className="font-mono">LINEAR_API_KEY</code>.
               </p>
             </div>
             <div>
