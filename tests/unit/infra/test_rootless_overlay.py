@@ -39,6 +39,14 @@ DROPPED_VOLUME_SOURCES = {"dind-certs-client", "registry-auth", "image-pins"}
 DROPPED_DEPENDENCIES = {"dind", "init-push-images"}
 SWITCHED_OFF = {"dind", "registry", "registry-auth-init", "init-push-images"}
 
+# Spec 3.2: the skills store. The rootless daemon resolves bind sources on the
+# host, where the base file's named volume has no path it can name, so the
+# overlay swaps the volume for a host directory and tells the orchestrator
+# that directory (SKILLS_STORE_DAEMON_PATH) to build the sandbox mounts from.
+SKILLS_HOST = "${SKILLS_STORE_HOST:-/var/lib/embry0/skills}"
+SKILLS_VOLUME = "skills-store:/skills"
+SKILLS_BIND = f"{SKILLS_HOST}:/skills"
+
 
 class _Loader(yaml.SafeLoader):
     """Reads compose's `!override` / `!reset` merge tags as the plain value."""
@@ -81,18 +89,25 @@ def test_the_overlay_keeps_every_base_orchestrator_variable_but_the_dind_ones():
     assert overlay["AGENT_RUNTIME"] == "rootless"
     assert overlay["DOCKER_HOST"] == SOCKET
     assert overlay["IMAGE_REGISTRY"] == "", "the root .env's IMAGE_REGISTRY must be overridden empty"
-    assert set(overlay) == set(kept) | {"AGENT_RUNTIME", "DOCKER_HOST", "IMAGE_REGISTRY"}
+    assert overlay["SKILLS_STORE_DAEMON_PATH"] == SKILLS_HOST, (
+        "the sandbox daemon must be told the host directory the store is bind-mounted from"
+    )
+    assert set(overlay) == set(kept) | {"AGENT_RUNTIME", "DOCKER_HOST", "IMAGE_REGISTRY", "SKILLS_STORE_DAEMON_PATH"}
 
 
 def test_the_overlay_keeps_every_base_orchestrator_mount_but_the_dind_ones():
     base = _services(BASE)["orchestrator"]["volumes"]
     overlay = _services(OVERLAY)["orchestrator"]["volumes"]
-    kept = [v for v in base if _volume_source(v) not in DROPPED_VOLUME_SOURCES]
+    assert SKILLS_VOLUME in base, "the base file's skills store mount moved; update SKILLS_VOLUME"
+    kept = [v for v in base if _volume_source(v) not in DROPPED_VOLUME_SOURCES and v != SKILLS_VOLUME]
     assert [v for v in overlay if v in kept] == kept, (
         f"base mounts missing from the overlay: {set(kept) - set(overlay)}"
     )
     assert f"{SOCKET_DIR}:{SOCKET_DIR}:ro" in overlay, "the sandbox daemon's socket directory is not mounted"
-    assert set(overlay) == set(kept) | {f"{SOCKET_DIR}:{SOCKET_DIR}:ro"}
+    assert SKILLS_BIND in overlay and SKILLS_VOLUME not in overlay, (
+        "the skills store must be a host directory the rootless daemon can bind-mount from"
+    )
+    assert set(overlay) == set(kept) | {f"{SOCKET_DIR}:{SOCKET_DIR}:ro", SKILLS_BIND}
 
 
 def test_the_overlay_keeps_every_base_dependency_but_the_dind_ones():
@@ -178,3 +193,6 @@ def test_compose_merges_the_overlay(tmp_path: Path) -> None:
     assert orchestrator["group_add"] == ["1234"]
     assert DROPPED_DEPENDENCIES.isdisjoint(orchestrator["depends_on"])
     assert {v["source"] for v in orchestrator["volumes"]}.isdisjoint(DROPPED_VOLUME_SOURCES)
+    [skills] = [v for v in orchestrator["volumes"] if v["target"] == "/skills"]
+    assert skills["type"] == "bind" and skills["source"] == "/var/lib/embry0/skills"
+    assert orchestrator["environment"]["SKILLS_STORE_DAEMON_PATH"] == skills["source"]
