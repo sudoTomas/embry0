@@ -177,3 +177,24 @@ async def test_brainstorming_on_the_developer_definition_raises_the_cap():
     update = result.update or {}
     assert not update.get("agent_questions_exhausted"), "the definition's brainstorming skill must lift the cap"
     assert update.get("agent_question_rounds") == 15
+
+
+@pytest.mark.asyncio
+async def test_a_template_node_adding_brainstorming_raises_the_cap():
+    """The cap reads the effective list the agent ran with: definition, template node delta, triage delta."""
+    from embry0.workflows.issue_to_pr.route_plan import build_route_plan
+
+    graph = {
+        "nodes": [
+            {"node_id": "t", "agent_type": "triage"},
+            {"node_id": "d", "agent_type": "developer", "config": {"skills": {"add": ["superpowers:brainstorming"]}}},
+        ],
+        "edges": [{"edge_id": "e1", "source": "t", "target": "d", "edge_type": "flow"}],
+    }
+    state = {**_brainstorm_cap_state({}), "route_plan": build_route_plan(graph), "route_cursor": 0}
+    result = await _run_developer_with_one_question(
+        state, {"configurable": {"agent_runner": object(), "credentials": {}}}
+    )
+    update = result.update or {}
+    assert not update.get("agent_questions_exhausted"), "a template node adding brainstorming must lift the cap"
+    assert update.get("agent_question_rounds") == 15

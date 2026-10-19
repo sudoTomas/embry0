@@ -921,13 +921,14 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         logger.info(
             "developer_log_tool_granted", job_id=state.get("job_id"), containers=state.get("case_log_containers")
         )
+    developer_template_config = step_template_config(state, "developer")
     result = await _nodes.run_agent_node(
         state=state,
         agent_runner=agent_runner,
         agent_type="developer",
         prompt=prompt,
         agent_definition=developer_definition,
-        template_config=step_template_config(state, "developer"),
+        template_config=developer_template_config,
         timeout_seconds=1800,
         on_event=_forward_event,
         credentials=credentials,
@@ -1047,12 +1048,13 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         from embry0.orchestration.nodes.agent import _enforce_ask_user_cap
 
         # Brainstorming sessions can legitimately need many turns of design
-        # back-and-forth. Bump the cap when the developer's row carries the
-        # brainstorming skill or triage added it; everything else stays at the
-        # default of 5. The template delta is not applied: the cap reads what
-        # triage attached, on top of the row.
-        raw_skills = ((state.get("pipeline_config", {}) or {}).get("agent_skills") or {}).get("developer")
-        skills_for_dev = effective_skills(developer_definition.get("skills") or [], raw_skills)
+        # back-and-forth. Bump the cap when the developer's effective skills
+        # carry brainstorming (the row, then the template node's delta, then
+        # triage's, as the resolver applies them); everything else stays at the
+        # default of 5.
+        template_skills = ((developer_template_config or {}).get("agent_skills") or {}).get("developer")
+        triage_skills = ((state.get("pipeline_config", {}) or {}).get("agent_skills") or {}).get("developer")
+        skills_for_dev = effective_skills(developer_definition.get("skills") or [], template_skills, triage_skills)
         ask_cap = BRAINSTORMING_ASK_USER_CAP if "superpowers:brainstorming" in skills_for_dev else DEFAULT_ASK_USER_CAP
 
         exhausted, cap_updates = _enforce_ask_user_cap(
