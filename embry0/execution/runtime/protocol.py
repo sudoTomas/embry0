@@ -182,6 +182,14 @@ class AgentRuntime(Protocol):
         """Force-remove the containers, running or not."""
         ...
 
+    async def container_mounts(self, container: str, *, timeout: int = 10) -> list[tuple[str, str]]:
+        """``(source, destination)`` of every mount of the container, as the daemon reports them."""
+        ...
+
+    async def mounted_sources(self, *, timeout: int = 30) -> set[str]:
+        """The mount source of every mount of every container on the daemon, running or not."""
+        ...
+
     async def chown_volume(self, volume: str, mount: str, *, image: str, owner: str, timeout: int = 30) -> None:
         """Hand the root of a named volume to ``owner``.
 

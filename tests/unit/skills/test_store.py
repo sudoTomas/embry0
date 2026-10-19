@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from embry0.skills.store import SkillStore
 
 
@@ -14,15 +16,50 @@ def _stage(tmp_path: Path, name: str) -> Path:
     return staged
 
 
-def test_publish_moves_the_tree_writes_current_and_drops_older_trees(tmp_path: Path) -> None:
+def test_publish_moves_the_tree_writes_current_and_keeps_older_trees(tmp_path: Path) -> None:
+    """A running or paused sandbox may bind-mount the older tree: publish alone removes nothing."""
     store = SkillStore(tmp_path / "skills")
     first = store.publish("mine", "a" * 40, _stage(tmp_path, "one"))
     assert first == store.tree_path("mine", "a" * 40) and first.is_dir()
     assert store.current_sha("mine") == "a" * 40
     second = store.publish("mine", "b" * 40, _stage(tmp_path, "two"))
-    assert second.is_dir() and not first.exists(), "an older tree is removed after the new one is current"
+    assert second.is_dir()
+    assert first.is_dir(), "publish removed an older tree a live sandbox may still mount"
     assert store.current_sha("mine") == "b" * 40
     assert not (tmp_path / "staging" / "two").exists(), "publish renames, it does not copy"
+
+
+def test_stale_trees_are_every_tree_but_the_current_one(tmp_path: Path) -> None:
+    store = SkillStore(tmp_path / "skills")
+    store.publish("mine", "a" * 40, _stage(tmp_path, "one"))
+    store.publish("mine", "b" * 40, _stage(tmp_path, "two"))
+    store.publish("mine", "c" * 40, _stage(tmp_path, "three"))
+    store.staging_dir("mine")
+    assert store.stale_trees("mine") == [store.tree_path("mine", "a" * 40), store.tree_path("mine", "b" * 40)]
+    assert store.stale_trees("nothing") == []
+    store.publish("other", "d" * 40, _stage(tmp_path, "four"))
+    (store.root / "lost+found" / "x").mkdir(parents=True)
+    (store.source_dir("other") / "current").unlink()
+    assert store.stale_trees("other") == [], "without a current pointer nothing is known to be stale"
+    assert store.all_stale_trees() == store.stale_trees("mine")
+
+
+def test_remove_tree_removes_a_stale_tree_and_refuses_the_current_one(tmp_path: Path) -> None:
+    store = SkillStore(tmp_path / "skills")
+    old = store.publish("mine", "a" * 40, _stage(tmp_path, "one"))
+    current = store.publish("mine", "b" * 40, _stage(tmp_path, "two"))
+    store.remove_tree(old)
+    assert not old.exists()
+    with pytest.raises(ValueError, match="current tree"):
+        store.remove_tree(current)
+    assert current.is_dir()
+    with pytest.raises(ValueError, match="not a tree of this store"):
+        store.remove_tree(tmp_path / "elsewhere" / "x" / "y")
+
+
+def test_daemon_path_maps_a_tree_into_the_daemons_namespace(tmp_path: Path) -> None:
+    store = SkillStore(tmp_path / "skills", daemon_root=Path("/var/lib/embry0/skills"))
+    assert store.daemon_path(store.tree_path("mine", "a" * 40)) == "/var/lib/embry0/skills/mine/" + "a" * 40
 
 
 def test_current_sha_is_none_for_an_unknown_source(tmp_path: Path) -> None:

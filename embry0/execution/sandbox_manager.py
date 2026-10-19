@@ -11,6 +11,7 @@ import ipaddress
 import re
 import socket
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
@@ -190,6 +191,10 @@ class SandboxManager:
         self._skill_store = skill_store
         self._skill_sources_repo = skill_sources_repo
         self._skill_mounts_by_container: dict[str, list[SkillMount]] = {}
+        # The mounts of every create between resolving them and `docker run`
+        # returning: the daemon does not list that container yet, so
+        # gc_skill_trees must not take its trees for unmounted.
+        self._skill_mounts_creating: list[list[SkillMount]] = []
 
     @property
     def runtime(self) -> AgentRuntime:
@@ -628,7 +633,11 @@ class SandboxManager:
             extra_hosts=extra_hosts or None,
             job_id=job_id,
         )
-        container_id = await self._docker.run_cmd(cmd)
+        self._skill_mounts_creating.append(skill_mounts)
+        try:
+            container_id = await self._docker.run_cmd(cmd)
+        finally:
+            self._skill_mounts_creating.remove(skill_mounts)
 
         # The named volume mounts as root. The agent user is who runs mvnw.
         # chown the mount point only — a populated cache must not be walked
@@ -1002,9 +1011,78 @@ class SandboxManager:
         return self._skill_store.mounts(rows)
 
     async def skill_mounts_for(self, container_id: str) -> list[SkillMount]:
-        """What ``create`` mounted into this sandbox; after a restart, the store's current manifest."""
+        """What ``create`` mounted into this sandbox.
+
+        After an orchestrator restart the record is gone, so the container's
+        mounts are read from the daemon; only when that fails does the
+        store's current manifest stand in.
+        """
         known = self._skill_mounts_by_container.get(container_id)
-        return list(known) if known is not None else await self._resolve_skill_mounts()
+        if known is not None:
+            return list(known)
+        if self._skill_store is None or self._skill_sources_repo is None:
+            return []
+        try:
+            mounted = await self._runtime.container_mounts(container_id)
+        except Exception as exc:  # noqa: BLE001 — a report, never a reason the job stops
+            logger.warning("skill_mounts_inspect_failed", container=container_id, error=str(exc))
+            return await self._resolve_skill_mounts()
+        try:
+            rows = {str(r["id"]): r for r in await self._skill_sources_repo.list_all()}
+        except Exception as exc:  # noqa: BLE001 — the plugin name falls back to the id
+            logger.warning("skill_sources_unavailable_for_mount", error=str(exc))
+            rows = {}
+        prefix = SkillStore.SANDBOX_ROOT + "/"
+        mounts: list[SkillMount] = []
+        for source, destination in mounted:
+            source_id = destination.removeprefix(prefix)
+            if not destination.startswith(prefix) or not source_id or "/" in source_id:
+                continue
+            mounts.append(
+                SkillMount(
+                    source_id=source_id,
+                    plugin_name=str(rows.get(source_id, {}).get("plugin_name") or source_id),
+                    host_path=source,
+                    container_path=destination,
+                )
+            )
+        self._skill_mounts_by_container[container_id] = mounts
+        return list(mounts)
+
+    def _skill_paths_being_created(self) -> set[str]:
+        return {m.host_path for mounts in self._skill_mounts_creating for m in mounts}
+
+    async def gc_skill_trees(self) -> list[Path]:
+        """Remove the store's stale trees that no container mounts; returns the removed trees.
+
+        A re-sync leaves the previous tree in place (``SkillStore.publish``),
+        because a running or paused sandbox may bind-mount it. Called after
+        each publish and at startup. When the daemon cannot list its mounts,
+        nothing is removed.
+        """
+        store = self._skill_store
+        if store is None:
+            return []
+        # Before and after the listing: a create whose `docker run` returns
+        # while the listing runs is in neither the listing nor the second set.
+        protected = self._skill_paths_being_created()
+        try:
+            protected |= await self._runtime.mounted_sources()
+        except Exception as exc:  # noqa: BLE001 — keeping a tree is always safe
+            logger.warning("skill_tree_gc_skipped", error=str(exc))
+            return []
+        protected |= self._skill_paths_being_created()
+        removed: list[Path] = []
+        for tree in store.all_stale_trees():
+            if store.daemon_path(tree) in protected:
+                continue
+            try:
+                await asyncio.to_thread(store.remove_tree, tree)
+            except (OSError, ValueError) as exc:
+                logger.warning("skill_tree_gc_failed", tree=str(tree), error=str(exc))
+                continue
+            removed.append(tree)
+        return removed
 
     def _remember_bearer(self, container: str, token: str) -> None:
         register_known_secrets([token])

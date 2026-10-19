@@ -187,6 +187,27 @@ class DockerRuntime:
     async def remove_containers(self, containers: Sequence[str], *, timeout: int = 15) -> None:
         await self._client.run_cmd(self._cmd("rm", "-f", *containers), timeout=timeout)
 
+    async def container_mounts(self, container: str, *, timeout: int = 10) -> list[tuple[str, str]]:
+        output = await self._client.run_cmd(
+            self._cmd("inspect", "--format", "{{json .Mounts}}", container), timeout=timeout
+        )
+        return [
+            (str(m.get("Source") or ""), str(m.get("Destination") or ""))
+            for m in json.loads((output or "").strip() or "[]") or []
+        ]
+
+    async def mounted_sources(self, *, timeout: int = 30) -> set[str]:
+        ids = (await self._client.run_cmd(self._cmd("ps", "-aq"), timeout=timeout) or "").split()
+        if not ids:
+            return set()
+        # One inspect for every container: one line of JSON each.
+        output = await self._client.run_cmd(self._cmd("inspect", "--format", "{{json .Mounts}}", *ids), timeout=timeout)
+        sources: set[str] = set()
+        for line in (output or "").splitlines():
+            if line.strip():
+                sources.update(str(m["Source"]) for m in json.loads(line) or [] if m.get("Source"))
+        return sources
+
     def chown_volume_cmd(self, volume: str, mount: str, *, image: str, owner: str) -> list[str]:
         """The `docker run` behind ``chown_volume``.
 

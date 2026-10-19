@@ -65,8 +65,17 @@ class SkillStore:
             return None
         return sha or None
 
+    def daemon_path(self, path: Path) -> str:
+        """``path`` (a path under ``root``) as the sandbox daemon sees it."""
+        return str(self._daemon_root / Path(path).relative_to(self._root))
+
     def publish(self, source_id: str, sha: str, staged: Path) -> Path:
-        """Rename ``staged`` into place, point ``current`` at it, drop older trees."""
+        """Rename ``staged`` into place and point ``current`` at it.
+
+        Older trees stay: a running or paused sandbox may still bind-mount
+        one. ``stale_trees`` lists them for a caller that knows which trees
+        are mounted (``SandboxManager.gc_skill_trees``).
+        """
         target = self.tree_path(source_id, sha)
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
@@ -79,11 +88,40 @@ class SkillStore:
         tmp = pointer.with_suffix(".tmp")
         tmp.write_text(sha + "\n", encoding="utf-8")
         tmp.replace(pointer)
-        for entry in self.source_dir(source_id).iterdir():
-            if entry.is_dir() and entry.name not in {sha, STAGING}:
-                shutil.rmtree(entry, ignore_errors=True)
         logger.info("skill_source_published", source_id=source_id, sha=sha)
         return target
+
+    def stale_trees(self, source_id: str) -> list[Path]:
+        """Every tree of the source except the current one (and the staging directory).
+
+        None without a ``current`` pointer: with nothing known to be current,
+        nothing is known to be stale (and a directory that is no source keeps
+        its contents).
+        """
+        current = self.current_sha(source_id)
+        source_dir = self.source_dir(source_id)
+        if current is None or not source_dir.is_dir():
+            return []
+        keep = {current, STAGING}
+        return sorted(entry for entry in source_dir.iterdir() if entry.is_dir() and entry.name not in keep)
+
+    def all_stale_trees(self) -> list[Path]:
+        """``stale_trees`` of every source directory in the store."""
+        if not self._root.is_dir():
+            return []
+        return [
+            tree for entry in sorted(self._root.iterdir()) if entry.is_dir() for tree in self.stale_trees(entry.name)
+        ]
+
+    def remove_tree(self, path: Path) -> None:
+        """Remove one tree; never the current one, which a new sandbox may be about to mount."""
+        path = Path(path)
+        if path.parent.parent != self._root or path.name in {CURRENT, STAGING}:
+            raise ValueError(f"{path} is not a tree of this store")
+        if self.current_sha(path.parent.name) == path.name:
+            raise ValueError(f"{path} is the current tree of {path.parent.name}")
+        shutil.rmtree(path, ignore_errors=True)
+        logger.info("skill_tree_removed", source_id=path.parent.name, sha=path.name)
 
     def mounts(self, sources: Iterable[Mapping[str, Any]]) -> list[SkillMount]:
         """One mount per enabled source whose current tree is on disk.
