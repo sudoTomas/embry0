@@ -132,7 +132,7 @@ export function IssueDetailPage(): JSX.Element {
             {issue.active_agent && <AgentIndicator agentType={issue.active_agent} size="md" />}
           </div>
           <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-[10px] uppercase tracking-[0.18em] text-primary/65 font-mono">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-fg-muted font-mono">
               Op {OPERATION_NUMERAL.calcinate} · calcinate · {OPERATION_ELEMENT.calcinate}
             </span>
             <span className="text-[10px] text-muted-foreground/40">·</span>

@@ -265,7 +265,7 @@ export function AgentFormPage() {
               const op = agentTypeToOperation(typeParam);
               if (!op) return null;
               return (
-                <span className="text-[10px] uppercase tracking-[0.18em] text-primary/65 font-mono mt-0.5">
+                <span className="text-[10px] uppercase tracking-[0.18em] text-fg-muted font-mono mt-0.5">
                   Op {OPERATION_NUMERAL[op]} · {op} · {OPERATION_ELEMENT[op]}
                 </span>
               );
@@ -395,7 +395,7 @@ export function AgentFormPage() {
                       type="checkbox"
                       checked={form.tools.includes(tool)}
                       onChange={() => handleToolToggle(tool)}
-                      className="w-4 h-4 rounded accent-primary"
+                      className="w-4 h-4 rounded accent-fg-secondary"
                     />
                     <span className="text-sm text-white/70 font-mono">{tool}</span>
                   </label>

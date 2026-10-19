@@ -197,7 +197,7 @@ function ProviderCard({
                               : "Tier-assigned models cannot be disabled — reassign the tier first"
                         }
                         onChange={(e) => onToggleModel(m.model, e.target.checked)}
-                        className="h-4 w-4 accent-primary"
+                        className="h-4 w-4 accent-fg-secondary"
                       />
                     </td>
                   </tr>

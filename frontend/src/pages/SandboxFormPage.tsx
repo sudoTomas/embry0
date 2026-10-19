@@ -227,7 +227,7 @@ export function SandboxFormPage() {
             <h1 className="text-xl font-bold leading-tight">
               {isEditMode ? `Edit "${name}"` : "New Sandbox Profile"}
             </h1>
-            <span className="text-[10px] uppercase tracking-[0.18em] text-primary/65 font-mono mt-0.5">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-fg-muted font-mono mt-0.5">
               Op {OPERATION_NUMERAL.ferment} · ferment · {OPERATION_ELEMENT.ferment}
             </span>
           </div>
