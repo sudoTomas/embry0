@@ -36,6 +36,9 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
       block participates in the CLI's prompt caching (EMB-35).
     - setting_sources: ["project"] so the SDK loads /workspace/.claude/settings.json
       for Ring 2 permissions and /workspace/.claude/skills/** for skill files.
+    - plugins: one local plugin per mounted skill source (invocation.skill_mounts).
+    - skills: invocation.skills as the allowlist over the plugins' skills and
+      the repository's own; None (no filter) when the list is empty.
     - mcp_servers: from invocation.mcp_servers, each marked ``alwaysLoad``
       (see the comment at the field).
     - env: not set here — Anthropic auth rides the sandbox container env
@@ -68,6 +71,12 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
             else None
         ),
         setting_sources=["project"],
+        # Spec 3.3: the mounted skill sources are local plugins; the effective
+        # skill list is the allowlist. None, not [], when the list is empty:
+        # [] hides every skill, including the repository's own under
+        # /workspace/.claude/skills, which setting_sources=["project"] loads.
+        plugins=[{"type": "local", "path": m["container_path"]} for m in invocation.skill_mounts],
+        skills=list(invocation.skills) if invocation.skills else None,
         # #501: alwaysLoad keeps every tool of the server in the prompt, never
         # deferred behind tool search. ENABLE_TOOL_SEARCH=false (below) already
         # stops deferral at start-up, and the first turn waits for the servers

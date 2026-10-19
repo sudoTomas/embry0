@@ -9,9 +9,17 @@ no state mutations.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from embry0.safety.policy import SafetyPolicy
+
+
+class SkillMountSpec(TypedDict):
+    """A skill source mounted into the sandbox: the SDK loads it as a local plugin."""
+
+    source_id: str
+    plugin_name: str
+    container_path: str
 
 
 @dataclass(frozen=True)
@@ -60,3 +68,7 @@ class AgentInvocation:
     # callers that predate them; the executor then falls back to agent_type.
     run_id: str = ""
     node: str = ""
+    # Spec 3.3: every ready, enabled skill source SandboxManager mounted into
+    # this job's sandbox. build_sdk_options turns each into a local plugin;
+    # `skills` is the allowlist over them (and over the repository's own).
+    skill_mounts: tuple[SkillMountSpec, ...] = ()

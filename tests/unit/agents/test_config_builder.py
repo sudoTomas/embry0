@@ -101,3 +101,23 @@ def test_build_sdk_options_disables_mcp_tool_search_deferral() -> None:
     env OVERLAY (never replacing the container env that carries auth)."""
     opts = build_sdk_options(_inv(agent_type="qa"))
     assert opts.env == {"ENABLE_TOOL_SEARCH": "false"}
+
+
+def test_build_sdk_options_passes_plugins_and_skills_allowlist() -> None:
+    mounts = (
+        {"source_id": "superpowers", "plugin_name": "superpowers", "container_path": "/opt/embry0/skills/superpowers"},
+        {"source_id": "local", "plugin_name": "local", "container_path": "/opt/embry0/skills/local"},
+    )
+    opts = build_sdk_options(_inv(skills=["superpowers:writing-plans"], skill_mounts=mounts))
+    assert opts.plugins == [
+        {"type": "local", "path": "/opt/embry0/skills/superpowers"},
+        {"type": "local", "path": "/opt/embry0/skills/local"},
+    ]
+    assert opts.skills == ["superpowers:writing-plans"]
+
+
+def test_build_sdk_options_empty_skills_means_no_filter() -> None:
+    """[] would hide every skill, including the repository's own under .claude/skills; None leaves them."""
+    opts = build_sdk_options(_inv(skills=[]))
+    assert opts.skills is None
+    assert opts.plugins == []
