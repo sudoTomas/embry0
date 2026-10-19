@@ -65,6 +65,10 @@ Pattern (bad): "Drop agents here" → "PRIMA MATERIA: Place the seven agents in 
 
 Any addition (new sigil, new component, new animation) lands with a short written justification — in the PR description and in the docstring of the new element — even if it's a one-line CSS change. The discipline keeps the layer from accumulating flourishes by drift.
 
+## 9. The roster is not the divine layer
+
+The pixel sprites in `frontend/src/components/roster/` are the agents' faces, not embry0's identity, and rule 5 does not apply to them: a sprite may sit on a live card, a list row or a graph node. What does apply: every sprite animation is gated by `prefers-reduced-motion: no-preference` (reduced motion shows the first frame, static), a sprite steps no faster than two frames per second, carries no second animation, and there is one sprite per card or node. Rule 1's byte budget does not cover the roster; its own budget is 40 KB of `sprites.ts` source, pinned by `sprites.test.ts`. Sprites keep rendering under `data-divine="off"`.
+
 ---
 
 These rules exist because the layer's value is in restraint. A divine element that breaks a rule erodes the whole layer's credibility.
