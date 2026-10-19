@@ -38,6 +38,10 @@ _CODE_EVENT = """
 """
 
 
+# What a saved session holds: the CLI session file, or the message history.
+_SESSION_BYTES = "COALESCE(octet_length(s.session_blob), 0) + COALESCE(octet_length(s.messages::text), 0)"
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateJob:
     job_id: str
@@ -112,3 +116,45 @@ class JobLogRetentionRepository:
             return
         async with self._db.transaction() as conn:
             await conn.executemany("UPDATE job_logs SET text = $2 WHERE id = $1", list(rows))
+
+    # --- agent sessions -------------------------------------------------------
+    # A saved session is the agent's whole conversation: for a Claude
+    # subscription the CLI's session file, every tool input and result in it
+    # uncapped. It lets a later turn of the same job, or a pull request comment
+    # follow-up, resume instead of starting cold.
+
+    async def expired_sessions(self, *, cutoff: datetime) -> tuple[int, int]:
+        """``(sessions, bytes)`` of ended jobs' sessions last used before ``cutoff``."""
+        row = await self._db.fetchrow(
+            f"""
+            SELECT count(*) AS n, COALESCE(sum({_SESSION_BYTES}), 0) AS bytes
+            FROM agent_sessions s JOIN jobs j ON j.job_id = s.job_id
+            WHERE j.status = ANY($1::text[]) AND s.last_turn_at < $2
+            """,
+            sorted(str(status) for status in RELEASED_JOB_STATUSES),
+            cutoff,
+        )
+        return (int(row["n"]), int(row["bytes"])) if row is not None else (0, 0)
+
+    async def delete_sessions(self, *, cutoff: datetime, limit: int) -> tuple[int, int]:
+        """Delete those sessions, ``limit`` per statement; returns ``(sessions, bytes)`` deleted."""
+        deleted = removed = 0
+        while True:
+            rows = await self._db.fetch(
+                f"""
+                DELETE FROM agent_sessions AS s WHERE s.id IN (
+                    SELECT x.id FROM agent_sessions x JOIN jobs j ON j.job_id = x.job_id
+                    WHERE j.status = ANY($1::text[]) AND x.last_turn_at < $2
+                    ORDER BY x.last_turn_at
+                    LIMIT $3
+                )
+                RETURNING {_SESSION_BYTES} AS bytes
+                """,
+                sorted(str(status) for status in RELEASED_JOB_STATUSES),
+                cutoff,
+                limit,
+            )
+            if not rows:
+                return deleted, removed
+            deleted += len(rows)
+            removed += sum(int(r["bytes"]) for r in rows)

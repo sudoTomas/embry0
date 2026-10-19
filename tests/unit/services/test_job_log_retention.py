@@ -252,7 +252,9 @@ async def test_jobs_logged_before_migration_95_are_found(db_with_migrations: Dat
 
     result = await JobLogRetentionSweep(JobLogRetentionRepository(db), retention_days=30).run_once(now=NOW)
 
-    assert (result.jobs, result.events) == (2, 2), f"a job with only pre-migration-95 rows was not a candidate: {result}"
+    assert (result.jobs, result.events) == (2, 2), (
+        f"a job with only pre-migration-95 rows was not a candidate: {result}"
+    )
     assert (await _payload(db, legacy_write))["tool_input"]["content"] == REDACTED_TEXT
     assert (await _payload(db, legacy_result))["content"] == REDACTED_TEXT
 
@@ -301,3 +303,55 @@ async def test_unset_leaves_old_code_in_place(db_with_migrations: DatabasePool) 
     await JobLogRetentionSweep(JobLogRetentionRepository(db), retention_days=None).run_once(now=NOW)
 
     assert await db.fetchval("SELECT text FROM job_logs WHERE id = $1", seq) == text
+
+
+# --- agent sessions ---------------------------------------------------------------
+
+
+async def _session(db: DatabasePool, job_id: str, last_turn_at: datetime, blob: bytes = b"transcript") -> None:
+    from embry0.storage.repositories.agent_sessions import AgentSessionsRepository
+
+    await AgentSessionsRepository(db).upsert(
+        job_id=job_id, agent_type="developer", mode="claude_max", session_id="sess", session_blob=blob
+    )
+    await db.execute("UPDATE agent_sessions SET last_turn_at = $2 WHERE job_id = $1", job_id, last_turn_at)
+
+
+async def _sessions(db: DatabasePool) -> set[str]:
+    return {r["job_id"] for r in await db.fetch("SELECT job_id FROM agent_sessions")}
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_old_sessions_of_ended_jobs_are_deleted_and_the_rest_kept(db_with_migrations: DatabasePool) -> None:
+    db = db_with_migrations
+    old_done = await _job(db, "completed")
+    new_done = await _job(db, "completed")
+    old_live = await _job(db, "awaiting_input")
+    await _session(db, old_done, OLD, blob=b"x" * 1000)
+    await _session(db, new_done, NOW)
+    await _session(db, old_live, OLD)
+    sweep = JobLogRetentionSweep(JobLogRetentionRepository(db), retention_days=30, batch_jobs=1)
+
+    preview = await sweep.run_once(dry_run=True, now=NOW)
+    assert await _sessions(db) == {old_done, new_done, old_live}, "a dry run deleted a session"
+    result = await sweep.run_once(now=NOW)
+
+    assert await _sessions(db) == {new_done, old_live}, (
+        "only the ended job's session untouched for longer than the retention may go; "
+        "a recent one or a live job's must stay"
+    )
+    assert result.agent_sessions == preview.agent_sessions == 1
+    assert result.agent_session_bytes == preview.agent_session_bytes >= 1000
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.asyncio
+async def test_unset_keeps_every_session(db_with_migrations: DatabasePool) -> None:
+    db = db_with_migrations
+    old_done = await _job(db, "completed")
+    await _session(db, old_done, OLD)
+
+    await JobLogRetentionSweep(JobLogRetentionRepository(db), retention_days=None).run_once(now=NOW)
+
+    assert await _sessions(db) == {old_done}

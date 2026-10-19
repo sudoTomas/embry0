@@ -674,7 +674,8 @@ class Embry0Config(BaseSettings):
     # Code retention (ADR 0017). Unset (the default) keeps everything, as
     # before. Set, a daily sweep replaces the code in job events older than
     # this many days (Write/Edit/Bash inputs, every tool result) with a marker
-    # that keeps the tool, file path, size and hash.
+    # that keeps the tool, file path, size and hash, and deletes the saved
+    # agent sessions of those jobs. Ended jobs only.
     job_log_retention_days: int | None = Field(default=None, gt=0, le=3650)
 
     @field_validator("audit_log_path", "job_log_retention_days", mode="before")
