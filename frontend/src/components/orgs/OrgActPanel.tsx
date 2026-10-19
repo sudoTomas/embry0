@@ -40,6 +40,17 @@ const OUTCOME_TONE: Record<OrgActionResult["outcome"], BadgeTone> = {
   failed: "error",
 };
 
+/** A dry run changed nothing: its "done" rows are what applying would do. */
+function outcomeLabel(outcome: OrgActionResult["outcome"], dryRun: boolean): string {
+  return dryRun && outcome === "done" ? "Would do" : statusLabel(outcome);
+}
+
+/** What an action does where its name says more: watch adds a stack that
+ * stays disabled until its LogQL is set and it is enabled. */
+const ACTION_NOTE: Partial<Record<string, string>> = {
+  watch: "Adds a disabled watcher stack per repository; watching starts once you set its LogQL and enable it.",
+};
+
 function errorText(err: unknown): string {
   const response = (err as { response?: { status?: number; data?: { detail?: unknown } } }).response;
   if (response?.status === 403) return "Acting on needs requires admin scope.";
@@ -79,7 +90,7 @@ function ResultsTable({ outcome }: { outcome: RunOutcome }) {
                   <td className={cn(TD, "whitespace-nowrap")}>{r.action}</td>
                   <td className={cn(TD, "font-mono text-xs")}>{r.repo}</td>
                   <td className={TD}>
-                    <Badge tone={OUTCOME_TONE[r.outcome] ?? "neutral"}>{statusLabel(r.outcome)}</Badge>
+                    <Badge tone={OUTCOME_TONE[r.outcome] ?? "neutral"}>{outcomeLabel(r.outcome, outcome.dryRun)}</Badge>
                   </td>
                   <td className={cn(TD, "text-white/60")}>{r.detail}</td>
                 </tr>
@@ -138,6 +149,11 @@ function NeedRow({
           </span>
         </div>
         {need.detail && <p className="text-xs text-muted-foreground">{need.detail}</p>}
+        {actionable && ACTION_NOTE[need.action.type] && (
+          <p className="text-xs text-muted-foreground" data-testid="org-act-note">
+            {ACTION_NOTE[need.action.type]}
+          </p>
+        )}
       </div>
       {need.status !== "done" && (
         <Button

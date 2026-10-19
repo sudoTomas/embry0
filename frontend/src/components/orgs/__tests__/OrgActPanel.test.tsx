@@ -124,4 +124,23 @@ describe("OrgActPanel", () => {
     expect(screen.getByTestId("org-act-admin-note")).toBeInTheDocument();
     expect(within(needRow("n1")).getByTestId("org-act-checkbox")).toBeDisabled();
   });
+
+  it("says Watch adds a disabled watcher stack, and a dry run says what it would do", async () => {
+    // The watch action adds a stack that stays disabled until someone sets
+    // its LogQL; neither its name nor a preview's "Done" may read as if
+    // watching starts.
+    mockRun.mockImplementation(async (_owner: string, body: { action: string; repos: string[]; dry_run: boolean }) => ({
+      owner: "acme",
+      action: body.action,
+      dry_run: body.dry_run,
+      results: body.repos.map((repo) => ({ repo, outcome: "done", detail: "would add a disabled watcher stack filing to github" })),
+    }));
+    renderPanel(needs([need("w1", "not_watched", ["acme/d"])]));
+    expect(needRow("w1")).toHaveTextContent(/adds a disabled watcher stack/i);
+    fireEvent.click(within(needRow("w1")).getByTestId("org-act-checkbox"));
+    fireEvent.click(screen.getByTestId("org-act-preview-button"));
+    const preview = await screen.findByTestId("org-act-preview");
+    expect(within(preview).queryByText("Done")).toBeNull();
+    expect(within(preview).getByText("Would do")).toBeInTheDocument();
+  });
 });
