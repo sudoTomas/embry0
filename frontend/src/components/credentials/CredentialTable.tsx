@@ -40,6 +40,7 @@ const KIND_LABELS: Record<CredentialKind, string> = {
   llm_oauth: "OAuth",
   llm_api_key: "API key",
   ssh_key: "SSH key",
+  tailnet_api_key: "Tailnet API key",
 };
 
 /** An account with no author of its own commits as the deployment's default

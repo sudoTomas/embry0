@@ -221,7 +221,7 @@ The create form passes no GitLab host, so it cannot select GitLab. Create a GitL
 
 Import from environment runs the importer above. Checking "Replace differing secrets" re-runs it with `replace: true`. The page shows the `created`, `bound` and `skipped` report.
 
-The bindings drawer edits one scope at a time: global, owner or host. Saving replaces that scope's bindings, keeping every other credential already bound there and adding this one at role `forge`. Removing drops this credential from that scope. Repo bindings are not edited in the drawer.
+The bindings drawer edits one scope at a time: global, owner or host. Saving replaces that scope's bindings, keeping every other credential already bound there and adding this one at the role its kind binds with: `forge` for a forge token, `llm` for an LLM account, `deploy` for an SSH key, `tailnet` for a tailnet key. The drawer offers only the scopes that role is looked up at: an LLM account global or owner, an SSH key host, a tailnet key global. An owner scope is `github:<owner>` or `gitlab:<owner>` for every role; an LLM account's starts at `github:`, and its resolver looks under both. Removing drops this credential from that scope. Repo bindings are not edited in the drawer.
 
 A repo's detail page has an Accounts section: the effective forge account (its label and whether it came from the registry or the environment), the precedence trace, and the missing-credential error when nothing resolves. A pinned credential that cannot be used is shown in that same place. The forge bind picker lists credentials for that repo's forge, plus "(none — use owner/global/env)", which clears the repo's forge binding and leaves other roles. The picker follows the same admin rule as the Credentials page.
 

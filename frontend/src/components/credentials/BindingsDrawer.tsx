@@ -7,11 +7,16 @@ import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useCredentials, useScopedBindings, useSetScopedBindings } from "@/hooks/useCredentials";
+import { ROLE_FOR_KIND, SCOPES_FOR_ROLE } from "@/lib/bindingRoles";
 import { createFocusTrap } from "@/lib/focus-trap";
 import { cn } from "@/lib/utils";
-import type { Binding, BindingInput, Credential, ScopeKind } from "@/lib/types/credentials";
+import type { Binding, BindingInput, BindingRole, Credential, ScopeKind } from "@/lib/types/credentials";
 
 type DrawerScope = Exclude<ScopeKind, "repo">;
+
+/** The scopes this drawer edits, in the order it offers them. Repo bindings live on the repo page. */
+const DRAWER_SCOPES: readonly DrawerScope[] = ["global", "owner", "host"];
+const SCOPE_LABELS: Record<DrawerScope, string> = { global: "Global", owner: "Owner", host: "Host" };
 
 export interface BindingsDrawerProps {
   credential: Credential;
@@ -19,15 +24,19 @@ export interface BindingsDrawerProps {
   onClose(): void;
 }
 
-function prefill(kind: DrawerScope, credential: Credential): string {
-  if (kind === "owner") return `${credential.provider}:`;
+/**
+ * An owner scope is always '<forge>:<owner>'. A forge token's is on its own
+ * forge; an LLM account's is looked up under github: and gitlab: alike
+ * (CredentialResolver._resolve_llm_fresh), so it starts at github:.
+ */
+function prefill(kind: DrawerScope, credential: Credential, role: BindingRole): string {
+  if (kind === "owner") return role === "forge" ? `${credential.provider}:` : "github:";
   if (kind === "host") return credential.host;
   return "";
 }
 
-function asScope(value: string): DrawerScope {
-  if (value === "owner" || value === "host") return value;
-  return "global";
+function asScope(value: string, offered: readonly DrawerScope[]): DrawerScope {
+  return offered.find((scope) => scope === value) ?? offered[0];
 }
 
 function toInput(binding: Binding): BindingInput {
@@ -66,14 +75,17 @@ function AdminFields({ isAdmin, children }: { isAdmin: boolean; children: ReactN
 
 /**
  * PUT /credentials/bindings replaces every row of one scope. Save sends the
- * other credentials' rows plus this one (role forge). Remove sends that scope
- * without this credential. `useScopedBindings` is keyed by the value we send,
- * so its data is that scope after the server normalizes the lookup.
+ * other credentials' rows plus this one, at the role its kind binds with.
+ * Remove sends that scope without this credential. `useScopedBindings` is
+ * keyed by the value we send, so its data is that scope after the server
+ * normalizes the lookup.
  */
 export function BindingsDrawer({ credential, isAdmin, onClose }: BindingsDrawerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [scopeKind, setScopeKind] = useState<DrawerScope>("global");
-  const [scopeValue, setScopeValue] = useState("");
+  const role = ROLE_FOR_KIND[credential.kind];
+  const scopes = DRAWER_SCOPES.filter((scope) => SCOPES_FOR_ROLE[role].includes(scope));
+  const [scopeKind, setScopeKind] = useState<DrawerScope>(scopes[0]);
+  const [scopeValue, setScopeValue] = useState(() => prefill(scopes[0], credential, role));
 
   const scopeValueForApi = scopeValue.trim();
   const credentialsQuery = useCredentials();
@@ -114,9 +126,9 @@ export function BindingsDrawer({ credential, isAdmin, onClose }: BindingsDrawerP
   }
 
   function onKind(value: string) {
-    const next = asScope(value);
+    const next = asScope(value, scopes);
     setScopeKind(next);
-    setScopeValue(prefill(next, credential));
+    setScopeValue(prefill(next, credential, role));
   }
 
   function onAdd(event: FormEvent) {
@@ -127,7 +139,7 @@ export function BindingsDrawer({ credential, isAdmin, onClose }: BindingsDrawerP
       scope_value: scopeValueForApi,
       bindings: [
         ...rows.filter((binding) => binding.credential_id !== credential.id).map(toInput),
-        { credential_id: credential.id, role: "forge" },
+        { credential_id: credential.id, role },
       ],
     });
   }
@@ -226,9 +238,11 @@ export function BindingsDrawer({ credential, isAdmin, onClose }: BindingsDrawerP
                 disabled={!isAdmin}
                 onChange={(event) => onKind(event.target.value)}
               >
-                <option value="global">Global</option>
-                <option value="owner">Owner</option>
-                <option value="host">Host</option>
+                {scopes.map((scope) => (
+                  <option key={scope} value={scope}>
+                    {SCOPE_LABELS[scope]}
+                  </option>
+                ))}
               </Select>
             </div>
             <div>
@@ -244,11 +258,11 @@ export function BindingsDrawer({ credential, isAdmin, onClose }: BindingsDrawerP
               />
               <p id="binding-scope-hint" className="mt-1 text-xs text-muted-foreground">
                 {scopeKind === "global" && "Global scope uses an empty value."}
-                {scopeKind === "owner" && "Owner is provider:name, for example github:acme."}
+                {scopeKind === "owner" && "Owner is github:name or gitlab:name, for example github:acme."}
                 {scopeKind === "host" && "Host is the credential host."}
               </p>
             </div>
-            <p className="text-sm text-muted-foreground">Role is forge.</p>
+            <p className="text-sm text-muted-foreground">Role is {role}.</p>
             <p className="text-xs text-muted-foreground">
               Saving keeps other credentials already bound at this scope.
             </p>
