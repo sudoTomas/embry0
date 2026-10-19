@@ -28,3 +28,13 @@ describe("TabsTrigger", () => {
     expect(general.className).toContain("text-fg-muted");
   });
 });
+
+describe("TabsList", () => {
+  it("stays inside a phone screen and scrolls its tabs instead", () => {
+    renderTabs();
+    // Tabs never wrap, so four of them were wider than a 360 px screen and
+    // pushed the page sideways. Safe centring keeps the first tab reachable
+    // when the list scrolls.
+    expect(screen.getByRole("tablist")).toHaveClass("max-w-full", "overflow-x-auto", "justify-center-safe");
+  });
+});

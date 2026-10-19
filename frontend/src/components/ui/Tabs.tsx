@@ -60,12 +60,14 @@ export function TabsList({ children, className }: { children: ReactNode; classNa
     triggers[next].focus();
   };
 
+  // The tabs never wrap, so the list is as wide as their labels; on a phone
+  // that can be wider than the page. It stays inside it and scrolls instead.
   return (
     <div
       role="tablist"
       onKeyDown={handleKeyDown}
       className={cn(
-        "inline-flex h-9 items-center justify-center rounded-lg border border-border bg-surface p-1 text-muted-foreground",
+        "inline-flex h-9 max-w-full items-center justify-center-safe overflow-x-auto rounded-lg border border-border bg-surface p-1 text-muted-foreground [scrollbar-width:none]",
         className,
       )}
     >
