@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useIntegrationConfig, useUpdateIntegrationConfig } from "@/hooks/useIntegrations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { AdminButton } from "@/components/auth/AdminButton";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { TagInput } from "@/components/ui/TagInput";
@@ -165,9 +166,9 @@ export default function IntegrationsTab() {
           <Button variant="outline" onClick={handleReset} disabled={!hasChanges}>
             Reset
           </Button>
-          <Button onClick={handleSave} disabled={updateIntegration.isPending || !hasChanges}>
+          <AdminButton onClick={handleSave} disabled={updateIntegration.isPending || !hasChanges}>
             {updateIntegration.isPending ? "Saving..." : "Save changes"}
-          </Button>
+          </AdminButton>
         </div>
       </div>
 

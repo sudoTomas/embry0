@@ -76,3 +76,13 @@ export const useAuthStore = create<AuthState>()((set) => ({
   setSsoEnabled: (enabled) => set({ ssoEnabled: enabled }),
   setApiKeyLogin: (enabled) => set({ apiKeyLogin: enabled }),
 }));
+
+/**
+ * Whether this session may use the API's admin-only routes (require_admin):
+ * the API key does, and an SSO user does when their tier is admin. Controls
+ * for those routes read this, so an operator is never offered a click that
+ * can only fail with 403.
+ */
+export function useIsAdmin(): boolean {
+  return useAuthStore((s) => s.authMode === "key" || s.user?.tier === "admin");
+}

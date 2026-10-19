@@ -10,6 +10,7 @@ import {
 } from "@/components/divine/operations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { AdminButton } from "@/components/auth/AdminButton";
 import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
@@ -270,9 +271,9 @@ export function AgentFormPage() {
           <Link to="/agents">
             <Button variant="outline">Cancel</Button>
           </Link>
-          <Button onClick={handleSave} disabled={isPending}>
+          <AdminButton onClick={handleSave} disabled={isPending}>
             {isPending ? "Saving..." : "Save Agent"}
-          </Button>
+          </AdminButton>
         </div>
       </div>
 
