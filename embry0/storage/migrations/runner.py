@@ -2929,6 +2929,40 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_repo_config_revisions_repo ON repo_config_revisions (repo, surface, id DESC);
         """,
     ),
+    (
+        104,
+        "repo_setup_proposals: agent-proposed test setups a person applies (ADR 0019)",
+        # The onboarding agent in propose mode stores its validated and
+        # smoke-tested draft here instead of in repo_qa_configs. A row is
+        # running while its job runs, then pending or failed; a person moves
+        # a pending row to applied or rejected, and a pending row whose base
+        # changed becomes stale. base_updated_at is repo_qa_configs.updated_at
+        # when the run started (NULL: no setup yet), for a compare-and-set
+        # apply. The partial unique index allows one running or pending row
+        # per repo, so it is also the lock against two setup runs at once.
+        """
+        CREATE TABLE IF NOT EXISTS repo_setup_proposals (
+            id               TEXT PRIMARY KEY,
+            repo             TEXT NOT NULL,
+            job_id           TEXT,
+            status           TEXT NOT NULL
+                             CHECK (status IN ('running', 'pending', 'applied', 'rejected', 'stale', 'failed')),
+            base_updated_at  TIMESTAMPTZ,
+            proposed_yaml    TEXT,
+            notes_md         TEXT NOT NULL DEFAULT '',
+            smoke            JSONB,
+            failure          TEXT NOT NULL DEFAULT '',
+            created_by       TEXT NOT NULL DEFAULT '',
+            decided_by       TEXT,
+            decided_at       TIMESTAMPTZ,
+            created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_setup_proposals_repo ON repo_setup_proposals (repo, created_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_repo_setup_proposals_live
+            ON repo_setup_proposals (repo) WHERE status IN ('running', 'pending');
+        """,
+    ),
 ]
 
 

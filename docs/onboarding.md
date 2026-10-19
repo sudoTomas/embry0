@@ -53,6 +53,29 @@ smoke-tests it (boot + ready checks only, no QA agent), and writes it to
 the store — iterating on failures up to 3 rounds. Present in store =
 validated.
 
+## Propose mode
+
+A repository gets its test setup one of two ways:
+
+- **A starter from a form.** `embry0 init` and `POST /api/v1/repos/bootstrap`
+  write a starter from the fields you give them. Nothing is guessed.
+- **A draft from the onboarding agent.** The agent reads the code and writes
+  the setup for you.
+
+`embry0 onboard`, `POST /api/v1/jobs` with `"pipeline": "onboard"` and the
+Organizations Onboard action store the agent's draft as the test setup
+straight away. In propose mode the agent takes the same steps (read the
+code, write a draft, check it against the schema, start each app and wait
+for its ready checks), then stores the draft as a setup proposal in
+`repo_setup_proposals` instead. The test setup stays as it was until a
+person applies the proposal. A run that ends without a working draft
+leaves a failed proposal that says why. A repository has at most one run
+going or proposal waiting.
+
+Every change to a stored test setup, from any of these paths, is kept in
+the repository's history, and the newest change can be undone
+([ADR 0019](adr/0019-setup-proposals.md)).
+
 ## A whole owner: the Organizations wizard
 
 In the dashboard, **Organizations** (next to Repos) adds a GitHub

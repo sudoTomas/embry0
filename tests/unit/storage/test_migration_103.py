@@ -15,12 +15,6 @@ def test_migration_103_present_and_gapless() -> None:
     assert "repo_config_revisions" in description
 
 
-def test_migration_103_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_102.py)."""
-    assert MIGRATIONS[-1][0] == 103, "migration 103 must create repo_config_revisions"
-
-
 @pytest.mark.requires_postgres
 async def test_a_revision_defaults_to_a_person_with_no_reason(db_with_migrations: DatabasePool) -> None:
     await db_with_migrations.execute(
