@@ -35,7 +35,7 @@ export function TraceDetailPanel({ trace, onClose }: TraceDetailPanelProps) {
   return (
     <tr>
       <td colSpan={9} className="p-0">
-        <div className="border-t border-primary/20 bg-muted/20 px-6 py-5">
+        <div className="border-t border-border bg-muted/20 px-6 py-5">
           {/* Header */}
           <div className="flex items-start justify-between mb-5">
             <div className="flex flex-col gap-1">

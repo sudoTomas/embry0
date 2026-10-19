@@ -67,7 +67,7 @@ function Stepper({ step }: { step: Step }) {
             aria-current={state === "current" ? "step" : undefined}
             className={cn(
               "flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium",
-              state === "current" && "border-primary/40 bg-primary/10 text-primary",
+              state === "current" && "border-border bg-primary/10 text-primary",
               state === "done" && "border-success/25 text-success",
               state === "todo" && "border-white/[0.06] text-white/40",
             )}

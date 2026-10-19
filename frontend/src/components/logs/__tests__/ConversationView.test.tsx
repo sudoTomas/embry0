@@ -12,6 +12,15 @@ describe("ConversationView", () => {
     expect(document.body.textContent, "the tool body lacks its tool_input").toContain('"file_path": "README.md"');
   });
 
+  it("frames a tool call in the neutral border, not gold", () => {
+    // Gold marks only the one thing on a view that needs a person; a
+    // transcript holds many tool calls.
+    render(<ConversationView events={loadFixture("issue-to-pr")} />);
+    const block = screen.getByText("Read README.md").closest("button")?.parentElement;
+    expect(block?.className).toContain("border-border");
+    expect(block?.className).not.toMatch(/(^|\s)border-primary/);
+  });
+
   it("numbers turns within each run", () => {
     render(<ConversationView events={loadFixture("issue-to-pr")} />);
     expect(screen.queryAllByText("Turn 1"), "Turn 1 once per run").toHaveLength(4);

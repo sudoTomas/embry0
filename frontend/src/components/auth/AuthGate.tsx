@@ -247,7 +247,7 @@ function ApiKeyPrompt({ sessionExpired }: { sessionExpired: boolean }) {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="embry0-card w-full max-w-sm p-8">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <span className="flex h-12 w-12 items-center justify-center rounded-full border border-primary/20 bg-primary-dim">
+          <span className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-primary-dim">
             <KeyRound size={20} className="text-primary" />
           </span>
           <div>

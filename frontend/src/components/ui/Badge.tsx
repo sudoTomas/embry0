@@ -82,7 +82,7 @@ export function Badge({ tone = "neutral", children, className, title, sigil }: B
           key={ring}
           aria-hidden
           data-slot="ring"
-          className="motion-ring pointer-events-none absolute inset-0 rounded"
+          className="motion-ring pointer-events-none absolute inset-0 rounded border border-current"
           onAnimationEnd={() => setRing(0)}
         />
       )}

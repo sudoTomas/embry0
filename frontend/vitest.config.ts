@@ -8,6 +8,9 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    // Vitest blanks every CSS import, ?raw included, unless it is listed
+    // here; the stylesheet test reads index.css as text.
+    css: { include: [/\/src\/index\.css\?raw$/] },
   },
   server: {
     fs: {

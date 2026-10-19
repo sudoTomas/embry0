@@ -36,7 +36,7 @@ export function PatentCanvas({
     <div
       className={
         `divine-element relative rounded font-mono text-primary ` +
-        `border border-primary/20 ${padding} ${className ?? ""}`
+        `border border-border ${padding} ${className ?? ""}`
       }
       style={{
         background:
@@ -46,7 +46,7 @@ export function PatentCanvas({
       {(date || inventor || patentNo) && (
         <div
           className={
-            `flex justify-between items-baseline border-b border-primary/35 ` +
+            `flex justify-between items-baseline border-b border-border ` +
             `pb-1.5 mb-4 ${headerSize} tracking-[0.15em] opacity-85 uppercase`
           }
         >
@@ -72,7 +72,7 @@ export function PatentCanvas({
       {(elements || epigraph) && (
         <div
           className={
-            `flex justify-between items-baseline border-t border-primary/25 ` +
+            `flex justify-between items-baseline border-t border-border ` +
             `pt-1.5 mt-4 text-[9px] tracking-[0.12em] opacity-55 italic`
           }
         >

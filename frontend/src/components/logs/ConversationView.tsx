@@ -298,7 +298,7 @@ function ToolUseBlockView({ block }: { block: ConversationToolUseBlock }) {
   const segments = highlightJson(jsonInput);
 
   return (
-    <div className="border border-primary/30 rounded-md">
+    <div className="border border-border rounded-md">
       <button
         className="flex items-center gap-2 w-full px-2.5 py-1.5 text-xs hover:bg-muted/30 cursor-pointer"
         onClick={() => setExpanded(!expanded)}

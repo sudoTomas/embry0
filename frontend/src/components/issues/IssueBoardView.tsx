@@ -62,7 +62,7 @@ export function IssueBoardView({ issues, totals, onStatusChange }: IssueBoardVie
             data-testid={`board-column-${status}`}
             className={`rounded-lg border flex flex-col min-h-[200px] transition-colors ${
               isOver
-                ? "border-primary/50 bg-primary-dim"
+                ? "border-border bg-primary-dim"
                 : "bg-card/50 border-white/[0.05]"
             }`}
             onDragOver={(e) => handleDragOver(e, status)}

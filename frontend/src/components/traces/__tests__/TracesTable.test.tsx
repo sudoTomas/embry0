@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 
@@ -127,5 +127,17 @@ describe("TracesTable", () => {
       "developer",
       "reviewer",
     ]);
+  });
+
+  it("opens a trace without a gold border: gold marks only what needs a person", () => {
+    renderTable();
+    const row = screen.getByRole("button", { name: "View trace run-fixture-1" });
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-expanded", "true");
+    const panel = row.nextElementSibling;
+    expect(panel?.innerHTML).toContain("border-t");
+    for (const el of [row, ...(panel?.querySelectorAll("*") ?? [])]) {
+      expect(el.getAttribute("class") ?? "").not.toMatch(/(^|\s)border(-[trblxy])?-primary/);
+    }
   });
 });

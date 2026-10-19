@@ -40,7 +40,6 @@ export function ToolCallCard({ tool, input, output, error, isActive, children }:
       className={cn(
         "border rounded-md overflow-hidden",
         error ? "border-destructive/50" : "border-border",
-        isActive && "border-primary/50",
       )}
     >
       <button

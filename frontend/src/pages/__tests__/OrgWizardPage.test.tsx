@@ -82,6 +82,14 @@ afterEach(() => {
 });
 
 describe("OrgWizardPage", () => {
+  it("marks the current step in gold text without a gold border", () => {
+    // Gold borders are kept for the one thing on a view that needs a person.
+    renderWizard();
+    const step = screen.getAllByTestId("wizard-step").find((s) => s.getAttribute("aria-current") === "step");
+    expect(step).toHaveClass("text-primary", "border-border");
+    expect(step?.className).not.toMatch(/(^|\s)border-primary/);
+  });
+
   it("walks connect, discover, report and act", async () => {
     api.runs
       .mockResolvedValueOnce([run({ status: "running", repos_seen: 1, repos_total: 2 })])

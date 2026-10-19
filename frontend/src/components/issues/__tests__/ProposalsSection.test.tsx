@@ -127,6 +127,13 @@ describe("ProposalsSection", () => {
     expect(screen.getByRole("heading", { name: "Proposals" })).toBeInTheDocument();
   });
 
+  it("frames the table in the neutral border: the count carries the waiting tone", async () => {
+    renderSection();
+    const frame = (await row("Fix the retry storm")).closest("table")!.parentElement!;
+    expect(frame).toHaveClass("border-border");
+    expect(frame.className).not.toMatch(/(^|\s)border-amber/);
+  });
+
   it("heads the ticket column Source, since an organization need has no ticket", async () => {
     mockFetchProposals.mockResolvedValue(page([LINEAR_DRAFT, ORG_NEED]));
     renderSection();

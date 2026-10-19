@@ -92,6 +92,15 @@ describe("StructuredView", () => {
     expect(screen.queryByText("Running..."), "a finished job's unanswered call still pulses Running...").toBeNull();
   });
 
+  it("a running call keeps the neutral border: a job in flight is not gold", () => {
+    const lost: LogEvent = { type: "tool_call", timestamp: "", tool_id: "toolu_live", tool_name: "Glob", summary: "", tool_input: {} };
+    renderVirtual(<StructuredView events={[lost]} isComplete={false} />);
+    const card = toolButton("Glob")?.parentElement;
+    expect(screen.queryByText("Running..."), "the call is not running").not.toBeNull();
+    expect(card?.className).toContain("border-border");
+    expect(card?.className).not.toMatch(/(^|\s)border-primary/);
+  });
+
   it("pre-contract job: the error line shows its text and the tool call renders", () => {
     renderVirtual(<StructuredView events={loadFixture("legacy-rows")} />);
     expect(screen.queryByText("legacy boom"), "the legacy error text is missing").not.toBeNull();

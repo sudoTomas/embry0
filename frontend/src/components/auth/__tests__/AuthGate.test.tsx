@@ -80,6 +80,15 @@ describe("AuthGate (key mode — pre-SSO behavior preserved)", () => {
     expect(screen.queryByTestId("app-content")).toBeNull();
   });
 
+  it("rings the key mark in the neutral border: Unlock is the one gold", async () => {
+    routeGet({ "/queue": () => Promise.reject(axiosErr(401)) });
+    renderGate();
+    await screen.findByLabelText("API key");
+    const mark = document.querySelector(".bg-primary-dim");
+    expect(mark).toHaveClass("rounded-full", "border-border");
+    expect(mark?.className).not.toMatch(/(^|\s)border-primary/);
+  });
+
   it("renders the app when the probe fails for non-auth reasons (backend down)", async () => {
     routeGet({ "/queue": () => Promise.reject(new AxiosError("Network Error", "ERR_NETWORK")) });
     renderGate();

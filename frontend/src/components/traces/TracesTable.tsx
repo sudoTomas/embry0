@@ -127,7 +127,7 @@ function TraceRow({
       <tr
         className={`border-b border-border/50 cursor-pointer transition-colors ${
           isSelected
-            ? "bg-primary/5 border-l-2 border-l-primary"
+            ? "bg-primary/5 border-l-2 border-l-border"
             : "hover:bg-muted/30"
         }`}
         onClick={onClick}

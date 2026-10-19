@@ -131,7 +131,7 @@ export function ProposalsSection() {
         </p>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-amber-400/20">
+      <div className="overflow-x-auto rounded-lg border border-border">
         <table className="data-table">
           <thead>
             <tr>

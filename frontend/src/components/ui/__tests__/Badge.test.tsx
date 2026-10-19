@@ -57,6 +57,8 @@ describe("Badge", () => {
     const el = ring();
     expect(el).not.toBeNull();
     expect(el).toHaveClass("motion-ring");
+    // An outline in the badge's own colour, from the utilities.
+    expect(el).toHaveClass("border", "border-current");
     expect(el).toHaveAttribute("aria-hidden");
     expect(screen.getByText("Completed")).toHaveClass("relative");
     // jsdom has no AnimationEvent, so React listens for the prefixed name

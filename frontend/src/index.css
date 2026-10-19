@@ -98,8 +98,14 @@
   --font-display: 'Outfit', system-ui, sans-serif;
 }
 
-* {
-  border-color: var(--color-border);
+/* The family's default border colour; Tailwind's own is currentColor. It
+   sits in the base layer, under the utilities: a rule outside every layer
+   beats any rule inside one, so unlayered it drew every border colour
+   utility (border-primary/40, border-border-strong) in the neutral colour. */
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
 }
 
 /* The shell is fixed to the viewport and only <main> scrolls, so the page itself
@@ -274,11 +280,8 @@ body[data-divine="off"] .motion-mark * {
   to   { opacity: 0; transform: scale(1.12, 1.5); }
 }
 
-/* At rest the ring is invisible, so it shows nothing if it never animates.
-   Its border colour is set here, not with a Tailwind class: the global
-   `* { border-color }` rule above is unlayered and outranks any utility. */
+/* At rest the ring is invisible, so it shows nothing if it never animates. */
 .motion-ring {
-  border: 1px solid currentColor;
   opacity: 0;
 }
 

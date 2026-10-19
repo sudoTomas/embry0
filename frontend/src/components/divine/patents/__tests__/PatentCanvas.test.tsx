@@ -32,6 +32,20 @@ describe("PatentCanvas", () => {
     expect(screen.queryByText(/2026/)).not.toBeInTheDocument();
   });
 
+  it("draws its frame and rules in the neutral border, not gold", () => {
+    // Gold marks only the one thing on a view that needs a person.
+    const { container } = render(
+      <PatentCanvas date="MAY 04, 2026" title="T" epigraph="E">
+        <span>x</span>
+      </PatentCanvas>,
+    );
+    const bordered = Array.from(container.querySelectorAll("[class*='border']"));
+    expect(bordered).toHaveLength(3);
+    for (const el of bordered) {
+      expect(el.className).not.toMatch(/(^|\s)border(-[trblxy])?-primary/);
+    }
+  });
+
   it("carries divine-element class for the escape hatch", () => {
     const { container } = render(<PatentCanvas><span>x</span></PatentCanvas>);
     expect(container.querySelector(".divine-element")).not.toBeNull();
