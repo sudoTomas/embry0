@@ -390,6 +390,79 @@ curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/history/42/undo \
 # -> {"revision_id": 43}
 ```
 
+## Setting up testing with embry0
+
+The onboarding agent can write a repository's test setup for a person to
+review ([ADR 0019](adr/0019-setup-proposals.md)). In propose mode it reads
+the code, writes a setup, starts each app with it and waits for its ready
+checks, then stores the setup as a proposal. Nothing reaches the test
+setup until a person applies the proposal.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/repos/{repo}/setup/cost` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/setup/propose` | operator |
+| `GET /api/v1/repos/{repo}/setup/proposal` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/setup/proposal/{proposal_id}/apply` | operator |
+| `POST /api/v1/repos/{repo}/setup/proposal/{proposal_id}/reject` | operator |
+| `POST /api/v1/repos/{repo}/setup/skip-testing` | operator |
+| `GET /api/v1/setup/proposals?status=pending` | any authenticated principal |
+
+`GET .../setup/cost` answers `{"recorded_runs", "typical_cost_usd",
+"per_job_budget_usd", "model", "paid_from"}`: how many setup runs completed
+on this embry0, the median recorded cost of the newest 20 (`null` when
+there are none), the per-job budget, the model the run uses (the medium
+tier) and the label of the AI account that would pay (`null` when none
+resolves). These are recorded facts, not an estimate. With the default
+`BUDGET_OVERRUN_MODE` of `soft`, the per-job budget is not a hard stop
+([configuration](configuration.md)).
+
+`POST .../setup/propose` takes `{"confirm_spend": true}`; without it the
+answer is 422. It retires a proposal that is waiting (it becomes `stale`),
+keeps the time the test setup was last saved, and starts an onboard job on
+the repository's base branch setting, else its default branch as discovery
+saw it, else `main`. It answers `{"proposal_id", "job_id"}`, or 409 while a
+run is going for the repository. The calling key's repository allowlist
+applies, as for `POST /jobs`.
+
+`GET .../setup/proposal` answers the latest proposal, or 404 when there is
+none: `{"id", "repo", "status", "job_id", "job_status", "created_by",
+"created_at", "decided_by", "decided_at", "notes_md", "failure", "smoke",
+"proposed_yaml", "current_yaml", "check"}`. `status` is `running`,
+`pending` (waiting for a person), `applied`, `rejected`, `stale` or
+`failed`. `check` is the answer `POST /repos/{repo}/qa-config/check` gives
+for `proposed_yaml`, `null` when there is none. A `running` proposal whose
+job has ended is stored as `failed` when it is read, with the job's error.
+
+Apply takes `{"acknowledged": [<warning codes>]}`. It answers 409 when the
+proposal is not waiting, or when the test setup was saved after the run
+started: the proposal becomes `stale` and nothing is written. It answers
+422 with `{"message", "problems"}` when the check finds a problem every run
+would stop on, and 422 with `{"message", "missing"}` when a warning that
+needs confirming is not in `acknowledged`. Otherwise it writes the proposal
+as the test setup, recorded with source `proposal` so History can undo it,
+and answers `{"revision_id"}`. Apply and reject add the audit rows
+`repo.setup_applied` and `repo.setup_rejected`.
+
+`POST .../setup/skip-testing` stores the starter with `qa_required: never`
+when the repository has no test setup, and answers 409 when it has one.
+
+```bash
+# Start a setup run, then apply the proposal it leaves
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/setup/propose \
+  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"confirm_spend": true}'
+# -> {"proposal_id": "prop-0123456789ab", "job_id": "job-0123456789ab"}
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/setup/proposal/prop-0123456789ab/apply \
+  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"acknowledged": ["live_address"]}'
+# -> {"revision_id": 44}
+```
+
 ## Docker access (admin)
 
 A sandbox profile with `dind_enabled` only *asks* for the shared Docker daemon

@@ -94,6 +94,16 @@ async def test_facts_replace_per_repo_and_runs_keep_history(facts_repo: OrgRepos
 
 
 @pytest.mark.asyncio
+async def test_get_reads_one_repositorys_facts_whatever_the_case(facts_repo: OrgReposRepository) -> None:
+    run = await facts_repo.start_run("acme")
+    await facts_repo.upsert_fact(RepoFacts(owner="acme", repo="Acme/Web", default_branch="trunk"), run_id=run["id"])
+    fact = await facts_repo.get("acme/web")
+    assert fact is not None
+    assert (fact["repo"], fact["default_branch"]) == ("Acme/Web", "trunk")
+    assert await facts_repo.get("acme/none") is None
+
+
+@pytest.mark.asyncio
 async def test_patch_merges_settings_and_keeps_the_rest(orgs_repo: OrganizationsRepository) -> None:
     await orgs_repo.register("acme", "github", settings={"tracker": "github"}, display_name="Acme")
     patched = await orgs_repo.patch("Acme", settings={"auto_register": True})

@@ -70,7 +70,10 @@ for its ready checks), then stores the draft as a setup proposal in
 `repo_setup_proposals` instead. The test setup stays as it was until a
 person applies the proposal. A run that ends without a working draft
 leaves a failed proposal that says why. A repository has at most one run
-going or proposal waiting.
+going or proposal waiting. `POST /api/v1/repos/{repo}/setup/propose` starts
+propose mode, and the proposal is read, applied or turned down under the
+same `setup/` path ([API](api.md)). Applying is refused when the test setup
+was saved after the run started.
 
 Every change to a stored test setup, from any of these paths, is kept in
 the repository's history, and the newest change can be undone

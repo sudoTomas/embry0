@@ -64,6 +64,7 @@ async def start_onboard_job(
     branch: str,
     skip_smoke: bool = False,
     agent_models: dict[str, str] | None = None,
+    proposal_id: str | None = None,
 ) -> str:
     """EMB-50: start an onboard job after every check ``POST /jobs`` runs first.
 
@@ -72,6 +73,8 @@ async def start_onboard_job(
     executor's ``onboard.job_created`` audit row names. ``POST /jobs {"pipeline": "onboard"}`` and the
     organization onboard action both start their jobs here, so the action
     cannot start a job the caller's key could not start through the route.
+    ``proposal_id`` runs it in propose mode (ADR 0019): the draft is stored on
+    that setup proposal, not as the test setup.
     Raises HTTPException as the route answers.
     """
     await enforce_repo_allowlist(request, repo, action=CREATE_A_JOB)
@@ -86,6 +89,7 @@ async def start_onboard_job(
             skip_smoke=skip_smoke,
             agent_models=agent_models,
             dispatched_by=request_actor(request),
+            proposal_id=proposal_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
