@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
@@ -637,6 +637,134 @@ describe("SetupChecklist", () => {
     const card = screen.getByTestId("setup-checklist");
     expect(card).toHaveAttribute("aria-busy", "true");
     expect(within(card).getByRole("heading", { name: "Getting this repository ready" })).toBeInTheDocument();
+  });
+});
+
+const iconOf = (key: string) => rowEl(key).querySelector<HTMLElement>("[data-setup-icon]")!;
+
+describe("the setup line", () => {
+  it("runs through the settled steps and stops at the next one, ringed", async () => {
+    await renderWith(UNCONFIGURED);
+    expect(iconOf("code_access")).toHaveAttribute("data-line", "passed");
+    expect(iconOf("app_values")).toHaveAttribute("data-line", "passed");
+    expect(iconOf("testing")).toHaveAttribute("data-line", "stop");
+    expect(iconOf("first_task")).not.toHaveAttribute("data-line");
+    expect(iconOf("work_trigger")).not.toHaveAttribute("data-line");
+    const rings = screen.getByTestId("setup-checklist").querySelectorAll("[data-setup-ring]");
+    expect(rings).toHaveLength(1);
+    expect(iconOf("testing")).toContainElement(rings[0] as HTMLElement);
+  });
+
+  it("runs to the last row once every required step is settled, past an optional one", async () => {
+    await renderWith(
+      readiness({
+        status: "ready",
+        steps_left: 0,
+        next_step: null,
+        rows: [
+          CODE_DONE,
+          VALUES_DONE,
+          row("testing", "off", "Testing is off for this repository."),
+          row("first_task", "done", "First pull request opened."),
+          TRIGGER_UNKNOWN,
+        ],
+      }),
+    );
+    for (const key of Object.keys(TITLES)) expect(iconOf(key)).toHaveAttribute("data-line", "passed");
+    expect(screen.getByTestId("setup-checklist").querySelector("[data-setup-ring]")).toBeNull();
+  });
+
+  describe("in motion", () => {
+    interface Call {
+      el: Element;
+      keyframes: Keyframe[];
+      options: KeyframeAnimationOptions;
+    }
+    let calls: Call[];
+
+    beforeEach(() => {
+      vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+      calls = [];
+      Object.defineProperty(Element.prototype, "animate", {
+        configurable: true,
+        writable: true,
+        value(this: Element, keyframes: Keyframe[], options: KeyframeAnimationOptions) {
+          calls.push({ el: this, keyframes, options });
+          return {} as Animation;
+        },
+      });
+      // Icon centres 60 px apart, the first 22 px into the list.
+      vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        const icons = [...document.querySelectorAll("[data-setup-icon]")];
+        const i = icons.indexOf(this);
+        const top = i >= 0 ? 92 + i * 60 : this === screen.queryByTestId("setup-line")?.parentElement ? 78 : 0;
+        return { top, height: i >= 0 ? 16 : 0, bottom: 0, left: 0, right: 0, width: 0, x: 0, y: top } as DOMRect;
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+      delete (Element.prototype as { animate?: unknown }).animate;
+    });
+
+    const line = () => calls.filter((c) => c.el === screen.getByTestId("setup-line"));
+    const check = (key: string) => calls.filter((c) => c.el === iconOf(key).querySelector("path"));
+    const ring = () => calls.filter((c) => c.el.hasAttribute("data-setup-ring"));
+
+    it("draws from the top on first view, each check as the line reaches it", async () => {
+      await renderWith(UNCONFIGURED);
+      const drawn = screen.getByTestId("setup-line");
+      // Down to the testing row's ring: 120 px to its centre, less the ring's 12.
+      expect(drawn.style.top).toBe("22px");
+      expect(drawn.style.height).toBe("108px");
+
+      expect(line()).toHaveLength(1);
+      const [{ keyframes, options }] = line();
+      expect(keyframes).toEqual([{ transform: "scaleY(0)" }, { transform: "scaleY(1)" }]);
+      // 108 of the 240 px from the first icon to the last: that share of 1400 ms.
+      expect(options.duration).toBe(630);
+
+      expect(check("code_access")).toHaveLength(1);
+      expect(check("code_access")[0].options.delay).toBe(0);
+      expect(check("code_access")[0].keyframes).toEqual([{ strokeDashoffset: "-24" }, { strokeDashoffset: "0" }]);
+      // 60 of 108 px on the travel ease: past half the time, before the end.
+      const reached = check("app_values")[0].options.delay!;
+      expect(reached).toBeGreaterThan(315);
+      expect(reached).toBeLessThan(630);
+
+      expect(ring()).toHaveLength(1);
+      expect(iconOf("testing")).toContainElement(ring()[0].el as HTMLElement);
+      expect(ring()[0].options.delay).toBe(630);
+      expect(calls).toHaveLength(4);
+    });
+
+    it("draws on only the new stretch when a step settles", async () => {
+      const user = userEvent.setup();
+      mockFetchReadiness.mockResolvedValueOnce(FIRST_TASK).mockResolvedValue(CONFIGURED);
+      renderChecklist();
+      await user.click(await screen.findByRole("button", { name: "Give embry0 a first task" }));
+      calls.length = 0;
+      await user.click(screen.getByRole("button", { name: "Create Issue" }));
+      await waitFor(() => expect(rowEl("first_task")).toHaveAttribute("data-state", "done"));
+
+      expect(screen.getByTestId("setup-line").style.height).toBe("240px");
+      // From the old stop's ring (180 - 12 px) on to the last row: 72 of 240 px.
+      expect(line()).toHaveLength(1);
+      expect(line()[0].keyframes).toEqual([{ transform: "scaleY(0.7)" }, { transform: "scaleY(1)" }]);
+      expect(line()[0].options.duration).toBe(420);
+      for (const key of ["code_access", "app_values", "testing"]) expect(check(key)).toEqual([]);
+      expect(check("first_task")[0].options.delay).toBeGreaterThan(0);
+      expect(check("work_trigger")[0].options.delay).toBeCloseTo(420, 0);
+      expect(ring()).toEqual([]);
+    });
+
+    it("keeps still for reduced motion, with the line where it ends", async () => {
+      vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener() {}, removeEventListener() {} }));
+      await renderWith(UNCONFIGURED);
+      expect(screen.getByTestId("setup-line").style.height).toBe("108px");
+      expect(calls).toEqual([]);
+    });
   });
 });
 
