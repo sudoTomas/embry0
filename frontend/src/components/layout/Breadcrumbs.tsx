@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { useLocation } from "react-router";
 import { cn } from "@/lib/utils";
+import { settingsTab } from "@/lib/settingsTabs";
 import { NAV_GROUPS } from "./navGroups";
 
 const breadcrumbMap: Record<string, string> = {
@@ -72,13 +73,19 @@ function decode(segment: string): string {
  * the trail is the parent and the record, with a repo always named in full
  * (`owner/name`), on the repo page and under QA alike.
  */
-function crumbsFor(pathname: string): Crumb[] {
+function crumbsFor(pathname: string, search: string): Crumb[] {
   // A "-" segment marks an app route under a name space (the organization
   // wizard at /orgs/-/new), never a name, so the crumb skips it.
   const segments = pathname
     .split("/")
     .filter((s) => s !== "" && s !== "-")
     .map(decode);
+
+  // Settings is its own section, so its line names the open tab instead of
+  // standing empty.
+  if (segments.length === 1 && segments[0] === "settings") {
+    return [{ label: "Settings" }, { label: settingsTab(new URLSearchParams(search).get("tab")).label }];
+  }
 
   const nav = NAV_BY_PATH.get(`/${segments.join("/")}`);
   if (nav) return nav.section === nav.label ? [] : [{ label: nav.section }];
@@ -106,12 +113,14 @@ function crumbsFor(pathname: string): Crumb[] {
 
 /**
  * Where the page sits, as a thin line at the top of the content. The header
- * carries the product name, so the trail starts at the section. A page whose
- * section is its own name (Settings) keeps the line, empty, so the content
- * starts at the same height on every page.
+ * carries the product name, so the trail starts at the section. Settings,
+ * whose section is its own name, names its open tab. A page with no trail
+ * keeps the line, empty, so the content starts at the same height on every
+ * page.
  */
 export function Breadcrumbs() {
-  const crumbs = crumbsFor(useLocation().pathname);
+  const { pathname, search } = useLocation();
+  const crumbs = crumbsFor(pathname, search);
   const lineClass =
     "flex h-9 shrink-0 items-center gap-2 overflow-hidden border-b border-border px-[var(--density-padding)] text-sm text-fg-muted";
 

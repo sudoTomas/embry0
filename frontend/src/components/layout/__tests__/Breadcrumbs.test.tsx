@@ -43,10 +43,14 @@ describe("Breadcrumbs", () => {
     expect(breadcrumb().queryByText("Credentials")).toBeNull();
   });
 
-  it("keeps the line empty, out of the landmarks, when the section is the page's own name", () => {
-    const { container } = renderAt("/settings");
-    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
-    expect(container.firstElementChild).toHaveAttribute("aria-hidden", "true");
+  it("names the open Settings tab, since the section is the page's own name", () => {
+    renderAt("/settings");
+    expect(trail()).toBe("Settings/General");
+  });
+
+  it("follows the Settings tab in the URL", () => {
+    renderAt("/settings?tab=apikeys");
+    expect(trail()).toBe("Settings/API keys");
   });
 
   it("never calls the root Dashboard", () => {
