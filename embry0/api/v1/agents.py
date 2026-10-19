@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from embry0.agents.skills import UnknownSkillError, check_skill_names
 from embry0.api.deps import get_agent_defs_repo, require_admin
 from embry0.api.schemas import AgentCreateRequest, AgentUpdateRequest
 from embry0.services.model_enablement import (
@@ -52,6 +53,27 @@ async def _reject_if_disabled(request: Request, model: str | None) -> None:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+async def catalog_skill_names(request: Request) -> set[str] | None:
+    """Every skill name the catalog knows; None when no catalog is wired (minimal test apps)."""
+    repo = getattr(request.app.state, "skill_sources_repo", None)
+    if repo is None:
+        return None
+    return {c["name"] for c in await repo.catalog()}
+
+
+async def check_catalog_skills(request: Request, names: list[str] | None) -> None:
+    """A save naming a skill the catalog does not know is a 422 naming the closest known ones."""
+    if not names:
+        return
+    known = await catalog_skill_names(request)
+    if known is None:
+        return
+    try:
+        check_skill_names(names, known)
+    except UnknownSkillError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get("/agents")
 async def list_agents(
     request: Request,
@@ -72,6 +94,10 @@ async def get_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent type not found")
     [annotated] = await annotate_agents([agent], request.app.state)
+    known = await catalog_skill_names(request)
+    annotated["orphan_skills"] = (
+        [s for s in annotated.get("skills") or [] if s not in known] if known is not None else []
+    )
     return annotated
 
 
@@ -82,6 +108,7 @@ async def create_agent(
     repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
 ) -> dict[str, Any]:
     await _reject_if_disabled(request, req.model)
+    await check_catalog_skills(request, req.skills)
     try:
         return await repo.create(
             agent_type=req.type,
@@ -121,6 +148,7 @@ async def update_agent(
         if key in updates and updates[key] is None:
             raise HTTPException(status_code=422, detail=f"{key} cannot be null")
     await _reject_if_disabled(request, updates.get("model"))
+    await check_catalog_skills(request, updates.get("skills"))
     if not updates:
         agent = await repo.get(agent_type)
         if not agent:

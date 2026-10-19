@@ -134,3 +134,80 @@ async def test_a_template_agent_models_map_is_refused(app, method):
         r = await getattr(client, method)(url, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
     assert r.status_code == 422, f"a template agent_models map must be refused, got {r.status_code}"
     assert "config.model" in r.text
+
+
+def _graph_with_developer(node: dict) -> dict:
+    return {
+        **SAMPLE_GRAPH,
+        "nodes": [{"node_id": "t", "agent_type": "triage"}, {"node_id": "d", "agent_type": "developer", **node}],
+    }
+
+
+def _catalog(*names: str) -> MagicMock:
+    repo = MagicMock()
+    repo.catalog = AsyncMock(return_value=[{"name": n, "available": True} for n in names])
+    return repo
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["post", "put"])
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"config": {"skills": {"add": ["superpowers:writing-plan"]}}},
+        {"skills": ["superpowers:writing-plan"]},  # the editor's legacy top-level shape (#78)
+    ],
+    ids=["config-delta", "legacy-top-level"],
+)
+async def test_a_template_naming_an_unknown_skill_is_refused(app, method, node):
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans")
+    body = {"name": "t", "graph_definition": _graph_with_developer(node)}
+    url = "/api/v1/pipelines/templates" + ("/tmpl-1" if method == "put" else "")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await getattr(client, method)(url, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
+    assert r.status_code == 422, f"an unknown skill must be refused, got {r.status_code}"
+    assert "superpowers:writing-plans" in r.text, "the 422 names the closest known skill"
+    app.state.templates_repo.create.assert_not_awaited()
+    app.state.templates_repo.update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_template_with_known_skills_saves(app):
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans", "local:house-style")
+    node = {"config": {"skills": {"add": ["superpowers:writing-plans"], "remove": ["local:house-style"]}}}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _graph_with_developer(node)},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 201, r.text
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_template_skills_delta_is_refused(app):
+    node = {"config": {"skills": {"add": "superpowers:writing-plans"}}}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _graph_with_developer(node)},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 422
+    assert "skills delta" in r.text
+    app.state.templates_repo.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_unpriced_model_at_the_legacy_top_level_is_refused(app):
+    """#78: a model stored at the node's top level is the model that runs, so it is checked too."""
+    node = {"model": "grok-9-unpriced"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _graph_with_developer(node)},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 422, f"a legacy-shaped unpriced model must be refused, got {r.status_code}"
+    assert "grok-9-unpriced" in r.text
+    app.state.templates_repo.create.assert_not_awaited()

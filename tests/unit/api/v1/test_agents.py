@@ -117,3 +117,77 @@ async def test_update_agent_forwards_identity_fields(app):
         resp = await client.put("/api/v1/agents/developer", json={"avatar": "rogue", "color": "rose"})
     assert resp.status_code == 200
     assert app.state.agent_defs_repo.update.await_args.kwargs == {"avatar": "rogue", "color": "rose"}
+
+
+def _catalog(*names: str) -> MagicMock:
+    repo = MagicMock()
+    repo.catalog = AsyncMock(return_value=[{"name": n, "available": True} for n in names])
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_create_agent_rejects_unknown_skill_name(app):
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans")
+    app.state.agent_defs_repo.create = AsyncMock()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=_CSRF) as client:
+        resp = await client.post(
+            "/api/v1/agents",
+            json={
+                "type": "lantern",
+                "description": "d",
+                "model": "claude-sonnet-5",
+                "skills": ["superpowers:writing-plan"],
+            },
+        )
+    assert resp.status_code == 422
+    assert "superpowers:writing-plans" in resp.text, "the 422 names the closest known skill"
+    app.state.agent_defs_repo.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_agent_accepts_known_skill_names(app):
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans")
+    app.state.agent_defs_repo.create = AsyncMock(return_value={"type": "lantern"})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=_CSRF) as client:
+        resp = await client.post(
+            "/api/v1/agents",
+            json={
+                "type": "lantern",
+                "description": "d",
+                "model": "claude-sonnet-5",
+                "skills": ["superpowers:writing-plans"],
+            },
+        )
+    assert resp.status_code == 201, resp.text
+    assert app.state.agent_defs_repo.create.await_args.kwargs["skills"] == ["superpowers:writing-plans"]
+
+
+@pytest.mark.asyncio
+async def test_update_agent_rejects_unknown_skill_name(app):
+    app.state.skill_sources_repo = _catalog("superpowers:brainstorming")
+    app.state.agent_defs_repo.update = AsyncMock()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=_CSRF) as client:
+        resp = await client.put("/api/v1/agents/developer", json={"skills": ["superpowers:brainstormin"]})
+    assert resp.status_code == 422
+    assert "superpowers:brainstorming" in resp.text
+    app.state.agent_defs_repo.update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_agent_lists_skills_missing_from_the_catalog(app):
+    app.state.skill_sources_repo = _catalog("superpowers:brainstorming")
+    app.state.agent_defs_repo.get = AsyncMock(
+        return_value={
+            "type": "developer",
+            "model": "claude-sonnet-5",
+            "skills": ["superpowers:brainstorming", "gone:skill"],
+        }
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/v1/agents/developer")
+    assert resp.status_code == 200
+    assert resp.json()["orphan_skills"] == ["gone:skill"]
