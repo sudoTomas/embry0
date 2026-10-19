@@ -1,10 +1,11 @@
 /** Per-agent card palette shared by the JobDetailPage AgentCard and the
  * Console board's stage badges, so triage/developer/review read the same
- * everywhere. */
+ * everywhere: each role takes the palette colour the pipeline graph draws
+ * it in (lib/graph-utils.ts). */
 export const AGENT_COLORS: Record<string, { text: string; bg: string; border: string; icon: string }> = {
   triage: { text: "text-purple", bg: "bg-purple-dim", border: "border-purple/25", icon: "\u25C9" },
-  developer: { text: "text-purple", bg: "bg-purple/[0.04]", border: "border-purple/25", icon: "\u270E" },
-  review: { text: "text-rose-400", bg: "bg-rose-500/[0.04]", border: "border-rose-500/25", icon: "\u2611" },
+  developer: { text: "text-amber", bg: "bg-amber/[0.04]", border: "border-amber/25", icon: "\u270E" },
+  review: { text: "text-purple", bg: "bg-purple/[0.04]", border: "border-purple/25", icon: "\u2611" },
 };
 
 export function getColors(agent: string) {
