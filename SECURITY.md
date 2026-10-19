@@ -31,7 +31,7 @@ Only the latest release / `main` branch receives security fixes.
 | **Environment secrets**: global and per-repo environment variables marked secret | The database, Fernet-encrypted. Injected into sandboxes: global ones into every sandbox, per-repo ones into their repository's. |
 | **The deployment host** | Runs the compose stack. By default that includes a **privileged** Docker-in-Docker (DinD) container that runs every proxy and every sandbox; with `AGENT_RUNTIME=rootless` they run on a dedicated rootless Docker daemon owned by an unprivileged account instead ([provisioning.md §10](docs/ops/provisioning.md#10-a-rootless-sandbox-daemon)). |
 
-Target-repository code is an asset too. It is cloned only inside a sandbox and deleted with it; the orchestrator never checks it out on the host.
+Target-repository code is an asset too. Agents work on it only inside a sandbox, which is deleted when the job ends, and the orchestrator never checks it out on the host. Copies of it do outlive the sandbox, in the database and on the sandbox daemon, and by default they are kept forever: [Data retention](#data-retention) lists each one and the setting that bounds it.
 
 ### Trust boundaries
 
@@ -50,7 +50,7 @@ Target-repository code is an asset too. It is cloned only inside a sandbox and d
 
 ### What holds
 
-**Ring 1: container isolation.** Each job runs in its own container on the DinD daemon, as the unprivileged `agent` user, with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, and memory, CPU and PID limits. The container, and the code cloned into it, is destroyed when the job ends. A sandbox profile can set the limits, but not the capability drop or `no-new-privileges`: the API and sandbox creation both refuse a `cap_drop` without `ALL`, any `cap_add`, and any `security_opt` other than `no-new-privileges`.
+**Ring 1: container isolation.** Each job runs in its own container on the DinD daemon, as the unprivileged `agent` user, with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, and memory, CPU and PID limits. The container, and the checkout in it, is destroyed when the job ends; [Data retention](#data-retention) lists what outlives it. A sandbox profile can set the limits, but not the capability drop or `no-new-privileges`: the API and sandbox creation both refuse a `cap_drop` without `ALL`, any `cap_add`, and any `security_opt` other than `no-new-privileges`.
 
 **Credential proxies with per-sandbox enrollment** ([ADR 0002](docs/adr/0002-credential-proxies-per-sandbox-enrollment.md)). The orchestrator starts the proxies inside DinD with `ProxyManager`:
 
@@ -123,4 +123,26 @@ These are known and accepted, or not yet closed. They are stated plainly so you 
 
 **No gVisor under the rootless runtime.** Isolation under `AGENT_RUNTIME=rootless` is the rootless daemon, the capability drop and `no-new-privileges`, the egress drop and sandbox isolation chains, and per-sandbox limits; every sandbox runs under runc on the host kernel. gVisor (`runsc`) is refused: under rootless Docker it would run only with `--ignore-cgroups`, dropping every per-sandbox limit. A profile naming another runtime is refused at creation, and the orchestrator refuses a daemon that registers runsc or defaults to anything but runc. gVisor is revisited for the SaaS runtime (#587). `minio-proxy` and `presign-proxy` stay under both runtimes: a sandbox has no other route to MinIO or the presign endpoint, and every alternative would widen its egress.
 
+**Code outlives the sandbox unless you set a retention.** By default the job's events keep whole files the agent read and wrote and its shell commands, its saved session keeps the whole conversation, and a pre-built QA image keeps a checkout of the repository, all with no end date. `JOB_LOG_RETENTION_DAYS` and `QA_IMAGE_RETENTION_DAYS` bound them; registry copies of QA images and database backups stay even then. See [Data retention](#data-retention).
+
 **Only the dashboard hostname gets the hardened vhost.** On the frontend, any hostname other than `DASHBOARD_PUBLIC_HOSTNAME` gets the LAN vhost: API authentication applies, but the CSP, HSTS and path blocking of the public vhost do not. The webhook tunnel points at that frontend, and its restriction to the webhook paths lives in the tunnel's own configuration on the Cloudflare side, not in embry0 ([webhooks.md](docs/webhooks.md)). Restrict it to the webhook paths, and do not expose port 8200 directly to the internet.
+
+## Data retention
+
+Agents work on a repository inside its job's sandbox, and the sandbox is deleted when the job ends. What follows outlives it. The two retention settings are unset by default, which keeps everything marked *forever* below; see what a value would remove before setting it with `GET /api/v1/admin/retention/preview` (admin tier, [api.md](docs/api.md#retention-preview-admin)).
+
+| What | Holds code? | Where | Kept | Bounded by |
+|---|---|---|---|---|
+| Job events: tool calls and results, agent text and thinking, costs, nodes | Yes: `Write`, `Edit`, `MultiEdit` and `NotebookEdit` inputs, `Bash` commands (heredocs write whole files), and every tool result (the file a `Read` read, `Grep` matches, `cat` or `git diff` output), an input string cut at 65,536 characters and a result at 4,000 | `job_logs` in PostgreSQL | forever | `JOB_LOG_RETENTION_DAYS`: for ended jobs, the code fields of events older than that become `[removed by job log retention]`, and each event keeps a `redacted` record of the tool name, file path, bytes and SHA-256 |
+| Saved agent sessions | Yes: the whole conversation; for a Claude subscription the CLI's session file, every tool input and result uncapped | `agent_sessions` in PostgreSQL | forever | `JOB_LOG_RETENTION_DAYS`: ended jobs' sessions last used before then are deleted (a later pull request comment follow-up then starts a fresh session) |
+| Graph checkpoints | Job state | `checkpoints`, `checkpoint_blobs`, `checkpoint_writes` | until the job ends; a daily sweep removes any left behind | |
+| Pre-built QA images | Yes: a commit of a builder sandbox after it cloned the repository and installed its dependencies, `.git` included | the sandbox daemon (DinD, or the rootless daemon) | forever, including bakes that failed after their commit | `QA_IMAGE_RETENTION_DAYS`: images named `embry0-qa-*` unused for that long, except the one an active `qa_image_tags` row names and any a container uses |
+| The same images in the registry | Yes | the in-stack registry (`registry-data` volume) | forever: the registry runs with deletes off and embry0 never deletes from it | by hand only |
+| Per-repo warm volumes (`cache.shared_volume.scope: per-repo`) | Yes: a checkout and its installed dependencies | the sandbox daemon | forever | `QA_IMAGE_RETENTION_DAYS`: volumes this deployment labelled and no QA job used for that long, except while a job of the repo is live or a container mounts it |
+| Per-job QA volumes and sandbox containers | Yes, while the job runs | the sandbox daemon | until the job ends; a paused job's sandbox until `PAUSED_JOB_TTL_HOURS` (48); the volume reaper sweeps leftovers hourly | |
+| QA artifacts: screenshots, videos, traces, logs of the app under test | What the app showed and logged | MinIO, `qa-artifacts` bucket | `QA_ARTIFACT_RETENTION_DAYS` (14) | that setting |
+| What agents write for people: job summaries, final outputs, review findings, deliverables | Prose that can quote fragments of code | PostgreSQL (`jobs`, `traces`, `job_logs` text and thinking events, `deliverables`, `pr_reviews`) | forever | |
+| Turbo remote cache (the optional `docker-compose.cache.yml` overlay) | Build outputs | `turbo_cache_data` volume | forever | not managed by embry0 |
+| Database backups | Everything above that is in PostgreSQL | `backup-data` volume; the off-host bucket when configured ([backup-restore.md](docs/ops/backup-restore.md)) | 7 daily, 4 weekly and 6 monthly dumps; the bucket's own lifecycle rule | the backup schedule: a dump taken before a redaction keeps what it held |
+
+Both sweeps run at startup and then daily and log their counts (`job_log_retention_swept`, `qa_image_retention_swept`). The job log sweep touches only jobs that have ended. Neither removes anything without its setting.

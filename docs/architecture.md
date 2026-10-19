@@ -6,7 +6,7 @@ Detailed technical documentation of the embry0 agent orchestration engine.
 
 ## System Overview
 
-embry0 is a general-purpose agent orchestration engine built on LangGraph and Claude Agent SDK. GitHub issues or API requests create issues which are triaged by an LLM agent, questions are dispatched to the user via multiple channels (Dashboard, Telegram, GitHub, Linear), agents execute inside Docker sandboxes, and on success a PR is opened automatically. Customer code never persists on the host — it lives only inside ephemeral sandbox containers.
+embry0 is a general-purpose agent orchestration engine built on LangGraph and Claude Agent SDK. GitHub issues or API requests create issues which are triaged by an LLM agent, questions are dispatched to the user via multiple channels (Dashboard, Telegram, GitHub, Linear), agents execute inside Docker sandboxes, and on success a PR is opened automatically. Agents work on customer code only inside ephemeral sandbox containers; the copies that outlive them (job events, saved agent sessions, pre-built QA images and per-repo volumes) and the settings that bound them are listed in [SECURITY.md](../SECURITY.md#data-retention).
 
 ```mermaid
 graph TB
@@ -227,7 +227,7 @@ The full mapping of each DinD mechanism is in
 | Service | Image | Purpose | Resources |
 |---------|-------|---------|-----------|
 | Frontend | `embry0-frontend` | nginx serving React SPA, reverse proxy | — |
-| Orchestrator | `embry0-orchestrator` | FastAPI + LangGraph, job management, proxy services. Never touches customer code. | configurable via `.env` |
+| Orchestrator | `embry0-orchestrator` | FastAPI + LangGraph, job management, proxy services. Never checks out customer code; stores job events and agent sessions, which carry it ([Data retention](../SECURITY.md#data-retention)). | configurable via `.env` |
 | PostgreSQL | `postgres:16` | Application data + LangGraph checkpoints | configurable via `.env` |
 | DinD | `docker:dind` | Runs sandbox containers (privileged) | configurable via `.env` |
 | MinIO | `pgsty/silo` (Silo, the community fork of MinIO) | S3-compatible artifact store. `qa-artifacts` bucket holds QA `result.json`, screenshots, traces, and `logs/full.log` per `<job_id>/<attempt_n>/...`. | configurable via `.env` |
@@ -612,7 +612,7 @@ Triage emits two distinct decisions inline in its JSON output (parsed via `Triag
 
 ## Sandbox Container Architecture
 
-Each job gets one Docker sandbox inside DinD. The sandbox clones the repo, agents execute inside it, and all git/GitHub operations happen within. When destroyed, all customer code is deleted.
+Each job gets one Docker sandbox inside DinD. The sandbox clones the repo, agents execute inside it, and all git/GitHub operations happen within. When destroyed, its checkout is deleted; [Data retention](../SECURITY.md#data-retention) lists what outlives it.
 
 ```mermaid
 graph LR
@@ -662,7 +662,7 @@ graph LR
 | Image | A profile's `base_image` names an image in embry0's own registry, without a registry host; it is pulled by its digest pin when one is installed (#523, #553) |
 | Credentials | Forge tokens are injected by the proxies (see Proxy Services) and never enter the sandbox. **The LLM credential does:** `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, and `XAI_API_KEY`, are in the sandbox env, because the Claude CLI reads its credential from there and subscription OAuth stays supported ([ADR 0008](adr/0008-llm-credential-in-sandbox-env.md)). Any code in the sandbox can read them. Only the xAI subscription token stays in `xai-proxy`. |
 | Command blocking | Ring 3: 41 regex patterns on Bash commands (`embry0/safety/patterns.py`), after NFKC normalization. Ring 2: the CLI's permission rules; embry0's own copy of that check, for the direct xAI executor, normalizes paths lexically and does not resolve symlinks. Defence in depth: neither binds a program the agent writes and runs |
-| Code retention | None — repo cloned inside container, deleted on teardown |
+| Code retention | The checkout is deleted with the container. Job events, saved agent sessions, pre-built QA images and per-repo volumes keep copies until `JOB_LOG_RETENTION_DAYS` and `QA_IMAGE_RETENTION_DAYS` remove them; both are unset by default ([Data retention](../SECURITY.md#data-retention)) |
 | LLM credentials | Resolved by the credential registry for each job and passed to the sandbox env (see the Credentials row above) |
 | Ring-3 enforcement | Asserted where the hook runs: the sandbox image builds fail, and `SdkAgentExecutor.run` returns an error before `query()`, if the sandbox's `claude_agent_sdk` does not declare `hooks` or the `PreToolUse` event (`embry0/agents/sdk_support.py`, #497). The orchestrator never runs an agent, so it no longer checks its own SDK. Per-run hook attachment is unconditional — no fall-back. The in-process executor fallback was removed in 2026-04 hardening. |
 
