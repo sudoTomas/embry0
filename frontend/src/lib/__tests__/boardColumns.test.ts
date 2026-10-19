@@ -43,8 +43,12 @@ describe("columnForStatus", () => {
     }
   });
 
-  it("throws on a status outside the union at runtime", () => {
-    expect(() => columnForStatus("bogus" as JobStatus)).toThrow(/Unhandled job status/);
+  it("puts a status this build does not know in the Failed lane instead of throwing", () => {
+    // A deploy can add a status while an open tab holds the older bundle; the
+    // board must still render that job (its pill names the status).
+    expect(columnForStatus("reverted" as JobStatus)).toBe("failed");
+    const grouped = groupJobsByColumn([makeJob("reverted" as JobStatus)]);
+    expect(grouped.failed.map((j) => j.job_id)).toEqual(["job-reverted"]);
   });
 });
 
