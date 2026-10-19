@@ -27,7 +27,6 @@ export function StartEndNode({ data, selected }: NodeProps) {
         style={{
           width: SPHERE_PX,
           height: SPHERE_PX,
-          filter: selected ? "drop-shadow(0 0 10px rgba(212, 175, 55, 0.55))" : undefined,
         }}
       >
         {handle === "target" && (
@@ -67,6 +66,19 @@ export function StartEndNode({ data, selected }: NodeProps) {
             opacity="0.55"
           />
           <circle cx="32" cy={poleY} r="3.6" fill="currentColor" opacity="0.9" />
+          {/* Selected: a thin ring in the node's own gold just outside its
+              cardinal dots, never a glow. */}
+          {selected && (
+            <circle
+              data-testid="node-selected-ring"
+              cx="32"
+              cy="32"
+              r="27"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+          )}
         </svg>
 
         {handle === "source" && (

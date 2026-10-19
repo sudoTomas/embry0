@@ -85,7 +85,13 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
         className="bg-page"
       >
         <Background color="rgba(255,255,255,0.018)" gap={24} />
-        <MiniMap className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !w-[120px] !h-[75px]" nodeColor="#ffffff20" />
+        <MiniMap
+          className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !w-[120px] !h-[75px]"
+          nodeColor="#ffffff20"
+          // React Flow's default mask is a light grey that reads as a block on
+          // the dark canvas; the page colour at 70% keeps the viewport window.
+          maskColor="rgb(10 10 15 / 0.7)"
+        />
         <Controls className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !shadow-lg" />
       </ReactFlow>
     </div>
