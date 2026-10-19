@@ -98,6 +98,16 @@ export function standardRows(
   return rows.sort(compareRows);
 }
 
+/**
+ * True for a repository in mode off that no audit ever scored: nothing about
+ * it under the standard to read. The Standards view folds these away, since
+ * most of an owner's repositories start in this state and would bury the rest.
+ * An off repository with a score (audited, then switched off) stays in view.
+ */
+export function isOffAndUnscored(row: StandardRepoRow): boolean {
+  return row.state.mode === "off" && row.state.score === null;
+}
+
 export function modeCounts(rows: readonly StandardRepoRow[]): Record<StandardMode, number> {
   const counts: Record<StandardMode, number> = { off: 0, advise: 0, enforce: 0 };
   for (const row of rows) if (row.state.mode in counts) counts[row.state.mode] += 1;

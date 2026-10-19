@@ -56,6 +56,13 @@ function rowOf(repo: string) {
   return screen.getAllByTestId("standard-repo-row").find((el) => el.getAttribute("data-repo") === repo)!;
 }
 
+const shownRepos = () => screen.queryAllByTestId("standard-repo-row").map((r) => r.getAttribute("data-repo"));
+
+/** Unfold the repositories in mode off that no audit scored. */
+function showOff() {
+  fireEvent.click(screen.getByTestId("standard-repos-off-toggle"));
+}
+
 beforeEach(() => {
   narrow = false;
   mockSetMode.mockReset().mockResolvedValue({});
@@ -65,6 +72,7 @@ beforeEach(() => {
 describe("StandardReposTable", () => {
   it("lists the repositories furthest from the standard first, by their name under the owner", () => {
     renderTable();
+    showOff();
     const rows = screen.getAllByTestId("standard-repo-row");
     expect(rows.map((r) => r.getAttribute("data-repo"))).toEqual(["acme/Low", "acme/fresh", "acme/running", "acme/quiet"]);
     expect(within(rows[0]).getByTestId("standard-repo-link")).toHaveTextContent(/^Low$/);
@@ -74,6 +82,61 @@ describe("StandardReposTable", () => {
     // Never audited: no findings count to show yet.
     expect(within(rows[1]).getByTestId("standard-findings")).toHaveTextContent("-");
     expect(screen.getByTestId("standard-repos-counts")).toHaveTextContent("4 repositories · 1 enforce · 2 advise · 1 off");
+  });
+
+  it("folds the repositories in mode off that no audit scored behind one row", () => {
+    const rows = standardRows(
+      "acme",
+      "design",
+      [{ repo: "acme/held" }, { repo: "acme/was-held" }, ...Array.from({ length: 140 }, (_, i) => ({ repo: `acme/off-${i}` }))],
+      [
+        state("acme/held", { mode: "advise" }),
+        // Audited, then switched off: its score is still worth reading.
+        state("acme/was-held", { score: 44, last_audit_at: "2026-01-01T00:00:00Z" }),
+      ],
+    );
+    renderTable({ rows });
+    expect(shownRepos()).toEqual(["acme/was-held", "acme/held"]);
+    const toggle = screen.getByTestId("standard-repos-off-toggle");
+    expect(toggle).toHaveTextContent("Show 140 in mode off");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle.className).not.toContain("bg-primary");
+    // The counts still cover every repository.
+    expect(screen.getByTestId("standard-repos-counts")).toHaveTextContent("142 repositories · 0 enforce · 1 advise · 141 off");
+
+    showOff();
+    expect(shownRepos()).toHaveLength(142);
+    expect(shownRepos().slice(0, 3)).toEqual(["acme/was-held", "acme/held", "acme/off-0"]);
+    // The toggle stays where it was clicked, between the held and the folded rows.
+    const toggleRow = screen.getByTestId("standard-repos-off-row");
+    expect(toggleRow.previousElementSibling).toHaveAttribute("data-repo", "acme/held");
+    expect(toggleRow.nextElementSibling).toHaveAttribute("data-repo", "acme/off-0");
+    expect(screen.getByTestId("standard-repos-off-toggle")).toHaveTextContent("Hide the 140 in mode off");
+
+    fireEvent.click(screen.getByTestId("standard-repos-off-toggle"));
+    expect(shownRepos()).toHaveLength(2);
+  });
+
+  it("searches the folded repositories too when filtering by name", () => {
+    renderTable();
+    expect(shownRepos()).not.toContain("acme/quiet");
+    fireEvent.change(screen.getByTestId("standard-repos-filter"), { target: { value: "qui" } });
+    expect(shownRepos()).toEqual(["acme/quiet"]);
+    expect(screen.queryByTestId("standard-repos-off-toggle")).toBeNull();
+  });
+
+  it("says when no repository is held to the standard, with the others one click away", () => {
+    renderTable({ rows: standardRows("acme", "design", [{ repo: "acme/a" }, { repo: "acme/b" }], []) });
+    expect(screen.getByTestId("standard-repos-none-held")).toHaveTextContent("No repository is held to this standard yet");
+    expect(shownRepos()).toEqual([]);
+    showOff();
+    expect(shownRepos()).toEqual(["acme/a", "acme/b"]);
+  });
+
+  it("offers no fold when nothing is in mode off", () => {
+    renderTable({ rows: ROWS.filter((r) => r.state.mode !== "off") });
+    expect(screen.queryByTestId("standard-repos-off-row")).toBeNull();
+    expect(shownRepos()).toHaveLength(3);
   });
 
   it("links each repository's newest audit job with its status", () => {
@@ -92,6 +155,7 @@ describe("StandardReposTable", () => {
   it("shows a mode refusal in the server's words under its row", async () => {
     mockSetMode.mockRejectedValue({ response: { status: 403, data: { detail: "admin tier required" } } });
     renderTable();
+    showOff();
     fireEvent.change(within(rowOf("acme/quiet")).getByTestId("standard-mode-select"), { target: { value: "advise" } });
     expect(await screen.findByTestId("standard-repo-error")).toHaveTextContent("acme/quiet: admin tier required");
   });
@@ -105,6 +169,7 @@ describe("StandardReposTable", () => {
 
   it("disables Audit in mode off and while an audit is pending or running", () => {
     renderTable({ jobStatuses: new Map([["job-old", "completed"], ["job-run", "pending"]]) });
+    showOff();
     const button = (repo: string) => within(rowOf(repo)).getByTestId("standard-audit-button");
     expect(button("acme/quiet")).toBeDisabled();
     expect(button("acme/quiet")).toHaveAttribute("title", expect.stringMatching(/mode off/));

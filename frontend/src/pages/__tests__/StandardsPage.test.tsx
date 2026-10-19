@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -71,10 +71,27 @@ describe("StandardsPage", () => {
 
   it("lists the owner's registered repositories, lowest score first, and no other owner's", async () => {
     renderPage();
-    const rows = await screen.findAllByTestId("standard-repo-row");
+    const held = await screen.findAllByTestId("standard-repo-row");
+    expect(held.map((r) => r.getAttribute("data-repo"))).toEqual(["acme/low"]);
+    expect(within(held[0]).getByTestId("standard-score")).toHaveTextContent("20");
+    fireEvent.click(screen.getByTestId("standard-repos-off-toggle"));
+    const rows = screen.getAllByTestId("standard-repo-row");
     expect(rows.map((r) => r.getAttribute("data-repo"))).toEqual(["acme/low", "acme/quiet"]);
-    expect(within(rows[0]).getByTestId("standard-score")).toHaveTextContent("20");
     expect(within(rows[1]).getByTestId("standard-mode-select")).toHaveValue("off");
+  });
+
+  it("folds the mode-off repositories, so the standard's parts follow the held ones", async () => {
+    api.repos.mockResolvedValue([{ repo: "acme/low" }, ...Array.from({ length: 140 }, (_, i) => ({ repo: `acme/off-${i}` }))]);
+    renderPage();
+    await screen.findAllByTestId("standard-repo-row");
+    expect(screen.getAllByTestId("standard-repo-row")).toHaveLength(1);
+    expect(screen.getByTestId("standard-repos-off-toggle")).toHaveTextContent("Show 140 in mode off");
+    // The colour roles render without unfolding anything.
+    const colours = screen.getByTestId("standard-colours-section");
+    expect(within(colours).getAllByTestId("standard-colour")).toHaveLength(2);
+    expect(screen.getByTestId("standard-repos-section").compareDocumentPosition(colours)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
   it("names the API path to write a version, and offers no editor", async () => {
@@ -89,7 +106,9 @@ describe("StandardsPage", () => {
     renderPage();
     expect(await screen.findByTestId("standard-none")).toHaveTextContent("No design standard for acme yet");
     expect(screen.getByTestId("standard-none")).toHaveTextContent("PUT /api/v1/standards/acme/design");
-    expect(await screen.findAllByTestId("standard-repo-row")).toHaveLength(2);
+    expect(await screen.findByTestId("standard-repos-none-held")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("standard-repos-off-toggle"));
+    expect(screen.getAllByTestId("standard-repo-row")).toHaveLength(2);
     expect(screen.queryByTestId("standard-colours")).toBeNull();
   });
 

@@ -5,6 +5,7 @@ import {
   auditBlockedReason,
   colourRoles,
   formatRoleValue,
+  isOffAndUnscored,
   isPlainColour,
   modeCounts,
   nextAuditRepo,
@@ -91,6 +92,13 @@ describe("audits", () => {
     expect(nextAuditRepo(rows, blocked)).toBe("acme/next");
     expect(nextAuditRepo(rows.slice(0, 2), blocked)).toBeNull();
     expect(nextAuditRepo([row("acme/off")], () => null)).toBeNull();
+  });
+
+  it("folds away only a repository in mode off that no audit scored", () => {
+    expect(isOffAndUnscored(row("acme/a"))).toBe(true);
+    expect(isOffAndUnscored(row("acme/a", { score: 40, last_audit_at: "2026-01-01T00:00:00Z" }))).toBe(false);
+    expect(isOffAndUnscored(row("acme/a", { mode: "advise" }))).toBe(false);
+    expect(isOffAndUnscored(row("acme/a", { mode: "enforce" }))).toBe(false);
   });
 
   it("counts the modes", () => {
