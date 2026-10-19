@@ -139,13 +139,17 @@ export function DashboardPage() {
                       <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>
                     </td>
                     <td className="w-full max-w-0">
+                      {/* On a phone the key takes a line of its own and the
+                          title up to two under it; from sm up they share one. */}
                       <Link
                         to={`/issues/${issue.trace_id}`}
-                        className="line-clamp-2 break-words hover:underline sm:line-clamp-1"
+                        className="block break-words hover:underline sm:truncate"
                         title={issue.title}
                       >
-                        <span className="font-mono text-xs text-fg-secondary">{recentIssueKey(issue)}</span>
-                        {recentIssueTitle(issue) && <span className="ml-2">{recentIssueTitle(issue)}</span>}
+                        <span className="block font-mono text-xs text-fg-secondary sm:inline">{recentIssueKey(issue)}</span>
+                        {recentIssueTitle(issue) && (
+                          <span className="line-clamp-2 sm:ml-2 sm:inline">{recentIssueTitle(issue)}</span>
+                        )}
                       </Link>
                     </td>
                     <td className="num hidden whitespace-nowrap text-fg-secondary sm:table-cell">

@@ -308,8 +308,13 @@ describe("DashboardPage", () => {
     expect(link, "the title must not repeat the key the row already shows").toHaveTextContent(
       /^ENG-7\s*\[watcher\] Tidy the setup docs$/,
     );
-    // Up to two lines on a phone, one from sm up; the cell no longer cuts it to one.
-    expect(link).toHaveClass("line-clamp-2", "break-words", "sm:line-clamp-1");
+    // On a phone the key has a line of its own and the title up to two under
+    // it; from sm up the two share one line, cut at the end.
+    const key = within(link).getByText("ENG-7");
+    const title = within(link).getByText("[watcher] Tidy the setup docs");
+    expect(key).toHaveClass("block", "sm:inline");
+    expect(title).toHaveClass("line-clamp-2", "sm:inline");
+    expect(link).toHaveClass("block", "break-words", "sm:truncate");
     expect(link.closest("td")).not.toHaveClass("truncate");
     // When is the table's last column, and it steps aside below sm.
     const table = within(issues).getByRole("table");
