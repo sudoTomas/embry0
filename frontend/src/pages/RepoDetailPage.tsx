@@ -6,6 +6,7 @@ import { useRepoEnv } from "@/hooks/useEnvironments";
 import { useQaRunsForRepo } from "@/hooks/useQaDashboard";
 import { QaConfigEditor } from "@/components/qa/QaConfigEditor";
 import { RepoAccountsSection } from "@/components/repos/RepoAccountsSection";
+import { RepoStandardsRow } from "@/components/standards/RepoStandardsRow";
 import { RepoDockerAccessSection } from "@/components/repos/RepoDockerAccessSection";
 import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
 import { PullRequestReviewCard } from "@/components/environments/PullRequestReviewCard";
@@ -71,6 +72,8 @@ export function RepoDetailPage() {
           </p>
         )}
       </div>
+
+      <RepoStandardsRow repo={repo.repo} standards={repo.standards} />
 
       <section className="space-y-2">
         <div className="flex items-center gap-2">

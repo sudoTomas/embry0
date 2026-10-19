@@ -16,10 +16,16 @@ vi.mock("@/api/orgs", async () => {
   };
 });
 vi.mock("@/api/credentials", () => ({ fetchCredentials: () => Promise.resolve([]) }));
+const mockStandards = vi.fn();
+vi.mock("@/api/standards", async () => {
+  const actual = await vi.importActual<typeof import("@/api/standards")>("@/api/standards");
+  return { ...actual, fetchOwnerStandards: (...a: unknown[]) => mockStandards(...a) };
+});
 
 import { useAuthStore } from "@/stores/authStore";
 import { OrganizationPage } from "../OrganizationPage";
 import { need, needs, org, repo, run } from "@/components/orgs/__tests__/fixtures";
+import { ownerStandards } from "@/components/standards/__tests__/fixtures";
 
 function renderPage(path = "/orgs/acme") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -42,6 +48,7 @@ beforeEach(() => {
   api.repos.mockResolvedValue([repo("widgets")]);
   api.needs.mockResolvedValue(needs([need("n1", "not_registered", ["acme/widgets"])]));
   api.discover.mockResolvedValue(run({ id: "odr-2", status: "running" }));
+  mockStandards.mockReset().mockResolvedValue(ownerStandards());
 });
 
 describe("OrganizationPage", () => {
@@ -62,6 +69,23 @@ describe("OrganizationPage", () => {
     const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
     expect(follows(needGroup, actPanel)).toBe(true);
     expect(follows(actPanel, repoRow)).toBe(true);
+  });
+
+  it("has a Design standard section that leads to the Standards view, above the repository table", async () => {
+    renderPage();
+    const heading = await screen.findByRole("heading", { name: "Design standard" });
+    expect(await screen.findByTestId("org-standard-link")).toHaveAttribute("href", "/orgs/acme/standards");
+    expect(mockStandards).toHaveBeenCalledWith("acme");
+    const repoRow = (await screen.findAllByTestId("org-repo-row"))[0];
+    expect(heading.compareDocumentPosition(repoRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows the rediscovery schedule in the header", async () => {
+    api.org.mockResolvedValue(org({ settings: { rediscover_hours: 24 } }));
+    renderPage();
+    const setting = await screen.findByTestId("org-rediscover-setting");
+    expect((screen.getByTestId("org-rediscover-hours") as HTMLInputElement).value).toBe("24");
+    expect(setting.compareDocumentPosition(screen.getByRole("heading", { name: "Latest discovery" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("rediscovers on demand", async () => {

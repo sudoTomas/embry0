@@ -17,4 +17,10 @@ describe("organization routes", () => {
     expect(leaf("/orgs/acme")?.route.path).toBe("orgs/:owner");
     expect(leaf("/orgs")?.route.path).toBe("orgs");
   });
+
+  it("puts an owner's design standard under its organization", () => {
+    const match = leaf("/orgs/acme/standards");
+    expect(match?.route.path).toBe("orgs/:owner/standards");
+    expect(match?.params.owner).toBe("acme");
+  });
 });

@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { need, org, repo } from "@/components/orgs/__tests__/fixtures";
-import { SENSES, credentialLabel, groupNeeds, isMissing, planActions, senseState } from "../orgs";
+import {
+  SENSES,
+  actionLabel,
+  credentialLabel,
+  groupNeeds,
+  isMissing,
+  needKindLabel,
+  planActions,
+  rediscoverHours,
+  senseState,
+} from "../orgs";
 
 const sense = (key: string) => SENSES.find((s) => s.key === key)!;
 
@@ -39,6 +49,15 @@ describe("planActions", () => {
     ]);
   });
 
+  it("deactivates last, after every action that needs a registration", () => {
+    const plan = planActions([
+      need("v1", "repo_vanished", ["acme/gone"], { action: { type: "deactivate", params: {} } }),
+      need("w1", "not_watched", ["acme/a"]),
+      need("r1", "not_registered", ["acme/b"]),
+    ]);
+    expect(plan.map((p) => p.action)).toEqual(["register", "watch", "deactivate"]);
+  });
+
   it("leaves out needs done by hand and needs that are not open", () => {
     const plan = planActions([
       need("n1", "access_limited", ["acme/a"]),
@@ -75,5 +94,28 @@ describe("credentialLabel", () => {
     expect(credentialLabel(org({ credential_id: "cred-9" }), credentials)).toBe("cred-9");
     expect(credentialLabel(org(), undefined)).toBe("environment (GITHUB_TOKEN__ACME)");
     expect(credentialLabel(org({ access: {} }), undefined)).toBe("environment token");
+  });
+});
+
+describe("labels", () => {
+  it("names the repositories gone from the forge and every action in words", () => {
+    expect(needKindLabel("repo_vanished")).toBe("Repositories gone from the forge");
+    expect(actionLabel("deactivate")).toBe("Deactivate");
+    expect(actionLabel("hook")).toBe("Add webhook");
+    expect(actionLabel("something_new")).toBe("something_new");
+  });
+});
+
+describe("rediscoverHours", () => {
+  it("reads a whole number of hours in range, and anything else as off", () => {
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 24 } }))).toBe(24);
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 1 } }))).toBe(1);
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 168 } }))).toBe(168);
+    expect(rediscoverHours(org({ settings: { rediscover_hours: null } }))).toBeNull();
+    expect(rediscoverHours(org({ settings: {} }))).toBeNull();
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 0 } }))).toBeNull();
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 169 } }))).toBeNull();
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 1.5 } }))).toBeNull();
+    expect(rediscoverHours(org({ settings: { rediscover_hours: true } }))).toBeNull();
   });
 });

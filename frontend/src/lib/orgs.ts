@@ -73,6 +73,7 @@ export const NEED_KINDS: readonly { kind: string; label: string }[] = [
   { kind: "no_deploy_marker", label: "No deploy marker" },
   { kind: "count_gap", label: "Count gap" },
   { kind: "hook_origin_unknown", label: "Webhook origin unknown" },
+  { kind: "repo_vanished", label: "Repositories gone from the forge" },
 ];
 
 export function needKindLabel(kind: string): string {
@@ -111,8 +112,22 @@ export function groupNeeds(needs: readonly OrgNeed[]): NeedGroup[] {
     }));
 }
 
-/** Registering comes first: hooking, onboarding and watching act on registered repositories. */
-export const ACTION_ORDER: readonly OrgActionName[] = ["register", "hook", "onboard", "watch"];
+/** Registering comes first: hooking, onboarding and watching act on registered repositories.
+ * Deactivating, for a repository gone from the forge, comes last. */
+export const ACTION_ORDER: readonly OrgActionName[] = ["register", "hook", "onboard", "watch", "deactivate"];
+
+/** Each action as the words a person reads, never the raw API name. */
+export const ACTION_LABELS: Readonly<Record<OrgActionName, string>> = {
+  register: "Register",
+  hook: "Add webhook",
+  onboard: "Onboard",
+  watch: "Watch",
+  deactivate: "Deactivate",
+};
+
+export function actionLabel(action: string): string {
+  return ACTION_LABELS[action as OrgActionName] ?? action;
+}
 
 export function isActionable(need: OrgNeed): boolean {
   return need.status === "open" && (ACTION_ORDER as readonly string[]).includes(need.action.type);
@@ -161,4 +176,17 @@ export function credentialLabel(org: Organization, credentials: readonly Credent
   }
   const source = typeof org.access.source === "string" ? org.access.source : "";
   return source.startsWith("env:") ? `environment (${source.slice(4)})` : "environment token";
+}
+
+/** The bounds of the rediscovery setting, as the server checks them. */
+export const REDISCOVER_MIN_HOURS = 1;
+export const REDISCOVER_MAX_HOURS = 168;
+
+/** The owner's rediscovery interval in hours, or null when it is off. Read
+ * the way the server reads it: anything but a whole number in range is off. */
+export function rediscoverHours(org: Pick<Organization, "settings">): number | null {
+  const value = org.settings?.rediscover_hours;
+  return typeof value === "number" && Number.isInteger(value) && value >= REDISCOVER_MIN_HOURS && value <= REDISCOVER_MAX_HOURS
+    ? value
+    : null;
 }

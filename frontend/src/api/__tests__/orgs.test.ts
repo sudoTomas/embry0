@@ -2,15 +2,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const get = vi.fn();
 const post = vi.fn();
-vi.mock("../client", () => ({ api: { get: (...a: unknown[]) => get(...a), post: (...a: unknown[]) => post(...a) } }));
+const patch = vi.fn();
+vi.mock("../client", () => ({
+  api: {
+    get: (...a: unknown[]) => get(...a),
+    post: (...a: unknown[]) => post(...a),
+    patch: (...a: unknown[]) => patch(...a),
+  },
+}));
 
-import { fetchOrganizationNeeds, isMissingEndpoint, probeOrganization, runOrganizationAction } from "../orgs";
+import {
+  fetchOrganizationNeeds,
+  isMissingEndpoint,
+  patchOrganization,
+  probeOrganization,
+  runOrganizationAction,
+} from "../orgs";
 
 const httpError = (status: number, detail: unknown = "x") => ({ response: { status, data: { detail } } });
 
 beforeEach(() => {
   get.mockReset();
   post.mockReset();
+  patch.mockReset();
 });
 
 describe("organizations API", () => {
@@ -59,5 +73,16 @@ describe("organizations API", () => {
       { action: "hook", repos: ["acme/a"], dry_run: true },
       { suppressValidationToast: true },
     );
+  });
+
+  it("patches only the settings it is given, nested under settings, and shows a refusal itself", async () => {
+    patch.mockResolvedValue({ data: { owner: "acme", settings: { rediscover_hours: 12 } } });
+    await expect(patchOrganization("acme", { rediscover_hours: 12 })).resolves.toEqual({
+      owner: "acme",
+      settings: { rediscover_hours: 12 },
+    });
+    expect(patch).toHaveBeenCalledWith("/orgs/acme", { settings: { rediscover_hours: 12 } }, { suppressValidationToast: true });
+    await patchOrganization("acme", { rediscover_hours: null });
+    expect(patch).toHaveBeenLastCalledWith("/orgs/acme", { settings: { rediscover_hours: null } }, { suppressValidationToast: true });
   });
 });

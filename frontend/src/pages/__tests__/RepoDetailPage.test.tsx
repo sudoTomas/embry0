@@ -43,6 +43,9 @@ vi.mock("@/components/repos/RepoDockerAccessSection", () => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+const mockFetchJobs = vi.fn();
+vi.mock("@/api/jobs", () => ({ fetchJobs: (...a: unknown[]) => mockFetchJobs(...a) }));
+
 import { RepoDetailPage } from "../RepoDetailPage";
 
 const DETAIL = {
@@ -124,6 +127,42 @@ describe("RepoDetailPage (RAV-1253)", () => {
     expect(screen.getByText("****")).toBeInTheDocument();
     expect(screen.queryByText("should-not-render")).not.toBeInTheDocument();
     expect(screen.getByTestId("repo-run-row")).toHaveAttribute("href", "/qa/runs/job-abc");
+  });
+
+  it("shows the repository's standards row with a link to the audit job, above the QA config", async () => {
+    mockFetchJobs.mockResolvedValue({ jobs: [], total: 0, offset: 0, limit: 200 });
+    mockFetchRepoDetail.mockResolvedValue({
+      ...DETAIL,
+      standards: [
+        {
+          repo: "acme/widgets",
+          owner: "acme",
+          kind: "design",
+          mode: "enforce",
+          last_audit_at: "2026-08-06T02:00:00Z",
+          last_audit_job_id: "job-9",
+          score: 88,
+          findings_open: 2,
+          exceptions: [],
+          updated_at: null,
+        },
+      ],
+    });
+    renderPage();
+    const row = await screen.findByTestId("repo-standard-row");
+    expect(row).toHaveTextContent("Enforce");
+    expect(screen.getByTestId("repo-standard-score")).toHaveTextContent("88");
+    expect(screen.getByTestId("repo-standard-findings")).toHaveTextContent("2");
+    expect(screen.getByTestId("repo-standard-job")).toHaveAttribute("href", "/jobs/job-9");
+    const qa = screen.getByRole("heading", { name: "QA config" });
+    expect(row.compareDocumentPosition(qa) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("leaves the standards row out for a server without standards", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    renderPage();
+    await screen.findByRole("heading", { name: "acme/widgets" });
+    expect(screen.queryByTestId("repo-standards")).toBeNull();
   });
 
   it("shows a clear error for unregistered repos", async () => {

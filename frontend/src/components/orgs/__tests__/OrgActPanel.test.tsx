@@ -103,7 +103,7 @@ describe("OrgActPanel", () => {
     renderPanel();
     fireEvent.click(within(needRow("n1")).getByTestId("org-act-checkbox"));
     fireEvent.click(screen.getByTestId("org-act-preview-button"));
-    expect(await screen.findByTestId("org-act-error")).toHaveTextContent("register: acme/a is archived");
+    expect(await screen.findByTestId("org-act-error")).toHaveTextContent("Register: acme/a is archived");
     expect(screen.getByTestId("org-act-apply-button")).toBeDisabled();
   });
 
@@ -117,6 +117,26 @@ describe("OrgActPanel", () => {
   it("shows the needs EmptyState when the server has no needs endpoint", () => {
     renderPanel(null);
     expect(screen.getByText("This server has no needs endpoint yet")).toBeInTheDocument();
+  });
+
+  it("offers deactivate for repositories gone from the forge, labelled and run last", async () => {
+    renderPanel(
+      needs([
+        need("v1", "repo_vanished", ["acme/gone"], { action: { type: "deactivate", params: {} } }),
+        need("r1", "not_registered", ["acme/new"]),
+      ]),
+    );
+    expect(screen.getByText("Repositories gone from the forge (1)")).toBeInTheDocument();
+    expect(within(needRow("v1")).getByText("Deactivate")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("org-act-select-all"));
+    expect(screen.getByText(/Register 1, Deactivate 1/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("org-act-preview-button"));
+    const preview = await screen.findByTestId("org-act-preview");
+    expect(mockRun.mock.calls).toEqual([
+      ["acme", { action: "register", repos: ["acme/new"], dry_run: true }],
+      ["acme", { action: "deactivate", repos: ["acme/gone"], dry_run: true }],
+    ]);
+    expect(within(preview).getAllByText("Deactivate")).toHaveLength(1);
   });
 
   it("disables acting without admin scope", () => {

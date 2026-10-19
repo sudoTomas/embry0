@@ -70,13 +70,16 @@ organization or user, or a GitLab group, in four steps:
    has for it (intake, registry, QA, watch, tracker, UI, boot), filterable
    by name or by a missing sense, and the needs list grouped by kind.
 4. **Act**: tick the needs embry0 can do itself (register, hook, onboard,
-   watch), preview them as a dry run, then apply them.
+   watch, and deactivate for repositories gone from the forge), preview
+   them as a dry run, then apply them.
 
 Registering an owner changes nothing for any repository until a need is
 applied ([ADR 0010](adr/0010-organizations.md)). The wizard lives at
 `/orgs/-/new`, and each organization keeps a page at `/orgs/<owner>` with
-the latest discovery, a Rediscover button and the same act panel; no owner
-name starts with `-`, so an owner named `new` keeps its page too. A server
+the latest discovery, a Rediscover button, the rediscovery schedule (every
+1 to 168 hours, or off; an admin changes it in place), the same act panel
+and a line on its design standard ([standards.md](standards.md#in-the-dashboard));
+no owner name starts with `-`, so an owner named `new` keeps its page too. A server
 without the probe, needs or actions route (FastAPI's own 404 or 405) says
 so in place of that step instead of failing; any other error is shown.
 

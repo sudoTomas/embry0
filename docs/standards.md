@@ -166,6 +166,16 @@ The design auditor's measurement script computes both scores from what it measur
 
 No part deducts an absolute count. Counts of stray values grow with an app's size, so a fixed deduction per stray value puts every real app near 0 and ranks nothing; a share, or a rate per 1,000 lines of UI code, ranks apps of any size. A part the standard leaves undefined, or with nothing in the app to measure, drops out with its weight. A finding costs what its part would gain were it alone fixed: it is `high` at 3 conformance points or more, `medium` at 1 conformance point or 5 hygiene points or more, and `low` below, so hygiene alone never makes a finding `high`. The full method, with the colour, size and font rules, is the design auditor's system prompt (`DESIGN_AUDITOR_SYSTEM_PROMPT` in `embry0/workflows/issue_to_pr/specialist_agents.py`).
 
+## In the dashboard
+
+The organization page (`/orgs/<owner>`) has a **Design standard** line: the active version, how many repositories are held to it (mode advise or enforce) and the lowest score, with a link to the Standards view at `/orgs/<owner>/standards`.
+
+The Standards view lists every registered repository under the owner, lowest score first and those without a score last, each with its mode, score, open findings and newest audit job. The repositories in mode off that no audit has scored, most of an owner's at first, fold behind one row (**Show N in mode off**), so the standard stays within reach; the name filter searches all of them. An admin changes a repository's mode in place. An operator starts an audit; the button is off in mode off, without an active standard and while the repository's previous audit is pending or running, and a 409 shows its detail under the row. The view finds unfinished audits in the jobs list (`GET /api/v1/jobs?status=<status>&brief=true`, one request per unfinished status) rather than reading each audit job, shows their status beside the job link, and polls only while one of them is unfinished. The one gold control is the Audit button of the first repository held to the standard that has never been audited and can be audited now; with none, nothing is gold. Below the table are the active standard itself (prose, references, the colour roles as swatches with their values, the other roles, the type scale and the rules) and its versions.
+
+A repository's page shows one line per kind: its mode, the score and findings of its newest completed audit, and a link to its newest audit job.
+
+The dashboard has no editor for the standard's JSON: a new version is written with `PUT /api/v1/standards/{owner}/{kind}`, and the view names that path.
+
 ## API
 
 Reads need any authenticated principal and an audit needs an operator; writing a standard and setting a mode need the `admin` tier. Every write records an audit row: `standard.updated` (owner, kind, version and the version it superseded), `standard.repo_mode_set` (repository, mode and the number of exceptions) and `standard.audit_started` (repository, version and job id).
