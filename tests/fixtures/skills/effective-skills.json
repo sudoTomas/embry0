@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"name": "no deltas", "base": ["a:x", "a:y"], "deltas": [], "expected": ["a:x", "a:y"]},
+    {"name": "add appends in order and dedupes", "base": ["a:x"], "deltas": [{"add": ["a:y", "a:x", "a:z"]}], "expected": ["a:x", "a:y", "a:z"]},
+    {"name": "remove before add", "base": ["a:x", "a:y"], "deltas": [{"remove": ["a:x"], "add": ["a:x"]}], "expected": ["a:y", "a:x"]},
+    {"name": "remove unknown is a no-op", "base": ["a:x"], "deltas": [{"remove": ["a:q"]}], "expected": ["a:x"]},
+    {"name": "legacy list replaces", "base": ["a:x", "a:y"], "deltas": [["b:z"]], "expected": ["b:z"]},
+    {"name": "remove star then add", "base": ["a:x"], "deltas": [{"remove": "*", "add": ["b:z"]}], "expected": ["b:z"]},
+    {"name": "two deltas compose", "base": ["a:x"], "deltas": [{"add": ["a:y"]}, {"remove": ["a:x"]}], "expected": ["a:y"]},
+    {"name": "empty legacy list clears", "base": ["a:x"], "deltas": [[]], "expected": []},
+    {"name": "null delta is identity", "base": ["a:x"], "deltas": [null], "expected": ["a:x"]}
+  ]
+}
