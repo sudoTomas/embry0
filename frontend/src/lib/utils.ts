@@ -49,16 +49,6 @@ export function getCostBarColor(used: number, budget: number): string {
 }
 
 /**
- * Extract a role key from a subagent name.
- * e.g. "developer_agent" -> "developer", "validator_v2" -> "validator"
- */
-export function extractRole(agentName: string): string | undefined {
-  const lower = agentName.toLowerCase();
-  const roles = ["developer", "validator", "explorer", "triage"];
-  return roles.find((r) => lower.includes(r));
-}
-
-/**
  * Syntax-highlight a JSON string with Tailwind text color spans.
  * Returns an array of React-renderable elements.
  */

@@ -30,15 +30,17 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
           agent.status === "pending" ? "border-white/[0.04] bg-white/[0.01]" : "border-white/[0.06] bg-white/[0.02]"
         } px-3 py-2.5 flex items-center gap-3 transition-colors hover:bg-white/[0.04]`}
       >
-        <div className={`w-7 h-7 rounded-md ${colors.bg} flex items-center justify-center`}>
-          {agent.status === "completed" ? (
-            <span className={`${colors.text} text-sm`}>{"\u2713"}</span>
-          ) : agent.status === "failed" ? (
-            <span className="text-red-400 text-sm">{"\u2717"}</span>
-          ) : (
-            <AgentAvatar identity={identity} size={28} />
-          )}
-        </div>
+        {agent.status === "completed" || agent.status === "failed" ? (
+          <div className={`w-7 h-7 rounded-md ${colors.bg} flex items-center justify-center`}>
+            {agent.status === "completed" ? (
+              <span className={`${colors.text} text-sm`}>{"\u2713"}</span>
+            ) : (
+              <span className="text-red-400 text-sm">{"\u2717"}</span>
+            )}
+          </div>
+        ) : (
+          <AgentAvatar identity={identity} size={28} />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className={`font-semibold text-xs ${colors.text}`} title={agent.agent}>{identity.displayName}</span>

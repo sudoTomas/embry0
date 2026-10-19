@@ -302,16 +302,7 @@ export function AgentDetailPopup({
       >
         {/* -------- Header -------- */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06]">
-          {/* Icon box */}
-          <div
-            className="shrink-0 w-[44px] h-[44px] rounded-xl flex items-center justify-center"
-            style={{
-              backgroundColor: `${color}26`,
-              border: `1px solid ${color}4D`,
-            }}
-          >
-            <AgentAvatar identity={identity} size={36} />
-          </div>
+          <AgentAvatar identity={identity} size={36} />
 
           {/* Title */}
           <div className="flex-1 min-w-0">

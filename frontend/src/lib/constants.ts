@@ -88,20 +88,6 @@ export const ROLE_COLORS: Record<string, string> = {
   triage: "text-role-triage",
 };
 
-export const ROLE_BG_COLORS: Record<string, string> = {
-  explorer: "bg-role-explorer",
-  developer: "bg-role-developer",
-  validator: "bg-role-validator",
-  triage: "bg-role-triage",
-};
-
-export const ROLE_LABELS: Record<string, string> = {
-  explorer: "Explorer",
-  developer: "Developer",
-  validator: "Validator",
-  triage: "Triage",
-};
-
 // ===== Pipeline Phase Metadata =====
 
 export interface PhaseConfig {
