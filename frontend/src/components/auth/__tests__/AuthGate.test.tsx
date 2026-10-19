@@ -197,3 +197,29 @@ describe("AuthGate (SSO — RAV-1069)", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("AuthGate (API-key sign-in turned off for people)", () => {
+  it("shows no key form when the server says key login is off and SSO is down", async () => {
+    // The public origin is SSO-only for people (api_key_login false). With
+    // SSO reporting off, the key form must not appear there.
+    routeGet({
+      "/auth/check": () =>
+        Promise.resolve({ data: { sso_enabled: false, authenticated: false, tier: null, api_key_login: false } }),
+      "/queue": () => Promise.reject(axiosErr(401)),
+    });
+    renderGate();
+    expect(await screen.findByText(/Sign-in is unavailable/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("API key")).toBeNull();
+    expect(screen.queryByTestId("app-content")).toBeNull();
+  });
+
+  it("keeps the key form where the server allows key login", async () => {
+    routeGet({
+      "/auth/check": () =>
+        Promise.resolve({ data: { sso_enabled: false, authenticated: false, tier: null, api_key_login: true } }),
+      "/queue": () => Promise.reject(axiosErr(401)),
+    });
+    renderGate();
+    expect(await screen.findByLabelText("API key")).toBeInTheDocument();
+  });
+});

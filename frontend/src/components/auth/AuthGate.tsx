@@ -60,6 +60,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const setSsoEnabled = useAuthStore((s) => s.setSsoEnabled);
   const setApiKeyLogin = useAuthStore((s) => s.setApiKeyLogin);
   const ssoEnabled = useAuthStore((s) => s.ssoEnabled);
+  const apiKeyLogin = useAuthStore((s) => s.apiKeyLogin);
 
   useEffect(() => {
     if (status !== "checking") return;
@@ -129,6 +130,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
     if (ssoEnabled) {
       return <SsoRedirect />;
     }
+    // An origin the server keeps SSO-only for people (api_key_login false)
+    // never offers the key form, even while SSO reports off.
+    if (!apiKeyLogin) {
+      return <SignInUnavailable />;
+    }
     return <ApiKeyPrompt sessionExpired={sessionExpired} />;
   }
 
@@ -142,6 +148,23 @@ function SsoRedirect() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
       <span className="text-sm">Redirecting to sign-in…</span>
+    </div>
+  );
+}
+
+function SignInUnavailable() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="embry0-card w-full max-w-sm p-8 text-center">
+        <h1 className="font-display text-xl font-semibold text-foreground">{APP_NAME}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Sign-in is unavailable right now. This address signs people in with single sign-on, which the server
+          reports is not configured. Try again later, or ask an administrator.
+        </p>
+        <Button className="mt-6 w-full" variant="outline" onClick={() => window.location.reload()}>
+          Try again
+        </Button>
+      </div>
     </div>
   );
 }
