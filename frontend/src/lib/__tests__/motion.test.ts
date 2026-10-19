@@ -28,6 +28,24 @@ describe("motion", () => {
     expect(animate).toHaveBeenCalledTimes(1);
   });
 
+  it("peaks the bump at 40 percent of its run, rise and settle eased on their own", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+    const el = document.createElement("span");
+    const animate = vi.fn();
+    (el as unknown as { animate: typeof animate }).animate = animate;
+    tick(el, 1.2);
+    // No easing over the whole run: one there would bend the keyframe
+    // offsets and move the peak again.
+    expect(animate).toHaveBeenCalledWith(
+      [
+        { transform: "scale(1)", easing: "ease-out" },
+        { transform: "scale(1.2)", offset: 0.4, easing: "ease-in-out" },
+        { transform: "scale(1)" },
+      ],
+      { duration: 280 },
+    );
+  });
+
   it("reads a motion token in seconds or ms, as the built stylesheet writes it", () => {
     const el = document.createElement("div");
     document.body.appendChild(el);

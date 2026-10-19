@@ -16,14 +16,20 @@ export const EASE_TRAVEL = "cubic-bezier(0.65, 0, 0.35, 1)";
 
 /**
  * A one-shot bump on an element whose value just changed: up to `scale` and
- * back. Nothing happens under reduced motion or without the Web Animations
- * API.
+ * back. The rise slows into the peak at 40% of the run and the settle eases
+ * out of it, each on its own easing: one strong ease-out over the whole run
+ * peaked at about 30 ms and read as a flicker. Nothing happens under reduced
+ * motion or without the Web Animations API.
  */
 export function tick(el: Element | null, scale = 1.18): void {
   if (!el || prefersReducedMotion() || typeof (el as HTMLElement).animate !== "function") return;
   (el as HTMLElement).animate(
-    [{ transform: "scale(1)" }, { transform: `scale(${scale})` }, { transform: "scale(1)" }],
-    { duration: 280, easing: EASE_STANDARD },
+    [
+      { transform: "scale(1)", easing: "ease-out" },
+      { transform: `scale(${scale})`, offset: 0.4, easing: "ease-in-out" },
+      { transform: "scale(1)" },
+    ],
+    { duration: 280 },
   );
 }
 
