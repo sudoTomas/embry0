@@ -351,6 +351,139 @@ The PUT replaces every field it does not mention — except `verification`
 (the orchestrator-run test gate and tier path rules, `docs/verification.md`):
 omitted or `null` keeps the stored value, `{}` clears it.
 
+## Repository history and undo
+
+Every change to a repository's stored test setup (`PUT` and `DELETE
+/repos/{repo}/qa-config`, bootstrap, onboarding) and to its preferences
+(`PUT` and `DELETE /repos/{repo}/preferences`) is recorded with who made it
+and how. The newest 100 changes of each are kept per repository. The API
+writes also add an audit row: `repo.qa_config_set`,
+`repo.qa_config_deleted`, `repo.preferences_set`,
+`repo.preferences_cleared`, and `repo.change_undone` for an undo.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/repos/{repo}/history?limit=50` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/history/{revision_id}/undo` | operator |
+
+`GET` answers `{"entries": [{"id", "surface", "what", "actor", "source",
+"created_at", "undoable", "why_not"}], "before_history": bool}`, newest
+first. `what` describes the change in plain words. `surface` is
+`qa_config` or `preferences`; `source` is `person`, `bootstrap`, `onboard`,
+`proposal` or `restore`. `before_history` is true when a test setup is
+stored but none of its changes are recorded: it was saved before the
+history existed.
+
+Undo puts back what one change replaced. Only the newest change of its
+surface can be undone, and only while the stored value is still what that
+change wrote; otherwise the answer is 409 with the `why_not` text. An
+earlier value that would no longer be accepted is a 422 and nothing is
+written. The undo is itself recorded, with source `restore`, so it can be
+undone in turn. The `PUT /qa-config` response carries the new change's
+`revision_id`, `null` when the text was unchanged.
+
+```bash
+# Put back the test setup the newest change replaced
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/history/42/undo \
+  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H "X-Requested-With: XMLHttpRequest"
+# -> {"revision_id": 43}
+```
+
+## Setting up testing with embry0
+
+The onboarding agent can write a repository's test setup for a person to
+review ([ADR 0019](adr/0019-setup-proposals.md)). In propose mode it reads
+the code, writes a setup, starts each app with it and waits for its ready
+checks, then stores the setup as a proposal. Nothing reaches the test
+setup until a person applies the proposal.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/repos/{repo}/setup/cost` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/setup/propose` | operator |
+| `GET /api/v1/repos/{repo}/setup/proposal` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/setup/proposal/{proposal_id}/apply` | operator |
+| `POST /api/v1/repos/{repo}/setup/proposal/{proposal_id}/reject` | operator |
+| `POST /api/v1/repos/{repo}/setup/skip-testing` | operator |
+| `GET /api/v1/setup/proposals?status=pending` | any authenticated principal |
+| `GET /api/v1/repos/{repo}/readiness` | any authenticated principal |
+
+`GET .../setup/cost` answers `{"recorded_runs", "typical_cost_usd",
+"per_job_budget_usd", "model", "paid_from"}`: how many setup runs completed
+on this embry0, the median recorded cost of the newest 20 (`null` when
+there are none), the per-job budget, the model the run uses (the medium
+tier) and the label of the AI account that would pay (`null` when none
+resolves). These are recorded facts, not an estimate. With the default
+`BUDGET_OVERRUN_MODE` of `soft`, the per-job budget is not a hard stop
+([configuration](configuration.md)).
+
+`POST .../setup/propose` takes `{"confirm_spend": true}`; without it the
+answer is 422, as it is for any value but a JSON `true`, such as `"yes"` or
+`1`. It retires a proposal that is waiting (it becomes `stale`),
+keeps the time the test setup was last saved, and starts an onboard job on
+the repository's base branch setting, else its default branch as discovery
+saw it, else `main`. It answers `{"proposal_id", "job_id"}`, or 409 while a
+run is going for the repository. The calling key's repository allowlist
+applies, as for `POST /jobs`, and to apply, reject and skip-testing too.
+
+`GET .../setup/proposal` answers the latest proposal, or 404 when there is
+none: `{"id", "repo", "status", "job_id", "job_status", "created_by",
+"created_at", "decided_by", "decided_at", "notes_md", "failure", "smoke",
+"proposed_yaml", "current_yaml", "check"}`. `status` is `running`,
+`pending` (waiting for a person), `applied`, `rejected`, `stale` or
+`failed`. `check` is the answer `POST /repos/{repo}/qa-config/check` gives
+for `proposed_yaml`, `null` when there is none. A `running` proposal whose
+job has ended is stored as `failed` when it is read, with the job's error.
+
+Apply takes `{"acknowledged": [<warning codes>]}`. It answers 409 when the
+proposal is not waiting, or when the test setup was saved after the run
+started: the proposal becomes `stale` and nothing is written. The decision
+and the write are one transaction, so a turn-down or a save that lands while
+apply runs wins: apply then answers 409 and writes nothing. It answers
+422 with `{"message", "problems"}` when the check finds a problem every run
+would stop on, and 422 with `{"message", "missing"}` when a warning that
+needs confirming is not in `acknowledged`. Otherwise it writes the proposal
+as the test setup, recorded with source `proposal` so History can undo it,
+and answers `{"revision_id"}`. Apply and reject add the audit rows
+`repo.setup_applied` and `repo.setup_rejected`.
+
+`POST .../setup/skip-testing` stores the starter with `qa_required: never`
+when the repository has no test setup, and answers 409 when it has one.
+
+`GET .../readiness` is the checklist the repository page opens on. It is
+built from facts embry0 already stores, with no model call and no forge
+call: the account that resolves for the repository, what discovery read of
+it, the settings stored for it and globally, the test setup and its check,
+the latest proposal, and the newest pull request a job opened. It answers
+`{"repo", "status", "steps_left", "summary", "next_step", "rows",
+"needs_docker", "facts_seen_at"}`, or 404 for a repository that is not
+registered. `rows` are, in order, `code_access`, `app_values`,
+`testing`, `first_task` and the optional `work_trigger`, each
+`{"key", "required", "state", "title", "says", "action"}` where `action`
+is `{"kind", "label"}` or `null`. A fact embry0 does not have reads
+`unknown` and is not counted in `steps_left`; `facts_seen_at` says when
+discovery last saw the repository. `next_step` is the first required row a
+person can act on, `null` while a setup run is going. `needs_docker` is
+true when the stored test setup will not start without the Docker access an
+admin grants.
+
+```bash
+# Start a setup run, then apply the proposal it leaves
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/setup/propose \
+  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"confirm_spend": true}'
+# -> {"proposal_id": "prop-0123456789ab", "job_id": "job-0123456789ab"}
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/setup/proposal/prop-0123456789ab/apply \
+  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"acknowledged": ["live_address"]}'
+# -> {"revision_id": 44}
+```
+
 ## Docker access (admin)
 
 A sandbox profile with `dind_enabled` only *asks* for the shared Docker daemon
@@ -448,7 +581,11 @@ other repository:
 - `POST /cases/{id}/accept`, `POST /merge-approvals/{id}/decide`,
   `POST /watcher/run` (the stack ticked; with none named, every watched
   stack, all checked before any ticks), `POST /qa/images/build` and
-  `POST /repos/bootstrap`.
+  `POST /repos/bootstrap`;
+- the steps of setting up testing: `POST /repos/{repo}/setup/propose`,
+  `POST /repos/{repo}/setup/proposal/{id}/apply` and `.../reject`,
+  `POST /repos/{repo}/setup/skip-testing` and
+  `POST /repos/{repo}/history/{id}/undo`.
 
 The MCP tools reach embry0 through these routes with the caller's key, so
 they are covered too. Matching ignores case and follows `REPO_RENAMES`
@@ -458,11 +595,12 @@ slug also matches its current one, and the reverse. Each refusal logs
 repository and the action, and writes an `apikey.repo_refused` audit row.
 
 Omitting the list, or sending an empty one, leaves the key unrestricted;
-every key minted before the allowlist existed is unrestricted. The list
-governs work only: it does not narrow what the key may read, nor the
-settings routes its scope allows. A restricted key may not mint keys or
-change any key's allowlist, its own included, since a key it minted would
-carry no restriction. For an agent that should only dispatch, mint an
+every key minted before the allowlist existed is unrestricted. Beyond the
+routes above, the list does not narrow what the key may read, nor the
+settings routes its scope allows, `PUT /repos/{repo}/qa-config` and
+`PUT /repos/{repo}/preferences` among them. A restricted key may not mint
+keys or change any key's allowlist, its own included, since a key it minted
+would carry no restriction. For an agent that should only dispatch, mint an
 `operate` key with the list.
 
 ```bash

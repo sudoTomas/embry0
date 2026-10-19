@@ -43,7 +43,78 @@ async def test_put_qa_config_auto_registers_and_serves(api_client) -> None:
 async def test_put_qa_config_rejects_invalid_yaml(api_client) -> None:
     r = await api_client.put("/api/v1/repos/acme/widgets/qa-config", content="version: 1\n")
     assert r.status_code == 422
-    assert "validation failed" in r.json()["detail"]
+    assert r.json()["detail"].startswith("Input should be 2 (version)\n\nTechnical details:\n")
+    assert "1 validation error for QAYamlConfigV2" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_put_qa_config_explains_a_typo_before_the_technical_details(api_client) -> None:
+    text = _V2_MIN + "apps:\n  web:\n    boot_comand: npm run dev\n    frontend_url: http://localhost:3000\n"
+    r = await api_client.put("/api/v1/repos/acme/widgets/qa-config", content=text)
+    assert r.status_code == 422
+    plain, technical = r.json()["detail"].split("\n\nTechnical details:\n")
+    assert plain == "'boot_comand' is not a setting embry0 knows. Did you mean 'boot_command'? (app web)"
+    assert "extra_forbidden" in technical
+
+
+_V2_ON = (
+    "version: 2\nworkspace_provider:\n  type: npm-workspaces-turbo\ndefaults:\n  sandbox_profile: {profile}\n"
+    "apps:\n  web:\n    boot_command: npm run dev\n    frontend_url: http://localhost:5173\n"
+    "    ready_checks:\n      - http: http://localhost:5173\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_check_refuses_a_machine_without_a_browser_and_stores_nothing(api_client, builtin_profile_seeded) -> None:
+    await api_client.put("/api/v1/repos/acme/widgets/qa-config", content=_V2_MIN)
+    r = await api_client.post("/api/v1/repos/acme/widgets/qa-config/check", content=_V2_ON.format(profile="slim"))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is False
+    assert body["problems"][0]["plain"] == "The work machine 'slim' has no browser, so every test run would stop."
+    assert (await api_client.get("/api/v1/repos/acme/widgets/qa-config")).text == _V2_MIN
+
+
+@pytest.mark.asyncio
+async def test_check_passes_a_browser_machine_on_a_subgroup_path(api_client, builtin_profile_seeded) -> None:
+    r = await api_client.post(
+        f"/api/v1/repos/{_GITLAB_REPO}/qa-config/check", content=_V2_ON.format(profile="qa-external")
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+    assert r.json()["summary"]["apps"][0]["machine"] == "qa-external"
+    assert (await api_client.get(f"/api/v1/repos/{_GITLAB_REPO}/qa-config")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_check_reads_values_from_the_repo_and_global_settings(api_client, builtin_profile_seeded) -> None:
+    auth = "  auth:\n    storage_state_from:\n      secret: QA_LOGIN_STATE\n"
+    text = _V2_ON.format(profile="qa-external").replace("apps:\n", auth + "apps:\n")
+    url = "/api/v1/repos/acme/widgets/qa-config/check"
+    missing = (await api_client.post(url, content=text)).json()
+    assert [w["code"] for w in missing["warnings"]] == ["login_value_missing"]
+
+    login = {"variables": [{"key": "QA_LOGIN_STATE", "value": "{}", "scope": "qa"}]}
+    put = await api_client.put("/api/v1/repos/acme/widgets/environment", json=login)
+    assert put.status_code == 200, put.text
+    assert (await api_client.post(url, content=text)).json()["warnings"] == []
+
+    await api_client.put("/api/v1/repos/acme/widgets/environment", json={"variables": []})
+    put = await api_client.put("/api/v1/environment/global", json=login)
+    assert put.status_code == 200, put.text
+    assert (await api_client.post(url, content=text)).json()["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_check_asks_for_docker_only_without_the_grant(api_client, builtin_profile_seeded) -> None:
+    text = _V2_ON.format(profile="qa-jvm").replace("defaults:\n", "defaults:\n  mode: dind\n")
+    text = text.replace("http://localhost:5173", "http://web:3000")
+    await api_client.post("/api/v1/repos", json={"repo": "acme/widgets"})
+    url = "/api/v1/repos/acme/widgets/qa-config/check"
+    assert [w["code"] for w in (await api_client.post(url, content=text)).json()["warnings"]] == ["needs_docker"]
+
+    await api_client.app.state.repos_repo.set_docker_access("acme/widgets", True)
+    assert (await api_client.post(url, content=text)).json()["warnings"] == []
 
 
 @pytest.mark.asyncio

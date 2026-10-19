@@ -182,6 +182,13 @@ class OrgReposRepository:
         )
         return bool(created)
 
+    async def get(self, repo: str) -> dict[str, Any] | None:
+        """One repository's facts, matched without regard to case (the forge keeps its own spelling)."""
+        row = await self._db.fetchrow(
+            f"SELECT {_FACT_COLUMNS} FROM org_repo_facts WHERE lower(repo) = lower($1) LIMIT 1", repo
+        )
+        return _fact(row) if row else None
+
     async def list_for_owner(self, owner: str, *, include_archived: bool = True) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
             f"SELECT {_FACT_COLUMNS} FROM org_repo_facts WHERE owner = $1 AND ($2::boolean OR NOT archived) ORDER BY pushed_at DESC NULLS LAST, repo",

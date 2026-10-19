@@ -15,12 +15,6 @@ def test_migration_102_present_and_gapless() -> None:
     assert versions == list(range(1, len(versions) + 1))
 
 
-def test_migration_102_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_101.py)."""
-    assert MIGRATIONS[-1][0] == 102, "migration 102 must widen credentials_provider_check"
-
-
 def test_the_check_names_every_provider_the_repository_accepts() -> None:
     sql = next(sql for v, _, sql in MIGRATIONS if v == 102)
     missing = [p for p in PROVIDERS if f"'{p}'" not in sql]

@@ -51,6 +51,14 @@ def app():
 
     mock_prefs.upsert = AsyncMock(side_effect=_upsert)
     mock_prefs.delete = AsyncMock()
+
+    # The routes write through the recorded variants (ADR 0019). They hand
+    # the fields to upsert, so the assertions on upsert below still hold.
+    async def _upsert_recorded(repo, *, actor="", source="person", reason="", **fields):
+        return await mock_prefs.upsert(repo, **fields), 1
+
+    mock_prefs.upsert_recorded = AsyncMock(side_effect=_upsert_recorded)
+    mock_prefs.delete_recorded = AsyncMock(return_value=1)
     app.state.repo_preferences_repo = mock_prefs
 
     # Sandbox profiles — only "python-3.12" exists.

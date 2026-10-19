@@ -681,9 +681,13 @@ class IssueExecutor:
         skip_smoke: bool = False,
         agent_models: dict[str, str] | None = None,
         dispatched_by: str | None = None,
+        proposal_id: str | None = None,
     ) -> str:
         """EMB-50: issue-less onboard job — analyze ``repo`` and generate its
-        qa.yaml v2 into the external config store. Returns the new job id."""
+        qa.yaml v2 into the external config store. Returns the new job id.
+
+        With ``proposal_id`` (propose mode, ADR 0019) the job stores its
+        draft on that setup proposal instead, for a person to apply."""
         import uuid
 
         trace_id = f"trc-{uuid.uuid4().hex[:12]}"
@@ -694,10 +698,16 @@ class IssueExecutor:
         }
         if agent_models:
             pipeline_config["agent_models_override"] = dict(agent_models)
+        if proposal_id:
+            pipeline_config["proposal_id"] = proposal_id
 
         job_id = await self._jobs.create(
             repo=repo,
-            task=f"Onboard {repo}@{branch} — generate qa.yaml into the config store",
+            task=(
+                f"Onboard {repo}@{branch}: propose a test setup for review"
+                if proposal_id
+                else f"Onboard {repo}@{branch} — generate qa.yaml into the config store"
+            ),
             pipeline_template="onboard",
             pipeline_config=pipeline_config,
             sandbox_profile="slim",
@@ -721,6 +731,7 @@ class IssueExecutor:
                 branch=branch,
                 skip_smoke=skip_smoke,
                 agent_models=agent_models,
+                proposal_id=proposal_id,
             ),
             kind="onboard_workflow_execute",
             job_id=job_id,
@@ -730,6 +741,7 @@ class IssueExecutor:
                 "branch": branch,
                 "skip_smoke": skip_smoke,
                 "agent_models": agent_models,
+                "proposal_id": proposal_id,
             },
         )
         return job_id
@@ -1273,6 +1285,7 @@ class IssueExecutor:
                 branch=str(launch.get("branch") or ""),
                 skip_smoke=bool(launch.get("skip_smoke")),
                 agent_models=launch.get("agent_models"),
+                proposal_id=launch.get("proposal_id"),
             )
             return
         if runner == "pr-review":
