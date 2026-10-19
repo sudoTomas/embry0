@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from embry0.execution.forge_client import Listing
 from embry0.services.org_discovery import (
     RepoFacts,
     count_gap,
@@ -48,9 +49,9 @@ class FakeForge:
         self.asked.append(path)
         return self.routes.get(path, _Resp(404))
 
-    async def paginate(self, path: str, **_: Any) -> list[Any]:
+    async def paginate_listing(self, path: str, **_: Any) -> Listing:
         self.asked.append(path)
-        return self.listing
+        return Listing(self.listing, complete=True)
 
 
 WEB = {
@@ -160,7 +161,7 @@ async def test_discover_folds_in_embry0_state_and_reports_progress() -> None:
     async def progress(i: int, n: int) -> None:
         seen.append((i, n))
 
-    out = await discover(
+    found = await discover(
         f,
         "acme",
         owner_kind="organization",
@@ -168,6 +169,8 @@ async def test_discover_folds_in_embry0_state_and_reports_progress() -> None:
         embry0_state=state,
         progress=progress,
     )
+    assert found.complete is True
+    out = found.repos
     assert [o.repo for o in out] == ["acme/web", "acme/old", "acme/api"]
     assert f.asked[0] == "/orgs/acme/repos"
     assert seen == [(1, 3), (2, 3), (3, 3)]
@@ -360,3 +363,80 @@ def test_count_gap_reads_forks_and_archived_apart() -> None:
     assert count_gap(facts, 3)["explained_by"] == "the owner record does not count archived repositories"
     assert count_gap(facts, 1)["explained_by"] == "the owner record counts neither forks nor archived repositories"
     assert count_gap(facts, 9)["explained_by"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_page_the_forge_refuses_fails_the_listing_instead_of_shortening_it() -> None:
+    """ADR 0016: a listing cut short by a refused page (a revoked token, a
+    rate limit) would read as repositories gone from the owner, and the needs
+    list would propose deactivating them. The run fails instead."""
+    import httpx
+
+    from embry0.execution.github_client import GitHubClient
+    from embry0.services.org_discovery import list_repositories
+
+    second = "https://api.github.com/orgs/acme/repos?page=2"
+    pages = [
+        httpx.Response(
+            200,
+            json=[{"full_name": "acme/web"}],
+            headers={"Link": f'<{second}>; rel="next"'},
+            request=httpx.Request("GET", "https://api.github.com/orgs/acme/repos"),
+        ),
+        httpx.Response(403, json={"message": "API rate limit exceeded"}, request=httpx.Request("GET", second)),
+    ]
+
+    async def get(path: str, **kwargs: Any) -> httpx.Response:
+        return pages.pop(0)
+
+    client = GitHubClient(default_token="t", max_attempts=1)
+    client.get = get  # type: ignore[method-assign]
+    with pytest.raises(httpx.HTTPStatusError):
+        await list_repositories(client, "acme", "organization")
+    assert pages == [], "both pages were asked for"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("pages", "complete"), [(3, True), (25, False)])
+async def test_the_listing_says_when_the_page_cap_cut_it_short(pages: int, complete: bool) -> None:
+    """An owner past 20 pages of 100 is listed up to the cap, and the
+    listing says it is not whole: a repository it did not reach is still
+    there, so nothing may read it as gone (ADR 0016)."""
+    import httpx
+
+    from embry0.execution.github_client import GitHubClient
+    from embry0.services.org_discovery import LISTING_MAX_PAGES, list_repositories
+
+    asked: list[str] = []
+
+    async def get(path: str, **kwargs: Any) -> httpx.Response:
+        asked.append(path)
+        url = httpx.URL(path if path.startswith("http") else f"https://api.github.com{path}")
+        page = int(url.params.get("page", "1"))
+        headers = (
+            {"Link": f'<https://api.github.com/orgs/acme/repos?page={page + 1}>; rel="next"'} if page < pages else {}
+        )
+        return httpx.Response(200, json=[{"full_name": f"acme/r{page:02d}"}], headers=headers)
+
+    client = GitHubClient(default_token="t", max_attempts=1)
+    client.get = get  # type: ignore[method-assign]
+    listing = await list_repositories(client, "acme", "organization")
+    assert listing.complete is complete
+    assert len(asked) == min(pages, LISTING_MAX_PAGES) == len(listing.items)
+
+
+@pytest.mark.asyncio
+async def test_a_direct_read_that_fails_or_says_nothing_is_unknown() -> None:
+    """confirm_gone answers None, not gone, when the read raises (a transport
+    failure after the retries) or the forge answers 200 without a record."""
+    from embry0.services.org_discovery import confirm_gone
+
+    class Broken:
+        async def get(self, path: str, **_: Any) -> Any:
+            raise OSError("connection reset")
+
+    assert await confirm_gone(Broken(), "acme/web") is None  # type: ignore[arg-type]
+    assert (
+        await confirm_gone(FakeForge({"/repos/acme/web": _Resp(200, ["not", "a", "record"])}, []), "acme/web") is None
+    )
+    assert await confirm_gone(FakeForge({"/repos/acme/web": _Resp(200, {"full_name": ""})}, []), "acme/web") is None

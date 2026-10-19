@@ -175,6 +175,28 @@ def test_count_gap_is_filed_only_when_the_summary_cannot_explain_it() -> None:
     assert listed_more.action["type"] == "none" and listed_more.title.startswith("Account for 1 repository ")
 
 
+def _gone(repo: str, **facts: Any) -> dict[str, Any]:
+    """A row an earlier run stamped: the repository is not in the newest listing."""
+    return {**_row(repo, **facts), "run_id": "odr-0"}
+
+
+def test_a_vanished_active_registration_is_proposed_for_deactivation() -> None:
+    vanished = [
+        _gone("acme/deleted", **SEEN, registered=True, active=True),
+        _gone("acme/moved", registered=True, active=True, skipped="archived"),
+        _gone("acme/never", **SEEN, registered=False),
+        _gone("acme/parked", **SEEN, registered=True, active=False),
+    ]
+    needs = _by_kind(derive_needs("acme", ROWS, vanished=vanished))
+    need = needs["repo_vanished"]
+    assert need.repos == ("acme/deleted", "acme/moved"), "only an active registration has anything to deactivate"
+    assert need.action == {"type": "deactivate", "params": {}}
+    assert need.title == "Deactivate 2 repositories no longer listed"
+    assert "Nothing is deactivated until a person says so" in need.detail
+    assert not any("acme/never" in n.repos for n in needs.values()), "a vanished row is read by its own rule only"
+    assert "repo_vanished" not in _by_kind(derive_needs("acme", ROWS)), "no vanished rows, no need"
+
+
 def test_signature_is_the_set_of_repositories() -> None:
     assert repos_signature(["acme/B", "acme/a"]) == repos_signature(("acme/a", "acme/b", "acme/a"))
     assert repos_signature(["acme/a"]) != repos_signature(["acme/a", "acme/b"])
@@ -280,6 +302,11 @@ class FakeFactsRepo:
 
     async def list_runs(self, owner: str, *, limit: int = 20) -> list[dict[str, Any]]:
         return [r for r in self.runs if r["owner"] == owner][:limit]
+
+    async def refresh_state(self, repo: str, state: dict[str, Any]) -> None:
+        for row in self.rows:
+            if row["repo"] == repo:
+                row["facts"] = {**row["facts"], **state}
 
 
 class FakeCases:
@@ -430,11 +457,136 @@ async def test_a_repository_the_newest_run_did_not_list_needs_nothing() -> None:
     facts.rows.append({**_row("acme/gone", **SEEN, registered=False, hook_present=False), "run_id": "odr-0"})
     listing = await service.sync("acme")
     assert not any("acme/gone" in n["repos"] for n in listing["needs"])
-    # A finished run that listed nothing leaves nothing open.
+    # A finished run that listed nothing settles every need, and proposes
+    # deactivating the repositories embry0 holds as active registrations and
+    # its direct reads confirmed gone (ADR 0016); it deactivates none of them.
     facts.runs.insert(0, {"id": "odr-3", "owner": "acme", "status": "done", "summary": {}})
+    for row in facts.rows:
+        if row["repo"] in ("acme/lib", "acme/web"):
+            row["facts"] = {**row["facts"], "vanished_run": "odr-3"}
     empty = await service.sync("acme")
-    assert empty["run_id"] == "odr-3" and empty["counts"]["open"] == 0
+    assert empty["run_id"] == "odr-3"
+    assert [(n["kind"], n["repos"], n["status"]) for n in empty["needs"] if n["status"] == "open"] == [
+        ("repo_vanished", ["acme/lib", "acme/web"], "open")
+    ]
     assert empty["counts"]["done"] == len(listing["needs"])
+
+
+@pytest.mark.asyncio
+async def test_only_a_departure_the_newest_run_confirmed_is_vanished() -> None:
+    """The listing can miss a repository that is still there, so a row the
+    newest run did not list is vanished only once that run's direct read
+    stamped it (``vanished_run``, note_vanished). A stamp from an earlier
+    run is that run's answer, not this one's."""
+    service, _needs, _cases = _service(ROWS)
+    facts = service._facts  # type: ignore[attr-defined]
+    held = {"registered": True, "active": True}
+    facts.rows.append({**_row("acme/confirmed", **SEEN, **held, vanished_run="odr-1"), "run_id": "odr-0"})
+    facts.rows.append({**_row("acme/stale", **SEEN, **held, vanished_run="odr-0"), "run_id": "odr-0"})
+    facts.rows.append({**_row("acme/unchecked", **SEEN, **held), "run_id": "odr-0"})
+    listing = await service.sync("acme")
+    vanished = [n["repos"] for n in listing["needs"] if n["kind"] == "repo_vanished"]
+    assert vanished == [["acme/confirmed"]]
+
+
+@pytest.mark.asyncio
+async def test_a_vanished_repository_once_deactivated_settles_its_need() -> None:
+    service, needs, cases = _service(ROWS)
+    facts = service._facts  # type: ignore[attr-defined]
+    confirmed = {"registered": True, "active": True, "vanished_run": "odr-1"}
+    facts.rows.append({**_row("acme/gone", **SEEN, **confirmed), "run_id": "odr-0"})
+    # The same repository under another case is in the newest listing: a rename of case, not a departure.
+    facts.rows.append({**_row("ACME/Web", **SEEN, **confirmed), "run_id": "odr-0"})
+    # A row only the webhook receiver wrote was never listed, so it never vanished.
+    facts.rows.append({**_row("acme/joined", **confirmed), "run_id": None})
+    first = await service.sync("acme")
+    vanished = [n for n in first["needs"] if n["kind"] == "repo_vanished"]
+    assert [(n["repos"], n["action"]["type"]) for n in vanished] == [(["acme/gone"], "deactivate")]
+    case = cases.cases[vanished[0]["case_id"]]
+    assert case["repo"] == "acme/gone" and case["fingerprint"].startswith("org:acme:repo_vanished:")
+    # The deactivate action ran, and the next run read the registry again (note_vanished).
+    facts.rows[-3]["facts"] = {**facts.rows[-3]["facts"], "active": False, "vanished_run": None}
+    facts.rows = [{**r, "run_id": "odr-2"} if r["run_id"] == "odr-1" else r for r in facts.rows]
+    facts.runs.insert(0, {"id": "odr-2", "owner": "acme", "status": "done", "summary": {}})
+    second = await service.sync("acme")
+    settled = next(n for n in second["needs"] if n["id"] == vanished[0]["id"])
+    assert settled["status"] == "done"
+    assert (vanished[0]["case_id"], "self_resolved", "Rediscovery no longer finds this need") in cases.closed
+
+
+class FakeRegistry:
+    """The registry calls the deactivate action makes, keyed by the stored spelling."""
+
+    def __init__(self, rows: dict[str, dict[str, Any]]) -> None:
+        self.rows = rows
+
+    async def registered_as(self, repo: str) -> str | None:
+        return next((r for r in self.rows if r.lower() == repo.lower()), None)
+
+    async def get(self, repo: str) -> dict[str, Any] | None:
+        return self.rows.get(repo)
+
+    async def set_active(self, repo: str, active: bool) -> dict[str, Any] | None:
+        self.rows[repo]["active"] = active
+        return self.rows[repo]
+
+
+@pytest.mark.asyncio
+async def test_an_archived_registration_that_vanished_is_settled_by_its_own_action() -> None:
+    """A registered, active repository was archived the last time it was
+    listed and has been deleted since. repo_vanished proposes it, the need's
+    own deactivate action reaches it (the archived skip holds every other
+    action off, not this one), and the run after that settles the need."""
+    from embry0.api.v1.organizations import note_vanished
+    from embry0.services.org_actions import ActionContext, run_action
+    from embry0.services.org_discovery import Discovery, RepoFacts
+
+    service, _needs, cases = _service(ROWS)
+    facts = service._facts  # type: ignore[attr-defined]
+    facts.rows.append(
+        {**_row("acme/attic", archived=True, registered=True, active=True, vanished_run="odr-1"), "run_id": "odr-0"}
+    )
+    first = await service.sync("acme")
+    (vanished,) = [n for n in first["needs"] if n["kind"] == "repo_vanished"]
+    assert vanished["repos"] == ["acme/attic"] and vanished["action"]["type"] == "deactivate"
+
+    # The need's action, with the facts POST /orgs/{owner}/actions reads.
+    registry = FakeRegistry({"acme/attic": {"repo": "acme/attic", "active": True}})
+    ctx = ActionContext(
+        owner="acme",
+        forge="github",
+        facts={str(r["repo"]).lower(): r for r in await facts.list_for_owner("acme")},
+        registry=registry,
+    )
+    results = await run_action(ctx, vanished["action"]["type"], vanished["repos"])
+    assert [(r.repo, r.outcome) for r in results] == [("acme/attic", "done")]
+    assert registry.rows["acme/attic"]["active"] is False
+
+    # The rediscovery that action starts: acme/attic is still not listed,
+    # and its registration is read again from the registry.
+    async def state(repo: str) -> dict[str, Any]:
+        row = registry.rows.get(repo)
+        return {"registered": row is not None, "active": bool(row and row["active"])}
+
+    facts.rows = [{**r, "run_id": "odr-2"} if r["run_id"] == "odr-1" else r for r in facts.rows]
+
+    class Forge:
+        asked: list[str] = []
+
+        async def get(self, path: str, **_: Any) -> Any:
+            self.asked.append(path)
+
+    listed = Discovery(
+        [RepoFacts(owner="acme", repo=r["repo"], facts=r["facts"]) for r in facts.rows if r["run_id"] == "odr-2"]
+    )
+    forge = Forge()
+    assert await note_vanished(facts, "acme", "odr-2", listed, state, forge) == {"vanished": 1, "vanished_confirmed": 0}
+    assert forge.asked == [], "an inactive registration is not read on the forge"
+    facts.runs.insert(0, {"id": "odr-2", "owner": "acme", "status": "done", "summary": {}})
+    second = await service.sync("acme")
+    settled = next(n for n in second["needs"] if n["id"] == vanished["id"])
+    assert settled["status"] == "done"
+    assert (vanished["case_id"], "self_resolved", "Rediscovery no longer finds this need") in cases.closed
 
 
 @pytest.mark.asyncio

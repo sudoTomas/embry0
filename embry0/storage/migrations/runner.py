@@ -40,7 +40,8 @@ logger = structlog.get_logger(__name__)
 # database-wide namespace, so any future advisory lock in embry0 MUST pick a
 # different key and be registered here (grep `pg_advisory` for the roster).
 # The others hash a prefixed text key with hashtextextended:
-# `qa_image_tags:<repo>`, `org_needs:<owner>` and `standards:<owner>:<kind>`.
+# `qa_image_tags:<repo>`, `org_needs:<owner>`, `standards:<owner>:<kind>` and
+# `org_discovery:<owner>`.
 MIGRATIONS_ADVISORY_LOCK_KEY = 0x656D62727930
 
 # Acquisition is usually instantaneous; anything slower means another replica

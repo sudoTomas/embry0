@@ -38,8 +38,9 @@ KINDS = (
     "no_deploy_marker",
     "count_gap",
     "hook_origin_unknown",
+    "repo_vanished",
 )
-ACTIONS = ("register", "hook", "onboard", "watch", "setting", "credential", "none")
+ACTIONS = ("register", "hook", "onboard", "watch", "deactivate", "setting", "credential", "none")
 STATUSES = ("open", "done", "dismissed")
 
 WEBHOOK_URL_SETTING = "WEBHOOK_PUBLIC_URL"
@@ -84,6 +85,7 @@ def derive_needs(
     *,
     summary: dict[str, Any] | None = None,
     delivered: Sequence[str] = (),
+    vanished: Sequence[dict[str, Any]] = (),
 ) -> list[Need]:
     """Needs from the fact rows of one owner's newest discovery run.
 
@@ -93,6 +95,10 @@ def derive_needs(
     counts as a yes or a no. ``delivered`` are repositories only the webhook
     receiver has recorded (ADR 0012): no run listed them, so each is not
     registered as far as embry0 knows, and nothing else is known of it.
+    ``vanished`` are the rows an earlier run stamped, this one did not, and
+    a direct read in this run confirmed gone: repositories that left the
+    owner (ADR 0016). One embry0 still holds as an active registration is
+    proposed for deactivation, never deactivated.
     """
     by_kind: dict[str, list[str]] = {kind: [] for kind in KINDS}
     env_missing: dict[str, list[str]] = {}
@@ -147,6 +153,10 @@ def derive_needs(
 
     listed = {repo.lower() for repo in by_kind["not_registered"]}
     by_kind["not_registered"].extend(repo for repo in delivered if repo.lower() not in listed)
+    for row in vanished:
+        facts = dict(row.get("facts") or {})
+        if facts.get("registered") and facts.get("active"):
+            by_kind["repo_vanished"].append(str(row["repo"]))
 
     needs: list[Need] = []
 
@@ -239,6 +249,18 @@ def derive_needs(
             "Their env examples declare variables a sandbox would need, and embry0 holds no value for them yet, "
             "neither for the repository nor globally.",
             _action("setting", setting="environment", keys={repo: keys for repo, keys in sorted(env_missing.items())}),
+        )
+    if by_kind["repo_vanished"]:
+        add(
+            "repo_vanished",
+            f"Deactivate {_n(len(by_kind['repo_vanished']))} no longer listed",
+            "An earlier discovery run listed these repositories, the newest one did not, and a direct read of each "
+            "on the forge confirmed it gone: not found, or now under another name. embry0 still holds each as an "
+            "active registration. A repository is gone when it is deleted, transferred or renamed, and reads as "
+            "not found when the credential can no longer see it; an archived one stays listed. Nothing is "
+            "deactivated until a person says so: run the deactivate action, or dismiss this need when they are "
+            "only out of the credential's sight.",
+            _action("deactivate"),
         )
     gap = (summary or {}).get("count_gap")
     if isinstance(gap, dict) and isinstance(gap.get("gap"), int) and gap["gap"] and not gap.get("explained_by"):
@@ -403,16 +425,27 @@ class OrgNeedsService:
 
     async def _derive(self, owner: str, run: dict[str, Any]) -> None:
         # Fact rows are one per repository, stamped with the run that last saw
-        # it; a repository this run did not list is gone, not still there. A
-        # row no run has stamped is the webhook receiver's (ADR 0012): the
-        # forge delivered for a repository before any run listed it.
+        # it. A repository this run did not list is read only by the vanished
+        # rule (ADR 0016), and only once this run confirmed it gone with a
+        # direct read (``vanished_run``): the listing can miss one that is
+        # still there. A row no run has stamped is the webhook receiver's
+        # (ADR 0012): the forge delivered for a repository before any run
+        # listed it.
         facts = await self._facts.list_for_owner(owner)
         rows = [r for r in facts if r.get("run_id") == run["id"]]
+        current = {str(r["repo"]).lower() for r in rows}
         delivered = [
             str(r["repo"]) for r in facts if r.get("run_id") is None and not (r.get("facts") or {}).get("registered")
         ]
+        vanished = [
+            r
+            for r in facts
+            if r.get("run_id") not in (None, run["id"])
+            and str(r["repo"]).lower() not in current
+            and (r.get("facts") or {}).get("vanished_run") == run["id"]
+        ]
         kept: list[str] = []
-        for need in derive_needs(owner, rows, summary=run.get("summary") or {}, delivered=delivered):
+        for need in derive_needs(owner, rows, summary=run.get("summary") or {}, delivered=delivered, vanished=vanished):
             row = await self._needs.upsert(owner, need, run_id=run["id"])
             kept.append(row["id"])
             if row["status"] == "done":
