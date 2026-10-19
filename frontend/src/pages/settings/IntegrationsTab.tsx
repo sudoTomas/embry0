@@ -208,9 +208,10 @@ export default function IntegrationsTab() {
               </p>
             </div>
             <div>
-              <Label>HMAC secret</Label>
+              <Label htmlFor="webhook_secret">HMAC secret</Label>
               <div className="mt-1">
                 <MaskedSecretInput
+                  id="webhook_secret"
                   isSet={integrationConfig.webhook_secret_set}
                   onChange={(v) => { setForm((prev) => (prev ? { ...prev, webhook_secret: v } : prev)); markSecretChanged("webhook_secret", v); }}
                   placeholder="Enter webhook HMAC secret"
@@ -243,9 +244,10 @@ export default function IntegrationsTab() {
               </p>
             </div>
             <div>
-              <Label>Signing secret</Label>
+              <Label htmlFor="webhook_notify_secret">Signing secret</Label>
               <div className="mt-1">
                 <MaskedSecretInput
+                  id="webhook_notify_secret"
                   isSet={integrationConfig.webhook_notify_secret_set}
                   maskedValue={integrationConfig.webhook_notify_secret_masked}
                   onChange={(v) => { setForm((prev) => (prev ? { ...prev, webhook_notify_secret: v } : prev)); markSecretChanged("webhook_notify_secret", v); }}
@@ -268,9 +270,10 @@ export default function IntegrationsTab() {
         <CardContent>
           <div className="space-y-4">
             <div>
-              <Label>API key</Label>
+              <Label htmlFor="linear_api_key">API key</Label>
               <div className="mt-1">
                 <MaskedSecretInput
+                  id="linear_api_key"
                   isSet={integrationConfig.linear_api_key_set}
                   maskedValue={integrationConfig.linear_api_key_masked}
                   onChange={(v) => { setForm((prev) => (prev ? { ...prev, linear_api_key: v } : prev)); markSecretChanged("linear_api_key", v); }}
@@ -283,9 +286,10 @@ export default function IntegrationsTab() {
               </p>
             </div>
             <div>
-              <Label>Webhook secret</Label>
+              <Label htmlFor="linear_webhook_secret">Webhook secret</Label>
               <div className="mt-1">
                 <MaskedSecretInput
+                  id="linear_webhook_secret"
                   isSet={integrationConfig.linear_webhook_secret_set}
                   maskedValue={integrationConfig.linear_webhook_secret_masked}
                   onChange={(v) => { setForm((prev) => (prev ? { ...prev, linear_webhook_secret: v } : prev)); markSecretChanged("linear_webhook_secret", v); }}
@@ -320,9 +324,10 @@ export default function IntegrationsTab() {
         </CardHeader>
         <CardContent>
           <div>
-            <Label>Webhook URL</Label>
+            <Label htmlFor="slack_webhook_url">Webhook URL</Label>
             <div className="mt-1">
               <MaskedSecretInput
+                id="slack_webhook_url"
                 isSet={integrationConfig.slack_webhook_url_set}
                 maskedValue={integrationConfig.slack_webhook_url_masked}
                 onChange={(v) => { setForm((prev) => (prev ? { ...prev, slack_webhook_url: v } : prev)); markSecretChanged("slack_webhook_url", v); }}
@@ -341,9 +346,10 @@ export default function IntegrationsTab() {
         <CardContent>
           <div className="space-y-4">
             <div>
-              <Label>Bot token</Label>
+              <Label htmlFor="telegram_bot_token">Bot token</Label>
               <div className="mt-1">
                 <MaskedSecretInput
+                  id="telegram_bot_token"
                   isSet={integrationConfig.telegram_bot_token_set}
                   maskedValue={integrationConfig.telegram_bot_token_masked}
                   onChange={(v) => { setForm((prev) => (prev ? { ...prev, telegram_bot_token: v } : prev)); markSecretChanged("telegram_bot_token", v); }}

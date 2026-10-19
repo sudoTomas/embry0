@@ -81,4 +81,12 @@ describe("IntegrationsTab — Linear (#157)", () => {
     // the repository would otherwise treat as a deliberate write.
     expect(payload).not.toHaveProperty("linear_api_key");
   });
+
+  it("names each unset secret field by its label", async () => {
+    renderTab();
+    expect(await screen.findByLabelText("HMAC secret")).toBeInTheDocument();
+    expect(screen.getByLabelText("Signing secret")).toBeInTheDocument();
+    expect(screen.getByLabelText("Webhook secret")).toBeInTheDocument();
+    expect(screen.getByLabelText("Bot token")).toBeInTheDocument();
+  });
 });

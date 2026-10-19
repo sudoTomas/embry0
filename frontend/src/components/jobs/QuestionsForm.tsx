@@ -137,6 +137,7 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
                       setAnswers((p) => ({ ...p, [input.id]: e.target.value }))
                     }
                     disabled={submitting}
+                    aria-label={input.question}
                     className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-sm text-white"
                   >
                     <option value="">— select —</option>
@@ -153,6 +154,7 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
                       setAnswers((p) => ({ ...p, [input.id]: e.target.value }))
                     }
                     disabled={submitting}
+                    aria-label={input.question}
                     rows={2}
                     className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-sm text-white font-mono resize-y"
                     placeholder={isOverriding ? "Override answer..." : "Your answer..."}

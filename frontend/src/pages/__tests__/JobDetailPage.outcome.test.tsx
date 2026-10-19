@@ -71,3 +71,11 @@ describe("the Job page's issue link", () => {
     expect(document.querySelector('a[href*="github.com"]')).toBeNull();
   });
 });
+
+describe("the Job page's back arrow", () => {
+  it("is one named link, not a button inside a link", () => {
+    const { container } = renderJob({ status: "running", finished_at: null });
+    expect(screen.getByRole("link", { name: "Back to jobs" })).toHaveAttribute("href", "/jobs");
+    expect(container.querySelector("a button")).toBeNull();
+  });
+});

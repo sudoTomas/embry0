@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/Button";
+import { Button, buttonVariants } from "@/components/ui/Button";
 import { Card, CardContent } from "@/components/ui/Card";
 import { FilterSelect } from "@/components/ui/FilterSelect";
 import { Pagination } from "@/components/ui/Pagination";
@@ -104,18 +104,28 @@ export function JobsTable({
                   <td className="hidden whitespace-nowrap text-right text-muted-foreground sm:table-cell">{formatDate(job.created_at)}</td>
                   <td className="text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1">
+                      {/* Each action is one named control: a link styled as a
+                          button, never a button nested in a link. */}
                       {job.pr_url && (
-                        <a href={job.pr_url} target="_blank" rel="noopener noreferrer" title="View Pull Request">
-                          <Button variant="ghost" size="icon-sm">
-                            <GitPullRequest className="h-3.5 w-3.5 text-success" />
-                          </Button>
+                        <a
+                          href={job.pr_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="View Pull Request"
+                          aria-label="View pull request"
+                          className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
+                        >
+                          <GitPullRequest className="h-3.5 w-3.5 text-success" />
                         </a>
                       )}
                       {job.status !== "pending" && (
-                        <Link to={`/jobs/${job.job_id}/logs`}>
-                          <Button variant="ghost" size="icon-sm" title="View Logs">
-                            <Eye className="h-3.5 w-3.5" />
-                          </Button>
+                        <Link
+                          to={`/jobs/${job.job_id}/logs`}
+                          title="View Logs"
+                          aria-label="View logs"
+                          className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
                         </Link>
                       )}
                       {isCancellable(job.status) && (
@@ -124,6 +134,7 @@ export function JobsTable({
                           size="icon-sm"
                           onClick={() => onCancel(job.job_id)}
                           title="Cancel"
+                          aria-label="Cancel job"
                           disabled={cancellingJobId === job.job_id}
                         >
                           <X className={`h-3.5 w-3.5 ${cancellingJobId === job.job_id ? "opacity-50" : ""}`} />

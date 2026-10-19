@@ -20,11 +20,23 @@ export function Pagination({ total, offset, limit, onPageChange }: PaginationPro
         {offset + 1}–{Math.min(offset + limit, total)} of {total}
       </span>
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPageChange(Math.max(0, offset - limit))}>
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label="Previous page"
+          disabled={page <= 1}
+          onClick={() => onPageChange(Math.max(0, offset - limit))}
+        >
           <ChevronLeft className="h-4 w-4" />
         </Button>
         <span className="text-sm">{page} / {totalPages}</span>
-        <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => onPageChange(offset + limit)}>
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label="Next page"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(offset + limit)}
+        >
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>

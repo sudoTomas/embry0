@@ -4,7 +4,7 @@ import { ArrowLeft, Info } from "lucide-react";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { OPERATION_NUMERAL, OPERATION_ELEMENT } from "@/components/divine/operations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonVariants } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { TagInput } from "@/components/ui/TagInput";
@@ -17,6 +17,7 @@ import {
 import type { SandboxProfile } from "@/api/sandbox-profiles";
 import { toast } from "sonner";
 import { toastApiError } from "@/api/errorToast";
+import { cn } from "@/lib/utils";
 
 type ProfileForm = Omit<SandboxProfile, "created_at" | "updated_at" | "is_builtin">;
 
@@ -212,10 +213,12 @@ export function SandboxFormPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Link to="/sandboxes">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
+          <Link
+            to="/sandboxes"
+            aria-label="Back to sandboxes"
+            className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
+          >
+            <ArrowLeft className="h-4 w-4" />
           </Link>
           <span className="flex items-center justify-center w-9 h-9 shrink-0">
             <OperationGlyph operation="ferment" size={36} titled />

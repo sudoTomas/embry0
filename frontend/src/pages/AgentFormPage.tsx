@@ -9,7 +9,7 @@ import {
   OPERATION_NUMERAL,
 } from "@/components/divine/operations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonVariants } from "@/components/ui/Button";
 import { AdminButton } from "@/components/auth/AdminButton";
 import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
@@ -22,6 +22,7 @@ import { useModels } from "@/hooks/useModels";
 import { providerForModel } from "@/lib/providers";
 import type { AgentCreateRequest, AgentUpdateRequest } from "@/lib/types/agents";
 import { toastApiError } from "@/api/errorToast";
+import { cn } from "@/lib/utils";
 
 const AVAILABLE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
 
@@ -240,10 +241,12 @@ export function AgentFormPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link to="/agents">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
+          <Link
+            to="/agents"
+            aria-label="Back to agents"
+            className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
+          >
+            <ArrowLeft className="h-4 w-4" />
           </Link>
           {(() => {
             const op = agentTypeToOperation(typeParam);

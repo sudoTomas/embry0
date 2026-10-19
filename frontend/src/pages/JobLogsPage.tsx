@@ -11,8 +11,9 @@ import { LogViewer } from "@/components/logs/LogViewer";
 import { PipelineGraphView } from "@/components/pipeline/PipelineGraphView";
 import { AgentFilterTabs } from "@/components/logs/AgentFilterTabs";
 import { AutoAnswerCard } from "@/components/jobs/AutoAnswerCard";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonVariants } from "@/components/ui/Button";
 import { ArrowLeft, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export function JobLogsPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -70,10 +71,12 @@ export function JobLogsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-4">
-        <Link to="/jobs">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
+        <Link
+          to="/jobs"
+          aria-label="Back to jobs"
+          className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
+        >
+          <ArrowLeft className="h-4 w-4" />
         </Link>
         <div>
           <h1 className="text-xl font-bold">Agent Logs</h1>

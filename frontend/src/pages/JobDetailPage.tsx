@@ -4,7 +4,7 @@ import { ArrowLeft, Clock, DollarSign, Layers } from "lucide-react";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { DivineRipple } from "@/components/divine/DivineRipple";
 import { jobToOperation, shouldFireCompletionFlare } from "@/components/divine/operations";
-import { Button, buttonVariants } from "@/components/ui/Button";
+import { buttonVariants } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { useJob } from "@/hooks/useJobs";
@@ -130,10 +130,12 @@ export function JobDetailPage() {
     <div className="space-y-4">
       {/* Compact Header */}
       <div className="flex items-center gap-3 flex-wrap">
-        <Link to="/jobs">
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
+        <Link
+          to="/jobs"
+          aria-label="Back to jobs"
+          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8")}
+        >
+          <ArrowLeft className="h-4 w-4" />
         </Link>
         <span className="relative flex items-center justify-center w-8 h-8 shrink-0">
           <OperationGlyph operation={currentOperation} size={28} titled />
