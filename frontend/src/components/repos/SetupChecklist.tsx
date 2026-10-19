@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import {
@@ -19,6 +20,8 @@ import { useRepoReadiness, useSkipTesting } from "@/hooks/useRepoReadiness";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button, buttonVariants } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { SetupAgentDialog } from "@/components/repos/SetupAgentDialog";
+import { SetupProposalCard } from "@/components/repos/SetupProposalCard";
 import { providerLabel } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
@@ -60,20 +63,14 @@ async function copyAdminRequest(text: string) {
   }
 }
 
-/** Where a link action goes; null for an action this page cannot place. */
+/** Where a link action goes; null for an action that is a button on this page. */
 function actionHref(row: ReadinessRow, repo: string): string | null {
-  const encoded = encodeURIComponent(repo);
   switch (row.action?.kind) {
     case "open_environment":
-      return `/environments?repo=${encoded}`;
-    case "start_setup":
-    case "fix_setup":
-      return `/repos/onboard?repo=${encoded}`;
+      return `/environments?repo=${encodeURIComponent(repo)}`;
     case "create_issue":
       return "/issues";
     case "view_job":
-    case "review_proposal":
-      // Until the review card lands, the proposal is read on its job's page.
       return row.job_id ? `/jobs/${row.job_id}` : null;
     default:
       return null;
@@ -97,50 +94,87 @@ interface ChecklistRowProps {
   forge: Forge;
   skipping: boolean;
   onSkip: () => void;
+  onStartSetup: () => void;
+  /** The setup proposal card is open under this row (testing only). */
+  cardOpen: boolean;
+  onToggleCard: () => void;
 }
 
-function ChecklistRow({ row, gold, repo, forge, skipping, onSkip }: ChecklistRowProps) {
+function ChecklistRow({ row, gold, repo, forge, skipping, onSkip, onStartSetup, cardOpen, onToggleCard }: ChecklistRowProps) {
   const action = row.action;
   const href = action ? actionHref(row, repo) : null;
-  const canSkip = row.key === "testing" && (row.state === "missing" || row.state === "failed");
+  const variant = gold ? "default" : "outline";
+  const showsCard = row.key === "testing" && cardOpen;
+  const failed = row.key === "testing" && row.state === "failed";
+  // An open card on a failed run carries Try again and Skip itself.
+  const cardActs = showsCard && failed;
+  const canSkip = row.key === "testing" && (row.state === "missing" || failed) && !cardActs;
 
   return (
-    <li className="flex gap-3 py-3" data-testid={`setup-row-${row.key}`} data-state={row.state}>
-      <StateIcon state={row.state} />
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <p className="text-sm font-semibold text-fg">
-          {row.title}
-          {!row.required && <span className="ml-2 text-xs font-normal text-fg-muted">Optional</span>}
-        </p>
-        <p className="text-sm text-fg-secondary">{row.says}</p>
+    <li className="py-3" data-testid={`setup-row-${row.key}`} data-state={row.state}>
+      <div className="flex gap-3">
+        <StateIcon state={row.state} />
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <p className="text-sm font-semibold text-fg">
+            {row.title}
+            {!row.required && <span className="ml-2 text-xs font-normal text-fg-muted">Optional</span>}
+          </p>
+          <p className="text-sm text-fg-secondary">{row.says}</p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-start justify-end gap-2">
+          {action?.kind === "copy_admin_request" && (
+            <Button variant="outline" size="sm" onClick={() => void copyAdminRequest(adminRequest(row, repo, forge))}>
+              {action.label}
+            </Button>
+          )}
+          {(action?.kind === "start_setup" || action?.kind === "fix_setup") && !cardActs && (
+            <Button variant={variant} size="sm" onClick={onStartSetup}>
+              {action.label}
+            </Button>
+          )}
+          {action?.kind === "review_proposal" && (
+            <Button variant={variant} size="sm" aria-expanded={cardOpen} onClick={onToggleCard}>
+              {action.label}
+            </Button>
+          )}
+          {action && href && (
+            <Link to={href} className={cn(buttonVariants({ variant, size: "sm" }))}>
+              {action.label}
+            </Link>
+          )}
+          {canSkip && (
+            <Button variant="outline" size="sm" disabled={skipping} onClick={onSkip}>
+              Skip testing for now
+            </Button>
+          )}
+          {failed && (
+            <Button variant="ghost" size="sm" aria-expanded={cardOpen} onClick={onToggleCard}>
+              See what happened
+            </Button>
+          )}
+          {row.key === "first_task" && row.state === "done" && row.pr_url && (
+            <a
+              href={row.pr_url}
+              target="_blank"
+              rel="noreferrer"
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+            >
+              Open the pull request
+            </a>
+          )}
+        </div>
       </div>
-      <div className="flex shrink-0 flex-wrap items-start justify-end gap-2">
-        {action?.kind === "copy_admin_request" && (
-          <Button variant="outline" size="sm" onClick={() => void copyAdminRequest(adminRequest(row, repo, forge))}>
-            {action.label}
-          </Button>
-        )}
-        {action && href && (
-          <Link to={href} className={cn(buttonVariants({ variant: gold ? "default" : "outline", size: "sm" }))}>
-            {action.label}
-          </Link>
-        )}
-        {canSkip && (
-          <Button variant="outline" size="sm" disabled={skipping} onClick={onSkip}>
-            Skip testing for now
-          </Button>
-        )}
-        {row.key === "first_task" && row.state === "done" && row.pr_url && (
-          <a
-            href={row.pr_url}
-            target="_blank"
-            rel="noreferrer"
-            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-          >
-            Open the pull request
-          </a>
-        )}
-      </div>
+      {showsCard && (
+        <div className="pl-7">
+          <SetupProposalCard
+            repo={repo}
+            onClose={onToggleCard}
+            onTryAgain={onStartSetup}
+            onSkip={onSkip}
+            skipping={skipping}
+          />
+        </div>
+      )}
     </li>
   );
 }
@@ -168,17 +202,23 @@ export function ReadinessChip({ readiness }: { readiness: Readiness }) {
  * The repo page's opening card: what is done, what is left and the one next
  * step, from the readiness rules (no model call). The next step's action is
  * the page's gold, except a request to an admin, which stays quiet: the
- * person cannot do that step themselves.
+ * person cannot do that step themselves. While the setup proposal card is
+ * open, its own main action is the gold and every row action is quiet.
  */
 export function SetupChecklist({ repo, forge }: { repo: string; forge: Forge }) {
   const readiness = useRepoReadiness(repo);
   const skip = useSkipTesting(repo);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [cardOpen, setCardOpen] = useState(false);
   const data = readiness.data;
 
   function onSkip() {
     if (skip.isPending) return;
     skip.mutate(undefined, {
-      onSuccess: () => toast.success("Testing is off for now. embry0 opens pull requests without testing the app."),
+      onSuccess: () => {
+        setCardOpen(false);
+        toast.success("Testing is off for now. embry0 opens pull requests without testing the app.");
+      },
       onError: (error) => toastApiError(error, "Could not skip testing"),
     });
   }
@@ -205,6 +245,7 @@ export function SetupChecklist({ repo, forge }: { repo: string; forge: Forge }) 
   }
 
   return (
+    <>
     <Card className="space-y-3 p-4" data-testid="setup-checklist">
       <div className="space-y-1">
         <h2 className="text-section font-semibold">{TITLE}</h2>
@@ -218,11 +259,14 @@ export function SetupChecklist({ repo, forge }: { repo: string; forge: Forge }) 
           <ChecklistRow
             key={row.key}
             row={row}
-            gold={row.key === data.next_step && row.action?.kind !== "copy_admin_request"}
+            gold={!cardOpen && row.key === data.next_step && row.action?.kind !== "copy_admin_request"}
             repo={repo}
             forge={forge}
             skipping={skip.isPending}
             onSkip={onSkip}
+            onStartSetup={() => setDialogOpen(true)}
+            cardOpen={cardOpen}
+            onToggleCard={() => setCardOpen((open) => !open)}
           />
         ))}
       </ol>
@@ -235,5 +279,13 @@ export function SetupChecklist({ repo, forge }: { repo: string; forge: Forge }) 
         </a>
       </div>
     </Card>
+    {dialogOpen && (
+      <SetupAgentDialog
+        repo={repo}
+        onStarted={() => setCardOpen(false)}
+        onClose={() => setDialogOpen(false)}
+      />
+    )}
+    </>
   );
 }

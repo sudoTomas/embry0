@@ -4,13 +4,21 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { Readiness, ReadinessRow } from "@/api/repoSetup";
+import type { Readiness, ReadinessRow, SetupProposal } from "@/api/repoSetup";
 
 const mockFetchReadiness = vi.fn();
 const mockSkipTesting = vi.fn();
+const mockFetchSetupCost = vi.fn();
+const mockStartSetup = vi.fn();
+const mockFetchProposal = vi.fn();
 vi.mock("@/api/repoSetup", () => ({
   fetchReadiness: (...a: unknown[]) => mockFetchReadiness(...a),
   skipTesting: (...a: unknown[]) => mockSkipTesting(...a),
+  fetchSetupCost: (...a: unknown[]) => mockFetchSetupCost(...a),
+  startSetup: (...a: unknown[]) => mockStartSetup(...a),
+  fetchProposal: (...a: unknown[]) => mockFetchProposal(...a),
+  applyProposal: vi.fn(),
+  rejectProposal: vi.fn(),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -138,6 +146,58 @@ const NEEDS_ADMIN = readiness({
   ],
 });
 
+const FAILED = readiness({
+  rows: [
+    CODE_DONE,
+    VALUES_DONE,
+    row("testing", "failed", "embry0 could not set up testing: the app did not start", {
+      action: { kind: "start_setup", label: "Try again" },
+      proposal_id: "prop-abc",
+    }),
+    FIRST_WAITING,
+    TRIGGER_UNKNOWN,
+  ],
+});
+
+const PROPOSAL: SetupProposal = {
+  id: "prop-abc",
+  repo: "acme/widgets",
+  status: "pending",
+  job_id: "job-123",
+  job_status: "completed",
+  created_by: "alex@example.com",
+  created_at: "2026-10-18T10:00:00Z",
+  decided_by: null,
+  decided_at: null,
+  notes_md: "",
+  failure: "",
+  smoke: { results: { web: "passed" }, failures: [] },
+  proposed_yaml: "version: 2\n",
+  current_yaml: null,
+  check: {
+    ok: true,
+    problems: [],
+    warnings: [],
+    summary: {
+      when: "auto",
+      when_plain: "When a change touches the app",
+      apps: [
+        {
+          name: "web",
+          target: "managed",
+          start: "npm run dev",
+          address: "http://localhost:5173",
+          address_is_local: true,
+          criteria: ["The home page loads"],
+          guardrails: 0,
+          machine: "qa-external",
+          machine_has_browser: true,
+        },
+      ],
+    },
+  },
+};
+
 const GOLD = /(^|\s)(bg-primary|bg-primary-dim|text-primary)(\s|$)/;
 
 /** Every element drawn in the gold: a gold fill, a gold wash or gold text. */
@@ -168,6 +228,9 @@ const rowEl = (key: string) => screen.getByTestId(`setup-row-${key}`);
 beforeEach(() => {
   mockFetchReadiness.mockReset();
   mockSkipTesting.mockReset();
+  mockFetchSetupCost.mockReset();
+  mockStartSetup.mockReset();
+  mockFetchProposal.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
 });
@@ -200,7 +263,7 @@ describe("SetupChecklist", () => {
     const card = await renderWith(data);
     const gold = goldElements(card);
     expect(gold).toHaveLength(1);
-    expect(gold[0]).toBe(within(rowEl("testing")).getByRole("link", { name: label }));
+    expect(gold[0]).toBe(within(rowEl("testing")).getByRole("button", { name: label }));
   });
 
   it.each([
@@ -288,10 +351,99 @@ describe("SetupChecklist", () => {
       "href",
       "/environments?repo=acme%2Fwidgets",
     );
-    expect(within(rowEl("testing")).getByRole("link", { name: "Let embry0 set up testing" })).toHaveAttribute(
-      "href",
-      "/repos/onboard?repo=acme%2Fwidgets",
-    );
+  });
+
+  it("asks before embry0 sets up testing, and starts nothing until Start", async () => {
+    const user = userEvent.setup();
+    mockFetchSetupCost.mockReturnValue(new Promise(() => {}));
+    await renderWith(UNCONFIGURED);
+    expect(within(rowEl("testing")).queryByRole("link")).not.toBeInTheDocument();
+    await user.click(within(rowEl("testing")).getByRole("button", { name: "Let embry0 set up testing" }));
+    const dialog = screen.getByRole("dialog", { name: "Let embry0 set up testing" });
+    expect(screen.getByTestId("setup-checklist")).not.toContainElement(dialog);
+    expect(mockFetchSetupCost).toHaveBeenCalledWith("acme/widgets");
+    expect(mockStartSetup).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockStartSetup).not.toHaveBeenCalled();
+  });
+
+  it("closes the dialog once embry0 has started", async () => {
+    const user = userEvent.setup();
+    mockFetchSetupCost.mockResolvedValue({
+      recorded_runs: 0,
+      typical_cost_usd: null,
+      per_job_budget_usd: 10,
+      model: "medium-model",
+      paid_from: null,
+    });
+    mockStartSetup.mockResolvedValue({ proposal_id: "prop-abc", job_id: "job-123" });
+    await renderWith(UNCONFIGURED);
+    await user.click(within(rowEl("testing")).getByRole("button", { name: "Let embry0 set up testing" }));
+    const dialog = screen.getByRole("dialog", { name: "Let embry0 set up testing" });
+    await within(dialog).findByText("No setup run is recorded here yet.");
+    await user.click(within(dialog).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mockStartSetup).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockFetchReadiness).toHaveBeenCalledTimes(2));
+  });
+
+  it("opens the review card under the testing row and keeps one gold", async () => {
+    const user = userEvent.setup();
+    mockFetchProposal.mockResolvedValue(PROPOSAL);
+    const card = await renderWith(REVIEW);
+    const toggle = within(rowEl("testing")).getByRole("button", { name: "Review the setup" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("setup-proposal")).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const proposal = within(rowEl("testing")).getByTestId("setup-proposal");
+    const apply = await within(proposal).findByRole("button", { name: "Apply this setup" });
+    expect(goldElements(card)).toEqual([apply]);
+    expect(toggle.className).toContain("border-border-strong");
+
+    await user.click(within(proposal).getByRole("button", { name: "Not now" }));
+    expect(screen.queryByTestId("setup-proposal")).not.toBeInTheDocument();
+    expect(goldElements(card)).toEqual([toggle]);
+  });
+
+  it("keeps the next step's gold on the row while a review card stays closed", async () => {
+    const user = userEvent.setup();
+    mockFetchProposal.mockResolvedValue(PROPOSAL);
+    const card = await renderWith(REVIEW);
+    const toggle = within(rowEl("testing")).getByRole("button", { name: "Review the setup" });
+    await user.click(toggle);
+    await user.click(toggle);
+    expect(screen.queryByTestId("setup-proposal")).not.toBeInTheDocument();
+    expect(goldElements(card)).toEqual([toggle]);
+  });
+
+  it("shows what happened in a failed run, and tries again from there", async () => {
+    const user = userEvent.setup();
+    mockFetchProposal.mockResolvedValue({
+      ...PROPOSAL,
+      status: "failed",
+      failure: "the app did not start",
+      proposed_yaml: null,
+      check: null,
+      smoke: null,
+    });
+    mockFetchSetupCost.mockReturnValue(new Promise(() => {}));
+    const card = await renderWith(FAILED);
+    const testing = rowEl("testing");
+    expect(goldElements(card)).toEqual([within(testing).getByRole("button", { name: "Try again" })]);
+
+    await user.click(within(testing).getByRole("button", { name: "See what happened" }));
+    const proposal = within(testing).getByTestId("setup-proposal");
+    await within(proposal).findByText(/embry0 could not set up testing: the app did not start/);
+    const tryAgain = within(proposal).getByRole("button", { name: "Try again" });
+    expect(within(testing).getAllByRole("button", { name: "Try again" })).toEqual([tryAgain]);
+    expect(within(testing).getAllByRole("button", { name: "Skip testing for now" })).toHaveLength(1);
+    expect(goldElements(card)).toEqual([tryAgain]);
+
+    await user.click(tryAgain);
+    expect(screen.getByRole("dialog", { name: "Let embry0 set up testing" })).toBeInTheDocument();
   });
 
   it("links progress, a fix, a first task and the first pull request", async () => {
@@ -315,10 +467,9 @@ describe("SetupChecklist", () => {
         ],
       }),
     );
-    expect(within(rowEl("testing")).getByRole("link", { name: "Let embry0 fix the setup" })).toHaveAttribute(
-      "href",
-      "/repos/onboard?repo=acme%2Fwidgets",
-    );
+    mockFetchSetupCost.mockReturnValue(new Promise(() => {}));
+    await userEvent.setup().click(within(rowEl("testing")).getByRole("button", { name: "Let embry0 fix the setup" }));
+    expect(screen.getByRole("dialog", { name: "Let embry0 set up testing" })).toBeInTheDocument();
     expect(within(rowEl("first_task")).getByRole("link", { name: "Give embry0 a first task" })).toHaveAttribute(
       "href",
       "/issues",

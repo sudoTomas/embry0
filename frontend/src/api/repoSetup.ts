@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { isNotFound } from "./errorDetail";
 
 /** Where a repository stands overall (GET /repos/{repo}/readiness). */
 export type ReadinessStatus = "ready" | "steps_left" | "needs_admin" | "setup_to_review";
@@ -79,4 +80,156 @@ export async function fetchReadiness(fullRepo: string): Promise<Readiness> {
 export async function skipTesting(fullRepo: string): Promise<SkipTestingResult> {
   const { data } = await api.post<SkipTestingResult>(`/repos/${fullRepo}/setup/skip-testing`);
   return data;
+}
+
+/** What the free check of a test setup asks a person to see (PR 4's warning codes). */
+export type QaCheckWarningCode =
+  | "live_address"
+  | "deployed_target"
+  | "deployed_without_guardrails"
+  | "needs_docker"
+  | "testing_off"
+  | "login_value_missing";
+
+export interface QaCheckProblem {
+  where: string;
+  plain: string;
+  fix: string;
+}
+
+export interface QaCheckWarning {
+  code: QaCheckWarningCode;
+  plain: string;
+  /** A person must tick it before the setup is applied. */
+  confirm: boolean;
+}
+
+export interface QaCheckApp {
+  name: string;
+  target: "managed" | "deployed";
+  start: string | null;
+  address: string;
+  address_is_local: boolean;
+  criteria: string[];
+  guardrails: number;
+  machine: string;
+  machine_has_browser: boolean;
+}
+
+export interface QaCheckSummary {
+  when: "auto" | "always" | "never";
+  when_plain: string;
+  apps: QaCheckApp[];
+}
+
+/**
+ * The free check of a test setup (no model, no forge call). A copy of the
+ * settings lane's type in api/qaConfig.ts; merge the two once both land.
+ */
+export interface QaCheckResult {
+  ok: boolean;
+  problems: QaCheckProblem[];
+  warnings: QaCheckWarning[];
+  summary: QaCheckSummary | null;
+}
+
+/** Recorded facts about setup runs on this embry0, never an estimate. */
+export interface SetupCost {
+  /** Finished setup runs the median is taken over (the newest 20). */
+  recorded_runs: number;
+  typical_cost_usd: number | null;
+  per_job_budget_usd: number;
+  model: string;
+  /** The AI account that pays; null when it does not resolve. */
+  paid_from: string | null;
+}
+
+export interface StartSetupResult {
+  proposal_id: string;
+  job_id: string;
+}
+
+export type SetupProposalStatus = "running" | "pending" | "applied" | "rejected" | "stale" | "failed";
+
+/** The onboarding agent's boot and ready-check run: each app's outcome ("passed" when it answered). */
+export interface SetupSmoke {
+  results?: Record<string, string>;
+  failures?: string[];
+  skipped?: boolean;
+}
+
+/** A test setup the onboarding agent proposed, for a person to apply or turn down. */
+export interface SetupProposal {
+  id: string;
+  repo: string;
+  status: SetupProposalStatus;
+  job_id: string | null;
+  job_status: string | null;
+  created_by: string;
+  created_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  notes_md: string;
+  failure: string;
+  smoke: SetupSmoke | null;
+  proposed_yaml: string | null;
+  /** The stored setup now; null when there is none. */
+  current_yaml: string | null;
+  /** The free check of the proposed text; null when it was not run. */
+  check: QaCheckResult | null;
+}
+
+export interface ApplyProposalResult {
+  revision_id: number | null;
+}
+
+export async function fetchSetupCost(fullRepo: string): Promise<SetupCost> {
+  const { data } = await api.get<SetupCost>(`/repos/${fullRepo}/setup/cost`);
+  return data;
+}
+
+/**
+ * Start the onboarding agent in propose mode. Only the consent dialog's
+ * Start sends this; it shows any refusal itself (409 while a run is live).
+ */
+export async function startSetup(fullRepo: string): Promise<StartSetupResult> {
+  const { data } = await api.post<StartSetupResult>(
+    `/repos/${fullRepo}/setup/propose`,
+    { confirm_spend: true },
+    { suppressValidationToast: true, suppressErrorToast: true },
+  );
+  return data;
+}
+
+/** The latest proposal for a repository, or null when it has none. */
+export async function fetchProposal(fullRepo: string): Promise<SetupProposal | null> {
+  try {
+    const { data } = await api.get<SetupProposal>(`/repos/${fullRepo}/setup/proposal`);
+    return data;
+  } catch (error) {
+    if (isNotFound(error)) return null;
+    throw error;
+  }
+}
+
+/**
+ * Apply a pending proposal, naming every warning the person ticked. 409 when
+ * the setup changed since the proposal (it is then stale); 422 when the check
+ * fails or a warning was not ticked. The card shows either reason.
+ */
+export async function applyProposal(
+  fullRepo: string,
+  proposalId: string,
+  acknowledged: QaCheckWarningCode[],
+): Promise<ApplyProposalResult> {
+  const { data } = await api.post<ApplyProposalResult>(
+    `/repos/${fullRepo}/setup/proposal/${proposalId}/apply`,
+    { acknowledged },
+    { suppressValidationToast: true },
+  );
+  return data;
+}
+
+export async function rejectProposal(fullRepo: string, proposalId: string): Promise<void> {
+  await api.post(`/repos/${fullRepo}/setup/proposal/${proposalId}/reject`);
 }
