@@ -63,6 +63,15 @@ def effective_skills(base: Iterable[str], *deltas: Any) -> list[str]:
     return current
 
 
+def is_repository_skill(name: str) -> bool:
+    """A name without a colon is the target repository's own ``.claude/skills`` entry.
+
+    The catalog cannot list those, so they are never checked against it, and
+    they pass through to the SDK allowlist as written.
+    """
+    return ":" not in name
+
+
 def closest_names(name: str, known: Iterable[str], n: int = 3) -> list[str]:
     """Up to ``n`` known names, most similar first."""
     candidates = sorted(set(known))
@@ -70,7 +79,10 @@ def closest_names(name: str, known: Iterable[str], n: int = 3) -> list[str]:
 
 
 class UnknownSkillError(ValueError):
-    """Skill names the catalog does not know, each with its closest known names."""
+    """Skill names the catalog does not know, each with its closest known names.
+
+    Repository skills (no colon, ``is_repository_skill``) are never unknown.
+    """
 
     def __init__(self, unknown: list[str], suggestions: dict[str, list[str]]) -> None:
         self.unknown = unknown
@@ -80,7 +92,7 @@ class UnknownSkillError(ValueError):
 
 
 def check_skill_names(names: Iterable[str], catalog_names: Collection[str]) -> None:
-    """Raise UnknownSkillError when any name is missing from the catalog."""
-    unknown = [n for n in dict.fromkeys(names) if n not in catalog_names]
+    """Raise UnknownSkillError when any catalog-shaped name is missing from the catalog."""
+    unknown = [n for n in dict.fromkeys(names) if not is_repository_skill(n) and n not in catalog_names]
     if unknown:
         raise UnknownSkillError(unknown, {u: closest_names(u, catalog_names) for u in unknown})

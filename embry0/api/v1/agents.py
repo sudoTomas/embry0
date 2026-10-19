@@ -4,10 +4,11 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from embry0.agents.skills import UnknownSkillError, check_skill_names
+from embry0.agents.skills import is_repository_skill
 from embry0.api.deps import get_agent_defs_repo, require_admin
 from embry0.api.schemas import AgentCreateRequest, AgentUpdateRequest
 from embry0.api.v1._audit import audit
+from embry0.api.v1._skill_writes import check_added_skills
 from embry0.services.model_enablement import (
     DisabledModelError,
     UnpricedModelError,
@@ -62,19 +63,6 @@ async def catalog_skill_names(request: Request) -> set[str] | None:
     return {c["name"] for c in await repo.catalog()}
 
 
-async def check_catalog_skills(request: Request, names: list[str] | None) -> None:
-    """A save naming a skill the catalog does not know is a 422 naming the closest known ones."""
-    if not names:
-        return
-    known = await catalog_skill_names(request)
-    if known is None:
-        return
-    try:
-        check_skill_names(names, known)
-    except UnknownSkillError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
 @router.get("/agents")
 async def list_agents(
     request: Request,
@@ -96,8 +84,11 @@ async def get_agent(
         raise HTTPException(status_code=404, detail="Agent type not found")
     [annotated] = await annotate_agents([agent], request.app.state)
     known = await catalog_skill_names(request)
+    # A repository skill (no colon) is never in the catalog, and never an orphan.
     annotated["orphan_skills"] = (
-        [s for s in annotated.get("skills") or [] if s not in known] if known is not None else []
+        [s for s in annotated.get("skills") or [] if not is_repository_skill(s) and s not in known]
+        if known is not None
+        else []
     )
     return annotated
 
@@ -109,9 +100,9 @@ async def create_agent(
     repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
 ) -> dict[str, Any]:
     await _reject_if_disabled(request, req.model)
-    await check_catalog_skills(request, req.skills)
+    warnings = await check_added_skills(request, req.skills or [])
     try:
-        return await repo.create(
+        created = await repo.create(
             agent_type=req.type,
             description=req.description,
             model=req.model,
@@ -130,6 +121,7 @@ async def create_agent(
         if "duplicate" in str(exc).lower() or "unique" in str(exc).lower():
             raise HTTPException(status_code=409, detail=f"Agent type '{req.type}' already exists") from exc
         raise
+    return {**created, "warnings": warnings}
 
 
 @router.put("/agents/{agent_type}", dependencies=[require_admin])
@@ -149,13 +141,19 @@ async def update_agent(
         if key in updates and updates[key] is None:
             raise HTTPException(status_code=422, detail=f"{key} cannot be null")
     await _reject_if_disabled(request, updates.get("model"))
-    await check_catalog_skills(request, updates.get("skills"))
+    warnings: list[str] = []
+    if updates.get("skills"):
+        # Only the names this write adds are checked: the form sends the whole list
+        # on every save, and names the row already has keep working (spec 3.3).
+        stored = await repo.get(agent_type)
+        had = set((stored or {}).get("skills") or [])
+        warnings = await check_added_skills(request, [s for s in updates["skills"] if s not in had])
     if not updates:
         agent = await repo.get(agent_type)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent type not found")
-        return agent
-    return await repo.update(agent_type, **updates)
+        return {**agent, "warnings": warnings}
+    return {**await repo.update(agent_type, **updates), "warnings": warnings}
 
 
 @router.delete("/agents/{agent_type}", dependencies=[require_admin])
@@ -190,17 +188,20 @@ async def add_agent_skill(
     request: Request,
     repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
 ) -> dict[str, Any]:
-    """Add one catalog skill to an agent; adding one it already has is a no-op."""
+    """Add one skill to an agent; adding one it already has is a no-op.
+
+    A catalog name must be known; a bare name is the target repository's own skill.
+    """
     agent = await repo.get(agent_type)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent type not found")
-    await check_catalog_skills(request, [skill_name])
     skills = list(agent.get("skills") or [])
     if skill_name in skills:
-        return agent
+        return {**agent, "warnings": []}
+    warnings = await check_added_skills(request, [skill_name])
     updated = await repo.update(agent_type, skills=[*skills, skill_name])
     await audit(request, "agent.skill_added", agent_type=agent_type, skill=skill_name)
-    return updated
+    return {**updated, "warnings": warnings}
 
 
 @router.delete("/agents/{agent_type}/skills/{skill_name}", dependencies=[require_admin])

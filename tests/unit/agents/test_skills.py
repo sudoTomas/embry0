@@ -44,6 +44,14 @@ def test_check_skill_names_lists_unknown_with_suggestions() -> None:
     assert "superpowers:writing-plans" in str(exc.value)
 
 
+def test_check_skill_names_passes_repository_skills_through() -> None:
+    """A name without a colon is the target repository's own skill; the catalog cannot list it."""
+    check_skill_names(["commit-standard", "superpowers:brainstorming"], {"superpowers:brainstorming"})
+    with pytest.raises(UnknownSkillError) as exc:
+        check_skill_names(["commit-standard", "nope:x"], {"superpowers:brainstorming"})
+    assert exc.value.unknown == ["nope:x"]
+
+
 def test_closest_names_is_bounded_and_ranked() -> None:
     assert len(closest_names("x", ["a", "b", "c", "d"], n=2)) == 2
     assert closest_names("writing-plan", ["writing-plans", "brainstorming", "debugging"], n=1) == ["writing-plans"]

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from embry0.agents.skills import normalize_delta
 from embry0.api.deps import get_templates_repo
 from embry0.api.schemas import TemplateCreateRequest, TemplateDuplicateRequest, TemplateUpdateRequest
-from embry0.api.v1.agents import check_catalog_skills
+from embry0.api.v1._skill_writes import check_added_skills
 from embry0.services.model_enablement import UnpricedModelError, ensure_models_priced
 from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
 from embry0.workflows._validation import validate_graph_definition
@@ -32,8 +32,8 @@ def _reject_unpriced(graph: dict[str, Any] | None) -> None:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-async def _reject_unknown_skills(request: Request, graph: dict[str, Any] | None) -> None:
-    """Every skill a node adds must be in the catalog; a malformed skills delta is a 422."""
+def _added_skills(graph: dict[str, Any] | None) -> list[str]:
+    """Every name the graph's nodes add; a malformed skills delta is a 422."""
     added: list[str] = []
     for n in (graph or {}).get("nodes") or []:
         skills = node_config(n).get("skills")
@@ -43,7 +43,26 @@ async def _reject_unknown_skills(request: Request, graph: dict[str, Any] | None)
             added.extend(normalize_delta(skills)["add"])
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"node {n.get('node_id')!r}: {exc}") from exc
-    await check_catalog_skills(request, added)
+    return added
+
+
+def _stored_added_skills(template: dict[str, Any] | None) -> set[str]:
+    """The names a stored template already adds; a node whose delta no longer parses adds none."""
+    names: set[str] = set()
+    for n in ((template or {}).get("graph_definition") or {}).get("nodes") or []:
+        try:
+            names.update(normalize_delta(node_config(n).get("skills"))["add"])
+        except ValueError:
+            continue
+    return names
+
+
+async def _check_template_skills(
+    request: Request, graph: dict[str, Any] | None, *, already: set[str] | None = None
+) -> list[str]:
+    """Check the names the graph adds that ``already`` does not hold; return the warnings."""
+    added = _added_skills(graph)
+    return await check_added_skills(request, [s for s in added if s not in (already or set())])
 
 
 @router.get("/pipelines/templates")
@@ -76,14 +95,15 @@ async def create_template(
     if problems:
         raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(req.graph_definition)
-    await _reject_unknown_skills(request, req.graph_definition)
-    return await repo.create(
+    warnings = await _check_template_skills(request, req.graph_definition)
+    created = await repo.create(
         name=req.name,
         description=req.description,
         graph_definition=req.graph_definition,
         sandbox_profile=req.sandbox_profile,
         default_for_kind=req.default_for_kind,
     )
+    return {**created, "warnings": warnings}
 
 
 @router.put("/pipelines/templates/{template_id}")
@@ -104,8 +124,12 @@ async def update_template(
         if problems:
             raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(updates.get("graph_definition"))
-    await _reject_unknown_skills(request, updates.get("graph_definition"))
-    return await repo.update(template_id, **updates)
+    warnings: list[str] = []
+    if "graph_definition" in updates:
+        # Only the names this save adds are checked; names the stored template has keep working.
+        already = _stored_added_skills(await repo.get(template_id))
+        warnings = await _check_template_skills(request, updates["graph_definition"], already=already)
+    return {**await repo.update(template_id, **updates), "warnings": warnings}
 
 
 @router.delete("/pipelines/templates/{template_id}")

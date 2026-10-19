@@ -143,9 +143,10 @@ def _graph_with_developer(node: dict) -> dict:
     }
 
 
-def _catalog(*names: str) -> MagicMock:
+def _catalog(*names: str, sources: list[dict] | None = None) -> MagicMock:
     repo = MagicMock()
     repo.catalog = AsyncMock(return_value=[{"name": n, "available": True} for n in names])
+    repo.list_all = AsyncMock(return_value=sources or [])
     return repo
 
 
@@ -211,3 +212,54 @@ async def test_an_unpriced_model_at_the_legacy_top_level_is_refused(app):
     assert r.status_code == 422, f"a legacy-shaped unpriced model must be refused, got {r.status_code}"
     assert "grok-9-unpriced" in r.text
     app.state.templates_repo.create.assert_not_awaited()
+
+
+_PENDING_SUPERPOWERS = [{"id": "superpowers", "plugin_name": "", "status": "pending", "enabled": True}]
+
+
+@pytest.mark.asyncio
+async def test_a_template_update_keeping_its_skills_saves_with_an_empty_catalog(app):
+    node = {"config": {"skills": {"add": ["superpowers:brainstorming"], "remove": ["superpowers:writing-plans"]}}}
+    graph = _graph_with_developer(node)
+    app.state.templates_repo.get = AsyncMock(return_value={**SAMPLE_TEMPLATE, "graph_definition": graph})
+    app.state.skill_sources_repo = _catalog()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/v1/pipelines/templates/tmpl-1",
+            json={"name": "t", "graph_definition": graph},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 200, r.text
+    assert r.json()["warnings"] == []
+    app.state.templates_repo.update.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_template_update_adding_an_unknown_skill_is_still_refused(app):
+    kept = _graph_with_developer({"config": {"skills": {"add": ["superpowers:brainstorming"]}}})
+    app.state.templates_repo.get = AsyncMock(return_value={**SAMPLE_TEMPLATE, "graph_definition": kept})
+    app.state.skill_sources_repo = _catalog()
+    graph = _graph_with_developer({"config": {"skills": {"add": ["superpowers:brainstorming", "nope:x"]}}})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/v1/pipelines/templates/tmpl-1",
+            json={"graph_definition": graph},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 422, r.text
+    assert "nope:x" in r.text and "superpowers:brainstorming" not in r.text.split("did you mean")[0]
+    app.state.templates_repo.update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_template_adding_a_pending_source_skill_saves_with_a_warning(app):
+    app.state.skill_sources_repo = _catalog(sources=_PENDING_SUPERPOWERS)
+    node = {"config": {"skills": {"add": ["superpowers:brainstorming", "commit-standard"]}}}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _graph_with_developer(node)},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 201, r.text
+    assert [w.split()[0] for w in r.json()["warnings"]] == ["superpowers:brainstorming"]

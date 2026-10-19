@@ -413,7 +413,8 @@ async def agent_update(
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Update an agent definition (only provided fields change). execution_mode: sdk|cli;
-    auth_mode: api_key|oauth; avatar and color are roster and palette ids.
+    auth_mode: api_key|oauth; avatar and color are roster and palette ids. skills: only names the agent
+    does not have yet are checked, and a bare name (no colon) is the target repository's own skill.
     Requires confirm=true (changes live pipeline behavior)."""
     if not confirm:
         return _confirmation_refusal("agent_update", f"update agent definition {agent_type!r}")
@@ -491,9 +492,10 @@ async def agent_reset(agent_type: str, confirm: bool = False) -> dict[str, Any]:
 
 @_tool
 async def agent_skill_add(agent_type: str, skill_name: str, confirm: bool = False) -> dict[str, Any]:
-    """Add one skill (a `plugin:skill` name from skill_list) to an agent definition; adding one it
-    already has is a no-op. An unknown name answers 422 with the closest known names. Returns the agent.
-    Requires confirm=true (changes live pipeline behavior)."""
+    """Add one skill (a `plugin:skill` name from skill_list, or a bare name for the target repository's own
+    skill, which is not checked) to an agent definition; adding one it already has is a no-op. An unknown
+    name answers 422 with the closest known names; one from a source not ready yet is added and listed in
+    `warnings`. Returns the agent. Requires confirm=true (changes live pipeline behavior)."""
     if not confirm:
         return _confirmation_refusal("agent_skill_add", f"add skill {skill_name!r} to agent {agent_type!r}")
     return await _get_client().agent_skill_add(agent_type, skill_name)
