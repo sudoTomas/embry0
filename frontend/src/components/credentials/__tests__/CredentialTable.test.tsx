@@ -57,6 +57,13 @@ describe("CredentialTable", () => {
     expect(row).not.toHaveTextContent("llm_api_key");
   });
 
+  it("names the default commit author in words, never the internal fallback", () => {
+    render(<CredentialTable credentials={[cred({ git_author_name: null, git_author_email: null })]} isAdmin {...handlers()} />);
+    const cell = screen.getByText("embry0 default");
+    expect(cell).toHaveAttribute("title", expect.stringContaining("EMBRY0_GIT_AUTHOR_NAME"));
+    expect(screen.getByTestId("credential-row")).not.toHaveTextContent("branding default");
+  });
+
   it("renders the empty state", () => {
     render(<CredentialTable credentials={[]} isAdmin {...handlers()} />);
     expect(screen.getByText("No credentials yet")).toBeInTheDocument();
