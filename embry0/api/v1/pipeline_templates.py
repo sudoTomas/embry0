@@ -129,7 +129,10 @@ async def update_template(
         # Only the names this save adds are checked; names the stored template has keep working.
         already = _stored_added_skills(await repo.get(template_id))
         warnings = await _check_template_skills(request, updates["graph_definition"], already=already)
-    return {**await repo.update(template_id, **updates), "warnings": warnings}
+    updated = await repo.update(template_id, **updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {**updated, "warnings": warnings}
 
 
 @router.delete("/pipelines/templates/{template_id}")

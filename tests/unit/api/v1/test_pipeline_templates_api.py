@@ -263,3 +263,16 @@ async def test_a_template_adding_a_pending_source_skill_saves_with_a_warning(app
         )
     assert r.status_code == 201, r.text
     assert [w.split()[0] for w in r.json()["warnings"]] == ["superpowers:brainstorming"]
+
+
+@pytest.mark.asyncio
+async def test_updating_a_missing_template_is_404(app):
+    app.state.templates_repo.get = AsyncMock(return_value=None)
+    app.state.templates_repo.update = AsyncMock(return_value=None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/v1/pipelines/templates/nope",
+            json={"description": "d"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 404, r.text
