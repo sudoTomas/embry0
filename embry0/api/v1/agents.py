@@ -58,7 +58,10 @@ async def list_agents(
     repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
 ) -> list[dict[str, Any]]:
     """Every agent definition, each with the provider its model routes to and
-    whether that provider has a credential right now (``provider``, ``provider_ready``)."""
+    whether that provider has a credential right now (``provider``, ``provider_ready``),
+    and the model and provider a job that names no model runs it on
+    (``effective_model``, ``effective_model_source``, ``effective_provider``,
+    ``effective_provider_ready``)."""
     return await annotate_agents(await repo.list_all(), request.app.state)
 
 

@@ -50,3 +50,23 @@ def build_model_policy(provider_config: Mapping[str, Any]) -> dict[str, Any]:
         "disabled_models": list(disabled) if isinstance(disabled, (list, tuple, set, frozenset)) else [],
         "tier_models": {tier: provider_config.get(tier) or "" for tier in TIER_KEYS},
     }
+
+
+def resolve_tier_models(provider_config: Mapping[str, Any] | None, app_config: Any) -> dict[str, str]:
+    """Each tier's model as runs read it, so every tier names one.
+
+    The provider_config row (None when it could not be read), then
+    ``Embry0Config`` (``MODEL_HEAVY`` and the rest), then the config class
+    default. Triage names these tiers, and every pr-review job runs on the
+    heavy one.
+    """
+    from embry0.config import Embry0Config
+
+    policy = build_model_policy(provider_config or {})
+    tiers: dict[str, str] = {}
+    for tier in TIER_KEYS:
+        configured = policy["tier_models"][tier] or getattr(app_config, tier, None)
+        tiers[tier] = (
+            configured if isinstance(configured, str) and configured else Embry0Config.model_fields[tier].default
+        )
+    return tiers

@@ -10,7 +10,7 @@ from typing import Any
 
 import structlog
 
-from embry0.agents.model_policy import TIER_KEYS, build_model_policy
+from embry0.agents.model_policy import build_model_policy, resolve_tier_models
 from embry0.agents.resolver import resolve_agent_invocation
 from embry0.agents.session import AgentSession
 from embry0.execution.auth_provider import AuthConfigError
@@ -222,20 +222,12 @@ async def load_triage_model_settings(config: Any) -> tuple[str, dict[str, str]]:
     Tiers resolve the way ``GET /config/models`` resolves them — the
     provider_config row, then ``Embry0Config`` — and end at the config class
     defaults so the prompt always has a model to name (no-DB callers: unit
-    tests, minimal setups). Best-effort like ``load_model_policy``.
+    tests, minimal setups), through ``resolve_tier_models``, which ``GET
+    /agents`` reads them with too. Best-effort like ``load_model_policy``.
     """
-    from embry0.config import Embry0Config
-
-    cfg = await _provider_config_row(config, failure_event="triage_model_settings_load_failed") or {}
-    policy = build_model_policy(cfg)
-    app_config = _graph_configurable(config).get("embry0_config")
-    tiers: dict[str, str] = {}
-    for tier in TIER_KEYS:
-        configured = policy["tier_models"][tier] or getattr(app_config, tier, None)
-        tiers[tier] = (
-            configured if isinstance(configured, str) and configured else Embry0Config.model_fields[tier].default
-        )
-    return policy["default_model"], tiers
+    cfg = await _provider_config_row(config, failure_event="triage_model_settings_load_failed")
+    default_model = build_model_policy(cfg or {})["default_model"]
+    return default_model, resolve_tier_models(cfg, _graph_configurable(config).get("embry0_config"))
 
 
 async def load_budget_policy(config: Any) -> tuple[float, str]:

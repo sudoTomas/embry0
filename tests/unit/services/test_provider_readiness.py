@@ -119,6 +119,10 @@ def test_annotate_agent_names_provider_and_readiness():
         "model": "claude-opus-5",
         "provider": "anthropic",
         "provider_ready": True,
+        "effective_model": "claude-opus-5",
+        "effective_model_source": "agent",
+        "effective_provider": "anthropic",
+        "effective_provider_ready": True,
     }
     grok = annotate_agent({"type": "grok-dev", "model": "grok-4.5"}, readiness)
     assert (grok["provider"], grok["provider_ready"]) == ("xai", False)

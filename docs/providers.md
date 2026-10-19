@@ -135,6 +135,21 @@ that, from the same sources (`embry0/services/provider_readiness.py`):
 - `GET /agents` and `GET /agents/{type}` carry `provider` (the catalogue
   provider the agent's `model` routes to, `null` when no prefix matches) and
   `provider_ready` for every agent. The Agents page shows them as a column.
+  The stored `model` is not always what runs: a default model replaces it,
+  and a disabled one falls back to a tier model. So each agent also carries
+  `effective_model`, the model a job that names none runs, resolved by the
+  code the executor uses (`effective_agent_model` in
+  `embry0/agents/resolver.py`), with `effective_model_source` (`agent`,
+  `default_model`, `disabled_fallback`, `builtin_default` or
+  `per_job_heavy_tier`), `effective_provider` and `effective_provider_ready`.
+  A job's own models, a pipeline template's and triage's picks still apply on
+  top of it. The `pr-reviewer` reports `per_job_heavy_tier`: every pr-review
+  job names its model, the heavy tier (the provider_config `model_heavy`,
+  then `MODEL_HEAVY`, then the built-in default), so neither its stored model
+  nor the default model moves it. A repository's `pr_review.model` overrides
+  the heavy tier for that repository's reviews.
+- `GET /config/models` marks as `default` the provider that serves the
+  default model when one is set, and Anthropic otherwise.
 - The agent form names the provider of the chosen model, a custom id
   included, and whether it is ready; it matches by `model_prefixes`, the rule
   the backend routes by. The model picker offers every tier and catalogue

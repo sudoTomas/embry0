@@ -24,12 +24,52 @@ logger = structlog.get_logger(__name__)
 _FALLBACK_TIER_FOR_AGENT = {"developer": "model_heavy"}
 
 
+# The model a run uses when nothing names one: no agent model, no default
+# model and no override.
+BUILTIN_DEFAULT_MODEL = "claude-sonnet-5"
+
+# Agents whose every job names a tier model through agent_models_override, so
+# neither the agent's own model nor the default model applies to them: a
+# pr-review job runs the repo's pr_review.model, else the heavy tier
+# (_pr_review_model in embry0/services/_executor_run.py).
+PER_JOB_TIER_FOR_AGENT: dict[str, str] = {"pr-reviewer": "model_heavy"}
+
+
 @dataclass(frozen=True)
 class ResolvedAgentConfig:
     model: str
     tools: list[str]
     skills: list[str]
     system_prompt: str
+
+
+@dataclass(frozen=True)
+class FinalModel:
+    """The model a run uses, after the built-in default and the disabled-model fallback.
+
+    ``disabled_model`` is the model the policy disables when one was chosen;
+    ``tier`` is the tier that replaced it, or None when nothing could and it
+    runs anyway.
+    """
+
+    model: str
+    disabled_model: str | None = None
+    tier: str | None = None
+
+
+@dataclass(frozen=True)
+class EffectiveAgentModel:
+    """What an agent runs on when its job, template and triage name no model.
+
+    ``source`` says which level chose it: ``agent`` (its own model),
+    ``default_model`` (the deployment's default model), ``disabled_fallback``
+    (a tier model standing in for a disabled one), ``builtin_default``
+    (nothing named one) or ``per_job_heavy_tier`` (the tier every job of the
+    agent names, ``PER_JOB_TIER_FOR_AGENT``).
+    """
+
+    model: str
+    source: str
 
 
 def _ensure_list(value: Any) -> list[str]:
@@ -113,6 +153,64 @@ def resolve_agent_config(
         skills=skills,
         system_prompt=system_prompt,
     )
+
+
+def finalize_agent_model(agent_type: str, model: str, model_policy: Mapping[str, Any] | None) -> FinalModel:
+    """The model a run uses for the resolved ``model``.
+
+    An empty model is the built-in default. A disabled one falls back to the
+    agent's tier default, heavy for the developer and medium otherwise; when
+    that is missing or disabled too, the pinned model runs anyway (fail-open:
+    an enablement toggle must never kill jobs). Pure, so the agents API can
+    report the same answer the run gets.
+    """
+    final_model = model or BUILTIN_DEFAULT_MODEL
+    disabled = set((model_policy or {}).get("disabled_models") or [])
+    if final_model not in disabled:
+        return FinalModel(final_model)
+    tier_models = (model_policy or {}).get("tier_models") or {}
+    tier = _FALLBACK_TIER_FOR_AGENT.get(agent_type, "model_medium")
+    fallback = tier_models.get(tier) or ""
+    if fallback and fallback not in disabled:
+        return FinalModel(fallback, disabled_model=final_model, tier=tier)
+    return FinalModel(final_model, disabled_model=final_model)
+
+
+def effective_agent_model(
+    agent_type: str,
+    agent_definition: Mapping[str, Any],
+    model_policy: Mapping[str, Any] | None,
+    *,
+    tier_models: Mapping[str, str],
+) -> EffectiveAgentModel:
+    """The model a run of ``agent_type`` uses when the job, its template and triage name none.
+
+    The steps ``resolve_agent_invocation`` takes, with the per-job levels the
+    executor itself sets: for an agent in ``PER_JOB_TIER_FOR_AGENT`` the tier
+    model every one of its jobs names (from ``tier_models``, read as runs read
+    them: ``embry0.agents.model_policy.resolve_tier_models``), for any other
+    the definition's model with the deployment's default model over it; then
+    ``finalize_agent_model``. ``GET /agents`` reports it next to the stored
+    model, which the default model replaces at run time (#465).
+    """
+    job_tier = PER_JOB_TIER_FOR_AGENT.get(agent_type)
+    if job_tier is not None:
+        final = finalize_agent_model(agent_type, tier_models[job_tier], model_policy)
+        tier_source = f"per_job_{job_tier.removeprefix('model_')}_tier"
+        return EffectiveAgentModel(final.model, "disabled_fallback" if final.tier is not None else tier_source)
+    stored = str(agent_definition.get("model") or "")
+    default_model = str((model_policy or {}).get("default_model") or "")
+    resolved = resolve_agent_config(agent_type, dict(agent_definition), default_model=default_model).model
+    final = finalize_agent_model(agent_type, resolved, model_policy)
+    if final.tier is not None:
+        source = "disabled_fallback"
+    elif not resolved:
+        source = "builtin_default"
+    elif default_model and resolved != stored:
+        source = "default_model"
+    else:
+        source = "agent"
+    return EffectiveAgentModel(final.model, source)
 
 
 _VALID_EXECUTION_MODES = {"sdk", "cli"}
@@ -208,35 +306,28 @@ def resolve_agent_invocation(
 
     from embry0.agents.providers import provider_for_model, unpriced_models, unpriced_models_message
 
-    final_model = resolved.model or "claude-sonnet-5"
-
     # RAV-1297 enablement: model_policy = {"default_model": ...,
     # "disabled_models": [...],
     # "tier_models": {"model_heavy": ..., "model_medium": ..., "model_light": ...}}
     # (loaded best-effort from provider_config by run_agent_node). A disabled
     # final model falls back to the agent's tier default with a warning; if
-    # no runnable fallback exists, the pinned model runs anyway (fail-open —
-    # an enablement toggle must never kill jobs).
-    disabled = set((model_policy or {}).get("disabled_models") or [])
-    if final_model in disabled:
-        tier_models = (model_policy or {}).get("tier_models") or {}
-        tier = _FALLBACK_TIER_FOR_AGENT.get(agent_type, "model_medium")
-        fallback = tier_models.get(tier) or ""
-        if fallback and fallback not in disabled:
-            logger.warning(
-                "agent_model_disabled_fallback",
-                agent_type=agent_type,
-                disabled_model=final_model,
-                fallback_model=fallback,
-                tier=tier,
-            )
-            final_model = fallback
-        else:
-            logger.warning(
-                "agent_model_disabled_no_fallback",
-                agent_type=agent_type,
-                disabled_model=final_model,
-            )
+    # no runnable fallback exists, the pinned model runs anyway.
+    final = finalize_agent_model(agent_type, resolved.model, model_policy)
+    if final.disabled_model is not None and final.tier is not None:
+        logger.warning(
+            "agent_model_disabled_fallback",
+            agent_type=agent_type,
+            disabled_model=final.disabled_model,
+            fallback_model=final.model,
+            tier=final.tier,
+        )
+    elif final.disabled_model is not None:
+        logger.warning(
+            "agent_model_disabled_no_fallback",
+            agent_type=agent_type,
+            disabled_model=final.disabled_model,
+        )
+    final_model = final.model
 
     # #219: a provider-routed model with no price entry would run unmetered —
     # the provider reports no cost, so the price table is the only accounting.
