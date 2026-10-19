@@ -19,7 +19,21 @@ rotation are [backup-restore.md](backup-restore.md).
 - **The release that adds skill sources** (migration 101) brings a compose change and a sandbox change:
   - The `skills-store` volume, mounted at `/skills` in `orchestrator` and at `/skills:ro` in `dind`, is created by the first `docker compose up` after the release. Because `dind`'s configuration changed, that first `infra/deploy.sh` also recreates `dind` (compose converges a changed dependency of a service it brings up), which restarts the sandbox daemon and kills every sandbox, the sandboxes of paused and awaiting-input jobs included: deploy this release with no job active, not just none `running`. The orchestrator image rebuild creates `/skills` owned by the `orchestrator` user, and the empty named volume takes that ownership on first use.
   - `embry0/agents/config_builder.py`, `embry0/agents/invocation.py` and `embry0/sandbox/runner.py` are baked into the sandbox images, so run the sandbox [rebuild recipe](#images-registry-pins-and-rebuilds) too. Until then the skill trees are mounted into sandboxes and the agents ignore them.
-  - At first boot the orchestrator syncs the builtin `superpowers` and `local` sources in the background, which needs outbound https to the `superpowers` repository's host; `GET /api/v1/skills/sources` shows `pending` until each is `ready`. To check a deployment: both sources `ready`, `GET /api/v1/skills` lists `superpowers:*`, and a job's `agent_started` event carries `skill_sources`.
+  - At first boot the orchestrator syncs the builtin `superpowers` and `local` sources in the background, which needs outbound https to the `superpowers` repository's host; `GET /api/v1/skills/sources` shows `pending` until each is `ready`. To check a deployment: both sources `ready`, `GET /api/v1/skills` lists `superpowers:*`, and a job's `agent_started` event carries `skill_sources`. A startup sync that fails is retried after 60 s, 300 s and 900 s, then left: a source still showing `error` in `GET /api/v1/skills/sources` names the cause in its `error` field; fix that (outbound https, the ref, the tree) and run `POST /api/v1/skills/sources/<id>/sync`.
+  - Node overrides written at a template node's top level (`model`, `tools`, `skills` and the rest, #78) start taking effect with this release for every node that has no `config` object. To list the templates that carry them before upgrading, so their owners can review what will change:
+
+    ```bash
+    docker exec -i embry0-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+    SELECT id, name FROM pipeline_templates t
+    WHERE EXISTS (
+      SELECT 1 FROM jsonb_array_elements(t.graph_definition->'nodes') AS n
+      WHERE jsonb_typeof(n->'config') IS DISTINCT FROM 'object'
+        AND jsonb_strip_nulls(n) ?| ARRAY['model', 'max_budget_usd', 'max_turns', 'effort', 'tools', 'skills',
+                                         'prompt_prepend', 'prompt_append', 'custom_prompt', 'custom_tools', 'sandbox']
+    )
+    ORDER BY name;
+    SQL
+    ```
 - The frontend is served via nginx on port 8200 and proxies `/api` to the orchestrator container.
 - Always verify health after restart: `curl -s http://localhost:8200/health`
 
