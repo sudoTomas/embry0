@@ -15,6 +15,11 @@ interface Embry0MarkProps {
    * stays still.
    */
   draw?: boolean;
+  /**
+   * A job is in flight: the cream dot breathes, and the mark's accessible name
+   * says a job is running. At rest otherwise.
+   */
+  running?: boolean;
 }
 
 /**
@@ -59,8 +64,15 @@ const CENTRE_LINE =
  * header is the one place the product says its name, and the line drawing
  * itself is the brand's idea (one unbroken line, life inside it) told once,
  * not atmosphere repeated all day.
+ *
+ * With `running`, the cream dot breathes (index.css `.motion-breathe`, an
+ * opacity loop of 2.4 s) for as long as a job is in flight, and stops when
+ * none is. Justification: the dot is the life inside the zero, so it moves
+ * only while the product is doing work, which is a real state, never for
+ * its own sake. It breathes only once it has arrived, so it carries one
+ * animation at a time; reduced motion and the escape hatch still it.
  */
-export function Embry0Mark({ className, mono = false, draw = false }: Embry0MarkProps) {
+export function Embry0Mark({ className, mono = false, draw = false, running = false }: Embry0MarkProps) {
   const reduced = useReducedMotion();
   const maskId = useId();
   // Decided once, as the mark mounts: the draw happens when the dashboard
@@ -68,15 +80,14 @@ export function Embry0Mark({ className, mono = false, draw = false }: Embry0Mark
   const [drawing, setDrawing] = useState(
     () => draw && !reduced && document.body.dataset.divine !== "off",
   );
-  const dotClass = [mono ? undefined : "text-cream", drawing ? "motion-mark-dot" : undefined]
-    .filter(Boolean)
-    .join(" ");
+  const dotMotion = drawing ? "motion-mark-dot" : running ? "motion-breathe" : undefined;
+  const dotClass = [mono ? undefined : "text-cream", dotMotion].filter(Boolean).join(" ");
 
   return (
     <div
       role="img"
       className={`flex items-center gap-1.5 select-none ${className ?? ""}`}
-      aria-label="embry0"
+      aria-label={running ? "embry0, a job is running" : "embry0"}
     >
       <svg
         width="16"

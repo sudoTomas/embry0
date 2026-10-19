@@ -5,13 +5,15 @@ import { ssoLogout } from "@/components/auth/AuthGate";
 import { Button } from "@/components/ui/Button";
 import { Embry0Mark } from "@/components/divine/Embry0Mark";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
+import { useQueue } from "@/hooks/useQueue";
 
 /**
  * The family header: a full-width 65px bar on the surface. The lockup and the
  * tagline on the left, the signed-in identity and sign-out on the right. At
  * phone width a menu button opens the sidebar drawer; at desktop width the
  * sidebar's own chevron collapses it. The lockup's mark draws itself once as
- * the dashboard opens; it is the only mark that does.
+ * the dashboard opens; it is the only mark that does. While a job runs, the
+ * mark's cream dot breathes.
  */
 export function TopBar() {
   const drawerOpen = useLayoutStore((s) => s.drawerOpen);
@@ -19,6 +21,8 @@ export function TopBar() {
   const narrow = useIsNarrow();
   const authMode = useAuthStore((s) => s.authMode);
   const user = useAuthStore((s) => s.user);
+  // The same /queue poll the sidebar's foot reads; react-query shares it.
+  const running = (useQueue().data?.running ?? 0) > 0;
 
   return (
     <header className="flex h-header shrink-0 items-center gap-3 border-b border-border bg-surface px-3 sm:px-5">
@@ -32,7 +36,7 @@ export function TopBar() {
           {drawerOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </Button>
       )}
-      <Embry0Mark draw />
+      <Embry0Mark draw running={running} />
       <span className="ml-3 hidden truncate text-sm text-fg-muted md:inline">
         Software that is alive
       </span>

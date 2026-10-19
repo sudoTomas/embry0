@@ -184,3 +184,31 @@ describe("Embry0Mark — the line draws itself once", () => {
     expect(svgOf(container).querySelector("mask")).toBeNull();
   });
 });
+
+describe("Embry0Mark — the dot breathes while a job runs", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("breathes the cream dot and says a job is running", () => {
+    const { container } = render(<Embry0Mark running />);
+    expect(screen.getByRole("img", { name: "embry0, a job is running" })).toBeInTheDocument();
+    expect(pathWith(svgOf(container), MASTER_DOT).getAttribute("class")).toBe("text-cream motion-breathe");
+  });
+
+  it("rests the dot and keeps the plain name when nothing runs", () => {
+    const { container } = render(<Embry0Mark />);
+    expect(screen.getByRole("img", { name: "embry0" })).toBeInTheDocument();
+    expect(pathWith(svgOf(container), MASTER_DOT).getAttribute("class")).toBe("text-cream");
+  });
+
+  it("breathes only once the dot has arrived, one animation at a time", () => {
+    allowMotion();
+    const { container } = render(<Embry0Mark draw running />);
+    const dot = pathWith(svgOf(container), MASTER_DOT);
+    expect(dot.getAttribute("class")).toBe("text-cream motion-mark-dot");
+    fireEvent.animationEnd(dot);
+    expect(dot.getAttribute("class")).toBe("text-cream motion-breathe");
+  });
+});
+
