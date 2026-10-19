@@ -150,6 +150,22 @@ export async function fetchOrganization(owner: string): Promise<Organization> {
   return data;
 }
 
+/** The settings a PATCH may write; each key left out keeps its stored value. */
+export interface OrgSettingsPatch {
+  /** Hours between discovery runs, 1 to 168; null takes the owner off the schedule. */
+  rediscover_hours?: number | null;
+}
+
+/** Change an owner's settings (admin). The server merges them into the stored ones. */
+export async function patchOrganization(owner: string, settings: OrgSettingsPatch): Promise<Organization> {
+  const { data } = await api.patch<Organization>(
+    `/orgs/${encodeURIComponent(owner)}`,
+    { settings },
+    { suppressValidationToast: true },
+  );
+  return data;
+}
+
 /** Ask the forge what a credential can do at an owner, without storing anything. */
 export async function probeOrganization(body: OrgProbeBody): Promise<OrgAccess> {
   const { data } = await api.post<OrgAccess>("/orgs/probe", body, { suppressValidationToast: true });

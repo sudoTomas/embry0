@@ -64,6 +64,14 @@ describe("OrganizationPage", () => {
     expect(follows(actPanel, repoRow)).toBe(true);
   });
 
+  it("shows the rediscovery schedule in the header", async () => {
+    api.org.mockResolvedValue(org({ settings: { rediscover_hours: 24 } }));
+    renderPage();
+    const setting = await screen.findByTestId("org-rediscover-setting");
+    expect((screen.getByTestId("org-rediscover-hours") as HTMLInputElement).value).toBe("24");
+    expect(setting.compareDocumentPosition(screen.getByRole("heading", { name: "Latest discovery" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("rediscovers on demand", async () => {
     renderPage();
     fireEvent.click(await screen.findByTestId("org-rediscover"));

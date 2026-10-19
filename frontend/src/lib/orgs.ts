@@ -177,3 +177,16 @@ export function credentialLabel(org: Organization, credentials: readonly Credent
   const source = typeof org.access.source === "string" ? org.access.source : "";
   return source.startsWith("env:") ? `environment (${source.slice(4)})` : "environment token";
 }
+
+/** The bounds of the rediscovery setting, as the server checks them. */
+export const REDISCOVER_MIN_HOURS = 1;
+export const REDISCOVER_MAX_HOURS = 168;
+
+/** The owner's rediscovery interval in hours, or null when it is off. Read
+ * the way the server reads it: anything but a whole number in range is off. */
+export function rediscoverHours(org: Pick<Organization, "settings">): number | null {
+  const value = org.settings?.rediscover_hours;
+  return typeof value === "number" && Number.isInteger(value) && value >= REDISCOVER_MIN_HOURS && value <= REDISCOVER_MAX_HOURS
+    ? value
+    : null;
+}

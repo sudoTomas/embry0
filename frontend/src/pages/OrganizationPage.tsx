@@ -6,6 +6,7 @@ import { DiscoveryStatus } from "@/components/orgs/DiscoveryStatus";
 import { OrgActPanel } from "@/components/orgs/OrgActPanel";
 import { OrgNeedsList } from "@/components/orgs/OrgNeedsList";
 import { OrgReposTable } from "@/components/orgs/OrgReposTable";
+import { RediscoverSetting } from "@/components/orgs/RediscoverSetting";
 import { PageError } from "@/components/PageError";
 import { Badge } from "@/components/ui/Badge";
 import { Button, buttonVariants } from "@/components/ui/Button";
@@ -115,6 +116,7 @@ export function OrganizationPage() {
           {o.repo_count !== null && ` · ${o.repo_count} repositories`}
           {` · discovered ${o.discovered_at ? formatDate(o.discovered_at) : "never"}`}
         </p>
+        <RediscoverSetting org={o} isAdmin={isAdmin} />
         {typeof o.access.detail === "string" && o.access.detail && (
           <p className="text-xs text-muted-foreground">{o.access.detail}</p>
         )}

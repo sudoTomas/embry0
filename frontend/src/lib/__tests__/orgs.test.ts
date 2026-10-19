@@ -8,6 +8,7 @@ import {
   isMissing,
   needKindLabel,
   planActions,
+  rediscoverHours,
   senseState,
 } from "../orgs";
 
@@ -102,5 +103,19 @@ describe("labels", () => {
     expect(actionLabel("deactivate")).toBe("Deactivate");
     expect(actionLabel("hook")).toBe("Add webhook");
     expect(actionLabel("something_new")).toBe("something_new");
+  });
+});
+
+describe("rediscoverHours", () => {
+  it("reads a whole number of hours in range, and anything else as off", () => {
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 24 } }))).toBe(24);
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 1 } }))).toBe(1);
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 168 } }))).toBe(168);
+    expect(rediscoverHours(org({ settings: { rediscover_hours: null } }))).toBeNull();
+    expect(rediscoverHours(org({ settings: {} }))).toBeNull();
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 0 } }))).toBeNull();
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 169 } }))).toBeNull();
+    expect(rediscoverHours(org({ settings: { rediscover_hours: 1.5 } }))).toBeNull();
+    expect(rediscoverHours(org({ settings: { rediscover_hours: true } }))).toBeNull();
   });
 });
