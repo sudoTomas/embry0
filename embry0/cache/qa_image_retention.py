@@ -11,9 +11,11 @@ no ``qa_image_tags`` row names at all.
 With ``QA_IMAGE_RETENTION_DAYS`` set, a daily sweep removes from the sandbox
 daemon:
 
-* each QA image (a repository named ``embry0-qa-*``) last used more than that
-  many days ago, unless an active ``qa_image_tags`` row names it (the image a
-  job selects now) or a container, running or stopped, was started from it;
+* each QA image (one with a tag or a digest in a repository named
+  ``embry0-qa-*``; a bake a later one took the tags of keeps its digest) last
+  used more than that many days ago, unless an active ``qa_image_tags`` row
+  names it (the image a job selects now) or a container, running or stopped,
+  was started from it;
 * each per-repo volume this deployment created (its ``embry0.instance``
   label) last used more than that many days ago, unless a job of its repo is
   still live or a container mounts it.
@@ -24,6 +26,9 @@ when it was last used; an image nothing newer has replaced counts from its
 own build (a failed bake was never used at all). A volume was last used when
 a QA job last asked for it (``qa_volume_state.last_warmed_at``, refreshed by
 every job that mounts it), or when it was created if it has no row.
+
+An image left with no tag and no digest names no repository, so nothing tells
+it is a QA image and the sweep leaves it.
 
 Right before removing a volume the sweep reads its repo's live jobs and its
 ``qa_volume_state`` row again, so a QA job that started or warmed it after the

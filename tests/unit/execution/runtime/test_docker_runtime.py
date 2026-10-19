@@ -408,7 +408,7 @@ async def test_list_images_inspects_each_image_once() -> None:
     images = await DockerRuntime(client).list_images()
     base = ["docker", "--host", "tcp://dind:2376"]
     assert _issued(client) == [
-        ([*base, "image", "ls", "--quiet", "--no-trunc"], 60),
+        ([*base, "image", "ls", "--all", "--quiet", "--no-trunc"], 60),
         ([*base, "image", "inspect", "sha256:aaa", "sha256:bbb"], 60),
     ]
     assert images[0].repo_tags == ("embry0-qa-x:t1", "registry:5000/embry0-qa-x:t1")

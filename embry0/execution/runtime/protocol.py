@@ -308,7 +308,7 @@ class AgentRuntime(Protocol):
         ...
 
     async def list_images(self, *, timeout: int = 60) -> list[ImageSummary]:
-        """Every image ``docker image ls`` lists: tagged and dangling, not build intermediates."""
+        """Every image on the daemon (``docker image ls --all``): tagged, untagged and build intermediates."""
         ...
 
     async def remove_image_refs(self, refs: Sequence[str], *, timeout: int = 60) -> None:

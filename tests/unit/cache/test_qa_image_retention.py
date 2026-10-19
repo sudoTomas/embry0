@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
@@ -11,6 +11,7 @@ import pytest
 
 from embry0.cache.qa_image_retention import QAImageRetentionSweep, Reason, decide_volume, qa_image, removal_refs
 from embry0.cache.volume_ownership import volume_labels
+from embry0.execution.runtime.docker import DockerRuntime
 from embry0.execution.runtime.protocol import ContainerSummary, DiskUsage, ImageSummary, VolumeSummary
 from embry0.storage.repositories.qa_image_tags import QAImageTagRow
 from embry0.storage.repositories.qa_volume_state import VolumeState
@@ -64,6 +65,47 @@ def _single_reference(refs: list[str]) -> bool:
     return len({_repository(r) for r in refs}) == 1 and sum("@" not in r for r in refs) <= 1
 
 
+class Docker27ImageCli:
+    """``docker image ls`` and ``docker image inspect`` as Docker 27.5.1 answers them, over a FakeRuntime's images.
+
+    ``image ls --quiet`` prints an image once per tag and leaves out every image
+    with no tag, one that still has its registry digest included, unless
+    ``--all`` is given. Measured on docker:27-dind 27.5.1 (overlay2, as the
+    live DinD): a pushed bake is listed twice; a bake left with its digest
+    alone, one left with no reference and an untagged parent 0 times each, and
+    once each with ``--all``.
+    """
+
+    def __init__(self, runtime: FakeRuntime) -> None:
+        self._runtime = runtime
+
+    def _build_base_cmd(self) -> list[str]:
+        return ["docker"]
+
+    def _inspect(self, image_id: str) -> dict[str, Any]:
+        image = next(i for i in self._runtime.images if i.id == image_id)
+        refs = self._runtime.refs[image_id]
+        return {
+            "Id": image.id,
+            "RepoTags": [r for r in refs if "@" not in r],
+            "RepoDigests": [r for r in refs if "@" in r],
+            "Created": image.created_at,
+            "Size": image.size,
+        }
+
+    async def run_cmd(self, cmd: list[str], timeout: int = 60, **_: Any) -> str:
+        args = cmd[1:]
+        if args[:2] == ["image", "ls"]:
+            lines: list[str] = []
+            for image_id, refs in self._runtime.refs.items():
+                tags = sum("@" not in r for r in refs)
+                lines += [image_id] * tags if tags else [image_id] * ("--all" in args)
+            return "\n".join(lines) + "\n"
+        if args[:2] == ["image", "inspect"]:
+            return json.dumps([self._inspect(image_id) for image_id in args[2:]])
+        raise AssertionError(f"unexpected docker command: {cmd}")
+
+
 class FakeRuntime:
     """The sandbox daemon, as far as the sweep reads and changes it."""
 
@@ -95,15 +137,8 @@ class FakeRuntime:
         )
 
     async def list_images(self) -> list[ImageSummary]:
-        return [
-            replace(
-                i,
-                repo_tags=tuple(r for r in self.refs[i.id] if "@" not in r),
-                repo_digests=tuple(r for r in self.refs[i.id] if "@" in r),
-            )
-            for i in self.images
-            if i.id in self.refs
-        ]
+        # The real listing command, answered the way the daemon answers it.
+        return await DockerRuntime(Docker27ImageCli(self)).list_images()  # type: ignore[arg-type]
 
     async def list_containers(self, *, ancestor: str | None = None, volume: str | None = None, **_: Any) -> list:
         n = self.image_users.get(ancestor or "", 0) if ancestor else self.volume_users.get(volume or "", 0)
@@ -303,6 +338,44 @@ def test_rmi_names_a_digest_only_when_no_tag_of_its_repository_is_named() -> Non
     assert removal_refs([local, tag, digest]) == [local, tag]
     assert removal_refs([local, digest]) == [local, digest], "the local tag does not take the registry digest"
     assert removal_refs([digest]) == [digest]
+
+
+@pytest.mark.asyncio
+async def test_a_qa_image_left_with_its_digest_alone_is_swept_unless_pinned_or_used() -> None:
+    """A second bake in the same minute takes the first one's tags, and a pull by digest adds none:
+    either leaves a QA image with only its registry digest. Docker 27 lists such an image only
+    under ``image ls --all``, so without it the sweep never saw one, kept its checkout forever
+    and left it out of the preview. An image with no reference left at all names no QA image."""
+
+    def digest_only(image_id: str, digest: str, created: datetime) -> ImageSummary:
+        return ImageSummary(
+            id=image_id, repo_tags=(), repo_digests=(f"{REG}/{NAME}@{digest}",), created_at=created.isoformat(), size=10
+        )
+
+    images = [
+        digest_only("sha256:replaced", "sha256:d1", _ago(120)),
+        digest_only("sha256:used", "sha256:d3", _ago(105)),
+        digest_only("sha256:pinned", "sha256:d2", _ago(100)),
+        ImageSummary(id="sha256:noref", repo_tags=(), repo_digests=(), created_at=_ago(130).isoformat(), size=10),
+    ]
+    rows = [
+        _row("t1", _ago(120), active=False, digest="sha256:d1"),
+        _row("t3", _ago(105), active=False, digest="sha256:d3"),
+        _row("t2", _ago(100), active=True, digest="sha256:d2"),
+    ]
+    dry_runtime = FakeRuntime(list(images), image_users={"sha256:used": 1})
+
+    preview = await _sweep(dry_runtime, rows).run_once(dry_run=True, now=NOW)
+
+    assert [i["id"] for i in preview.images] == ["sha256:replaced"], (
+        "the preview must count a replaced QA image left with its digest alone"
+    )
+    runtime = FakeRuntime(list(images), image_users={"sha256:used": 1})
+    result = await _sweep(runtime, rows).run_once(now=NOW)
+    assert runtime.deleted == {"sha256:replaced"}, "only the replaced, unused untagged QA image may go"
+    assert runtime.removed_refs == [[f"{REG}/{NAME}@sha256:d1"]]
+    assert (result.failed, dict(result.kept)) == ([], {Reason.IN_USE: 1, Reason.PINNED: 1})
+    assert preview.as_dict() == result.as_dict(), "the dry run must report exactly what the sweep then removes"
 
 
 @pytest.mark.asyncio

@@ -335,7 +335,9 @@ class DockerRuntime:
         await self._client.run_cmd(self._cmd("rmi", "-f", image), timeout=timeout)
 
     async def list_images(self, *, timeout: int = 60) -> list[ImageSummary]:
-        listed = await self._client.run_cmd(self._cmd("image", "ls", "--quiet", "--no-trunc"), timeout=timeout)
+        # --all: without it Docker 27 leaves out every image with no tag, a QA
+        # image left with its registry digest alone included.
+        listed = await self._client.run_cmd(self._cmd("image", "ls", "--all", "--quiet", "--no-trunc"), timeout=timeout)
         ids = list(dict.fromkeys((listed or "").split()))  # one line per tag: keep each image once
         images: list[ImageSummary] = []
         for i in range(0, len(ids), _INSPECT_CHUNK):
