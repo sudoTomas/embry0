@@ -776,3 +776,26 @@ async def test_an_image_with_inconsistent_baked_modules_is_reported_as_a_start_f
         f"an image whose runner cannot import its safety module was coded {out.error_code!r}: {out.error_message}"
     )
     assert "cannot import name 'classify_agent_error'" in out.stderr_tail
+
+
+@pytest.mark.asyncio
+async def test_skill_mounts_are_the_managers_record_without_the_daemon_path() -> None:
+    from embry0.skills.store import SkillMount
+
+    sandbox = MagicMock()
+    sandbox.skill_mounts_for = AsyncMock(
+        return_value=[
+            SkillMount(
+                source_id="superpowers",
+                plugin_name="superpowers",
+                host_path="/skills/superpowers/" + "a" * 40,
+                container_path="/opt/embry0/skills/superpowers",
+            )
+        ]
+    )
+    runner = AgentRunner(sandbox, MagicMock())
+    specs = await runner.skill_mounts("container-abc123")
+    sandbox.skill_mounts_for.assert_awaited_once_with("container-abc123")
+    assert specs == [
+        {"source_id": "superpowers", "plugin_name": "superpowers", "container_path": "/opt/embry0/skills/superpowers"}
+    ]

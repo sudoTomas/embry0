@@ -2828,6 +2828,69 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             CHECK (role IN ('forge', 'llm', 'deploy', 'tailnet'));
         """,
     ),
+    (
+        101,
+        "agent identity columns, skill_sources and inline_skills (agent identity and skills spec 3.1, 3.2)",
+        # Identity: display_name ('' = show the slug), avatar and color from the
+        # fixed vocabularies in embry0/agents/identity.py, tagline. The UPDATE
+        # writes the builtin identities for rows still at the defaults so an
+        # upgraded deployment shows the roster without a reseed; the seeders
+        # carry the same values for a fresh database.
+        #
+        # skill_sources: where skills come from (spec 3.2). credential_id is
+        # reserved and always NULL in this release. inline_skills: SKILL.md
+        # documents written in the dashboard, rendered into the `local` source.
+        """
+        ALTER TABLE agent_definitions ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
+        ALTER TABLE agent_definitions ADD COLUMN IF NOT EXISTS avatar TEXT NOT NULL DEFAULT 'golem';
+        ALTER TABLE agent_definitions ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT 'slate';
+        ALTER TABLE agent_definitions ADD COLUMN IF NOT EXISTS tagline TEXT NOT NULL DEFAULT '';
+
+        UPDATE agent_definitions SET display_name = v.display_name, avatar = v.avatar, color = v.color, tagline = v.tagline
+        FROM (VALUES
+            ('triage',      'Triage',      'seer',      'violet',  'Reads the issue, sets the course.'),
+            ('developer',   'Developer',   'smith',     'amber',   'Forges the change.'),
+            ('review',      'Reviewer',    'warden',    'rose',    'Guards the gate.'),
+            ('qa',          'QA',          'alchemist', 'emerald', 'Proves it in the vessel.'),
+            ('onboarding',  'Onboarding',  'herald',    'sky',     'Announces a new repository.'),
+            ('pr-reviewer', 'PR Reviewer', 'arbiter',   'cyan',    'Weighs a pull request.'),
+            ('research',    'Research',    'scholar',   'gold',    'Reads everything first.'),
+            ('analysis',    'Analysis',    'oracle',    'violet',  'Finds the pattern.'),
+            ('ops',         'Ops',         'engineer',  'amber',   'Keeps it running.')
+        ) AS v(type, display_name, avatar, color, tagline)
+        WHERE agent_definitions.type = v.type AND agent_definitions.display_name = '';
+
+        CREATE TABLE IF NOT EXISTS skill_sources (
+            id             TEXT PRIMARY KEY,
+            kind           TEXT NOT NULL CHECK (kind IN ('git', 'path', 'inline')),
+            url            TEXT NOT NULL DEFAULT '',
+            ref            TEXT NOT NULL DEFAULT '',
+            resolved_sha   TEXT NOT NULL DEFAULT '',
+            plugin_name    TEXT NOT NULL DEFAULT '',
+            skills         JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(skills) = 'array'),
+            status         TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'ready', 'error')),
+            error          TEXT NOT NULL DEFAULT '',
+            enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+            is_builtin     BOOLEAN NOT NULL DEFAULT FALSE,
+            credential_id  TEXT,
+            synced_at      TIMESTAMPTZ,
+            created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        COMMENT ON TABLE skill_sources IS
+            'Where agent skills come from: a pinned public git repository, a directory in the orchestrator container, or the inline SKILL.md rows. Synced into the skills store and mounted read-only into sandboxes.';
+
+        CREATE TABLE IF NOT EXISTS inline_skills (
+            name         TEXT PRIMARY KEY,
+            description  TEXT NOT NULL,
+            body         TEXT NOT NULL,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        COMMENT ON TABLE inline_skills IS
+            'SKILL.md documents written in the dashboard; rendered into the `local` skill source.';
+        """,
+    ),
 ]
 
 

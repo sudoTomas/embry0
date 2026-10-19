@@ -54,6 +54,67 @@ def test_a_step_model_reaches_its_agent(node_type: str, runtime_type: str) -> No
     assert got == f"model-for-{node_type}", f"a {node_type} step's model resolved to {got!r}"
 
 
+def _legacy_graph(types: list[str]) -> dict[str, Any]:
+    """The editor's pre-#78 shape: overrides at the node's top level, no ``config``."""
+    graph = _graph(types)
+    graph["nodes"] = [{"node_id": t, "agent_type": t, "model": f"model-for-{t}"} for t in types]
+    return graph
+
+
+@pytest.mark.parametrize(("node_type", "runtime_type"), sorted(_STEP_TYPES.items()))
+def test_a_legacy_top_level_step_model_reaches_its_agent(node_type: str, runtime_type: str) -> None:
+    plan = build_route_plan(_legacy_graph(["triage", node_type]))
+    state = {"route_plan": plan, "route_cursor": 0}
+    got = _resolved_model(runtime_type, step_template_config(state, runtime_type))
+    assert got == f"model-for-{node_type}", f"a legacy-shaped {node_type} step's model resolved to {got!r}"
+
+
+def test_a_legacy_top_level_triage_model_reaches_triage() -> None:
+    got = _resolved_model("triage", triage_template_config(_legacy_graph(["triage", "developer"])))
+    assert got == "model-for-triage", f"a legacy-shaped triage model resolved to {got!r}"
+
+
+def _editor_node(node_id: str, agent_type: str) -> dict[str, Any]:
+    """A node exactly as ``serializeGraph`` (frontend/src/lib/graph-utils.ts) writes it today.
+
+    Every override sits at the top level, and ``AgentDetailPopup`` stores
+    skills as ``{name, mode}`` objects.
+    """
+    return {
+        "node_id": node_id,
+        "agent_type": agent_type,
+        "label": agent_type,
+        "position": {"x": 0, "y": 0},
+        "model": f"model-for-{agent_type}",
+        "max_budget_usd": 2.5,
+        "max_turns": 40,
+        "effort": "high",
+        "tools": ["Read", "Edit"],
+        "skills": [
+            {"name": "superpowers:brainstorming", "mode": "autonomous"},
+            {"name": "superpowers:writing-plans", "mode": "autonomous"},
+        ],
+        "prompt_prepend": "be brief",
+        "prompt_append": None,
+        "custom_prompt": None,
+        "custom_tools": None,
+        "sandbox": None,
+    }
+
+
+def test_editor_shaped_skill_objects_resolve_to_their_names() -> None:
+    graph = _graph(["triage", "developer"])
+    graph["nodes"] = [_editor_node("triage", "triage"), _editor_node("developer", "developer")]
+    plan = build_route_plan(graph)
+    template_config = step_template_config({"route_plan": plan, "route_cursor": 0}, "developer")
+    definition = {"model": "definition-model", "tools": [], "skills": ["superpowers:test-driven-development"]}
+    resolved = resolve_agent_config("developer", definition, template_config, default_model="deployment-default")
+    assert resolved.skills == ["superpowers:brainstorming", "superpowers:writing-plans"], (
+        f"editor-shaped skill objects resolved to {resolved.skills!r}"
+    )
+    assert resolved.model == "model-for-developer"
+
+
 def test_the_triage_node_model_reaches_triage() -> None:
     got = _resolved_model("triage", triage_template_config(_graph(["triage", "developer"])))
     assert got == "model-for-triage", f"the template's triage model resolved to {got!r}"

@@ -12,6 +12,7 @@ feedback, ask-user) never touch the cursor — they are not template edges.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import structlog
@@ -78,7 +79,7 @@ def build_route_plan(graph_definition: dict[str, Any]) -> list[dict[str, Any]]:
         node = nodes[node_id]
         agent_type = node.get("agent_type", "")
         if agent_type != "triage":  # triage is the selector, not a step
-            plan.append({"agent_type": agent_type, "node_id": node_id, "config": node.get("config") or {}})
+            plan.append({"agent_type": agent_type, "node_id": node_id, "config": node_config(node)})
         node_id = successors.get(node_id)
     return plan
 
@@ -162,8 +163,35 @@ def triage_template_config(graph_definition: dict[str, Any]) -> dict[str, Any] |
     """
     for node in graph_definition.get("nodes", []):
         if node.get("agent_type") == "triage":
-            return _config_overrides(node.get("config") or {}, "triage")
+            return _config_overrides(node_config(node), "triage")
     return None
+
+
+_LEGACY_NODE_OVERRIDE_KEYS = (
+    "model",
+    "max_budget_usd",
+    "max_turns",
+    "effort",
+    "tools",
+    "skills",
+    "prompt_prepend",
+    "prompt_append",
+    "custom_prompt",
+    "custom_tools",
+    "sandbox",
+)
+
+
+def node_config(node: Mapping[str, Any]) -> dict[str, Any]:
+    """A node's overrides: ``config`` when it is a dict, else the legacy top-level keys (#78).
+
+    The editor wrote overrides at the node's top level for a while; stored
+    templates of that shape keep working. An explicit ``config`` dict wins.
+    """
+    cfg = node.get("config")
+    if isinstance(cfg, dict):
+        return dict(cfg)
+    return {k: node[k] for k in _LEGACY_NODE_OVERRIDE_KEYS if node.get(k) is not None}
 
 
 def _config_overrides(cfg: dict[str, Any], run_agent_type: str) -> dict[str, Any] | None:
@@ -173,7 +201,7 @@ def _config_overrides(cfg: dict[str, Any], run_agent_type: str) -> dict[str, Any
     if cfg.get("tools"):
         out["agent_tools"] = {run_agent_type: list(cfg["tools"])}
     if cfg.get("skills"):
-        out["agent_skills"] = {run_agent_type: list(cfg["skills"])}
+        out["agent_skills"] = {run_agent_type: cfg["skills"]}
     return out or None
 
 

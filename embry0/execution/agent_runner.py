@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     # it eagerly would pull in embry0.execution.image_registry and the
     # whole image-build chain, which is not needed inside the sandbox where
     # this module is loaded only for the AgentOutput dataclass.
+    from embry0.agents.invocation import SkillMountSpec
     from embry0.agents.session import AgentSession
     from embry0.execution.sandbox_manager import SandboxManager
 
@@ -523,6 +524,13 @@ class AgentRunner:
             watchdog.stop()
 
         return _diagnose(result, _stderr_text()), exit_facts
+
+    async def skill_mounts(self, container_id: str) -> list[SkillMountSpec]:
+        """The skill sources mounted into this sandbox, as the invocation carries them."""
+        return [
+            {"source_id": m.source_id, "plugin_name": m.plugin_name, "container_path": m.container_path}
+            for m in await self._sandbox.skill_mounts_for(container_id)
+        ]
 
     async def _image_ref(self, container: str) -> str:
         """The image a container was created from, for the stale-image log."""

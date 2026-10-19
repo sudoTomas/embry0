@@ -441,6 +441,19 @@ class Embry0Config(BaseSettings):
     # registry on the backend network; on K8s migration this becomes the
     # production registry URL with no code changes.
     image_registry: str = ""
+    # Where skill sources are synced to (spec 3.2). The compose file mounts the
+    # `skills-store` volume here and at the same path in dind, because the
+    # sandbox bind mounts are resolved in dind's namespace.
+    skills_store_path: Path = Path("/skills")
+    # The path at which the sandbox daemon sees the store; None means the same
+    # path as skills_store_path. DinD mounts the volume at /skills too; the
+    # rootless daemon runs on the host, so infra/docker-compose.rootless.yml
+    # bind-mounts a host directory and sets this to that directory.
+    skills_store_daemon_path: Path | None = None
+    # The directory a `path` skill source must live under, as the orchestrator
+    # sees it; a source that resolves outside it fails its sync. None refuses
+    # every `path` source.
+    skills_path_root: Path | None = None
     # #523: the in-stack registry refuses anonymous clients. A directory holding
     # `username` and `password` files (compose mounts the registry-auth volume
     # there); at startup the login is written into the orchestrator's docker CLI

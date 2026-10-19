@@ -40,6 +40,7 @@ from embry0.storage.repositories.repo_preferences import RepoPreferencesReposito
 from embry0.storage.repositories.repo_qa_configs import RepoQAConfigsRepository
 from embry0.storage.repositories.repos import ReposRepository
 from embry0.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+from embry0.storage.repositories.skills import InlineSkillsRepository, SkillSourcesRepository
 from embry0.storage.repositories.traces import TracesRepository
 from embry0.storage.repositories.users import UsersRepository
 from embry0.workflows.issue_to_pr.graph import IssueToprWorkflow
@@ -699,6 +700,8 @@ async def _init_app_state(
     app.state.context_repo = ContextConfigRepository(db)
     app.state.budget_repo = BudgetConfigRepository(db)
     app.state.agent_defs_repo = AgentDefinitionsRepository(db)
+    app.state.skill_sources_repo = SkillSourcesRepository(db)
+    app.state.inline_skills_repo = InlineSkillsRepository(db)
     app.state.templates_repo = PipelineTemplatesRepository(db)
     app.state.integration_repo = IntegrationConfigRepository(db)
     app.state.provider_repo = ProviderConfigRepository(db)
@@ -935,6 +938,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await seed_missing_builtin_agents(AgentDefinitionsRepository(db))
 
+    # Builtin skill sources (superpowers pinned by sha, and the inline
+    # `local` source). Insert-if-missing; operator edits are kept.
+    from embry0.storage.seeds.skill_sources_builtin import seed_builtin_skill_sources
+
+    await seed_builtin_skill_sources(SkillSourcesRepository(db))
+
     # #278: give every historical watcher proposal a healing case. Idempotent,
     # and fail-open — a ledger gap must never keep the orchestrator down.
     await _backfill_healing_cases(db, config)
@@ -1168,6 +1177,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         image_registry=config.image_registry,
         enroll_ttl_seconds=config.proxy_enroll_ttl_seconds,
     )
+    # Spec 3.2: the skills store. Built before SandboxManager, which mounts
+    # its trees. Its sync service and the startup sync are wired after
+    # _init_app_state, which creates the skill repositories and seeds the
+    # builtin sources the startup sync must see.
+    from embry0.skills.store import SkillStore
+
+    app.state.skill_store = SkillStore(config.skills_store_path, daemon_root=config.skills_store_daemon_path)
     sandbox_mgr = SandboxManager(
         docker,
         proxy_manager=proxy_mgr,
@@ -1186,6 +1202,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Without it no repo gets the daemon (closed, not open).
         docker_access_registry=ReposRepository(db, default_forge=config.default_forge),
         runtime=runtime,
+        # Spec 3.3: every sandbox gets the enabled skill sources, read-only.
+        # Built here, like the registry above: _init_app_state creates
+        # app.state.skill_sources_repo later.
+        skill_store=app.state.skill_store,
+        skill_sources_repo=SkillSourcesRepository(db),
     )
     loop_metrics = getattr(app.state, "loop_metrics", None)
     agent_runner = AgentRunner(
@@ -1589,6 +1610,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.issue_executor._qa_base_digest_resolver = app.state.qa_base_digest_resolver
 
     app.state.issue_executor._background_tasks = app.state.background_tasks
+
+    # Spec 3.2: fill the store for every enabled source that has no tree yet
+    # (a fresh volume, a new builtin). In the background: a clone must not hold
+    # the API back, and sync_missing logs its failures instead of raising.
+    from embry0.skills.sync import SkillSourceSync
+
+    app.state.skill_sync = SkillSourceSync(
+        app.state.skill_store,
+        app.state.skill_sources_repo,
+        app.state.inline_skills_repo,
+        path_root=config.skills_path_root,
+        # A re-sync keeps the older trees; this removes those no sandbox mounts.
+        after_publish=sandbox_mgr.gc_skill_trees,
+    )
+    skill_sync_task = asyncio.create_task(app.state.skill_sync.sync_missing())
+    app.state.background_tasks.add(skill_sync_task)
+    skill_sync_task.add_done_callback(app.state.background_tasks.discard)
 
     # Daily orphan checkpoint sweep — purges checkpoint rows for job_ids
     # that no longer exist in the jobs table (covers cases where per-job
@@ -2211,8 +2249,10 @@ def _register_routers(app: FastAPI) -> None:
         repos,
         sandbox_profiles,
         sandboxes,
+        skills,
         stats,
         telegram,
+        tools,
         traces,
         users,
         watcher,
@@ -2229,6 +2269,8 @@ def _register_routers(app: FastAPI) -> None:
     # (POST — covered by the CSRF header guard like every other mutation).
     app.include_router(auth_session.router, prefix="/api/v1", tags=["auth"])
     app.include_router(agents.router, prefix="/api/v1", tags=["agents"], dependencies=auth_deps)
+    app.include_router(skills.router, prefix="/api/v1", tags=["skills"], dependencies=auth_deps)
+    app.include_router(tools.router, prefix="/api/v1", tags=["tools"], dependencies=auth_deps)
     # RAV-1056 Phase A: user management — admin tier only (require_admin
     # accepts the master API key or an embry0-admin session).
     app.include_router(users.router, prefix="/api/v1", tags=["users"], dependencies=[require_admin])

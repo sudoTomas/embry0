@@ -671,6 +671,19 @@ unit run compose from `infra/` and pick the overlay up from `COMPOSE_FILE`.
 and proxy images on the rootless daemon, and wait for that daemon instead of
 `dind`.
 
+The overlay also mounts the skills store from a host directory,
+`SKILLS_STORE_HOST` in `infra/.env` (default `/var/lib/embry0/skills`), and
+passes that path to the orchestrator as `SKILLS_STORE_DAEMON_PATH`: the rootless
+daemon resolves a sandbox's skill mounts on the host, where the base file's
+named volume has no path. Create the directory before the first start. It must
+be writable by the orchestrator container's user (`orchestrator`; from `infra/`, its uid is
+`docker compose run --rm --no-deps orchestrator id -u`) and readable by the
+sandbox daemon's account, so mode 0755 owned by that uid serves both:
+
+```bash
+sudo install -d -m 0755 -o "$(docker compose run --rm --no-deps orchestrator id -u)" /var/lib/embry0/skills
+```
+
 ### Build the images on the daemon
 
 The images profile builds on whichever daemon `DOCKER_HOST` names. Build the

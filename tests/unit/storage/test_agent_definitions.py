@@ -226,3 +226,85 @@ def test_builtin_seed_skill_counts_match_design_2026_05_04():
             f"  expected: {sorted(want)}\n"
             f"  got:      {sorted(got)}"
         )
+
+
+async def test_create_stores_identity_and_defaults(db_with_migrations) -> None:
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    row = await repo.create(agent_type="cartographer", description="maps", model="claude-sonnet-5")
+    assert (row["display_name"], row["avatar"], row["color"], row["tagline"]) == ("", "golem", "slate", "")
+    row = await repo.create(
+        agent_type="lantern",
+        description="lights",
+        model="claude-sonnet-5",
+        display_name="Lantern",
+        avatar="bard",
+        color="sky",
+        tagline="Sings the changelog.",
+    )
+    assert (row["display_name"], row["avatar"], row["color"]) == ("Lantern", "bard", "sky")
+
+
+async def test_update_accepts_identity_fields(db_with_migrations) -> None:
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    await repo.create(agent_type="lantern", description="lights", model="claude-sonnet-5")
+    row = await repo.update("lantern", display_name="Lantern", avatar="rogue", color="rose", tagline="t")
+    assert (row["display_name"], row["avatar"], row["color"], row["tagline"]) == ("Lantern", "rogue", "rose", "t")
+
+
+async def test_reset_restores_builtin_identity(db_with_migrations) -> None:
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    await repo.update("developer", display_name="Renamed", avatar="golem", color="slate", tagline="x")
+    row = await repo.reset("developer")
+    assert (row["display_name"], row["avatar"], row["color"]) == ("Developer", "smith", "amber"), (
+        "reset must restore the seeded identity with the rest of the row"
+    )
+
+
+async def test_every_builtin_row_carries_its_identity(agent_repo: AgentDefinitionsRepository) -> None:
+    """All nine builtin rows match BUILTIN_IDENTITY after the startup seeders run,
+    whether migration 101 wrote the identity or a seeder inserted the row."""
+    from embry0.agents.identity import BUILTIN_IDENTITY
+
+    rows = {r["type"]: r for r in await agent_repo.list_all()}
+    mismatched = {
+        agent_type: {k: rows.get(agent_type, {}).get(k) for k in ident}
+        for agent_type, ident in BUILTIN_IDENTITY.items()
+        if {k: rows.get(agent_type, {}).get(k) for k in ident} != ident
+    }
+    assert len(BUILTIN_IDENTITY) == 9
+    assert mismatched == {}, f"builtin rows whose identity differs from BUILTIN_IDENTITY: {mismatched}"
+
+
+def _force_syncing_seeders():
+    from embry0.workflows.onboard.agent_seed import seed_onboarding_agent
+    from embry0.workflows.pr_review.agent_seed import seed_pr_reviewer_agent
+    from embry0.workflows.qa.agent_seed import seed_qa_agent
+
+    return [
+        pytest.param("qa", seed_qa_agent, id="qa"),
+        pytest.param("onboarding", seed_onboarding_agent, id="onboarding"),
+        pytest.param("pr-reviewer", seed_pr_reviewer_agent, id="pr-reviewer"),
+    ]
+
+
+@pytest.mark.parametrize(("agent_type", "seeder"), _force_syncing_seeders())
+async def test_reseeding_keeps_identity_edits_and_resyncs_the_rest(db_with_migrations, agent_type, seeder) -> None:
+    """The per-boot sync restores the seed's behaviour fields but never an operator's identity edits
+    or added skills; POST /agents/{type}/reset is the explicit restore path for both."""
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    await seeder(repo)
+    seeded_skills = list(BUILTIN_SEED[agent_type]["skills"])
+    added = [*seeded_skills, "superpowers:brainstorming"]
+    await repo.update(
+        agent_type, display_name="Renamed", avatar="rogue", color="rose", description="edited", skills=added
+    )
+    await seeder(repo)
+    row = await repo.get(agent_type)
+    assert row is not None
+    assert (row["display_name"], row["avatar"], row["color"]) == ("Renamed", "rogue", "rose"), (
+        f"re-running the {agent_type} seeder reverted the operator's identity edits"
+    )
+    assert row["skills"] == added, f"re-running the {agent_type} seeder undid an added skill: {row['skills']}"
+    assert row["description"] == BUILTIN_SEED[agent_type]["description"], "the seeder must still re-sync description"
+    reset = await repo.reset(agent_type)
+    assert reset["skills"] == seeded_skills, "reset returns the skills to the seed"

@@ -272,6 +272,36 @@ async def test_agent_update_sends_only_provided_fields():
     assert json.loads(handler.seen[0].content) == {"model": "m2"}
 
 
+async def test_agent_update_sends_identity_fields():
+    handler = capture({("PUT", "/api/v1/agents/developer"): {"type": "developer"}})
+    client = make_client(handler)
+    await client.agent_update("developer", avatar="rogue", tagline="t")
+    assert json.loads(handler.seen[0].content) == {"avatar": "rogue", "tagline": "t"}
+
+
+async def test_agent_create_posts_the_definition_with_identity_defaults():
+    handler = capture({("POST", "/api/v1/agents"): {"type": "lantern"}})
+    client = make_client(handler)
+    assert await client.agent_create("lantern", description="lights", model="m") == {"type": "lantern"}
+    assert handler.seen[("POST", "/api/v1/agents")] == {
+        "type": "lantern",
+        "description": "lights",
+        "model": "m",
+        "system_prompt": "",
+        "display_name": "",
+        "avatar": "golem",
+        "color": "slate",
+        "tagline": "",
+    }
+
+
+async def test_agent_delete_calls_the_delete_route():
+    handler = capture({("DELETE", "/api/v1/agents/lantern"): {"type": "lantern", "status": "deleted"}})
+    client = make_client(handler)
+    assert await client.agent_delete("lantern") == {"type": "lantern", "status": "deleted"}
+    assert [(r.method, r.url.path) for r in handler.seen] == [("DELETE", "/api/v1/agents/lantern")]
+
+
 async def test_agent_update_surfaces_the_provider_readiness_refusal():
     """The MCP tool saves through PUT /agents/{type}; its 422 reaches the caller verbatim."""
     detail = "provider 'xai' is not ready to run model 'grok-4.5': no credential is configured for it."

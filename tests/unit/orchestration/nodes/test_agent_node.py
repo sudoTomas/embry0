@@ -941,3 +941,33 @@ async def test_trace_result_summary_is_redacted_before_its_cap(monkeypatch) -> N
     summary = traces_repo.finish.call_args.kwargs["result_summary"]
     assert secret not in summary and secret[:8] not in summary, "no fragment of the secret may survive the cut"
     assert len(summary) <= 500
+
+
+@pytest.mark.asyncio
+async def test_run_agent_node_serializes_the_sandboxs_skill_mounts() -> None:
+    spec = {
+        "source_id": "superpowers",
+        "plugin_name": "superpowers",
+        "container_path": "/opt/embry0/skills/superpowers",
+    }
+    runner = _make_fake_runner(agent_type="research")
+    runner.skill_mounts = AsyncMock(return_value=[spec])
+    await run_agent_node(
+        state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "pipeline_config": {}},
+        agent_runner=runner,
+        agent_type="research",
+        node="generic_agent",
+        prompt="go",
+        agent_definition={
+            "model": "claude-sonnet-5",
+            "tools": [],
+            "skills": [],
+            "system_prompt": "",
+            "mcp_servers": {},
+            "execution_mode": None,
+            "auth_mode": None,
+        },
+        credentials={"api_key": "", "oauth_token": "t"},
+    )
+    runner.skill_mounts.assert_awaited_once_with("c1")
+    assert runner.run.call_args.kwargs["config"]["skill_mounts"] == [spec]

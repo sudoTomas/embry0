@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
+from embry0.agents.identity import DISPLAY_NAME_MAX, TAGLINE_MAX, validate_avatar, validate_color
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.execution.auth_provider import env_override_refusal
 from embry0.execution.profile_isolation import ISOLATION_FIELDS, field_problem
@@ -394,6 +395,10 @@ class AgentCreateRequest(BaseModel):
     execution_mode: str | None = Field(default=None, pattern="^(sdk|cli)$")
     auth_mode: str | None = Field(default=None, pattern="^(api_key|oauth)$")
     mcp_servers: dict[str, Any] = Field(default_factory=dict)
+    display_name: str = Field(default="", max_length=DISPLAY_NAME_MAX)
+    avatar: str = "golem"
+    color: str = "slate"
+    tagline: str = Field(default="", max_length=TAGLINE_MAX)
 
     @field_validator("type")
     @classmethod
@@ -402,6 +407,16 @@ class AgentCreateRequest(BaseModel):
             msg = "type must be lowercase alphanumeric with hyphens/underscores"
             raise ValueError(msg)
         return v
+
+    @field_validator("avatar")
+    @classmethod
+    def _avatar(cls, v: str) -> str:
+        return validate_avatar(v)
+
+    @field_validator("color")
+    @classmethod
+    def _color(cls, v: str) -> str:
+        return validate_color(v)
 
 
 class AgentUpdateRequest(BaseModel):
@@ -413,6 +428,64 @@ class AgentUpdateRequest(BaseModel):
     execution_mode: str | None = Field(default=None, pattern="^(sdk|cli)$")
     auth_mode: str | None = Field(default=None, pattern="^(api_key|oauth)$")
     mcp_servers: dict[str, Any] | None = None
+    display_name: str | None = Field(default=None, max_length=DISPLAY_NAME_MAX)
+    avatar: str | None = None
+    color: str | None = None
+    tagline: str | None = Field(default=None, max_length=TAGLINE_MAX)
+
+    @field_validator("avatar")
+    @classmethod
+    def _avatar(cls, v: str | None) -> str | None:
+        return None if v is None else validate_avatar(v)
+
+    @field_validator("color")
+    @classmethod
+    def _color(cls, v: str | None) -> str | None:
+        return None if v is None else validate_color(v)
+
+
+# --- Skills ---
+
+
+class SkillSourceCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=40)
+    # Only the builtin `local` source is inline; operators write its skills through /skills/inline.
+    kind: str = Field(pattern="^(git|path)$")
+    url: str = Field(default="", max_length=2000)
+    ref: str = Field(default="", max_length=255)
+    enabled: bool = True
+    credential_id: str | None = Field(default=None, description="reserved; any value is refused in this release")
+
+    @field_validator("credential_id")
+    @classmethod
+    def _reserved(cls, v: str | None) -> str | None:
+        if v is not None:
+            raise ValueError("credential_id is reserved: skill sources are public in this release")
+        return v
+
+
+class SkillSourcePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ref: str | None = Field(default=None, max_length=255)
+    enabled: bool | None = None
+
+
+class InlineSkillRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    description: str = Field(min_length=1, max_length=500)
+    body: str = Field(max_length=64 * 1024)
+
+    @field_validator("description", "body")
+    @classmethod
+    def _no_nul(cls, v: str, info: ValidationInfo) -> str:
+        # Postgres text cannot hold a NUL byte; refusing it here keeps it a 422, not a 500.
+        if "\x00" in v:
+            raise ValueError(f"{info.field_name} must not contain a NUL byte")
+        return v
 
 
 # --- Pipeline Templates ---

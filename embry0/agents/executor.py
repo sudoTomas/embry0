@@ -664,7 +664,14 @@ class SdkAgentExecutor:
         if resume_messages and not resume_session_id:
             prompt = f"{render_transcript_block(resume_messages)}\n\n{prompt}"
 
-        writer(events.agent_started(model=invocation.model, max_turns=invocation.max_turns, **ids))
+        writer(
+            events.agent_started(
+                model=invocation.model,
+                max_turns=invocation.max_turns,
+                skill_sources=[m["source_id"] for m in invocation.skill_mounts] or None,
+                **ids,
+            )
+        )
 
         # Seed the api_key-mode messages list with the user prompt as turn 0.
         # We append AssistantMessage text below; this stays empty/unused in

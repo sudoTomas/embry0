@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from embry0.agents.identity import BUILTIN_IDENTITY
+
 if TYPE_CHECKING:
     # Lazy at runtime — BUILTIN_SEED imports SYSTEM_PROMPT from this module,
     # so a top-level AgentDefinitionsRepository import would cycle (same
@@ -130,6 +132,7 @@ ONBOARDING_AGENT_SEED: dict[str, Any] = {
     "execution_mode": None,
     "auth_mode": None,
     "mcp_servers": {},
+    **BUILTIN_IDENTITY["onboarding"],
 }
 
 
@@ -146,13 +149,19 @@ async def seed_onboarding_agent(repo: AgentDefinitionsRepository) -> None:
             system_prompt=ONBOARDING_AGENT_SEED["system_prompt"],
             execution_mode=ONBOARDING_AGENT_SEED["execution_mode"],
             auth_mode=ONBOARDING_AGENT_SEED["auth_mode"],
+            display_name=ONBOARDING_AGENT_SEED["display_name"],
+            avatar=ONBOARDING_AGENT_SEED["avatar"],
+            color=ONBOARDING_AGENT_SEED["color"],
+            tagline=ONBOARDING_AGENT_SEED["tagline"],
         )
+    # Identity and skills are written only on create: an operator's edits and the
+    # skills added through POST /agents/{type}/skills survive a reboot, and
+    # POST /agents/{type}/reset is the explicit restore path.
     await repo.update(
         "onboarding",
         description=ONBOARDING_AGENT_SEED["description"],
         model=ONBOARDING_AGENT_SEED["model"],
         tools=ONBOARDING_AGENT_SEED["tools"],
-        skills=ONBOARDING_AGENT_SEED["skills"],
         system_prompt=ONBOARDING_AGENT_SEED["system_prompt"],
         execution_mode=ONBOARDING_AGENT_SEED["execution_mode"],
         auth_mode=ONBOARDING_AGENT_SEED["auth_mode"],

@@ -5,6 +5,7 @@ from typing import Any
 
 import structlog
 
+from embry0.agents.identity import BUILTIN_IDENTITY, DEFAULT_AVATAR, DEFAULT_COLOR
 from embry0.storage.database import DatabasePool
 from embry0.workflows.issue_to_pr.noncode_agents import (
     ANALYSIS_SYSTEM_PROMPT as _ANALYSIS_SYSTEM_PROMPT,
@@ -159,6 +160,12 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
     },
 }
 
+# Every builtin carries its identity (embry0/agents/identity.py). Merged here so
+# the entries above keep their hand-written form; qa and pr-reviewer are deep
+# copies, so this touches the copies only (their own seeds carry it too).
+for _agent_type, _ident in BUILTIN_IDENTITY.items():
+    BUILTIN_SEED[_agent_type].update(_ident)
+
 _ALLOWED_UPDATE_FIELDS = {
     "description",
     "model",
@@ -168,6 +175,10 @@ _ALLOWED_UPDATE_FIELDS = {
     "execution_mode",
     "auth_mode",
     "mcp_servers",
+    "display_name",
+    "avatar",
+    "color",
+    "tagline",
 }
 
 
@@ -200,14 +211,18 @@ class AgentDefinitionsRepository:
         execution_mode: str | None = None,
         auth_mode: str | None = None,
         mcp_servers: dict[str, Any] | None = None,
+        display_name: str = "",
+        avatar: str = DEFAULT_AVATAR,
+        color: str = DEFAULT_COLOR,
+        tagline: str = "",
     ) -> dict[str, Any]:
         """Insert a new custom agent definition."""
         row = await self._db.fetchrow(
             """
             INSERT INTO agent_definitions
                 (type, description, model, tools, skills, system_prompt, is_builtin, execution_mode, auth_mode,
-                 mcp_servers)
-            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9)
+                 mcp_servers, display_name, avatar, color, tagline)
+            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $13)
             RETURNING *
             """,
             agent_type,
@@ -219,6 +234,10 @@ class AgentDefinitionsRepository:
             execution_mode,
             auth_mode,
             mcp_servers or {},
+            display_name,
+            avatar,
+            color,
+            tagline,
         )
         logger.info("agent_definition_created", agent_type=agent_type)
         assert row is not None, "INSERT ... RETURNING must return a row"
@@ -279,8 +298,12 @@ class AgentDefinitionsRepository:
                 execution_mode = $6,
                 auth_mode = $7,
                 mcp_servers = $8,
+                display_name = $9,
+                avatar = $10,
+                color = $11,
+                tagline = $12,
                 updated_at = NOW()
-            WHERE type = $9
+            WHERE type = $13
             RETURNING *
             """,
             seed["description"],
@@ -291,6 +314,10 @@ class AgentDefinitionsRepository:
             seed["execution_mode"],
             seed["auth_mode"],
             seed["mcp_servers"],
+            seed["display_name"],
+            seed["avatar"],
+            seed["color"],
+            seed["tagline"],
             agent_type,
         )
         if row is None:

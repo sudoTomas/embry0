@@ -221,7 +221,8 @@ class DirectXaiExecutor:
 
         client = _make_client(base_url, proxy_token)
 
-        writer(events.agent_started(model=invocation.model, max_turns=invocation.max_turns, **ids))
+        # No skill sources: this executor runs no CLI, so it loads no plugins.
+        writer(events.agent_started(model=invocation.model, max_turns=invocation.max_turns, skill_sources=None, **ids))
 
         async def execute() -> None:
             nonlocal capped

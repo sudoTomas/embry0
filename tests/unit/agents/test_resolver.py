@@ -178,3 +178,20 @@ def test_jsonb_tools_parsed():
     assert cfg.skills == ["summarise"]
     assert isinstance(cfg.tools, list)
     assert isinstance(cfg.skills, list)
+
+
+def test_template_and_triage_skill_deltas_are_additive() -> None:
+    definition = {"model": "m", "tools": [], "skills": ["s:a", "s:b"], "system_prompt": ""}
+    resolved = resolve_agent_config(
+        "developer",
+        definition,
+        template_config={"agent_skills": {"developer": {"add": ["s:c"], "remove": ["s:a"]}}},
+        pipeline_config={"agent_skills": {"developer": {"add": ["s:d"]}}},
+    )
+    assert resolved.skills == ["s:b", "s:c", "s:d"]
+
+
+def test_legacy_list_skill_override_still_replaces() -> None:
+    definition = {"model": "m", "tools": [], "skills": ["s:a", "s:b"], "system_prompt": ""}
+    resolved = resolve_agent_config("developer", definition, pipeline_config={"agent_skills": {"developer": ["s:z"]}})
+    assert resolved.skills == ["s:z"]

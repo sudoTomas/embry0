@@ -285,3 +285,14 @@ def test_emit_scrubs_every_string_value_before_stdout(capsys, monkeypatch) -> No
     line = json.loads(capsys.readouterr().out)
     assert secret not in json.dumps(line)
     assert line["tool_id"] == "t1" and line["type"] == "tool_call"
+
+
+def test_invocation_from_config_reads_skill_mounts() -> None:
+    spec = {
+        "source_id": "superpowers",
+        "plugin_name": "superpowers",
+        "container_path": "/opt/embry0/skills/superpowers",
+    }
+    inv = _invocation_from_config({"prompt": "ping", "skill_mounts": [spec]})
+    assert inv.skill_mounts == (spec,)
+    assert _invocation_from_config({"prompt": "ping"}).skill_mounts == ()

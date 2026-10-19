@@ -4,11 +4,14 @@ Run via the ``embry0-mcp`` console script (stdio transport). Configure with
 ``EMBRY0_API_URL`` (default ``http://localhost:8200``) and ``EMBRY0_API_KEY``.
 
 Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
-``job_answer``, ``agent_update``, ``agent_reset``, ``env_set``, ``env_delete``,
-``merge_decide``, ``case_accept``, ``case_close``, ``repo_register``,
-``org_register``, ``org_webhook_install``, ``org_act``, ``qa_config_set``,
-``credential_bind``, ``host_import_tailnet``) require ``confirm=true``; without
-it they return an instructive refusal instead of acting.
+``job_answer``, ``agent_create``, ``agent_update``, ``agent_delete``,
+``agent_reset``, ``env_set``, ``env_delete``, ``merge_decide``, ``case_accept``,
+``case_close``, ``repo_register``, ``org_register``, ``org_webhook_install``,
+``org_act``, ``qa_config_set``, ``credential_bind``, ``host_import_tailnet``,
+``skill_source_add``, ``skill_source_sync``, ``skill_source_remove``,
+``inline_skill_put``, ``inline_skill_remove``, ``agent_skill_add``,
+``agent_skill_remove``) require ``confirm=true``; without it they return an
+instructive refusal instead of acting.
 """
 
 from __future__ import annotations
@@ -33,8 +36,9 @@ mcp = MCPServer(
         "Tools for driving the embry0 issue-to-PR / QA / research automation platform: "
         "issues, jobs (create/wait/logs/deliverables), agent definitions, pipeline "
         "templates, the log watcher, healing cases, merge approvals, per-repo environment "
-        "variables, forge credentials (list, resolve, bind), and the hosts that run the "
-        "code (list, get, probe, import from a tailnet). "
+        "variables, forge credentials (list, resolve, bind), the hosts that run the "
+        "code (list, get, probe, import from a tailnet), "
+        "skills (catalog, sources, inline skills, per-agent add/remove) and the tool catalog. "
         "Destructive tools require confirm=true after explicit user approval. "
         'Two lists answer "what is open?", and they are different things: '
         'issue_list(status="open") is the work on the Issues page of the dashboard; '
@@ -402,10 +406,16 @@ async def agent_update(
     execution_mode: str | None = None,
     auth_mode: str | None = None,
     mcp_servers: dict[str, Any] | None = None,
+    display_name: str | None = None,
+    avatar: str | None = None,
+    color: str | None = None,
+    tagline: str | None = None,
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Update an agent definition (only provided fields change). execution_mode: sdk|cli;
-    auth_mode: api_key|oauth. Requires confirm=true (changes live pipeline behavior)."""
+    auth_mode: api_key|oauth; avatar and color are roster and palette ids. skills: only names the agent
+    does not have yet are checked, and a bare name (no colon) is the target repository's own skill.
+    Requires confirm=true (changes live pipeline behavior)."""
     if not confirm:
         return _confirmation_refusal("agent_update", f"update agent definition {agent_type!r}")
     return await _get_client().agent_update(
@@ -418,7 +428,57 @@ async def agent_update(
         execution_mode=execution_mode,
         auth_mode=auth_mode,
         mcp_servers=mcp_servers,
+        display_name=display_name,
+        avatar=avatar,
+        color=color,
+        tagline=tagline,
     )
+
+
+@_tool
+async def agent_create(
+    agent_type: str,
+    description: str,
+    model: str,
+    tools: list[str] | None = None,
+    skills: list[str] | None = None,
+    system_prompt: str = "",
+    execution_mode: str | None = None,
+    auth_mode: str | None = None,
+    mcp_servers: dict[str, Any] | None = None,
+    display_name: str = "",
+    avatar: str = "golem",
+    color: str = "slate",
+    tagline: str = "",
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Create a custom agent definition. avatar is one of the roster ids and color one of the palette ids
+    (see GET /agents for the builtins' values). Requires confirm=true (adds a runnable agent)."""
+    if not confirm:
+        return _confirmation_refusal("agent_create", f"create agent definition {agent_type!r}")
+    return await _get_client().agent_create(
+        agent_type,
+        description=description,
+        model=model,
+        tools=tools,
+        skills=skills,
+        system_prompt=system_prompt,
+        execution_mode=execution_mode,
+        auth_mode=auth_mode,
+        mcp_servers=mcp_servers,
+        display_name=display_name,
+        avatar=avatar,
+        color=color,
+        tagline=tagline,
+    )
+
+
+@_tool
+async def agent_delete(agent_type: str, confirm: bool = False) -> dict[str, Any]:
+    """Delete a custom agent definition (builtins answer 403). Requires confirm=true (destructive)."""
+    if not confirm:
+        return _confirmation_refusal("agent_delete", f"delete agent definition {agent_type!r}")
+    return await _get_client().agent_delete(agent_type)
 
 
 @_tool
@@ -428,6 +488,130 @@ async def agent_reset(agent_type: str, confirm: bool = False) -> dict[str, Any]:
     if not confirm:
         return _confirmation_refusal("agent_reset", f"reset agent definition {agent_type!r} to defaults")
     return await _get_client().agent_reset(agent_type)
+
+
+@_tool
+async def agent_skill_add(agent_type: str, skill_name: str, confirm: bool = False) -> dict[str, Any]:
+    """Add one skill (a `plugin:skill` name from skill_list, or a bare name for the target repository's own
+    skill, which is not checked) to an agent definition; adding one it already has is a no-op. An unknown
+    name answers 422 with the closest known names; one from a source not ready yet is added and listed in
+    `warnings`. Returns the agent. Requires confirm=true (changes live pipeline behavior)."""
+    if not confirm:
+        return _confirmation_refusal("agent_skill_add", f"add skill {skill_name!r} to agent {agent_type!r}")
+    return await _get_client().agent_skill_add(agent_type, skill_name)
+
+
+@_tool
+async def agent_skill_remove(agent_type: str, skill_name: str, confirm: bool = False) -> dict[str, Any]:
+    """Remove one skill from an agent definition; removing one it does not have is a no-op.
+    Returns the agent. Requires confirm=true (changes live pipeline behavior)."""
+    if not confirm:
+        return _confirmation_refusal("agent_skill_remove", f"remove skill {skill_name!r} from agent {agent_type!r}")
+    return await _get_client().agent_skill_remove(agent_type, skill_name)
+
+
+# ------------------------------------------------------------------- skills
+
+
+@_tool
+async def skill_list() -> list[dict[str, Any]]:
+    """List the skill catalog: every `plugin:skill` name the skill sources provide, with its source,
+    description, and whether it is available (its source is ready and enabled)."""
+    return await _get_client().skill_list()
+
+
+@_tool
+async def skill_source_list() -> list[dict[str, Any]]:
+    """List the skill sources (git, path, inline) with status, resolved sha, plugin name, synced_at and
+    the last sync error."""
+    return await _get_client().skill_source_list()
+
+
+@_tool
+async def skill_source_add(
+    source_id: str,
+    kind: str,
+    url: str = "",
+    ref: str = "",
+    enabled: bool = True,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Add a skill source and start its first sync; it answers in status `pending`. kind: git|path.
+    git: url is a public https repository and ref a tag, branch or commit sha (the pin is the trust
+    decision); path: url is a directory inside the orchestrator container. Inline skills go through
+    inline_skill_put. Requires confirm=true (code the agents will load)."""
+    if not confirm:
+        return _confirmation_refusal("skill_source_add", f"add {kind} skill source {source_id!r}")
+    return await _get_client().skill_source_add(source_id, kind=kind, url=url, ref=ref, enabled=enabled)
+
+
+@_tool
+async def skill_source_get(source_id: str) -> dict[str, Any]:
+    """One skill source: kind, url, ref, resolved sha, status and error, and the skills it lists."""
+    return await _get_client().skill_source_get(source_id)
+
+
+@_tool
+async def skill_source_update(
+    source_id: str, ref: str | None = None, enabled: bool | None = None, confirm: bool = False
+) -> dict[str, Any]:
+    """Change a skill source's ref (git sources; starts a sync) or enable or disable it. Only the given
+    fields change; built-in sources accept enabled only. Requires confirm=true (changes what agents load)."""
+    if not confirm:
+        return _confirmation_refusal("skill_source_update", f"update skill source {source_id!r}")
+    return await _get_client().skill_source_update(source_id, ref=ref, enabled=enabled)
+
+
+@_tool
+async def skill_source_sync(source_id: str, confirm: bool = False) -> dict[str, Any]:
+    """Re-sync a skill source in the background (409 while a sync of it runs); watch skill_source_list
+    for the result. Requires confirm=true (replaces the tree new sandboxes mount)."""
+    if not confirm:
+        return _confirmation_refusal("skill_source_sync", f"re-sync skill source {source_id!r}")
+    return await _get_client().skill_source_sync(source_id)
+
+
+@_tool
+async def skill_source_remove(source_id: str, confirm: bool = False) -> dict[str, Any]:
+    """Delete a skill source and its stored tree. Builtins answer 403; a source whose skills an agent or
+    template still names answers 409 listing them. Requires confirm=true (destructive)."""
+    if not confirm:
+        return _confirmation_refusal("skill_source_remove", f"delete skill source {source_id!r}")
+    return await _get_client().skill_source_remove(source_id)
+
+
+@_tool
+async def inline_skill_list() -> list[dict[str, Any]]:
+    """The inline skills (name, description, body, timestamps); agents name each one `local:<name>`."""
+    return await _get_client().inline_skill_list()
+
+
+@_tool
+async def inline_skill_put(name: str, description: str, body: str, confirm: bool = False) -> dict[str, Any]:
+    """Create or replace an inline skill, published as `local:<name>`. body is the SKILL.md content
+    below the frontmatter. Re-syncs the `local` source. Requires confirm=true (changes what agents load)."""
+    if not confirm:
+        return _confirmation_refusal("inline_skill_put", f"write inline skill {name!r}")
+    return await _get_client().inline_skill_put(name, description=description, body=body)
+
+
+@_tool
+async def inline_skill_remove(name: str, confirm: bool = False) -> dict[str, Any]:
+    """Delete an inline skill; 409 while an agent or template names `local:<name>`.
+    Requires confirm=true (destructive)."""
+    if not confirm:
+        return _confirmation_refusal("inline_skill_remove", f"delete inline skill {name!r}")
+    return await _get_client().inline_skill_remove(name)
+
+
+# -------------------------------------------------------------------- tools
+
+
+@_tool
+async def tool_list() -> list[dict[str, Any]]:
+    """List the tool names an agent definition can name: Claude Code builtins, each browser backend's
+    MCP tools (source `mcp:<backend>`) and the log tool (source `mcp:context`)."""
+    return await _get_client().tool_list()
 
 
 # ---------------------------------------------------------------- templates

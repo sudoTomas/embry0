@@ -1,0 +1,86 @@
+{
+  "avatars": [
+    "seer",
+    "smith",
+    "warden",
+    "alchemist",
+    "herald",
+    "arbiter",
+    "scholar",
+    "oracle",
+    "engineer",
+    "rogue",
+    "bard",
+    "golem"
+  ],
+  "builtin": {
+    "analysis": {
+      "avatar": "oracle",
+      "color": "violet",
+      "display_name": "Analysis",
+      "tagline": "Finds the pattern."
+    },
+    "developer": {
+      "avatar": "smith",
+      "color": "amber",
+      "display_name": "Developer",
+      "tagline": "Forges the change."
+    },
+    "onboarding": {
+      "avatar": "herald",
+      "color": "sky",
+      "display_name": "Onboarding",
+      "tagline": "Announces a new repository."
+    },
+    "ops": {
+      "avatar": "engineer",
+      "color": "amber",
+      "display_name": "Ops",
+      "tagline": "Keeps it running."
+    },
+    "pr-reviewer": {
+      "avatar": "arbiter",
+      "color": "cyan",
+      "display_name": "PR Reviewer",
+      "tagline": "Weighs a pull request."
+    },
+    "qa": {
+      "avatar": "alchemist",
+      "color": "emerald",
+      "display_name": "QA",
+      "tagline": "Proves it in the vessel."
+    },
+    "research": {
+      "avatar": "scholar",
+      "color": "gold",
+      "display_name": "Research",
+      "tagline": "Reads everything first."
+    },
+    "review": {
+      "avatar": "warden",
+      "color": "rose",
+      "display_name": "Reviewer",
+      "tagline": "Guards the gate."
+    },
+    "triage": {
+      "avatar": "seer",
+      "color": "violet",
+      "display_name": "Triage",
+      "tagline": "Reads the issue, sets the course."
+    }
+  },
+  "default_avatar": "golem",
+  "default_color": "slate",
+  "display_name_max": 60,
+  "palette": [
+    "gold",
+    "cyan",
+    "violet",
+    "rose",
+    "emerald",
+    "amber",
+    "sky",
+    "slate"
+  ],
+  "tagline_max": 140
+}

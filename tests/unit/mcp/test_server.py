@@ -22,7 +22,9 @@ EXPECTED_TOOLS = {
     "job_deliverables",
     "agent_list",
     "agent_get",
+    "agent_create",
     "agent_update",
+    "agent_delete",
     "agent_reset",
     "template_list",
     "template_get",
@@ -58,6 +60,19 @@ EXPECTED_TOOLS = {
     "credential_list",
     "credential_resolve",
     "credential_bind",
+    "skill_list",
+    "skill_source_list",
+    "skill_source_add",
+    "skill_source_sync",
+    "skill_source_remove",
+    "skill_source_get",
+    "skill_source_update",
+    "inline_skill_list",
+    "inline_skill_put",
+    "inline_skill_remove",
+    "agent_skill_add",
+    "agent_skill_remove",
+    "tool_list",
 }
 
 CONFIRM_GATED = {
@@ -67,7 +82,9 @@ CONFIRM_GATED = {
     "job_resume",
     "job_answer",
     "job_cancel",
+    "agent_create",
     "agent_update",
+    "agent_delete",
     "agent_reset",
     "env_set",
     "env_delete",
@@ -78,6 +95,14 @@ CONFIRM_GATED = {
     "org_act",
     "qa_config_set",
     "credential_bind",
+    "skill_source_add",
+    "skill_source_sync",
+    "skill_source_remove",
+    "skill_source_update",
+    "inline_skill_put",
+    "inline_skill_remove",
+    "agent_skill_add",
+    "agent_skill_remove",
 }
 
 
@@ -112,7 +137,9 @@ async def test_confirm_gated_tools_refuse_without_confirm(fake_client):
         await server.job_resume("j1", "abandon"),
         await server.job_answer("j1", "inp-1", "use option A"),
         await server.job_cancel("j1"),
+        await server.agent_create("lantern", "lights", "m"),
         await server.agent_update("developer", model="m"),
+        await server.agent_delete("lantern"),
         await server.agent_reset("developer"),
         await server.env_set("K", "v"),
         await server.env_delete("K"),
@@ -138,7 +165,9 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
     assert await server.job_cancel("j1", confirm=True) == {"called": "job_cancel"}
     assert await server.job_resume("j1", "merge_as_is", confirm=True) == {"called": "job_resume"}
     assert await server.job_answer("j1", "inp-1", "use option A", confirm=True) == {"called": "job_input_answer"}
+    assert await server.agent_create("lantern", "lights", "m", confirm=True) == {"called": "agent_create"}
     assert await server.agent_update("developer", model="m", confirm=True) == {"called": "agent_update"}
+    assert await server.agent_delete("lantern", confirm=True) == {"called": "agent_delete"}
     assert await server.agent_reset("developer", confirm=True) == {"called": "agent_reset"}
     assert await server.env_set("K", "v", confirm=True) == {"called": "env_set"}
     assert await server.env_delete("K", confirm=True) == {"called": "env_delete"}
@@ -160,7 +189,9 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
         "job_cancel",
         "job_resume",
         "job_input_answer",
+        "agent_create",
         "agent_update",
+        "agent_delete",
         "agent_reset",
         "env_set",
         "env_delete",
@@ -378,3 +409,61 @@ def test_case_accept_says_a_linear_draft_is_accepted_here():
     # The one tracker still left to its label, and the promise the route keeps.
     assert "A GitLab draft is still accepted by adding the label in GitLab" in doc
     assert "there is no success without one" in doc
+
+
+async def test_agent_create_forwards_every_field(fake_client):
+    await server.agent_create(
+        "lantern",
+        "lights",
+        "claude-sonnet-5",
+        tools=["Read"],
+        skills=["s"],
+        system_prompt="p",
+        execution_mode="sdk",
+        auth_mode="oauth",
+        mcp_servers={"x": {}},
+        display_name="Lantern",
+        avatar="bard",
+        color="sky",
+        tagline="Sings.",
+        confirm=True,
+    )
+    assert fake_client.calls == [
+        (
+            "agent_create",
+            ("lantern",),
+            {
+                "description": "lights",
+                "model": "claude-sonnet-5",
+                "tools": ["Read"],
+                "skills": ["s"],
+                "system_prompt": "p",
+                "execution_mode": "sdk",
+                "auth_mode": "oauth",
+                "mcp_servers": {"x": {}},
+                "display_name": "Lantern",
+                "avatar": "bard",
+                "color": "sky",
+                "tagline": "Sings.",
+            },
+        )
+    ]
+
+
+async def test_agent_update_forwards_identity_fields(fake_client):
+    await server.agent_update("developer", display_name="Dev", avatar="rogue", color="rose", tagline="t", confirm=True)
+    name, args, kwargs = fake_client.calls[-1]
+    assert (name, args) == ("agent_update", ("developer",))
+    assert {k: kwargs[k] for k in ("display_name", "avatar", "color", "tagline")} == {
+        "display_name": "Dev",
+        "avatar": "rogue",
+        "color": "rose",
+        "tagline": "t",
+    }
+
+
+async def test_agent_delete_refusal_names_the_agent(fake_client):
+    refusal = await server.agent_delete("lantern")
+    assert refusal["error"] == "confirmation_required"
+    assert "lantern" in refusal["message"] and "agent_delete" in refusal["message"]
+    assert fake_client.calls == []

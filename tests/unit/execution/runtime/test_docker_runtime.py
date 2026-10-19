@@ -384,3 +384,45 @@ async def test_sandbox_manager_enforces_policy_through_its_runtime() -> None:
     runtime.ensure_isolation.assert_awaited_once_with(["git-proxy"])
     await manager.destroy("sbx")
     runtime.detach_policy.assert_awaited_once_with("sbx")
+
+
+@pytest.mark.asyncio
+async def test_container_mounts_reports_source_and_destination() -> None:
+    mounts = (
+        '[{"Type": "bind", "Source": "/skills/superpowers/aaa", "Destination": "/opt/embry0/skills/superpowers"},'
+        ' {"Type": "volume", "Name": "cache", "Source": "/var/lib/docker/volumes/cache/_data",'
+        ' "Destination": "/home/agent/.m2"}]\n'
+    )
+    client = _client(mounts, "null\n")
+    runtime = DockerRuntime(client)
+    assert await runtime.container_mounts("cid") == [
+        ("/skills/superpowers/aaa", "/opt/embry0/skills/superpowers"),
+        ("/var/lib/docker/volumes/cache/_data", "/home/agent/.m2"),
+    ]
+    assert await runtime.container_mounts("bare") == [], "a container with no mounts prints null"
+    base = ["docker", "--host", "tcp://dind:2376"]
+    assert _issued(client)[0] == ([*base, "inspect", "--format", "{{json .Mounts}}", "cid"], 10)
+
+
+@pytest.mark.asyncio
+async def test_mounted_sources_inspects_every_container_in_one_call() -> None:
+    inspected = (
+        '[{"Source": "/skills/superpowers/aaa", "Destination": "/opt/embry0/skills/superpowers"}]\n'
+        "null\n"
+        '[{"Source": "/skills/local/bbb", "Destination": "/opt/embry0/skills/local"}, {"Destination": "/tmp"}]\n'
+    )
+    client = _client("c1\nc2\nc3\n", inspected)
+    runtime = DockerRuntime(client)
+    assert await runtime.mounted_sources() == {"/skills/superpowers/aaa", "/skills/local/bbb"}
+    base = ["docker", "--host", "tcp://dind:2376"]
+    assert _issued(client) == [
+        ([*base, "ps", "-aq"], 30),
+        ([*base, "inspect", "--format", "{{json .Mounts}}", "c1", "c2", "c3"], 30),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mounted_sources_with_no_containers_inspects_nothing() -> None:
+    client = _client("\n")
+    assert await DockerRuntime(client).mounted_sources() == set()
+    assert len(_issued(client)) == 1

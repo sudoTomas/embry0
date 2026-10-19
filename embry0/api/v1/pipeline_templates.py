@@ -2,30 +2,64 @@
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from embry0.agents.skills import normalize_delta
 from embry0.api.deps import get_templates_repo
 from embry0.api.schemas import TemplateCreateRequest, TemplateDuplicateRequest, TemplateUpdateRequest
+from embry0.api.v1._skill_writes import check_added_skills
 from embry0.services.model_enablement import UnpricedModelError, ensure_models_priced
 from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
 from embry0.workflows._validation import validate_graph_definition
+from embry0.workflows.issue_to_pr.route_plan import node_config
 
 router = APIRouter()
 
 
 def _reject_unpriced(graph: dict[str, Any] | None) -> None:
-    """#219: a template's models — one per step, on ``config.model`` (#468) — must not run unmetered.
+    """#219: a template's models — one per step, on ``config.model`` (#468) or a
+    legacy top-level ``model`` (#78) — must not run unmetered.
 
     Save-time only: ``validate_graph_definition`` also runs in plan_route, where
     a problem silently skips the template, and the resolver refuses an unpriced
     model at run time anyway.
     """
     nodes = (graph or {}).get("nodes") or []
-    step_models = [str(n["config"].get("model") or "") for n in nodes if isinstance(n.get("config"), dict)]
+    step_models = [str(node_config(n).get("model") or "") for n in nodes]
     try:
         ensure_models_priced(step_models)
     except UnpricedModelError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _added_skills(graph: dict[str, Any] | None) -> list[str]:
+    """Every name the graph's nodes add; a malformed skills delta is a 422."""
+    added: list[str] = []
+    for n in (graph or {}).get("nodes") or []:
+        skills = node_config(n).get("skills")
+        if skills is None:
+            continue
+        try:
+            added.extend(normalize_delta(skills)["add"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"node {n.get('node_id')!r}: {exc}") from exc
+    return added
+
+
+def _stored_added_skills(template: dict[str, Any] | None) -> set[str]:
+    """The names a stored template already adds; a node whose delta no longer parses adds none."""
+    names: set[str] = set()
+    for n in ((template or {}).get("graph_definition") or {}).get("nodes") or []:
+        try:
+            names.update(normalize_delta(node_config(n).get("skills"))["add"])
+        except ValueError:
+            continue
+    return names
+
+
+async def _check_template_skills(request: Request, graph: dict[str, Any] | None) -> list[str]:
+    """Check every name the graph adds; return the warnings."""
+    return await check_added_skills(request, _added_skills(graph))
 
 
 @router.get("/pipelines/templates")
@@ -49,6 +83,7 @@ async def get_template(
 @router.post("/pipelines/templates", status_code=201)
 async def create_template(
     req: TemplateCreateRequest,
+    request: Request,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict[str, Any]:
     # RAV-601: templates are runtime control-flow now — only executable
@@ -57,19 +92,22 @@ async def create_template(
     if problems:
         raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(req.graph_definition)
-    return await repo.create(
+    warnings = await _check_template_skills(request, req.graph_definition)
+    created = await repo.create(
         name=req.name,
         description=req.description,
         graph_definition=req.graph_definition,
         sandbox_profile=req.sandbox_profile,
         default_for_kind=req.default_for_kind,
     )
+    return {**created, "warnings": warnings}
 
 
 @router.put("/pipelines/templates/{template_id}")
 async def update_template(
     template_id: str,
     req: TemplateUpdateRequest,
+    request: Request,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
@@ -78,12 +116,27 @@ async def update_template(
         if not template:
             raise HTTPException(status_code=404, detail="Template not found")
         return template
+    # 1. The body on its own: graph validity, deferred tools, priced models, skills delta shape.
+    graph = updates.get("graph_definition")
+    added: list[str] = []
     if "graph_definition" in updates:
         problems = validate_graph_definition(str(template_id), updates["graph_definition"])
         if problems:
             raise HTTPException(status_code=422, detail="; ".join(problems))
-    _reject_unpriced(updates.get("graph_definition"))
-    return await repo.update(template_id, **updates)
+    _reject_unpriced(graph)
+    if "graph_definition" in updates:
+        added = _added_skills(graph)
+    # 2. The template must exist: the added names are measured against it.
+    stored = await repo.get(template_id) if repo is not None else None
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    # 3. Only the names this save adds are checked; names the stored template has keep working.
+    already = _stored_added_skills(stored)
+    warnings = await check_added_skills(request, [s for s in added if s not in already])
+    updated = await repo.update(template_id, **updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {**updated, "warnings": warnings}
 
 
 @router.delete("/pipelines/templates/{template_id}")

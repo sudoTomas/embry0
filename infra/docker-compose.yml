@@ -80,6 +80,9 @@ services:
     volumes:
       - dind-certs-client:/certs/client:ro
       - orchestrator-data:/data
+      # spec 3.2: the orchestrator syncs skill sources here; dind bind-mounts the
+      # trees read-only into sandboxes, so the path must be the same in both.
+      - skills-store:/skills
       # Spec 1A 3.2: private CA for a self-managed GitLab. GITLAB_CA_BUNDLE_HOST
       # names a host path; the container always sees it at the fixed path below,
       # which is what GITLAB_CA_BUNDLE must be set to. The /dev/null default
@@ -302,6 +305,9 @@ services:
       - dind-certs-ca:/certs/ca
       - dind-certs-client:/certs/client
       - dind-storage:/var/lib/docker
+      # spec 3.2: the orchestrator syncs skill sources here; dind bind-mounts the
+      # trees read-only into sandboxes, so the path must be the same in both.
+      - skills-store:/skills:ro
       # Allow DinD to pull from the in-stack `registry` service over plain HTTP.
       - ./dind-daemon.json:/etc/docker/daemon.json:ro
     healthcheck:
@@ -630,6 +636,7 @@ volumes:
   registry-auth:
   image-pins:
   cloudflared-dashboard-config:
+  skills-store:
 
 networks:
   frontend:

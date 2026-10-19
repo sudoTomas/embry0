@@ -13,6 +13,7 @@ import os
 import re
 from contextvars import ContextVar
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -58,6 +59,11 @@ def _as_list(data: Any) -> list[dict[str, Any]]:
 
 def _drop_none(params: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in params.items() if value is not None}
+
+
+def _seg(value: str) -> str:
+    """One path segment: a ``plugin:skill`` name or an id cannot split the path or start a query."""
+    return quote(value, safe="")
 
 
 _REPO_SEGMENT = r"[A-Za-z0-9][A-Za-z0-9_.-]*"
@@ -333,6 +339,10 @@ class Embry0Client:
         execution_mode: str | None = None,
         auth_mode: str | None = None,
         mcp_servers: dict[str, Any] | None = None,
+        display_name: str | None = None,
+        avatar: str | None = None,
+        color: str | None = None,
+        tagline: str | None = None,
     ) -> dict[str, Any]:
         body = _drop_none(
             {
@@ -344,12 +354,107 @@ class Embry0Client:
                 "execution_mode": execution_mode,
                 "auth_mode": auth_mode,
                 "mcp_servers": mcp_servers,
+                "display_name": display_name,
+                "avatar": avatar,
+                "color": color,
+                "tagline": tagline,
             }
         )
         return _as_dict(await self._request("PUT", f"/api/v1/agents/{agent_type}", body=body))
 
+    async def agent_create(
+        self,
+        agent_type: str,
+        *,
+        description: str,
+        model: str,
+        tools: list[str] | None = None,
+        skills: list[str] | None = None,
+        system_prompt: str = "",
+        execution_mode: str | None = None,
+        auth_mode: str | None = None,
+        mcp_servers: dict[str, Any] | None = None,
+        display_name: str = "",
+        avatar: str = "golem",
+        color: str = "slate",
+        tagline: str = "",
+    ) -> dict[str, Any]:
+        body = _drop_none(
+            {
+                "type": agent_type,
+                "description": description,
+                "model": model,
+                "tools": tools,
+                "skills": skills,
+                "system_prompt": system_prompt,
+                "execution_mode": execution_mode,
+                "auth_mode": auth_mode,
+                "mcp_servers": mcp_servers,
+                "display_name": display_name,
+                "avatar": avatar,
+                "color": color,
+                "tagline": tagline,
+            }
+        )
+        return _as_dict(await self._request("POST", "/api/v1/agents", body=body))
+
+    async def agent_delete(self, agent_type: str) -> dict[str, Any]:
+        return _as_dict(await self._request("DELETE", f"/api/v1/agents/{agent_type}"))
+
     async def agent_reset(self, agent_type: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/agents/{agent_type}/reset"))
+
+    async def agent_skill_add(self, agent_type: str, skill_name: str) -> dict[str, Any]:
+        path = f"/api/v1/agents/{_seg(agent_type)}/skills/{_seg(skill_name)}"
+        return _as_dict(await self._request("POST", path))
+
+    async def agent_skill_remove(self, agent_type: str, skill_name: str) -> dict[str, Any]:
+        path = f"/api/v1/agents/{_seg(agent_type)}/skills/{_seg(skill_name)}"
+        return _as_dict(await self._request("DELETE", path))
+
+    # ------------------------------------------------------------------- skills
+
+    async def skill_list(self) -> list[dict[str, Any]]:
+        return _as_list(await self._request("GET", "/api/v1/skills"))
+
+    async def skill_source_list(self) -> list[dict[str, Any]]:
+        return _as_list(await self._request("GET", "/api/v1/skills/sources"))
+
+    async def skill_source_get(self, source_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/skills/sources/{_seg(source_id)}"))
+
+    async def skill_source_add(
+        self, source_id: str, *, kind: str, url: str = "", ref: str = "", enabled: bool = True
+    ) -> dict[str, Any]:
+        body = {"id": source_id, "kind": kind, "url": url, "ref": ref, "enabled": enabled}
+        return _as_dict(await self._request("POST", "/api/v1/skills/sources", body=body))
+
+    async def skill_source_update(
+        self, source_id: str, *, ref: str | None = None, enabled: bool | None = None
+    ) -> dict[str, Any]:
+        body = _drop_none({"ref": ref, "enabled": enabled})
+        return _as_dict(await self._request("PATCH", f"/api/v1/skills/sources/{_seg(source_id)}", body=body))
+
+    async def skill_source_sync(self, source_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("POST", f"/api/v1/skills/sources/{_seg(source_id)}/sync"))
+
+    async def skill_source_remove(self, source_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("DELETE", f"/api/v1/skills/sources/{_seg(source_id)}"))
+
+    async def inline_skill_list(self) -> list[dict[str, Any]]:
+        return _as_list(await self._request("GET", "/api/v1/skills/inline"))
+
+    async def inline_skill_put(self, name: str, *, description: str, body: str) -> dict[str, Any]:
+        payload = {"description": description, "body": body}
+        return _as_dict(await self._request("PUT", f"/api/v1/skills/inline/{_seg(name)}", body=payload))
+
+    async def inline_skill_remove(self, name: str) -> dict[str, Any]:
+        return _as_dict(await self._request("DELETE", f"/api/v1/skills/inline/{_seg(name)}"))
+
+    # -------------------------------------------------------------------- tools
+
+    async def tool_list(self) -> list[dict[str, Any]]:
+        return _as_list(await self._request("GET", "/api/v1/tools"))
 
     # ---------------------------------------------------------------- templates
 

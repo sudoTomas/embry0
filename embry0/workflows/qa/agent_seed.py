@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from embry0.agents.identity import BUILTIN_IDENTITY
 from embry0.workflows.qa.browser_backends import PLAYWRIGHT
 
 if TYPE_CHECKING:
@@ -168,6 +169,7 @@ QA_AGENT_SEED: dict[str, Any] = {
     "execution_mode": None,
     "auth_mode": None,
     "mcp_servers": PLAYWRIGHT.mcp_servers(),
+    **BUILTIN_IDENTITY["qa"],
 }
 
 
@@ -184,17 +186,23 @@ async def seed_qa_agent(repo: AgentDefinitionsRepository) -> None:
             system_prompt=QA_AGENT_SEED["system_prompt"],
             execution_mode=QA_AGENT_SEED["execution_mode"],
             auth_mode=QA_AGENT_SEED["auth_mode"],
+            display_name=QA_AGENT_SEED["display_name"],
+            avatar=QA_AGENT_SEED["avatar"],
+            color=QA_AGENT_SEED["color"],
+            tagline=QA_AGENT_SEED["tagline"],
         )
     # Standard fields (including mcp_servers) flow through the public update()
     # API — _ALLOWED_UPDATE_FIELDS includes "mcp_servers". is_builtin stays
     # outside that set on purpose: only seeders should mark a row as builtin,
     # so we set it via direct SQL.
+    # Identity and skills are written only on create: an operator's edits and the
+    # skills added through POST /agents/{type}/skills survive a reboot, and
+    # POST /agents/{type}/reset is the explicit restore path.
     await repo.update(
         "qa",
         description=QA_AGENT_SEED["description"],
         model=QA_AGENT_SEED["model"],
         tools=QA_AGENT_SEED["tools"],
-        skills=QA_AGENT_SEED["skills"],
         system_prompt=QA_AGENT_SEED["system_prompt"],
         execution_mode=QA_AGENT_SEED["execution_mode"],
         auth_mode=QA_AGENT_SEED["auth_mode"],

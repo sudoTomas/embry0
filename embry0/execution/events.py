@@ -88,6 +88,8 @@ class BaseEvent(TypedDict):
 class AgentStartedEvent(BaseEvent):
     model: str
     max_turns: int
+    # Spec 3.3: the skill sources the SDK loaded as plugins; absent when none.
+    skill_sources: NotRequired[list[str]]
 
 
 class TurnStartEvent(BaseEvent):
@@ -359,10 +361,13 @@ def _base(
 # --- sandbox executor events -------------------------------------------------
 
 
-def agent_started(*, model: str, max_turns: int, run_id: str, node: str, agent: str) -> dict[str, Any]:
-    return _make(
-        EventType.AGENT_STARTED, {"model": model, "max_turns": max_turns}, _base(run_id=run_id, node=node, agent=agent)
-    )
+def agent_started(
+    *, model: str, max_turns: int, run_id: str, node: str, agent: str, skill_sources: list[str] | None = None
+) -> dict[str, Any]:
+    fields: dict[str, Any] = {"model": model, "max_turns": max_turns}
+    if skill_sources is not None:
+        fields["skill_sources"] = skill_sources
+    return _make(EventType.AGENT_STARTED, fields, _base(run_id=run_id, node=node, agent=agent))
 
 
 def turn_start(

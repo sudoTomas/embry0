@@ -90,7 +90,14 @@ def test_lifespan_passes_resolver_to_every_forge_consumer():
     expectations = {
         # #522: without the registry no repo ever gets Docker (closed), so a
         # dropped argument breaks every granted repo's QA run, not security.
-        r"SandboxManager\(": (resolver, "docker_access_registry=ReposRepository("),
+        # Spec 3.3: without both, no sandbox ever gets a skill source mounted,
+        # and nothing says so: the manager constructs happily either way.
+        r"SandboxManager\(": (
+            resolver,
+            "docker_access_registry=ReposRepository(",
+            "skill_store=app.state.skill_store",
+            "skill_sources_repo=SkillSourcesRepository(",
+        ),
         r"GitHubClient\(": (resolver,),
         r"make_gitlab_client\(": (resolver,),
         r"IssueExecutor\(": (
@@ -221,3 +228,9 @@ def test_xai_refresh_loop_uses_the_registry():
     assert "xai_enabled = False" not in src[disabled : disabled + 400], (
         "a missing CLI credential file must not stop the proxy the registry accounts need"
     )
+
+
+def test_the_skill_store_is_told_where_the_sandbox_daemon_sees_it():
+    """Rootless: without daemon_root every skill bind names a path the host daemon does not have."""
+    [(_, window)] = _call_windows(_src(), r"app\.state\.skill_store = SkillStore\(")
+    assert "daemon_root=config.skills_store_daemon_path" in _top_level(window)
