@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 
@@ -17,7 +17,8 @@ vi.mock("@/hooks/useSandboxProfiles", () => ({
   useSandboxProfiles: () => ({ data: [{ name: "python-3.12" }], isLoading: false }),
 }));
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const toastSuccess = vi.fn();
+vi.mock("sonner", () => ({ toast: { success: (...a: unknown[]) => toastSuccess(...a), error: vi.fn() } }));
 
 import { RepoPreferencesSection } from "../RepoPreferencesSection";
 
@@ -36,7 +37,6 @@ const PREFS = {
 };
 
 function renderSection() {
-  // The section links to the QA config page, so it needs a router context.
   return render(
     <MemoryRouter>
       <RepoPreferencesSection repo="acme/group/backend" />
@@ -105,7 +105,63 @@ describe("RepoPreferencesSection heading", () => {
 
   it("heads the section in sentence case, like every other section title", () => {
     renderSection();
-    expect(screen.getByRole("heading", { name: "Sandbox preferences" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Work machine and branches" })).toBeInTheDocument();
+  });
+
+  it("says what the section holds, in plain words", () => {
+    renderSection();
+    expect(
+      screen.getByText(
+        "The work machine, the branch embry0 starts from and asks to merge into, the commit author, and the checks it runs before a pull request.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/triage/)).not.toBeInTheDocument();
+  });
+
+  it("names the blank work machine embry0's default", () => {
+    renderSection();
+    const picker = screen.getByLabelText("Work machine");
+    expect(within(picker).getByRole("option", { name: "embry0's default" })).toHaveValue("");
+    expect(within(picker).queryByRole("option", { name: /triage/ })).toBeNull();
+  });
+
+  it("no longer links to the old QA config page", () => {
+    renderSection();
+    expect(screen.queryByTestId("repo-prefs-qa-config-link")).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+});
+
+describe("RepoPreferencesSection clear", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseRepoPreferences.mockReturnValue({ data: PREFS, isLoading: false });
+  });
+
+  const CONFIRM =
+    "Clear the work machine, branch, commit author, checks before a pull request and notes for acme/group/backend? This also turns off pull request review. You can undo this from History.";
+
+  it("asks first, and a cancel sends no DELETE", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderSection();
+    await user.click(screen.getByRole("button", { name: "Clear these settings" }));
+    expect(confirmSpy).toHaveBeenCalledWith(CONFIRM);
+    expect(mockDeleteMutate).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Base branch")).toHaveValue("dev");
+    confirmSpy.mockRestore();
+  });
+
+  it("clears after the confirm and says it can be undone", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockDeleteMutate.mockImplementation((_vars, opts: { onSuccess: () => void }) => opts.onSuccess());
+    renderSection();
+    await user.click(screen.getByRole("button", { name: "Clear these settings" }));
+    expect(mockDeleteMutate).toHaveBeenCalledWith({ fullRepo: "acme/group/backend" }, expect.anything());
+    expect(toastSuccess).toHaveBeenCalledWith("Settings cleared. You can undo this from History.");
+    expect(screen.getByLabelText("Base branch")).toHaveValue("");
+    confirmSpy.mockRestore();
   });
 });
 

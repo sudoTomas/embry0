@@ -27,6 +27,8 @@ function starterTemplate(repo: string): string {
     "  config:\n" +
     '    apps:\n' +
     '      web: {path: "."}\n' +
+    "defaults:\n" +
+    "  sandbox_profile: qa-external\n" +
     "qa_required: auto\n" +
     "apps:\n" +
     "  web:\n" +
@@ -71,7 +73,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [dirty]);
 
-  if (isError) return <PageError message="Failed to load the QA config" onRetry={() => refetch()} />;
+  if (isError) return <PageError message="Could not load the test setup" onRetry={() => refetch()} />;
   if (isLoading || data === undefined) return <TableSkeleton />;
 
   const showEditor = data !== null || draft !== null;
@@ -87,10 +89,10 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
     saveMutation.mutate(
       { fullRepo: repo, yamlText: text },
       {
-        onSuccess: () => toast.success("qa.yaml saved"),
+        onSuccess: () => toast.success("Test setup saved"),
         onError: (error) => {
           if (!(isAxiosError(error) && error.response?.status === 422)) {
-            toastApiError(error, "Failed to save qa.yaml");
+            toastApiError(error, "Could not save the test setup");
           }
         },
       },
@@ -100,7 +102,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
   function handleDelete() {
     if (
       !window.confirm(
-        `Delete the stored qa.yaml for ${repo}? QA treats the repo as unconfigured until a new config is stored (a legacy in-repo .embry0/qa.yaml would re-import as a deprecated fallback).`,
+        `Remove the test setup for ${repo}? Jobs that need to test your app will stop at that step until a new setup is saved. You can undo this from History.`,
       )
     )
       return;
@@ -109,9 +111,9 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
       {
         onSuccess: () => {
           setDraft(null);
-          toast.success("Stored config deleted");
+          toast.success("Test setup removed. You can undo this from History.");
         },
-        onError: (e) => toastApiError(e, "Failed to remove the stored qa.yaml"),
+        onError: (e) => toastApiError(e, "Could not remove the test setup"),
       },
     );
   }
@@ -119,29 +121,24 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
   return (
     <div className="space-y-4">
       <p className="text-sm text-white/60">
-        Stored qa.yaml (v2) — the embry0 DB is the source of truth; target repos carry no
-        config file. Schema-validated on save. Field reference:{" "}
-        <code className="text-white/70">docs/qa-yaml-reference.md</code>
+        Test setup. How embry0 starts your app on its own test computer and what it checks after
+        each change. embry0 keeps it itself, so nothing is added to your repository.
       </p>
 
       {!showEditor ? (
         <EmptyState
           stage="qa"
           icon={FileCode2}
-          title="No stored QA config"
-          description={
-            "embry0 has no stored qa.yaml for this repo, so QA treats it as unconfigured. " +
-            "A legacy in-repo .embry0/qa.yaml still auto-imports on the next run (deprecated) — " +
-            "storing one here is the supported path."
-          }
+          title="Testing is not set up yet"
+          description="embry0 can still write code, but it cannot check that your app still works."
         >
           <div className="flex items-center justify-center gap-3">
             <Link
               to={`/repos/onboard?repo=${encodeURIComponent(repo!)}`}
-              className={cn(buttonVariants({ size: "sm" }))}
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
               data-testid="qa-config-bootstrap-cta"
             >
-              Bootstrap this repo
+              Fill in a form
             </Link>
             <Button
               variant="outline"
@@ -180,6 +177,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
           )}
           <div className="flex items-center gap-3">
             <Button
+              variant="secondary"
               onClick={handleSave}
               disabled={!dirty || !text.trim() || saveMutation.isPending}
               data-testid="qa-config-save"
@@ -205,7 +203,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
                 disabled={deleteMutation.isPending}
                 data-testid="qa-config-delete"
               >
-                {deleteMutation.isPending ? "Deleting…" : "Delete stored config"}
+                {deleteMutation.isPending ? "Removing…" : "Remove test setup"}
               </Button>
             )}
           </div>

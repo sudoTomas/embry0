@@ -2,7 +2,7 @@
 // toasts every 5xx itself, and the page explains every other refusal with the
 // API's detail. Drives the real Environments page, hooks and api client; only
 // the HTTP answer is stubbed at the axios adapter.
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -50,7 +50,11 @@ async function deleteVariable() {
 beforeEach(() => {
   toastError.mockClear();
   useAuthStore.setState({ status: "authenticated", authMode: "key", user: null });
+  // Removing a value asks first; these tests are about the refused write after a yes.
+  vi.spyOn(window, "confirm").mockReturnValue(true);
 });
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("a refused environment write", () => {
   it("a 500 shows its reason in one toast, not two", async () => {
