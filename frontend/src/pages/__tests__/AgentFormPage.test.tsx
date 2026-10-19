@@ -91,18 +91,20 @@ beforeEach(() => {
 describe("AgentFormPage — execution depth (RAV-1058)", () => {
   it("populates execution mode, auth mode, and mcp servers from the definition", () => {
     renderEdit();
-    expect(screen.getByLabelText("Execution Mode")).toHaveValue("cli");
-    expect(screen.getByLabelText("Auth Mode")).toHaveValue("oauth");
-    expect(screen.getByLabelText("MCP Servers (JSON)")).toHaveValue(
+    expect(screen.getByLabelText("Execution mode")).toHaveValue("cli");
+    expect(screen.getByLabelText("Auth mode")).toHaveValue("oauth");
+    expect(screen.getByLabelText("MCP servers (JSON)")).toHaveValue(
       JSON.stringify(EXISTING.mcp_servers, null, 2),
     );
+    expect(screen.getByLabelText("System prompt")).toHaveValue("You write code.");
+    expect(screen.getByRole("heading", { level: 1, name: "Edit agent: developer" })).toBeInTheDocument();
   });
 
   it("saves the full surface, sending null to clear an inherited mode", async () => {
     const user = userEvent.setup();
     renderEdit();
 
-    await user.selectOptions(screen.getByLabelText("Execution Mode"), "");
+    await user.selectOptions(screen.getByLabelText("Execution mode"), "");
     await user.click(screen.getByRole("button", { name: "Save Agent" }));
 
     expect(mockUpdateMutate).toHaveBeenCalledWith(
@@ -120,7 +122,7 @@ describe("AgentFormPage — execution depth (RAV-1058)", () => {
     const user = userEvent.setup();
     renderEdit();
 
-    const editor = screen.getByLabelText("MCP Servers (JSON)");
+    const editor = screen.getByLabelText("MCP servers (JSON)");
     await user.clear(editor);
     await user.type(editor, "not json");
     await user.click(screen.getByRole("button", { name: "Save Agent" }));

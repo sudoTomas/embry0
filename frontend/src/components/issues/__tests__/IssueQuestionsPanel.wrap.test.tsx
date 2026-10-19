@@ -34,4 +34,9 @@ describe("IssueQuestionsPanel question text", () => {
     expect(text.querySelector("code")).toHaveTextContent("a_very_long_identifier_with_no_break_points_at_all");
     expect(text).not.toHaveTextContent("`");
   });
+
+  it("names its submit button in sentence case", () => {
+    render(<IssueQuestionsPanel issueId="iss-1" />);
+    expect(screen.getByRole("button", { name: "Submit answer" })).toBeInTheDocument();
+  });
 });

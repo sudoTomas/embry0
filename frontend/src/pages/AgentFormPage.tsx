@@ -254,7 +254,7 @@ export function AgentFormPage() {
           })()}
           <div className="flex flex-col">
             <h1 className="text-xl font-bold leading-tight">
-              {isEdit ? `Edit Agent: ${typeParam}` : "New Agent"}
+              {isEdit ? `Edit agent: ${typeParam}` : "New agent"}
             </h1>
             {(() => {
               const op = agentTypeToOperation(typeParam);
@@ -414,7 +414,7 @@ export function AgentFormPage() {
             {/* Execution / auth mode (RAV-1058) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="agent-execution-mode">Execution Mode</Label>
+                <Label htmlFor="agent-execution-mode">Execution mode</Label>
                 <Select
                   id="agent-execution-mode"
                   value={form.execution_mode}
@@ -429,7 +429,7 @@ export function AgentFormPage() {
                 </Select>
               </div>
               <div>
-                <Label htmlFor="agent-auth-mode">Auth Mode</Label>
+                <Label htmlFor="agent-auth-mode">Auth mode</Label>
                 <Select
                   id="agent-auth-mode"
                   value={form.auth_mode}
@@ -447,7 +447,7 @@ export function AgentFormPage() {
 
             {/* MCP servers (RAV-1058) */}
             <div>
-              <Label htmlFor="agent-mcp-servers">MCP Servers (JSON)</Label>
+              <Label htmlFor="agent-mcp-servers">MCP servers (JSON)</Label>
               <Textarea
                 id="agent-mcp-servers"
                 placeholder={'{\n  "my-server": { "type": "stdio", "command": "my-mcp", "args": ["--flag"] }\n}'}
@@ -472,7 +472,7 @@ export function AgentFormPage() {
         </CardHeader>
         <CardContent>
           <div>
-            <Label htmlFor="agent-system-prompt">System Prompt</Label>
+            <Label htmlFor="agent-system-prompt">System prompt</Label>
             <Textarea
               id="agent-system-prompt"
               placeholder="Enter the system prompt for this agent..."

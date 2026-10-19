@@ -56,7 +56,7 @@ export function AwaitingInputCard({ jobInputs, jobId }: AwaitingInputCardProps) 
           <PauseCircle className="w-5 h-5 text-amber-500" />
         </div>
         <div>
-          <h3 className="text-lg font-bold text-amber-400">Awaiting Input</h3>
+          <h3 className="text-lg font-bold text-amber-400">Awaiting input</h3>
           <p className="text-sm text-white/40">The pipeline needs more information to continue</p>
         </div>
       </div>

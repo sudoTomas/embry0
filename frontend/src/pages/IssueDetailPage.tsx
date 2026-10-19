@@ -206,7 +206,7 @@ export function IssueDetailPage(): JSX.Element {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">
-                  Child Issues
+                  Child issues
                   <span className="ml-2 text-sm font-normal text-muted-foreground">
                     ({issue.children.length})
                   </span>
@@ -322,8 +322,8 @@ export function IssueDetailPage(): JSX.Element {
                 >
                   <option value="open">Open</option>
                   <option value="triaging">Triaging</option>
-                  <option value="awaiting_input">Awaiting Input</option>
-                  <option value="in_progress">In Progress</option>
+                  <option value="awaiting_input">Awaiting input</option>
+                  <option value="in_progress">In progress</option>
                   <option value="closed">Closed</option>
                   <option value="cancelled">Cancelled</option>
                 </Select>

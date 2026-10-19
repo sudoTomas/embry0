@@ -66,7 +66,7 @@ function QuestionRow({ input, issueId }: { input: InputResponse; issueId: string
             onClick={handleSubmit}
             disabled={!answerText.trim() || answerMutation.isPending}
           >
-            {answerMutation.isPending ? "Submitting…" : "Submit Answer"}
+            {answerMutation.isPending ? "Submitting…" : "Submit answer"}
           </Button>
         </div>
       )}
