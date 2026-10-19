@@ -145,6 +145,19 @@ compose build "${services[@]}"
 echo ">> recreating ${recreate[*]}"
 compose up -d --force-recreate --no-deps "${recreate[@]}"
 
+# nginx looks the orchestrator's name up once, when it loads its config: the
+# LAN and public vhosts proxy /api, /ws, /webhook and /health to
+# http://orchestrator:8000 without a resolver. A recreated orchestrator can
+# come back on another address, so when the frontend was not recreated with
+# it, reload nginx to look the name up again.
+if [[ " ${services[*]} " == *" orchestrator "* && " ${services[*]} " != *" frontend "* ]]; then
+  echo ">> reloading nginx, which still holds the old orchestrator's address"
+  if ! compose exec -T frontend nginx -s reload; then
+    echo "deploy: could not reload nginx in the frontend container, so it may still proxy to the old orchestrator — run: infra/deploy.sh frontend" >&2
+    exit 1
+  fi
+fi
+
 echo ">> waiting for http://localhost:$port/health"
 for _ in $(seq 1 60); do
   if curl -fsS -m 3 "http://localhost:$port/health" >/dev/null 2>&1; then

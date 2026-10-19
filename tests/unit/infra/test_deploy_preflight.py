@@ -19,6 +19,7 @@ _SCRIPT = Path(__file__).resolve().parents[3] / "infra" / "deploy.sh"
 _STUBS = {
     "docker": """#!/bin/sh
 echo "docker $*" >> "$STUB_LOG"
+case "$*" in *"${STUB_DOCKER_FAIL:-@never@}"*) exit 1 ;; esac
 """,
     "git": """#!/bin/sh
 echo "git $*" >> "$STUB_LOG"
@@ -130,3 +131,30 @@ def test_force_deploys_past_the_refusals(deploy) -> None:
     result, calls = deploy(STUB_GIT_STATUS=" M embry0/config.py\n", STUB_JOBS_HTTP="401", EMBRY0_DEPLOY_FORCE="1")
     assert result.returncode == 0, result.stderr
     assert any(" up " in call for call in _docker(calls)), _docker(calls)
+
+
+# nginx resolves the orchestrator's name once, when it loads its config, and a
+# recreated orchestrator can come back on another address. A deploy that
+# recreates the orchestrator but not the frontend reloads nginx after it.
+_RELOAD = "docker compose exec -T frontend nginx -s reload"
+
+
+def test_an_orchestrator_only_deploy_reloads_nginx_after_the_recreate(deploy) -> None:
+    result, calls = deploy("orchestrator")
+    assert result.returncode == 0, result.stderr
+    docker = _docker(calls)
+    up = docker.index("docker compose up -d --force-recreate --no-deps orchestrator mcp")
+    assert _RELOAD in docker[up + 1 :], f"nginx was not reloaded after the recreate: {docker}"
+
+
+@pytest.mark.parametrize("services", [(), ("frontend",), ("orchestrator", "frontend")])
+def test_a_deploy_that_recreates_the_frontend_does_not_reload_it(deploy, services: tuple[str, ...]) -> None:
+    result, calls = deploy(*services)
+    assert result.returncode == 0, result.stderr
+    assert _RELOAD not in _docker(calls), _docker(calls)
+
+
+def test_a_failed_reload_fails_the_deploy_and_says_what_to_run(deploy) -> None:
+    result, _ = deploy("orchestrator", STUB_DOCKER_FAIL="nginx -s reload")
+    assert result.returncode == 1, f"a failed reload passed: {result.stdout}{result.stderr}"
+    assert "infra/deploy.sh frontend" in result.stderr, result.stderr
