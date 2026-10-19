@@ -116,6 +116,10 @@ curl http://localhost:8200/api/v1/repos/owner/repo/environment/detect \
   -H "X-Requested-With: XMLHttpRequest"
 ```
 
+A list response carries each secret as `****` plus a `masked_preview`:
+eight `•` and the secret's last 2 characters when it has 12 or more, eight
+`•` alone otherwise.
+
 A PUT replaces the whole set. A secret sent back as `****`, the value the
 list responses carry, keeps its stored value, so a client can write one
 variable without revealing the others: the MCP `env_set` tool, and

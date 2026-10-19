@@ -90,7 +90,7 @@ Sandboxes that need the internet (the Claude CLI calls its API from inside the s
 
 **The public origin.** The dashboard tunnel fronts the dashboard behind SSO through a dedicated nginx vhost, rendered from `DASHBOARD_PUBLIC_HOSTNAME`. That vhost returns 404 for the webhook, Telegram and internal paths, and sends a Content-Security-Policy and HSTS. The tunnel refuses to start without a valid hostname rather than open a catch-all ingress ([sso.md](docs/sso.md#ingress)).
 
-**Secrets at rest and in output.** Credentials and secret env vars are Fernet-encrypted in the database. Credentials are write-only: no endpoint returns one. A secret env value can be revealed only by the admin tier, and each reveal is audited. `embry0 config`, the settings object and the startup logs mask every secret setting, and the password in any URL.
+**Secrets at rest and in output.** Credentials and secret env vars are Fernet-encrypted in the database. Credentials are write-only: no endpoint returns one. A secret env value can be revealed only by the admin tier, and each reveal is audited. Every other caller that can list env vars gets `****` and a preview that shows at most the last 2 characters of a secret of 12 characters or more, and nothing of a shorter one. `embry0 config`, the settings object and the startup logs mask every secret setting, and the password in any URL.
 
 #### The in-stack image registry
 

@@ -206,14 +206,26 @@ def test_partial_mask_rules():
     from embry0.api.v1.environment import partial_mask
 
     glyphs = "•" * 8
-    # Under 8 chars: fully masked, fixed length (no length leak).
+    # Under 12 chars: fully masked, fixed length (no length leak).
     assert partial_mask("short") == glyphs
-    assert partial_mask("1234567") == glyphs
-    # 8-11 chars: 2+2 visible so at least 4 stay masked.
-    assert partial_mask("abcdefgh") == f"ab{glyphs}gh"
-    assert partial_mask("abcdefghijk") == f"ab{glyphs}jk"
-    # 12+ chars: the ticket's AZUR••••7Q2F shape.
-    assert partial_mask("AZURxxxxxxxx7Q2F") == f"AZUR{glyphs}7Q2F"
+    assert partial_mask("Password") == glyphs
+    assert partial_mask("abcdefghijk") == glyphs
+    # 12+ chars: the last two only, enough to tell two secrets apart.
+    assert partial_mask("s3cretPassw0") == f"{glyphs}w0"
+    assert partial_mask("AZURxxxxxxxx7Q2F") == f"{glyphs}2F"
+
+
+def test_no_secret_preview_shows_more_than_its_last_two_characters():
+    """Every caller that can list env vars sees the preview, read keys included."""
+    from embry0.api.v1.environment import partial_mask
+
+    for length in range(65):
+        secret = "".join(chr(ord("a") + i % 26) for i in range(length))
+        preview = partial_mask(secret)
+        shown = len(preview) - preview.count("•")
+        allowed = 2 if length >= 12 else 0
+        assert shown <= allowed, f"a {length}-character secret previews {shown} real characters: {preview!r}"
+        assert preview.endswith(secret[-shown:] if shown else "•"), f"the preview is not the secret's tail: {preview!r}"
 
 
 def _env_app():
@@ -269,7 +281,7 @@ async def test_repo_environment_lists_partial_previews():
     secret = by_key["AZURE_KEY"]
     # The full value stays masked; the preview is recognisable-but-safe.
     assert secret["value"] == "****"
-    assert secret["masked_preview"] == "AZUR" + "•" * 8 + "7Q2F"
+    assert secret["masked_preview"] == "•" * 8 + "2F"
     # Config vars carry their plain value and no preview.
     assert by_key["MODE"]["value"] == "prod"
     assert by_key["MODE"]["masked_preview"] is None

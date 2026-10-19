@@ -641,7 +641,9 @@ async def merge_decide(
 async def env_list(repo: str | None = None) -> dict[str, Any]:
     """List environment variables — global set by default, or a repo's set when repo
     ("group/name", or a GitLab subgroup path like "group/subgroup/project") is given.
-    Secret values are always masked as "****"; there is no tool to read secret values."""
+    Secret values are always masked as "****"; there is no tool to read secret values.
+    A secret's masked_preview shows at most its last 2 characters, and only for a
+    secret of 12 characters or more."""
     return await _get_client().env_list(repo=repo)
 
 
