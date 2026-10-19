@@ -57,12 +57,9 @@ def _stored_added_skills(template: dict[str, Any] | None) -> set[str]:
     return names
 
 
-async def _check_template_skills(
-    request: Request, graph: dict[str, Any] | None, *, already: set[str] | None = None
-) -> list[str]:
-    """Check the names the graph adds that ``already`` does not hold; return the warnings."""
-    added = _added_skills(graph)
-    return await check_added_skills(request, [s for s in added if s not in (already or set())])
+async def _check_template_skills(request: Request, graph: dict[str, Any] | None) -> list[str]:
+    """Check every name the graph adds; return the warnings."""
+    return await check_added_skills(request, _added_skills(graph))
 
 
 @router.get("/pipelines/templates")
@@ -114,22 +111,28 @@ async def update_template(
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
-    # A missing template is a 404 before any check of the body: its names are measured against it.
-    stored = await repo.get(template_id)
-    if not stored:
-        raise HTTPException(status_code=404, detail="Template not found")
     if not updates:
-        return stored
+        template = await repo.get(template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+        return template
+    # 1. The body on its own: graph validity, deferred tools, priced models, skills delta shape.
+    graph = updates.get("graph_definition")
+    added: list[str] = []
     if "graph_definition" in updates:
         problems = validate_graph_definition(str(template_id), updates["graph_definition"])
         if problems:
             raise HTTPException(status_code=422, detail="; ".join(problems))
-    _reject_unpriced(updates.get("graph_definition"))
-    warnings: list[str] = []
+    _reject_unpriced(graph)
     if "graph_definition" in updates:
-        # Only the names this save adds are checked; names the stored template has keep working.
-        already = _stored_added_skills(stored)
-        warnings = await _check_template_skills(request, updates["graph_definition"], already=already)
+        added = _added_skills(graph)
+    # 2. The template must exist: the added names are measured against it.
+    stored = await repo.get(template_id) if repo is not None else None
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    # 3. Only the names this save adds are checked; names the stored template has keep working.
+    already = _stored_added_skills(stored)
+    warnings = await check_added_skills(request, [s for s in added if s not in already])
     updated = await repo.update(template_id, **updates)
     if not updated:
         raise HTTPException(status_code=404, detail="Template not found")
