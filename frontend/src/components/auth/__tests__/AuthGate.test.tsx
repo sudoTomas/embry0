@@ -223,3 +223,47 @@ describe("AuthGate (API-key sign-in turned off for people)", () => {
     expect(await screen.findByLabelText("API key")).toBeInTheDocument();
   });
 });
+
+describe("AuthGate (the sign-in check itself fails)", () => {
+  // Only the server knows whether this origin lets people in with a key. When
+  // /auth/check cannot answer, the key form must not appear on an origin that
+  // may be SSO-only: the prompt says sign-in is unavailable, with Try again.
+  it("shows sign-in unavailable, not the key form, when the check answers 5xx", async () => {
+    routeGet({
+      "/auth/check": () => Promise.reject(axiosErr(503)),
+      "/queue": () => Promise.reject(axiosErr(401)),
+    });
+    renderGate();
+    expect(await screen.findByText(/Sign-in is unavailable/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("API key")).toBeNull();
+  });
+
+  it("shows sign-in unavailable when the check cannot reach the server", async () => {
+    routeGet({
+      "/auth/check": () => Promise.reject(new AxiosError("Network Error", "ERR_NETWORK")),
+      "/queue": () => Promise.reject(axiosErr(401)),
+    });
+    renderGate();
+    expect(await screen.findByText(/Sign-in is unavailable/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("API key")).toBeNull();
+  });
+
+  it("keeps the key form on an older backend that has no sign-in check (404)", async () => {
+    routeGet({
+      "/auth/check": () => Promise.reject(axiosErr(404)),
+      "/queue": () => Promise.reject(axiosErr(401)),
+    });
+    renderGate();
+    expect(await screen.findByLabelText("API key")).toBeInTheDocument();
+  });
+
+  it("still renders the app when a stored key works, whatever the check said", async () => {
+    routeGet({
+      "/auth/check": () => Promise.reject(axiosErr(503)),
+      "/queue": () => Promise.resolve({ data: {} }),
+    });
+    renderGate();
+    expect(await screen.findByTestId("app-content")).toBeInTheDocument();
+  });
+});
