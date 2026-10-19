@@ -10,13 +10,27 @@ export function useJobInputs(jobId: string) {
   });
 }
 
+export interface AnswerInputVars {
+  /** The question's issue, or null for a job created without one. */
+  issueId: string | null;
+  jobId: string;
+  inputId: string;
+  answer: string;
+}
+
+/**
+ * The one way the job surfaces (Job page, Console, logs page) answer an
+ * agent's question. jobId is always passed, so an issue-less job answers
+ * through the job route instead of throwing in answerInput.
+ */
 export function useAnswerInput() {
   const qc = useQueryClient();
   return useMutation({
-    // jobId is threaded through so issue-less jobs (issue_id empty) answer via
-    // the job-scoped endpoint instead of throwing in answerInput (RAV-1059).
-    mutationFn: ({ issueId, jobId, inputId, answer }: { issueId: string; jobId: string; inputId: string; answer: string }) =>
+    mutationFn: ({ issueId, jobId, inputId, answer }: AnswerInputVars) =>
       answerInput(issueId, inputId, answer, jobId),
-    onSuccess: (_, { jobId }) => qc.invalidateQueries({ queryKey: ["job-inputs", jobId] }),
+    onSuccess: (_, { jobId, issueId }) => {
+      qc.invalidateQueries({ queryKey: ["job-inputs", jobId] });
+      if (issueId) qc.invalidateQueries({ queryKey: ["issues", issueId, "inputs"] });
+    },
   });
 }

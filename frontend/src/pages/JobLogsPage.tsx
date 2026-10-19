@@ -107,7 +107,7 @@ export function JobLogsPage() {
           {jobInputs
             .filter((inp) => inp.status === "auto_answered" || (inp.status === "answered" && inp.auto_answer != null))
             .map((inp) => (
-              <AutoAnswerCard key={inp.input_id} input={inp} jobId={jobId!} />
+              <AutoAnswerCard key={inp.id} input={inp} jobId={jobId!} />
             ))}
         </div>
       )}

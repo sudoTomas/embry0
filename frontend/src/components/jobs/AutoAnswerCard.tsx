@@ -24,7 +24,7 @@ export function AutoAnswerCard({ input, jobId }: AutoAnswerCardProps) {
   const handleOverride = () => {
     if (!override.trim()) return;
     answerMutation.mutate(
-      { issueId: input.issue_id, jobId, inputId: input.input_id, answer: override },
+      { issueId: input.issue_id, jobId, inputId: input.id, answer: override },
       { onSuccess: () => setShowOverride(false) },
     );
   };
@@ -35,7 +35,7 @@ export function AutoAnswerCard({ input, jobId }: AutoAnswerCardProps) {
     <div className="rounded-md border border-white/[0.08] bg-white/[0.02] p-3 space-y-2 text-sm">
       <div className="flex items-center gap-2">
         <span className="text-[10px] uppercase tracking-wider text-white/30 bg-white/[0.06] rounded-full px-2 py-0.5">
-          {input.category}
+          {input.asking_node}
         </span>
         <span className="text-white/40">
           {isOverridden ? "Auto-answer overridden" : "Orchestrator answered"}
