@@ -555,7 +555,8 @@ async def verify_credential(credential_id: str, request: Request) -> CredentialO
         else:
             from embry0.services.provider_probe import STATUS_OK, probe_llm_secret
 
-            check = await probe_llm_secret(row["provider"], row["kind"], secret)
+            base_url = str((row.get("metadata") or {}).get("base_url") or "")
+            check = await probe_llm_secret(row["provider"], row["kind"], secret, base_url=base_url)
             if check.status != STATUS_OK:
                 raise RuntimeError(check.status)
             login = "ok"

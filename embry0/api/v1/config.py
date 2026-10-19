@@ -1,5 +1,6 @@
 """Configuration API — budget controls and context injection settings."""
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -76,7 +77,12 @@ async def get_model_config(
         providers.append(
             {
                 "name": p.name,
-                "base_url": p.base_url,
+                # The custom provider's root is the operator's; the env one is shown when set.
+                "base_url": p.base_url or (os.environ.get(p.base_url_env, "") if p.base_url_env else ""),
+                # docs/providers.md: the OpenAI-compatible family, xAI included.
+                "family": "openai_compatible"
+                if (p.openai_base_url or p.runtime == "chat_completions")
+                else "anthropic",
                 "available": state.ready,
                 "credential_source": state.credential_source,
                 "default": p.name == default_provider,
@@ -88,6 +94,8 @@ async def get_model_config(
                     {
                         "model": m,
                         "enabled": m not in disabled,
+                        # False: served without tool calling on this provider's API (chat-only).
+                        "tool_calling": m not in p.chat_only_models,
                         "pricing_usd_per_mtok": {
                             "input": p.pricing_usd_per_mtok.get(m, (None, None))[0],
                             "output": p.pricing_usd_per_mtok.get(m, (None, None))[1],
@@ -340,22 +348,27 @@ async def test_catalog_provider(
     and decodes the failure class — unauthorized vs entitlement-refused vs
     unreachable. Credentials never appear in the result.
     """
-    from embry0.agents.providers import CATALOG_PROVIDERS
+    from embry0.agents.providers import catalog_providers
     from embry0.services.provider_probe import (
         overall_status,
         probe_anthropic,
+        probe_chat_completions_provider,
         probe_xai,
         serialize_checks,
     )
 
-    provider = next((p for p in CATALOG_PROVIDERS if p.name == provider_name), None)
+    provider = next((p for p in catalog_providers() if p.name == provider_name), None)
     if provider is None:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_name!r}")
 
     if provider_name == "anthropic":
         checks = await probe_anthropic()
-    else:  # xai — the only other catalog provider today
+    elif provider_name == "xai":
         checks = await probe_xai(getattr(request.app.state, "xai_refresher", None))
+    else:  # an enabled OpenAI-compatible provider
+        checks = await probe_chat_completions_provider(
+            provider, getattr(request.app.state, "credential_resolver", None)
+        )
 
     status = overall_status(checks)
     db = getattr(request.app.state, "db", None)

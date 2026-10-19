@@ -82,7 +82,10 @@ async def provider_availability(app_state: Any, provider: ModelProvider) -> tupl
 
     Anthropic authenticates via CLAUDE_CODE_OAUTH_TOKEN and/or ANTHROPIC_API_KEY; xAI via
     its console key or the SuperGrok OAuth proxy (a provisioned refresher means grok is
-    runnable). A registry row counts only when those env sources are absent.
+    runnable); an OpenAI-compatible provider via its key variable (the custom one only
+    together with its base URL variable). A registry row counts only when those env
+    sources are absent. A provider with none of them is not ready, and a job whose model
+    routes to it fails before its sandbox exists (CREDENTIAL_MISSING).
     """
     if provider.name == "anthropic":
         oauth = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
@@ -96,11 +99,11 @@ async def provider_availability(app_state: Any, provider: ModelProvider) -> tupl
         if await _registry_has_provider(app_state, "anthropic"):
             return True, "registry"
         return False, None
-    if os.environ.get(provider.api_key_env):
+    if os.environ.get(provider.api_key_env) and (not provider.base_url_env or os.environ.get(provider.base_url_env)):
         return True, "api_key"
     if provider.name == "xai" and getattr(app_state, "xai_refresher", None) is not None:
         return True, "oauth_proxy"
-    if provider.name == "xai" and await _registry_has_provider(app_state, "xai"):
+    if await _registry_has_provider(app_state, provider.name):
         return True, "registry"
     return False, None
 
