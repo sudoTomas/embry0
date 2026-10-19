@@ -437,7 +437,9 @@ job has ended is stored as `failed` when it is read, with the job's error.
 
 Apply takes `{"acknowledged": [<warning codes>]}`. It answers 409 when the
 proposal is not waiting, or when the test setup was saved after the run
-started: the proposal becomes `stale` and nothing is written. It answers
+started: the proposal becomes `stale` and nothing is written. The decision
+and the write are one transaction, so a turn-down or a save that lands while
+apply runs wins: apply then answers 409 and writes nothing. It answers
 422 with `{"message", "problems"}` when the check finds a problem every run
 would stop on, and 422 with `{"message", "missing"}` when a warning that
 needs confirming is not in `acknowledged`. Otherwise it writes the proposal

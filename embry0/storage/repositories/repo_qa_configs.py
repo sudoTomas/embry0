@@ -11,8 +11,10 @@ transaction (ADR 0019), whichever path it came through.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Final
 
+import asyncpg
 import structlog
 
 from embry0.storage.database import DatabasePool
@@ -26,6 +28,10 @@ _COLUMNS = "repo, yaml_text, updated_by, created_at, updated_at"
 # The updated_by stamps the automatic writers use, and the path each one is.
 # Anything else is a person, through the dashboard, the API or MCP.
 _SOURCE_BY_WRITER: Final[dict[str, RevisionSource]] = {"bootstrap": "bootstrap", "onboard-pipeline": "onboard"}
+
+
+class SetupChanged(Exception):
+    """The stored test setup is not the one a compare-and-set expected."""
 
 
 class RepoQAConfigsRepository:
@@ -69,49 +75,101 @@ class RepoQAConfigsRepository:
         ``onboard-pipeline`` (onboard), anything else a person.
         """
         async with self._db.transaction() as conn:
-            if not self._default_forge:
-                registered = await conn.fetchrow("SELECT 1 FROM repos WHERE repo = $1", repo)
-                if not registered:
-                    raise ValueError(
-                        f"repo {repo!r} is not registered and DEFAULT_FORGE is empty — "
-                        "register it with its forge first (POST /repos with "
-                        '{"repo": "<path>", "forge": "gitlab"} or the MCP repo_register tool), '
-                        "then store its QA config."
-                    )
-            else:
-                await conn.execute(
-                    "INSERT INTO repos (repo, forge) VALUES ($1, $2) ON CONFLICT (repo) DO NOTHING",
-                    repo,
-                    self._default_forge,
+            return await self._upsert_on(conn, repo, yaml_text, updated_by, source=source, reason=reason)
+
+    async def upsert_recorded_if_unchanged(
+        self,
+        conn: asyncpg.Connection,
+        repo: str,
+        yaml_text: str,
+        *,
+        base_updated_at: datetime | None,
+        updated_by: str,
+        source: RevisionSource,
+        reason: str,
+    ) -> tuple[dict[str, Any], int | None]:
+        """``upsert_recorded`` as a compare-and-set, on the caller's connection
+        inside its transaction. It writes only over the setup whose
+        ``updated_at`` is ``base_updated_at`` (None: no setup is stored), and
+        raises SetupChanged when another one is, so the caller's transaction
+        rolls back with nothing written."""
+        return await self._upsert_on(
+            conn,
+            repo,
+            yaml_text,
+            updated_by,
+            source=source,
+            reason=reason,
+            check_base=True,
+            base_updated_at=base_updated_at,
+        )
+
+    async def _upsert_on(
+        self,
+        conn: asyncpg.Connection,
+        repo: str,
+        yaml_text: str,
+        updated_by: str,
+        *,
+        source: RevisionSource | None,
+        reason: str,
+        check_base: bool = False,
+        base_updated_at: datetime | None = None,
+    ) -> tuple[dict[str, Any], int | None]:
+        if not self._default_forge:
+            registered = await conn.fetchrow("SELECT 1 FROM repos WHERE repo = $1", repo)
+            if not registered:
+                raise ValueError(
+                    f"repo {repo!r} is not registered and DEFAULT_FORGE is empty — "
+                    "register it with its forge first (POST /repos with "
+                    '{"repo": "<path>", "forge": "gitlab"} or the MCP repo_register tool), '
+                    "then store its QA config."
                 )
-            old = await conn.fetchval("SELECT yaml_text FROM repo_qa_configs WHERE repo = $1 FOR UPDATE", repo)
-            row = await conn.fetchrow(
-                f"""
-                INSERT INTO repo_qa_configs (repo, yaml_text, updated_by)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (repo) DO UPDATE SET
-                    yaml_text = EXCLUDED.yaml_text,
-                    updated_by = EXCLUDED.updated_by,
-                    updated_at = NOW()
-                RETURNING {_COLUMNS}
-                """,
+        else:
+            await conn.execute(
+                "INSERT INTO repos (repo, forge) VALUES ($1, $2) ON CONFLICT (repo) DO NOTHING",
                 repo,
-                yaml_text,
-                updated_by,
+                self._default_forge,
             )
-            assert row is not None
-            revision_id: int | None = None
-            if old != yaml_text:
-                revision_id = await self._revisions.append(
-                    conn,
-                    repo=repo,
-                    surface="qa_config",
-                    before=None if old is None else {"yaml_text": old},
-                    after={"yaml_text": yaml_text},
-                    actor=updated_by,
-                    source=source or _SOURCE_BY_WRITER.get(updated_by, "person"),
-                    reason=reason,
-                )
+        stored = await conn.fetchrow(
+            "SELECT yaml_text, updated_at FROM repo_qa_configs WHERE repo = $1 FOR UPDATE", repo
+        )
+        if check_base and (stored["updated_at"] if stored is not None else None) != base_updated_at:
+            raise SetupChanged(f"the test setup of {repo} changed")
+        # With no row there was nothing to lock: another writer's first save
+        # can still be uncommitted. The insert then waits for it, and a
+        # compare-and-set must not replace it ($4 false).
+        row = await conn.fetchrow(
+            f"""
+            INSERT INTO repo_qa_configs (repo, yaml_text, updated_by)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (repo) DO UPDATE SET
+                yaml_text = EXCLUDED.yaml_text,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = NOW()
+            WHERE $4
+            RETURNING {_COLUMNS}
+            """,
+            repo,
+            yaml_text,
+            updated_by,
+            not (check_base and stored is None),
+        )
+        if row is None:
+            raise SetupChanged(f"the test setup of {repo} was saved meanwhile")
+        old = stored["yaml_text"] if stored is not None else None
+        revision_id: int | None = None
+        if old != yaml_text:
+            revision_id = await self._revisions.append(
+                conn,
+                repo=repo,
+                surface="qa_config",
+                before=None if old is None else {"yaml_text": old},
+                after={"yaml_text": yaml_text},
+                actor=updated_by,
+                source=source or _SOURCE_BY_WRITER.get(updated_by, "person"),
+                reason=reason,
+            )
         return dict(row), revision_id
 
     async def delete(self, repo: str) -> None:

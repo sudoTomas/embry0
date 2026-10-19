@@ -6,6 +6,7 @@ call site: the dashboard and API, MCP, bootstrap, the onboard pipeline, and
 later the proposal apply and undo.
 """
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -14,7 +15,7 @@ import pytest
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.repo_config_revisions import KEEP_PER_SURFACE, RepoConfigRevisionsRepository
 from embry0.storage.repositories.repo_preferences import RepoPreferencesRepository
-from embry0.storage.repositories.repo_qa_configs import RepoQAConfigsRepository
+from embry0.storage.repositories.repo_qa_configs import RepoQAConfigsRepository, SetupChanged
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -113,6 +114,60 @@ async def test_a_failed_append_rolls_back_the_setup(configs, revisions) -> None:
     stored = await configs.get(REPO)
     assert stored is not None and stored["yaml_text"] == V1, "the write must not outlive its revision"
     assert len(await revisions.list_for_repo(REPO)) == 1
+
+
+async def _apply_over(db: DatabasePool, configs: RepoQAConfigsRepository, base: Any, text: str) -> int | None:
+    """A compare-and-set write in its own transaction, as an apply makes it."""
+    async with db.transaction() as conn:
+        _, revision_id = await configs.upsert_recorded_if_unchanged(
+            conn, REPO, text, base_updated_at=base, updated_by="dev@example.com", source="proposal", reason="proposal p"
+        )
+    return revision_id
+
+
+async def test_a_compare_and_set_writes_only_over_the_setup_it_expects(
+    db_with_migrations: DatabasePool, configs, revisions
+) -> None:
+    saved, _ = await configs.upsert_recorded(REPO, V1)
+    with pytest.raises(SetupChanged):
+        await _apply_over(db_with_migrations, configs, None, V2)
+    assert (await configs.get(REPO))["yaml_text"] == V1
+    assert len(await revisions.list_for_repo(REPO)) == 1
+
+    revision_id = await _apply_over(db_with_migrations, configs, saved["updated_at"], V2)
+    assert (await configs.get(REPO))["yaml_text"] == V2
+    revision = await revisions.get(revision_id)
+    assert revision is not None and (revision["before"], revision["source"]) == ({"yaml_text": V1}, "proposal")
+
+
+async def _until_a_write_waits(db: DatabasePool) -> None:
+    for _ in range(500):
+        waiting = await db.fetchval(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+        )
+        if waiting:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the second write never waited for the first")
+
+
+async def test_a_compare_and_set_over_no_setup_keeps_a_first_save_still_in_flight(
+    db_with_migrations: DatabasePool, configs, revisions
+) -> None:
+    """With no setup stored there is no row to lock, so the first save of
+    another writer can still be uncommitted when the apply writes."""
+    db = db_with_migrations
+    await db.execute("INSERT INTO repos (repo, forge) VALUES ($1, 'github')", REPO)
+    async with db.transaction() as first_save:
+        await first_save.execute(
+            "INSERT INTO repo_qa_configs (repo, yaml_text, updated_by) VALUES ($1, $2, 'someone')", REPO, V1
+        )
+        apply = asyncio.create_task(_apply_over(db, configs, None, V2))
+        await _until_a_write_waits(db)
+    with pytest.raises(SetupChanged):
+        await apply
+    assert (await configs.get(REPO))["yaml_text"] == V1
+    assert await revisions.list_for_repo(REPO) == []
 
 
 async def test_a_deployment_without_a_default_forge_still_refuses_an_unregistered_repo(

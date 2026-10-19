@@ -9,7 +9,7 @@ a fake that creates the job row the way the real one does and starts nothing.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -472,6 +472,63 @@ async def test_apply_after_someone_saved_the_setup_is_stale_and_writes_nothing(c
     assert (await client.get(QA)).text == V1
     stored = await app.state.repo_setup_proposals_repo.get(proposal_id)
     assert (stored["status"], stored["decided_by"]) == ("stale", "dev@example.com")
+
+
+@contextmanager
+def _during_the_check(step: Callable[[], Awaitable[None]]) -> Iterator[None]:
+    """Run ``step`` while apply runs its free check, as a second request would."""
+    from embry0.services import repo_setup
+
+    real = repo_setup.check_setup
+
+    async def step_then_check(app_state: Any, repo: str, text: str) -> dict[str, Any]:
+        await step()
+        return await real(app_state, repo, text)
+
+    with patch.object(repo_setup, "check_setup", step_then_check):
+        yield
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.parametrize("had_setup", [True, False], ids=["over-a-setup", "over-none"])
+async def test_a_save_while_apply_checks_makes_it_stale_and_the_save_stays(
+    client, app, db_with_migrations, had_setup
+) -> None:
+    base = None
+    if had_setup:
+        await client.put(QA, content=V1)
+        base = (await app.state.qa_configs_repo.get(REPO))["updated_at"]
+    proposal_id = await _proposal(app, base_updated_at=base)
+    saved_meanwhile = V1.replace("qa_required: never", "qa_required: auto")
+
+    async def save() -> None:
+        assert (await client.put(QA, content=saved_meanwhile)).status_code == 200
+
+    with _during_the_check(save):
+        resp = await client.post(f"{SETUP}/proposal/{proposal_id}/apply", json={"acknowledged": []})
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == STALE
+    assert (await client.get(QA)).text == saved_meanwhile
+    assert (await app.state.repo_setup_proposals_repo.get(proposal_id))["status"] == "stale"
+    assert await _audit(db_with_migrations, "repo.setup_applied") == []
+
+
+@pytest.mark.requires_postgres
+async def test_a_turn_down_while_apply_checks_wins_and_nothing_is_written(client, app, db_with_migrations) -> None:
+    proposal_id = await _proposal(app)
+
+    async def turn_down() -> None:
+        assert (await client.post(f"{SETUP}/proposal/{proposal_id}/reject")).status_code == 200
+
+    with _during_the_check(turn_down):
+        resp = await client.post(f"{SETUP}/proposal/{proposal_id}/apply", json={"acknowledged": []})
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "This setup was already turned down."
+    assert (await client.get(QA)).status_code == 404
+    assert await app.state.repo_config_revisions_repo.latest(REPO, "qa_config") is None
+    assert (await app.state.repo_setup_proposals_repo.get(proposal_id))["status"] == "rejected"
+    assert await _audit(db_with_migrations, "repo.setup_applied") == []
+    assert len(await _audit(db_with_migrations, "repo.setup_rejected")) == 1
 
 
 @pytest.mark.requires_postgres

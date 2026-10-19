@@ -116,10 +116,16 @@ class RepoSetupProposalsRepository:
         return int(str(result).split()[-1]) if result else 0
 
     async def decide(
-        self, proposal_id: str, *, status: Literal["applied", "rejected", "stale"], decided_by: str
+        self,
+        proposal_id: str,
+        *,
+        status: Literal["applied", "rejected", "stale"],
+        decided_by: str,
+        conn: asyncpg.Connection | None = None,
     ) -> bool:
-        """A person's decision on a ``pending`` proposal; False when it is not pending."""
-        decided = await self._db.fetchval(
+        """A person's decision on a ``pending`` proposal; False when it is not
+        pending. On ``conn``, inside the caller's transaction, when given."""
+        decided = await (conn or self._db).fetchval(
             """
             UPDATE repo_setup_proposals
             SET status = $2, decided_by = $3, decided_at = NOW(), updated_at = NOW()

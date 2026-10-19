@@ -19,6 +19,7 @@ import structlog
 from embry0.services.bootstrap import render_starter_qa_yaml
 from embry0.services.qa_config_check import check_qa_config
 from embry0.storage.repositories.jobs import TERMINAL_JOB_STATUSES
+from embry0.storage.repositories.repo_qa_configs import SetupChanged
 
 logger = structlog.get_logger(__name__)
 
@@ -173,6 +174,12 @@ async def _waiting(app_state: Any, repo: str, proposal_id: str) -> dict[str, Any
     return proposal
 
 
+async def _decided_meanwhile(proposals: Any, proposal_id: str) -> Refused:
+    """The refusal for a proposal someone else decided after ``_waiting`` read it."""
+    now = await proposals.get(proposal_id)
+    return Refused(409, _NOT_WAITING[now["status"]] if now is not None else NOT_FOUND)
+
+
 async def apply_proposal(
     app_state: Any, repo: str, proposal_id: str, *, acknowledged: list[str], actor: str
 ) -> int | None:
@@ -197,15 +204,33 @@ async def apply_proposal(
     if missing:
         raise Refused(422, {"message": "Tick each warning before you apply this setup.", "missing": missing})
 
-    revision_id: int | None
+    # The checks above answer early; this transaction is the one that counts.
+    # The decision and the write commit together, and only while the
+    # proposal is still pending and the setup is still the one the run
+    # started from, so a turn-down or a save that landed meanwhile wins.
+    applied = False
+    revision_id: int | None = None
     try:
-        _, revision_id = await configs.upsert_recorded(
-            repo, text, updated_by=actor, source="proposal", reason=f"proposal {proposal_id}"
-        )
+        async with app_state.db.transaction() as conn:
+            applied = await proposals.decide(proposal_id, status="applied", decided_by=actor, conn=conn)
+            if applied:
+                _, revision_id = await configs.upsert_recorded_if_unchanged(
+                    conn,
+                    repo,
+                    text,
+                    base_updated_at=proposal["base_updated_at"],
+                    updated_by=actor,
+                    source="proposal",
+                    reason=f"proposal {proposal_id}",
+                )
+    except SetupChanged:
+        await proposals.decide(proposal_id, status="stale", decided_by=actor)
+        raise Refused(409, STALE) from None
     except ValueError as exc:
         # As the PUT: a deployment with no default forge will not register the repository.
         raise Refused(422, str(exc)) from exc
-    await proposals.decide(proposal_id, status="applied", decided_by=actor)
+    if not applied:
+        raise await _decided_meanwhile(proposals, proposal_id)
     return revision_id
 
 
@@ -213,8 +238,7 @@ async def reject_proposal(app_state: Any, repo: str, proposal_id: str, *, actor:
     proposals = app_state.repo_setup_proposals_repo
     await _waiting(app_state, repo, proposal_id)
     if not await proposals.decide(proposal_id, status="rejected", decided_by=actor):
-        now = await proposals.get(proposal_id)
-        raise Refused(409, _NOT_WAITING[now["status"]] if now is not None else NOT_FOUND)
+        raise await _decided_meanwhile(proposals, proposal_id)
 
 
 async def skip_testing(app_state: Any, repo: str, *, actor: str) -> int | None:
