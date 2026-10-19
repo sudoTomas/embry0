@@ -31,6 +31,14 @@ export function formatDateTime(value: string | Date, now: Date = new Date()): st
   return format(d, d.getFullYear() === now.getFullYear() ? "MMM d, HH:mm" : "MMM d, yyyy HH:mm");
 }
 
+/** The date part of that format, for a meta line that carries no time
+ * ("Sep 8", "Dec 30, 2025"). */
+export function formatDay(value: string | Date, now: Date = new Date()): string {
+  const d = parseTimestamp(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return format(d, d.getFullYear() === now.getFullYear() ? "MMM d" : "MMM d, yyyy");
+}
+
 /** 24-hour clock time ("23:49"), for a time range inside one row. */
 export function formatTime(value: string | Date): string {
   const d = parseTimestamp(value);

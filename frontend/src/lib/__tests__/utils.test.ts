@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cn, formatDateTime, formatTime, highlightJson } from "../utils";
+import { cn, formatDateTime, formatDay, formatTime, highlightJson } from "../utils";
 
 describe("cn", () => {
   it("merges class names", () => {
@@ -38,6 +38,22 @@ describe("formatDateTime", () => {
 
   it("shows a value that does not parse as it came", () => {
     expect(formatDateTime("not a date", now)).toBe("not a date");
+  });
+});
+
+describe("formatDay", () => {
+  const now = new Date(2026, 9, 18, 12, 0);
+
+  it("is the date part of the table format: no year inside the current one", () => {
+    expect(formatDay(new Date(2026, 8, 8, 13, 34), now)).toBe("Sep 8");
+  });
+
+  it("names the year when it differs", () => {
+    expect(formatDay(new Date(2025, 11, 30, 9, 5), now)).toBe("Dec 30, 2025");
+  });
+
+  it("shows a value that does not parse as it came", () => {
+    expect(formatDay("not a date", now)).toBe("not a date");
   });
 });
 

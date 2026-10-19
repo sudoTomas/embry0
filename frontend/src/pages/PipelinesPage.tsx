@@ -2,13 +2,10 @@ import { useState, useCallback } from "react";
 import { Plus, GitBranch, Calendar, ChevronRight } from "lucide-react";
 import { PipelineEditor } from "@/components/pipeline-editor/PipelineEditor";
 import { Button } from "@/components/ui/Button";
+import { formatDay } from "@/lib/utils";
 import { useTemplates } from "@/hooks/usePipelines";
 import { fetchTemplate } from "@/api/pipelines";
 import type { PipelineGraph, PipelineTemplateSummary } from "@/lib/types";
-
-function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-}
 
 interface TemplateCardProps {
   template: PipelineTemplateSummary;
@@ -43,7 +40,7 @@ function TemplateCard({ template, onOpen, loading }: TemplateCardProps) {
       </div>
       <div className="flex items-center gap-1 mt-3 text-2xs text-fg-muted">
         <Calendar size={10} />
-        <span>{formatDate(template.created_at)}</span>
+        <span>{formatDay(template.created_at)}</span>
       </div>
     </button>
   );
