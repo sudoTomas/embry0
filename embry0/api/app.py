@@ -36,6 +36,7 @@ from embry0.storage.repositories.qa_app_results import QAAppResultsRepository
 from embry0.storage.repositories.qa_image_tags import QAImageTagsRepository
 from embry0.storage.repositories.qa_run_metadata import QARunMetadataRepository
 from embry0.storage.repositories.qa_volume_state import QAVolumeStateRepository
+from embry0.storage.repositories.repo_config_revisions import RepoConfigRevisionsRepository
 from embry0.storage.repositories.repo_preferences import RepoPreferencesRepository
 from embry0.storage.repositories.repo_qa_configs import RepoQAConfigsRepository
 from embry0.storage.repositories.repos import ReposRepository
@@ -745,6 +746,8 @@ async def _init_app_state(
     app.state.standards_repo = StandardsRepository(db)
     app.state.repo_standard_state_repo = RepoStandardStateRepository(db)
     app.state.qa_configs_repo = RepoQAConfigsRepository(db, default_forge=app_config.default_forge)
+    # ADR 0019: every change to a repo's test setup and preferences, for history and undo.
+    app.state.repo_config_revisions_repo = RepoConfigRevisionsRepository(db)
     app.state.qa_app_results_repo = QAAppResultsRepository(db)
     app.state.qa_image_tags_repo = QAImageTagsRepository(db)
     app.state.qa_volume_state_repo = QAVolumeStateRepository(db)
@@ -2295,6 +2298,7 @@ def _register_routers(app: FastAPI) -> None:
         qa_events,
         qa_images,
         queue,
+        repo_history,
         repo_preferences,
         repos,
         retention,
@@ -2372,6 +2376,8 @@ def _register_routers(app: FastAPI) -> None:
     # RAV-1251: repo registry + unified per-repo detail.
     app.include_router(qa_config.router, prefix="/api/v1", tags=["qa-config"], dependencies=auth_deps)
     app.include_router(bootstrap.router, prefix="/api/v1", tags=["bootstrap"], dependencies=auth_deps)
+    # ADR 0019: a repo's change history and undo (operator tier, like the writes it reverses).
+    app.include_router(repo_history.router, prefix="/api/v1", tags=["repo-history"], dependencies=auth_deps)
     # MUST come after every router owning a /repos/{repo}/<suffix> route:
     # repos exposes a `{full_repo:path}` catch-all (#162, for GitLab nested
     # subgroups) which would otherwise shadow them. Pinned by

@@ -351,6 +351,45 @@ The PUT replaces every field it does not mention — except `verification`
 (the orchestrator-run test gate and tier path rules, `docs/verification.md`):
 omitted or `null` keeps the stored value, `{}` clears it.
 
+## Repository history and undo
+
+Every change to a repository's stored test setup (`PUT` and `DELETE
+/repos/{repo}/qa-config`, bootstrap, onboarding) and to its preferences
+(`PUT` and `DELETE /repos/{repo}/preferences`) is recorded with who made it
+and how. The newest 100 changes of each are kept per repository. The API
+writes also add an audit row: `repo.qa_config_set`,
+`repo.qa_config_deleted`, `repo.preferences_set`,
+`repo.preferences_cleared`, and `repo.change_undone` for an undo.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/repos/{repo}/history?limit=50` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/history/{revision_id}/undo` | operator |
+
+`GET` answers `{"entries": [{"id", "surface", "what", "actor", "source",
+"created_at", "undoable", "why_not"}], "before_history": bool}`, newest
+first. `what` describes the change in plain words. `surface` is
+`qa_config` or `preferences`; `source` is `person`, `bootstrap`, `onboard`,
+`proposal` or `restore`. `before_history` is true when a test setup is
+stored but none of its changes are recorded: it was saved before the
+history existed.
+
+Undo puts back what one change replaced. Only the newest change of its
+surface can be undone, and only while the stored value is still what that
+change wrote; otherwise the answer is 409 with the `why_not` text. An
+earlier value that would no longer be accepted is a 422 and nothing is
+written. The undo is itself recorded, with source `restore`, so it can be
+undone in turn. The `PUT /qa-config` response carries the new change's
+`revision_id`, `null` when the text was unchanged.
+
+```bash
+# Put back the test setup the newest change replaced
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/history/42/undo \
+  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H "X-Requested-With: XMLHttpRequest"
+# -> {"revision_id": 43}
+```
+
 ## Docker access (admin)
 
 A sandbox profile with `dind_enabled` only *asks* for the shared Docker daemon
