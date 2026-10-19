@@ -145,6 +145,69 @@ h1, h2, h3, h4, h5, h6 {
   background: var(--color-border-strong);
 }
 
+/* ===== Motion =====
+   The dashboard is alive, and its motion reports something real: a page
+   arriving, a number changing, a job moving to another lane or stage, a
+   setup step finishing. Atmosphere stays in the divine layer below.
+   - Nothing moves for anyone who asked for reduced motion: they get the
+     final state at once (hooks/useReducedMotion.ts for script motion).
+   - Only transform, opacity and stroke-dashoffset animate.
+   - A loop runs no quicker than 2 s and no slower than 4 s, the divine
+     layer's rule, and only while the state it shows holds.
+   - The cream dot (--color-cream) is life: a job in flight. Gold never
+     moves for its own sake; it marks the one thing that needs a person.
+   - No animation library: CSS and the Web Animations API. */
+:root {
+  --motion-fast: 160ms;
+  --motion-base: 280ms;
+  --motion-slow: 560ms;
+  --motion-draw: 1400ms;
+  /* Travel: a thing going from one place to another (a card, a line).
+     Arrivals use --ease-standard. Plain :root, not @theme: Tailwind drops
+     theme variables no utility uses, and scripts read these. */
+  --ease-travel: cubic-bezier(0.65, 0, 0.35, 1);
+  /* The gap between siblings arriving in turn; lib/motion.ts sets --i. */
+  --motion-step: 35ms;
+}
+
+@keyframes motion-enter {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+@keyframes motion-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* An element arriving: in and up 6 px. Siblings take turns through --i,
+     capped at 12 so a long list never waits on its tail. It fills backwards
+     only: a finished arrival that still filled forwards would hold an
+     identity transform, and any transform makes the element the containing
+     block of every position: fixed box inside it, so an inline dialog would
+     open inside a card instead of over the window. */
+  .motion-enter {
+    animation: motion-enter var(--motion-base) var(--ease-standard) backwards;
+    animation-delay: calc(min(var(--i, 0), 12) * var(--motion-step));
+  }
+  /* Life: the cream dot of a job in flight. */
+  .motion-breathe {
+    animation: motion-breathe 2.4s ease-in-out infinite;
+  }
+}
+
+/* ----- motion: shell (mark, page arrival, sidebar) ----- */
+
+/* ----- motion: live numbers and rows ----- */
+
+/* ----- motion: console board ----- */
+
+/* ----- motion: job journey ----- */
+
+/* ----- motion: repository setup ----- */
+
+/* ===== end motion ===== */
+
 /* Density mode custom properties */
 :root {
   --density-padding: 1rem;
