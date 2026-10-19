@@ -71,14 +71,23 @@ model or a job's `agent_models` outranks the one above.
   should enforce it. License headers, public API docs and notes about a
   dependency the project cannot change stay.
 - **design-auditor** measures the frontend against a design standard. A
-  script it writes counts font families, font sizes, radii, raw color
-  literals, accent colors, and tables versus card grids; the score (0 to 100)
-  is computed from those numbers by a fixed formula, so the same commit gives
-  the same score. The report's first line is `Score: N`, then a `## Findings`
-  heading and one table with the columns Severity, Rule, Location, Evidence
-  and Proposed fix: one row per finding, ranked by the points it costs, with a
-  `path:line` example and a fix. A program can read the score and count the
-  findings from that start.
+  script it writes counts how the app uses colors, font sizes and families,
+  radii, shell values (layout widths and heights, control heights), and
+  tables versus card grids, and computes two scores from 0 to 100 from those
+  numbers by a fixed formula, so the same commit gives the same scores.
+  Conformance is how closely the interface renders the standard: its
+  palette, its one accent, its type scale, its radii, its shell values and
+  tables over cards. Hygiene is how much drift the code carries: raw color
+  literals outside the tokens, sizes off the scale, radii off the set, extra
+  font families. Every part is a share or a rate per 1,000 lines of UI code,
+  never an absolute count, so the scores rank apps of any size; hygiene
+  weighs less and never changes conformance. The report's first line is
+  `Score: N` (the conformance score), the second `Hygiene: M`, then a
+  `## Findings` heading and one table with the columns Severity, Rule,
+  Location, Evidence and Proposed fix: one row per finding, ranked by the
+  conformance points it costs, with a `path:line` example and a fix. A
+  program can read the score and count the findings from that start. The
+  formula is in [standards.md](standards.md#how-a-design-audit-scores).
 
 ### What to put in the task
 

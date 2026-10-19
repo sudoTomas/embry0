@@ -270,8 +270,9 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "description": (
             "Measures a repository's frontend against a design standard with a "
             "deterministic script (font families, font sizes, radii, raw colors, "
-            "accents, tables versus cards) and returns ranked findings with a "
-            "reproducible 0 to 100 score. Read-only."
+            "accents, tables versus cards) and returns ranked findings with two "
+            "reproducible 0 to 100 scores: conformance to the standard and code "
+            "hygiene. Read-only."
         ),
         "model": "claude-sonnet-5",
         "tools": ["Read", "Glob", "Grep", "Bash"],

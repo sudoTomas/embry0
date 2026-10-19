@@ -248,8 +248,9 @@ def audit_task(standard: Standard, repo: str, exceptions: list[dict[str, Any]]) 
     """The task an audit job carries: what to do, the report contract, and the whole active standard.
 
     The first line is the job's title. The report contract is what
-    :func:`parse_audit_report` reads back: a ``Score: N`` line first, then a
-    findings table under a ``Findings`` heading.
+    :func:`parse_audit_report` reads back: a ``Score: N`` line first (the
+    conformance score), then a findings table under a ``Findings`` heading.
+    The ``Hygiene: M`` line between them is read by people; it is not stored.
     """
     lines = [
         f"{standard.kind.capitalize()} audit of {repo} against the {standard.owner} {standard.kind} standard, "
@@ -266,13 +267,15 @@ def audit_task(standard: Standard, repo: str, exceptions: list[dict[str, Any]]) 
         "",
         f"Your final message is the report, in markdown, at most {REPORT_TARGET_CHARS:,} characters:",
         "",
-        "1. First line: `Score: N`, where N is a whole number from 0 (the standard is not followed) "
-        "to 100 (nothing to report).",
-        "2. A `## Findings` heading, then one markdown table with the columns "
+        "1. First line: `Score: N`, the conformance score: a whole number from 0 (the interface does not "
+        "follow the standard) to 100 (it renders the standard throughout).",
+        "2. Second line: `Hygiene: M`, the hygiene score: a whole number from 0 to 100 for the drift the "
+        "code carries beside it (raw values outside the tokens, stray sizes, radii and font families).",
+        "3. A `## Findings` heading, then one markdown table with the columns "
         "`Severity | Rule | Location | Evidence | Proposed fix`, one row per finding, most severe first, "
         f"at most {MAX_FINDING_ROWS} rows. Severity is `high`, `medium` or `low`; Location is `path:line`. "
         "With nothing to report, write `No findings.` under the heading and no table.",
-        "3. Anything else after the table.",
+        "4. Anything else after the table.",
         "",
         "## Exceptions this repository holds",
         "",

@@ -2,11 +2,13 @@
 agent types that has to accept them."""
 
 import json
+import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from embry0.orchestration.nodes.agent import DEFAULT_AGENT_MAX_TURNS
+from embry0.services.standards import MAX_FINDING_ROWS
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
 from embry0.storage.seeds.pipeline_templates_builtin import BUILTIN_PIPELINE_TEMPLATES
 from embry0.workflows._validation import validate_graph_definition
@@ -114,7 +116,7 @@ def test_each_prompt_carries_its_methods_output_contract():
         "how": ["entry points", "Ownership and layering", "Where things live"],
         "blast-radius": ["one fact it is safe because of", "`unproven`", "Before you merge", "the copy under /tmp/run"],
         "comment-sicko": ["MUST KILL", "Encode instead", "never touch the code"],
-        "design-auditor": ["Start at 100", "deterministic", "font sizes"],
+        "design-auditor": ["deterministic", "font sizes", "**Conformance**", "**Hygiene**"],
     }
     for agent_type, phrases in expected.items():
         prompt = BUILTIN_SEED[agent_type]["system_prompt"]
@@ -138,11 +140,40 @@ def test_design_audit_report_opens_with_the_score_and_the_findings_table():
     # table under the Findings heading.
     prompt = BUILTIN_SEED["design-auditor"]["system_prompt"]
     assert "The first line is `Score: N` and nothing" in prompt
-    assert "Score: N" in prompt
+    assert "where N is the conformance score" in prompt
+    assert "The second line is `Hygiene: M` and nothing" in prompt
+    assert prompt.index("`Score: N`") < prompt.index("`Hygiene: M`") < prompt.index("a `## Findings` heading")
     assert "a `## Findings` heading" in prompt
     assert "\n| Severity | Rule | Location | Evidence | Proposed fix |\n" in prompt
     assert "most severe first" in prompt
+    assert f"at most {MAX_FINDING_ROWS} rows" in prompt, "the prompt and the audit task cap the table alike"
     assert "N/100" not in prompt, "the old Score - N/100 bullet must not compete with the first line"
+
+
+def test_design_audit_states_two_scores_normalized_by_size():
+    # The first formula deducted absolute counts, each capped: an app of a few
+    # thousand lines hit every cap, so the reference app the standard was
+    # measured from scored 2 and nothing could be ranked.
+    prompt = BUILTIN_SEED["design-auditor"]["system_prompt"]
+    assert "**Conformance** is how closely the interface renders the standard" in prompt
+    assert "**Hygiene** is how much drift the code carries" in prompt
+    assert "never changes it." in prompt, "hygiene is reported beside the score, never folded into it"
+    assert "Neither score deducts absolute counts." in prompt
+    assert "a rate per 1,000 lines of UI code" in prompt
+    assert "per 1,000 UI lines" in prompt, "the raw-literal part is a rate, not a count"
+    assert "over all distinct font sizes" in prompt and "over all distinct radius values" in prompt
+    assert "(cap " not in prompt and "capped" not in prompt, "no part is an absolute count with a cap"
+
+
+def test_design_audit_weights_sum_to_100_in_each_score():
+    prompt = BUILTIN_SEED["design-auditor"]["system_prompt"]
+    conformance, hygiene = prompt.split("Conformance is 100 times", 1)[1].split("Hygiene is 100 times", 1)
+    part = re.compile(r"^   - ([a-z -]+), weight (\d+):", re.MULTILINE)
+    conformance_weights = {name: int(w) for name, w in part.findall(conformance)}
+    hygiene_weights = {name: int(w) for name, w in part.findall(hygiene)}
+    assert conformance_weights == {"palette": 20, "accent": 20, "type": 20, "radii": 10, "shell": 15, "tables": 15}
+    assert hygiene_weights == {"raw colors": 40, "off-scale sizes": 20, "off-set radii": 20, "extra families": 20}
+    assert sum(conformance_weights.values()) == sum(hygiene_weights.values()) == 100
 
 
 # ---- the routes ----------------------------------------------------------------
