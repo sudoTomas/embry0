@@ -26,8 +26,6 @@ DEFAULT_API_URL = "http://localhost:8200"
 
 TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled", "partial", "expired", "skipped"})
 
-_SECRET_MASK = "****"
-
 
 class Embry0APIError(Exception):
     """An embry0 API call failed; carries the HTTP status and the API's ``detail``."""
@@ -469,17 +467,13 @@ class Embry0Client:
     async def env_list(self, *, repo: str | None = None) -> dict[str, Any]:
         return _as_dict(await self._request("GET", self._env_base(repo)))
 
-    async def _env_reveal(self, key: str, repo: str | None) -> str:
-        data = _as_dict(await self._request("GET", f"{self._env_base(repo)}/{key}/reveal"))
-        value = data.get("value")
-        return value if isinstance(value, str) else ""
-
     async def _env_rebuild(self, repo: str | None, *, drop_key: str | None = None) -> list[dict[str, Any]]:
-        """Reconstruct the current variable set with real (unmasked) values.
+        """The current variable set, as the list response gave it, minus ``drop_key``.
 
-        The API only exposes full-set PUT, and list responses mask secrets, so a
-        single-key upsert/delete must reveal each existing secret before writing
-        the set back — otherwise the literal mask would overwrite stored values.
+        The API only exposes full-set PUT. A stored secret goes back as the
+        ``****`` its list response carries, which the PUT reads as "keep the
+        stored value", so a single-key write never reveals a secret: reveal is
+        admin tier and audited, while writing the set is operator tier.
         """
         current = await self.env_list(repo=repo)
         variables: list[dict[str, Any]] = []
@@ -487,13 +481,10 @@ class Embry0Client:
             key = var.get("key")
             if not isinstance(key, str) or key == drop_key:
                 continue
-            value = var.get("value", "")
-            if var.get("var_type") == "secret" or value == _SECRET_MASK:
-                value = await self._env_reveal(key, repo)
             variables.append(
                 {
                     "key": key,
-                    "value": value,
+                    "value": var.get("value", ""),
                     "var_type": var.get("var_type", "config"),
                     "description": var.get("description", ""),
                     "required": var.get("required", False),

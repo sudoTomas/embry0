@@ -116,6 +116,12 @@ curl http://localhost:8200/api/v1/repos/owner/repo/environment/detect \
   -H "X-Requested-With: XMLHttpRequest"
 ```
 
+A PUT replaces the whole set. A secret sent back as `****`, the value the
+list responses carry, keeps its stored value, so a client can write one
+variable without revealing the others: the MCP `env_set` tool, and
+`env_delete` on the global set, work that way and need only operator tier. A
+secret sent as `****` for a key with no stored secret is refused with a 400.
+
 Some keys are refused with a 422, matched case-insensitively. The same check drops them again at sandbox start, from stored rows and from profile `env_defaults`. These keys are the infrastructure credentials and proxy URLs, plus every variable that would redirect a sandbox's traffic or load code into its processes: proxy routing, TLS verification, the dynamic loader, `PATH`/`HOME`/`SHELL`, shell and interpreter startup hooks, and the `GIT_`, `CLAUDE_`, `BUN_` and `GROK_` namespaces. `NODE_OPTIONS` and the JVM option variables (`JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`, `JAVA_OPTS`, `MAVEN_OPTS`, `GRADLE_OPTS`) are accepted, but only with memory flags. The authoritative list is `embry0/execution/auth_provider.py`. A 422 on these routes never echoes the submitted value.
 
 ## Container logs
