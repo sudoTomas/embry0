@@ -101,7 +101,7 @@ pip install -e .          # installs the embry0 CLI
 embry0 start              # builds every image, starts the stack, waits for health
 ```
 
-Open the dashboard at **http://localhost:8200** and sign in with your `API_KEY`. Then create an issue and click **Send to Agent**. To trigger jobs straight from GitHub, set up [webhooks](docs/webhooks.md); the Cloudflare tunnel for them is an optional compose profile.
+Open the dashboard at **http://localhost:8200** and sign in with your `API_KEY`. Then create an issue and click **Send to Triage**. To trigger jobs straight from GitHub, set up [webhooks](docs/webhooks.md); the Cloudflare tunnel for them is an optional compose profile.
 
 `embry0 start` reads this root `.env`, and `infra/.env` only for a `COMPOSE_FILE` overlay such as the [rootless sandbox runtime](docs/ops/provisioning.md#10-a-rootless-sandbox-daemon). Running compose yourself from `infra/` (as `infra/deploy.sh` does) reads `infra/.env` instead: start it from [`infra/.env.example`](infra/.env.example).
 

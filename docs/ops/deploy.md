@@ -46,7 +46,7 @@ stops a job without losing it (#307):
    from its start — its agent turn's spend is spent twice. A job that never
    started, or stopped before its graph began, starts again from its launch
    record. Each says so on its timeline.
-3. **What still fails.** A QA or onboard job that had begun its graph
+3. **What still fails.** A QA, onboard or pr-review job that had begun its graph
    (their sub-sandboxes are not re-enrolled), a job with nothing to resume
    from, and a job whose sandbox is gone (the daemon restarted with it:
    `ERR_SANDBOX_GONE`) fail as before. One the drain stopped reads

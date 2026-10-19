@@ -7,8 +7,10 @@ A job that pauses for an answer has returned, so it holds none; its resume
 claims a slot again, with priority over jobs that have not started yet.
 
 In-process and in-memory, like the background tasks it gates: a restart
-loses the queue, and the boot reconciliation fails the jobs that were
-waiting in it (``JobsRepository.fail_orphaned``).
+loses the queue. A job that was waiting in it is still ``pending`` with its
+launch record, and boot recovery starts it again (``relaunch`` in
+``embry0.orchestration.restart``); one with no launch record is failed
+(``JobsRepository.fail_orphaned``).
 """
 
 from __future__ import annotations

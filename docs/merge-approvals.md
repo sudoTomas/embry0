@@ -78,10 +78,13 @@ can be approved for real once the mode is `on`.
 ## Auth: the `merge` key scope
 
 The chat client holds a `merge`-scope API key (admin-minted). It may make every GET,
-plus exactly these mutations: `POST /merge-approvals/{id}/decide`, both
+plus exactly these mutations: `POST /merge-approvals/{id}/decide`,
+`POST /cases/{id}/accept` (accepting a watcher finding of a stack this
+orchestrator watches, which dispatches one paid job per call), both
 agent-question answer routes, and `POST /pipelines/validate`. Everything else
-is 403 — a leaked copy cannot create or cancel jobs, edit env vars or trigger
-the watcher. The allowlist is matched on the full route template, include
+is 403: a leaked copy cannot submit, cancel or resume a job directly, edit env
+vars or trigger the watcher, but it can start paid work, one job for each
+finding it accepts. The allowlist is matched on the full route template, include
 prefix and all (`embry0/api/deps.py:MERGE_SCOPE_MUTATIONS`, read through
 `embry0/api/route_table.py`).
 

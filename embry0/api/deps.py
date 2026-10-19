@@ -119,8 +119,10 @@ async def resolve_bearer_principal(app: Any, token: str) -> Principal | None:
     """Validate a bearer token: the master API_KEY, else a live DB key.
 
     Returns the Principal or None (invalid/revoked/expired/owner-disabled).
-    Shared by the HTTP dependencies, the jobs WebSocket handshake, and the
-    QA SSE stream auth.
+    Shared by the HTTP dependencies, ``authenticate_stream`` (the SSE
+    streams) and the rate limiter. The jobs WebSocket handshake takes no key:
+    it takes a token minted by ``POST /jobs/{id}/events-token`` or an SSO
+    session.
     """
     config = app.state.config
     if config.api_key and hmac.compare_digest(token, config.api_key):
