@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useNeedStatus } from "@/hooks/useOrgs";
-import { groupNeeds, isActionable, planActions } from "@/lib/orgs";
+import { actionLabel, groupNeeds, isActionable, planActions } from "@/lib/orgs";
 import { cn } from "@/lib/utils";
 import { NeedsEndpointMissing } from "./OrgNeedsList";
 import { statusLabel } from "@/lib/status";
@@ -76,7 +76,7 @@ function ResultsTable({ outcome }: { outcome: RunOutcome }) {
                   key={`${r.action}:${r.repo}`}
                   data-testid="org-act-result-row"
                 >
-                  <td className={cn(TD, "whitespace-nowrap")}>{r.action}</td>
+                  <td className={cn(TD, "whitespace-nowrap")}>{actionLabel(r.action)}</td>
                   <td className={cn(TD, "font-mono text-xs")}>{r.repo}</td>
                   <td className={TD}>
                     <Badge tone={OUTCOME_TONE[r.outcome] ?? "neutral"}>{statusLabel(r.outcome)}</Badge>
@@ -125,7 +125,7 @@ function NeedRow({
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className={need.status === "open" ? "" : "text-white/40"}>{need.title}</span>
           {actionable ? (
-            <Badge tone="gold">{need.action.type}</Badge>
+            <Badge tone="gold">{actionLabel(need.action.type)}</Badge>
           ) : need.status === "open" ? (
             <Badge tone="neutral" title="embry0 cannot do this one for you">
               By hand
@@ -228,7 +228,7 @@ export function OrgActPanel({
           setBusy(false);
           return;
         }
-        error = `${step.action}: ${errorText(err)}`;
+        error = `${actionLabel(step.action)}: ${errorText(err)}`;
         break;
       }
     }
@@ -337,7 +337,7 @@ export function OrgActPanel({
         <span className="text-xs text-muted-foreground">
           {plan.length === 0
             ? "Tick a need to preview it."
-            : `${plan.map((p) => `${p.action} ${p.repos.length}`).join(", ")}${previewFresh ? "" : ". Preview first."}`}
+            : `${plan.map((p) => `${actionLabel(p.action)} ${p.repos.length}`).join(", ")}${previewFresh ? "" : ". Preview first."}`}
         </span>
       </div>
 

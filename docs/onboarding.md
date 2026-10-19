@@ -70,7 +70,8 @@ organization or user, or a GitLab group, in four steps:
    has for it (intake, registry, QA, watch, tracker, UI, boot), filterable
    by name or by a missing sense, and the needs list grouped by kind.
 4. **Act**: tick the needs embry0 can do itself (register, hook, onboard,
-   watch), preview them as a dry run, then apply them.
+   watch, and deactivate for repositories gone from the forge), preview
+   them as a dry run, then apply them.
 
 Registering an owner changes nothing for any repository until a need is
 applied ([ADR 0010](adr/0010-organizations.md)). The wizard lives at

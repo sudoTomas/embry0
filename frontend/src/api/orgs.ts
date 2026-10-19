@@ -68,7 +68,15 @@ export interface OrgRepoFacts {
   maintain_steps?: NeedActionType[];
 }
 
-export type NeedActionType = "register" | "hook" | "onboard" | "watch" | "setting" | "credential" | "none";
+export type NeedActionType =
+  | "register"
+  | "hook"
+  | "onboard"
+  | "watch"
+  | "deactivate"
+  | "setting"
+  | "credential"
+  | "none";
 export type NeedStatus = "open" | "done" | "dismissed";
 
 export interface OrgNeed {
@@ -90,7 +98,7 @@ export interface OrgNeeds {
 }
 
 /** The actions the actions endpoint runs. The other need types are done by hand. */
-export type OrgActionName = "register" | "hook" | "onboard" | "watch";
+export type OrgActionName = "register" | "hook" | "onboard" | "watch" | "deactivate";
 
 export interface OrgActionResult {
   repo: string;
