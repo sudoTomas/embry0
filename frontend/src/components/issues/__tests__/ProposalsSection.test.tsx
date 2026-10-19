@@ -124,6 +124,15 @@ describe("ProposalsSection", () => {
     expect(screen.getByRole("heading", { name: "Proposals" })).toBeInTheDocument();
   });
 
+  it("heads the ticket column Source, since an organization need has no ticket", async () => {
+    mockFetchProposals.mockResolvedValue(page([LINEAR_DRAFT, ORG_NEED]));
+    renderSection();
+    await row("Register 3 repositories");
+    const heads = screen.getAllByRole("columnheader").map((th) => th.textContent);
+    expect(heads).toContain("Source");
+    expect(heads).not.toContain("Ticket");
+  });
+
   it("offers Accept for GitHub and Linear drafts, and points at the tracker for GitLab", async () => {
     mockFetchProposals.mockResolvedValue(page([LINEAR_DRAFT, GITHUB_DRAFT, GITLAB_DRAFT]));
     renderSection();

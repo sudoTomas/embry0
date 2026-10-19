@@ -140,7 +140,9 @@ export function ProposalsSection() {
           <thead>
             <tr>
               <th>Proposal</th>
-              <th className="hidden sm:table-cell">Ticket</th>
+              {/* Where the proposal comes from: the watcher's draft ticket, or an
+                  organization need, which has no ticket. */}
+              <th className="hidden sm:table-cell">Source</th>
               <th className="hidden sm:table-cell">Waiting</th>
               <th className="text-right">Decision</th>
             </tr>
@@ -154,7 +156,7 @@ export function ProposalsSection() {
                   {/* The one flexible column: it takes what the others leave and
                       truncates, so the decision stays on screen without a
                       sideways scroll. The repo rides under the title. Below sm
-                      the ticket and waiting columns step aside and the decision
+                      the source and waiting columns step aside and the decision
                       wraps, so Accept and Reject stay on a phone screen. */}
                   <td className="w-full min-w-[7rem] max-w-0 sm:min-w-[14rem]">
                     <div className="truncate" title={proposal.title}>
