@@ -159,12 +159,16 @@ class FakeImageRepo:
 
 
 class FakeStateRepo:
-    def __init__(self, warmed: dict[str, datetime] | None = None) -> None:
+    def __init__(self, warmed: dict[str, datetime] | None = None, *, later: dict[str, datetime] | None = None) -> None:
         self.warmed = warmed or {}
+        self.later = later  # what every read after the first returns: a QA job warmed the volume meanwhile
+        self.reads = 0
         self.deleted: list[str] = []
 
     async def get(self, *, scope: str, scope_key: str) -> VolumeState | None:
-        at = self.warmed.get(scope_key)
+        self.reads += 1
+        warmed = self.later if self.later is not None and self.reads > 1 else self.warmed
+        at = warmed.get(scope_key)
         return VolumeState(scope, scope_key, f"vol-{scope_key}", "sha", at) if at else None
 
     async def delete_by_volume_name(self, name: str) -> None:
@@ -172,11 +176,14 @@ class FakeStateRepo:
 
 
 class FakeJobs:
-    def __init__(self, live: set[str] | None = None) -> None:
+    def __init__(self, live: set[str] | None = None, *, later: set[str] | None = None) -> None:
         self.live = live or set()
+        self.later = later  # what every read after the first returns: a job started meanwhile
+        self.reads = 0
 
     async def live_job_repos(self) -> set[str]:
-        return set(self.live)
+        self.reads += 1
+        return set(self.later if self.later is not None and self.reads > 1 else self.live)
 
 
 def _sweep(
@@ -366,6 +373,23 @@ async def test_a_volume_is_kept_while_used_recently_mounted_or_its_repo_has_a_li
 
     assert runtime.removed_volumes == [], "a recently used, mounted or live-job volume was removed"
     assert (result.kept[Reason.RECENT], result.kept[Reason.IN_USE], result.kept[Reason.LIVE_JOB]) == (1, 1, 1)
+
+
+@pytest.mark.parametrize("claim", ["a job of its repo started", "a job warmed it"])
+@pytest.mark.asyncio
+async def test_a_volume_a_job_claims_after_the_decision_is_kept(claim: str) -> None:
+    """A QA job can start, and ensure() the volume, between the sweep's reads and its rm. Removing it
+    then leaves the job an empty, unlabelled volume that neither the reaper nor this sweep knows."""
+    runtime = FakeRuntime([], volumes=[_volume("embry0-qa-vol-acme-widgets", "acme/widgets", _ago(100))])
+    if claim == "a job of its repo started":
+        jobs, state, reason = FakeJobs(later={"Acme/Widgets"}), FakeStateRepo(), Reason.LIVE_JOB
+    else:
+        jobs, state, reason = FakeJobs(), FakeStateRepo(later={"acme/widgets": NOW}), Reason.RECENT
+
+    result = await _sweep(runtime, [], state=state, jobs=jobs).run_once(now=NOW)
+
+    assert runtime.removed_volumes == [], f"the volume was removed after {claim}"
+    assert result.kept[reason] == 1 and result.volumes == []
 
 
 def test_a_volume_another_deployment_labelled_is_not_ours() -> None:

@@ -25,8 +25,10 @@ own build (a failed bake was never used at all). A volume was last used when
 a QA job last asked for it (``qa_volume_state.last_warmed_at``, refreshed by
 every job that mounts it), or when it was created if it has no row.
 
-Removal never uses ``--force``, so the daemon itself also refuses an image a
-container uses and a volume a container mounts. Copies in the in-stack
+Right before removing a volume the sweep reads its repo's live jobs and its
+``qa_volume_state`` row again, so a QA job that started or warmed it after the
+first reads keeps it. Removal never uses ``--force``, so the daemon itself
+also refuses an image a container uses and a volume a container mounts. Copies in the in-stack
 registry are not touched; SECURITY.md says so. ``run_once(dry_run=True)``
 decides the same way and removes nothing: the admin preview.
 """
@@ -375,20 +377,12 @@ class QAImageRetentionSweep:
             result.errors.append(f"volumes not read: {str(exc)[:200]}")
             return
         for volume in volumes:
-            try:
-                state = await self._state_repo.get(scope=_PER_REPO, scope_key=volume.labels.get(LABEL_SCOPE_KEY, ""))
-                decision = decide_volume(
-                    volume,
-                    instance_id=self._instance_id,
-                    last_warmed_at=state.last_warmed_at if state is not None else None,
-                    live_repos=live,
-                    cutoff=cutoff,
-                )
-                if decision.remove and await self._runtime.list_containers(volume=volume.name):
-                    decision = VolumeDecision(False, Reason.IN_USE, decision.last_used)
-            except Exception as exc:  # noqa: BLE001 — unknown state or holders: keep
-                logger.warning("qa_volume_retention_unreadable", volume=volume.name, error=str(exc)[:200])
-                decision = VolumeDecision(False, Reason.UNCHECKED)
+            decision = await self._decide_volume(volume, live=live, cutoff=cutoff)
+            if decision.remove and not dry_run:
+                # A QA job of this repo can start and warm the volume after
+                # `live` was read: decide again on fresh reads right before the
+                # removal. Only the instant between that read and the rm is left.
+                decision = await self._decide_volume(volume, live=None, cutoff=cutoff)
             if not decision.remove:
                 result.kept[decision.reason] += 1
                 continue
@@ -411,6 +405,26 @@ class QAImageRetentionSweep:
                 except Exception as exc:  # noqa: BLE001 — a stale row only claims a warm tree that is gone
                     logger.warning("qa_volume_state_delete_failed", volume=volume.name, error=str(exc)[:200])
             result.volumes.append(item)
+
+    async def _decide_volume(self, volume: VolumeSummary, *, live: set[str] | None, cutoff: datetime) -> VolumeDecision:
+        """decide_volume on the volume's state row, then the mount check; ``live`` None reads the live repos."""
+        try:
+            if live is None:
+                live = {repo.lower() for repo in await self._jobs_repo.live_job_repos()}
+            state = await self._state_repo.get(scope=_PER_REPO, scope_key=volume.labels.get(LABEL_SCOPE_KEY, ""))
+            decision = decide_volume(
+                volume,
+                instance_id=self._instance_id,
+                last_warmed_at=state.last_warmed_at if state is not None else None,
+                live_repos=live,
+                cutoff=cutoff,
+            )
+            if decision.remove and await self._runtime.list_containers(volume=volume.name):
+                decision = VolumeDecision(False, Reason.IN_USE, decision.last_used)
+        except Exception as exc:  # noqa: BLE001 — unknown state or holders: keep
+            logger.warning("qa_volume_retention_unreadable", volume=volume.name, error=str(exc)[:200])
+            decision = VolumeDecision(False, Reason.UNCHECKED)
+        return decision
 
     async def start(self) -> None:  # pragma: no cover - the loop is exercised by the app
         """One sweep now, then one per interval, until the task is cancelled."""
