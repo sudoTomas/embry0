@@ -5,7 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { Node } from "@xyflow/react";
 
 vi.mock("@/hooks/useAgents", () => ({
-  useAgents: () => ({ data: [{ type: "developer", model: "m", skills: ["superpowers:brainstorming", "local:house-style"], display_name: "Developer", avatar: "smith", color: "amber" }] }),
+  useAgents: () => ({ data: [
+    { type: "developer", model: "m", skills: ["superpowers:brainstorming", "local:house-style"], display_name: "Developer", avatar: "smith", color: "amber" },
+    { type: "review", model: "m", skills: ["superpowers:writing-plans"], display_name: "Reviewer", avatar: "warden", color: "rose" },
+  ] }),
 }));
 vi.mock("@/hooks/useSkills", () => ({
   useSkills: () => ({ data: [
@@ -16,12 +19,12 @@ vi.mock("@/hooks/useSkills", () => ({
 }));
 import { AgentDetailPopup } from "../AgentDetailPopup";
 
-function node(skills: unknown): Node {
-  return { id: "d", type: "agentNode", position: { x: 0, y: 0 }, data: { agentType: "developer", label: "Developer", skills } };
+function node(skills: unknown, agentType = "developer"): Node {
+  return { id: "d", type: "agentNode", position: { x: 0, y: 0 }, data: { agentType, label: agentType, skills } };
 }
-function setup(skills: unknown) {
+function setup(skills: unknown, agentType?: string) {
   const onUpdate = vi.fn();
-  render(<MemoryRouter><AgentDetailPopup node={node(skills)} onUpdate={onUpdate} onClose={() => {}} /></MemoryRouter>);
+  render(<MemoryRouter><AgentDetailPopup node={node(skills, agentType)} onUpdate={onUpdate} onClose={() => {}} /></MemoryRouter>);
   return { onUpdate, user: userEvent.setup() };
 }
 
@@ -55,6 +58,15 @@ describe("AgentDetailPopup skills delta", () => {
     await user.click(screen.getByRole("button", { name: /edit/i }));
     await user.click(screen.getByRole("button", { name: "Remove superpowers:writing-plans" }));
     expect(onUpdate).toHaveBeenCalledWith({ skills: null });
+  });
+  it("a reviewer node reads the review definition's skills", async () => {
+    const { user } = setup({ add: [], remove: [] }, "reviewer");
+    await user.click(screen.getByRole("button", { name: /edit/i }));
+    const effective = screen.getByTestId("skills-effective");
+    expect(effective).toHaveTextContent("superpowers:writing-plans");
+    expect(effective).not.toHaveTextContent("superpowers:brainstorming");
+    // Offered as a definition skill to drop: it came from the review row, not the node.
+    expect(screen.getByRole("button", { name: "Remove superpowers:writing-plans from this node" })).toBeInTheDocument();
   });
   it("has no per-skill mode select", async () => {
     const { user } = setup({ add: ["superpowers:writing-plans"], remove: [] });

@@ -53,6 +53,15 @@ export const PALETTE_CLASSES: Record<PaletteId, PaletteClasses> = {
 export function isAvatarId(v: unknown): v is AvatarId { return typeof v === "string" && (AVATARS as readonly string[]).includes(v); }
 export function isPaletteId(v: unknown): v is PaletteId { return typeof v === "string" && (PALETTE as readonly string[]).includes(v); }
 
+/**
+ * The agent row a node's type names. Every builtin template spells the
+ * review step `reviewer` while the agent row is `review`; the rest name
+ * their row directly.
+ */
+export function resolveAgentType(type: string): string {
+  return type === "reviewer" ? "review" : type;
+}
+
 /** The fields identityOf reads; a GET /agents row satisfies it, so does a bare type. */
 export interface IdentitySource {
   type: string;

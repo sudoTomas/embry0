@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { identityOf } from "../agentIdentity";
+import { identityOf, resolveAgentType } from "../agentIdentity";
 
 describe("identityOf", () => {
   it("reads the row", () => {
@@ -22,5 +22,13 @@ describe("identityOf", () => {
   });
   it("never yields an empty initial", () => {
     expect(identityOf({ type: "", display_name: "  " }).initial).toBe("?");
+  });
+});
+
+describe("resolveAgentType", () => {
+  it("maps the template spelling reviewer to the review row and leaves the rest", () => {
+    expect(resolveAgentType("reviewer")).toBe("review");
+    expect(resolveAgentType("review")).toBe("review");
+    expect(resolveAgentType("developer")).toBe("developer");
   });
 });

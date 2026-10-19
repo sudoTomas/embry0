@@ -7,6 +7,7 @@ import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { useSkills } from "@/hooks/useSkills";
 import { SkillPicker } from "@/components/skills/SkillPicker";
 import { cn } from "@/lib/utils";
+import { resolveAgentType } from "@/lib/agentIdentity";
 import { normalizeDelta, effectiveSkills, isEmptyDelta, type NormalizedDelta } from "@/lib/skills";
 import type { SkillCatalogEntry } from "@/lib/types";
 import { SANDBOX_IMAGE_PLACEHOLDER } from "@/lib/branding";
@@ -226,7 +227,7 @@ export function AgentDetailPopup({
   const color = identity.hex;
 
   const agentDef = useMemo(
-    () => agents?.find((a) => a.type === agentType),
+    () => agents?.find((a) => a.type === resolveAgentType(agentType)),
     [agents, agentType],
   );
 
