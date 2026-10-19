@@ -128,6 +128,16 @@ describe("ProvidersPage", () => {
     expect(within(xai).getByText(/none configured/)).toBeInTheDocument();
   });
 
+  it("titles each provider card with the provider's own spelling, not the stored id", async () => {
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    expect(within(anthropic).getByText("Anthropic")).toBeInTheDocument();
+    const xai = screen.getByTestId("provider-card-xai");
+    const title = within(xai).getByText("xAI");
+    expect(title.className).not.toContain("capitalize");
+    expect(within(xai).queryByText("xai")).not.toBeInTheDocument();
+  });
+
   it("shows model pricing in the provider table", async () => {
     renderPage();
     const anthropic = await screen.findByTestId("provider-card-anthropic");
