@@ -10,7 +10,10 @@ import type { JobResponse } from "@/lib/types";
 
 const job = vi.hoisted(() => ({ current: null as unknown }));
 vi.mock("@/hooks/useJobs", () => ({ useJob: () => ({ data: job.current, isLoading: false, isError: false, refetch: vi.fn() }) }));
-vi.mock("@/hooks/useInputs", () => ({ useJobInputs: () => ({ data: [] }) }));
+vi.mock("@/hooks/useInputs", () => ({
+  useJobInputs: () => ({ data: [] }),
+  useAnswerInput: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 vi.mock("@/hooks/useTraces", () => ({ useTraces: () => ({ data: { traces: [], total: 0 } }) }));
 vi.mock("@/hooks/useJobLogs", () => ({ useJobLogs: () => ({ events: [], isConnected: false, latestCost: 0, pipelineGraph: null }) }));
 
