@@ -31,7 +31,7 @@ If your work contradicts a record here, say so explicitly rather than silently o
 
 | ADR | Decision | Status |
 |---|---|---|
-| [0001](0001-langgraph-agent-sdk-dind-sandboxes.md) | LangGraph + Claude Agent SDK; agents execute in DinD sandboxes, no customer code retained on the host | accepted (2026-04-04) |
+| [0001](0001-langgraph-agent-sdk-dind-sandboxes.md) | LangGraph + Claude Agent SDK; agents execute in DinD sandboxes, no customer code retained on the host (that clause is corrected by ADR 0017) | accepted (2026-04-04) |
 | [0002](0002-credential-proxies-per-sandbox-enrollment.md) | Credential proxies with per-sandbox enrollment, no forge tokens in the sandbox env | accepted (2026-04-28) |
 | [0003](0003-db-backed-qa-config.md) | qa.yaml v2 lives in the embry0 DB; legacy config channels removed | accepted (2026-08-06) |
 | [0004](0004-github-issues-canonical-tracker.md) | GitHub Issues is the canonical tracker; Linear is transitional | accepted (2026-08-07) |
@@ -47,3 +47,4 @@ If your work contradicts a record here, say so explicitly rather than silently o
 | [0014](0014-organization-standards.md) | A standard is a schema embry0 ships and values the organization holds, keyed by the forge owner; a repository starts in mode off and is never audited there | accepted (2026-10-18) |
 | [0015](0015-maintain-hints.md) | What a repository takes to maintain is read from its facts by rules, never a model | accepted (2026-10-18) |
 | [0016](0016-rediscovery-schedule.md) | An organization can be rediscovered on a schedule; a repository that left the listing, once a direct read confirms it gone, is proposed for deactivation, never deactivated on its own | accepted (2026-10-18) |
+| [0017](0017-code-retention.md) | What embry0 keeps of a repository's code (job events, agent sessions, QA images and volumes) is bounded by `JOB_LOG_RETENTION_DAYS`, `AGENT_SESSION_RETENTION_DAYS` and `QA_IMAGE_RETENTION_DAYS`, all off by default; corrects ADR 0001's retention clause | accepted (2026-10-19) |

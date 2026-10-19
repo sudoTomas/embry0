@@ -1636,6 +1636,54 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(audit_sweep_task)
     audit_sweep_task.add_done_callback(app.state.background_tasks.discard)
 
+    # ADR 0017: job log retention. The sweep object always exists, so the
+    # admin preview can dry-run it at any number of days; its loop runs only
+    # with JOB_LOG_RETENTION_DAYS set (one sweep now, then daily: a deploy
+    # more often than daily must not keep postponing it).
+    from embry0.services.job_log_retention import JobLogRetentionSweep
+    from embry0.storage.repositories.job_log_retention import JobLogRetentionRepository
+
+    app.state.job_log_retention = JobLogRetentionSweep(
+        JobLogRetentionRepository(db), retention_days=config.job_log_retention_days
+    )
+    if app.state.job_log_retention.enabled:
+        job_log_retention_task = asyncio.create_task(app.state.job_log_retention.start())
+        app.state.background_tasks.add(job_log_retention_task)
+        job_log_retention_task.add_done_callback(app.state.background_tasks.discard)
+    logger.info("job_log_retention_configured", retention_days=config.job_log_retention_days)
+
+    # ADR 0017: agent session retention, its own setting because deleting a
+    # session ends the resume of a pull request comment follow-up. Same shape.
+    from embry0.services.agent_session_retention import AgentSessionRetentionSweep
+
+    app.state.agent_session_retention = AgentSessionRetentionSweep(
+        app.state.agent_sessions_repo, retention_days=config.agent_session_retention_days
+    )
+    if app.state.agent_session_retention.enabled:
+        agent_session_retention_task = asyncio.create_task(app.state.agent_session_retention.start())
+        app.state.background_tasks.add(agent_session_retention_task)
+        agent_session_retention_task.add_done_callback(app.state.background_tasks.discard)
+    logger.info("agent_session_retention_configured", retention_days=config.agent_session_retention_days)
+
+    # ADR 0017: QA image retention, the same shape: always built (the preview
+    # dry-runs it), looping only with QA_IMAGE_RETENTION_DAYS set. Volumes are
+    # recognised by this deployment's instance label, as the volume reaper does.
+    from embry0.cache.qa_image_retention import QAImageRetentionSweep
+
+    app.state.qa_image_retention = QAImageRetentionSweep(
+        runtime=app.state.runtime,
+        image_repo=app.state.qa_image_tags_repo,
+        volume_state_repo=app.state.qa_volume_state_repo,
+        jobs_repo=app.state.jobs_repo,
+        instance_id=volume_instance_id,
+        retention_days=config.qa_image_retention_days,
+    )
+    if app.state.qa_image_retention.enabled:
+        qa_image_retention_task = asyncio.create_task(app.state.qa_image_retention.start())
+        app.state.background_tasks.add(qa_image_retention_task)
+        qa_image_retention_task.add_done_callback(app.state.background_tasks.discard)
+    logger.info("qa_image_retention_configured", retention_days=config.qa_image_retention_days)
+
     # #270: which trigger label dispatch matches on, and whether the DB row,
     # .env or the code default supplied it (DB wins; a shadowed .env warns).
     await app.state.integration_repo.log_effective_trigger_labels()
@@ -2249,6 +2297,7 @@ def _register_routers(app: FastAPI) -> None:
         queue,
         repo_preferences,
         repos,
+        retention,
         sandbox_profiles,
         sandboxes,
         standards,
@@ -2332,6 +2381,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(org_needs.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     # ADR 0013: the hosts that run the code (reads and probes operator-tier; writes admin-tier in-route).
     app.include_router(hosts.router, prefix="/api/v1", tags=["hosts"], dependencies=auth_deps)
+    # ADR 0017: the retention dry run; its one route adds require_admin.
+    app.include_router(retention.router, prefix="/api/v1", tags=["retention"], dependencies=auth_deps)
     # ADR 0014: organization standards (reads and audits operator-tier; writes admin-tier in-route).
     app.include_router(standards.router, prefix="/api/v1", tags=["standards"], dependencies=auth_deps)
     app.include_router(org_actions.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)

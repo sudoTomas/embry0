@@ -484,6 +484,7 @@
       "node",
       "parent_tool_use_id",
       "prev_seq",
+      "redacted",
       "run_id"
     ],
     "required": [
@@ -504,6 +505,7 @@
       "original_length",
       "parent_tool_use_id",
       "prev_seq",
+      "redacted",
       "run_id",
       "truncated"
     ],

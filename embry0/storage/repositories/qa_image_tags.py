@@ -119,6 +119,11 @@ class QAImageTagsRepository:
         rows = await self.db.fetch(f"SELECT {_COLUMNS} FROM qa_image_tags WHERE is_active ORDER BY repo")
         return [_to_row(r) for r in rows]
 
+    async def list_all(self) -> list[QAImageTagRow]:
+        """Every row, active or not, oldest build first."""
+        rows = await self.db.fetch(f"SELECT {_COLUMNS} FROM qa_image_tags ORDER BY built_at")
+        return [_to_row(r) for r in rows]
+
     async def list_for_repo(self, repo: str) -> list[QAImageTagRow]:
         rows = await self.db.fetch(
             f"SELECT {_COLUMNS} FROM qa_image_tags WHERE repo = $1 ORDER BY built_at DESC",

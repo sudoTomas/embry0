@@ -671,7 +671,29 @@ class Embry0Config(BaseSettings):
     minio_root_password: SecretSetting = ""
     qa_artifact_retention_days: int = Field(default=14, gt=0, le=3650)
 
-    @field_validator("audit_log_path", mode="before")
+    # Code retention (ADR 0017). Unset (the default) keeps everything, as
+    # before. Set, a daily sweep replaces the code in job events older than
+    # this many days (Write/Edit/Bash inputs, every tool result) with a marker
+    # that keeps the tool, file path, size and hash. Ended jobs only.
+    job_log_retention_days: int | None = Field(default=None, gt=0, le=3650)
+    # Set, a daily sweep deletes the saved agent sessions (the whole
+    # conversation) of ended jobs last used more than this many days ago. A
+    # pull request comment follow-up on such a job then starts a fresh session
+    # instead of resuming, which is why this is not part of the job log setting.
+    agent_session_retention_days: int | None = Field(default=None, gt=0, le=3650)
+    # Set, a daily sweep removes pre-built QA images (a full checkout each)
+    # and per-repo warm volumes unused for this many days, from the sandbox
+    # daemon. Never the image an active qa_image_tags row names, nor anything
+    # a container uses or a live job's repo needs.
+    qa_image_retention_days: int | None = Field(default=None, gt=0, le=3650)
+
+    @field_validator(
+        "audit_log_path",
+        "job_log_retention_days",
+        "agent_session_retention_days",
+        "qa_image_retention_days",
+        mode="before",
+    )
     @classmethod
     def _empty_str_to_none(cls, v: object) -> object:
         if v == "":
