@@ -10,7 +10,7 @@ import { Pagination } from "@/components/ui/Pagination";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
-import { formatDate } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 import { ACTION_ICONS, ACTION_LABELS, actionLabel, formatDetails } from "@/lib/auditLabels";
 
 const WINDOW_OPTIONS = [
@@ -153,7 +153,7 @@ export function AuditPage() {
                             )}
                           </td>
                           <td className="whitespace-nowrap text-right text-xs text-muted-foreground">
-                            {formatDate(entry.created_at)}
+                            {formatDateTime(entry.created_at)}
                           </td>
                         </tr>
                       );

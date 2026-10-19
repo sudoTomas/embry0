@@ -14,6 +14,7 @@ import { TableSkeleton } from "@/components/TableSkeleton";
 import { Badge } from "@/components/ui/Badge";
 import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
 import { statusLabel } from "@/lib/status";
+import { formatDateTime } from "@/lib/utils";
 
 /** RAV-1253: the unified per-repo view — registry state, QA config editor,
  * environment (masked), forge account, sandbox preferences, and recent QA runs. */
@@ -66,7 +67,7 @@ export function RepoDetailPage() {
         {repo.notes && <p className="mt-1 text-sm text-white/60">{repo.notes}</p>}
         {repo.qa_config_updated_at && (
           <p className="mt-1 text-xs text-muted-foreground" data-testid="repo-config-meta">
-            QA config updated {repo.qa_config_updated_at}
+            QA config updated {formatDateTime(repo.qa_config_updated_at)}
             {repo.qa_config_updated_by ? ` by ${repo.qa_config_updated_by}` : ""}
           </p>
         )}
@@ -190,7 +191,7 @@ export function RepoDetailPage() {
                       <RunStatusBadge status={run.overall_status} />
                     </td>
                     <td className="num whitespace-nowrap text-fg-muted">
-                      {new Date(run.started_at).toLocaleString()}
+                      {formatDateTime(run.started_at)}
                     </td>
                   </tr>
                 ))}

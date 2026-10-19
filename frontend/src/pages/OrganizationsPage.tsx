@@ -12,7 +12,7 @@ import { useCredentials } from "@/hooks/useCredentials";
 import { useOrganizations } from "@/hooks/useOrgs";
 import { ORG_WIZARD_PATH, credentialLabel } from "@/lib/orgs";
 import { statusLabel } from "@/lib/status";
-import { cn, formatDate } from "@/lib/utils";
+import { cn, formatDateTime } from "@/lib/utils";
 
 const STATUS_TONE: Record<Organization["status"], BadgeTone> = {
   active: "success",
@@ -105,7 +105,7 @@ export function OrganizationsPage() {
                   </td>
                   <td className={cn(TD, "text-right font-mono")}>{org.repo_count ?? "-"}</td>
                   <td className={cn(TD, "hidden whitespace-nowrap text-white/60 sm:table-cell")}>
-                    {org.discovered_at ? formatDate(org.discovered_at) : "never"}
+                    {org.discovered_at ? formatDateTime(org.discovered_at) : "never"}
                   </td>
                   <td className={TD}>
                     <Badge tone={STATUS_TONE[org.status] ?? "neutral"}>{statusLabel(org.status)}</Badge>

@@ -4,7 +4,7 @@ import { FilterSelect } from "@/components/ui/FilterSelect";
 import { Pagination } from "@/components/ui/Pagination";
 import { JobStatusBadge } from "./JobStatusBadge";
 import { EmptyJobsState } from "./EmptyJobsState";
-import { formatCost, formatDate } from "@/lib/utils";
+import { formatCost, formatDateTime } from "@/lib/utils";
 import { statusLabel } from "@/lib/status";
 import { Link, useNavigate } from "react-router";
 import { X, Eye, GitPullRequest } from "lucide-react";
@@ -95,7 +95,7 @@ export function JobsTable({
                     <JobStatusBadge status={job.status} />
                   </td>
                   <td className="hidden whitespace-nowrap text-right sm:table-cell">{formatCost(job.total_cost_usd)}</td>
-                  <td className="hidden whitespace-nowrap text-right text-muted-foreground sm:table-cell">{formatDate(job.created_at)}</td>
+                  <td className="hidden whitespace-nowrap text-right text-muted-foreground sm:table-cell">{formatDateTime(job.created_at)}</td>
                   <td className="text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1">
                       {job.pr_url && (

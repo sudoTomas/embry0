@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Tooltip } from "@/components/ui/Tooltip";
 import type { Credential, CredentialKind } from "@/lib/types/credentials";
-import { cn, formatDate } from "@/lib/utils";
+import { cn, formatDateTime } from "@/lib/utils";
 import { sentenceCase } from "@/lib/status";
 
 export interface CredentialTableProps {
@@ -181,7 +181,7 @@ export function CredentialTable({
                     </Button>
                   </td>
                   <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">
-                    {credential.last_used_at ? formatDate(credential.last_used_at) : "never"}
+                    {credential.last_used_at ? formatDateTime(credential.last_used_at) : "never"}
                   </td>
                   <td className="text-right">
                     {/* Three to a line below sm, one line above. */}

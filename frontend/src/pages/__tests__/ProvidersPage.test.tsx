@@ -96,7 +96,7 @@ describe("ProvidersPage", () => {
     const anthropic = await screen.findByTestId("provider-card-anthropic");
     const line = within(anthropic).getByTestId("provider-last-probe");
     expect(line).toHaveTextContent("Last test: Unauthorized");
-    expect(within(line).getByText(/2026/).getAttribute("dateTime")).toBe("2026-01-02T03:04:05+00:00");
+    expect(line.querySelector("time")?.getAttribute("dateTime")).toBe("2026-01-02T03:04:05+00:00");
     const xai = screen.getByTestId("provider-card-xai");
     expect(within(xai).getByTestId("provider-last-probe")).toHaveTextContent("Last test: never");
   });

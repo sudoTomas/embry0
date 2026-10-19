@@ -9,16 +9,12 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
-import { formatDate } from "@/lib/utils";
+import { formatDateTime, formatTime } from "@/lib/utils";
 import { watcherActionLabel, watcherActionTone } from "@/lib/watcherActions";
 
 
 function windowLabel(startIso: string, endIso: string): string {
-  const start = new Date(startIso);
-  const end = new Date(endIso);
-  const fmt = (d: Date) =>
-    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  return `${fmt(start)} – ${fmt(end)}`;
+  return `${formatTime(startIso)}–${formatTime(endIso)}`;
 }
 
 /**
@@ -94,7 +90,7 @@ export function WatcherPage() {
               {runs.data.map((run) => (
                 <tr key={run.id}>
                   <td className="whitespace-nowrap text-muted-foreground">
-                    {formatDate(run.created_at)}
+                    {formatDateTime(run.created_at)}
                   </td>
                   <td>
                     <Badge tone={watcherActionTone(run.action)}>

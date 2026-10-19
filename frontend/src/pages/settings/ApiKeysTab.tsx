@@ -21,7 +21,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { parseRepoList } from "@/lib/repoList";
-import { formatDate } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 
 const SCOPE_TONES: Record<ApiKey["scope"], BadgeTone> = {
   admin: "gold",
@@ -284,10 +284,10 @@ export default function ApiKeysTab() {
                     </td>
                   )}
                   <td className="text-xs text-muted-foreground">
-                    {k.last_used_at ? formatDate(k.last_used_at) : "never"}
+                    {k.last_used_at ? formatDateTime(k.last_used_at) : "never"}
                   </td>
                   <td className="text-xs text-muted-foreground">
-                    {k.expires_at ? formatDate(k.expires_at) : "—"}
+                    {k.expires_at ? formatDateTime(k.expires_at) : "—"}
                   </td>
                   <td>
                     {k.revoked_at ? <Badge tone="error">Revoked</Badge> : <Badge tone="success">Active</Badge>}

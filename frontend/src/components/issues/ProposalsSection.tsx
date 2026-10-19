@@ -4,6 +4,7 @@ import { ExternalLink } from "lucide-react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
+import { formatDateTime } from "@/lib/utils";
 import { useAcceptProposal, useProposals, useRejectProposal } from "@/hooks/useProposals";
 import type { HealingCase } from "@/lib/types";
 
@@ -190,7 +191,7 @@ export function ProposalsSection() {
                   </td>
                   <td
                     className="hidden whitespace-nowrap text-muted-foreground sm:table-cell"
-                    title={new Date(filed).toLocaleString()}
+                    title={formatDateTime(filed)}
                   >
                     {formatDistanceToNow(new Date(filed))}
                   </td>

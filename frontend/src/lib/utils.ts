@@ -12,14 +12,41 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** A timestamp from the API as a Date. Python's `str(datetime)` puts a space
+ * where ISO puts a `T`; not every browser parses that form. */
+function parseTimestamp(value: string | Date): Date {
+  if (value instanceof Date) return value;
+  return new Date(/^\d{4}-\d{2}-\d{2} /.test(value) ? value.replace(" ", "T") : value);
+}
+
+/**
+ * The one date-and-time format for table cells and meta lines, like the
+ * sibling dashboards': short month, day and 24-hour time, with the year only
+ * when it is not the current one ("Sep 8, 13:34", "Dec 30, 2025 09:05"). A
+ * value that does not parse is shown as it came.
+ */
+export function formatDateTime(value: string | Date, now: Date = new Date()): string {
+  const d = parseTimestamp(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return format(d, d.getFullYear() === now.getFullYear() ? "MMM d, HH:mm" : "MMM d, yyyy HH:mm");
+}
+
+/** 24-hour clock time ("23:49"), for a time range inside one row. */
+export function formatTime(value: string | Date): string {
+  const d = parseTimestamp(value);
+  return Number.isNaN(d.getTime()) ? String(value) : format(d, "HH:mm");
+}
+
+/** Prose time ("finished 3 minutes ago"): relative within a day, then the
+ * table format. */
 export function formatDate(iso: string): string {
-  const d = new Date(iso);
+  const d = parseTimestamp(iso);
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
   if (diffMs < 24 * 60 * 60 * 1000) {
     return formatDistanceToNow(d, { addSuffix: true });
   }
-  return format(d, "MMM d, yyyy HH:mm");
+  return formatDateTime(d, now);
 }
 
 export function formatCost(usd: number): string {

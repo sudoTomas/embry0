@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { RunStatusBadge } from "./RunStatusBadge";
+import { formatDateTime } from "@/lib/utils";
 import type { RunListItem } from "@/lib/types";
 
 interface Props {
@@ -23,7 +24,7 @@ export function QaRunRow({ run }: Props) {
         <RunStatusBadge status={run.overall_status} />
       </td>
       <td className="num text-fg-secondary">{run.app_count}</td>
-      <td className="num whitespace-nowrap text-fg-muted">{new Date(run.started_at).toLocaleString()}</td>
+      <td className="num whitespace-nowrap text-fg-muted">{formatDateTime(run.started_at)}</td>
     </tr>
   );
 }

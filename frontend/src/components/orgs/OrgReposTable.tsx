@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Input";
 import { SENSES, isMissing, senseState, senseTitle, type SenseKey, type SenseState } from "@/lib/orgs";
-import { cn, formatDate } from "@/lib/utils";
+import { cn, formatDateTime } from "@/lib/utils";
 import { TABLE_BOX, TD, TH } from "./styles";
 
 const CHIP: Record<SenseState, string> = {
@@ -133,7 +133,7 @@ export function OrgReposTable({ repos }: { repos: readonly OrgRepoFacts[] }) {
                 </td>
                 <td className={cn(TD, "text-white/70")}>{r.language ?? "-"}</td>
                 <td className={cn(TD, "whitespace-nowrap text-white/60")}>
-                  {r.pushed_at ? formatDate(r.pushed_at) : "-"}
+                  {r.pushed_at ? formatDateTime(r.pushed_at) : "-"}
                 </td>
                 <td className={cn(TD, "text-right font-mono text-white/70")}>{r.open_issues ?? "-"}</td>
                 <td className={TD}>

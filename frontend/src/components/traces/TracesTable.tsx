@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { FilterSelect } from "@/components/ui/FilterSelect";
 import { Pagination } from "@/components/ui/Pagination";
 import { RESULT_COLORS } from "@/lib/constants";
-import { formatCost, formatDate, formatTokens } from "@/lib/utils";
+import { formatCost, formatDateTime, formatTokens } from "@/lib/utils";
 import { TraceDetailPanel } from "@/components/traces/TraceDetailPanel";
 import { useAgents } from "@/hooks/useAgents";
 import type { TraceResponse } from "@/lib/types";
@@ -171,7 +171,7 @@ function TraceRow({
         </td>
         <td className="text-right tabular-nums">{toolCount || "\u2014"}</td>
         <td className="text-right text-muted-foreground">
-          {formatDate(trace.created_at)}
+          {formatDateTime(trace.created_at)}
         </td>
       </tr>
       {isSelected && <TraceDetailPanel trace={trace} onClose={onClose} />}

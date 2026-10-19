@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { statusLabel } from "@/lib/status";
-import { formatDate } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 
 const TIER_TONES: Record<AdminUser["tier"], BadgeTone> = {
   admin: "gold",
@@ -102,7 +102,7 @@ export function UsersAdminPage() {
                   </td>
                   <td className="hidden font-mono text-xs sm:table-cell">{u.login_count}</td>
                   <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">
-                    {u.last_login_at ? formatDate(u.last_login_at) : "—"}
+                    {u.last_login_at ? formatDateTime(u.last_login_at) : "—"}
                   </td>
                   <td>
                     <div className="flex items-center justify-end gap-1.5">

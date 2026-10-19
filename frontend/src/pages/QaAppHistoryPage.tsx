@@ -4,6 +4,7 @@ import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { formatDateTime } from "@/lib/utils";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -69,7 +70,7 @@ export function QaAppHistoryPage() {
                   </td>
                   <td className="text-white/70">{formatDuration(h.duration_ms)}</td>
                   <td className="text-white/40">
-                    {new Date(h.started_at).toLocaleString()}
+                    {formatDateTime(h.started_at)}
                   </td>
                   <td className="text-destructive">
                     {h.failure_summary || ""}
