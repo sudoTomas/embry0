@@ -1,9 +1,9 @@
 """Browser-backend registry (#230): playwright entry, lookup, immutability.
 
 The EXPECTED_* literals below are the pre-registry wiring copied verbatim
-from the old duplicated seeds — they are the byte-identical regression
-guard. Do not derive them from the registry; their whole point is to be an
-independent copy.
+from the old duplicated seeds (plus browser_find, added by #81) — they are
+the byte-identical regression guard. Do not derive them from the registry;
+their whole point is to be an independent copy.
 """
 
 import pytest
@@ -24,6 +24,7 @@ EXPECTED_PLAYWRIGHT_TOOLS = [
     "mcp__playwright__browser_type",
     "mcp__playwright__browser_press_key",
     "mcp__playwright__browser_snapshot",
+    "mcp__playwright__browser_find",
     "mcp__playwright__browser_take_screenshot",
     "mcp__playwright__browser_console_messages",
     "mcp__playwright__browser_network_requests",
@@ -94,6 +95,19 @@ def test_storage_state_environ():
         "PLAYWRIGHT_MCP_STORAGE_STATE": "/workspace/.qa/storage-state.json",
         "PLAYWRIGHT_MCP_ISOLATED": "1",
     }
+
+
+def test_playwright_grants_browser_find_and_keeps_the_exclusions_out():
+    """#81: the agent reaches for browser_find on every QA run; the two
+    deliberately excluded tools must never creep in silently."""
+    from embry0.workflows.qa.browser_backends import PLAYWRIGHT_EXCLUDED_TOOLS
+
+    assert "mcp__playwright__browser_find" in PLAYWRIGHT.tool_names
+    assert PLAYWRIGHT_EXCLUDED_TOOLS == {
+        "mcp__playwright__browser_run_code_unsafe",
+        "mcp__playwright__browser_emulate_media",
+    }
+    assert PLAYWRIGHT_EXCLUDED_TOOLS.isdisjoint(PLAYWRIGHT.tool_names)
 
 
 def test_backend_dataclass_is_immutable():

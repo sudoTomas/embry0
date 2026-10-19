@@ -439,7 +439,7 @@ stateDiagram-v2
 | `retry` | No | — | Inject review feedback into state, increment counter |
 | `max_retries` | No | — | `interrupt()` — ask user: continue, merge as-is, or abandon |
 | `init_orchestrator` | No | — | (QA gate, when `needs_qa=true`) In a short-lived `slim` bootstrap sandbox: clone, compute the diff, load the stored `repo_qa_configs` document into `state["qa"]` |
-| `orchestrate_qa` | Yes (per app) | The QA agent: Read, Glob, Grep, Bash, Edit, plus the selected browser backend's MCP tools (Playwright: 22, Vibium: 49 — see `workflows/qa/browser_backends.py`) | Fan out one sub-task per affected app (the sub-task graph, see QA Pipeline), aggregate the results, set `qa.final_status` |
+| `orchestrate_qa` | Yes (per app) | The QA agent: Read, Glob, Grep, Bash, Edit, plus the selected browser backend's MCP tools (Playwright: 23, Vibium: 49 — see `workflows/qa/browser_backends.py`) | Fan out one sub-task per affected app (the sub-task graph, see QA Pipeline), aggregate the results, set `qa.final_status` |
 | `qa_report` | No | — | Write the sticky QA PR comment with the aggregate verdict and per-app breakdown |
 | `qa_failure_bookkeeping` | No | — | Increment `qa.failure_rounds` when `final_status=failed` |
 | `qa_exhausted` | No | — | Terminal node when `failure_rounds` hits the cap; sets `error_code=ERR_QA_FAILURES_UNRESOLVED` |

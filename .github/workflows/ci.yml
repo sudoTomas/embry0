@@ -154,6 +154,15 @@ jobs:
             vibium --version
           '
 
+      - name: Playwright MCP tool list matches the QA allowlist (#81)
+        # The QA agent's allowlist is a copy of what @playwright/mcp serves.
+        # Ask the image's own server for tools/list and compare, so a tool it
+        # starts or stops serving fails here, not as a denied call mid-job.
+        run: |
+          docker run --rm --network none -v "$PWD:/src:ro" embry0-sandbox-qa:latest \
+            python /src/infra/scripts/check-playwright-mcp-tools.py \
+              /src/embry0/workflows/qa/browser_backends.py
+
       - name: Smoke-test vibium headless browser (no egress)
         # Proves the vibium backend can drive its baked Chrome for Testing
         # with zero network access (sandboxes have no internet egress at job
