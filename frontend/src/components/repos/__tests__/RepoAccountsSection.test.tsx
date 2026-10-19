@@ -9,6 +9,7 @@ import { RepoAccountsSection } from "../RepoAccountsSection";
 const mockSet = vi.fn();
 let repoCreds: unknown;
 let credentialRows: Array<Record<string, unknown>>;
+let catalogProviders: { name: string }[] | undefined;
 
 const forgeRows = () => [
   {
@@ -28,6 +29,10 @@ vi.mock("@/hooks/useCredentials", () => ({
     data: credentialRows,
     isLoading: false,
   }),
+}));
+
+vi.mock("@/hooks/useProvider", () => ({
+  useModelsCatalog: () => ({ data: catalogProviders ? { providers: catalogProviders } : undefined }),
 }));
 
 function renderSection(repo: string, forge: "github" | "gitlab") {
@@ -62,6 +67,7 @@ describe("RepoAccountsSection", () => {
     mockSet.mockReset();
     repoCreds = undefined;
     credentialRows = forgeRows();
+    catalogProviders = undefined;
     asTier("operator");
   });
 
@@ -234,6 +240,57 @@ describe("RepoAccountsSection", () => {
     const xai = screen.getByLabelText(/^xai account/i);
     expect(within(xai).getByRole("option", { name: "grok-key" })).toBeInTheDocument();
     expect(within(xai).queryByRole("option", { name: "claude-default" })).toBeNull();
+  });
+
+  it("binds an account for every provider the deployment enables and names the rest", async () => {
+    catalogProviders = [{ name: "anthropic" }, { name: "xai" }, { name: "openai" }, { name: "custom" }];
+    credentialRows = [
+      ...forgeRows(),
+      { id: "cred-00000000000c", label: "openai-key", provider: "openai", status: "ok" },
+      { id: "cred-00000000000d", label: "ollama", provider: "custom", status: "ok" },
+    ];
+    repoCreds = {
+      repo: "acme/widgets",
+      bindings: [],
+      effective: {
+        forge: { error: "x" },
+        llm: {
+          openai: { id: "cred-00000000000c", label: "openai-key", provider: "openai", source: "registry", trace: ["global -> openai-key"] },
+        },
+      },
+    };
+    asTier("admin");
+    const user = userEvent.setup();
+    renderSection("acme/widgets", "github");
+    expect(
+      ["anthropic", "xai", "openai", "openrouter", "google", "groq", "deepseek", "custom"].filter((name) =>
+        screen.queryByTestId(`llm-${name}`),
+      ),
+    ).toEqual(["anthropic", "xai", "openai", "custom"]);
+    const openai = screen.getByLabelText(/^openai account/i);
+    expect(within(openai).getByRole("option", { name: "openai-key" })).toBeInTheDocument();
+    expect(within(openai).queryByRole("option", { name: "ollama" })).toBeNull();
+    expect(within(screen.getByTestId("llm-trace-openai")).getByText("global -> openai-key")).toBeInTheDocument();
+    expect(screen.getByTestId("llm-not-enabled")).toHaveTextContent(
+      "Not enabled in this deployment: OpenRouter, Google, Groq, DeepSeek. Name a provider in OPENAI_COMPATIBLE_PROVIDERS to bind its account here.",
+    );
+    await user.selectOptions(screen.getByLabelText(/^custom account/i), "cred-00000000000d");
+    expect(mockSet).toHaveBeenLastCalledWith(
+      {
+        fullRepo: "acme/widgets",
+        bindings: [{ credential_id: "cred-00000000000d", role: "llm", pinned: false }],
+      },
+      expect.anything(),
+    );
+  });
+
+  it("shows Anthropic and xAI only, and claims nothing, before the catalog answers", () => {
+    repoCreds = { repo: "acme/widgets", bindings: [], effective: { forge: { error: "x" } } };
+    renderSection("acme/widgets", "github");
+    expect(screen.getByTestId("llm-anthropic")).toBeInTheDocument();
+    expect(screen.getByTestId("llm-xai")).toBeInTheDocument();
+    expect(screen.queryByTestId("llm-openai")).toBeNull();
+    expect(screen.queryByTestId("llm-not-enabled")).toBeNull();
   });
 
   it("pins the selected LLM account for this repo", async () => {

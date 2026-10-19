@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useCredentials, useRepoCredentials, useSetRepoCredentials } from "@/hooks/useCredentials";
+import { useModelsCatalog } from "@/hooks/useProvider";
+import { ENABLE_SETTING, llmProviderStates, type LlmProviderName } from "@/lib/llmProviders";
 import type { Binding, BindingInput, RepoCredentials } from "@/lib/types/credentials";
 import { providerLabel } from "@/lib/status";
 import { useAuthStore } from "@/stores/authStore";
@@ -15,9 +17,6 @@ const NONE_VALUE = "";
 const NONE_LABEL = "(none — use owner/global/env)";
 const ENV_SOURCE_TITLE = "served from the environment; run import-env";
 const PIN_COPY = "Never fall back to another account for this repo";
-const LLM_PROVIDERS = ["anthropic", "xai"] as const;
-
-type LlmName = (typeof LLM_PROVIDERS)[number];
 
 type ForgeName = "github" | "gitlab";
 type ForgeEffective = NonNullable<RepoCredentials["effective"]["forge"]>;
@@ -30,11 +29,13 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
   const repoQuery = useRepoCredentials(repo);
   const credentialsQuery = useCredentials();
   const setRepoCredentials = useSetRepoCredentials();
+  // The providers page's catalog: a row per provider this deployment enables.
+  const catalog = useModelsCatalog();
   // The select is controlled by the server. Keep a local choice until that
   // query refetches, and drop it if the write fails.
   const [draft, setDraft] = useState<string | null>(null);
-  const [llmDraft, setLlmDraft] = useState<Partial<Record<LlmName, string>>>({});
-  const [pinDraft, setPinDraft] = useState<Partial<Record<LlmName, boolean>>>({});
+  const [llmDraft, setLlmDraft] = useState<Partial<Record<LlmProviderName, string>>>({});
+  const [pinDraft, setPinDraft] = useState<Partial<Record<LlmProviderName, boolean>>>({});
 
   useEffect(() => {
     setDraft(null);
@@ -108,7 +109,7 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
     return binding.provider ?? credentials.find((row) => row.id === binding.credential_id)?.provider;
   }
 
-  function selectedFor(provider: LlmName): string {
+  function selectedFor(provider: LlmProviderName): string {
     const drafted = llmDraft[provider];
     if (drafted !== undefined) return drafted;
     const binding = bindings.find((row) => row.role === "llm" && providerOf(row) === provider);
@@ -118,13 +119,13 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
     return NONE_VALUE;
   }
 
-  function pinnedFor(provider: LlmName): boolean {
+  function pinnedFor(provider: LlmProviderName): boolean {
     if (pinDraft[provider] !== undefined) return Boolean(pinDraft[provider]);
     const binding = bindings.find((row) => row.role === "llm" && providerOf(row) === provider);
     return Boolean(binding?.pinned);
   }
 
-  function writeLlm(provider: LlmName, credentialId: string, pinned: boolean) {
+  function writeLlm(provider: LlmProviderName, credentialId: string, pinned: boolean) {
     if (!isAdmin || setRepoCredentials.isPending) return;
     setLlmDraft((curr) => ({ ...curr, [provider]: credentialId }));
     setPinDraft((curr) => ({ ...curr, [provider]: pinned }));
@@ -160,6 +161,9 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
   }
 
   const llm = repoQuery.data?.effective?.llm;
+  const llmStates = llmProviderStates(catalog.data?.providers);
+  const llmRows = llmStates.filter((entry) => entry.state === "enabled").map((entry) => entry.name);
+  const notEnabled = llmStates.filter((entry) => entry.state === "not_enabled").map((entry) => entry.name);
 
   return (
     <div className="space-y-4">
@@ -169,7 +173,7 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
       </Card>
       <Card className="space-y-4 p-4">
         <h3 className="text-sm font-medium">LLM accounts</h3>
-        {LLM_PROVIDERS.map((provider) => (
+        {llmRows.map((provider) => (
           <LlmProviderRow
             key={provider}
             provider={provider}
@@ -187,6 +191,12 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
             }}
           />
         ))}
+        {notEnabled.length > 0 && (
+          <p data-testid="llm-not-enabled" className="text-xs text-muted-foreground">
+            Not enabled in this deployment: {notEnabled.map(providerLabel).join(", ")}. Name a provider in{" "}
+            <span className="font-mono">{ENABLE_SETTING}</span> to bind its account here.
+          </p>
+        )}
       </Card>
       <div className="space-y-1">
         <Label htmlFor="repo-bound-account">Bound account</Label>
@@ -217,7 +227,7 @@ function LlmProviderRow({
   onSelect,
   onPin,
 }: {
-  provider: LlmName;
+  provider: LlmProviderName;
   effective: RepoCredentials["effective"]["llm"] extends infer T
     ? T extends Record<string, infer V>
       ? V
@@ -282,7 +292,7 @@ function LlmAccount({
         error?: string;
       }
     | undefined;
-  provider: LlmName;
+  provider: LlmProviderName;
 }) {
   if (value == null) {
     return <p className="text-sm text-muted-foreground">No {providerLabel(provider)} account resolved.</p>;
