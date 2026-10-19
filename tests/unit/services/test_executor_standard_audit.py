@@ -71,16 +71,19 @@ async def test_a_failing_recorder_never_touches_the_job_outcome(monkeypatch: pyt
     broken = MagicMock()
     broken.record_audit = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("embry0.storage.repositories.standards.RepoStandardStateRepository", lambda _db: broken)
+    purge = AsyncMock()
     with (
         patch("embry0.services.issue_executor.emit_audit", new=AsyncMock()),
-        patch("embry0.orchestration.checkpoint.purge_thread", new=AsyncMock()),
+        patch("embry0.orchestration.checkpoint.purge_thread", new=purge),
         patch("embry0.services._executor_outcomes.record_case_event", new=AsyncMock()),
         patch("embry0.services._executor_outcomes._publish_verification", new=AsyncMock()),
     ):
         await ex._handle_workflow_result(None, "job-1", CLEAN_RUN)
     broken.record_audit.assert_awaited_once()
     assert ex._jobs.update.await_args.kwargs["status"] == "completed"
-    ex._issues.update.assert_awaited()
+    # The handler ran to its end: the checkpoint purge is the last step of an
+    # issue-less job, which has no issue status to update.
+    purge.assert_awaited_once()
 
 
 async def test_no_database_is_a_no_op() -> None:

@@ -901,21 +901,24 @@ async def _handle_workflow_result(
                 status=final_status,
                 exc_info=True,
             )
-        issue_status = "closed" if final_status == "completed" else "open"
-        await self._issues.update(issue_id, status=issue_status)
-        await self._issues.update_parent_status(issue_id)
-        await self._emit_audit(
-            self._db,
-            "issue.status_changed",
-            actor="system",
-            details={
-                "old_status": "triaging",
-                "new_status": issue_status,
-                "job_status": final_status,
-            },
-            audit_log_path=self._audit_log_path,
-            issue_id=issue_id,
-        )
+        # A job with no issue (every log-watcher analysis job) has no status
+        # to change: a row here would record a transition that never happened.
+        if issue_id is not None:
+            issue_status = "closed" if final_status == "completed" else "open"
+            await self._issues.update(issue_id, status=issue_status)
+            await self._issues.update_parent_status(issue_id)
+            await self._emit_audit(
+                self._db,
+                "issue.status_changed",
+                actor="system",
+                details={
+                    "old_status": "triaging",
+                    "new_status": issue_status,
+                    "job_status": final_status,
+                },
+                audit_log_path=self._audit_log_path,
+                issue_id=issue_id,
+            )
 
 
 async def _handle_split(self: IssueExecutor, issue_id: str | None, job_id: str, decision: dict[str, Any]) -> None:
