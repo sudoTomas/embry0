@@ -20,8 +20,14 @@ repos:
     hooks:
       - id: check-merge-conflict
       - id: check-yaml
-        # Deliberately malformed fixtures for the qa.yaml parser's error paths.
-        exclude: ^tests/fixtures/qa-yaml-corpus/invalid/
+        # Deliberately malformed fixtures for the qa.yaml parser's error paths,
+        # and the rootless overlay, whose compose tags (!override, !reset) a
+        # safe load cannot construct: the next entry checks its syntax.
+        exclude: ^(tests/fixtures/qa-yaml-corpus/invalid/|infra/docker-compose\.rootless\.yml$)
+      - id: check-yaml
+        name: check yaml (syntax only, compose tags)
+        args: [--unsafe]
+        files: ^infra/docker-compose\.rootless\.yml$
       - id: check-toml
       - id: check-json
       - id: check-case-conflict

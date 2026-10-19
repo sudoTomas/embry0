@@ -788,7 +788,7 @@ graph TB
         ISS["/issues — CRUD, triage, sync, activity,<br/>inputs answer/skip"]
         JOB["/jobs — create/list/get/cancel/resume,<br/>inputs answer, events-token,<br/>logs/events, qa/services"]
         DLV["/deliverables — typed job outputs"]
-        QUE["/queue"] 
+        QUE["/queue"]
         STA["/stats"]
         TRC["/traces"]
         LOG["/logs/query — Loki log proxy"]
