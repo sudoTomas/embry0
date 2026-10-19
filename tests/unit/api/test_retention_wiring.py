@@ -45,3 +45,16 @@ def test_the_job_log_sweep_reads_its_setting_and_is_started() -> None:
     )
     assert ast.unparse(call.args[0]).startswith("JobLogRetentionRepository("), "the sweep needs its repository"
     assert _started("job_log_retention"), "app.py never starts the job log retention loop"
+
+
+def test_the_qa_image_sweep_reads_its_setting_and_is_started() -> None:
+    call = _construction("QAImageRetentionSweep")
+    passed = {kw.arg: ast.unparse(kw.value) for kw in call.keywords if kw.arg}
+    assert passed.get("retention_days") == "config.qa_image_retention_days", (
+        "QAImageRetentionSweep is not given QA_IMAGE_RETENTION_DAYS"
+    )
+    # Without the instance id no volume is ever recognised as this deployment's.
+    assert passed.get("instance_id") == "volume_instance_id", "the sweep is not given the deployment's instance id"
+    for collaborator in ("runtime", "image_repo", "volume_state_repo", "jobs_repo"):
+        assert collaborator in passed, f"QAImageRetentionSweep is built without {collaborator}"
+    assert _started("qa_image_retention"), "app.py never starts the QA image retention loop"

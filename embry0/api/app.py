@@ -1652,6 +1652,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         job_log_retention_task.add_done_callback(app.state.background_tasks.discard)
     logger.info("job_log_retention_configured", retention_days=config.job_log_retention_days)
 
+    # ADR 0017: QA image retention, the same shape: always built (the preview
+    # dry-runs it), looping only with QA_IMAGE_RETENTION_DAYS set. Volumes are
+    # recognised by this deployment's instance label, as the volume reaper does.
+    from embry0.cache.qa_image_retention import QAImageRetentionSweep
+
+    app.state.qa_image_retention = QAImageRetentionSweep(
+        runtime=app.state.runtime,
+        image_repo=app.state.qa_image_tags_repo,
+        volume_state_repo=app.state.qa_volume_state_repo,
+        jobs_repo=app.state.jobs_repo,
+        instance_id=volume_instance_id,
+        retention_days=config.qa_image_retention_days,
+    )
+    if app.state.qa_image_retention.enabled:
+        qa_image_retention_task = asyncio.create_task(app.state.qa_image_retention.start())
+        app.state.background_tasks.add(qa_image_retention_task)
+        qa_image_retention_task.add_done_callback(app.state.background_tasks.discard)
+    logger.info("qa_image_retention_configured", retention_days=config.qa_image_retention_days)
+
     # #270: which trigger label dispatch matches on, and whether the DB row,
     # .env or the code default supplied it (DB wins; a shadowed .env warns).
     await app.state.integration_repo.log_effective_trigger_labels()

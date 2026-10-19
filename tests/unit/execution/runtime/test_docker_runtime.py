@@ -384,3 +384,71 @@ async def test_sandbox_manager_enforces_policy_through_its_runtime() -> None:
     runtime.ensure_isolation.assert_awaited_once_with(["git-proxy"])
     await manager.destroy("sbx")
     runtime.detach_policy.assert_awaited_once_with("sbx")
+
+
+# --- QA image retention (ADR 0017) ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_images_inspects_each_image_once() -> None:
+    import json
+
+    listed = "sha256:aaa\nsha256:aaa\nsha256:bbb\n"  # one line per tag
+    inspected = [
+        {
+            "Id": "sha256:aaa",
+            "RepoTags": ["embry0-qa-x:t1", "registry:5000/embry0-qa-x:t1"],
+            "RepoDigests": ["registry:5000/embry0-qa-x@sha256:d1"],
+            "Created": "2026-08-12T22:32:22.775519053Z",
+            "Size": 4293400006,
+        },
+        {"Id": "sha256:bbb", "RepoTags": None, "RepoDigests": None, "Created": "2026-08-01T00:00:00Z", "Size": 5},
+    ]
+    client = _client(listed, json.dumps(inspected))
+    images = await DockerRuntime(client).list_images()
+    base = ["docker", "--host", "tcp://dind:2376"]
+    assert _issued(client) == [
+        ([*base, "image", "ls", "--quiet", "--no-trunc"], 60),
+        ([*base, "image", "inspect", "sha256:aaa", "sha256:bbb"], 60),
+    ]
+    assert images[0].repo_tags == ("embry0-qa-x:t1", "registry:5000/embry0-qa-x:t1")
+    assert images[0].repo_digests == ("registry:5000/embry0-qa-x@sha256:d1",)
+    assert (images[0].size, images[1].repo_tags, images[1].repo_digests) == (4293400006, (), ())
+
+
+@pytest.mark.asyncio
+async def test_image_refs_are_removed_without_force_and_holders_found_by_ancestor() -> None:
+    client = _client("", "")
+    runtime = DockerRuntime(client)
+    await runtime.remove_image_refs(["embry0-qa-x:t1", "registry:5000/embry0-qa-x@sha256:d1"])
+    await runtime.list_containers(ancestor="sha256:aaa")
+    (rmi, _), (ps, _) = _issued(client)
+    assert rmi[3:] == ["rmi", "embry0-qa-x:t1", "registry:5000/embry0-qa-x@sha256:d1"], "rmi must not carry -f"
+    assert ps[3:7] == ["ps", "-a", "--filter", "ancestor=sha256:aaa"]
+
+
+@pytest.mark.asyncio
+async def test_disk_usage_reads_unique_image_sizes_and_volume_sizes() -> None:
+    import json
+
+    from embry0.execution.runtime.docker import parse_size
+
+    df = {
+        "Images": [
+            {"ID": "sha256:aaa", "UniqueSize": "400.7MB", "Size": "1.38GB"},
+            {"ID": "sha256:bbb", "UniqueSize": "N/A"},
+        ],
+        "Volumes": [{"Name": "embry0-qa-vol-x", "Size": "158.3MB"}],
+    }
+    client = _client(json.dumps(df))
+    usage = await DockerRuntime(client).disk_usage()
+    ((cmd, timeout),) = _issued(client)
+    assert cmd[3:] == ["system", "df", "-v", "--format", "{{json .}}"] and timeout == 120
+    assert usage.image_unique_bytes == {"sha256:aaa": 400_700_000}
+    assert usage.volume_bytes == {"embry0-qa-vol-x": 158_300_000}
+    assert (parse_size("0B"), parse_size("12kB"), parse_size("1.5GB"), parse_size("")) == (
+        0,
+        12_000,
+        1_500_000_000,
+        None,
+    )

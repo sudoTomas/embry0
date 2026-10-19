@@ -677,8 +677,13 @@ class Embry0Config(BaseSettings):
     # that keeps the tool, file path, size and hash, and deletes the saved
     # agent sessions of those jobs. Ended jobs only.
     job_log_retention_days: int | None = Field(default=None, gt=0, le=3650)
+    # Set, a daily sweep removes pre-built QA images (a full checkout each)
+    # and per-repo warm volumes unused for this many days, from the sandbox
+    # daemon. Never the image an active qa_image_tags row names, nor anything
+    # a container uses or a live job's repo needs.
+    qa_image_retention_days: int | None = Field(default=None, gt=0, le=3650)
 
-    @field_validator("audit_log_path", "job_log_retention_days", mode="before")
+    @field_validator("audit_log_path", "job_log_retention_days", "qa_image_retention_days", mode="before")
     @classmethod
     def _empty_str_to_none(cls, v: object) -> object:
         if v == "":

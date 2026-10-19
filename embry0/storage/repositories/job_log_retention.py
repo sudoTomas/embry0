@@ -14,12 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from embry0.storage.database import DatabasePool
-from embry0.storage.repositories.jobs import TERMINAL_JOB_STATUSES
-from embry0.storage.schemas import JobStatus
-
-#: Statuses after which nothing writes a job's log again. An allow-list: a
-#: status added to JobStatus later reads as live, so its log is kept.
-RELEASED_JOB_STATUSES: frozenset[str] = frozenset(TERMINAL_JOB_STATUSES | {JobStatus.PR_MERGED, JobStatus.PR_CLOSED})
+from embry0.storage.repositories.jobs import RELEASED_JOB_STATUSES
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 

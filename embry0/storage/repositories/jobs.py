@@ -103,6 +103,12 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset(
 #: "is this row terminal?" with the repository's own answer (plan B).
 TERMINAL_JOB_STATUSES: frozenset[str] = _TERMINAL_STATUSES
 
+#: Statuses after which a job never runs again or writes its log: the
+#: terminal ones and the pull request follow-ups of a completed job. An
+#: allow-list, so a status added to JobStatus later reads as live and what
+#: it holds is kept (the retention sweeps, ADR 0017).
+RELEASED_JOB_STATUSES: frozenset[str] = frozenset(_TERMINAL_STATUSES | {JobStatus.PR_MERGED, JobStatus.PR_CLOSED})
+
 # What a terminal UPDATE returns, for the outcome metrics (#285).
 _FINISHED_COLUMNS = "job_id, status, pipeline_template, error_code, created_at, started_at, finished_at"
 
@@ -627,6 +633,14 @@ class JobsRepository:
             "SELECT job_id FROM jobs WHERE status IN ('pending', 'running', 'awaiting_input', 'paused')"
         )
         return {f"sandbox-{row['job_id']}" for row in rows}
+
+    async def live_job_repos(self) -> set[str]:
+        """The repos with a job not yet released (any status outside RELEASED_JOB_STATUSES)."""
+        rows = await self._db.fetch(
+            "SELECT DISTINCT repo FROM jobs WHERE status <> ALL($1::text[])",
+            sorted(str(status) for status in RELEASED_JOB_STATUSES),
+        )
+        return {row["repo"] for row in rows}
 
     async def fetch_statuses(self, job_ids: list[str]) -> dict[str, str]:
         """Return ``{job_id: status}`` for the given ids that have a row.
