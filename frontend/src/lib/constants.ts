@@ -80,7 +80,7 @@ export const ISSUE_STATE_COLORS: Record<string, string> = {
   closed: "text-muted-foreground",
 };
 
-// Canonical hex colors are in graph-utils.ts (AGENT_COLORS). These Tailwind classes map to the same values.
+// Log-filter role colours (AgentFilterTabs). Agent identity colours live in agentIdentity.ts.
 export const ROLE_COLORS: Record<string, string> = {
   explorer: "text-role-explorer",
   developer: "text-role-developer",

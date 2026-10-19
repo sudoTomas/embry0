@@ -2,8 +2,8 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import type { Node } from "@xyflow/react";
 import { X, ChevronDown, ChevronRight } from "lucide-react";
 import { useAgents } from "@/hooks/useAgents";
-import { getAgentColor, getAgentCategory } from "@/lib/graph-utils";
-import { getAgentIcon } from "@/lib/agentIcons";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
+import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { cn } from "@/lib/utils";
 import type { SkillConfig } from "@/lib/types";
 import { SANDBOX_IMAGE_PLACEHOLDER } from "@/lib/branding";
@@ -240,9 +240,8 @@ export function AgentDetailPopup({
 
   /* ---- derived data ---- */
   const agentType = (d.agentType as string) ?? "custom";
-  const color = getAgentColor(agentType);
-  const category = getAgentCategory(agentType);
-  const Icon = getAgentIcon(agentType);
+  const identity = useAgentIdentity(agentType);
+  const color = identity.hex;
 
   const agentDef = useMemo(
     () => agents?.find((a) => a.type === agentType),
@@ -325,7 +324,7 @@ export function AgentDetailPopup({
               border: `1px solid ${color}4D`,
             }}
           >
-            <Icon className="w-5 h-5" style={{ color }} />
+            <AgentAvatar identity={identity} size={36} />
           </div>
 
           {/* Title */}
@@ -334,7 +333,7 @@ export function AgentDetailPopup({
               {displayLabel}
             </div>
             <div className="text-[13px] text-white/40 mt-0.5">
-              {editing ? "Editing" : category}
+              {editing ? "Editing" : identity.displayName}
             </div>
           </div>
 

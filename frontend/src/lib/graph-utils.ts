@@ -1,40 +1,6 @@
 import type { Node, Edge } from "@xyflow/react";
 import type { AgentNode, PipelineEdge, PipelineGraph, PipelineMetadata, EdgeType } from "./types";
 
-// Canonical color map for React Flow nodes. Tailwind class equivalents are in constants.ts (ROLE_COLORS).
-// Agent type -> color category
-const AGENT_COLORS: Record<string, string> = {
-  explorer: "#06b6d4", // cyan
-  "frontend-explorer": "#06b6d4",
-  developer: "#f59e0b", // amber
-  "code-gen": "#f59e0b",
-  "docs-writer": "#f59e0b",
-  "test-runner": "#22c55e", // green
-  "lint-checker": "#22c55e",
-  "type-checker": "#22c55e",
-  "visual-validator": "#22c55e",
-  reviewer: "#a855f7", // purple
-  "security-reviewer": "#a855f7",
-  triage: "#a855f7",
-  validator: "#22c55e", // green
-  output: "#f43f5e", // rose
-  custom: "#6b7280", // gray
-};
-
-export function getAgentColor(agentType: string): string {
-  return AGENT_COLORS[agentType] ?? "#6b7280";
-}
-
-export function getAgentCategory(agentType: string): string {
-  if (["explorer", "frontend-explorer"].includes(agentType)) return "Exploration";
-  if (["developer", "code-gen", "docs-writer"].includes(agentType)) return "Development";
-  if (["test-runner", "lint-checker", "type-checker", "visual-validator", "validator"].includes(agentType)) return "Validation";
-  if (["reviewer", "security-reviewer"].includes(agentType)) return "Review";
-  if (agentType === "triage") return "Triage";
-  if (agentType === "output") return "Output";
-  return "Custom";
-}
-
 /**
  * DFS-based cycle detection. Returns set of edge IDs that are back-edges.
  */

@@ -1,8 +1,8 @@
 import { memo } from "react";
 import { useLiveDuration } from "@/hooks/useLiveDuration";
-import { formatDuration, getColors } from "@/lib/agentVisuals";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { useLiveJobSummary } from "@/hooks/useLiveJobSummary";
-import { formatCost } from "@/lib/utils";
+import { formatCost, formatDuration } from "@/lib/utils";
 import type { JobResponse } from "@/lib/types";
 import { ConsoleCardShell } from "./ConsoleCardShell";
 
@@ -40,7 +40,8 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
   const stageLabel = summary.currentNode
     ? `${summary.currentNode}#${summary.attempt}`
     : job.current_stage ?? null;
-  const stageColors = getColors(summary.currentNode ?? job.current_stage ?? "");
+  const stageIdentity = useAgentIdentity(summary.currentNode ?? job.current_stage ?? "");
+  const stageColors = stageIdentity.classes;
   const spentUsd = summary.latestCost > 0 ? summary.latestCost : job.total_cost_usd;
   const cap = maxBudgetUsd != null && maxBudgetUsd > 0 ? maxBudgetUsd : null;
   const budgetRatio = cap != null ? spentUsd / cap : null;

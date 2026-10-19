@@ -1,7 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { VirtuosoMockContext } from "react-virtuoso";
 import type { ReactElement } from "react";
+
+vi.mock("@/hooks/useAgents", () => ({
+  useAgents: () => ({ data: [{ type: "developer", display_name: "Developer", avatar: "smith", color: "amber", tagline: "" }], isLoading: false }),
+}));
+
 import { StructuredView } from "../StructuredView";
 import { loadFixture } from "@/lib/__tests__/fixtures";
 import type { LogEvent } from "@/lib/types";
@@ -62,6 +67,15 @@ describe("StructuredView", () => {
     renderVirtual(<StructuredView events={loadFixture("issue-to-pr")} />);
     expect(screen.queryByText("Explore Agent"), "no subagent start marker").not.toBeNull();
     expect(screen.queryByText("Subagent Explore completed"), "the end marker does not name the subagent").not.toBeNull();
+  });
+
+  it("paints a subagent's start marker from its identity row", () => {
+    const events = [
+      { type: "subagent_start", tool_id: "t-dev", name: "developer", timestamp: "2026-10-19T00:00:00Z" },
+    ] as unknown as LogEvent[];
+    const { container } = renderVirtual(<StructuredView events={events} />);
+    expect(screen.queryByText("Developer Agent"), "the marker reads the display name").not.toBeNull();
+    expect(container.querySelector('[data-avatar="smith"]'), "the marker carries the row's avatar").not.toBeNull();
   });
 
   it("renders progress with its app and message", () => {
