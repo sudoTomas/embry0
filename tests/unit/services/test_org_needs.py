@@ -101,6 +101,9 @@ def test_not_watched_is_a_runnable_registered_repo_without_a_stack() -> None:
     needs = _by_kind(derive_needs("acme", rows))
     assert set(needs) == {"not_watched"}
     assert needs["not_watched"].action["type"] == "watch"
+    # The watch action adds a stack that stays off until its LogQL is set and
+    # it is enabled; a title that says "Watch" reads as if watching starts.
+    assert needs["not_watched"].title == "Add a disabled watcher stack to 1 repository"
 
 
 def test_unknown_hook_origin_is_one_need_and_never_a_missing_webhook() -> None:
