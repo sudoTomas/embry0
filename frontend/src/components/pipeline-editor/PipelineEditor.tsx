@@ -280,29 +280,32 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
           Templates
         </button>
         {/* One gold action: Save for a template of your own, Save As for a
-            new pipeline or a built-in, which only a copy can keep. */}
-        <Button
-          type="button"
-          size="sm"
-          variant={canSaveInPlace ? "default" : "outline"}
-          onClick={handleSave}
-          disabled={!canSaveInPlace || nodes.length === 0 || renameMutation.isPending}
-          aria-describedby={isBuiltin ? builtinHintId : undefined}
-          title={isBuiltin ? BUILTIN_HINT : undefined}
-          className="gap-1.5"
-        >
-          <Save size={13} />
-          Save
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={canSaveInPlace ? "outline" : "default"}
-          onClick={handleSaveAs}
-          disabled={nodes.length === 0 || createMutation.isPending}
-        >
-          Save As
-        </Button>
+            new pipeline or a built-in, which only a copy can keep. The two
+            wrap as a pair, so on a phone they share the actions' second row. */}
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={canSaveInPlace ? "default" : "outline"}
+            onClick={handleSave}
+            disabled={!canSaveInPlace || nodes.length === 0 || renameMutation.isPending}
+            aria-describedby={isBuiltin ? builtinHintId : undefined}
+            title={isBuiltin ? BUILTIN_HINT : undefined}
+            className="gap-1.5"
+          >
+            <Save size={13} />
+            Save
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={canSaveInPlace ? "outline" : "default"}
+            onClick={handleSaveAs}
+            disabled={nodes.length === 0 || createMutation.isPending}
+          >
+            Save As
+          </Button>
+        </div>
       </div>
     </div>
   );

@@ -177,4 +177,11 @@ describe("the pipeline editor's toolbar on a phone", () => {
     expect(name).toHaveClass("w-full", "sm:w-64");
     expect(screen.getByTestId("pipeline-actions")).toHaveClass("flex-wrap");
   });
+
+  it("keeps Save and Save As together when the actions wrap", async () => {
+    await openFromList(/Bug fix/);
+    const pair = saveButton().parentElement;
+    expect(pair, "Save As must not wrap onto a row of its own, apart from Save").toBe(saveAsButton().parentElement);
+    expect(pair).not.toBe(screen.getByTestId("pipeline-actions"));
+  });
 });
