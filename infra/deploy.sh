@@ -5,10 +5,10 @@
 #   infra/deploy.sh orchestrator         # only what changed
 #   infra/deploy.sh marker <sha> <svc>…  # only the marker, after a deploy done by hand
 #
-# Steps: refuse unless the checkout is on main, build the images on this host,
-# recreate the containers (`mcp` runs the orchestrator image, so it is recreated
-# with the orchestrator — a rebuild that leaves it out ships a stale MCP server),
-# wait for /health, then push one line to Loki:
+# Steps: refuse unless the checkout is clean and on main, build the images on
+# this host, recreate the containers (`mcp` runs the orchestrator image, so it
+# is recreated with the orchestrator — a rebuild that leaves it out ships a
+# stale MCP server), wait for /health, then push one line to Loki:
 #
 #   deployed <sha>: orchestrator frontend
 #
@@ -24,10 +24,15 @@
 #                           from the root .env (the watcher's own Loki); empty =
 #                           no marker, said out loud.
 #   EMBRY0_DEPLOY_DRY_RUN=1 print the marker line instead of pushing it.
-#   EMBRY0_DEPLOY_FORCE=1   deploy even while a job is running. The recreate
-#                           interrupts it: the orchestrator drains, and the
-#                           job resumes from its last checkpoint when the new
-#                           one starts, re-running the node it was in (#307).
+#   EMBRY0_DEPLOY_FORCE=1   deploy past the preflight refusals: a running job,
+#                           a running-jobs check that got no 200, a dirty
+#                           checkout. The recreate interrupts a running job:
+#                           the orchestrator drains, and the job resumes from
+#                           its last checkpoint when the new one starts,
+#                           re-running the node it was in (#307).
+#
+# Only the services named are recreated (--no-deps). dind is never one of
+# them: restarting it kills every sandbox, so it is recreated by hand, by name.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -86,6 +91,16 @@ if [ "$branch" != "main" ]; then
 fi
 sha="$(git -C "$root" rev-parse --short=12 HEAD)"
 
+# The images are built from the working tree, so an uncommitted edit (or an
+# untracked file) would ship under the committed sha's name.
+dirty="$(git -C "$root" status --porcelain)"
+if [ -n "$dirty" ] && [ "${EMBRY0_DEPLOY_FORCE-}" != "1" ]; then
+  echo "deploy: $root has uncommitted changes, which a build would ship as $sha:" >&2
+  printf '%s\n' "$dirty" | head -n 20 >&2 || true  # a long list closes the pipe early
+  echo "deploy: the deployed checkout moves only by git pull --ff-only — clean it, or EMBRY0_DEPLOY_FORCE=1" >&2
+  exit 1
+fi
+
 # Compose interpolates infra/.env and loads the root .env into the orchestrator
 # (ADR 0005); a deploy without either cannot work, so say which one is missing.
 for env_file in "$here/.env:infra/.env.example" "$root/.env:.env.example"; do
@@ -99,9 +114,16 @@ port="$(sed -n 's/^PROD_PORT=//p' "$here/.env" | tail -n 1)"
 port="${port:-8200}"
 api_key="$(env_value API_KEY)"
 if [ "${EMBRY0_DEPLOY_FORCE-}" != "1" ] && [ -n "$api_key" ]; then
-  running="$(curl -fsS -m 5 -H "Authorization: Bearer $api_key" \
-    "http://localhost:$port/api/v1/jobs?status=running&limit=1" 2>/dev/null | grep -c '"job_id"' || true)"
-  if [ "${running:-0}" != "0" ]; then
+  # Only a 200 answers the question: a 401 or no answer at all says nothing
+  # about what is running, so it refuses instead of passing.
+  jobs_url="http://localhost:$port/api/v1/jobs?status=running&limit=1"
+  reply="$(curl -sS -m 5 -w '\n%{http_code}' -H "Authorization: Bearer $api_key" "$jobs_url" 2>/dev/null)" || true
+  code="${reply##*$'\n'}"
+  if [ "$code" != "200" ]; then
+    echo "deploy: the running-jobs check got HTTP ${code:-000} from $jobs_url, so it cannot tell whether a job is running — fix API_KEY or the stack, or EMBRY0_DEPLOY_FORCE=1" >&2
+    exit 1
+  fi
+  if printf '%s' "${reply%$'\n'*}" | grep -q '"job_id"'; then
     echo "deploy: a job is running; a recreate interrupts it and it resumes after, re-running its current step — wait, or EMBRY0_DEPLOY_FORCE=1" >&2
     exit 1
   fi
@@ -121,7 +143,7 @@ compose() { (cd "$here" && docker compose "$@"); }
 echo ">> building ${services[*]} at $sha"
 compose build "${services[@]}"
 echo ">> recreating ${recreate[*]}"
-compose up -d --force-recreate "${recreate[@]}"
+compose up -d --force-recreate --no-deps "${recreate[@]}"
 
 echo ">> waiting for http://localhost:$port/health"
 for _ in $(seq 1 60); do

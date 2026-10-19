@@ -25,9 +25,13 @@ def _checkout(tmp_path: Path, *, infra_env: bool, root_env: bool) -> Path:
         (root / "infra" / ".env").write_text("PROD_PORT=8200\n")
     if root_env:
         (root / ".env").write_text("API_KEY=\n")
+    # As in the repository: the script is committed and the env files are
+    # ignored, so the checkout is clean and the dirty-tree check passes.
+    (root / ".gitignore").write_text(".env\n")
     git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
     subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
-    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "init"], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "init"], check=True)
     return root
 
 
