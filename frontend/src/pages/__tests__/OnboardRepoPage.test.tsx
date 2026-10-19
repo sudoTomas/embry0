@@ -108,16 +108,21 @@ describe("OnboardRepoPage", () => {
     );
   });
 
-  it("shows the force panel on an already-exists 400 and re-submits with force", async () => {
+  it("shows the force panel on an already-has-a-setup 400 and re-submits with force", async () => {
     renderPage();
     await setRepoInput("owner/name");
     mockMutate.mockImplementationOnce((_req, { onError }) =>
-      onError(make400("config for 'owner/name' already exists in the store — pass force=true to overwrite it")),
+      onError(
+        make400(
+          "This repository already has a test setup. Replacing it keeps the current one in History " +
+            "(send force=true, or --force on the command line).",
+        ),
+      ),
     );
     fireEvent.click(screen.getByTestId("bootstrap-submit"));
 
     const panel = screen.getByTestId("bootstrap-force-panel");
-    expect(panel).toHaveTextContent("already exists");
+    expect(panel).toHaveTextContent("already has a test setup");
 
     fireEvent.click(screen.getByTestId("bootstrap-force-overwrite"));
     expect(mockMutate).toHaveBeenLastCalledWith(

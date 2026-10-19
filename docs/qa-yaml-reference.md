@@ -63,7 +63,7 @@ retired `apps/<name>/.embry0/app.yaml` tree files).
 version: 2                       # required, must be the integer 2
 
 workspace_provider:              # required — how the affected set is computed
-  type: npm-workspaces-turbo     # the only shipped provider today
+  type: npm-workspaces-turbo     # or static-apps (the two shipped providers)
   config: { ... }                # provider-specific (see below)
 
 defaults: { ... }                # baseline applied to every app
@@ -118,7 +118,7 @@ the provider does not declare fails the run with `ERR_QA_CONFIG_INVALID`.
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `mode` | `process` \| `dind` | `process` | **Repo-wide** — there is no per-app `mode`. `process` for plain dev servers; `dind` when boot needs Docker — that also needs a DinD profile and an admin's Docker access grant for the repo, see [Docker access](#docker-access-mode-dind). |
-| `sandbox_profile` | str | `slim` | e.g. `slim`, `qa-jvm`, `qa-external` (browser + LAN egress, no DinD — for QA against an externally deployed instance; clone it to set `extra_hosts` vhost aliases). A profile with DinD (`qa-jvm`) is refused for a repo without the [Docker access](#docker-access-mode-dind) grant. |
+| `sandbox_profile` | str | `slim` | e.g. `slim`, `qa-jvm`, `qa-external` (browser + LAN egress, no DinD. Tests an app it starts as a process, or one deployed elsewhere. Clone it to set `extra_hosts` vhost aliases). A profile with DinD (`qa-jvm`) is refused for a repo without the [Docker access](#docker-access-mode-dind) grant. |
 | `ready_checks` | list of check | `[]` | See below. An app whose merged ready_checks end up empty **by omission** fails validation (`infra_error` — boot would "pass" with zero verification). To deliberately skip verification, set `ready_checks: []` explicitly on the app or its app-local config (acknowledged opt-out). `deployed` apps always require non-empty checks. |
 | `boot_timeout_seconds` | int 1..3600 | `600` | |
 | `seed_command` | str \| null | none | Optional data seed after boot. |
@@ -470,7 +470,7 @@ workspace_provider:
 
 defaults:
   mode: process                       # Next.js dev servers — no Docker
-  sandbox_profile: slim
+  sandbox_profile: qa-external        # slim has no browser
   ready_checks:
     - http: "http://localhost:${port}"
       expect_status: [200, 302, 401, 403]   # auth-gated: server is up even when / redirects
