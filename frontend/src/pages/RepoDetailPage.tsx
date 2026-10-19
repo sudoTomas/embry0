@@ -178,7 +178,7 @@ export function RepoDetailPage() {
               <tbody>
                 {(runs.data ?? []).map((run) => (
                   <tr key={run.job_id}>
-                    <td className="w-full max-w-0 truncate">
+                    <td className="w-full whitespace-nowrap">
                       <Link
                         to={`/qa/runs/${run.job_id}`}
                         className="font-mono text-xs text-fg hover:text-primary hover:underline"

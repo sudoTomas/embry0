@@ -61,7 +61,7 @@ export function QaRepoDetailPage() {
               <tr>
                 <th scope="col">Run</th>
                 <th scope="col">Status</th>
-                <th scope="col" className="num">Apps</th>
+                <th scope="col" className="num hidden sm:table-cell">Apps</th>
                 <th scope="col" className="num">Started</th>
               </tr>
             </thead>
