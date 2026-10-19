@@ -187,7 +187,7 @@ export function OrgWizardPage() {
         <Link to="/orgs" className="text-sm text-white/50 hover:underline">
           ← Organizations
         </Link>
-        <h1 className="text-2xl font-bold">Add organization</h1>
+        <h1 className="title-pixel text-2xl font-bold">Add organization</h1>
         <Stepper step={step} />
         {!isAdmin && (
           <p className="text-sm text-warning" data-testid="wizard-admin-note">

@@ -24,10 +24,10 @@ export function LiveActivityBand({ running, queued, awaitingInput }: LiveActivit
 
   return (
     <div
-      className="embry0-card animate-fade-up flex items-center gap-3 px-4 py-2.5"
+      className="rounded-lg border bg-card animate-fade-up flex items-center gap-3 px-4 py-2.5"
       style={{ animationDelay: "60ms", borderColor: "rgba(34,197,94,0.15)" }}
     >
-      <Activity size={14} className="text-success animate-pulse-glow shrink-0" />
+      <Activity size={14} className="text-success shrink-0" />
       <span className="text-xs font-semibold uppercase tracking-wide text-success">Live</span>
       <span className="text-white/20">·</span>
       <ul className="flex items-center gap-3 text-xs text-white/70 tabular-nums">

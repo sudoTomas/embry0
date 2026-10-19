@@ -14,7 +14,7 @@ export function AgentIndicator({ agentType, size = "sm" }: AgentIndicatorProps) 
   const agent = AGENT_CHARACTERS[agentType] ?? AGENT_CHARACTERS.developer;
   const sizeClass = size === "sm" ? "text-sm" : "text-base";
   return (
-    <span className={`inline-flex items-center gap-1 ${agent.color} ${sizeClass} animate-agent-bounce`} title={agent.label}>
+    <span className={`inline-flex items-center gap-1 ${agent.color} ${sizeClass}`} title={agent.label}>
       <span className="inline-block">{agent.char}</span>
       {size === "md" && <span className="text-xs">{agent.label}</span>}
     </span>

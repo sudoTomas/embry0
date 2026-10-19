@@ -51,7 +51,7 @@ export function RepoDetailPage() {
           ← Repos
         </Link>
         <div className="mt-1 flex items-center gap-3">
-          <h1 className="text-2xl font-bold">{full}</h1>
+          <h1 className="title-pixel text-2xl font-bold">{full}</h1>
           <Badge tone="neutral" data-testid="repo-detail-forge">
             {repo.forge === "gitlab" ? "GitLab" : "GitHub"}
           </Badge>

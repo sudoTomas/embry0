@@ -220,7 +220,7 @@ export function Sidebar() {
       data-testid="sidebar"
       data-mode={narrow ? "drawer" : "column"}
       className={cn(
-        "flex flex-col border-r border-white/[0.06] bg-[#0c1015] transition-all duration-200",
+        "flex flex-col border-r border-white/[0.06] bg-canvas transition-all duration-200",
         narrow ? "fixed inset-y-0 left-0 z-50 w-64 shadow-2xl" : sidebarOpen ? "w-56" : "w-14"
       )}
     >

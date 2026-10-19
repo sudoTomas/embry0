@@ -330,7 +330,7 @@ export function SkillsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Skills</h1>
+        <h1 className="title-pixel text-2xl font-bold">Skills</h1>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
           Skill sources are synced into the shared store and mounted read-only into every sandbox; agents name skills
           as <code>plugin:skill</code>.

@@ -32,7 +32,7 @@ function LiveAgentNode({ data }: NodeProps) {
           ? `${color}90`
           : "rgba(255,255,255,0.15)";
   const glow = state === "running" ? `0 0 24px ${color}40, 0 0 8px ${color}20` : undefined;
-  const runningClass = state === "running" ? "animate-pulse-glow" : "";
+  const runningClass = "";
 
   return (
     <div

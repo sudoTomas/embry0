@@ -27,7 +27,7 @@ export function QaRunDetailPage() {
         ← {data.repo}
       </Link>
       <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-bold font-mono">{data.job_id}</h1>
+        <h1 className="title-pixel text-2xl font-bold font-mono">{data.job_id}</h1>
         <RunStatusBadge status={data.overall_status} />
       </div>
       <p className="text-sm text-white/60">

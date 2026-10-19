@@ -64,7 +64,7 @@ export function AgentBar({ nodes, edges }: AgentBarProps) {
   };
 
   return (
-    <div className="flex items-center gap-3 px-5 py-2.5 border-t border-white/[0.06] bg-[#0f1419] overflow-x-auto shrink-0">
+    <div className="flex items-center gap-3 px-5 py-2.5 border-t border-white/[0.06] bg-card overflow-x-auto shrink-0">
       <span className="text-[10px] uppercase tracking-[0.08em] text-white/25 font-semibold whitespace-nowrap mr-1">
         Agents
       </span>

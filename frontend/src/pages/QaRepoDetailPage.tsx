@@ -20,7 +20,7 @@ export function QaRepoDetailPage() {
       <Link to="/qa/repos" className="text-sm text-white/50 hover:underline">
         ← all repos
       </Link>
-      <h1 className="text-2xl font-bold">{repo}</h1>
+      <h1 className="title-pixel text-2xl font-bold">{repo}</h1>
       <p className="text-sm text-white/60">
         Last {data.length} runs · {passing} passed · {failing} failed
         {" · "}
