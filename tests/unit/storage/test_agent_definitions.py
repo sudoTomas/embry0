@@ -13,7 +13,7 @@ pytestmark = pytest.mark.requires_postgres
 async def agent_repo(db_with_migrations: DatabasePool) -> AgentDefinitionsRepository:
     # Migrations seed triage/developer/review. Everything else in BUILTIN_SEED
     # arrives at app startup (embry0/api/app.py): qa, onboarding and
-    # pr-reviewer have their own force-syncing seeders, and
+    # pr-reviewer have their own insert-if-missing seeders, and
     # seed_missing_builtin_agents inserts the rest — the non-code agents
     # (research/analysis/ops, RAV-604). Mirror all four here so
     # BUILTIN_SEED ⊆ list_all() holds; omitting the last one is

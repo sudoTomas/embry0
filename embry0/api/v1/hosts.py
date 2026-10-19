@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.schemas.repo_path import validate_repo_path
+from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services import hosts as hosts_service
 from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
@@ -134,7 +135,7 @@ async def _host_or_404(request: Request, host_id: str) -> Host:
     return host
 
 
-async def _audit(request: Request, action: str, details: dict[str, Any]) -> None:
+async def _audit(request: Request, action: AuditAction, details: dict[str, Any]) -> None:
     config = getattr(request.app.state, "config", None)
     await emit_audit(
         getattr(request.app.state, "db", None),

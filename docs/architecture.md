@@ -1513,6 +1513,8 @@ service actor (`embry0/orchestration/dispatch_actors.py`):
 | `embry0:auto-retriage` | triage re-run with auto-answered questions folded in | exempt |
 | `embry0:answer-resume` | fresh run after the last blocking answer arrived on a channel that names nobody | exempt |
 | `embry0:pr-comment` | PR follow-up whose comment named no author | limited |
+| `embry0:master-key` | an API request made with the master key (`API_KEY`) | limited |
+| `embry0:anonymous` | an API request with no identity, which only `AUTH_DEV_MODE` lets in | limited |
 | `linear-reconciler` | the Linear dispatch reconciler | limited |
 
 The per-author limit throttles people. The three exempt actors skip layer 3

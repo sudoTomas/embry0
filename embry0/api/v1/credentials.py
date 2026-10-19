@@ -33,6 +33,7 @@ from embry0.api.schemas.credentials import (
     XaiDeviceLoginStarted,
 )
 from embry0.api.schemas.repo_path import validate_repo_path
+from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.safety.redaction import register_known_secrets
 from embry0.services.credentials.import_env import import_from_env
@@ -74,7 +75,7 @@ def _expected_host(config: Any, provider: str) -> str:
     return "github.com"
 
 
-async def _audit(request: Request, action: str, details: dict[str, Any]) -> None:
+async def _audit(request: Request, action: AuditAction, details: dict[str, Any]) -> None:
     await emit_audit(
         _state(request).db,
         action,

@@ -8,6 +8,8 @@ from typing import Any
 
 import structlog
 
+from embry0.audit.actions import AuditAction
+
 logger = structlog.get_logger("audit")
 
 # Serializes JSONL appends against the retention sweeper's atomic rewrite
@@ -20,7 +22,7 @@ def _now_iso() -> str:
 
 
 def emit_audit_event(
-    action: str,
+    action: AuditAction,
     *,
     actor: str = "system",
     details: dict[str, Any] | None = None,
@@ -30,7 +32,7 @@ def emit_audit_event(
     """Emit a structured audit event.
 
     Args:
-        action: Security-relevant action (e.g. "config_updated", "job_created").
+        action: Security-relevant action, one of ``embry0.audit.actions.AuditAction``.
         actor: Who performed action (IP address, "system", "webhook").
         details: Action-specific key-value pairs.
         audit_log_path: Path to JSONL audit log file. None = skip file write.

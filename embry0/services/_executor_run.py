@@ -1182,19 +1182,21 @@ async def _run_workflow(
         await self._announce_finished(job_id)
         if pr_url:
             await self._record_pr_opened(issue_id, job_id, pr_url)
-        await self._issues.update(issue_id, status="open")
-        await self._emit_audit(
-            self._db,
-            "issue.status_changed",
-            actor="system",
-            details={
-                "old_status": "triaging",
-                "new_status": "open",
-                "reason": f"Workflow failed: {exc}",
-            },
-            audit_log_path=self._audit_log_path,
-            issue_id=issue_id,
-        )
+        # No issue, no status change to record (see _handle_workflow_result).
+        if issue_id is not None:
+            await self._issues.update(issue_id, status="open")
+            await self._emit_audit(
+                self._db,
+                "issue.status_changed",
+                actor="system",
+                details={
+                    "old_status": "triaging",
+                    "new_status": "open",
+                    "reason": f"Workflow failed: {exc}",
+                },
+                audit_log_path=self._audit_log_path,
+                issue_id=issue_id,
+            )
 
         # Purge checkpoint state for failed jobs.
         from embry0.orchestration.checkpoint import purge_thread as _purge_thread_on_error

@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from embry0.agents.model_policy import usable_default_model
 from embry0.api.deps import (
     get_budget_repo,
     get_config,
@@ -22,7 +23,7 @@ from embry0.api.schemas import (
 )
 from embry0.audit.helpers import emit_audit
 from embry0.config import Embry0Config
-from embry0.services.provider_readiness import PROBE_AUDIT_ACTION, readiness_by_provider
+from embry0.services.provider_readiness import PROBE_AUDIT_ACTION, catalog_provider_for_model, readiness_by_provider
 from embry0.storage.repositories.budget_config import BudgetConfigRepository
 from embry0.storage.repositories.context_config import ContextConfigRepository
 from embry0.storage.repositories.integration_config import _SECRET_FIELDS, IntegrationConfigRepository
@@ -62,6 +63,11 @@ async def get_model_config(
     provider_cfg = await provider_repo.get()
     disabled = set(provider_cfg.get("disabled_models") or [])
     readiness = await readiness_by_provider(request.app.state, with_last_probe=True)
+    # The default provider serves the deployment's default model, which every
+    # agent runs on when one is set (#465); with none it is Anthropic, the
+    # runtime's own default.
+    default_serving = catalog_provider_for_model(usable_default_model(provider_cfg.get("default_model")))
+    default_provider = default_serving.name if default_serving is not None else "anthropic"
 
     providers = []
     for p in CATALOG_PROVIDERS:
@@ -73,7 +79,7 @@ async def get_model_config(
                 "base_url": p.base_url,
                 "available": state.ready,
                 "credential_source": state.credential_source,
-                "default": p.name == "anthropic",
+                "default": p.name == default_provider,
                 "model_prefixes": list(p.model_prefixes),
                 "last_probe": (
                     {"status": probe.status, "checked_at": probe.checked_at.isoformat()} if probe is not None else None

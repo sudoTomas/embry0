@@ -46,7 +46,9 @@ to 30 seconds, and both routes clear that entry.
 - `require_auth` accepts API-key bearer OR operator+ session; `require_admin`
   additionally gates the admin-tier routes. SSE streams and the jobs
   WebSocket accept the session cookie directly.
-- Audit rows use the SSO email as actor when present (IP otherwise).
+- Audit rows use the SSO email as actor. A request made with an API key is
+  recorded under the key owner's email or `key:<name>`, one made with the
+  master key under `embry0:master-key`, never under a client address.
 
 Config: `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`,
 `SESSION_SECRET`, `SSO_PUBLIC_ORIGIN`, `SSO_ROLES_CLAIM` (the ID-token claim

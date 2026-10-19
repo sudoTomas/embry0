@@ -383,7 +383,12 @@ async def job_deliverables(job_id: str) -> list[dict[str, Any]]:
 
 @_tool
 async def agent_list() -> list[dict[str, Any]]:
-    """List all agent definitions (type, description, model, tools, skills, execution mode)."""
+    """List all agent definitions (type, description, model, tools, skills, execution mode).
+
+    ``model`` is the stored one. ``effective_model`` and ``effective_provider``
+    are what a job that names no model runs it on: a deployment default model
+    replaces the stored one (``effective_model_source`` says which applied).
+    """
     return await _get_client().agent_list()
 
 
