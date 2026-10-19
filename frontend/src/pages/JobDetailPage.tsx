@@ -178,9 +178,10 @@ export function JobDetailPage() {
         <div className="h-[3px] bg-white/[0.06] rounded-full overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-500"
+            data-testid="job-progress-fill"
             style={{
               width: `${totalPhases > 0 ? ((completedPhases + activeAgents.length * 0.5) / totalPhases) * 100 : 0}%`,
-              background: "var(--color-primary)",
+              background: job.status === "awaiting_input" ? "var(--color-warning)" : "var(--color-info)",
             }}
           />
         </div>
