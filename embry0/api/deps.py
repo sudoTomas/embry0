@@ -10,6 +10,7 @@ from fastapi import Depends, Header, HTTPException, Request
 
 from embry0.api.route_table import route_template
 from embry0.api.session import TIER_ADMIN, TIER_OPERATOR, SessionData, request_session
+from embry0.orchestration import dispatch_actors
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -296,16 +297,24 @@ def unidentified_caller_tier(request: Request) -> str:
 
 
 def request_actor(request: Request) -> str:
-    """Audit actor: session email > key owner email > key name > client IP."""
+    """Audit actor, named from who authenticated.
+
+    Session email > key owner email > key name > the master key. Never the
+    client address: behind the dashboard proxy every master-key request comes
+    from the proxy, so an address named no one. A request with no identity
+    (only AUTH_DEV_MODE lets one in) is ``embry0:anonymous``.
+    """
     session = getattr(request.state, "session", None)
     if session is not None and session.email:
         return str(session.email)
     principal = getattr(request.state, "principal", None)
+    if principal is not None and principal.kind == "master":
+        return dispatch_actors.MASTER_KEY
     if principal is not None and principal.kind == "key":
         if principal.email:
             return str(principal.email)
-        return f"key:{principal.key_name}"
-    return (request.client.host if request.client else None) or "unknown"
+        return f"key:{principal.key_name or principal.key_id}"
+    return dispatch_actors.ANONYMOUS
 
 
 # Reusable dependency: requires a valid API key OR an operator+ SSO session.

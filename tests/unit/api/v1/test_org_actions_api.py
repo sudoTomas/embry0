@@ -385,7 +385,7 @@ async def test_watch_adds_a_disabled_stack_and_writes_the_stack_audit_row(app: A
     stack = app.state.watcher_stacks_repo.rows["acme/widgets"]
     assert stack.enabled is False and stack.tracker == "github"
     assert _audits(app, "watcher_stack_updated") == [
-        ("127.0.0.1", {"repo": "acme/widgets", "tracker": "github", "enabled": False, "ignored_settings": []})
+        ("embry0:anonymous", {"repo": "acme/widgets", "tracker": "github", "enabled": False, "ignored_settings": []})
     ]
     assert len(_audits(app, "organization.action")) == 1
 
@@ -526,7 +526,7 @@ async def test_the_rediscovery_is_the_discover_endpoints_own_run(app: Any, monke
     assert resp.json()["rediscovery"] == "odr-1", resp.text
     assert app.state.org_repos_repo.runs[0]["status"] == "done"
     assert walked == ["acme"]
-    assert _audits(app, "organization.discover") == [("127.0.0.1", {"owner": "acme", "run_id": "odr-1"})]
+    assert _audits(app, "organization.discover") == [("embry0:anonymous", {"owner": "acme", "run_id": "odr-1"})]
 
 
 @pytest.mark.asyncio
