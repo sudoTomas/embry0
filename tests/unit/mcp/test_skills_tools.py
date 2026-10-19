@@ -13,6 +13,7 @@ _WRITES = {
     "skill_source_add": lambda **kw: server.skill_source_add("mine", "git", url="https://example.com/a.git", **kw),
     "skill_source_sync": lambda **kw: server.skill_source_sync("mine", **kw),
     "skill_source_remove": lambda **kw: server.skill_source_remove("mine", **kw),
+    "skill_source_update": lambda **kw: server.skill_source_update("mine", ref="v2", **kw),
     "inline_skill_put": lambda **kw: server.inline_skill_put("tidy", "Tidy up", "Do it.", **kw),
     "inline_skill_remove": lambda **kw: server.inline_skill_remove("tidy", **kw),
     "agent_skill_add": lambda **kw: server.agent_skill_add("developer", "superpowers:writing-plans", **kw),
@@ -67,7 +68,63 @@ async def test_read_tools_need_no_confirm(fake_client):
     assert await server.skill_list() == {"called": "skill_list"}
     assert await server.skill_source_list() == {"called": "skill_source_list"}
     assert await server.tool_list() == {"called": "tool_list"}
-    assert [name for name, _, _ in fake_client.calls] == ["skill_list", "skill_source_list", "tool_list"]
+    assert await server.skill_source_get("mine") == {"called": "skill_source_get"}
+    assert await server.inline_skill_list() == {"called": "inline_skill_list"}
+    assert fake_client.calls == [
+        ("skill_list", (), {}),
+        ("skill_source_list", (), {}),
+        ("tool_list", (), {}),
+        ("skill_source_get", ("mine",), {}),
+        ("inline_skill_list", (), {}),
+    ]
+
+
+async def test_skill_source_update_forwards_only_what_it_was_given(fake_client):
+    await server.skill_source_update("mine", ref="v2", confirm=True)
+    await server.skill_source_update("mine", enabled=False, confirm=True)
+    assert fake_client.calls == [
+        ("skill_source_update", ("mine",), {"ref": "v2", "enabled": None}),
+        ("skill_source_update", ("mine",), {"ref": None, "enabled": False}),
+    ]
+
+
+async def test_client_skill_source_update_patches_only_the_given_fields():
+    client, handler = _client_for({("PATCH", "/api/v1/skills/sources/mine"): {"id": "mine"}})
+    await client.skill_source_update("mine", ref="v2")
+    await client.skill_source_update("mine", enabled=False)
+    assert [json.loads(r.content) for r in handler.seen] == [{"ref": "v2"}, {"enabled": False}]
+
+
+async def test_client_new_reads_hit_their_routes():
+    client, handler = _client_for(
+        {
+            ("GET", "/api/v1/skills/sources/mine"): {"id": "mine"},
+            ("GET", "/api/v1/skills/inline"): [{"name": "tidy"}],
+        }
+    )
+    assert await client.skill_source_get("mine") == {"id": "mine"}
+    assert await client.inline_skill_list() == [{"name": "tidy"}]
+
+
+async def test_client_percent_encodes_skill_names_and_source_ids():
+    """A ``plugin:skill`` name, or any id with a path character, reaches the route as one segment."""
+    routes = {
+        ("POST", "/api/v1/agents/developer/skills/superpowers:writing-plans"): {"type": "developer"},
+        ("DELETE", "/api/v1/agents/developer/skills/a/b"): {"type": "developer"},
+        ("POST", "/api/v1/skills/sources/x/y/sync"): (202, {"id": "x/y"}),
+        ("PUT", "/api/v1/skills/inline/a?b"): {"name": "a?b"},
+    }
+    client, handler = _client_for(routes)
+    await client.agent_skill_add("developer", "superpowers:writing-plans")
+    await client.agent_skill_remove("developer", "a/b")
+    await client.skill_source_sync("x/y")
+    await client.inline_skill_put("a?b", description="d", body="b")
+    assert [r.url.raw_path.decode() for r in handler.seen] == [
+        "/api/v1/agents/developer/skills/superpowers%3Awriting-plans",
+        "/api/v1/agents/developer/skills/a%2Fb",
+        "/api/v1/skills/sources/x%2Fy/sync",
+        "/api/v1/skills/inline/a%3Fb",
+    ]
 
 
 def _client_for(routes: dict) -> tuple[Embry0Client, object]:

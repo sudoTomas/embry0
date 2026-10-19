@@ -546,6 +546,23 @@ async def skill_source_add(
 
 
 @_tool
+async def skill_source_get(source_id: str) -> dict[str, Any]:
+    """One skill source: kind, url, ref, resolved sha, status and error, and the skills it lists."""
+    return await _get_client().skill_source_get(source_id)
+
+
+@_tool
+async def skill_source_update(
+    source_id: str, ref: str | None = None, enabled: bool | None = None, confirm: bool = False
+) -> dict[str, Any]:
+    """Change a skill source's ref (git sources; starts a sync) or enable or disable it. Only the given
+    fields change; built-in sources accept enabled only. Requires confirm=true (changes what agents load)."""
+    if not confirm:
+        return _confirmation_refusal("skill_source_update", f"update skill source {source_id!r}")
+    return await _get_client().skill_source_update(source_id, ref=ref, enabled=enabled)
+
+
+@_tool
 async def skill_source_sync(source_id: str, confirm: bool = False) -> dict[str, Any]:
     """Re-sync a skill source in the background (409 while a sync of it runs); watch skill_source_list
     for the result. Requires confirm=true (replaces the tree new sandboxes mount)."""
@@ -561,6 +578,12 @@ async def skill_source_remove(source_id: str, confirm: bool = False) -> dict[str
     if not confirm:
         return _confirmation_refusal("skill_source_remove", f"delete skill source {source_id!r}")
     return await _get_client().skill_source_remove(source_id)
+
+
+@_tool
+async def inline_skill_list() -> list[dict[str, Any]]:
+    """The inline skills (name, description, body, timestamps); agents name each one `local:<name>`."""
+    return await _get_client().inline_skill_list()
 
 
 @_tool

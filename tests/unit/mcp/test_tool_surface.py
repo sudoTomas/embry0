@@ -103,6 +103,7 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
     "host_import_tailnet": ["confirm: boolean = false", 'credential_id: string = ""'],
     "host_list": ["include_removed: boolean = false", "source: string|null = null"],
     "host_probe": ['credential_id: string = ""', "host_id: string"],
+    "inline_skill_list": [],
     "inline_skill_put": ["body: string", "confirm: boolean = false", "description: string", "name: string"],
     "inline_skill_remove": ["confirm: boolean = false", "name: string"],
     "issue_create": [
@@ -202,9 +203,16 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
         "source_id: string",
         'url: string = ""',
     ],
+    "skill_source_get": ["source_id: string"],
     "skill_source_list": [],
     "skill_source_remove": ["confirm: boolean = false", "source_id: string"],
     "skill_source_sync": ["confirm: boolean = false", "source_id: string"],
+    "skill_source_update": [
+        "confirm: boolean = false",
+        "enabled: boolean|null = null",
+        "ref: string|null = null",
+        "source_id: string",
+    ],
     "stats": [],
     "template_get": ["template_id: string"],
     "template_list": [],
@@ -288,6 +296,7 @@ async def test_every_confirm_gated_tool_defaults_to_refusing():
         "skill_source_add",
         "skill_source_remove",
         "skill_source_sync",
+        "skill_source_update",
     }
     for name in gated:
         confirm = tools[name]["inputSchema"]["properties"]["confirm"]
