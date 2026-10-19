@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Outlet, useLocation } from "react-router";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { BriefBar } from "@/components/dashboard/BriefBar";
 import { useLayoutStore } from "@/stores/layoutStore";
+import { cn } from "@/lib/utils";
 
 /**
  * The family shell: a full-width header, the sidebar under it, and the content
@@ -15,14 +17,23 @@ export function AppLayout() {
   const densityMode = useLayoutStore((s) => s.densityMode);
   const { pathname } = useLocation();
   const isRoot = pathname === "/";
+  // Below sm the brief wraps, so its height waits on its answers; growing to
+  // it under a page already in view pushed that page down. Until the answers
+  // are in, main is laid out but not drawn there, and both arrive together.
+  const [briefReady, setBriefReady] = useState(false);
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground" data-density={densityMode}>
       <TopBar />
       <div className="flex min-h-0 flex-1">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {isRoot ? <BriefBar /> : <Breadcrumbs />}
-          <main className="flex-1 overflow-auto overscroll-contain [scrollbar-gutter:stable] p-[var(--density-padding)]">
+          {isRoot ? <BriefBar onReady={setBriefReady} /> : <Breadcrumbs />}
+          <main
+            className={cn(
+              "flex-1 overflow-auto overscroll-contain [scrollbar-gutter:stable] p-[var(--density-padding)]",
+              isRoot && !briefReady && "max-sm:invisible",
+            )}
+          >
             {/* Keyed by the path, so a page that opens arrives (.motion-enter)
                 instead of swapping in a frame, while a search change (a tab, a
                 filter) keeps the page and its state. One grid cell at least as

@@ -7,6 +7,9 @@ type FakeQuery<T> = {
   data: T | undefined;
   isPending: boolean;
   isError: boolean;
+  dataUpdatedAt: number;
+  errorUpdatedAt: number;
+  failureCount: number;
 };
 
 const mockUseStats = vi.fn();
@@ -26,13 +29,17 @@ vi.mock("@/hooks/useWatcherRuns", () => ({
 import { DashboardPage } from "../DashboardPage";
 
 function ready<T>(data: T): FakeQuery<T> {
-  return { data, isPending: false, isError: false };
+  return { data, isPending: false, isError: false, dataUpdatedAt: 1, errorUpdatedAt: 0, failureCount: 0 };
 }
 function loading<T>(): FakeQuery<T> {
-  return { data: undefined, isPending: true, isError: false };
+  return { data: undefined, isPending: true, isError: false, dataUpdatedAt: 0, errorUpdatedAt: 0, failureCount: 0 };
+}
+/** Pending again after a failed first attempt: retrying. */
+function retrying<T>(): FakeQuery<T> {
+  return { ...loading<T>(), failureCount: 1 };
 }
 function errored<T>(): FakeQuery<T> {
-  return { data: undefined, isPending: false, isError: true };
+  return { data: undefined, isPending: false, isError: true, dataUpdatedAt: 0, errorUpdatedAt: 1, failureCount: 2 };
 }
 
 const ORCH_OK = ready({
@@ -215,9 +222,35 @@ describe("DashboardPage", () => {
     expect(within(screen.getByTestId("tile-PRs merged")).getByText("0")).toBeInTheDocument();
   });
 
-  it("renders every tile in loading state while queries are pending", () => {
+  it("paints once stats and the queue have first answered, a skeleton before", () => {
     mockUseStats.mockReturnValue(loading());
-    mockUseQueue.mockReturnValue(loading());
+    const { rerender } = renderPage();
+    // Drawn before, the page grew as they landed and pushed itself down.
+    expect(screen.queryByTestId("tile-Running")).toBeNull();
+    expect(screen.queryByTestId("panel-Recent issues")).toBeNull();
+
+    mockUseStats.mockReturnValue(ORCH_OK);
+    rerender(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+    expect(within(screen.getByTestId("tile-Running")).getByText("7 queued")).toBeInTheDocument();
+    expect(screen.getByTestId("panel-Recent issues")).toBeInTheDocument();
+  });
+
+  it("does not wait on the watcher, whose answer moves nothing", () => {
+    mockUseWatcherRuns.mockReturnValue(loading());
+    renderPage();
+    expect(screen.getByTestId("tile-Running")).toBeInTheDocument();
+    expect(within(screen.getByTestId("panel-Watcher")).getByText("Loading…")).toBeInTheDocument();
+  });
+
+  it("renders every tile in loading state while a failed first attempt retries", () => {
+    // The first paint never waits out retries: it goes ahead, and the tiles
+    // say they are still loading.
+    mockUseStats.mockReturnValue(retrying());
+    mockUseQueue.mockReturnValue(retrying());
     renderPage();
     for (const label of ["Running", "Needs you", "Job success", "Cost today"]) {
       expect(screen.getByTestId(`tile-${label}`)).toHaveAttribute("data-state", "loading");

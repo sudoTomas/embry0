@@ -3,8 +3,38 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { TWEEN_MS } from "@/hooks/useTweenedNumber";
 
-type FakeQuery<T> = { data: T | undefined; isPending: boolean; isError: boolean };
-const ready = <T,>(data: T): FakeQuery<T> => ({ data, isPending: false, isError: false });
+type FakeQuery<T> = {
+  data: T | undefined;
+  isPending: boolean;
+  isError: boolean;
+  dataUpdatedAt: number;
+  errorUpdatedAt: number;
+  failureCount: number;
+};
+const ready = <T,>(data: T): FakeQuery<T> => ({
+  data,
+  isPending: false,
+  isError: false,
+  dataUpdatedAt: 1,
+  errorUpdatedAt: 0,
+  failureCount: 0,
+});
+const waiting = <T,>(): FakeQuery<T> => ({
+  data: undefined,
+  isPending: true,
+  isError: false,
+  dataUpdatedAt: 0,
+  errorUpdatedAt: 0,
+  failureCount: 0,
+});
+const failed = <T,>(): FakeQuery<T> => ({
+  data: undefined,
+  isPending: false,
+  isError: true,
+  dataUpdatedAt: 0,
+  errorUpdatedAt: 1,
+  failureCount: 2,
+});
 
 const mockQueue = vi.fn();
 const mockProposals = vi.fn();
@@ -17,10 +47,10 @@ vi.mock("@/hooks/useSetupProposal", () => ({ usePendingSetupProposals: () => moc
 
 import { BriefBar } from "../BriefBar";
 
-function renderBar() {
+function renderBar(onReady?: (ready: boolean) => void) {
   return render(
     <MemoryRouter>
-      <BriefBar />
+      <BriefBar onReady={onReady} />
     </MemoryRouter>,
   );
 }
@@ -136,7 +166,7 @@ describe("BriefBar", () => {
     renderBar();
     expect(screen.queryByTestId("brief-setups")).toBeNull();
     cleanup();
-    mockSetups.mockReturnValue({ data: undefined, isPending: false, isError: true });
+    mockSetups.mockReturnValue(failed());
     renderBar();
     expect(screen.queryByTestId("brief-setups")).toBeNull();
     expect(screen.getByTestId("brief-awaiting")).toBeInTheDocument();
@@ -150,6 +180,35 @@ describe("BriefBar", () => {
     renderBar();
     expect(screen.queryByText("Nothing waits for you")).not.toBeInTheDocument();
     expect(screen.getByTestId("brief-setups")).toHaveTextContent("1 test setup to review");
+  });
+
+  it("draws its items together once all four sources have first answered", () => {
+    const onReady = vi.fn();
+    mockSetups.mockReturnValue(waiting());
+    const { rerender } = renderBar(onReady);
+    // Drawn as each source landed, the line wrapped onto one more line after
+    // another on a phone and pushed the page down each time.
+    expect(screen.getByTestId("brief-bar")).toHaveTextContent(new Date().toLocaleDateString("en-US", { weekday: "long" }));
+    expect(screen.queryByTestId("brief-awaiting")).toBeNull();
+    expect(screen.queryByTestId("brief-running")).toBeNull();
+    expect(screen.queryByText("Nothing waits for you")).toBeNull();
+    expect(onReady).toHaveBeenLastCalledWith(false);
+
+    mockSetups.mockReturnValue(ready([]));
+    rerender(
+      <MemoryRouter>
+        <BriefBar onReady={onReady} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("brief-awaiting")).toHaveTextContent("2 awaiting input");
+    expect(screen.getByTestId("brief-running")).toHaveTextContent("4 running");
+    expect(onReady).toHaveBeenLastCalledWith(true);
+  });
+
+  it("does not wait on a source through the retries of a failed first attempt", () => {
+    mockSetups.mockReturnValue({ ...waiting(), failureCount: 1 });
+    renderBar();
+    expect(screen.getByTestId("brief-awaiting")).toBeInTheDocument();
   });
 
   it("opens with today's date", () => {

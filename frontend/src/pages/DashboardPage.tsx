@@ -3,7 +3,9 @@ import { Link } from "react-router";
 import { useStats } from "@/hooks/useStats";
 import { useQueue } from "@/hooks/useQueue";
 import { useWatcherRuns } from "@/hooks/useWatcherRuns";
+import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
 import { Badge } from "@/components/ui/Badge";
+import { DashboardSkeleton } from "@/components/ui/PageSkeleton";
 import { formatDateTime } from "@/lib/utils";
 import { statusLabel, statusTone } from "@/lib/status";
 import { watcherActionLabel, watcherActionTone } from "@/lib/watcherActions";
@@ -59,8 +61,14 @@ export function DashboardPage() {
   const stats = useStats();
   const queue = useQueue();
   const watcher = useWatcherRuns(5);
+  // The page paints once stats and the queue have first answered. Drawn
+  // before, it grew as they landed: two tiles' second lines and the recent
+  // issues pushed everything under them down. The watcher's answer moves
+  // nothing (its panel is last, or beside another), so it is not waited on.
+  const painted = useFirstPaint(hasAnswered(stats) && hasAnswered(queue));
 
   const recentIssues = stats.data?.recent_issues.slice(0, 6) ?? [];
+  if (!painted) return <DashboardSkeleton />;
 
   return (
     <div className="space-y-5">

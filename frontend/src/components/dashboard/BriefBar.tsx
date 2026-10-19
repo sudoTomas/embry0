@@ -1,4 +1,4 @@
-import { Fragment, useRef } from "react";
+import { Fragment, useLayoutEffect, useRef } from "react";
 import { Link } from "react-router";
 import { format } from "date-fns";
 import { useQueue } from "@/hooks/useQueue";
@@ -6,6 +6,7 @@ import { useProposals } from "@/hooks/useProposals";
 import { usePendingMergeApprovals } from "@/hooks/useMergeApprovals";
 import { usePendingSetupProposals } from "@/hooks/useSetupProposal";
 import { useTweenedNumber } from "@/hooks/useTweenedNumber";
+import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
 import { cn } from "@/lib/utils";
 
 interface BriefItem {
@@ -39,8 +40,12 @@ function plural(count: number, one: string, many: string): string {
  * list or the test setups waiting for review; a source that is off or failing
  * leaves its item out. Below the sm breakpoint the items wrap onto a second
  * line instead of scrolling out of sight.
+ *
+ * The items wait for all four sources' first answers and arrive together:
+ * drawn as each answer landed, the line wrapped onto one more line after
+ * another on a phone. `onReady` tells the layout when they are in.
  */
-export function BriefBar() {
+export function BriefBar({ onReady }: { onReady?: (ready: boolean) => void }) {
   const queue = useQueue();
   const proposals = useProposals();
   const approvals = usePendingMergeApprovals();
@@ -77,8 +82,12 @@ export function BriefBar() {
     );
   }
 
-  const settled = !queue.isPending && !proposals.isPending;
-  const nobodyNeeded = settled && !items.some((item) => item.needsPerson);
+  const ready = useFirstPaint([queue, proposals, approvals, setupProposals].every(hasAnswered));
+  // Before paint, so the layout reveals the page in the frame the items arrive.
+  useLayoutEffect(() => {
+    onReady?.(ready);
+  }, [ready, onReady]);
+  const nobodyNeeded = ready && !items.some((item) => item.needsPerson);
 
   return (
     <div
@@ -92,7 +101,7 @@ export function BriefBar() {
           <span className="whitespace-nowrap text-fg-muted">Nothing waits for you</span>
         </>
       )}
-      {items.map((item) => {
+      {ready && items.map((item) => {
         const body = (
           <>
             <BriefCount count={item.count} /> {item.text}

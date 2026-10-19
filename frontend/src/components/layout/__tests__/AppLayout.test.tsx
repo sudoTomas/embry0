@@ -11,8 +11,12 @@ vi.mock("../Sidebar", () => ({
 vi.mock("../TopBar", () => ({
   TopBar: () => <div data-testid="stub-topbar" />,
 }));
+// The stub brief says it is ready when clicked, as the real one does once
+// its sources have answered.
 vi.mock("@/components/dashboard/BriefBar", () => ({
-  BriefBar: () => <div data-testid="stub-briefbar" />,
+  BriefBar: ({ onReady }: { onReady?: (ready: boolean) => void }) => (
+    <button type="button" data-testid="stub-briefbar" onClick={() => onReady?.(true)} />
+  ),
 }));
 vi.mock("@/stores/layoutStore", () => ({
   useLayoutStore: (selector?: (s: { densityMode: string }) => unknown) =>
@@ -78,6 +82,36 @@ describe("AppLayout", () => {
     expect(screen.queryByTestId("feedback-fab")).toBeNull();
     expect(screen.queryByTestId("command-palette")).toBeNull();
   });
+  it("draws the Overview's page on a phone only once the brief above it is ready", () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route element={<AppLayout />}>
+            <Route index element={<div>home</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    // Below sm the brief wraps, and growing to its lines under a page in
+    // view pushed the page down; laid out but not drawn, main cannot move.
+    expect(screen.getByRole("main")).toHaveClass("max-sm:invisible");
+    fireEvent.click(screen.getByTestId("stub-briefbar"));
+    expect(screen.getByRole("main")).not.toHaveClass("max-sm:invisible");
+  });
+
+  it("never hides main on a page without the brief", () => {
+    render(
+      <MemoryRouter initialEntries={["/jobs"]}>
+        <Routes>
+          <Route element={<AppLayout />}>
+            <Route path="jobs" element={<div>jobs</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("main")).not.toHaveClass("max-sm:invisible");
+  });
+
   it("sizes the shell to the visible viewport and keeps a scroll inside the content", () => {
     const { container } = render(
       <MemoryRouter initialEntries={["/jobs"]}>
