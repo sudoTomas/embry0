@@ -152,6 +152,9 @@ The twelve pixel avatars an agent can wear (`avatar` on its row; ids in `fronten
 ### Sprite
 One roster avatar in one state (`idle`, `thinking`, `tool`, `done`, `failed`, `pending`), rendered by `<Sprite>` and stepped between two frames by one CSS keyframe under `prefers-reduced-motion: no-preference`. `stateFor` maps an agent run to a state, `stateForNode` a live graph node. Every surface that shows an agent shows its sprite (agents list and form, console cards, job page, [PartyNode](#partynode)).
 
+### PartyNode
+The one agent node renderer (`frontend/src/components/pipeline/PartyNode.tsx`) the [PipelineEditor](#pipelineeditor) and the live job graph both register: the agent's [sprite](#sprite) inside a ring in its palette colour, the display name on a pixel nameplate, and one HUD line (skill count and model in the editor; attempt, cost and turns live). The start and end sentinels keep their gold sphere.
+
 ### Output
 The agent that closes the loop — merges the PR, performs [Distill](#distill) (extract reusable template) and [Coagulate](#coagulate) (ship + record). Substance sigils: Aqua Vitae 🜈 (Distill), Sol ☉ (Coagulate).
 
