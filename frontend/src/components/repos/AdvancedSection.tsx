@@ -10,6 +10,36 @@ const RISK_TONES: Record<SettingRisk, BadgeTone> = {
   admin: "neutral",
 };
 
+/** How long a linked section is held in place while the page loads around it. */
+const HOLD_MS = 5000;
+
+/**
+ * Scroll to a linked section, then keep it there while the page settles.
+ * The page's other parts load their own data after the scroll: content
+ * below that has not arrived leaves the page too short to bring the
+ * section to the top, and content above that arrives pushes it down. So
+ * each time the page changes size the section is brought back, until the
+ * hold runs out or the person scrolls, clicks or types; from then on the
+ * page is theirs. Every part of the page sits in one of the section's
+ * ancestors, so watching those catches any change of size.
+ */
+function holdInView(section: HTMLElement): () => void {
+  const bring = () => section.scrollIntoView({ block: "start" });
+  bring();
+  const observer = new ResizeObserver(bring);
+  for (let node: Element | null = section; node; node = node.parentElement) observer.observe(node);
+  // A wheel or a key scrolls; a touch or a click starts with a pointerdown.
+  const takeover = ["wheel", "pointerdown", "keydown"] as const;
+  const stop = () => {
+    observer.disconnect();
+    clearTimeout(timer);
+    for (const type of takeover) window.removeEventListener(type, stop, true);
+  };
+  const timer = setTimeout(stop, HOLD_MS);
+  for (const type of takeover) window.addEventListener(type, stop, { capture: true, passive: true });
+  return stop;
+}
+
 /**
  * One technical setting under the repo page's Advanced settings. A native
  * <details>, closed by default, so its controls stay in the DOM but out of
@@ -31,10 +61,10 @@ export function AdvancedSection({ setting, children }: { setting: SettingKey; ch
     // scroll to it. A click later still eases (index.css, data-instant).
     details.setAttribute("data-instant", "");
     details.open = true;
+    requestAnimationFrame(() => details.removeAttribute("data-instant"));
     // The page renders after its data loads, so the browser's own jump to
     // the address's #fragment found nothing to scroll to.
-    if (typeof details.scrollIntoView === "function") details.scrollIntoView({ block: "start" });
-    requestAnimationFrame(() => details.removeAttribute("data-instant"));
+    if (typeof details.scrollIntoView === "function") return holdInView(details);
   }, [hash, id]);
 
   return (
