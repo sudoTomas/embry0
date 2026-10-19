@@ -15,6 +15,7 @@ import { IssuePriorityBadge } from "@/components/issues/IssuePriorityBadge";
 import { AgentIndicator } from "@/components/issues/AgentIndicator";
 import { IssueActivityFeed } from "@/components/issues/IssueActivityFeed";
 import { IssueQuestionsPanel } from "@/components/issues/IssueQuestionsPanel";
+import { IssueBody } from "@/components/issues/IssueBody";
 import { LabelInput } from "@/components/issues/LabelInput";
 import { updateIssueNotificationChannels } from "@/api/issues";
 import { useIssue, useIssueActivity, useTriageIssue, useSyncIssue, useDeleteIssue, useUpdateIssue } from "@/hooks/useIssues";
@@ -192,9 +193,7 @@ export function IssueDetailPage(): JSX.Element {
             </CardHeader>
             <CardContent>
               {issue.body ? (
-                <div className="text-sm text-foreground/90 whitespace-pre-wrap break-words leading-relaxed">
-                  {issue.body}
-                </div>
+                <IssueBody body={issue.body} />
               ) : (
                 <p className="text-sm text-muted-foreground">No description provided.</p>
               )}
