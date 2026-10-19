@@ -41,7 +41,7 @@ export function CostTracker({ costUsd, tokensIn, tokensOut, turns, isComplete, b
             {isComplete ? (
               <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">Complete</span>
             ) : (
-              <span className="text-xs text-success bg-success/10 px-2 py-1 rounded animate-pulse">Live</span>
+              <span className="text-xs text-success bg-success/10 px-2 py-1 rounded motion-safe:animate-pulse">Live</span>
             )}
           </div>
         </div>

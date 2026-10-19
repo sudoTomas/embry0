@@ -108,7 +108,7 @@ function ScreenshotThumb({ runId, app, filename }: ScreenshotThumbProps): JSX.El
       <div
         data-testid="qa-artifact-thumb-loading"
         data-filename={filename}
-        className="h-32 w-full animate-pulse rounded border border-white/10 bg-white/5"
+        className="h-32 w-full motion-safe:animate-pulse rounded border border-white/10 bg-white/5"
         title={filename}
       />
     );

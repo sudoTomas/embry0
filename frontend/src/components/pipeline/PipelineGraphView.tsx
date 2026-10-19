@@ -71,7 +71,7 @@ function LiveAgentNode({ data }: NodeProps) {
       {state === "running" && (
         <div className="mt-1.5 h-[3px] bg-white/10 rounded overflow-hidden">
           <div
-            className="h-full rounded animate-pulse"
+            className="h-full rounded motion-safe:animate-pulse"
             style={{ width: "60%", background: `linear-gradient(90deg, ${color}, ${color}80)` }}
           />
         </div>

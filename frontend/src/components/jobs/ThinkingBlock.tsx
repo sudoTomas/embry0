@@ -22,9 +22,9 @@ export function ThinkingBlock({ blocks, isStreaming = false }: ThinkingBlockProp
           <span className="flex items-center gap-2">
             Thinking
             <span className="flex gap-0.5">
-              <span className="h-1 w-1 rounded-full bg-purple animate-bounce" style={{ animationDelay: "0ms" }} />
-              <span className="h-1 w-1 rounded-full bg-purple animate-bounce" style={{ animationDelay: "150ms" }} />
-              <span className="h-1 w-1 rounded-full bg-purple animate-bounce" style={{ animationDelay: "300ms" }} />
+              <span className="h-1 w-1 rounded-full bg-purple motion-safe:animate-bounce" style={{ animationDelay: "0ms" }} />
+              <span className="h-1 w-1 rounded-full bg-purple motion-safe:animate-bounce" style={{ animationDelay: "150ms" }} />
+              <span className="h-1 w-1 rounded-full bg-purple motion-safe:animate-bounce" style={{ animationDelay: "300ms" }} />
             </span>
           </span>
         ) : (

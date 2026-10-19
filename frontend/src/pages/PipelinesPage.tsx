@@ -88,7 +88,7 @@ function LandingView({
       {isLoading && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-24 rounded-lg border border-border bg-surface animate-pulse" />
+            <div key={i} className="h-24 rounded-lg border border-border bg-surface motion-safe:animate-pulse" />
           ))}
         </div>
       )}

@@ -44,7 +44,7 @@ function renderRow(tc: ToolCallEntry, key: string, depth: number, isLast: boolea
           </span>
         )}
         {!hasResult && isLast && (
-          <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse shrink-0 mt-1" />
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400 motion-safe:animate-pulse shrink-0 mt-1" />
         )}
       </div>
       {tc.children.map((child, idx) => renderRow(child, `${key}.${idx}`, depth + 1, false, painted))}

@@ -150,7 +150,7 @@ export function SetupProposalCard({ repo, onClose, onTryAgain, onSkip, skipping 
             </Button>
           </div>
         ) : (
-          <div className="h-10 w-full animate-pulse rounded bg-muted/60" />
+          <div className="h-10 w-full motion-safe:animate-pulse rounded bg-muted/60" />
         )}
       </div>
     );

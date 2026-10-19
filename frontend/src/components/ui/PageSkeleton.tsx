@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("animate-pulse rounded-md bg-white/[0.04]", className)} />;
+  return <div className={cn("motion-safe:animate-pulse rounded-md bg-white/[0.04]", className)} />;
 }
 
 export function StatCardSkeleton() {

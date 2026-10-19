@@ -414,8 +414,8 @@ export function SetupChecklist({ repo, forge }: { repo: string; forge: Forge }) 
           </div>
         ) : (
           <div className="space-y-2">
-            <div className="h-4 w-2/3 animate-pulse rounded bg-muted/60" />
-            <div className="h-10 w-full animate-pulse rounded bg-muted/60" />
+            <div className="h-4 w-2/3 motion-safe:animate-pulse rounded bg-muted/60" />
+            <div className="h-10 w-full motion-safe:animate-pulse rounded bg-muted/60" />
           </div>
         )}
       </Card>

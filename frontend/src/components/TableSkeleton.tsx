@@ -11,7 +11,7 @@ export function TableSkeleton({ columns, rows = 5 }: TableSkeletonProps) {
     return (
       <div className="space-y-2">
         {Array.from({ length: rows }).map((_, i) => (
-          <div key={i} className="h-10 w-full bg-muted/60 rounded animate-pulse" />
+          <div key={i} className="h-10 w-full bg-muted/60 rounded motion-safe:animate-pulse" />
         ))}
       </div>
     );
@@ -25,7 +25,7 @@ export function TableSkeleton({ columns, rows = 5 }: TableSkeletonProps) {
               <tr>
                 {Array.from({ length: columns }).map((_, i) => (
                   <th key={i}>
-                    <div className="h-3 w-20 bg-muted rounded animate-pulse" />
+                    <div className="h-3 w-20 bg-muted rounded motion-safe:animate-pulse" />
                   </th>
                 ))}
               </tr>
@@ -36,7 +36,7 @@ export function TableSkeleton({ columns, rows = 5 }: TableSkeletonProps) {
                   {Array.from({ length: columns }).map((_, colIdx) => (
                     <td key={colIdx}>
                       <div
-                        className="h-3 bg-muted/60 rounded animate-pulse"
+                        className="h-3 bg-muted/60 rounded motion-safe:animate-pulse"
                         style={{ width: `${40 + ((colIdx * 17 + rowIdx * 13) % 40)}%` }}
                       />
                     </td>

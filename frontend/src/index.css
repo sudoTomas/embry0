@@ -157,6 +157,9 @@ h1, h2, h3, h4, h5, h6 {
    setup step finishing. Atmosphere stays in the divine layer below.
    - Nothing moves for anyone who asked for reduced motion: they get the
      final state at once (hooks/useReducedMotion.ts for script motion).
+     Tailwind's loops (animate-pulse, animate-bounce, animate-ping) ignore
+     the setting, so they take the motion-safe: variant. A spinner keeps
+     turning: the turning is what it says, and a still one says nothing.
    - Only transform, opacity and stroke-dashoffset animate.
    - A loop runs no quicker than 2 s and no slower than 4 s, the divine
      layer's rule, and only while the state it shows holds.
@@ -429,14 +432,17 @@ body[data-divine="off"] .divine-fallback {
   display: inline-flex !important;
 }
 
-/* Glow / pulse effects for active agents */
+/* Glow / pulse effects for active agents. Under reduced motion the node
+   stays still: its border in the agent's colour already says it runs. */
 @keyframes pulse-glow {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.7; }
 }
 
-.animate-pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
+@media (prefers-reduced-motion: no-preference) {
+  .animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
 }
 
 /* React Flow dark theme overrides */
@@ -469,8 +475,11 @@ body[data-divine="off"] .divine-fallback {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.animate-fade-up {
-  animation: fade-up 0.4s ease-out both;
+/* Reduced motion gets the page in place at once. */
+@media (prefers-reduced-motion: no-preference) {
+  .animate-fade-up {
+    animation: fade-up 0.4s ease-out both;
+  }
 }
 
 @keyframes scale-in {
@@ -597,13 +606,17 @@ body[data-divine="off"] .divine-fallback {
   animation: embry0-spin 0.8s linear infinite;
 }
 
+/* The agent working an issue bobs. Under reduced motion it stays still:
+   its icon and colour already name the agent at work. */
 @keyframes agent-bounce {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-3px); }
 }
 
-.animate-agent-bounce {
-  animation: agent-bounce 1.5s ease-in-out infinite;
+@media (prefers-reduced-motion: no-preference) {
+  .animate-agent-bounce {
+    animation: agent-bounce 1.5s ease-in-out infinite;
+  }
 }
 
 @keyframes divine-radiate {

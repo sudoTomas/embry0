@@ -408,7 +408,7 @@ export function JobDetailPage() {
       {/* Connection indicator */}
       {job.status !== "pending" && job.status !== "expired" && (
         <div className="flex items-center gap-2 text-[10px] text-white/30">
-          <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-success animate-pulse" : "bg-white/20"}`} />
+          <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-success motion-safe:animate-pulse" : "bg-white/20"}`} />
           <span>{isConnected ? "Live" : "Disconnected"}</span>
           <span className="ml-auto">{events.length} events</span>
         </div>

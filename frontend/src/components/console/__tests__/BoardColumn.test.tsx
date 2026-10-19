@@ -67,7 +67,7 @@ describe("BoardColumn", () => {
       </BoardColumn>,
     );
 
-    expect(container.querySelectorAll(".animate-pulse").length).toBe(2);
+    expect(container.querySelectorAll(".motion-safe\\:animate-pulse").length).toBe(2);
     expect(screen.queryByText("card")).toBeNull();
     expect(screen.queryByTestId("empty-lane")).toBeNull();
   });

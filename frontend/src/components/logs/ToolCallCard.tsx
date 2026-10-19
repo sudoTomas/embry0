@@ -59,7 +59,7 @@ export function ToolCallCard({ tool, input, output, error, isActive, children }:
           ) : (
             <CheckCircle className="h-3.5 w-3.5 text-success ml-auto" />
           ))}
-        {isActive && <span className="ml-auto text-xs text-muted-foreground animate-pulse">Running...</span>}
+        {isActive && <span className="ml-auto text-xs text-muted-foreground motion-safe:animate-pulse">Running...</span>}
       </button>
 
       {expanded && (
