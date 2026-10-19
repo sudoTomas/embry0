@@ -7,12 +7,49 @@ export interface QaConfigSaveResult {
 }
 
 /**
+ * The free check of a test setup (`POST /repos/{repo}/qa-config/check`): no
+ * model, no forge call, no sandbox, and nothing is written. `ok` is false
+ * when every test run would stop on the setup (`problems`); `warnings` are
+ * worth knowing but do not stop a run. `summary` is null when the text could
+ * not be read.
+ */
+export interface QaCheckResult {
+  ok: boolean;
+  problems: { where: string; plain: string; fix: string }[];
+  warnings: {
+    code:
+      | "live_address"
+      | "deployed_target"
+      | "deployed_without_guardrails"
+      | "needs_docker"
+      | "testing_off"
+      | "login_value_missing";
+    plain: string;
+    confirm: boolean;
+  }[];
+  summary: {
+    when: "auto" | "always" | "never";
+    when_plain: string;
+    apps: {
+      name: string;
+      target: "managed" | "deployed";
+      start: string | null;
+      address: string;
+      address_is_local: boolean;
+      criteria: string[];
+      guardrails: number;
+      machine: string;
+      machine_has_browser: boolean;
+    }[];
+  } | null;
+}
+
+/**
  * Fetch the stored qa.yaml for a repo as raw YAML text (RAV-1251: the
  * embry0 DB is the source of truth).
  *
- * Returns null on 404 — no config is stored for the repo. Legacy in-repo
- * `.embry0/qa.yaml` files are a deprecated import channel handled by the
- * orchestrator and deliberately invisible to this API.
+ * Returns null on 404: no config is stored for the repo, and QA treats it as
+ * unconfigured. The orchestrator reads no in-repo `.embry0/qa.yaml`.
  */
 export async function fetchQaConfig(fullRepo: string): Promise<string | null> {
   try {
@@ -40,6 +77,23 @@ export async function saveQaConfig(
 ): Promise<QaConfigSaveResult> {
   const { data } = await api.put<QaConfigSaveResult>(
     `/repos/${fullRepo}/qa-config`,
+    yamlText,
+    {
+      headers: { "Content-Type": "application/yaml" },
+      suppressValidationToast: true,
+    },
+  );
+  return data;
+}
+
+/**
+ * Check qa.yaml v2 text without storing it. The body goes the way
+ * saveQaConfig sends it; a setup the check cannot read comes back as a
+ * problem in the result, not as a 422.
+ */
+export async function checkQaConfig(fullRepo: string, yamlText: string): Promise<QaCheckResult> {
+  const { data } = await api.post<QaCheckResult>(
+    `/repos/${fullRepo}/qa-config/check`,
     yamlText,
     {
       headers: { "Content-Type": "application/yaml" },

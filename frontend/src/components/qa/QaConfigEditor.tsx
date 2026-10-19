@@ -3,8 +3,15 @@ import { Link } from "react-router";
 import { isAxiosError } from "axios";
 import { FileCode2 } from "lucide-react";
 import { toast } from "sonner";
-import { useQaConfig, useSaveQaConfig, useDeleteQaConfig } from "@/hooks/useQaConfig";
+import {
+  useQaConfig,
+  useSaveQaConfig,
+  useDeleteQaConfig,
+  useCheckQaConfig,
+} from "@/hooks/useQaConfig";
+import type { QaCheckResult as CheckResult } from "@/api/qaConfig";
 import { PageError } from "@/components/PageError";
+import { QaCheckResult } from "@/components/qa/QaCheckResult";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button, buttonVariants } from "@/components/ui/Button";
@@ -52,9 +59,12 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
   const { data, isLoading, isError, refetch } = useQaConfig(repo);
   const saveMutation = useSaveQaConfig();
   const deleteMutation = useDeleteQaConfig();
+  const checkMutation = useCheckQaConfig();
 
   // null = viewing the server state; string = editing (dirty or template-seeded)
   const [draft, setDraft] = useState<string | null>(null);
+  // The last check of the text on screen; dropped when the text changes.
+  const [checkResult, setCheckResult] = useState<CheckResult | null>(null);
   const text = draft ?? data ?? "";
   const dirty = draft !== null && draft !== (data ?? "");
 
@@ -84,17 +94,54 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
       ? ((saveError.response.data as { detail?: string })?.detail ?? "validation failed")
       : null;
   const otherSaveError = saveError && !validationDetail;
+  const busy = saveMutation.isPending || checkMutation.isPending;
 
-  function handleSave() {
+  function handleCheck() {
+    setCheckResult(null);
+    checkMutation.mutate(
+      { fullRepo: repo, yamlText: text },
+      {
+        onSuccess: setCheckResult,
+        onError: (error) => toastApiError(error, "Could not check the setup"),
+      },
+    );
+  }
+
+  /** Store the text; `warned` is the check result to show once it is stored. */
+  function save(warned: CheckResult | null) {
     saveMutation.mutate(
       { fullRepo: repo, yamlText: text },
       {
-        onSuccess: () => toast.success("Test setup saved"),
+        onSuccess: () => {
+          toast.success("Test setup saved");
+          setCheckResult(warned);
+        },
         onError: (error) => {
           if (!(isAxiosError(error) && error.response?.status === 422)) {
             toastApiError(error, "Could not save the test setup");
           }
         },
+      },
+    );
+  }
+
+  // The check runs first, so a setup every test run would stop on is never
+  // stored from here. When the check itself cannot run, the save goes ahead
+  // as before and the server's own validation still applies.
+  function handleSave() {
+    setCheckResult(null);
+    checkMutation.mutate(
+      { fullRepo: repo, yamlText: text },
+      {
+        onSuccess: (result) => {
+          if (!result.ok) {
+            setCheckResult(result);
+            toast.error("Not saved. Fix the problems shown below; every test run would stop on them.");
+            return;
+          }
+          save(result.warnings.length > 0 ? result : null);
+        },
+        onError: () => save(null),
       },
     );
   }
@@ -156,6 +203,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
             value={text}
             onChange={(e) => {
               setDraft(e.target.value);
+              setCheckResult(null);
               if (saveMutation.error) saveMutation.reset();
             }}
             spellCheck={false}
@@ -179,18 +227,27 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
             <Button
               variant="secondary"
               onClick={handleSave}
-              disabled={!dirty || !text.trim() || saveMutation.isPending}
+              disabled={!dirty || !text.trim() || busy}
               data-testid="qa-config-save"
             >
               {saveMutation.isPending ? "Validating & saving…" : "Save"}
             </Button>
             <Button
               variant="outline"
+              onClick={handleCheck}
+              disabled={!text.trim() || busy}
+              data-testid="qa-config-check"
+            >
+              {checkMutation.isPending ? "Checking…" : "Check my setup"}
+            </Button>
+            <Button
+              variant="outline"
               onClick={() => {
                 setDraft(null);
+                setCheckResult(null);
                 saveMutation.reset();
               }}
-              disabled={!dirty || saveMutation.isPending}
+              disabled={!dirty || busy}
               data-testid="qa-config-revert"
             >
               Revert
@@ -207,6 +264,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
               </Button>
             )}
           </div>
+          {checkResult && <QaCheckResult result={checkResult} />}
         </div>
       )}
     </div>

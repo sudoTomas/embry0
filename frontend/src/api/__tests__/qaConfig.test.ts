@@ -76,6 +76,19 @@ describe("qaConfig api", () => {
     expect(captured.config?.suppressValidationToast).toBe(true);
   });
 
+  it("POST check sends the raw text the way PUT does and returns the result", async () => {
+    const result = { ok: true, problems: [], warnings: [], summary: null };
+    const captured = await withCapturingAdapter(result);
+    const { checkQaConfig } = await import("../qaConfig");
+
+    await expect(checkQaConfig("acme/group/widgets", YAML)).resolves.toEqual(result);
+    expect(captured.config?.url).toBe("/repos/acme/group/widgets/qa-config/check");
+    expect(captured.config?.method).toBe("post");
+    expect(captured.config?.data).toBe(YAML);
+    expect(captured.config?.headers["Content-Type"]).toBe("application/yaml");
+    expect(captured.config?.suppressValidationToast).toBe(true);
+  });
+
   it("DELETE hits the qa-config path", async () => {
     const captured = await withCapturingAdapter();
     const { deleteQaConfig } = await import("../qaConfig");

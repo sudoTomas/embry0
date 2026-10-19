@@ -9,10 +9,13 @@ const mockSaveReset = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockUseSaveQaConfig = vi.fn();
 const mockUseDeleteQaConfig = vi.fn();
+// Save runs the free check first; here every check passes.
+const mockCheckMutate = vi.fn();
 vi.mock("@/hooks/useQaConfig", () => ({
   useQaConfig: () => mockUseQaConfig(),
   useSaveQaConfig: () => mockUseSaveQaConfig(),
   useDeleteQaConfig: () => mockUseDeleteQaConfig(),
+  useCheckQaConfig: () => ({ mutate: mockCheckMutate, isPending: false }),
 }));
 
 const toastSuccess = vi.fn();
@@ -63,6 +66,9 @@ beforeEach(() => {
     mutate: mockDeleteMutate,
     isPending: false,
   });
+  mockCheckMutate.mockReset().mockImplementation((_vars, opts: { onSuccess: (r: unknown) => void }) =>
+    opts.onSuccess({ ok: true, problems: [], warnings: [], summary: null }),
+  );
 });
 
 describe("QaRepoConfigPage", () => {
