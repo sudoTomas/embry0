@@ -14,6 +14,7 @@ import {
 } from "@/hooks/useRepoPreferences";
 import type { DevCheck } from "@/api/repoPreferences";
 import { useSandboxProfiles } from "@/hooks/useSandboxProfiles";
+import { toastApiError } from "@/api/errorToast";
 
 interface RepoPreferencesSectionProps {
   /** Full repo path; may exceed two segments (GitLab subgroups, #162). */
@@ -93,7 +94,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
           toast.success("Sandbox preferences saved");
           setDirty(false);
         },
-        onError: (e: Error) => toast.error(`Failed: ${e.message}`),
+        onError: (e: Error) => toastApiError(e, "Failed"),
       },
     );
   };
@@ -113,7 +114,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
           setDevChecks([]);
           setDirty(false);
         },
-        onError: (e: Error) => toast.error(`Failed: ${e.message}`),
+        onError: (e: Error) => toastApiError(e, "Failed"),
       },
     );
   };

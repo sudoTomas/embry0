@@ -34,12 +34,14 @@ export function LabelInput({ value, onChange, suggestions = [] }: LabelInputProp
         {value.map((label) => (
           <span key={label} className="inline-flex items-center gap-1 rounded-md bg-overlay px-2 py-0.5 text-xs text-fg-secondary">
             {label}
-            <button type="button" onClick={() => removeLabel(label)} className="hover:text-white"><X size={12} /></button>
+            <button type="button" onClick={() => removeLabel(label)} className="hover:text-white" aria-label={`Remove ${label}`}>
+              <X size={12} />
+            </button>
           </span>
         ))}
       </div>
       <div className="relative">
-        <Input value={input} onChange={(e) => { setInput(e.target.value); setShowSuggestions(true); }}
+        <Input aria-label="Add a label" value={input} onChange={(e) => { setInput(e.target.value); setShowSuggestions(true); }}
           onKeyDown={handleKeyDown} onFocus={() => setShowSuggestions(true)}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 150)} placeholder="Type and press Enter..." />
         {showSuggestions && filtered.length > 0 && (

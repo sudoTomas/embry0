@@ -4,7 +4,7 @@ import { ArrowLeft, Info } from "lucide-react";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { OPERATION_NUMERAL, OPERATION_ELEMENT } from "@/components/divine/operations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonVariants } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { TagInput } from "@/components/ui/TagInput";
@@ -16,6 +16,8 @@ import {
 } from "@/hooks/useSandboxProfiles";
 import type { SandboxProfile } from "@/api/sandbox-profiles";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
+import { cn } from "@/lib/utils";
 
 type ProfileForm = Omit<SandboxProfile, "created_at" | "updated_at" | "is_builtin">;
 
@@ -175,7 +177,7 @@ export function SandboxFormPage() {
           toast.success(`Updated "${form.name}"`);
           navigate("/sandboxes");
         },
-        onError: (err) => toast.error(`Failed to update: ${err.message}`),
+        onError: (err) => toastApiError(err, "Failed to update"),
       });
     } else {
       createMutation.mutate(payload, {
@@ -183,7 +185,7 @@ export function SandboxFormPage() {
           toast.success(`Created "${form.name}"`);
           navigate("/sandboxes");
         },
-        onError: (err) => toast.error(`Failed to create: ${err.message}`),
+        onError: (err) => toastApiError(err, "Failed to create"),
       });
     }
   };
@@ -196,7 +198,7 @@ export function SandboxFormPage() {
         toast.success(`Reset "${name}"`);
         navigate("/sandboxes");
       },
-      onError: (err) => toast.error(`Failed to reset: ${(err as Error).message}`),
+      onError: (err) => toastApiError(err, "Failed to reset"),
     });
   };
 
@@ -211,10 +213,12 @@ export function SandboxFormPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Link to="/sandboxes">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
+          <Link
+            to="/sandboxes"
+            aria-label="Back to sandboxes"
+            className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
+          >
+            <ArrowLeft className="h-4 w-4" />
           </Link>
           <span className="flex items-center justify-center w-9 h-9 shrink-0">
             <OperationGlyph operation="ferment" size={36} titled />
@@ -299,9 +303,10 @@ export function SandboxFormPage() {
             </div>
           </div>
           <div>
-            <Label>Additional Packages</Label>
+            <Label htmlFor="additional_packages">Additional Packages</Label>
             <div className="mt-1">
               <TagInput
+                id="additional_packages"
                 value={form.additional_packages}
                 onChange={(tags) => setField("additional_packages", tags)}
                 placeholder="Add package..."
@@ -311,9 +316,10 @@ export function SandboxFormPage() {
             <p className="text-xs text-white/30 mt-1">Press Enter to add. These are installed at container startup.</p>
           </div>
           <div>
-            <Label>Setup Commands</Label>
+            <Label htmlFor="setup_commands">Setup Commands</Label>
             <div className="mt-1">
               <TagInput
+                id="setup_commands"
                 value={form.setup_commands}
                 onChange={(tags) => setField("setup_commands", tags)}
                 placeholder="Add command..."

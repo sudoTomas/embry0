@@ -8,6 +8,7 @@ import { QuestionText } from "@/components/jobs/QuestionText";
 import { useIssueInputs, useAnswerIssueInput } from "@/hooks/useIssueInputs";
 import { formatDate } from "@/lib/utils";
 import type { InputResponse } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 interface IssueQuestionsPanelProps {
   issueId: string;
@@ -26,7 +27,7 @@ function QuestionRow({ input, issueId }: { input: InputResponse; issueId: string
           toast.success("Answer submitted");
           setAnswerText("");
         },
-        onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to submit answer"),
+        onError: (e) => toastApiError(e, "Failed to submit answer"),
       },
     );
   };

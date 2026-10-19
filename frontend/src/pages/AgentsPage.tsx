@@ -9,11 +9,14 @@ import { providerLabel } from "@/lib/status";
 import { IconBox } from "@/components/ui/IconBox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { useAgents, useDeleteAgent, useResetAgent } from "@/hooks/useAgents";
+import { AdminButton } from "@/components/auth/AdminButton";
+import { useIsAdmin } from "@/stores/authStore";
 import type { AgentDefinition } from "@/lib/types/agents";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { agentTypeToOperation } from "@/components/divine/operations";
 import { specialistVisual } from "@/lib/specialistAgents";
 import { cn } from "@/lib/utils";
+import { toastApiError } from "@/api/errorToast";
 
 type Filter = "all" | "builtin" | "custom";
 
@@ -24,6 +27,7 @@ export function AgentsPage() {
   const deleteAgent = useDeleteAgent();
   const resetAgent = useResetAgent();
   const navigate = useNavigate();
+  const isAdmin = useIsAdmin();
 
   const [filter, setFilter] = useState<Filter>("all");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -42,7 +46,7 @@ export function AgentsPage() {
     }
     deleteAgent.mutate(type, {
       onSuccess: () => toast.success(`Agent "${type}" deleted`),
-      onError: (e) => toast.error(`Failed to delete: ${e.message}`),
+      onError: (e) => toastApiError(e, "Failed to delete"),
     });
     setConfirmDelete(null);
   };
@@ -54,7 +58,7 @@ export function AgentsPage() {
     }
     resetAgent.mutate(type, {
       onSuccess: () => toast.success(`Agent "${type}" reset to defaults`),
-      onError: (e) => toast.error(`Failed to reset: ${e.message}`),
+      onError: (e) => toastApiError(e, "Failed to reset"),
     });
     setConfirmReset(null);
   };
@@ -73,12 +77,19 @@ export function AgentsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Agents</h1>
-        <Link to="/agents/new">
-          <Button>
+        {isAdmin ? (
+          <Link to="/agents/new">
+            <Button>
+              <Plus className="w-4 h-4" />
+              New agent
+            </Button>
+          </Link>
+        ) : (
+          <AdminButton>
             <Plus className="w-4 h-4" />
             New agent
-          </Button>
-        </Link>
+          </AdminButton>
+        )}
       </div>
 
       {/* Filter: the shared tab bar, so the selected state matches every other tab set. */}
@@ -206,7 +217,7 @@ export function AgentsPage() {
                             onClick={(e) => e.stopPropagation()}
                           >
                             {agent.is_builtin ? (
-                              <Button
+                              <AdminButton
                                 variant="outline"
                                 size="xs"
                                 onClick={() => handleReset(agent.type)}
@@ -215,9 +226,9 @@ export function AgentsPage() {
                               >
                                 <RotateCcw className="w-3.5 h-3.5" />
                                 {confirmReset === agent.type ? "Confirm reset" : "Reset"}
-                              </Button>
+                              </AdminButton>
                             ) : (
-                              <Button
+                              <AdminButton
                                 variant="outline"
                                 size="xs"
                                 onClick={() => handleDelete(agent.type)}
@@ -226,7 +237,7 @@ export function AgentsPage() {
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                                 {confirmDelete === agent.type ? "Confirm delete" : "Delete"}
-                              </Button>
+                              </AdminButton>
                             )}
                           </div>
                         </td>

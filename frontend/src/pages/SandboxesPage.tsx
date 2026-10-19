@@ -10,6 +10,7 @@ import { useSandboxProfiles, useDeleteSandboxProfile } from "@/hooks/useSandboxP
 import { useActiveSandboxes } from "@/hooks/useActiveSandboxes";
 import type { SandboxProfile } from "@/api/sandbox-profiles";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
 
 export function SandboxesPage() {
   const [activeTab, setActiveTab] = useState<string>("profiles");
@@ -57,7 +58,7 @@ function ProfilesTab() {
     if (!confirm(`Delete sandbox profile "${name}"?`)) return;
     deleteMutation.mutate(name, {
       onSuccess: () => toast.success(`Deleted "${name}"`),
-      onError: (err) => toast.error(`Failed to delete: ${err.message}`),
+      onError: (err) => toastApiError(err, "Failed to delete"),
     });
   };
 
@@ -178,9 +179,10 @@ function SandboxCard({ profile, onClick, onDelete, isDeleting }: SandboxCardProp
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
+              className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity hover:text-destructive"
               onClick={onDelete}
               disabled={isDeleting}
+              aria-label={`Delete ${profile.name}`}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </Button>

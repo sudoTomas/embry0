@@ -1,23 +1,17 @@
 import { useState } from "react";
 import { IssueCard } from "./IssueCard";
-import { ISSUE_STATUS_COLORS, ISSUE_STATUS_ICONS } from "@/lib/constants";
+import { ISSUE_BOARD_COLUMNS as BOARD_COLUMNS, ISSUE_STATUS_COLORS, ISSUE_STATUS_ICONS } from "@/lib/constants";
 import type { IssueResponse, IssueStatus } from "@/lib/types";
 
-const BOARD_COLUMNS: { status: IssueStatus; label: string }[] = [
-  { status: "open", label: "Open" },
-  { status: "triaging", label: "Triaging" },
-  { status: "awaiting_input", label: "Awaiting Input" },
-  { status: "in_progress", label: "In Progress" },
-  { status: "closed", label: "Closed" },
-  { status: "cancelled", label: "Cancelled" },
-];
 
 interface IssueBoardViewProps {
   issues: IssueResponse[];
+  /** Every issue in each status, which can exceed the cards loaded. */
+  totals?: Partial<Record<IssueStatus, number>>;
   onStatusChange?: (issueId: string, newStatus: string) => void;
 }
 
-export function IssueBoardView({ issues, onStatusChange }: IssueBoardViewProps) {
+export function IssueBoardView({ issues, totals, onStatusChange }: IssueBoardViewProps) {
   const [dragOverStatus, setDragOverStatus] = useState<IssueStatus | null>(null);
 
   const byStatus = Object.fromEntries(
@@ -57,6 +51,7 @@ export function IssueBoardView({ issues, onStatusChange }: IssueBoardViewProps) 
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
       {BOARD_COLUMNS.map(({ status, label }) => {
         const columnIssues = byStatus[status] ?? [];
+        const total = totals?.[status] ?? columnIssues.length;
         const icon = ISSUE_STATUS_ICONS[status] ?? "●";
         const color = ISSUE_STATUS_COLORS[status] ?? "text-muted-foreground";
         const isOver = dragOverStatus === status;
@@ -64,6 +59,7 @@ export function IssueBoardView({ issues, onStatusChange }: IssueBoardViewProps) 
         return (
           <div
             key={status}
+            data-testid={`board-column-${status}`}
             className={`rounded-lg border flex flex-col min-h-[200px] transition-colors ${
               isOver
                 ? "border-primary/50 bg-primary-dim"
@@ -77,8 +73,11 @@ export function IssueBoardView({ issues, onStatusChange }: IssueBoardViewProps) 
             <div className="flex items-center gap-2 px-3 py-3 border-b border-white/[0.05]">
               <span className={`text-sm ${color}`}>{icon}</span>
               <span className="text-sm font-medium">{label}</span>
-              <span className="ml-auto text-xs text-muted-foreground bg-white/[0.05] rounded-full px-2 py-0.5">
-                {columnIssues.length}
+              <span
+                data-testid="board-column-count"
+                className="ml-auto text-xs text-muted-foreground bg-white/[0.05] rounded-full px-2 py-0.5"
+              >
+                {total}
               </span>
             </div>
 
@@ -97,6 +96,11 @@ export function IssueBoardView({ issues, onStatusChange }: IssueBoardViewProps) 
                     onDragStart={(e) => handleDragStart(e, issue.id, status)}
                   />
                 ))
+              )}
+              {total > columnIssues.length && (
+                <p className="px-1 py-1 text-xs text-muted-foreground">
+                  Showing {columnIssues.length} of {total}
+                </p>
               )}
             </div>
           </div>

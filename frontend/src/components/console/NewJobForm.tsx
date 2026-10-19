@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { toastApiError } from "@/api/errorToast";
 
 interface NewJobFormProps {
   onClose: () => void;
@@ -62,7 +63,7 @@ export function NewJobForm({ onClose, knownRepos = [] }: NewJobFormProps) {
           toast.success("Job dispatched");
           navigate(`/jobs/${job.job_id}`);
         },
-        onError: (err) => toast.error(`Failed: ${err.message}`),
+        onError: (err) => toastApiError(err, "Failed"),
       },
     );
   };

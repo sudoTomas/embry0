@@ -1,6 +1,6 @@
 import { useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";
-import { detailMessages } from "@/api/errorDetail";
+import { detailMessages, isReported } from "@/api/errorDetail";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { Label } from "@/components/ui/Label";
@@ -80,7 +80,7 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
         },
         onError: (error: unknown) => {
           setDraft(null);
-          if (interceptorAlreadyToasted(error)) return;
+          if (isReported(error)) return;
           toast.error(failureText(error));
         },
       },
@@ -152,7 +152,7 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
             delete copy[provider];
             return copy;
           });
-          if (interceptorAlreadyToasted(error)) return;
+          if (isReported(error)) return;
           toast.error(failureText(error));
         },
       },
@@ -365,15 +365,6 @@ function ResolvedForge({ forge }: { forge: Exclude<ForgeEffective, { error: stri
       </details>
     </div>
   );
-}
-
-function interceptorAlreadyToasted(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const coded = error as { code?: string; response?: { status?: number } };
-  if (coded.code === "ERR_NETWORK" || coded.code === "ERR_CANCELED") return true;
-  const status = coded.response?.status;
-  if (status === 401 || status === 422) return true;
-  return status !== undefined && status >= 500;
 }
 
 function failureText(error: unknown): string {

@@ -10,11 +10,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Select } from "@/components/ui/Select";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { PageError } from "@/components/PageError";
+import { isNotFound } from "@/api/errorDetail";
 import { IssueStatusBadge } from "@/components/issues/IssueStatusBadge";
 import { IssuePriorityBadge } from "@/components/issues/IssuePriorityBadge";
 import { AgentIndicator } from "@/components/issues/AgentIndicator";
 import { IssueActivityFeed } from "@/components/issues/IssueActivityFeed";
 import { IssueQuestionsPanel } from "@/components/issues/IssueQuestionsPanel";
+import { IssueBody } from "@/components/issues/IssueBody";
 import { LabelInput } from "@/components/issues/LabelInput";
 import { updateIssueNotificationChannels } from "@/api/issues";
 import { useIssue, useIssueActivity, useTriageIssue, useSyncIssue, useDeleteIssue, useUpdateIssue } from "@/hooks/useIssues";
@@ -22,6 +24,8 @@ import { formatDate } from "@/lib/utils";
 import { formatCost } from "@/lib/utils";
 import { providerLabel, statusLabel } from "@/lib/status";
 import type { NotificationChannel } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
+import { trackerName } from "@/lib/forgeLinks";
 
 const NOTIFICATION_CHANNELS = ["dashboard", "telegram", "github", "linear", "gitlab", "slack"] as NotificationChannel[];
 
@@ -29,7 +33,7 @@ export function IssueDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  const { data: issue, isLoading, isError, refetch } = useIssue(id);
+  const { data: issue, isLoading, isError, error, refetch } = useIssue(id);
   const { data: activity = [] } = useIssueActivity(id);
   const triageIssue = useTriageIssue();
   const syncIssue = useSyncIssue();
@@ -50,7 +54,7 @@ export function IssueDetailPage(): JSX.Element {
   }, [issue?.notification_channels]);
 
   const handleFieldUpdate = (field: string, value: unknown): void => {
-    updateIssue.mutate({ id: issue!.id, [field]: value });
+    updateIssue.mutate({ id: issue!.id, [field]: value }, { onError: (e) => toastApiError(e, "Failed to update") });
   };
 
   const toggleChannel = (ch: NotificationChannel): void => {
@@ -69,10 +73,11 @@ export function IssueDetailPage(): JSX.Element {
       .catch((e: unknown) => {
         // Roll back the optimistic state on failure.
         setChannels(channels);
-        toast.error(e instanceof Error ? e.message : "Failed to update notification channels");
+        toastApiError(e, "Failed to update notification channels");
       });
   };
 
+  if (isNotFound(error)) return <PageError message={`No issue ${id}`} back={{ to: "/issues", label: "All issues" }} />;
   if (isError) return <PageError message="Failed to load issue" onRetry={() => refetch()} />;
   if (isLoading || !issue) return <TableSkeleton columns={4} rows={8} />;
 
@@ -87,14 +92,14 @@ export function IssueDetailPage(): JSX.Element {
         result.dispatch_error
           ? toast.error(`Triage did not start: ${result.dispatch_error}`)
           : toast.success("Triage started"),
-      onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to triage"),
+      onError: (e) => toastApiError(e, "Failed to triage"),
     });
   };
 
   const handleSync = () => {
     syncIssue.mutate(id!, {
       onSuccess: () => toast.success("Synced with GitHub"),
-      onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to sync"),
+      onError: (e) => toastApiError(e, "Failed to sync"),
     });
   };
 
@@ -104,7 +109,7 @@ export function IssueDetailPage(): JSX.Element {
     if (!confirm("Cancel this issue? Its running jobs are cancelled too.")) return;
     deleteIssue.mutate(id!, {
       onSuccess: () => toast.success("Issue cancelled"),
-      onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to cancel"),
+      onError: (e) => toastApiError(e, "Failed to cancel"),
     });
   };
 
@@ -192,9 +197,7 @@ export function IssueDetailPage(): JSX.Element {
             </CardHeader>
             <CardContent>
               {issue.body ? (
-                <div className="text-sm text-foreground/90 whitespace-pre-wrap break-words leading-relaxed">
-                  {issue.body}
-                </div>
+                <IssueBody body={issue.body} />
               ) : (
                 <p className="text-sm text-muted-foreground">No description provided.</p>
               )}
@@ -316,6 +319,7 @@ export function IssueDetailPage(): JSX.Element {
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5">Status</p>
                 <Select
+                  aria-label="Status"
                   value={issue.status}
                   onChange={(e) => handleFieldUpdate("status", e.target.value)}
                   className="h-8 text-xs"
@@ -333,6 +337,7 @@ export function IssueDetailPage(): JSX.Element {
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5">Priority</p>
                 <Select
+                  aria-label="Priority"
                   value={issue.priority}
                   onChange={(e) => handleFieldUpdate("priority", e.target.value)}
                   className="h-8 text-xs"
@@ -373,6 +378,7 @@ export function IssueDetailPage(): JSX.Element {
                         </span>
                         {issue.tracker_url && (
                           <a
+                            aria-label={`Open ${issue.tracker === "linear" ? issue.tracker_key : `#${issue.tracker_key}`} in ${trackerName(issue.tracker)}`}
                             href={issue.tracker_url}
                             target="_blank"
                             rel="noopener noreferrer"

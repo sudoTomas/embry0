@@ -210,7 +210,7 @@ def derive_needs(
     if by_kind["not_watched"]:
         add(
             "not_watched",
-            f"Watch {_n(len(by_kind['not_watched']))}",
+            f"Add a disabled watcher stack to {_n(len(by_kind['not_watched']))}",
             "Registered and runnable, but no watcher stack reads their logs, so nothing there is noticed until "
             "someone reports it.",
             _action("watch"),

@@ -14,6 +14,7 @@ import {
 } from "@/components/jobs/JobAdvancedFields";
 import { toast } from "sonner";
 import type { JobContextType, JobCreateRequest } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 interface CreateJobDialogProps {
   onClose: () => void;
@@ -71,7 +72,7 @@ export function CreateJobDialog({ onClose }: CreateJobDialogProps) {
         toast.success("Job created");
         onClose();
       },
-      onError: (err) => toast.error(`Failed: ${err.message}`),
+      onError: (err) => toastApiError(err, "Failed"),
     });
   };
 

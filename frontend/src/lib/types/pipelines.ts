@@ -70,6 +70,9 @@ export interface PipelineTemplate {
   description: string;
   graph: PipelineGraph;
   created_at: string;
+  /** Seeded by embry0 and re-seeded on every restart, so an edit saved in
+   * place does not survive one; Save As keeps it as a template of your own. */
+  is_builtin?: boolean;
 }
 
 export interface PipelineTemplateSummary {

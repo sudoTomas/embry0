@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useParams } from "react-router";
-import { ArrowLeft, ExternalLink, Clock, DollarSign, Layers } from "lucide-react";
-import { toast } from "sonner";
+import { ArrowLeft, Clock, DollarSign, ExternalLink, Layers } from "lucide-react";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { DivineRipple } from "@/components/divine/DivineRipple";
 import { jobToOperation, shouldFireCompletionFlare } from "@/components/divine/operations";
-import { Button } from "@/components/ui/Button";
+import { buttonVariants } from "@/components/ui/Button";
+import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { useJob } from "@/hooks/useJobs";
+import { useRegisteredRepos } from "@/hooks/useRepos";
 import { useJobInputs } from "@/hooks/useInputs";
 import { useTraces } from "@/hooks/useTraces";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
@@ -22,6 +23,11 @@ import { AgentFailuresCard } from "@/components/jobs/AgentFailuresCard";
 import { DeliverablesCard } from "@/components/jobs/DeliverablesCard";
 import { QATab } from "@/components/qa/QATab";
 import { resumeJob, discardJob } from "@/api/jobs";
+import { isTerminalStatus } from "@/lib/jobStatus";
+import { forgeIssueUrl } from "@/lib/forgeLinks";
+import { isNotFound } from "@/api/errorDetail";
+import { PageError } from "@/components/PageError";
+import { toastApiError } from "@/api/errorToast";
 
 function useElapsedTime(startedAt: string | null, finishedAt: string | null) {
   const [elapsed, setElapsed] = useState("");
@@ -48,11 +54,19 @@ const TRACES_PAGE_SIZE = 25;
 
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
-  const { data: job, isLoading, isError, refetch } = useJob(jobId);
-  const { data: jobInputs } = useJobInputs(jobId ?? "");
+  const { data: job, isLoading, isError, error, refetch } = useJob(jobId);
+  const missing = isNotFound(error);
+  const { data: jobInputs } = useJobInputs(missing ? "" : (jobId ?? ""), job?.status);
 
-  const { events, isConnected, latestCost, pipelineGraph } = useJobLogs(jobId);
+  // The event stream opens once the job is known to exist: a missing job
+  // has none, and opening it before the 404 mints a token for nothing.
+  const { events, isConnected, latestCost, pipelineGraph } = useJobLogs(job ? jobId : undefined);
   const { agents, prUrl, interruptData } = useAgentStates(events, job?.status, pipelineGraph);
+  // A job with an issue number but no issue row (made through POST /jobs)
+  // links to the issue on its forge; the repository's row names the forge
+  // when there is no pull request yet.
+  const issueOnForgeOnly = !!job && !job.issue_id && job.issue_number != null && !!job.repo;
+  const { data: registeredRepos } = useRegisteredRepos({ enabled: issueOnForgeOnly });
   const activeAgents = agents.filter((a) => a.status === "running");
   const completedAgents = agents.filter((a) => a.status === "completed" || a.status === "failed");
   const pendingAgents = agents.filter((a) => a.status === "pending");
@@ -94,10 +108,20 @@ export function JobDetailPage() {
     prevStatusRef.current = job?.status ?? null;
   }, [job?.status]);
 
-  if (isError) return <div className="p-8 text-center text-destructive">Failed to load job</div>;
+  if (missing) return <PageError message={`No job ${jobId}`} back={{ to: "/jobs", label: "All jobs" }} />;
+  if (isError)
+    return <PageError message="Failed to load job" onRetry={() => void refetch()} back={{ to: "/jobs", label: "All jobs" }} />;
   if (isLoading || !job) return <div className="p-8 text-center text-white/40">Loading...</div>;
 
   const displayPrUrl = prUrl || job.pr_url;
+  const forgeIssueLink = issueOnForgeOnly
+    ? forgeIssueUrl({
+        repo: job.repo,
+        issueNumber: job.issue_number,
+        prUrl: displayPrUrl,
+        forge: registeredRepos?.find((r) => r.repo === job.repo)?.forge ?? null,
+      })
+    : null;
   const isActive = job.status === "running" || job.status === "awaiting_input";
 
   const handleResume = async (choice: string, guidance?: string) => {
@@ -105,7 +129,7 @@ export function JobDetailPage() {
       await resumeJob(job.job_id, choice, guidance);
       refetch();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to resume job");
+      toastApiError(err, "Failed to resume job");
     }
   };
 
@@ -114,7 +138,7 @@ export function JobDetailPage() {
       await discardJob(job.job_id);
       refetch();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to discard job");
+      toastApiError(err, "Failed to discard job");
     }
   };
 
@@ -122,10 +146,12 @@ export function JobDetailPage() {
     <div className="space-y-4">
       {/* Compact Header */}
       <div className="flex items-center gap-3 flex-wrap">
-        <Link to="/jobs">
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
+        <Link
+          to="/jobs"
+          aria-label="Back to jobs"
+          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8")}
+        >
+          <ArrowLeft className="h-4 w-4" />
         </Link>
         <span className="relative flex items-center justify-center w-8 h-8 shrink-0">
           <OperationGlyph operation={currentOperation} size={28} titled />
@@ -159,12 +185,27 @@ export function JobDetailPage() {
             </span>
           )}
         </div>
-        {job.issue_number && (
-          <a href={`https://github.com/${job.repo}/issues/${job.issue_number}`} target="_blank" rel="noopener noreferrer">
-            <Button variant="outline" size="sm" className="gap-1 text-xs h-7">
-              Issue #{job.issue_number} <ExternalLink className="w-3 h-3" />
-            </Button>
-          </a>
+        {/* The job's issue row, which links on to its tracker (GitHub, GitLab
+            or Linear): a link built here assumed github.com for every forge.
+            A job with no issue row links to the issue on its own forge. */}
+        {job.issue_id ? (
+          <Link
+            to={`/issues/${job.issue_id}`}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1 text-xs h-7")}
+          >
+            {job.issue_number ? `Issue #${job.issue_number}` : "Issue"}
+          </Link>
+        ) : (
+          forgeIssueLink && (
+            <a
+              href={forgeIssueLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1 text-xs h-7")}
+            >
+              Issue #{job.issue_number} <ExternalLink className="w-3 h-3" aria-hidden="true" />
+            </a>
+          )
         )}
       </div>
 
@@ -197,12 +238,14 @@ export function JobDetailPage() {
         </div>
       )}
 
-      {/* Success banner */}
-      {job.status === "completed" && (
+      {/* Success banner: the job completed, or its pull request has merged since */}
+      {(job.status === "completed" || job.status === "pr_merged") && (
         <div className="px-4 py-3 rounded-lg border border-success/20 bg-success/[0.06] flex items-center gap-3">
           <span className="text-success text-lg">&#x2713;</span>
           <div>
-            <div className="text-sm font-medium text-success">Pipeline completed successfully</div>
+            <div className="text-sm font-medium text-success">
+              {job.status === "pr_merged" ? "Pipeline completed, pull request merged" : "Pipeline completed successfully"}
+            </div>
             {displayPrUrl && (
               <a href={displayPrUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-purple hover:underline">
                 {displayPrUrl}
@@ -213,9 +256,18 @@ export function JobDetailPage() {
       )}
 
       {/* Deliverables (RAV-603): what the job actually produced — PR link,
-          report text, downloadable artifacts. Rows exist only for completed
-          jobs; the card renders nothing while the list is empty. */}
-      {job.status === "completed" && <DeliverablesCard jobId={job.job_id} />}
+          report text, downloadable artifacts — for every finished status (a
+          completed job becomes pr_merged; a partial or skipped one keeps its
+          report). The card renders nothing while the list is empty. */}
+      {isTerminalStatus(job.status) && <DeliverablesCard jobId={job.job_id} />}
+
+      {/* Partial: some apps passed, some did not */}
+      {job.status === "partial" && (
+        <div className="px-4 py-3 rounded-lg border border-warning/20 bg-warning/[0.06]">
+          <div className="text-sm font-medium text-warning mb-1">Pipeline partly passed</div>
+          {job.error_message && <div className="text-xs text-fg-muted">{job.error_message}</div>}
+        </div>
+      )}
 
       {/* Error banner */}
       {job.status === "failed" && job.error_message && (

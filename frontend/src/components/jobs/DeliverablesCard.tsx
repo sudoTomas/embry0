@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Download, ExternalLink, FileText, GitPullRequest, MessageSquare, Package } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { useDeliverables } from "@/hooks/useDeliverables";
 import { downloadDeliverable, type Deliverable } from "@/api/deliverables";
+import { toastApiError } from "@/api/errorToast";
 
 function formatBytes(n: number | null): string {
   if (n === null || n === undefined) return "";
@@ -38,7 +38,7 @@ function DeliverableRow({ deliverable }: { deliverable: Deliverable }) {
     try {
       await downloadDeliverable(deliverable);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to download artifact");
+      toastApiError(err, "Failed to download artifact");
     }
   };
 

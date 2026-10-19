@@ -44,6 +44,7 @@ function mapTemplate(row: ApiTemplate): PipelineTemplate {
     description: row.description,
     graph: row.graph_definition,
     created_at: row.created_at,
+    is_builtin: row.is_builtin === true,
   };
 }
 

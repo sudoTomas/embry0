@@ -28,7 +28,7 @@ export const BOARD_COLUMNS: readonly BoardColumnConfig[] = [
 /**
  * Map a job status to its board lane. Exhaustive over JobStatus — adding a
  * new status without assigning it a lane is a compile-time error, not a
- * silently invisible card.
+ * silently invisible card; an unknown status at runtime lands in Failed.
  *
  * Note: embry0 has no "queued" status; `pending` is it — the lane keeps
  * the operator-facing "queued" name (and /stats reports the same alias).
@@ -58,7 +58,13 @@ export function columnForStatus(status: JobStatus): BoardColumnId {
       // Compile-time exhaustiveness guard: a new JobStatus lands here as a
       // type error until it is assigned a lane above.
       const unhandled: never = status;
-      throw new Error(`Unhandled job status: ${String(unhandled)}`);
+      // At runtime a status this bundle does not know (a deploy added it
+      // while a tab held the older bundle; the API types status as a plain
+      // string) must not take the board down. Failed is the lane for what
+      // is neither a known success, a wait nor a run, and the card's own
+      // pill names the status.
+      void unhandled;
+      return "failed";
     }
   }
 }

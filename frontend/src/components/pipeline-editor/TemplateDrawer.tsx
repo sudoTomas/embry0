@@ -4,6 +4,7 @@ import { fetchTemplate } from "@/api/pipelines";
 import { formatDay } from "@/lib/utils";
 import { useTemplates, useTemplate, useRenameTemplate, useCreateTemplate, useDeleteTemplate } from "@/hooks/usePipelines";
 import type { PipelineTemplate, PipelineTemplateSummary } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 interface TemplateDrawerProps {
   onSelect: (template: PipelineTemplate) => void;
@@ -75,7 +76,7 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
   const handleRenameSubmit = (templateId: string) => {
     const trimmed = renameValue.trim();
     if (trimmed && trimmed !== templates?.find((t) => t.template_id === templateId)?.name) {
-      renameMutation.mutate({ templateId, name: trimmed });
+      renameMutation.mutate({ templateId, name: trimmed }, { onError: (e) => toastApiError(e, "Failed to rename") });
     }
     setRenamingId(null);
   };
@@ -84,17 +85,16 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
     setMenuOpenId(null);
     // Fetch the full template to get its graph for duplication
     const full = await fetchTemplate(t.template_id);
-    createMutation.mutate({
-      name: `${t.name} (copy)`,
-      description: t.description,
-      graph: full.graph,
-    });
+    createMutation.mutate(
+      { name: `${t.name} (copy)`, description: t.description, graph: full.graph },
+      { onError: (e) => toastApiError(e, "Failed to duplicate") },
+    );
   };
 
   const handleDelete = (templateId: string) => {
     setMenuOpenId(null);
     if (!window.confirm("Delete this template?")) return;
-    deleteMutation.mutate(templateId);
+    deleteMutation.mutate(templateId, { onError: (e) => toastApiError(e, "Failed to delete") });
   };
 
   return (

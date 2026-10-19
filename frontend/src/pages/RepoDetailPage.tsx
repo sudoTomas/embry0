@@ -11,6 +11,7 @@ import { RepoDockerAccessSection } from "@/components/repos/RepoDockerAccessSect
 import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
 import { PullRequestReviewCard } from "@/components/environments/PullRequestReviewCard";
 import { PageError } from "@/components/PageError";
+import { isNotFound } from "@/api/errorDetail";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { Badge } from "@/components/ui/Badge";
 import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
@@ -36,13 +37,10 @@ export function RepoDetailPage() {
   const runs = useQaRunsForRepo(validRepo ? full : undefined, { limit: 10 });
 
   if (!validRepo) return <PageError message="Invalid repo — expected a path like owner/name" />;
+  if (isNotFound(detail.error))
+    return <PageError message={`${full} is not registered in embry0`} back={{ to: "/repos", label: "All repositories" }} />;
   if (detail.isError)
-    return (
-      <PageError
-        message={`${full} is not registered in embry0`}
-        onRetry={() => void detail.refetch()}
-      />
-    );
+    return <PageError message={`Failed to load ${full}`} onRetry={() => void detail.refetch()} />;
   if (detail.isLoading || !detail.data) return <TableSkeleton />;
 
   const repo = detail.data;

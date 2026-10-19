@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { formatDay } from "@/lib/utils";
 import { useTemplates } from "@/hooks/usePipelines";
 import { fetchTemplate } from "@/api/pipelines";
-import type { PipelineGraph, PipelineTemplateSummary } from "@/lib/types";
+import type { PipelineTemplate, PipelineTemplateSummary } from "@/lib/types";
 
 interface TemplateCardProps {
   template: PipelineTemplateSummary;
@@ -51,7 +51,7 @@ function LandingView({
   onOpenTemplate,
 }: {
   onNewPipeline: () => void;
-  onOpenTemplate: (template: PipelineTemplateSummary) => void;
+  onOpenTemplate: (template: PipelineTemplate) => void;
 }) {
   const { data: templates, isLoading } = useTemplates();
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -125,39 +125,36 @@ function LandingView({
 }
 
 export function PipelinesPage() {
-  // null = landing, PipelineGraph = editor with that graph, "new" = editor with empty canvas
-  const [editorGraph, setEditorGraph] = useState<PipelineGraph | null | "new">(null);
+  // null = landing, a template = editor on that saved template (its name and
+  // id travel with the graph so Save writes back to it), "new" = empty canvas
+  const [editing, setEditing] = useState<PipelineTemplate | null | "new">(null);
 
-  const handleOpenTemplate = useCallback((templateWithGraph: PipelineTemplateSummary & { graph?: PipelineGraph }) => {
-    if (templateWithGraph.graph) {
-      setEditorGraph(templateWithGraph.graph);
+  const handleOpenTemplate = useCallback((template: PipelineTemplate) => {
+    if (template.graph) {
+      setEditing(template);
     }
   }, []);
 
   const handleNewPipeline = useCallback(() => {
-    setEditorGraph("new");
+    setEditing("new");
   }, []);
 
   const handleClose = useCallback(() => {
-    setEditorGraph(null);
+    setEditing(null);
   }, []);
 
-  if (editorGraph !== null) {
+  if (editing !== null) {
     return (
       <div className="h-full">
         <PipelineEditor
           mode="page"
-          initialGraph={editorGraph === "new" ? undefined : editorGraph}
+          initialGraph={editing === "new" ? undefined : editing.graph}
+          initialTemplate={editing === "new" ? undefined : editing}
           onClose={handleClose}
         />
       </div>
     );
   }
 
-  return (
-    <LandingView
-      onNewPipeline={handleNewPipeline}
-      onOpenTemplate={handleOpenTemplate as (t: PipelineTemplateSummary) => void}
-    />
-  );
+  return <LandingView onNewPipeline={handleNewPipeline} onOpenTemplate={handleOpenTemplate} />;
 }

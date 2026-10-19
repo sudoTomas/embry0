@@ -1,4 +1,3 @@
-import { isAxiosError } from "axios";
 import { formatDistanceToNow } from "date-fns";
 import { ExternalLink } from "lucide-react";
 import { Link } from "react-router";
@@ -8,6 +7,8 @@ import { formatDateTime } from "@/lib/utils";
 import { providerLabel } from "@/lib/status";
 import { useAcceptProposal, useProposals, useRejectProposal } from "@/hooks/useProposals";
 import type { HealingCase } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
+import { useIsAdmin } from "@/stores/authStore";
 
 /**
  * Trackers whose drafts the API accepts (POST /cases/{id}/accept). The others —
@@ -24,11 +25,6 @@ const LABELLED_ON_ACCEPT = new Set(["linear"]);
 
 function trackerName(kind: string | undefined): string {
   return kind ? providerLabel(kind) : "its tracker";
-}
-
-function detailOf(error: unknown, fallback: string): string {
-  const detail = isAxiosError(error) ? error.response?.data?.detail : undefined;
-  return typeof detail === "string" ? detail : fallback;
 }
 
 /**
@@ -63,6 +59,7 @@ function filedAt(proposal: HealingCase): string {
  * of a deployment with no watcher and no organization is unchanged.
  */
 export function ProposalsSection() {
+  const isAdmin = useIsAdmin();
   const proposals = useProposals();
   const accept = useAcceptProposal();
   const reject = useRejectProposal();
@@ -89,7 +86,7 @@ export function ProposalsSection() {
     if (!confirm(`Accept "${proposal.title}"? ${effect}`)) return;
     accept.mutate(proposal.id, {
       onSuccess: (result) => toast.success(`Accepted — job ${result.job_id.slice(0, 12)} started`),
-      onError: (e) => toast.error(detailOf(e, "Could not accept the proposal")),
+      onError: (e) => toastApiError(e),
     });
   };
 
@@ -99,7 +96,7 @@ export function ProposalsSection() {
       return;
     reject.mutate(proposal.id, {
       onSuccess: () => toast.success(`Dismissed. Reopen it from the ${owner} needs list.`),
-      onError: (e) => toast.error(detailOf(e, "Could not dismiss the need")),
+      onError: (e) => toastApiError(e, "Could not dismiss the need"),
     });
   };
 
@@ -114,7 +111,7 @@ export function ProposalsSection() {
       return;
     reject.mutate(proposal.id, {
       onSuccess: () => toast.success(`Rejected. ${ticket} is still open in ${where}.`),
-      onError: (e) => toast.error(detailOf(e, "Could not reject the proposal")),
+      onError: (e) => toastApiError(e, "Could not reject the proposal"),
     });
   };
 
@@ -224,10 +221,14 @@ export function ProposalsSection() {
                           Accept by label in {trackerName(tracker?.kind)}
                         </span>
                       )}
+                      {/* Dismissing a need is admin work (the organization
+                          route requires admin), so only an admin gets it. */}
                       {isOrgNeed(proposal) ? (
-                        <Button size="xs" variant="outline" disabled={busy} onClick={() => handleDismiss(proposal)}>
-                          Dismiss
-                        </Button>
+                        isAdmin && (
+                          <Button size="xs" variant="outline" disabled={busy} onClick={() => handleDismiss(proposal)}>
+                            Dismiss
+                          </Button>
+                        )
                       ) : (
                         <Button size="xs" variant="outline" disabled={busy} onClick={() => handleReject(proposal)}>
                           Reject

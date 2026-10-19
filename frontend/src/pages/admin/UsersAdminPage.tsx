@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { UsersRound, LogOut, Ban, CircleCheck } from "lucide-react";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
 import { useUsers } from "@/hooks/useUsers";
 import { setUserDisabled, forceLogoutUser, type AdminUser } from "@/api/users";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
@@ -38,7 +39,7 @@ export function UsersAdminPage() {
       toast.success(`${row.email} ${row.disabled ? "disabled" : "enabled"}`);
       invalidate();
     },
-    onError: () => toast.error("Update failed"),
+    onError: (e) => toastApiError(e, "Update failed"),
   });
 
   const logoutMut = useMutation({
@@ -47,7 +48,7 @@ export function UsersAdminPage() {
       toast.success(`${row.email} signed out everywhere`);
       invalidate();
     },
-    onError: () => toast.error("Force logout failed"),
+    onError: (e) => toastApiError(e, "Force logout failed"),
   });
 
   return (

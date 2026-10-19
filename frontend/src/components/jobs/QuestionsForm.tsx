@@ -1,6 +1,7 @@
 import { useState, type JSX } from "react";
 import { QuestionText } from "./QuestionText";
 import { Button } from "@/components/ui/Button";
+import { apiErrorMessage } from "@/api/errorDetail";
 
 interface PendingInput {
   id: string;
@@ -59,7 +60,7 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
     const newErrors: Record<string, string> = {};
     results.forEach((r, idx) => {
       if (r.status === "rejected") {
-        newErrors[toSubmit[idx].id] = String(r.reason).slice(0, 200);
+        newErrors[toSubmit[idx].id] = apiErrorMessage(r.reason).slice(0, 200);
       }
     });
     setErrors(newErrors);
@@ -78,13 +79,16 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
         const isAnswered = input.status === "answered";
         const isOverriding = isAutoAnswered && overridingId === input.id;
         const showAnswerField = needsAnswer(input);
+        // The answer field is named shortly and described by the question's
+        // row, which holds its number, the asking node and the question.
+        const questionId = `question-${input.id}`;
 
         return (
           <div
             key={input.id}
             className="border border-amber-500/20 rounded p-3 bg-amber-500/[0.03]"
           >
-            <div className="flex items-baseline gap-2 mb-2">
+            <div id={questionId} className="flex items-baseline gap-2 mb-2">
               <span className="text-amber-400 font-mono text-xs">{idx + 1}.</span>
               {input.asking_node && (
                 <span className="text-[10px] uppercase text-amber-400/60">
@@ -142,6 +146,8 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
                       setAnswers((p) => ({ ...p, [input.id]: e.target.value }))
                     }
                     disabled={submitting}
+                    aria-label="Your answer"
+                    aria-describedby={questionId}
                     className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-sm text-white"
                   >
                     <option value="">— select —</option>
@@ -158,6 +164,8 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
                       setAnswers((p) => ({ ...p, [input.id]: e.target.value }))
                     }
                     disabled={submitting}
+                    aria-label="Your answer"
+                    aria-describedby={questionId}
                     rows={2}
                     className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-sm text-white font-mono resize-y"
                     placeholder={isOverriding ? "Override answer..." : "Your answer..."}

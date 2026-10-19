@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { useAuthStore } from "@/stores/authStore";
 import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -97,6 +98,8 @@ let confirmSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Dismissing an organization need is admin work; these tests act as the API key.
+  useAuthStore.setState({ status: "authenticated", authMode: "key", user: null });
   mockFetchProposals.mockResolvedValue(page([LINEAR_DRAFT, GITHUB_DRAFT]));
   confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 });
@@ -241,6 +244,19 @@ describe("ProposalsSection", () => {
     expect(within(need).queryByText(/accept by label/i)).not.toBeInTheDocument();
     expect(within(need).queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
     // A watcher draft beside it is unchanged.
+    expect(within(await row("Cleanup fails when the daemon is down")).getByRole("button", { name: "Reject" })).toBeInTheDocument();
+  });
+
+  it("offers Dismiss on an organization need only to an admin", async () => {
+    // Dismissing a need is admin-only on the organization route, and closing
+    // its case is the same answer, so an operator is not offered it here.
+    useAuthStore.setState({ authMode: "session", user: { email: "o@x", name: "O", tier: "operator" } });
+    mockFetchProposals.mockResolvedValue(page([ORG_NEED, GITHUB_DRAFT]));
+    renderSection();
+    const need = await row("Register 3 repositories");
+    expect(within(need).queryByRole("button", { name: "Dismiss" })).toBeNull();
+    expect(within(need).getByRole("link", { name: "Answer on acme" })).toBeInTheDocument();
+    // An operator still rejects a watcher draft.
     expect(within(await row("Cleanup fails when the daemon is down")).getByRole("button", { name: "Reject" })).toBeInTheDocument();
   });
 

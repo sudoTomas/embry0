@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Copy, FolderGit2, KeyRound, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
 import { useApiKeys } from "@/hooks/useApiKeys";
 import {
   createApiKey,
@@ -77,7 +78,7 @@ export default function ApiKeysTab() {
       setAllowedRepos("");
       invalidate();
     },
-    onError: () => toast.error("Key creation failed"),
+    onError: (e) => toastApiError(e, "Key creation failed"),
   });
 
   const reposMut = useMutation({
@@ -88,7 +89,7 @@ export default function ApiKeysTab() {
       );
       invalidate();
     },
-    onError: () => toast.error("Could not change the key's repositories"),
+    onError: (e) => toastApiError(e, "Could not change the key's repositories"),
   });
 
   const revokeMut = useMutation({
@@ -97,7 +98,7 @@ export default function ApiKeysTab() {
       toast.success(`Key "${row.name}" revoked`);
       invalidate();
     },
-    onError: () => toast.error("Revoke failed"),
+    onError: (e) => toastApiError(e, "Revoke failed"),
   });
 
   // "merge" is the chat relay's narrow scope (read + merge decisions + agent

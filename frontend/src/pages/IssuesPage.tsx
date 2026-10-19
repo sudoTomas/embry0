@@ -8,11 +8,14 @@ import { IssueListView } from "@/components/issues/IssueListView";
 import { IssueBoardView } from "@/components/issues/IssueBoardView";
 import { CreateIssueDialog } from "@/components/issues/CreateIssueDialog";
 import { ProposalsSection } from "@/components/issues/ProposalsSection";
-import { useIssues, useUpdateIssue } from "@/hooks/useIssues";
+import { useIssueBoard, useIssues, useUpdateIssue } from "@/hooks/useIssues";
 import { useIssuesStore } from "@/stores/issuesStore";
+import { ISSUE_BOARD_COLUMNS } from "@/lib/constants";
 import type { IssueStatus } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 const LIMIT = 20;
+const BOARD_STATUSES = ISSUE_BOARD_COLUMNS.map((c) => c.status);
 
 export function IssuesPage() {
   const { viewMode, setViewMode } = useIssuesStore();
@@ -32,6 +35,13 @@ export function IssuesPage() {
     limit: LIMIT,
     offset,
   });
+
+  // The board counts every issue per status, apart from the list's page.
+  const board = useIssueBoard(
+    BOARD_STATUSES,
+    { priority: priorityFilter, repo: repoFilter, search },
+    viewMode === "board",
+  );
 
   const handleStatusChange = useCallback((v: string | undefined) => {
     setStatusFilter(v);
@@ -54,7 +64,10 @@ export function IssuesPage() {
   }, []);
 
   const handleBoardStatusChange = useCallback((issueId: string, newStatus: string) => {
-    updateIssue.mutate({ id: issueId, status: newStatus as IssueStatus });
+    updateIssue.mutate(
+      { id: issueId, status: newStatus as IssueStatus },
+      { onError: (e) => toastApiError(e, "Failed to move the issue") },
+    );
   }, [updateIssue]);
 
   const repoOptions: string[] = data
@@ -131,8 +144,12 @@ export function IssuesPage() {
               searchValue={search}
               onPageChange={setOffset}
             />
+          ) : board.isError ? (
+            <PageError message="Failed to load the issue board" onRetry={board.refetch} />
+          ) : board.isLoading ? (
+            <TableSkeleton columns={6} rows={6} />
           ) : (
-            <IssueBoardView issues={data.issues} onStatusChange={handleBoardStatusChange} />
+            <IssueBoardView issues={board.issues} totals={board.totals} onStatusChange={handleBoardStatusChange} />
           )
         ) : null}
       </TabsContent>

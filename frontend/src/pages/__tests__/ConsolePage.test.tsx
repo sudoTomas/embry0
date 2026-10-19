@@ -167,6 +167,19 @@ describe("ConsolePage — board lanes", () => {
     expect(within(screen.getByTestId("board-column-failed")).getByText("Broken task")).toBeInTheDocument();
   });
 
+  it("still renders the board when a job carries a status this build does not know", async () => {
+    mockFetchJobs.mockResolvedValue(
+      jobList([
+        makeJob({ job_id: "run00001aaaa", status: "running", task: "Running task" }),
+        makeJob({ job_id: "new00001aaaa", status: "reverted" as JobResponse["status"], task: "Newer task", finished_at: RECENT }),
+      ]),
+    );
+    renderPage();
+    const running = screen.getByTestId("board-column-running");
+    expect(await within(running).findByText("Running task")).toBeInTheDocument();
+    expect(within(screen.getByTestId("board-column-failed")).getByText("Newer task")).toBeInTheDocument();
+  });
+
   it("caps the Done/Failed lanes to the last ~24h", async () => {
     mockFetchJobs.mockResolvedValue(
       jobList([

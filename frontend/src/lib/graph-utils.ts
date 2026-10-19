@@ -229,7 +229,8 @@ export function deserializeGraph(graph: PipelineGraph): { nodes: Node[]; edges: 
 
 /**
  * Ensure Start and End nodes exist in the React Flow graph.
- * If missing, inject them at sensible positions relative to existing nodes.
+ * If missing, inject them at sensible positions relative to existing nodes,
+ * connected to the graph's roots and leaves.
  */
 export function injectStartEndNodes(graph: { nodes: Node[]; edges: Edge[] }): { nodes: Node[]; edges: Edge[] } {
   const { nodes, edges } = graph;
@@ -266,5 +267,26 @@ export function injectStartEndNodes(graph: { nodes: Node[]; edges: Edge[] }): { 
     });
   }
 
-  return { nodes: injected, edges };
+  // A stored graph has no scaffold edges (toApiGraph strips them), so connect
+  // what was injected: Start to every agent no flow edge enters, every agent
+  // no flow edge leaves to End. Feedback edges loop back and do not count.
+  const flow = edges.filter((e) => (e.data as Record<string, unknown> | undefined)?.edgeType !== "feedback");
+  const hasIncoming = new Set(flow.map((e) => e.target));
+  const hasOutgoing = new Set(flow.map((e) => e.source));
+  const scaffold = (source: string, target: string): Edge => ({
+    id: `${source}->${target}`,
+    source,
+    target,
+    type: "default",
+    data: { edgeType: "flow" },
+  });
+  const added: Edge[] = [];
+  if (!hasStart) {
+    for (const n of agentNodes) if (!hasIncoming.has(n.id)) added.push(scaffold("__start__", n.id));
+  }
+  if (!hasEnd) {
+    for (const n of agentNodes) if (!hasOutgoing.has(n.id)) added.push(scaffold(n.id, "__end__"));
+  }
+
+  return { nodes: injected, edges: [...edges, ...added] };
 }

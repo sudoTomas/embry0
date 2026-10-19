@@ -215,9 +215,8 @@ describe("AddRepoPanel discovery account", () => {
     renderPanel();
     await registerSelected("acme/widgets");
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith(
-        "Failed to register repo — expected a path like owner/name",
-      ),
+      // The reason the request failed, not a guess that the path was wrong.
+      expect(toast.error).toHaveBeenCalledWith("Failed to register repo: The request failed (HTTP 500)"),
     );
     expect(mockRegister).not.toHaveBeenCalled();
     expect(mockSetRepoCredentials).not.toHaveBeenCalled();

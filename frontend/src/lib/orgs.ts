@@ -121,7 +121,8 @@ export const ACTION_LABELS: Readonly<Record<OrgActionName, string>> = {
   register: "Register",
   hook: "Add webhook",
   onboard: "Onboard",
-  watch: "Watch",
+  // The stack it adds stays off until its LogQL is set and it is enabled.
+  watch: "Add a disabled watcher stack",
   deactivate: "Deactivate",
 };
 

@@ -1,3 +1,5 @@
+import type { IssueStatus } from "@/lib/types";
+
 export const ISSUE_STATUS_COLORS: Record<string, string> = {
   open: "text-success",
   triaging: "text-warning",
@@ -92,3 +94,12 @@ export function getPhaseForAgent(agentType: string): PhaseConfig {
   return PIPELINE_PHASES[agentType] ?? PIPELINE_PHASES.output;
 }
 
+/** The Issues board's columns, in order. */
+export const ISSUE_BOARD_COLUMNS: { status: IssueStatus; label: string }[] = [
+  { status: "open", label: "Open" },
+  { status: "triaging", label: "Triaging" },
+  { status: "awaiting_input", label: "Awaiting Input" },
+  { status: "in_progress", label: "In Progress" },
+  { status: "closed", label: "Closed" },
+  { status: "cancelled", label: "Cancelled" },
+];

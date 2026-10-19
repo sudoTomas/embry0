@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useAuthStore } from "@/stores/authStore";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -83,6 +84,8 @@ function renderEdit(type = "developer") {
 }
 
 beforeEach(() => {
+  // Saving is admin work (require_admin); these tests drive it as the API key.
+  useAuthStore.setState({ authMode: "key" });
   vi.clearAllMocks();
   modelsState.current = modelsState.NO_CATALOG;
   mockUseAgent.mockReturnValue({ data: EXISTING, isLoading: false });

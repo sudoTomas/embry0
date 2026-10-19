@@ -11,13 +11,15 @@ export default defineConfig({
   },
   server: {
     fs: {
-      // The event contract test reads docs/contracts/events.json and the
-      // render tests read tests/fixtures/job-events, both outside the
-      // frontend root; allow those two directories and keep the default.
+      // The event contract test reads docs/contracts/events.json, the
+      // render tests read tests/fixtures/job-events, and the parity tests
+      // read backend sources under embry0/, all outside the frontend root;
+      // allow those directories and keep the default.
       allow: [
         searchForWorkspaceRoot(import.meta.dirname),
         path.resolve(import.meta.dirname, "../docs/contracts"),
         path.resolve(import.meta.dirname, "../tests/fixtures/job-events"),
+        path.resolve(import.meta.dirname, "../embry0"),
       ],
     },
   },

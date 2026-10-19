@@ -11,6 +11,7 @@ import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { formatDateTime, formatTime } from "@/lib/utils";
 import { watcherActionLabel, watcherActionTone } from "@/lib/watcherActions";
+import { toastApiError } from "@/api/errorToast";
 
 
 function windowLabel(startIso: string, endIso: string): string {
@@ -41,7 +42,7 @@ export function WatcherPage() {
       }
       queryClient.invalidateQueries({ queryKey: ["watcher-runs"] });
     },
-    onError: () => toast.error("Watcher tick failed — see orchestrator logs"),
+    onError: (e) => toastApiError(e, "Watcher tick failed"),
   });
 
   return (

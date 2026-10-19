@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Button, buttonVariants } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { cn } from "@/lib/utils";
+import { toastApiError } from "@/api/errorToast";
 
 /**
  * Minimal schema-valid qa.yaml v2 skeleton for hand-written configs.
@@ -89,7 +90,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
         onSuccess: () => toast.success("qa.yaml saved"),
         onError: (error) => {
           if (!(isAxiosError(error) && error.response?.status === 422)) {
-            toast.error("Failed to save qa.yaml");
+            toastApiError(error, "Failed to save qa.yaml");
           }
         },
       },
@@ -110,7 +111,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
           setDraft(null);
           toast.success("Stored config deleted");
         },
-        onError: () => toast.error("Failed to remove the stored qa.yaml"),
+        onError: (e) => toastApiError(e, "Failed to remove the stored qa.yaml"),
       },
     );
   }

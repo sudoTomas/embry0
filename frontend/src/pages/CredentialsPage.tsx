@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { detailMessages } from "@/api/errorDetail";
+import { toastApiError } from "@/api/errorToast";
 import { BindingsDrawer } from "@/components/credentials/BindingsDrawer";
 import { CredentialModal } from "@/components/credentials/CredentialModal";
 import { CredentialTable } from "@/components/credentials/CredentialTable";
@@ -23,14 +23,6 @@ import { useAuthStore } from "@/stores/authStore";
 const DOCS_HREF = "https://github.com/sudoTomas/embry0/blob/main/docs/credentials.md";
 
 type OpenModal = { mode: "create" } | { mode: "rotate"; credential: Credential };
-
-function errorDetail(error: unknown): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  const parts = detailMessages(detail);
-  if (parts.length > 0) return parts.join(" ");
-  if (error instanceof Error && error.message) return error.message;
-  return "Request failed";
-}
 
 function importSummary(report: ImportEnvReport): string {
   return `Imported ${report.created.length} created, ${report.bound.length} bound, ${report.skipped.length} skipped.`;
@@ -110,7 +102,7 @@ export function CredentialsPage() {
       setImportReport(report);
       toast.success(importSummary(report));
     } catch (error) {
-      toast.error(errorDetail(error));
+      toastApiError(error);
     }
   }
 
@@ -134,7 +126,7 @@ export function CredentialsPage() {
         toast.success(row.verified_login ? `Verified as ${row.verified_login}` : "Verified");
       },
       onError: (error) => {
-        toast.error(errorDetail(error));
+        toastApiError(error);
       },
       onSettled: () => setVerifyingId((current) => (current === credential.id ? null : current)),
     });
@@ -148,7 +140,7 @@ export function CredentialsPage() {
         onSuccess: () => {
           toast.success(status === "ok" ? `Enabled "${credential.label}"` : `Disabled "${credential.label}"`);
         },
-        onError: (error) => toast.error(errorDetail(error)),
+        onError: (error) => toastApiError(error),
       },
     );
   }
@@ -157,7 +149,7 @@ export function CredentialsPage() {
     if (!window.confirm(`Delete credential "${credential.label}"?`)) return;
     deleteCredential.mutate(credential.id, {
       onSuccess: () => toast.success(`Deleted "${credential.label}"`),
-      onError: (error) => toast.error(errorDetail(error)),
+      onError: (error) => toastApiError(error),
     });
   }
 

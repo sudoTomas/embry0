@@ -12,6 +12,7 @@ import { clearStoredApiKey } from "@/lib/apiKey";
 import { useAuthStore } from "@/stores/authStore";
 import { toast } from "sonner";
 import type { ConfigResponse } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 type DensityMode = "comfortable" | "standard" | "compact";
 
@@ -95,7 +96,7 @@ export default function GeneralTab() {
         setForm(null);
         toast.success("Settings saved");
       },
-      onError: (e) => toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`),
+      onError: (e) => toastApiError(e, "Failed"),
     });
   };
 

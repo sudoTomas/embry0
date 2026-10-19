@@ -10,7 +10,7 @@ import {
   type Organization,
 } from "@/api/orgs";
 import type { Forge } from "@/api/repos";
-import { formatErrorDetail } from "@/api/errorDetail";
+import { apiErrorMessage } from "@/api/errorDetail";
 import { AccessChips } from "@/components/orgs/AccessChips";
 import { DiscoveryStatus } from "@/components/orgs/DiscoveryStatus";
 import { OrgActPanel } from "@/components/orgs/OrgActPanel";
@@ -46,7 +46,7 @@ type ProbeState =
 function errorText(err: unknown): string {
   const response = (err as { response?: { status?: number; data?: { detail?: unknown } } }).response;
   if (response?.status === 403) return "This needs admin scope.";
-  return formatErrorDetail(response?.data?.detail) ?? (err instanceof Error ? err.message : "The request failed.");
+  return apiErrorMessage(err);
 }
 
 function httpStatus(err: unknown): number | undefined {

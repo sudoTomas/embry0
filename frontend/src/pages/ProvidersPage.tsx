@@ -16,6 +16,7 @@ import {
   useUpdateProviderConfig,
 } from "@/hooks/useProvider";
 import type { CatalogProvider, ProviderProbeResult } from "@/lib/types/provider";
+import { toastApiError } from "@/api/errorToast";
 
 // RAV-1297: LLM Providers — the complete catalog (Anthropic first-class),
 // live connection tests, per-model enablement, and tier assignment. This
@@ -87,7 +88,7 @@ function ProviderCard({
         if (result.status === "ok") toast.success(`${providerLabel(provider.name)}: connection OK`);
         else toast.error(`${providerLabel(provider.name)}: ${PROBE_STATUS_LABELS[result.status] ?? result.status}`);
       },
-      onError: (e) => toast.error(`Test failed: ${e.message}`),
+      onError: (e) => toastApiError(e, "Test failed"),
     });
   };
 
@@ -285,7 +286,7 @@ export function ProvidersPage() {
         setDefaultModelDraft(null);
         toast.success("Model settings saved");
       },
-      onError: (e) => toast.error(`Failed to save model settings: ${e.message}`),
+      onError: (e) => toastApiError(e, "Failed to save model settings"),
     });
   };
 
@@ -297,7 +298,7 @@ export function ProvidersPage() {
       { disabled_models: next },
       {
         onSuccess: () => toast.success(`${model} ${enable ? "enabled" : "disabled"}`),
-        onError: (e) => toast.error(`Failed to update ${model}: ${e.message}`),
+        onError: (e) => toastApiError(e, `Failed to update ${model}`),
       },
     );
   };

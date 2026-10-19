@@ -253,4 +253,72 @@ describe("DashboardPage", () => {
     renderPage();
     expect(screen.getByText("No watcher ticks recorded yet.")).toBeInTheDocument();
   });
+
+  it("names each recent issue by its tracker key and title, and links it to the issue", () => {
+    const base = ORCH_OK.data!;
+    const now = new Date().toISOString();
+    mockUseStats.mockReturnValue(
+      ready({
+        ...base,
+        recent_issues: [
+          {
+            trace_id: "iss-lin", issue_number: 0, repo: "acme/app", title: "Tidy the setup docs",
+            tracker: "linear", tracker_key: "ENG-7", issue_status: "open", job_status: "expired",
+            timestamp: now, passed: false, cost_usd: 0, status: "expired",
+          },
+          {
+            trace_id: "iss-gh", issue_number: 42, repo: "acme/app", title: "Fix the login redirect",
+            tracker: "github", tracker_key: "42", issue_status: "closed", job_status: "pr_merged",
+            timestamp: now, passed: false, cost_usd: 1, status: "pr_merged",
+          },
+        ],
+      }),
+    );
+    renderPage();
+    const issues = screen.getByTestId("panel-Recent issues");
+    expect(within(issues).queryByText(/acme\/app#0/), "a Linear ticket is not issue #0").toBeNull();
+
+    const linear = within(issues).getByRole("link", { name: /ENG-7.*Tidy the setup docs/ });
+    expect(linear).toHaveAttribute("href", "/issues/iss-lin");
+    const github = within(issues).getByRole("link", { name: /acme\/app#42.*Fix the login redirect/ });
+    expect(github).toHaveAttribute("href", "/issues/iss-gh");
+
+    // The pill is the issue's own status, not its latest job's.
+    const linearRow = linear.closest("tr")!;
+    expect(within(linearRow).getByText("Open")).toBeInTheDocument();
+    expect(within(linearRow).queryByText("Expired")).toBeNull();
+  });
+
+  it("keeps a recent issue's key and title readable on a phone", () => {
+    mockUseStats.mockReturnValue(
+      ready({
+        ...ORCH_OK.data!,
+        recent_issues: [
+          {
+            trace_id: "iss-lin", issue_number: 0, repo: "acme/app", title: "[ENG-7] [watcher] Tidy the setup docs",
+            tracker: "linear", tracker_key: "ENG-7", issue_status: "open", job_status: "expired",
+            timestamp: new Date().toISOString(), passed: false, cost_usd: 0, status: "expired",
+          },
+        ],
+      }),
+    );
+    renderPage();
+    const issues = screen.getByTestId("panel-Recent issues");
+    const link = within(issues).getByRole("link", { name: /ENG-7/ });
+    expect(link, "the title must not repeat the key the row already shows").toHaveTextContent(
+      /^ENG-7\s*\[watcher\] Tidy the setup docs$/,
+    );
+    // On a phone the key has a line of its own and the title up to two under
+    // it; from sm up the two share one line, cut at the end.
+    const key = within(link).getByText("ENG-7");
+    const title = within(link).getByText("[watcher] Tidy the setup docs");
+    expect(key).toHaveClass("block", "sm:inline");
+    expect(title).toHaveClass("line-clamp-2", "sm:inline");
+    expect(link).toHaveClass("block", "break-words", "sm:truncate");
+    expect(link.closest("td")).not.toHaveClass("truncate");
+    // When is the table's last column, and it steps aside below sm.
+    const table = within(issues).getByRole("table");
+    expect(within(table).getAllByRole("columnheader").at(-1)).toHaveTextContent("When");
+    expect(table).toHaveClass("[&_tr>*:last-child]:hidden", "sm:[&_tr>*:last-child]:table-cell");
+  });
 });

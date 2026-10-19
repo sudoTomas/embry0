@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { toastApiError } from "@/api/errorToast";
 
 // RAV-1301: the central Add-repo flow. The dropdown is fed by the discovery
 // endpoint — everything the configured GitHub tokens can see minus the
@@ -43,7 +44,8 @@ function repoLabel(r: DiscoverableRepo): string {
   // A registry row names the account. An env row still names the key, never the value.
   const account = r.credential_id ? r.credential_label : r.token_env_key;
   const parts = [r.private ? "private" : "public", account];
-  if (r.push === false) parts.push("push?");
+  // The forge said this account cannot push; unknown (null) is not said.
+  if (r.push === false) parts.push("no push");
   return `${r.full_name} (${parts.join(", ")})`;
 }
 
@@ -151,7 +153,7 @@ export function AddRepoPanel() {
       void queryClient.invalidateQueries({ queryKey: ["gitlab", "discoverable-projects"] });
       void queryClient.invalidateQueries({ queryKey: ["qa-dashboard"] });
     },
-    onError: () => toast.error("Failed to register repo — expected a path like owner/name"),
+    onError: (e) => toastApiError(e, "Failed to register repo"),
   });
 
   const registerAndOnboard = useMutation({
@@ -164,7 +166,7 @@ export function AddRepoPanel() {
       void queryClient.invalidateQueries({ queryKey: ["gitlab", "discoverable-projects"] });
       void navigate(`/repos/onboard?repo=${encodeURIComponent(outcome.row.repo)}`);
     },
-    onError: () => toast.error("Failed to register repo — expected a path like owner/name"),
+    onError: (e) => toastApiError(e, "Failed to register repo"),
   });
 
   const refresh = async () => {

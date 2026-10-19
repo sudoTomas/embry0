@@ -12,6 +12,7 @@ import { useCreateIssue } from "@/hooks/useIssues";
 import { useGitHubRepos } from "@/hooks/useGitHub";
 import type { IssuePriority } from "@/lib/types";
 import { createFocusTrap } from "@/lib/focus-trap";
+import { toastApiError } from "@/api/errorToast";
 
 interface CreateIssueDialogProps {
   onClose: () => void;
@@ -69,7 +70,7 @@ export function CreateIssueDialog({ onClose, repos = [], labelSuggestions = [] }
           }
           onClose();
         },
-        onError: (err) => { toast.error(err instanceof Error ? err.message : "Failed to create issue"); },
+        onError: (err) => toastApiError(err, "Failed to create issue"),
       },
     );
   };

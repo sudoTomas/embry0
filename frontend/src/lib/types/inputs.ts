@@ -3,26 +3,17 @@
 // status "answered" with auto_answer still set (RAV-1059) — not a separate state.
 export type InputStatus = "pending" | "answered" | "auto_answered" | "skipped";
 
-export interface JobInput {
-  input_id: string;
-  job_id: string;
-  issue_id: string;
-  question: string;
-  category: string;
-  options: string[] | null;
-  status: InputStatus;
-  answer: string | null;
-  auto_answer: string | null;
-  created_at: string;
-  answered_at: string | null;
-}
-
 export type InputImportance = "blocking" | "auto_answerable";
-export type IssueInputStatus = "pending" | "auto_answered" | "answered";
 
+/**
+ * One question an agent asked: an issue_inputs row, as both
+ * GET /jobs/{id}/inputs and GET /issues/{id}/inputs return it (the backend's
+ * InputResponse in embry0/api/schemas/inputs.py). issue_id is null for a job
+ * created without an issue; such a question is answered through the job.
+ */
 export interface InputResponse {
   id: string;
-  issue_id: string;
+  issue_id: string | null;
   job_id: string;
   asking_node: string;
   question: string;
@@ -30,7 +21,10 @@ export interface InputResponse {
   auto_answer: string | null;
   answer: string | null;
   answered_by: string | null;
-  status: IssueInputStatus;
+  status: InputStatus;
   created_at: string;
   answered_at: string | null;
 }
+
+/** The rows GET /jobs/{id}/inputs returns: the same issue_inputs rows. */
+export type JobInput = InputResponse;
