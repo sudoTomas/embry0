@@ -123,16 +123,29 @@ def test_no_job_path_reads_the_image_pins_or_the_registry_login():
     assert callers == [], f"a job path now reads the pins or the registry login; give its errors a code: {callers}"
 
 
+# The catalog check and its one caller, which only the save routes (embry0/api/v1) import.
+_SKILL_CHECK_HOMES = {"embry0/agents/skills.py", "embry0/agents/skill_catalog.py"}
+
+
 def test_no_job_path_checks_skill_names_against_the_catalog():
     """UnknownSkillError is exempt only while the save routes alone raise it."""
     callers = []
+    catalog_importers = []
     for entry in _PIPELINE_PACKAGES:
         root = _REPO_ROOT / entry
         for path in [root] if root.is_file() else sorted(root.rglob("*.py")):
             rel = str(path.relative_to(_REPO_ROOT))
-            if rel != "embry0/agents/skills.py" and "check_skill_names" in path.read_text():
+            if rel in _SKILL_CHECK_HOMES:
+                continue
+            text = path.read_text()
+            if "check_skill_names" in text:
                 callers.append(rel)
+            if "skill_catalog" in text:
+                catalog_importers.append(rel)
     assert callers == [], f"a job path now checks skill names; give UnknownSkillError a code: {callers}"
+    assert catalog_importers == [], (
+        f"a job path now reaches the catalog check; give UnknownSkillError a code: {catalog_importers}"
+    )
 
 
 def _instantiate(cls: type[BaseException]) -> BaseException:
