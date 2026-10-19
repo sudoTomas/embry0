@@ -16,7 +16,7 @@
 
 embry0 autonomously resolves GitHub issues by dispatching AI agents through a configurable pipeline: an LLM **triage agent** plans the work, a **developer agent** writes the code and opens the PR, a **reviewer agent** gates it, and an optional **QA agent** boots your full-stack app and validates acceptance criteria in a real browser. Built on **LangGraph** for orchestration and the **Claude Agent SDK** for execution, with every agent locked inside an isolated Docker sandbox.
 
-**Where your code lives.** Agents work on a repository only inside its job's sandbox container, which is deleted when the job ends. Copies outlive it on the host: the job's event log and saved agent session in PostgreSQL (files the agent read and wrote, its shell commands) and pre-built QA images and per-repo cache volumes (a checkout). By default they are kept forever; `JOB_LOG_RETENTION_DAYS` and `QA_IMAGE_RETENTION_DAYS` bound them, though not the registry's copies of QA images or database backups. [Data retention](SECURITY.md#data-retention) lists every copy and how long it stays.
+**Where your code lives.** Agents work on a repository only inside its job's sandbox container, which is deleted when the job ends. Copies outlive it on the host: the job's event log and saved agent session in PostgreSQL (files the agent read and wrote, its shell commands) and pre-built QA images and per-repo cache volumes (a checkout). By default they are kept forever; `JOB_LOG_RETENTION_DAYS`, `AGENT_SESSION_RETENTION_DAYS` and `QA_IMAGE_RETENTION_DAYS` bound them, though not the registry's copies of QA images or database backups. [Data retention](SECURITY.md#data-retention) lists every copy and how long it stays.
 
 ```mermaid
 graph TB

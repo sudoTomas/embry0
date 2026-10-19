@@ -50,10 +50,11 @@ describes what embry0 does rather than listing changes.
   design-auditor ([docs/specialist-agents.md](docs/specialist-agents.md)).
 - **MCP server** (`embry0-mcp`, and `embry0-mcp-http` for the hosted endpoint).
 - **Code retention.** `JOB_LOG_RETENTION_DAYS` removes the code from ended
-  jobs' events and deletes their saved agent sessions after that many days;
-  `QA_IMAGE_RETENTION_DAYS` removes pre-built QA images and per-repo volumes
-  nothing has used for that long. Both are off by default, and an admin can
-  preview either first ([SECURITY.md](SECURITY.md#data-retention),
+  jobs' events after that many days; `AGENT_SESSION_RETENTION_DAYS` deletes
+  ended jobs' saved agent sessions (and with them the resume of a pull request
+  comment follow-up); `QA_IMAGE_RETENTION_DAYS` removes pre-built QA images and
+  per-repo volumes nothing has used for that long. All three are off by
+  default, and an admin can preview each first ([SECURITY.md](SECURITY.md#data-retention),
   [ADR 0017](docs/adr/0017-code-retention.md)).
 
 ### Upgrade notes

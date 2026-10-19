@@ -1,4 +1,4 @@
-"""GET /admin/retention/preview (ADR 0017): admin only, a dry run of both sweeps.
+"""GET /admin/retention/preview (ADR 0017): admin only, a dry run of the three sweeps.
 
 Stub-app style, as test_audit_api.py: the real require_auth and require_admin
 chain runs (sessions via signed cookie, keys via a mocked api_keys_repo).
@@ -18,6 +18,7 @@ from embry0.api.deps import bust_api_key_cache, bust_user_gate_cache, require_au
 from embry0.api.session import SESSION_COOKIE, SessionData, encode_session
 from embry0.cache.qa_image_retention import QAImageRetentionResult
 from embry0.config import Embry0Config
+from embry0.services.agent_session_retention import AgentSessionRetentionResult
 from embry0.services.job_log_retention import JobLogRetentionResult
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 
@@ -58,8 +59,10 @@ def _app() -> FastAPI:
     app.state.config = _config()
     app.state.db = None
     app.state.job_log_retention = FakeSweep(
-        JobLogRetentionResult(retention_days=30, jobs=2, events=5, bytes=900, agent_sessions=1, agent_session_bytes=50),
-        configured=None,
+        JobLogRetentionResult(retention_days=30, jobs=2, events=5, bytes=900), configured=None
+    )
+    app.state.agent_session_retention = FakeSweep(
+        AgentSessionRetentionResult(retention_days=90, sessions=1, bytes=50), configured=90
     )
     app.state.qa_image_retention = FakeSweep(QAImageRetentionResult(retention_days=14), configured=14)
     keys = MagicMock()
@@ -128,25 +131,18 @@ def test_no_credential_is_refused() -> None:
     assert TestClient(_app()).get(PATH).status_code == 401
 
 
-def test_an_admin_gets_both_dry_runs() -> None:
+def test_an_admin_gets_every_dry_run() -> None:
     app = _app()
 
     resp = TestClient(app).get(PATH, headers={"Authorization": "Bearer master-key"})
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["job_logs"] == {
-        "configured_days": None,
-        "retention_days": 30,
-        "jobs": 2,
-        "events": 5,
-        "bytes": 900,
-        "agent_sessions": 1,
-        "agent_session_bytes": 50,
-    }
+    assert body["job_logs"] == {"configured_days": None, "retention_days": 30, "jobs": 2, "events": 5, "bytes": 900}
+    assert body["agent_sessions"] == {"configured_days": 90, "retention_days": 90, "sessions": 1, "bytes": 50}
     assert body["qa_images"]["configured_days"] == 14 and body["qa_images"]["images"] == 0
-    assert app.state.job_log_retention.calls == [{"dry_run": True, "retention_days": None}]
-    assert app.state.qa_image_retention.calls == [{"dry_run": True, "retention_days": None}]
+    for sweep in ("job_log_retention", "agent_session_retention", "qa_image_retention"):
+        assert getattr(app.state, sweep).calls == [{"dry_run": True, "retention_days": None}], sweep
 
 
 def test_the_query_previews_a_value_before_it_is_set() -> None:
@@ -154,8 +150,10 @@ def test_the_query_previews_a_value_before_it_is_set() -> None:
     client = TestClient(app)
     client.cookies.set(SESSION_COOKIE, _cookie("admin"))
 
-    assert client.get(PATH, params={"job_log_days": 30, "qa_image_days": 7}).status_code == 200
+    params = {"job_log_days": 30, "agent_session_days": 60, "qa_image_days": 7}
+    assert client.get(PATH, params=params).status_code == 200
     assert app.state.job_log_retention.calls == [{"dry_run": True, "retention_days": 30}]
+    assert app.state.agent_session_retention.calls == [{"dry_run": True, "retention_days": 60}]
     assert app.state.qa_image_retention.calls == [{"dry_run": True, "retention_days": 7}]
     assert client.get(PATH, params={"job_log_days": 0}).status_code == 422
 

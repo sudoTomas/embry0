@@ -323,35 +323,15 @@ async def _sessions(db: DatabasePool) -> set[str]:
 
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
-async def test_old_sessions_of_ended_jobs_are_deleted_and_the_rest_kept(db_with_migrations: DatabasePool) -> None:
+async def test_job_log_retention_alone_keeps_every_agent_session(db_with_migrations: DatabasePool) -> None:
+    """Deleting a session costs the resume of a pull request comment follow-up, so it is decided
+    on its own (AGENT_SESSION_RETENTION_DAYS), not as a side effect of bounding the job log."""
     db = db_with_migrations
     old_done = await _job(db, "completed")
-    new_done = await _job(db, "completed")
-    old_live = await _job(db, "awaiting_input")
-    await _session(db, old_done, OLD, blob=b"x" * 1000)
-    await _session(db, new_done, NOW)
-    await _session(db, old_live, OLD)
-    sweep = JobLogRetentionSweep(JobLogRetentionRepository(db), retention_days=30, batch_jobs=1)
-
-    preview = await sweep.run_once(dry_run=True, now=NOW)
-    assert await _sessions(db) == {old_done, new_done, old_live}, "a dry run deleted a session"
-    result = await sweep.run_once(now=NOW)
-
-    assert await _sessions(db) == {new_done, old_live}, (
-        "only the ended job's session untouched for longer than the retention may go; "
-        "a recent one or a live job's must stay"
-    )
-    assert result.agent_sessions == preview.agent_sessions == 1
-    assert result.agent_session_bytes == preview.agent_session_bytes >= 1000
-
-
-@pytest.mark.requires_postgres
-@pytest.mark.asyncio
-async def test_unset_keeps_every_session(db_with_migrations: DatabasePool) -> None:
-    db = db_with_migrations
-    old_done = await _job(db, "completed")
+    await _log(db, old_done, _write(), OLD)
     await _session(db, old_done, OLD)
 
-    await JobLogRetentionSweep(JobLogRetentionRepository(db), retention_days=None).run_once(now=NOW)
+    result = await JobLogRetentionSweep(JobLogRetentionRepository(db), retention_days=30).run_once(now=NOW)
 
-    assert await _sessions(db) == {old_done}
+    assert result.events == 1, "the old Write was not redacted, so this test did not exercise the sweep"
+    assert await _sessions(db) == {old_done}, "JOB_LOG_RETENTION_DAYS deleted a saved agent session"

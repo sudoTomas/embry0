@@ -1652,6 +1652,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         job_log_retention_task.add_done_callback(app.state.background_tasks.discard)
     logger.info("job_log_retention_configured", retention_days=config.job_log_retention_days)
 
+    # ADR 0017: agent session retention, its own setting because deleting a
+    # session ends the resume of a pull request comment follow-up. Same shape.
+    from embry0.services.agent_session_retention import AgentSessionRetentionSweep
+
+    app.state.agent_session_retention = AgentSessionRetentionSweep(
+        app.state.agent_sessions_repo, retention_days=config.agent_session_retention_days
+    )
+    if app.state.agent_session_retention.enabled:
+        agent_session_retention_task = asyncio.create_task(app.state.agent_session_retention.start())
+        app.state.background_tasks.add(agent_session_retention_task)
+        agent_session_retention_task.add_done_callback(app.state.background_tasks.discard)
+    logger.info("agent_session_retention_configured", retention_days=config.agent_session_retention_days)
+
     # ADR 0017: QA image retention, the same shape: always built (the preview
     # dry-runs it), looping only with QA_IMAGE_RETENTION_DAYS set. Volumes are
     # recognised by this deployment's instance label, as the volume reaper does.

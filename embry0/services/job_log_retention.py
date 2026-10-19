@@ -22,12 +22,10 @@ else stays: the other events (agent prose, cost, nodes), the job row with its
 summary, cost and status, and in each rewritten event its ids, tool name, file
 path and error flag. Unset, nothing is touched.
 
-The same setting deletes the agents' saved sessions (``agent_sessions``) of
-ended jobs last used before then. A session is the agent's whole conversation,
-for a Claude subscription the CLI's session file with every tool input and
-result uncapped, so it holds more code than the events do. What deleting it
-costs: a pull request comment follow-up on such a job starts a fresh session
-instead of resuming the one that wrote the pull request.
+The agents' saved sessions (``agent_sessions``) hold the same code and more;
+they have their own setting, ``AGENT_SESSION_RETENTION_DAYS``
+(``embry0/services/agent_session_retention.py``), because deleting one also
+ends the resume of a pull request comment follow-up. This sweep leaves them.
 
 The sweep is idempotent (a redacted event is never planned again) and batched
 by job. ``run_once(dry_run=True)`` plans the same rewrites and writes nothing,
@@ -99,18 +97,9 @@ class JobLogRetentionResult:
     jobs: int = 0
     events: int = 0
     bytes: int = 0
-    agent_sessions: int = 0
-    agent_session_bytes: int = 0
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "retention_days": self.retention_days,
-            "jobs": self.jobs,
-            "events": self.events,
-            "bytes": self.bytes,
-            "agent_sessions": self.agent_sessions,
-            "agent_session_bytes": self.agent_session_bytes,
-        }
+        return {"retention_days": self.retention_days, "jobs": self.jobs, "events": self.events, "bytes": self.bytes}
 
 
 def _digest(value: Any) -> dict[str, Any]:
@@ -286,11 +275,6 @@ class JobLogRetentionSweep:
                 result.bytes += sum(r.bytes_removed for r in rewrites)
             after = (page[-1].created_at, page[-1].job_id)
             await asyncio.sleep(0)  # let other tasks run between batches
-        if dry_run:
-            sessions = await self._repo.expired_sessions(cutoff=cutoff)
-        else:
-            sessions = await self._repo.delete_sessions(cutoff=cutoff, limit=self._batch)
-        result.agent_sessions, result.agent_session_bytes = sessions
         logger.info("job_log_retention_swept", dry_run=dry_run, cutoff=cutoff.isoformat(), **result.as_dict())
         return result
 

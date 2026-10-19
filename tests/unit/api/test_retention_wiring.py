@@ -47,6 +47,16 @@ def test_the_job_log_sweep_reads_its_setting_and_is_started() -> None:
     assert _started("job_log_retention"), "app.py never starts the job log retention loop"
 
 
+def test_the_agent_session_sweep_reads_its_own_setting_and_is_started() -> None:
+    call = _construction("AgentSessionRetentionSweep")
+    passed = {kw.arg: ast.unparse(kw.value) for kw in call.keywords if kw.arg}
+    assert passed.get("retention_days") == "config.agent_session_retention_days", (
+        "AgentSessionRetentionSweep is not given AGENT_SESSION_RETENTION_DAYS"
+    )
+    assert ast.unparse(call.args[0]) == "app.state.agent_sessions_repo", "the sweep needs the sessions repository"
+    assert _started("agent_session_retention"), "app.py never starts the agent session retention loop"
+
+
 def test_the_qa_image_sweep_reads_its_setting_and_is_started() -> None:
     call = _construction("QAImageRetentionSweep")
     passed = {kw.arg: ast.unparse(kw.value) for kw in call.keywords if kw.arg}
