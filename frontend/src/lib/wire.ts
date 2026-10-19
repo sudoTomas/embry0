@@ -20,8 +20,8 @@ function isRecord(v: unknown): v is Record<string, unknown> {
  * Rows written before the contract are mapped to contract names here, once, so
  * reducers never read a legacy field: `error.error` -> `message`, a string
  * `input` -> `summary`, `tool_use_id` -> `tool_id`, `node_id` -> `node`,
- * agent_completed's nested `result.is_error` (and its message and output) -> the
- * top-level fields. A row the
+ * agent_completed's nested `result.is_error`, `error_code` and `error_message` ->
+ * the top-level fields. A row the
  * API could not decode (`{"type":"raw"}`) and any type outside the contract become
  * a `system` event carrying the text, so they stay visible instead of vanishing.
  */
@@ -43,10 +43,11 @@ export function normalizeWireEvent(raw: unknown): LogEvent {
   }
   if (ev.type === "agent_completed" && isRecord(ev.result)) {
     // A pre-contract agent_completed carried the run's outcome in a nested
-    // `result`; without this the failed run read as a clean exit.
+    // `result`; without its error fields the failed run read as a clean exit.
+    // Its `output`, the agent's whole final reply, stays where it was: no
+    // card ever showed it, and the Raw view still prints the row as stored.
     const result = ev.result;
-    delete ev.result;
-    for (const key of ["is_error", "error_code", "error_message", "output"] as const) {
+    for (const key of ["is_error", "error_code", "error_message"] as const) {
       if (ev[key] === undefined && result[key] !== undefined) ev[key] = result[key];
     }
   }

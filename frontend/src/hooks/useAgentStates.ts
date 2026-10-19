@@ -131,8 +131,11 @@ export function useAgentStates(
       }
 
       // A pre-contract agent_completed carries neither run_id nor node, like
-      // its agent_started: it closes the run of the node that last started.
-      const runNode = node || (event.type === "agent_completed" && !event.run_id ? lastStartedNode : "");
+      // its agent_started. A failed one closes the run of the node that last
+      // started, so the failure shows; a clean one adds nothing the node's own
+      // rows do not already say, and stays out as it always has.
+      const legacyFailure = event.type === "agent_completed" && !event.run_id && event.is_error === true;
+      const runNode = node || (legacyFailure ? lastStartedNode : "");
       const key = event.run_id ?? latestRunByNode.get(runNode);
       const agent = key ? runs.get(key) : undefined;
       if (!agent) return;
