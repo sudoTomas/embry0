@@ -1,9 +1,9 @@
 import type { LlmProviderName } from "../llmProviders";
 
-export type CredentialKind = "forge_token" | "llm_oauth" | "llm_api_key" | "ssh_key";
-export type CredentialProvider = "github" | "gitlab" | "ssh" | LlmProviderName;
+export type CredentialKind = "forge_token" | "llm_oauth" | "llm_api_key" | "ssh_key" | "tailnet_api_key";
+export type CredentialProvider = "github" | "gitlab" | "ssh" | "tailscale" | LlmProviderName;
 export type CredentialStatus = "ok" | "disabled" | "quarantined";
-export type BindingRole = "forge" | "llm" | "deploy";
+export type BindingRole = "forge" | "llm" | "deploy" | "tailnet";
 export type ScopeKind = "repo" | "owner" | "host" | "global";
 
 export interface Credential {

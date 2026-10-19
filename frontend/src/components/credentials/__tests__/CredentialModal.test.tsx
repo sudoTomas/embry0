@@ -196,6 +196,43 @@ describe("CredentialModal", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("offers xAI sign-in only for an xAI account, the one kind it creates", async () => {
+    const user = userEvent.setup();
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} />);
+    const signIn = () => screen.queryByRole("button", { name: /sign in with xai/i });
+    expect(signIn(), "forge token").toBeNull();
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "claude_oauth");
+    expect(signIn(), "Claude OAuth token").toBeNull();
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
+    expect(screen.getByLabelText(/^provider/i)).toHaveValue("anthropic");
+    expect(signIn(), "Anthropic API key").toBeNull();
+    await user.selectOptions(screen.getByLabelText(/^provider/i), "xai");
+    expect(signIn()).toBeInTheDocument();
+    expect(screen.getByText(/stores an xAI OAuth account/i)).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "forge_token");
+    expect(signIn(), "back to forge token").toBeNull();
+  });
+
+  it("keeps a started xAI login on screen when the kind changes", async () => {
+    startXaiDeviceLogin.mockResolvedValue({
+      login_id: "login-2",
+      user_code: "WXYZ-1234",
+      verification_uri_complete: "https://x.ai/device?user_code=WXYZ-1234",
+      expires_at: "2026-10-01T00:05:00Z",
+      interval: 5,
+    });
+    const user = userEvent.setup();
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} />);
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
+    await user.selectOptions(screen.getByLabelText(/^provider/i), "xai");
+    await user.type(screen.getByLabelText(/label/i), "grok-default");
+    await user.click(screen.getByRole("button", { name: /sign in with xai/i }));
+    expect(await screen.findByText("WXYZ-1234")).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "forge_token");
+    expect(screen.getByText("WXYZ-1234")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sign in with xai/i })).toBeNull();
+  });
+
   it("polls xAI device login on the interval from the start response", async () => {
     vi.useFakeTimers();
     startXaiDeviceLogin.mockResolvedValue({
@@ -210,6 +247,8 @@ describe("CredentialModal", () => {
       .mockResolvedValueOnce({ status: "done", credential: { id: "cred-00000000000b" } });
     const onSubmit = vi.fn();
     render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={onSubmit} onClose={vi.fn()} gitlabHost={null} />);
+    fireEvent.change(screen.getByLabelText(/^kind/i), { target: { value: "llm_api_key" } });
+    fireEvent.change(screen.getByLabelText(/^provider/i), { target: { value: "xai" } });
     fireEvent.change(screen.getByLabelText(/label/i), { target: { value: "grok-default" } });
     fireEvent.click(screen.getByRole("button", { name: /sign in with xai/i }));
     await act(async () => {
@@ -242,6 +281,18 @@ describe("CredentialModal", () => {
     });
     expect(pollXaiDeviceLogin).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
+  });
+
+  it("keeps the dialog inside a short screen and scrolls it inside itself", () => {
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} />);
+    const dialog = screen.getByRole("dialog", { name: "Create credential" });
+    // jsdom has no layout, so this pins the classes: the backdrop keeps a 16px
+    // gutter, and the dialog is no taller than the space inside it and scrolls
+    // its own content without handing the scroll to the page.
+    expect(dialog.parentElement?.className).toContain("p-4");
+    expect(dialog.className).toContain("max-h-full");
+    expect(dialog.className).toContain("overflow-y-auto");
+    expect(dialog.className).toContain("overscroll-contain");
   });
 
   it("rotate mode shows the label read-only and submits only the secret", async () => {

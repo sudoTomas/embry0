@@ -182,6 +182,9 @@ export function CredentialModal({
 
   const llmStates = llmProviderStates(catalogProviders);
   const notEnabled = llmStates.filter((entry) => entry.state === "not_enabled").map((entry) => entry.name);
+  // The device login creates an xAI llm_oauth account (POST /credentials/xai/device-login),
+  // so it is offered only while the form is making an xAI account.
+  const offersXaiSignIn = !isRotate && accountKind === "llm_api_key" && llmProvider === "xai";
 
   const requestClose = useCallback(() => {
     setSecret("");
@@ -372,7 +375,7 @@ export function CredentialModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) requestClose();
       }}
@@ -382,7 +385,7 @@ export function CredentialModal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl"
+        className="relative max-h-full w-full max-w-md overflow-y-auto overscroll-contain rounded-lg border border-border bg-card p-6 shadow-xl"
       >
         <button
           type="button"
@@ -559,11 +562,24 @@ export function CredentialModal({
             {fieldErrors.label && <FieldAlert id="credential-label-error">{fieldErrors.label}</FieldAlert>}
           </div>
 
-          {!isRotate && (
+          {(offersXaiSignIn || deviceLogin) && (
             <div className="space-y-2">
-              <Button type="button" variant="outline" onClick={() => void handleDeviceLogin()} disabled={pending}>
-                Sign in with xAI
-              </Button>
+              {offersXaiSignIn && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleDeviceLogin()}
+                    disabled={pending}
+                    aria-describedby="credential-xai-sign-in-hint"
+                  >
+                    Sign in with xAI
+                  </Button>
+                  <p id="credential-xai-sign-in-hint" className="text-xs text-muted-foreground">
+                    Or sign in instead of pasting a key: that stores an xAI OAuth account under this label.
+                  </p>
+                </>
+              )}
               {deviceLogin && (
                 <div className="space-y-1 text-sm">
                   <p className="font-mono">{deviceLogin.userCode}</p>
