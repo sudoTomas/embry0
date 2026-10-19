@@ -238,6 +238,22 @@ async def test_watcher_paths():
     assert await client.watcher_trigger() == {"proposals": 0}
 
 
+async def test_watcher_calls_can_name_a_stack():
+    handler = capture(
+        {
+            ("GET", "/api/v1/watcher/runs"): [],
+            ("POST", "/api/v1/watcher/run"): {"action": "no_issue"},
+        }
+    )
+    client = make_client(handler)
+    await client.watcher_runs(limit=5, stack="acme/api")
+    assert dict(handler.seen[0].url.params) == {"limit": "5", "stack": "acme/api"}
+    await client.watcher_trigger(stack="acme/api")
+    assert dict(handler.seen[1].url.params) == {"stack": "acme/api"}
+    await client.watcher_trigger()
+    assert dict(handler.seen[2].url.params) == {}, "no stack named: the route ticks every stack"
+
+
 async def test_case_paths():
     handler = capture(
         {

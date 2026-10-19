@@ -371,7 +371,8 @@ repository:
   one), `POST /issues/{id}/triage`, `POST /issues/{id}/sync` and
   `POST /issues/{id}/inputs/{input_id}/answer`;
 - `POST /cases/{id}/accept`, `POST /merge-approvals/{id}/decide`,
-  `POST /watcher/run` (the stack ticked), `POST /qa/images/build` and
+  `POST /watcher/run` (the stack ticked; with none named, every watched
+  stack, all checked before any ticks), `POST /qa/images/build` and
   `POST /repos/bootstrap`.
 
 The MCP tools reach embry0 through these routes with the caller's key, so

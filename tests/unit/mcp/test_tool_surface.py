@@ -183,8 +183,8 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
     "template_get": ["template_id: string"],
     "template_list": [],
     "template_validate": ["graph: object"],
-    "watcher_runs": ["limit: integer = 50"],
-    "watcher_trigger": ["timeout: number = 900.0"],
+    "watcher_runs": ["limit: integer = 50", "stack: string|null = null"],
+    "watcher_trigger": ["stack: string|null = null", "timeout: number = 900.0"],
 }
 
 

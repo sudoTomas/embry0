@@ -476,18 +476,24 @@ async def logs_query(
 
 
 @_tool
-async def watcher_runs(limit: int = 50) -> list[dict[str, Any]]:
-    """List recent log-watcher runs (anomaly scans that file draft tickets)."""
-    return await _get_client().watcher_runs(limit=limit)
+async def watcher_runs(limit: int = 50, stack: str | None = None) -> list[dict[str, Any]]:
+    """List recent log-watcher runs (anomaly scans that file draft tickets), newest
+    first. stack (the watched repo, "group/name" or a GitLab subgroup path) narrows
+    to one watched stack; omitted, every stack's runs are interleaved and each
+    row's repo names its stack."""
+    return await _get_client().watcher_runs(limit=limit, stack=stack)
 
 
 @_tool
-async def watcher_trigger(timeout: float = 900.0) -> dict[str, Any]:
-    """Trigger one log-watcher tick now and return its summary. Safe: proposal caps,
-    dedup, and the human gate still apply. A tick runs an LLM analysis job
-    synchronously and takes minutes — timeout (seconds) bounds the wait; the tick
-    keeps running server-side even if it elapses."""
-    return await _get_client().watcher_trigger(timeout=timeout)
+async def watcher_trigger(timeout: float = 900.0, stack: str | None = None) -> dict[str, Any]:
+    """Trigger a log-watcher tick now and return its summary. Safe: proposal caps,
+    dedup, and the human gate still apply. stack (a watched repo, as watcher_runs
+    names it) ticks that stack; omitted while several are watched, every stack
+    ticks and the summary lists each one's result under "stacks" (each may run
+    one paid analysis). A tick runs an LLM analysis job synchronously and takes
+    minutes — timeout (seconds) bounds the wait; the tick keeps running
+    server-side even if it elapses."""
+    return await _get_client().watcher_trigger(timeout=timeout, stack=stack)
 
 
 # -------------------------------------------------------------------- cases
