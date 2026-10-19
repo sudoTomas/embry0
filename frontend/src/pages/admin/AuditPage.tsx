@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { formatDateTime } from "@/lib/utils";
-import { ACTION_ICONS, ACTION_LABELS, actionLabel, formatDetails } from "@/lib/auditLabels";
+import { ACTION_LABELS, actionIcon, actionLabel, formatDetails } from "@/lib/auditLabels";
 
 const WINDOW_OPTIONS = [
   { hours: 0, label: "All time" },
@@ -129,11 +129,12 @@ export function AuditPage() {
                   <tbody>
                     {audit.data.entries.map((entry) => {
                       const detail = formatDetails(entry.action, entry.details);
+                      const Icon = actionIcon(entry.action);
                       return (
                         <tr key={entry.id}>
                           <td>
                             <div className="flex items-baseline gap-1.5">
-                              <span className="text-sm">{ACTION_ICONS[entry.action] ?? "●"}</span>
+                              <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 self-center text-fg-muted" />
                               <span className="whitespace-nowrap font-medium text-white/80">
                                 {actionLabel(entry.action)}
                               </span>

@@ -4,35 +4,63 @@
 // snake `*_config_updated`); unknown actions fall back to sentence case
 // (`actionLabel`), never the raw string.
 
+import {
+  ArrowLeftRight,
+  ArrowRight,
+  Ban,
+  Check,
+  Dot,
+  Eye,
+  GitBranch,
+  GitMerge,
+  Key,
+  KeyRound,
+  LogOut,
+  Pencil,
+  Plus,
+  Search,
+  Settings,
+  X,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
 import { sentenceCase } from "./status";
 
-export const ACTION_ICONS: Record<string, string> = {
-  "issue.created": "✦",
-  "issue.updated": "✎",
-  "issue.status_changed": "→",
-  "issue.triaged": "🔍",
-  "issue.decomposed": "⑃",
-  "issue.job_created": "⚡",
-  "issue.github_synced": "⇄",
-  "issue.cancelled": "✕",
-  "user.login": "🔑",
-  "user.disabled": "⛔",
-  "user.enabled": "✓",
-  "user.force_logout": "⏏",
-  "apikey.created": "🗝",
-  "apikey.revoked": "✕",
-  "environment.secret_revealed": "👁",
-  "job.cancelled": "✕",
-  "merge.decided": "⇲",
-  provider_config_updated: "⚙",
-  budget_config_updated: "⚙",
-  integration_config_updated: "⚙",
-  context_config_updated: "⚙",
-  context_config_deleted: "✕",
-  provider_config_tested: "⚙",
-  watcher_stack_updated: "⚙",
-  watcher_stack_deleted: "✕",
+/** One lucide icon per audit action, drawn muted beside its label. Emoji used
+ * to stand in here and rendered as empty boxes on a machine without a colour
+ * emoji font; every other page already draws lucide icons. */
+export const ACTION_ICONS: Record<string, LucideIcon> = {
+  "issue.created": Plus,
+  "issue.updated": Pencil,
+  "issue.status_changed": ArrowRight,
+  "issue.triaged": Search,
+  "issue.decomposed": GitBranch,
+  "issue.job_created": Zap,
+  "issue.github_synced": ArrowLeftRight,
+  "issue.cancelled": X,
+  "user.login": KeyRound,
+  "user.disabled": Ban,
+  "user.enabled": Check,
+  "user.force_logout": LogOut,
+  "apikey.created": Key,
+  "apikey.revoked": X,
+  "environment.secret_revealed": Eye,
+  "job.cancelled": X,
+  "merge.decided": GitMerge,
+  provider_config_updated: Settings,
+  budget_config_updated: Settings,
+  integration_config_updated: Settings,
+  context_config_updated: Settings,
+  context_config_deleted: X,
+  provider_config_tested: Settings,
+  watcher_stack_updated: Settings,
+  watcher_stack_deleted: X,
 };
+
+/** The icon for an audit action; an action the map does not know yet gets a dot. */
+export function actionIcon(action: string): LucideIcon {
+  return ACTION_ICONS[action] ?? Dot;
+}
 
 export const ACTION_LABELS: Record<string, string> = {
   "issue.created": "Created",
