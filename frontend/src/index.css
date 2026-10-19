@@ -239,6 +239,32 @@ body[data-divine="off"] .motion-mark * {
 
 /* ----- motion: live numbers and rows ----- */
 
+/* Table rows arrive in turn the first time they are drawn: each body row of
+   the shared .data-table rises in like .motion-enter, one --motion-step
+   after the row above, and rows past the twelfth share the twelfth's turn.
+   A row React keeps across a poll is the same element, so it never arrives
+   twice; a new row arrives on its own. The fill is backwards only, so a row
+   that is in holds no animation: a filled transform would leave every row a
+   containing block and a stacking context, so a menu or tooltip opened in a
+   row would be placed against the row and drawn under the rows after it. */
+@media (prefers-reduced-motion: no-preference) {
+  .data-table > tbody > tr {
+    animation: motion-enter var(--motion-base) var(--ease-standard) backwards;
+    animation-delay: calc(var(--row-turn, 11) * var(--motion-step));
+  }
+  .data-table > tbody > tr:nth-child(1) { --row-turn: 0; }
+  .data-table > tbody > tr:nth-child(2) { --row-turn: 1; }
+  .data-table > tbody > tr:nth-child(3) { --row-turn: 2; }
+  .data-table > tbody > tr:nth-child(4) { --row-turn: 3; }
+  .data-table > tbody > tr:nth-child(5) { --row-turn: 4; }
+  .data-table > tbody > tr:nth-child(6) { --row-turn: 5; }
+  .data-table > tbody > tr:nth-child(7) { --row-turn: 6; }
+  .data-table > tbody > tr:nth-child(8) { --row-turn: 7; }
+  .data-table > tbody > tr:nth-child(9) { --row-turn: 8; }
+  .data-table > tbody > tr:nth-child(10) { --row-turn: 9; }
+  .data-table > tbody > tr:nth-child(11) { --row-turn: 10; }
+}
+
 /* ----- motion: console board ----- */
 
 /* ----- motion: job journey ----- */
