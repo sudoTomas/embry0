@@ -1,10 +1,20 @@
 export interface RecentIssue {
+  /** The issue's id: the row links to /issues/:trace_id. */
   trace_id: string;
+  /** GitHub issue number; 0 for every other tracker. */
   issue_number: number;
   repo: string;
+  /** The rest name the issue; absent from a backend older than them. */
+  title?: string;
+  tracker?: string | null;
+  tracker_key?: string | null;
+  /** The issue's own status, apart from its latest job's. */
+  issue_status?: string;
+  job_status?: string | null;
   timestamp: string;
   passed: boolean;
   cost_usd?: number;
+  /** The latest job's status, else the issue's (blended; kept for older backends). */
   status?: string;
 }
 

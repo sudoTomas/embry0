@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 import { formatDate } from "@/lib/utils";
 import { statusLabel, statusTone } from "@/lib/status";
 import { watcherActionLabel, watcherActionTone } from "@/lib/watcherActions";
+import type { RecentIssue } from "@/lib/types";
 import {
   SingleSourceTile,
   type SingleSourceQuery,
@@ -31,6 +32,13 @@ function selectQuery<TSource, TValue>(
     isPending: result.isPending,
     data: result.data === undefined ? undefined : select(result.data),
   };
+}
+
+/** How a recent issue is named: owner/repo#42 on GitHub, the tracker's own
+ * key (ENG-7) elsewhere, the repository when the issue has no key. */
+function recentIssueKey(issue: RecentIssue): string {
+  if (issue.tracker_key) return issue.tracker === "github" ? `${issue.repo}#${issue.tracker_key}` : issue.tracker_key;
+  return issue.issue_number > 0 ? `${issue.repo}#${issue.issue_number}` : issue.repo;
 }
 
 /**
@@ -115,14 +123,17 @@ export function DashboardPage() {
             </thead>
             <tbody>
               {recentIssues.map((issue) => {
-                const status = issue.status ?? (issue.passed ? "passed" : "failed");
+                const status = issue.issue_status ?? issue.status ?? (issue.passed ? "passed" : "failed");
                 return (
                   <tr key={issue.trace_id}>
                     <td className="w-px">
                       <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>
                     </td>
                     <td className="w-full max-w-0 truncate">
-                      {issue.repo}#{issue.issue_number}
+                      <Link to={`/issues/${issue.trace_id}`} className="hover:underline" title={issue.title}>
+                        <span className="text-fg-secondary">{recentIssueKey(issue)}</span>
+                        {issue.title && <span className="ml-2">{issue.title}</span>}
+                      </Link>
                     </td>
                     <td className="num hidden whitespace-nowrap text-fg-secondary sm:table-cell">
                       {issue.cost_usd !== undefined ? formatUsd(issue.cost_usd) : "—"}
