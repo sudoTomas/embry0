@@ -102,3 +102,78 @@ async def test_developer_without_brainstorming_skill_uses_default_cap():
     assert isinstance(result, Command)
     update = result.update or {}
     assert update.get("agent_questions_exhausted") is True
+
+
+def _brainstorm_cap_state(pipeline_config: dict) -> dict:
+    return {
+        "job_id": "JOB",
+        "issue_id": "iss-x",
+        "repo": "owner/repo",
+        "task": "design something",
+        "sandbox_container_id": "C",
+        "agent_outputs": [],
+        "errors": [],
+        "agent_question_rounds": 14,
+        "pipeline_config": {**pipeline_config, "budget_usd": 50.0},
+    }
+
+
+async def _run_developer_with_one_question(state: dict, config: dict):
+    from embry0.workflows.issue_to_pr.nodes import developer_node
+
+    fake_events = [{"type": "agent_ask_user", "question": "Q15?", "category": "design", "options": []}]
+    fake_result = {
+        "agent_outputs": [{"agent_type": "developer", "is_error": False, "output": "..."}],
+        "events": fake_events,
+        "total_cost_usd": 0.10,
+    }
+
+    async def _run(*args, **kwargs):
+        cb = kwargs.get("on_event")
+        if cb:
+            for ev in fake_events:
+                cb(ev)
+        return fake_result
+
+    with (
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(side_effect=_run)),
+        patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
+    ):
+        return await developer_node(state, config)
+
+
+@pytest.mark.asyncio
+async def test_a_triage_skills_delta_adding_brainstorming_raises_the_cap():
+    """Triage now emits {"add": [...]}; the cap reads the effective list, not the raw override."""
+    state = _brainstorm_cap_state({"agent_skills": {"developer": {"add": ["superpowers:brainstorming"]}}})
+    result = await _run_developer_with_one_question(
+        state, {"configurable": {"agent_runner": object(), "credentials": {}}}
+    )
+    update = result.update or {}
+    assert not update.get("agent_questions_exhausted"), "a brainstorming delta must lift the cap to 15"
+    assert update.get("agent_question_rounds") == 15
+
+
+@pytest.mark.asyncio
+async def test_brainstorming_on_the_developer_definition_raises_the_cap():
+    """A row that carries brainstorming gets the higher cap with no triage override at all."""
+    from unittest.mock import MagicMock
+
+    defs = MagicMock()
+    defs.get = AsyncMock(
+        return_value={
+            "model": "claude-sonnet-5",
+            "tools": [],
+            "skills": ["superpowers:brainstorming"],
+            "system_prompt": "",
+        }
+    )
+    state = _brainstorm_cap_state({})
+    with patch("embry0.storage.repositories.agent_definitions.AgentDefinitionsRepository", return_value=defs):
+        result = await _run_developer_with_one_question(
+            state, {"configurable": {"agent_runner": object(), "credentials": {}, "db": MagicMock()}}
+        )
+    defs.get.assert_awaited_with("developer")
+    update = result.update or {}
+    assert not update.get("agent_questions_exhausted"), "the definition's brainstorming skill must lift the cap"
+    assert update.get("agent_question_rounds") == 15

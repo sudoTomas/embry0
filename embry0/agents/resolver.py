@@ -11,6 +11,7 @@ from typing import Any
 import structlog
 
 from embry0.agents.invocation import AgentInvocation
+from embry0.agents.skills import effective_skills
 from embry0.execution.auth_provider import AuthConfigError
 from embry0.safety.error_codes import ErrorCode
 from embry0.safety.policy import default_policy_for_agent
@@ -54,7 +55,9 @@ def resolve_agent_config(
 ) -> ResolvedAgentConfig:
     """Merge chain: agent_definition <- template overrides <- runtime overrides.
 
-    For tools and skills: later levels replace earlier.
+    For tools: later levels replace earlier. For skills: each level is a
+    delta (add/remove) over the previous, a bare list meaning replace
+    (``embry0.agents.skills.effective_skills``).
     system_prompt comes only from agent_definition.
 
     The model has two more levels (#465). Later wins:
@@ -82,8 +85,6 @@ def resolve_agent_config(
             model = template_config["agent_models"][agent_type]
         if agent_type in template_config.get("agent_tools", {}):
             tools = template_config["agent_tools"][agent_type]
-        if agent_type in template_config.get("agent_skills", {}):
-            skills = template_config["agent_skills"][agent_type]
 
     # Runtime (triage) overrides
     if pipeline_config:
@@ -100,8 +101,12 @@ def resolve_agent_config(
                 model = triage_models[agent_type]
         if agent_type in pipeline_config.get("agent_tools", {}):
             tools = pipeline_config["agent_tools"][agent_type]
-        if agent_type in pipeline_config.get("agent_skills", {}):
-            skills = pipeline_config["agent_skills"][agent_type]
+
+    skills = effective_skills(
+        skills,
+        ((template_config or {}).get("agent_skills") or {}).get(agent_type),
+        ((pipeline_config or {}).get("agent_skills") or {}).get(agent_type),
+    )
 
     # Explicit job-level models — the most specific instruction there is.
     if job_agent_models and agent_type in job_agent_models:

@@ -214,3 +214,30 @@ def test_review_agent_type_routes_like_reviewer():
     plan_with_cfg = [{"agent_type": "review", "node_id": "rev", "config": {"model": "claude-opus-5"}}]
     cfg = step_template_config({"route_plan": plan_with_cfg, "route_cursor": 0}, "review")
     assert cfg == {"agent_models": {"review": "claude-opus-5"}}
+
+
+def test_node_config_reads_config_then_legacy_top_level() -> None:
+    from embry0.workflows.issue_to_pr.route_plan import node_config
+
+    assert node_config({"config": {"model": "m", "skills": {"add": ["s:x"]}}})["model"] == "m"
+    legacy = {
+        "node_id": "n",
+        "agent_type": "developer",
+        "model": "m2",
+        "skills": ["s:y"],
+        "tools": None,
+        "max_turns": 3,
+    }
+    assert node_config(legacy) == {"model": "m2", "skills": ["s:y"], "max_turns": 3}
+    assert node_config({"config": {}, "model": "ignored"}) == {}, "an empty config dict wins over legacy keys"
+
+
+def test_step_template_config_passes_a_skills_delta_through() -> None:
+    from embry0.workflows.issue_to_pr.route_plan import step_template_config
+
+    delta = {"add": ["s:x"], "remove": ["s:y"]}
+    plan = build_route_plan(
+        {"nodes": [{"node_id": "d", "agent_type": "developer", "config": {"skills": delta}}], "edges": []}
+    )
+    got = step_template_config({"route_plan": plan, "route_cursor": 0}, "developer")
+    assert got == {"agent_skills": {"developer": delta}}, f"the step's skills delta was reshaped: {got!r}"

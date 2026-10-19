@@ -63,7 +63,9 @@ class PipelineConfig(TypedDict, total=False):
     validator_modes: list[str]
     agent_models: dict[str, str]
     agent_tools: dict[str, list[str]]
-    agent_skills: dict[str, list[str]]
+    # A bare list replaces the agent's skills; {"add": [...], "remove": [...] | "*"}
+    # is a delta over them (embry0.agents.skills.effective_skills).
+    agent_skills: dict[str, list[str] | dict[str, Any]]
     budget_usd: float
     # Phase 1 additions — per-agent-type overrides produced by triage.
     execution_modes: dict[str, str]
@@ -138,6 +140,15 @@ class AgentOutputEntry(TypedDict, total=False):
     session_blob: bytes | None
 
 
+class SkillsDeltaModel(BaseModel):
+    """A skills delta triage may emit: ``remove`` first, then ``add`` (spec 3.3)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    add: list[str] = Field(default_factory=list)
+    remove: list[str] | Literal["*"] = Field(default_factory=list)
+
+
 class PipelineConfigModel(BaseModel):
     """Strict Pydantic equivalent of the PipelineConfig TypedDict.
 
@@ -157,7 +168,7 @@ class PipelineConfigModel(BaseModel):
     validator_modes: list[str] = Field(default_factory=list)
     agent_models: dict[str, str] = Field(default_factory=dict)
     agent_tools: dict[str, list[str]] = Field(default_factory=dict)
-    agent_skills: dict[str, list[str]] = Field(default_factory=dict)
+    agent_skills: dict[str, list[str] | SkillsDeltaModel] = Field(default_factory=dict)
     budget_usd: float = Field(default=10.0, ge=0.0)
     execution_modes: dict[str, str] = Field(default_factory=dict)
     auth_modes: dict[str, str] = Field(default_factory=dict)

@@ -32,6 +32,45 @@ def test_triage_word_default_is_not_stored_as_a_profile():
     )
 
 
+def test_triage_prompt_asks_for_a_skills_addition():
+    from embry0.orchestration.nodes.triage import _TRIAGE_SYSTEM_PROMPT_TEMPLATE
+
+    assert '{"developer": {"add": ["superpowers:brainstorming"]}}' in _TRIAGE_SYSTEM_PROMPT_TEMPLATE
+    assert '{"developer": ["superpowers:brainstorming"]}' not in _TRIAGE_SYSTEM_PROMPT_TEMPLATE, (
+        "the replace form would drop the developer's configured skills"
+    )
+
+
+def test_a_skills_delta_from_triage_parses_and_adds_to_the_definition():
+    from embry0.agents.resolver import resolve_agent_config
+
+    raw = json.dumps(
+        {
+            "action": "proceed",
+            "confidence": 0.9,
+            "pipeline_config": {"agent_skills": {"developer": {"add": ["superpowers:brainstorming"]}}},
+            "reasoning": "open-ended",
+        }
+    )
+    decision = parse_triage_response(raw)
+    definition = {"model": "m", "tools": [], "skills": ["local:house-style"], "system_prompt": ""}
+    resolved = resolve_agent_config("developer", definition, pipeline_config=dict(decision["pipeline_config"]))
+    assert resolved.skills == ["local:house-style", "superpowers:brainstorming"]
+
+
+def test_a_legacy_skills_list_from_triage_still_parses():
+    raw = json.dumps(
+        {
+            "action": "proceed",
+            "confidence": 0.9,
+            "pipeline_config": {"agent_skills": {"developer": ["superpowers:writing-plans"]}},
+            "reasoning": "clear",
+        }
+    )
+    decision = parse_triage_response(raw)
+    assert decision["pipeline_config"]["agent_skills"] == {"developer": ["superpowers:writing-plans"]}
+
+
 def test_parse_triage_response_proceed():
     raw = json.dumps(
         {

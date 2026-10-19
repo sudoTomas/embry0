@@ -54,6 +54,26 @@ def test_a_step_model_reaches_its_agent(node_type: str, runtime_type: str) -> No
     assert got == f"model-for-{node_type}", f"a {node_type} step's model resolved to {got!r}"
 
 
+def _legacy_graph(types: list[str]) -> dict[str, Any]:
+    """The editor's pre-#78 shape: overrides at the node's top level, no ``config``."""
+    graph = _graph(types)
+    graph["nodes"] = [{"node_id": t, "agent_type": t, "model": f"model-for-{t}"} for t in types]
+    return graph
+
+
+@pytest.mark.parametrize(("node_type", "runtime_type"), sorted(_STEP_TYPES.items()))
+def test_a_legacy_top_level_step_model_reaches_its_agent(node_type: str, runtime_type: str) -> None:
+    plan = build_route_plan(_legacy_graph(["triage", node_type]))
+    state = {"route_plan": plan, "route_cursor": 0}
+    got = _resolved_model(runtime_type, step_template_config(state, runtime_type))
+    assert got == f"model-for-{node_type}", f"a legacy-shaped {node_type} step's model resolved to {got!r}"
+
+
+def test_a_legacy_top_level_triage_model_reaches_triage() -> None:
+    got = _resolved_model("triage", triage_template_config(_legacy_graph(["triage", "developer"])))
+    assert got == "model-for-triage", f"a legacy-shaped triage model resolved to {got!r}"
+
+
 def test_the_triage_node_model_reaches_triage() -> None:
     got = _resolved_model("triage", triage_template_config(_graph(["triage", "developer"])))
     assert got == "model-for-triage", f"the template's triage model resolved to {got!r}"

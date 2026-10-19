@@ -83,9 +83,10 @@ implementation, then attach exactly ONE of these two skills to the developer:
   sentence. The skill goes straight to writing a step-by-step
   implementation plan, then to executing it.
 
-Set the chosen skill in `pipeline_config.agent_skills`:
-  {"developer": ["superpowers:brainstorming"]}     # or
-  {"developer": ["superpowers:writing-plans"]}
+Set the chosen skill as an ADDITION in `pipeline_config.agent_skills` (the
+developer keeps its configured skills; you add one):
+  {"developer": {"add": ["superpowers:brainstorming"]}}     # or
+  {"developer": {"add": ["superpowers:writing-plans"]}}
 
 Defaults if you can't decide: prefer brainstorming. Better to spend a few
 minutes designing than to ship the wrong thing.
