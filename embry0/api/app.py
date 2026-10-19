@@ -1177,6 +1177,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         image_registry=config.image_registry,
         enroll_ttl_seconds=config.proxy_enroll_ttl_seconds,
     )
+    # Spec 3.2: the skills store. Built before SandboxManager, which mounts
+    # its trees. Its sync service and the startup sync are wired after
+    # _init_app_state, which creates the skill repositories and seeds the
+    # builtin sources the startup sync must see.
+    from embry0.skills.store import SkillStore
+
+    app.state.skill_store = SkillStore(config.skills_store_path, daemon_root=config.skills_store_daemon_path)
     sandbox_mgr = SandboxManager(
         docker,
         proxy_manager=proxy_mgr,
@@ -1195,6 +1202,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Without it no repo gets the daemon (closed, not open).
         docker_access_registry=ReposRepository(db, default_forge=config.default_forge),
         runtime=runtime,
+        # Spec 3.3: every sandbox gets the enabled skill sources, read-only.
+        # Built here, like the registry above: _init_app_state creates
+        # app.state.skill_sources_repo later.
+        skill_store=app.state.skill_store,
+        skill_sources_repo=SkillSourcesRepository(db),
     )
     loop_metrics = getattr(app.state, "loop_metrics", None)
     agent_runner = AgentRunner(
@@ -1215,13 +1227,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.sandbox_manager = sandbox_mgr
     app.state.agent_runner = agent_runner
     app.state.proxy_manager = proxy_mgr
-
-    # Spec 3.2: the skills store. Its sync service and the startup sync are
-    # wired after _init_app_state, which creates the skill repositories and
-    # seeds the builtin sources the startup sync must see.
-    from embry0.skills.store import SkillStore
-
-    app.state.skill_store = SkillStore(config.skills_store_path)
 
     image_mgr = SandboxImageManager(runtime, image_registry=config.image_registry)
     app.state.image_manager = image_mgr

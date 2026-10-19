@@ -445,6 +445,11 @@ class Embry0Config(BaseSettings):
     # `skills-store` volume here and at the same path in dind, because the
     # sandbox bind mounts are resolved in dind's namespace.
     skills_store_path: Path = Path("/skills")
+    # The path at which the sandbox daemon sees the store; None means the same
+    # path as skills_store_path. DinD mounts the volume at /skills too; the
+    # rootless daemon runs on the host, so infra/docker-compose.rootless.yml
+    # bind-mounts a host directory and sets this to that directory.
+    skills_store_daemon_path: Path | None = None
     # #523: the in-stack registry refuses anonymous clients. A directory holding
     # `username` and `password` files (compose mounts the registry-auth volume
     # there); at startup the login is written into the orchestrator's docker CLI

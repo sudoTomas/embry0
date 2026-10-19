@@ -28,6 +28,7 @@ from embry0.services.credentials.resolver import (
     CredentialUnavailableError,
     ResolvedCredential,
 )
+from embry0.skills.store import SkillMount, SkillStore
 
 if TYPE_CHECKING:
     from embry0.execution.proxy.manager import ProxyManager
@@ -148,6 +149,8 @@ class SandboxManager:
         credential_resolver: Any | None = None,
         docker_access_registry: DockerAccessRegistry | None = None,
         runtime: AgentRuntime | None = None,
+        skill_store: SkillStore | None = None,
+        skill_sources_repo: Any | None = None,
     ) -> None:
         self._docker = docker
         # #268: production passes the runtime chosen at startup, whose client
@@ -181,6 +184,12 @@ class SandboxManager:
         # #554: the isolation chain is one per bridge, shared by every
         # sandbox; rewrites from concurrent creates go one at a time.
         self._isolation_lock = asyncio.Lock()
+        # Spec 3.3: the skill sources each sandbox gets, read-only. Either one
+        # absent mounts nothing. What create mounted is kept per container id
+        # (the id the node holds), so a run reports that, not a newer manifest.
+        self._skill_store = skill_store
+        self._skill_sources_repo = skill_sources_repo
+        self._skill_mounts_by_container: dict[str, list[SkillMount]] = {}
 
     @property
     def runtime(self) -> AgentRuntime:
@@ -594,6 +603,13 @@ class SandboxManager:
         for vol_name, mount_point in volumes or []:
             extra_volumes.append(f"{vol_name}:{mount_point}")
 
+        # Spec 3.3: every enabled skill source with a tree, read-only. The
+        # source is resolved in the sandbox daemon's namespace (SkillStore's
+        # daemon_root), like the /certs/client bind above.
+        skill_mounts = await self._resolve_skill_mounts()
+        for mount in skill_mounts:
+            extra_volumes.append(f"{mount.host_path}:{mount.container_path}:ro")
+
         base_image = p.get("base_image", _DEFAULT_PROFILE["base_image"])
         cmd = self._docker.build_run_cmd(
             image=qualify_image(base_image, self._image_registry),
@@ -777,6 +793,7 @@ class SandboxManager:
             self._forge_credentials[container_id] = resolved_cred
         if llm_resolved:
             self._llm_credentials[container_id] = llm_resolved
+        self._skill_mounts_by_container[container_id] = skill_mounts
 
         logger.info(
             "sandbox_created",
@@ -974,6 +991,21 @@ class SandboxManager:
             logger.warning("claude_credentials_read_failed", error=str(exc))
             return None
 
+    async def _resolve_skill_mounts(self) -> list[SkillMount]:
+        if self._skill_store is None or self._skill_sources_repo is None:
+            return []
+        try:
+            rows = await self._skill_sources_repo.list_all()
+        except Exception as exc:  # noqa: BLE001 — the store is never a reason a sandbox cannot start
+            logger.warning("skill_sources_unavailable_for_mount", error=str(exc))
+            return []
+        return self._skill_store.mounts(rows)
+
+    async def skill_mounts_for(self, container_id: str) -> list[SkillMount]:
+        """What ``create`` mounted into this sandbox; after a restart, the store's current manifest."""
+        known = self._skill_mounts_by_container.get(container_id)
+        return list(known) if known is not None else await self._resolve_skill_mounts()
+
     def _remember_bearer(self, container: str, token: str) -> None:
         register_known_secrets([token])
         self._bearers.setdefault(container, set()).add(token)
@@ -996,6 +1028,7 @@ class SandboxManager:
         # container's address still resolves. Best-effort.
         self._forge_credentials.pop(container, None)
         self._llm_credentials.pop(container, None)
+        self._skill_mounts_by_container.pop(container, None)
         self._release_bearers(container)
         was_enforced = container in self._egress_enforced
         self._egress_enforced.discard(container)

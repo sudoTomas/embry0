@@ -499,7 +499,12 @@ async def run_agent_node(
     # Spec 3.4: the run id is minted here, before the exec, so the trace row
     # and every event of this run share it; the sandbox stamps it on events.
     run_id = f"run-{uuid.uuid4().hex}"
-    invocation = replace(invocation, run_id=run_id, node=node or agent_type)
+    # Spec 3.3: the skill sources this job's sandbox has mounted; the sandbox
+    # turns each into a local plugin of the SDK. A runner without the method
+    # (test doubles that only run) mounts nothing.
+    skill_mounts_of = getattr(agent_runner, "skill_mounts", None)
+    skill_mounts = await skill_mounts_of(state.get("sandbox_container_id", "")) if skill_mounts_of else []
+    invocation = replace(invocation, run_id=run_id, node=node or agent_type, skill_mounts=tuple(skill_mounts))
 
     # Build the serialized invocation dict the sandbox runner receives.
     serialized = {
@@ -518,6 +523,7 @@ async def run_agent_node(
         "provider": invocation.provider,
         "run_id": invocation.run_id,
         "node": invocation.node,
+        "skill_mounts": list(invocation.skill_mounts),
     }
 
     container = state.get("sandbox_container_id", "")

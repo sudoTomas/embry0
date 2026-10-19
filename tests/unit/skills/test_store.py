@@ -64,3 +64,13 @@ def test_mounts_enabled_sources_whose_tree_exists_whatever_the_status(tmp_path: 
     assert mounts[0].container_path == "/opt/embry0/skills/mine"
     missing = [e for e in logs if e["event"] == "skill_source_mount_missing"]
     assert [e["source_id"] for e in missing] == ["wiped"]
+
+
+def test_mounts_name_the_tree_where_the_sandbox_daemon_sees_the_store(tmp_path: Path) -> None:
+    """Rootless: the daemon resolves bind sources on the host, not at the orchestrator's /skills."""
+    store = SkillStore(tmp_path / "skills", daemon_root=Path("/var/lib/embry0/skills"))
+    store.publish("mine", "a" * 40, _stage(tmp_path, "one"))
+    assert store.tree_path("mine", "a" * 40) == tmp_path / "skills" / "mine" / ("a" * 40)
+    [mount] = store.mounts([{"id": "mine", "plugin_name": "mine", "enabled": True}])
+    assert mount.host_path == "/var/lib/embry0/skills/mine/" + "a" * 40, "the mount names the daemon's path"
+    assert mount.container_path == "/opt/embry0/skills/mine"

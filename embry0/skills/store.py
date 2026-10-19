@@ -1,7 +1,9 @@
 """The skills store: /skills/<source_id>/<resolved_sha>/ trees and a `current` pointer (spec 3.2).
 
-The orchestrator writes here; DinD sees the same volume at the same path and
-bind-mounts a tree read-only into each sandbox at /opt/embry0/skills/<id>.
+The orchestrator writes here; the sandbox daemon bind-mounts a tree read-only
+into each sandbox at /opt/embry0/skills/<id>. DinD sees the same volume at the
+same path; a daemon that sees the store elsewhere (the rootless daemon, on the
+host) is given that path as ``daemon_root``.
 """
 
 from __future__ import annotations
@@ -24,15 +26,18 @@ STAGING = ".staging"
 class SkillMount:
     source_id: str
     plugin_name: str
-    host_path: str  # /skills/<id>/<sha>, the path DinD bind-mounts
+    host_path: str  # <daemon_root>/<id>/<sha>, the path the sandbox daemon bind-mounts
     container_path: str  # /opt/embry0/skills/<id>
 
 
 class SkillStore:
     SANDBOX_ROOT = "/opt/embry0/skills"
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, daemon_root: Path | None = None) -> None:
         self._root = Path(root)
+        # Where the sandbox daemon sees ``root``: bind sources are resolved in
+        # its namespace, not the orchestrator's. None means the same path.
+        self._daemon_root = Path(daemon_root) if daemon_root is not None else self._root
 
     @property
     def root(self) -> Path:
@@ -99,7 +104,7 @@ class SkillStore:
                 SkillMount(
                     source_id=source_id,
                     plugin_name=str(src.get("plugin_name") or source_id),
-                    host_path=str(self.tree_path(source_id, sha)),
+                    host_path=str(self._daemon_root / source_id / sha),
                     container_path=f"{self.SANDBOX_ROOT}/{source_id}",
                 )
             )
