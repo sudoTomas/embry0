@@ -18,7 +18,7 @@ const CHIP: Record<SenseState, string> = {
 function SenseChips({ row }: { row: OrgRepoFacts }) {
   if (row.archived) return <Badge tone="neutral">Archived</Badge>;
   return (
-    <span className="inline-flex gap-1 whitespace-nowrap">
+    <span className="inline-flex flex-wrap gap-1 sm:flex-nowrap sm:whitespace-nowrap">
       {SENSES.map((sense) => {
         const state = senseState(row, sense);
         return (
@@ -97,20 +97,22 @@ export function OrgReposTable({ repos }: { repos: readonly OrgRepoFacts[] }) {
         </span>
       </div>
       <div className={TABLE_BOX}>
-        <table className="data-table min-w-[900px]" data-testid="org-repos-table">
+        {/* Below sm the repository and its senses stay and the chips wrap;
+            language, last push and open issues step aside. */}
+        <table className="data-table sm:min-w-[900px]" data-testid="org-repos-table">
           <thead>
             <tr>
               <th scope="col" className={TH}>Repository</th>
-              <th scope="col" className={TH}>Language</th>
-              <th scope="col" className={TH}>Pushed</th>
-              <th scope="col" className={cn(TH, "text-right")}>Issues</th>
+              <th scope="col" className={cn(TH, "hidden sm:table-cell")}>Language</th>
+              <th scope="col" className={cn(TH, "hidden sm:table-cell")}>Pushed</th>
+              <th scope="col" className={cn(TH, "hidden text-right sm:table-cell")}>Issues</th>
               <th scope="col" className={TH}>Senses</th>
             </tr>
           </thead>
           <tbody>
             {shown.map((r) => (
               <tr key={r.repo} data-testid="org-repo-row">
-                <td className={TD}>
+                <td className={cn(TD, "[overflow-wrap:anywhere]")}>
                   <div className="flex flex-col gap-0.5">
                     <Link to={`/repos/${r.repo}`} className="font-medium hover:underline" data-testid="org-repo-link">
                       {r.repo}
@@ -131,11 +133,11 @@ export function OrgReposTable({ repos }: { repos: readonly OrgRepoFacts[] }) {
                     )}
                   </div>
                 </td>
-                <td className={cn(TD, "text-white/70")}>{r.language ?? "-"}</td>
-                <td className={cn(TD, "whitespace-nowrap text-white/60")}>
+                <td className={cn(TD, "hidden text-white/70 sm:table-cell")}>{r.language ?? "-"}</td>
+                <td className={cn(TD, "hidden whitespace-nowrap text-white/60 sm:table-cell")}>
                   {r.pushed_at ? formatDateTime(r.pushed_at) : "-"}
                 </td>
-                <td className={cn(TD, "text-right font-mono text-white/70")}>{r.open_issues ?? "-"}</td>
+                <td className={cn(TD, "hidden text-right font-mono text-white/70 sm:table-cell")}>{r.open_issues ?? "-"}</td>
                 <td className={TD}>
                   <SenseChips row={r} />
                 </td>

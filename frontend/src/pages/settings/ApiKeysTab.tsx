@@ -249,18 +249,20 @@ export default function ApiKeysTab() {
         <EmptyState title="No API keys" description="Create one above to authenticate MCP/CLI clients." />
       )}
 
+      {/* Below sm the key's name, scope, status and actions stay; the rest
+          steps aside so revoke never sits off a phone screen. */}
       {keys.data && keys.data.length > 0 && (
         <div className="embry0-card overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Key</th>
+                <th className="hidden sm:table-cell">Key</th>
                 <th>Scope</th>
-                <th>Repositories</th>
-                {isAdmin && <th>Owner</th>}
-                <th>Last used</th>
-                <th>Expires</th>
+                <th className="hidden sm:table-cell">Repositories</th>
+                {isAdmin && <th className="hidden sm:table-cell">Owner</th>}
+                <th className="hidden sm:table-cell">Last used</th>
+                <th className="hidden sm:table-cell">Expires</th>
                 <th>Status</th>
                 <th className="text-right">Actions</th>
               </tr>
@@ -269,11 +271,11 @@ export default function ApiKeysTab() {
               {keys.data.map((k) => (
                 <tr key={k.id}>
                   <td>{k.name}</td>
-                  <td className="font-mono text-xs text-muted-foreground">{k.prefix}…</td>
+                  <td className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{k.prefix}…</td>
                   <td>
                     <Badge tone={SCOPE_TONES[k.scope]}>{k.scope}</Badge>
                   </td>
-                  <td className="text-xs" data-testid={`key-repos-${k.id}`}>
+                  <td className="hidden text-xs sm:table-cell" data-testid={`key-repos-${k.id}`}>
                     {k.allowed_repos ? (
                       <span className="font-mono">{k.allowed_repos.join(", ")}</span>
                     ) : (
@@ -281,14 +283,14 @@ export default function ApiKeysTab() {
                     )}
                   </td>
                   {isAdmin && (
-                    <td className="text-xs text-muted-foreground">
+                    <td className="hidden text-xs text-muted-foreground sm:table-cell">
                       {k.service ? <Badge tone="neutral">Service</Badge> : (k.user_id ?? "—")}
                     </td>
                   )}
-                  <td className="text-xs text-muted-foreground">
+                  <td className="hidden text-xs text-muted-foreground sm:table-cell">
                     {k.last_used_at ? formatDateTime(k.last_used_at) : "never"}
                   </td>
-                  <td className="text-xs text-muted-foreground">
+                  <td className="hidden text-xs text-muted-foreground sm:table-cell">
                     {k.expires_at ? formatDateTime(k.expires_at) : "—"}
                   </td>
                   <td>
