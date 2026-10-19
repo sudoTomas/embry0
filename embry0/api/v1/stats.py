@@ -170,13 +170,22 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
     )
     failures_by_category = failure_categories((r["error_code"], r["n"]) for r in failure_rows)
 
-    # Recent issues (10 most recent by latest job start, falling back to created_at)
+    # Recent issues (10 most recent by latest job start, falling back to created_at).
+    # Each row names its issue (title, tracker key) and keeps the issue's own
+    # status apart from its latest job's: `status` blends the two and
+    # `issue_number` is 0 for every non-GitHub tracker, so both stay only for
+    # older clients.
     recent_rows = await db.fetch(
         """
         SELECT
             i.id          AS trace_id,
             COALESCE(CASE WHEN i.tracker = 'github' THEN i.tracker_key::integer END, 0) AS issue_number,
             i.repo        AS repo,
+            COALESCE(i.title, 'Untitled') AS title,
+            i.tracker     AS tracker,
+            i.tracker_key AS tracker_key,
+            i.status      AS issue_status,
+            j.status      AS job_status,
             COALESCE(j.started_at, i.created_at) AS timestamp,
             COALESCE(j.status = 'completed', false) AS passed,
             COALESCE(j.total_cost_usd, 0.0) AS cost_usd,
@@ -198,6 +207,11 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
             "trace_id": r["trace_id"],
             "issue_number": r["issue_number"],
             "repo": r["repo"],
+            "title": r["title"],
+            "tracker": r["tracker"],
+            "tracker_key": r["tracker_key"],
+            "issue_status": r["issue_status"],
+            "job_status": r["job_status"],
             "timestamp": r["timestamp"].isoformat() if r["timestamp"] else None,
             "passed": r["passed"],
             "cost_usd": float(r["cost_usd"]),
