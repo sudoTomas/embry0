@@ -146,6 +146,12 @@ The agent that exercises a change against the full test matrix. Performs [Fermen
 ### Browser Backend
 The pluggable unit that supplies the [QA](#qa) agent's browser. A backend bundles four things: an MCP stdio server config, an exact-name tool allowlist, an auth-injection mechanism for pre-seeded login state, and a system-prompt fragment teaching the agent that backend's idioms. Two exist: `playwright` (default — `@playwright/mcp`, env-var storageState injection) and `vibium` (WebDriver-BiDi Go binary, tool-call `browser_restore_storage` injection, evaluate-shim console/network diagnostics). Selected per repo/app via the `browser_backend` field in qa.yaml v2 (defaults → app → app_local), overridable per job; both coexist in the `embry0-sandbox-qa` image. Registry lives in `embry0/workflows/qa/browser_backends.py`; design record in `docs/spikes/2026-08-27-vibium-browser-backend.md`. (2026-08)
 
+### Roster
+The twelve pixel avatars an agent can wear (`avatar` on its row; ids in `frontend/src/lib/agentIdentity.ts`), drawn as 16x16 character grids in `frontend/src/components/roster/sprites.ts` and compiled to SVG paths at load. Tinted by the agent's palette `color`. Not part of the [divine layer](#divine-layer) (its CLAUDE.md rule 9).
+
+### Sprite
+One roster avatar in one state (`idle`, `thinking`, `tool`, `done`, `failed`, `pending`), rendered by `<Sprite>` and stepped between two frames by one CSS keyframe under `prefers-reduced-motion: no-preference`. `stateFor` maps an agent run to a state, `stateForNode` a live graph node. Every surface that shows an agent shows its sprite (agents list and form, console cards, job page, [PartyNode](#partynode)).
+
 ### Output
 The agent that closes the loop — merges the PR, performs [Distill](#distill) (extract reusable template) and [Coagulate](#coagulate) (ship + record). Substance sigils: Aqua Vitae 🜈 (Distill), Sol ☉ (Coagulate).
 

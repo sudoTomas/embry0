@@ -8,6 +8,10 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    // Vitest blanks every stylesheet it does not process, a `?raw`
+    // import included, so the theme tests would read "". Keep raw
+    // stylesheet text; Vite's own CSS pipeline skips `?raw` anyway.
+    css: { include: [/\.css\?raw$/] },
   },
   server: {
     fs: {
