@@ -171,6 +171,8 @@ export function ConsolePage() {
       {showCreate && <NewJobForm onClose={() => setShowCreate(false)} knownRepos={repoOptions} />}
 
       <div className="space-y-4">
+        {/* On a phone the two filters share the line in halves, so their
+            widths never wait on the repo names the jobs poll brings. */}
         <div className="flex items-center gap-2">
           <FilterSelect
             label="Statuses"
@@ -178,12 +180,14 @@ export function ConsolePage() {
             options={[...ALL_JOB_STATUSES]}
             optionLabel={statusLabel}
             onChange={(v) => setParam("status", v)}
+            className="flex-1 sm:flex-initial"
           />
           <FilterSelect
             label="Repos"
             value={repoFilter}
             options={repoOptions}
             onChange={(v) => setParam("repo", v)}
+            className="flex-1 sm:flex-initial"
           />
         </div>
 

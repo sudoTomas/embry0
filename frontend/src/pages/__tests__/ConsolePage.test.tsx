@@ -253,6 +253,23 @@ describe("ConsolePage — URL-synced state", () => {
   });
 });
 
+describe("ConsolePage — on a phone", () => {
+  it("shares the filter line in halves, so a long repo name stays on screen", async () => {
+    mockFetchJobs.mockResolvedValue(
+      jobList([makeJob({ status: "running", task: "Running task", repo: "acme/a-repository-name-longer-than-a-phone-is-wide" })]),
+    );
+    renderPage();
+    await screen.findByText("Running task");
+    // A select is as wide as its longest option, and as a flex item it did
+    // not shrink below that: it pushed main sideways. Wrapping instead would
+    // move the board down when the jobs poll brought a long name.
+    for (const label of ["Statuses", "Repos"]) {
+      expect(screen.getByLabelText(label)).toHaveClass("min-w-0", "max-w-full", "flex-1", "sm:flex-initial");
+    }
+    expect(screen.getByLabelText("Repos").parentElement).not.toHaveClass("flex-wrap");
+  });
+});
+
 describe("ConsolePage — New Job launch flow", () => {
   it("creates a job with repo + task and navigates to its detail page", async () => {
     mockCreateJob.mockResolvedValue(makeJob({ job_id: "new-job-123" }));
