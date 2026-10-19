@@ -2242,6 +2242,7 @@ def _register_routers(app: FastAPI) -> None:
         skills,
         stats,
         telegram,
+        tools,
         traces,
         users,
         watcher,
@@ -2259,6 +2260,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(auth_session.router, prefix="/api/v1", tags=["auth"])
     app.include_router(agents.router, prefix="/api/v1", tags=["agents"], dependencies=auth_deps)
     app.include_router(skills.router, prefix="/api/v1", tags=["skills"], dependencies=auth_deps)
+    app.include_router(tools.router, prefix="/api/v1", tags=["tools"], dependencies=auth_deps)
     # RAV-1056 Phase A: user management — admin tier only (require_admin
     # accepts the master API key or an embry0-admin session).
     app.include_router(users.router, prefix="/api/v1", tags=["users"], dependencies=[require_admin])
