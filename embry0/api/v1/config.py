@@ -58,7 +58,7 @@ async def get_model_config(
     # MODEL_* values show the pre-5-family models in every dashboard
     # dropdown while jobs ran on the current ones. RAV-1297: the complete
     # catalog (Anthropic was omitted as the implicit runtime default).
-    from embry0.agents.providers import CATALOG_PROVIDERS
+    from embry0.agents.providers import catalog_providers
 
     provider_cfg = await provider_repo.get()
     disabled = set(provider_cfg.get("disabled_models") or [])
@@ -70,7 +70,7 @@ async def get_model_config(
     default_provider = default_serving.name if default_serving is not None else "anthropic"
 
     providers = []
-    for p in CATALOG_PROVIDERS:
+    for p in catalog_providers():
         state = readiness[p.name]
         probe = state.last_probe
         providers.append(
