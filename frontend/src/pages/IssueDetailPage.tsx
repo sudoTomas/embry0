@@ -23,9 +23,9 @@ import { useIssue, useIssueActivity, useTriageIssue, useSyncIssue, useDeleteIssu
 import { formatDate } from "@/lib/utils";
 import { formatCost } from "@/lib/utils";
 import { statusLabel } from "@/lib/status";
-import { trackerName } from "@/lib/forgeLinks";
 import type { NotificationChannel } from "@/lib/types";
 import { toastApiError } from "@/api/errorToast";
+import { trackerName } from "@/lib/forgeLinks";
 
 const NOTIFICATION_CHANNELS = ["dashboard", "telegram", "github", "linear", "gitlab", "slack"] as NotificationChannel[];
 
