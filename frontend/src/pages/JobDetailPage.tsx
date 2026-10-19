@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, Clock, DollarSign, ExternalLink, Layers } from "lucide-react";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
@@ -29,6 +29,7 @@ import { forgeIssueUrl } from "@/lib/forgeLinks";
 import { isNotFound } from "@/api/errorDetail";
 import { PageError } from "@/components/PageError";
 import { toastApiError } from "@/api/errorToast";
+import { motionIndex } from "@/lib/motion";
 
 function useElapsedTime(startedAt: string | null, finishedAt: string | null) {
   const [elapsed, setElapsed] = useState("");
@@ -52,6 +53,22 @@ function useElapsedTime(startedAt: string | null, finishedAt: string | null) {
 }
 
 const TRACES_PAGE_SIZE = 25;
+
+/**
+ * A card on the Pipeline tab arrives once, when it mounts: in its turn on
+ * the first paint, at once when it lands later. A run that changes group
+ * (waiting, running, done) mounts again in its new group, so it arrives in
+ * its new place. The grid lets the card fill its cell's height, as it did
+ * before it had a wrapper.
+ */
+function CardArrival({ turn, children }: { turn: number; children: ReactNode }) {
+  const [i] = useState(turn);
+  return (
+    <div className="motion-enter grid" style={motionIndex(i)}>
+      {children}
+    </div>
+  );
+}
 
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -82,6 +99,13 @@ export function JobDetailPage() {
   );
 
   const elapsed = useElapsedTime(job?.started_at ?? null, job?.finished_at ?? null);
+
+  // The cards' first paint takes turns; a card that lands after it does not wait.
+  const [cardsShown, setCardsShown] = useState(false);
+  useEffect(() => {
+    if (agents.length > 0) setCardsShown(true);
+  }, [agents.length]);
+  const turn = (i: number) => (cardsShown ? 0 : i);
 
   // Cost sources disagree by design: the stream-derived sums only cover agents
   // whose events this viewer actually received, so a viewer who joined mid-job
@@ -322,8 +346,10 @@ export function JobDetailPage() {
             {/* Completed agents in grid */}
             {completedAgents.length > 0 && (
               <div className={`grid gap-2 ${completedAgents.length >= 3 ? "grid-cols-1 sm:grid-cols-3" : completedAgents.length === 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
-                {completedAgents.map((agent) => (
-                  <AgentCard key={agent.runId} agent={agent} />
+                {completedAgents.map((agent, i) => (
+                  <CardArrival key={agent.runId} turn={turn(i)}>
+                    <AgentCard agent={agent} />
+                  </CardArrival>
                 ))}
               </div>
             )}
@@ -331,8 +357,10 @@ export function JobDetailPage() {
             {/* Active agents — full width or side by side */}
             {activeAgents.length > 0 && (
               <div className={`grid gap-2 ${activeAgents.length >= 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
-                {activeAgents.map((agent) => (
-                  <AgentCard key={agent.runId} agent={agent} expanded />
+                {activeAgents.map((agent, i) => (
+                  <CardArrival key={agent.runId} turn={turn(completedAgents.length + i)}>
+                    <AgentCard agent={agent} expanded />
+                  </CardArrival>
                 ))}
               </div>
             )}
@@ -340,8 +368,10 @@ export function JobDetailPage() {
             {/* Pending agents in grid */}
             {pendingAgents.length > 0 && (
               <div className={`grid gap-2 ${pendingAgents.length >= 3 ? "grid-cols-1 sm:grid-cols-3" : pendingAgents.length === 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
-                {pendingAgents.map((agent) => (
-                  <AgentCard key={agent.runId} agent={agent} />
+                {pendingAgents.map((agent, i) => (
+                  <CardArrival key={agent.runId} turn={turn(completedAgents.length + activeAgents.length + i)}>
+                    <AgentCard agent={agent} />
+                  </CardArrival>
                 ))}
               </div>
             )}
