@@ -12,6 +12,7 @@ from embry0.agents.identity import DISPLAY_NAME_MAX, TAGLINE_MAX, validate_avata
 from embry0.api.schemas.repo_path import validate_repo_path
 from embry0.execution.auth_provider import env_override_refusal
 from embry0.execution.profile_isolation import ISOLATION_FIELDS, field_problem
+from embry0.workflows._validation import FIXED_NODE_TYPES
 
 # Slash-separated alnum + . _ - : segments. Colon allowed for ISO timestamps in
 # filenames. No leading/trailing slash. No '..' segments. No double slashes.
@@ -405,6 +406,12 @@ class AgentCreateRequest(BaseModel):
     def validate_agent_type(cls, v: str) -> str:
         if not _AGENT_TYPE_PATTERN.match(v):
             msg = "type must be lowercase alphanumeric with hyphens/underscores"
+            raise ValueError(msg)
+        # A row named after a fixed node is placeable in a template but runs
+        # that node, never generic_agent; the scaffolding names are no agent.
+        reserved = FIXED_NODE_TYPES | {"__start__", "__end__"}
+        if v in reserved:
+            msg = f"type {v!r} is reserved for a fixed pipeline node; reserved: {sorted(reserved)}"
             raise ValueError(msg)
         return v
 

@@ -50,7 +50,7 @@ export function AgentBar({ nodes, edges }: AgentBarProps) {
   // itself), plus the terminal `output` sentinel, valid template vocabulary
   // with no agent row behind it (it runs the finalize_output code node). The
   // backend validator accepts any registered row as a pipeline node.
-  const available = [...(agents ?? []).filter((a) => a.type !== "triage").map((a) => a.type), "output"];
+  const available = [...new Set([...(agents ?? []).filter((a) => a.type !== "triage").map((a) => a.type), "output"])];
 
   const feedbackCount = edges.filter(
     (e) => (e.data as Record<string, unknown> | undefined)?.edgeType === "feedback",
