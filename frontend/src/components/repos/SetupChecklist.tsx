@@ -126,59 +126,63 @@ function ChecklistRow({
     <li className="py-3" data-testid={`setup-row-${row.key}`} data-state={row.state}>
       <div className="flex gap-3">
         <StateIcon state={row.state} />
-        <div className="min-w-0 flex-1 space-y-0.5">
-          <p className="text-sm font-semibold text-fg">
-            {row.title}
-            {!row.required && <span className="ml-2 text-xs font-normal text-fg-muted">Optional</span>}
-          </p>
-          <p className="text-sm text-fg-secondary">{row.says}</p>
-        </div>
-        <div className="flex shrink-0 flex-wrap items-start justify-end gap-2">
-          {action?.kind === "copy_admin_request" && (
-            <Button variant="outline" size="sm" onClick={() => void copyAdminRequest(adminRequest(row, repo, forge))}>
-              {action.label}
-            </Button>
-          )}
-          {(action?.kind === "start_setup" || action?.kind === "fix_setup") && !cardActs && (
-            <Button variant={variant} size="sm" onClick={onStartSetup}>
-              {action.label}
-            </Button>
-          )}
-          {action?.kind === "create_issue" && (
-            <Button variant={variant} size="sm" onClick={onFirstTask}>
-              {action.label}
-            </Button>
-          )}
-          {action?.kind === "review_proposal" && (
-            <Button variant={variant} size="sm" aria-expanded={cardOpen} onClick={onToggleCard}>
-              {action.label}
-            </Button>
-          )}
-          {action && href && (
-            <Link to={href} className={cn(buttonVariants({ variant, size: "sm" }))}>
-              {action.label}
-            </Link>
-          )}
-          {canSkip && (
-            <Button variant="outline" size="sm" disabled={skipping} onClick={onSkip}>
-              Skip testing for now
-            </Button>
-          )}
-          {failed && (
-            <Button variant="ghost" size="sm" aria-expanded={cardOpen} onClick={onToggleCard}>
-              See what happened
-            </Button>
-          )}
-          {row.key === "first_task" && row.state === "done" && row.pr_url && (
-            <a
-              href={row.pr_url}
-              target="_blank"
-              rel="noreferrer"
-              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-            >
-              Open the pull request
-            </a>
-          )}
+        {/* Below lg the actions sit under the text: beside it, two buttons left the
+            title a few pixels wide on a phone and pushed one past the card. */}
+        <div className="flex min-w-0 flex-1 flex-col gap-2 lg:flex-row lg:gap-3">
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <p className="text-sm font-semibold text-fg">
+              {row.title}
+              {!row.required && <span className="ml-2 text-xs font-normal text-fg-muted">Optional</span>}
+            </p>
+            <p className="text-sm text-fg-secondary">{row.says}</p>
+          </div>
+          <div className="flex flex-wrap items-start gap-2 lg:shrink-0 lg:justify-end">
+            {action?.kind === "copy_admin_request" && (
+              <Button variant="outline" size="sm" onClick={() => void copyAdminRequest(adminRequest(row, repo, forge))}>
+                {action.label}
+              </Button>
+            )}
+            {(action?.kind === "start_setup" || action?.kind === "fix_setup") && !cardActs && (
+              <Button variant={variant} size="sm" onClick={onStartSetup}>
+                {action.label}
+              </Button>
+            )}
+            {action?.kind === "create_issue" && (
+              <Button variant={variant} size="sm" onClick={onFirstTask}>
+                {action.label}
+              </Button>
+            )}
+            {action?.kind === "review_proposal" && (
+              <Button variant={variant} size="sm" aria-expanded={cardOpen} onClick={onToggleCard}>
+                {action.label}
+              </Button>
+            )}
+            {action && href && (
+              <Link to={href} className={cn(buttonVariants({ variant, size: "sm" }))}>
+                {action.label}
+              </Link>
+            )}
+            {canSkip && (
+              <Button variant="outline" size="sm" disabled={skipping} onClick={onSkip}>
+                Skip testing for now
+              </Button>
+            )}
+            {failed && (
+              <Button variant="ghost" size="sm" aria-expanded={cardOpen} onClick={onToggleCard}>
+                See what happened
+              </Button>
+            )}
+            {row.key === "first_task" && row.state === "done" && row.pr_url && (
+              <a
+                href={row.pr_url}
+                target="_blank"
+                rel="noreferrer"
+                className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+              >
+                Open the pull request
+              </a>
+            )}
+          </div>
         </div>
       </div>
       {showsCard && (
