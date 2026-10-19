@@ -378,6 +378,40 @@ curl -X PUT http://localhost:8200/api/v1/repos/owner/repo/docker-access \
 Docker on a repo without the grant is refused before it starts, with
 `ERR_INCOHERENT_CONFIG` and a message naming this endpoint.
 
+## Retention preview (admin)
+
+What the two retention sweeps (`JOB_LOG_RETENTION_DAYS`,
+`QA_IMAGE_RETENTION_DAYS`; see SECURITY.md, "Data retention") would remove
+if they ran now. It is a dry run of the same code, so it removes nothing.
+Each sweep runs at its configured number of days, or at the value in the
+query, to see the effect of a setting before turning it on. A sweep with
+neither reports zeros and `"retention_days": null`.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/admin/retention/preview` | admin |
+
+```bash
+curl "http://localhost:8200/api/v1/admin/retention/preview?job_log_days=30&qa_image_days=30" \
+  -H "Authorization: Bearer $EMBRY0_API_KEY"
+# -> {"job_logs": {"configured_days": null, "retention_days": 30, "jobs": 412,
+#      "events": 9031, "bytes": 21400000, "agent_sessions": 380,
+#      "agent_session_bytes": 61000000},
+#     "qa_images": {"configured_days": null, "retention_days": 30, "images": 3,
+#      "image_bytes": 1200000000, "volumes": 0, "volume_bytes": 0,
+#      "kept": {"pinned": 1, "recent": 1}, "failed": 0, "errors": [],
+#      "removed_images": [{"id": "sha256:…", "refs": ["…"], "last_used": "…", "bytes": 400700000}],
+#      "removed_volumes": []}}
+```
+
+`bytes` is what the redacted fields held; `image_bytes` and `volume_bytes`
+are the sizes the daemon reports (`docker system df`, rounded), each image's
+own layers only, and `null` when the daemon could not report them. `kept`
+counts what stays, by reason: `pinned` (an active `qa_image_tags` row names
+it), `recent`, `in_use` (a container uses it), `live_job` (its repo has a job
+that has not ended), `not_ours`, `unchecked` (a lookup failed). The job log
+dry run reads every old event, so on a large database it takes a while.
+
 ## API keys
 
 Database API keys authenticate MCP, CLI and other machine clients with

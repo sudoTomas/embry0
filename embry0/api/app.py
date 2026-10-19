@@ -2284,6 +2284,7 @@ def _register_routers(app: FastAPI) -> None:
         queue,
         repo_preferences,
         repos,
+        retention,
         sandbox_profiles,
         sandboxes,
         standards,
@@ -2367,6 +2368,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(org_needs.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     # ADR 0013: the hosts that run the code (reads and probes operator-tier; writes admin-tier in-route).
     app.include_router(hosts.router, prefix="/api/v1", tags=["hosts"], dependencies=auth_deps)
+    # ADR 0017: the retention dry run; its one route adds require_admin.
+    app.include_router(retention.router, prefix="/api/v1", tags=["retention"], dependencies=auth_deps)
     # ADR 0014: organization standards (reads and audits operator-tier; writes admin-tier in-route).
     app.include_router(standards.router, prefix="/api/v1", tags=["standards"], dependencies=auth_deps)
     app.include_router(org_actions.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
