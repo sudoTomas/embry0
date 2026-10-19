@@ -7,7 +7,8 @@ Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``job_answer``, ``agent_update``, ``agent_reset``, ``env_set``, ``env_delete``,
 ``merge_decide``, ``case_accept``, ``case_close``, ``repo_register``,
 ``org_register``, ``org_webhook_install``, ``org_act``, ``qa_config_set``,
-``credential_bind``, ``host_import_tailnet``) require ``confirm=true``; without
+``credential_bind``, ``host_import_tailnet``, ``standard_set``,
+``standard_audit``) require ``confirm=true``; without
 it they return an instructive refusal instead of acting.
 """
 
@@ -33,8 +34,9 @@ mcp = MCPServer(
         "Tools for driving the embry0 issue-to-PR / QA / research automation platform: "
         "issues, jobs (create/wait/logs/deliverables), agent definitions, pipeline "
         "templates, the log watcher, healing cases, merge approvals, per-repo environment "
-        "variables, forge credentials (list, resolve, bind), and the hosts that run the "
-        "code (list, get, probe, import from a tailnet). "
+        "variables, forge credentials (list, resolve, bind), the hosts that run the "
+        "code (list, get, probe, import from a tailnet), and an owner's standards "
+        "(get, set, audit a repository against one). "
         "Destructive tools require confirm=true after explicit user approval. "
         'Two lists answer "what is open?", and they are different things: '
         'issue_list(status="open") is the work on the Issues page of the dashboard; '
@@ -760,6 +762,55 @@ async def host_import_tailnet(credential_id: str = "", confirm: bool = False) ->
     if not confirm:
         return _confirmation_refusal("host_import_tailnet", "import hosts from the tailnet's devices")
     return await _get_client().host_import_tailnet(credential_id=credential_id)
+
+
+@_tool
+async def standard_get(owner: str, kind: str) -> dict[str, Any]:
+    """The active version of a forge owner's standard of one ``kind`` ("design") (ADR 0014): its
+    schema (the token roles, type scale and component rules every standard of the kind shares), its
+    values (this owner's fill of the roles), prose, references and version number. 404s when the
+    owner holds none of that kind. Read-only."""
+    return await _get_client().standard_get(owner, kind)
+
+
+@_tool
+async def standard_set(
+    owner: str,
+    kind: str,
+    schema: dict[str, Any],
+    values: dict[str, Any],
+    prose: str = "",
+    references: list[str] | None = None,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Write a new version of a forge owner's standard of one ``kind`` ("design") and supersede the
+    active one (ADR 0014). The call is the whole version, so read it with standard_get first and
+    send back what you keep. ``schema`` holds ``roles`` (role name to an object describing the
+    role), ``type_scale`` (step name to an object) and ``rules`` (objects with an ``id`` and a
+    ``text``); every key of ``values`` must be a role the schema declares. ``references`` are
+    repositories or URLs where the standard is held best. Needs an admin-scope key. Requires
+    confirm=true (changes what every repository under the owner is audited against)."""
+    if not confirm:
+        return _confirmation_refusal("standard_set", f"write a new version of the {kind} standard of {owner!r}")
+    return await _get_client().standard_set(
+        owner, kind, schema=schema, values=values, prose=prose, references=list(references or [])
+    )
+
+
+@_tool
+async def standard_audit(owner: str, kind: str, repo: str, confirm: bool = False) -> dict[str, Any]:
+    """Start a read-only audit job of one repository under ``owner`` ("group/name", or a GitLab
+    subgroup path like "group/subgroup/project") against the owner's active standard of ``kind``
+    ("design"). Refused unless an admin put the repository in mode advise or enforce, the owner holds
+    an active standard of the kind, its pipeline template (design-audit) exists, and no audit of the
+    repository is pending or running: a retry while one runs is refused with that job's id, which
+    is the one to follow. When the job
+    completes, its report's score (0 to 100) and finding count are stored on the repository's
+    standards state, which repo_get shows. Returns the job id: follow it with job_wait and
+    job_deliverables. Requires confirm=true (starts a paid job)."""
+    if not confirm:
+        return _confirmation_refusal("standard_audit", f"start a {kind} audit of {repo!r} against {owner!r}")
+    return await _get_client().standard_audit(owner, kind, repo)
 
 
 @_tool

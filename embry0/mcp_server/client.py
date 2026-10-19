@@ -75,6 +75,24 @@ def _host_id(host_id: str) -> str:
     return host_id
 
 
+_OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
+_KIND_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}\Z")
+
+
+def _owner(owner: str) -> str:
+    """A forge owner, one path segment, so nothing else reaches the URL."""
+    if not _OWNER_RE.match(owner):
+        raise Embry0APIError(422, f"owner must be one forge owner with no slash, got {owner!r}")
+    return owner
+
+
+def _kind(kind: str) -> str:
+    """A standard's kind as the API names them (lowercase, one word), so nothing else reaches the URL."""
+    if not _KIND_RE.match(kind):
+        raise Embry0APIError(422, f"kind must be a standard kind such as 'design', got {kind!r}")
+    return kind
+
+
 def _repo_path(repo: str) -> str:
     r"""Validate a repo path and return it verbatim for use in a URL.
 
@@ -587,6 +605,33 @@ class Embry0Client:
         if credential_id:
             body["credential_id"] = credential_id
         return _as_dict(await self._request("POST", "/api/v1/hosts/import/tailnet", body=body))
+
+    # ------------------------------------------------------------- standards (ADR 0014)
+
+    async def standard_get(self, owner: str, kind: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/standards/{_owner(owner)}/{_kind(kind)}"))
+
+    async def standard_set(
+        self,
+        owner: str,
+        kind: str,
+        *,
+        schema: dict[str, Any],
+        values: dict[str, Any],
+        prose: str = "",
+        references: list[str] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "schema": schema,
+            "values": values,
+            "prose": prose,
+            "references": list(references or []),
+        }
+        return _as_dict(await self._request("PUT", f"/api/v1/standards/{_owner(owner)}/{_kind(kind)}", body=body))
+
+    async def standard_audit(self, owner: str, kind: str, repo: str) -> dict[str, Any]:
+        path = f"/api/v1/standards/{_owner(owner)}/{_kind(kind)}/audit/{_repo_path(repo)}"
+        return _as_dict(await self._request("POST", path))
 
     async def org_webhook_install(self, owner: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/webhook"))

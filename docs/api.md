@@ -206,6 +206,33 @@ curl -X POST http://localhost:8200/api/v1/hosts/import/tailnet \
 
 `GET /api/v1/repos/{repo}` lists the repository's hosts under `hosts`, each with its `role`.
 
+## Standards
+
+An owner's versioned standards and each repository's mode under them ([`docs/standards.md`](standards.md), [ADR 0014](adr/0014-organization-standards.md)). Reads need any authenticated principal and an audit needs an operator; writing a standard and setting a mode need the `admin` tier and write a `standard.*` audit row.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/standards/{owner}` | read |
+| `GET /api/v1/standards/{owner}/{kind}` | read |
+| `PUT /api/v1/standards/{owner}/{kind}` | admin |
+| `GET /api/v1/standards/{owner}/{kind}/versions` | read |
+| `GET /api/v1/standards/{owner}/{kind}/repos/{repo}` | read |
+| `PUT /api/v1/standards/{owner}/{kind}/repos/{repo}` | admin |
+| `POST /api/v1/standards/{owner}/{kind}/audit/{repo}` | operator |
+
+`PUT /standards/{owner}/{kind}` stores a whole new version, `{"schema", "values", "prose", "references"}`, and supersedes the active one; every key of `values` must be a role `schema.roles` declares, or the answer is a 422 listing the problems. `PUT .../repos/{repo}` sets `{"mode": "off" | "advise" | "enforce", "exceptions": [...]}` for a registered repository under the owner; every repository starts in `off`. The audit starts a read-only job on the `design-audit` pipeline template and answers 202 with its `job_id`, or 409 in mode `off`, without an active standard or the template, or while the previous audit runs (of requests sent together, one starts and the others are 409 naming its job); its completed report's `Score: N` line and findings table become the repository's `score` and `findings_open`. `GET /api/v1/repos/{repo}` lists the state under `standards`, one entry per kind.
+
+```bash
+# Put acme/widgets in advise mode, then audit it against acme's design standard
+curl -X PUT http://localhost:8200/api/v1/standards/acme/design/repos/acme/widgets \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"mode": "advise"}'
+
+curl -X POST http://localhost:8200/api/v1/standards/acme/design/audit/acme/widgets \
+  -H "X-Requested-With: XMLHttpRequest"
+```
+
 ## Organizations
 
 The forge owners embry0 maintains as a whole ([ADR 0010](adr/0010-organizations.md)). Reads need any authenticated principal; every mutation needs the `admin` tier and writes an `organization.*` audit row. Registering an owner changes nothing for any repository until a person acts.

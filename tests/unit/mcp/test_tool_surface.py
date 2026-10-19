@@ -168,6 +168,17 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
     "repo_get": ["repo: string"],
     "repo_list": ["include_inactive: boolean = false"],
     "repo_register": ["confirm: boolean = false", 'forge: string = ""', 'notes: string = ""', "repo: string"],
+    "standard_audit": ["confirm: boolean = false", "kind: string", "owner: string", "repo: string"],
+    "standard_get": ["kind: string", "owner: string"],
+    "standard_set": [
+        "confirm: boolean = false",
+        "kind: string",
+        "owner: string",
+        'prose: string = ""',
+        "references: array|null = null",
+        "schema: object",
+        "values: object",
+    ],
     "stats": [],
     "template_get": ["template_id: string"],
     "template_list": [],
@@ -241,6 +252,8 @@ async def test_every_confirm_gated_tool_defaults_to_refusing():
         "org_webhook_install",
         "qa_config_set",
         "repo_register",
+        "standard_audit",
+        "standard_set",
     }
     for name in gated:
         confirm = tools[name]["inputSchema"]["properties"]["confirm"]
