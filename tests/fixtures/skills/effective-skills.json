@@ -8,6 +8,8 @@
     {"name": "remove star then add", "base": ["a:x"], "deltas": [{"remove": "*", "add": ["b:z"]}], "expected": ["b:z"]},
     {"name": "two deltas compose", "base": ["a:x"], "deltas": [{"add": ["a:y"]}, {"remove": ["a:x"]}], "expected": ["a:y"]},
     {"name": "empty legacy list clears", "base": ["a:x"], "deltas": [[]], "expected": []},
-    {"name": "null delta is identity", "base": ["a:x"], "deltas": [null], "expected": ["a:x"]}
+    {"name": "null delta is identity", "base": ["a:x"], "deltas": [null], "expected": ["a:x"]},
+    {"name": "legacy list of objects replaces with the names", "base": ["a:x"], "deltas": [[{"name": "b:z", "mode": "autonomous"}, {"name": "b:w", "mode": "ask"}]], "expected": ["b:z", "b:w"]},
+    {"name": "delta add holds an object", "base": ["a:x"], "deltas": [{"add": [{"name": "b:z", "mode": "autonomous"}, "b:w"]}], "expected": ["a:x", "b:z", "b:w"]}
   ]
 }

@@ -25,6 +25,16 @@ def test_normalize_delta_rejects_garbage() -> None:
         normalize_delta(42)
 
 
+@pytest.mark.parametrize(
+    "delta",
+    [[{"mode": "autonomous"}], [{"name": ""}], [{"name": 7}], [7], {"add": [None]}, {"remove": [["a:x"]]}],
+    ids=["object-without-name", "empty-name", "non-string-name", "int", "none-in-add", "list-in-remove"],
+)
+def test_normalize_delta_refuses_entries_that_are_not_names(delta: object) -> None:
+    with pytest.raises(ValueError, match=r'skills delta entries must be names or \{"name": \.\.\.\} objects'):
+        normalize_delta(delta)
+
+
 def test_check_skill_names_lists_unknown_with_suggestions() -> None:
     known = {"superpowers:writing-plans", "superpowers:brainstorming", "local:house-style"}
     with pytest.raises(UnknownSkillError) as exc:

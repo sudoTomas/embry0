@@ -11,22 +11,39 @@ from collections.abc import Collection, Iterable
 from typing import Any
 
 
+def _entry_name(entry: Any) -> str:
+    """A delta entry's skill name: a string as is, or the ``name`` of a ``{"name": ...}`` object.
+
+    The pipeline editor stores node skills as ``{"name", "mode"}`` objects; only the name means anything.
+    """
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        name = entry.get("name")
+        if isinstance(name, str) and name:
+            return name
+    raise ValueError('skills delta entries must be names or {"name": ...} objects')
+
+
 def normalize_delta(value: Any) -> dict[str, Any]:
     """A delta dict with ``add`` (list) and ``remove`` (list or "*").
 
     A bare list is the legacy *replace* form: ``{"add": list, "remove": "*"}``.
-    ``None`` is the identity delta.
+    ``None`` is the identity delta. Entries are names or ``{"name": ...}`` objects.
     """
     if value is None:
         return {"add": [], "remove": []}
     if isinstance(value, list):
-        return {"add": [str(v) for v in value], "remove": "*"}
+        return {"add": [_entry_name(v) for v in value], "remove": "*"}
     if isinstance(value, dict):
         add = value.get("add", [])
         remove = value.get("remove", [])
         if not isinstance(add, list) or not (remove == "*" or isinstance(remove, list)):
             raise ValueError('skills delta must be {"add": [...], "remove": [...] | "*"}')
-        return {"add": [str(v) for v in add], "remove": "*" if remove == "*" else [str(v) for v in remove]}
+        return {
+            "add": [_entry_name(v) for v in add],
+            "remove": "*" if remove == "*" else [_entry_name(v) for v in remove],
+        }
     raise ValueError(f"skills delta must be a list or a dict, not {type(value).__name__}")
 
 
