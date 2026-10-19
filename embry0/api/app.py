@@ -1216,6 +1216,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.agent_runner = agent_runner
     app.state.proxy_manager = proxy_mgr
 
+    # Spec 3.2: the skills store. Its sync service and the startup sync are
+    # wired after _init_app_state, which creates the skill repositories and
+    # seeds the builtin sources the startup sync must see.
+    from embry0.skills.store import SkillStore
+
+    app.state.skill_store = SkillStore(config.skills_store_path)
+
     image_mgr = SandboxImageManager(runtime, image_registry=config.image_registry)
     app.state.image_manager = image_mgr
 
@@ -1598,6 +1605,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.issue_executor._qa_base_digest_resolver = app.state.qa_base_digest_resolver
 
     app.state.issue_executor._background_tasks = app.state.background_tasks
+
+    # Spec 3.2: fill the store for every enabled source that has no tree yet
+    # (a fresh volume, a new builtin). In the background: a clone must not hold
+    # the API back, and sync_missing logs its failures instead of raising.
+    from embry0.skills.sync import SkillSourceSync
+
+    app.state.skill_sync = SkillSourceSync(
+        app.state.skill_store, app.state.skill_sources_repo, app.state.inline_skills_repo
+    )
+    skill_sync_task = asyncio.create_task(app.state.skill_sync.sync_missing())
+    app.state.background_tasks.add(skill_sync_task)
+    skill_sync_task.add_done_callback(app.state.background_tasks.discard)
 
     # Daily orphan checkpoint sweep — purges checkpoint rows for job_ids
     # that no longer exist in the jobs table (covers cases where per-job

@@ -49,6 +49,10 @@ services:
       - "${SANDBOX_DOCKER_GID:?set SANDBOX_DOCKER_GID in infra/.env to the sandbox account's gid}"
     volumes: !override
       - orchestrator-data:/data
+      # Spec 3.2: the skills store, as in the base file. The rootless sandbox
+      # daemon does not see this named volume at /skills, so a sandbox started
+      # under this overlay cannot bind-mount the trees from this path.
+      - skills-store:/skills
       - ${GITLAB_CA_BUNDLE_HOST:-/dev/null}:/etc/embry0/gitlab-ca.pem:ro
       - /run/embry0-sandbox:/run/embry0-sandbox:ro
       # #581: the off-host backup status, as in the base file.
