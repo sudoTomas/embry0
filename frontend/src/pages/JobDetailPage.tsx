@@ -21,6 +21,7 @@ import { AgentFailuresCard } from "@/components/jobs/AgentFailuresCard";
 import { DeliverablesCard } from "@/components/jobs/DeliverablesCard";
 import { QATab } from "@/components/qa/QATab";
 import { resumeJob, discardJob } from "@/api/jobs";
+import { isTerminalStatus } from "@/lib/jobStatus";
 import { toastApiError } from "@/api/errorToast";
 
 function useElapsedTime(startedAt: string | null, finishedAt: string | null) {
@@ -49,7 +50,7 @@ const TRACES_PAGE_SIZE = 25;
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const { data: job, isLoading, isError, refetch } = useJob(jobId);
-  const { data: jobInputs } = useJobInputs(jobId ?? "");
+  const { data: jobInputs } = useJobInputs(jobId ?? "", job?.status);
 
   const { events, isConnected, latestCost, pipelineGraph } = useJobLogs(jobId);
   const { agents, prUrl, interruptData } = useAgentStates(events, job?.status, pipelineGraph);
@@ -196,12 +197,14 @@ export function JobDetailPage() {
         </div>
       )}
 
-      {/* Success banner */}
-      {job.status === "completed" && (
+      {/* Success banner: the job completed, or its pull request has merged since */}
+      {(job.status === "completed" || job.status === "pr_merged") && (
         <div className="px-4 py-3 rounded-lg border border-success/20 bg-success/[0.06] flex items-center gap-3">
           <span className="text-success text-lg">&#x2713;</span>
           <div>
-            <div className="text-sm font-medium text-success">Pipeline completed successfully</div>
+            <div className="text-sm font-medium text-success">
+              {job.status === "pr_merged" ? "Pipeline completed, pull request merged" : "Pipeline completed successfully"}
+            </div>
             {displayPrUrl && (
               <a href={displayPrUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-purple hover:underline">
                 {displayPrUrl}
@@ -212,9 +215,18 @@ export function JobDetailPage() {
       )}
 
       {/* Deliverables (RAV-603): what the job actually produced — PR link,
-          report text, downloadable artifacts. Rows exist only for completed
-          jobs; the card renders nothing while the list is empty. */}
-      {job.status === "completed" && <DeliverablesCard jobId={job.job_id} />}
+          report text, downloadable artifacts — for every finished status (a
+          completed job becomes pr_merged; a partial or skipped one keeps its
+          report). The card renders nothing while the list is empty. */}
+      {isTerminalStatus(job.status) && <DeliverablesCard jobId={job.job_id} />}
+
+      {/* Partial: some apps passed, some did not */}
+      {job.status === "partial" && (
+        <div className="px-4 py-3 rounded-lg border border-warning/20 bg-warning/[0.06]">
+          <div className="text-sm font-medium text-warning mb-1">Pipeline partly passed</div>
+          {job.error_message && <div className="text-xs text-white/50">{job.error_message}</div>}
+        </div>
+      )}
 
       {/* Error banner */}
       {job.status === "failed" && job.error_message && (

@@ -40,7 +40,7 @@ export function JobLogsPage() {
     [effectiveGraph, events, job?.status],
   );
 
-  const { data: jobInputs } = useJobInputs(jobId ?? "");
+  const { data: jobInputs } = useJobInputs(jobId ?? "", job?.status);
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 

@@ -53,4 +53,16 @@ describe("JobsTable rows", () => {
     const id = screen.getByText("fd155299");
     expect(id).toHaveAttribute("title", "job-fd155299c8a4");
   });
+
+  it("offers Cancel on every status the API cancels, and logs on every job that ran", () => {
+    const waiting = { ...tick("job-aaaa1111bbbb", "acme/app", 3), status: "awaiting_input" } as JobResponse;
+    const merged = { ...tick("job-cccc2222dddd", "acme/app", 3), status: "pr_merged" } as JobResponse;
+    const partial = { ...tick("job-eeee3333ffff", "acme/app", 3), status: "partial" } as JobResponse;
+    renderTable([waiting, merged, partial]);
+    const [w, m, p] = screen.getAllByRole("link", { name: /View job/ });
+    expect(within(w).getByTitle("Cancel"), "an awaiting_input job can be cancelled").toBeInTheDocument();
+    expect(within(m).queryByTitle("Cancel")).toBeNull();
+    expect(within(m).getByTitle("View Logs"), "a merged job keeps its logs").toBeInTheDocument();
+    expect(within(p).getByTitle("View Logs"), "a partial job keeps its logs").toBeInTheDocument();
+  });
 });

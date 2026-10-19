@@ -1,12 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJobInputs, answerInput } from "@/api/inputs";
+import { isTerminalStatus } from "@/lib/jobStatus";
 
-export function useJobInputs(jobId: string) {
+/** jobStatus, when known, stops the poll once the job is finished: its
+ * questions can no longer change. */
+export function useJobInputs(jobId: string, jobStatus?: string) {
   return useQuery({
     queryKey: ["job-inputs", jobId],
     queryFn: () => fetchJobInputs(jobId),
     enabled: !!jobId,
-    refetchInterval: 5000,
+    refetchInterval: isTerminalStatus(jobStatus) ? false : 5000,
   });
 }
 

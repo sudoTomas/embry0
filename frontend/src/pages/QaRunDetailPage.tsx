@@ -1,5 +1,6 @@
 import { Link, useParams } from "react-router";
 import { useQaRun } from "@/hooks/useQaDashboard";
+import { useJob } from "@/hooks/useJobs";
 import { useQaRunEvents } from "@/hooks/useQaRunEvents";
 import { QaAppResultCard } from "@/components/qa/QaAppResultCard";
 import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
@@ -8,6 +9,8 @@ import { TableSkeleton } from "@/components/TableSkeleton";
 
 export function QaRunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
+  // The run's job (same id): its finished status stops the run's polling.
+  useJob(runId);
   const { data, isLoading, isError, refetch } = useQaRun(runId);
   // Phase 5C: subscribe to SSE for sub-second liveness on per-app status
   // changes. The hook invalidates the same query key useQaRun reads, so the

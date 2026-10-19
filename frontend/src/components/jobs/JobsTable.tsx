@@ -7,6 +7,7 @@ import { EmptyJobsState } from "./EmptyJobsState";
 import { formatCost, formatDate } from "@/lib/utils";
 import { statusLabel } from "@/lib/status";
 import { jobTitle, shortJobId } from "@/lib/jobTitle";
+import { isCancellable } from "@/lib/jobStatus";
 import { Link, useNavigate } from "react-router";
 import { X, Eye, GitPullRequest } from "lucide-react";
 import type { JobResponse } from "@/lib/types";
@@ -110,14 +111,14 @@ export function JobsTable({
                           </Button>
                         </a>
                       )}
-                      {(job.status === "running" || job.status === "completed" || job.status === "failed") && (
+                      {job.status !== "pending" && (
                         <Link to={`/jobs/${job.job_id}/logs`}>
                           <Button variant="ghost" size="icon-sm" title="View Logs">
                             <Eye className="h-3.5 w-3.5" />
                           </Button>
                         </Link>
                       )}
-                      {(job.status === "pending" || job.status === "running") && (
+                      {isCancellable(job.status) && (
                         <Button
                           variant="ghost"
                           size="icon-sm"

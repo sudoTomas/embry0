@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJobs, fetchJob, createJob, cancelJob } from "@/api/jobs";
 import type { JobCreateRequest, JobFilters } from "@/lib/types";
+import { isTerminalStatus } from "@/lib/jobStatus";
 
 export function useJobs(filters: JobFilters = {}, refetchInterval = 10_000) {
   return useQuery({
@@ -15,7 +16,8 @@ export function useJob(jobId: string | undefined) {
     queryKey: ["jobs", jobId],
     queryFn: () => fetchJob(jobId!),
     enabled: !!jobId,
-    refetchInterval: 10_000,
+    // A finished job changes no more; polling it stops.
+    refetchInterval: (query) => (isTerminalStatus(query.state.data?.status) ? false : 10_000),
   });
 }
 
