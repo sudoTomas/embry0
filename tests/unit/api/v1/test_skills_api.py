@@ -327,6 +327,18 @@ async def test_delete_referenced_builtin_source_is_403_not_409(app):
 
 
 @pytest.mark.asyncio
+async def test_delete_source_409_while_it_is_syncing(app):
+    """A sync publishing as the source is removed would leave a tree, or a row error, behind."""
+    app.state.skill_sync.is_syncing = MagicMock(return_value=True)
+    async with _client(app) as client:
+        resp = await client.delete("/api/v1/skills/sources/mine")
+    assert resp.status_code == 409, resp.text
+    assert "sync" in resp.json()["detail"]
+    app.state.skill_sources_repo.delete.assert_not_awaited()
+    app.state.skill_store.remove_source.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_delete_source_removes_its_tree_and_audits(app):
     with patch(_AUDIT, new_callable=AsyncMock) as audit:
         async with _client(app) as client:
