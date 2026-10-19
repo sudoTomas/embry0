@@ -11,7 +11,9 @@ latest proposal with the free check of it. Apply writes it as the test setup
 is the checklist the repo page opens on, built from stored facts only.
 
 Operator tier for every write, the same as saving a test setup: the router
-is mounted with ``auth_deps``, which refuses a read-scope key on POST.
+is mounted with ``auth_deps``, which refuses a read-scope key on POST. Every
+write also checks the calling key's repository allowlist before it reads or
+changes anything.
 """
 
 from __future__ import annotations
@@ -122,6 +124,7 @@ async def get_setup_proposal(full_repo: str, request: Request) -> dict[str, Any]
 async def apply_setup_proposal(
     full_repo: str, proposal_id: str, request: Request, req: ApplyRequest | None = None
 ) -> dict[str, int | None]:
+    await enforce_repo_allowlist(request, full_repo, action="apply a setup proposal")
     try:
         revision_id = await apply_proposal(
             request.app.state,
@@ -140,6 +143,7 @@ async def apply_setup_proposal(
 
 @router.post("/repos/{full_repo:path}/setup/proposal/{proposal_id}/reject")
 async def reject_setup_proposal(full_repo: str, proposal_id: str, request: Request) -> dict[str, str]:
+    await enforce_repo_allowlist(request, full_repo, action="turn down a setup proposal")
     try:
         await reject_proposal(request.app.state, full_repo, proposal_id, actor=request_actor(request))
     except Refused as exc:
@@ -150,6 +154,7 @@ async def reject_setup_proposal(full_repo: str, proposal_id: str, request: Reque
 
 @router.post("/repos/{full_repo:path}/setup/skip-testing")
 async def skip_setup_testing(full_repo: str, request: Request) -> dict[str, int | None]:
+    await enforce_repo_allowlist(request, full_repo, action="skip testing")
     try:
         revision_id = await skip_testing(request.app.state, full_repo, actor=request_actor(request))
     except Refused as exc:

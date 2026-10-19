@@ -424,7 +424,7 @@ keeps the time the test setup was last saved, and starts an onboard job on
 the repository's base branch setting, else its default branch as discovery
 saw it, else `main`. It answers `{"proposal_id", "job_id"}`, or 409 while a
 run is going for the repository. The calling key's repository allowlist
-applies, as for `POST /jobs`.
+applies, as for `POST /jobs`, and to apply, reject and skip-testing too.
 
 `GET .../setup/proposal` answers the latest proposal, or 404 when there is
 none: `{"id", "repo", "status", "job_id", "job_status", "created_by",
@@ -578,7 +578,11 @@ other repository:
 - `POST /cases/{id}/accept`, `POST /merge-approvals/{id}/decide`,
   `POST /watcher/run` (the stack ticked; with none named, every watched
   stack, all checked before any ticks), `POST /qa/images/build` and
-  `POST /repos/bootstrap`.
+  `POST /repos/bootstrap`;
+- the steps of setting up testing: `POST /repos/{repo}/setup/propose`,
+  `POST /repos/{repo}/setup/proposal/{id}/apply` and `.../reject`,
+  `POST /repos/{repo}/setup/skip-testing` and
+  `POST /repos/{repo}/history/{id}/undo`.
 
 The MCP tools reach embry0 through these routes with the caller's key, so
 they are covered too. Matching ignores case and follows `REPO_RENAMES`
@@ -588,11 +592,12 @@ slug also matches its current one, and the reverse. Each refusal logs
 repository and the action, and writes an `apikey.repo_refused` audit row.
 
 Omitting the list, or sending an empty one, leaves the key unrestricted;
-every key minted before the allowlist existed is unrestricted. The list
-governs work only: it does not narrow what the key may read, nor the
-settings routes its scope allows. A restricted key may not mint keys or
-change any key's allowlist, its own included, since a key it minted would
-carry no restriction. For an agent that should only dispatch, mint an
+every key minted before the allowlist existed is unrestricted. Beyond the
+routes above, the list does not narrow what the key may read, nor the
+settings routes its scope allows, `PUT /repos/{repo}/qa-config` and
+`PUT /repos/{repo}/preferences` among them. A restricted key may not mint
+keys or change any key's allowlist, its own included, since a key it minted
+would carry no restriction. For an agent that should only dispatch, mint an
 `operate` key with the list.
 
 ```bash

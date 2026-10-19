@@ -528,6 +528,26 @@ async def test_a_read_key_can_look_but_not_apply(app) -> None:
     assert (await app.state.repo_setup_proposals_repo.get(proposal_id))["status"] == "pending"
 
 
+@pytest.mark.requires_postgres
+async def test_a_key_that_may_not_work_here_cannot_apply_turn_down_or_skip(app, db_with_migrations) -> None:
+    waiting = await _proposal(app)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_as(ELSEWHERE)) as c:
+        for path, action in (
+            (f"{SETUP}/proposal/{waiting}/apply", "apply a setup proposal"),
+            (f"{SETUP}/proposal/{waiting}/reject", "turn down a setup proposal"),
+            (f"{SETUP}/skip-testing", "skip testing"),
+        ):
+            resp = await c.post(path, json={})
+            assert resp.status_code == 403, f"{path}: {resp.status_code} {resp.text}"
+            assert resp.json()["detail"].startswith("repo_not_allowed: ")
+            assert f"may not {action} on {REPO}" in resp.json()["detail"]
+    assert (await app.state.repo_setup_proposals_repo.get(waiting))["status"] == "pending"
+    assert await app.state.qa_configs_repo.get(REPO) is None
+    assert await app.state.repo_config_revisions_repo.latest(REPO, "qa_config") is None
+    assert await _audit(db_with_migrations, "repo.setup_applied") == []
+    assert await _audit(db_with_migrations, "repo.setup_rejected") == []
+
+
 # -- turn down ---------------------------------------------------------------------
 
 

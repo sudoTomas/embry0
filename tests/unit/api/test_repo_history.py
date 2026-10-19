@@ -33,9 +33,10 @@ V2 = "version: 2\nqa_required: auto\nworkspace_provider:\n  type: npm-workspaces
 
 OPERATOR = "emb_" + "o" * 43
 READER = "emb_" + "r" * 43
+ELSEWHERE = "emb_" + "e" * 43
 
 
-def _key(key_id: str, scope: str, user_id: str | None) -> ApiKeyRow:
+def _key(key_id: str, scope: str, user_id: str | None, allowed: tuple[str, ...] | None = None) -> ApiKeyRow:
     return ApiKeyRow(
         id=key_id,
         user_id=user_id,
@@ -47,12 +48,14 @@ def _key(key_id: str, scope: str, user_id: str | None) -> ApiKeyRow:
         expires_at=None,
         last_used_at=None,
         revoked_at=None,
+        allowed_repos=allowed,
     )
 
 
 KEYS = {
     hash_token(OPERATOR): _key("key-operator0001", "operate", "usr-dev"),
     hash_token(READER): _key("key-reader000001", "read", None),
+    hash_token(ELSEWHERE): _key("key-elsewhere001", "operate", None, ("acme/other",)),
 }
 
 
@@ -191,6 +194,21 @@ async def test_a_read_key_cannot_undo_and_an_operator_can(client) -> None:
     assert refused.status_code == 403
     assert (await client.get(QA)).text == V2
     assert (await client.post(f"{HISTORY}/{newest}/undo", headers=_as(OPERATOR))).status_code == 200
+
+
+@pytest.mark.requires_postgres
+async def test_a_key_that_may_not_work_here_cannot_undo(client, db_with_migrations) -> None:
+    await client.put(QA, content=V1)
+    await client.put(QA, content=V2)
+    newest = (await _history(client))["entries"][0]["id"]
+
+    refused = await client.post(f"{HISTORY}/{newest}/undo", headers=_as(ELSEWHERE))
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"].startswith("repo_not_allowed: ")
+    assert f"may not undo a change on {REPO}" in refused.json()["detail"]
+    assert (await client.get(QA)).text == V2
+    assert len((await _history(client))["entries"]) == 2
+    assert await _audit(db_with_migrations, "repo.change_undone") == []
 
 
 @pytest.mark.requires_postgres

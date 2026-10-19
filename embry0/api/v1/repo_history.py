@@ -7,7 +7,8 @@ surface, and only while the stored document is still what that change wrote.
 An undo is itself recorded, with source ``restore``, so it can be undone too.
 
 Operator tier, the same as the writes it reverses: the router is mounted with
-``auth_deps``, which already refuses a read-scope key on POST.
+``auth_deps``, which already refuses a read-scope key on POST. Undo also
+checks the calling key's repository allowlist first.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import ValidationError
 
 from embry0.api.deps import request_actor
+from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas.repo_preferences import RepoPreferencesUpdateRequest
 from embry0.audit.helpers import emit_audit
 from embry0.storage.repositories.repo_config_revisions import RevisionSurface
@@ -143,6 +145,7 @@ def _no_longer_valid(exc: Exception) -> HTTPException:
 async def undo_change(full_repo: str, revision_id: int, request: Request) -> dict[str, int | None]:
     from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
 
+    await enforce_repo_allowlist(request, full_repo, action="undo a change")
     revision = await request.app.state.repo_config_revisions_repo.get(revision_id)
     if revision is None or revision["repo"] != full_repo:
         raise HTTPException(status_code=404, detail="That change was not found for this repository.")
