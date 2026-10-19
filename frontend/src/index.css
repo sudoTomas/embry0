@@ -337,6 +337,32 @@ body[data-divine="off"] .motion-mark * {
 }
 
 /* ----- motion: repository setup ----- */
+/* The repo page's Advanced settings open and close with a height ease
+   instead of a jump, where the browser can ease to and from `auto` and
+   style a <details> body. Others keep the instant open. The chevron turns
+   with it (AdvancedSection.tsx). */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (interpolate-size: allow-keywords) and selector(::details-content) {
+    .advanced-section {
+      interpolate-size: allow-keywords;
+    }
+    .advanced-section::details-content {
+      block-size: 0;
+      overflow: clip;
+      /* allow-discrete keeps the body shown until a close has finished. */
+      transition:
+        block-size var(--motion-base) var(--ease-standard),
+        content-visibility var(--motion-base) allow-discrete;
+    }
+    .advanced-section[open]::details-content {
+      block-size: auto;
+    }
+    /* Opened by the page's address: there at once, so the page can scroll to it. */
+    .advanced-section[data-instant]::details-content {
+      transition: none;
+    }
+  }
+}
 
 /* ===== end motion ===== */
 

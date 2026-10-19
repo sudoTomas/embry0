@@ -26,17 +26,22 @@ export function AdvancedSection({ setting, children }: { setting: SettingKey; ch
   useEffect(() => {
     const details = ref.current;
     if (!details || hash !== `#${id}`) return;
+    // The address lands on this section already open, without the opening
+    // ease: while the body grows from nothing the page is too short to
+    // scroll to it. A click later still eases (index.css, data-instant).
+    details.setAttribute("data-instant", "");
     details.open = true;
     // The page renders after its data loads, so the browser's own jump to
     // the address's #fragment found nothing to scroll to.
     if (typeof details.scrollIntoView === "function") details.scrollIntoView({ block: "start" });
+    requestAnimationFrame(() => details.removeAttribute("data-instant"));
   }, [hash, id]);
 
   return (
-    <details ref={ref} id={id} data-testid={id} className="group rounded-lg border border-border">
+    <details ref={ref} id={id} data-testid={id} className="advanced-section group rounded-lg border border-border">
       <summary className="flex cursor-pointer list-none gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
         <ChevronRight
-          className="mt-0.5 h-4 w-4 shrink-0 text-fg-muted transition-transform group-open:rotate-90"
+          className="mt-0.5 h-4 w-4 shrink-0 text-fg-muted group-open:rotate-90 motion-safe:transition-transform motion-safe:duration-(--motion-base)"
           aria-hidden="true"
         />
         <div className="min-w-0 flex-1 space-y-0.5">
