@@ -93,3 +93,5 @@ def test_only_the_denylist_step_reads_a_secret_and_only_with_secrets():
     check = next(step for step in job["steps"] if step.get("name") == "Name denylist")
     assert check["if"] == "env.NO_SECRETS != 'true'", check["if"]
     assert "continue-on-error" not in check and "|| true" not in check["run"], "exit 2 must fail the step"
+    # The whole tracked tree, not DEFAULT_SCOPE: the public repository is this tree.
+    assert "scripts/check_denylist.py --public" in check["run"], check["run"]

@@ -19,6 +19,10 @@ side: an allowed `github.com/owner/repo` does not cover
 `github.com/owner/repo-other`. The public export uses this for the public
 repository's own canonical URLs, which name its owner.
 
+`--public` scans the whole tree with the allowances the public export passes
+(`public_allowances`). This repository is the public one, so CI runs it that
+way.
+
 Exit codes: 0 clean, 1 a match, 2 the check did not run (nothing configured,
 an unreadable or empty denylist, a scope path that is missing or holds no
 file). A match is reported as the file, the line and the denylist line of the
@@ -29,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import importlib.util
 import os
 import re
 import subprocess
@@ -36,6 +41,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 ENV_VAR = "EMBRY0_DENYLIST_FILE"
 
@@ -58,6 +64,11 @@ EXIT_MATCH = 1
 EXIT_NOT_RUN = 2
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# The public export: --public reads its allowances from it, so the two scans
+# cannot drift apart.
+EXPORT_SCRIPT = Path(__file__).resolve().with_name("export_public.py")
+CONTRIBUTORS_FILE = "CONTRIBUTORS"
 
 
 class NotRun(Exception):
@@ -114,6 +125,49 @@ def load_patterns(denylist: Path) -> list[Pattern]:
     if not patterns:
         raise NotRun(f"the denylist {denylist} holds no patterns")
     return patterns
+
+
+def _load_export_script() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("check_denylist_export_public", EXPORT_SCRIPT)
+    if spec is None or spec.loader is None or not EXPORT_SCRIPT.is_file():
+        raise NotRun(f"cannot load the public export script {EXPORT_SCRIPT}")
+    module = importlib.util.module_from_spec(spec)
+    # dataclasses look their module up in sys.modules while the class is built.
+    sys.modules[spec.name] = module
+    # A scanned tree that is not a git work tree is scanned whole, so writing
+    # scripts/__pycache__ into it would add files to the scan.
+    writes_bytecode = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = writes_bytecode
+    return module
+
+
+def contributor_names(root: Path) -> list[str]:
+    """The names CONTRIBUTORS lists, one per line; blank and `#` lines are not names."""
+    path = root / CONTRIBUTORS_FILE
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise NotRun(f"cannot read {CONTRIBUTORS_FILE}: {exc}") from None
+    return [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
+
+
+def public_allowances(root: Path, public_repo: str | None = None) -> list[Allowance]:
+    """The allowances the public export passes, for a scan of the published tree.
+
+    The public repository's canonical URLs in any file, its owner's handle in
+    .github/CODEOWNERS, and each name CONTRIBUTORS lists in that file only
+    (scripts/export_public.py, step 7).
+    """
+    export = _load_export_script()
+    allowed = export.canonical_allowances(public_repo or export.PUBLIC_REPO)
+    allowed += export.contributor_allowances(contributor_names(root))
+    return [Allowance(literal, path) for path, literal in allowed]
 
 
 def _tracked_files(root: Path) -> set[str] | None:
@@ -213,6 +267,12 @@ def scan(
     return matches
 
 
+def _not_run(exc: NotRun) -> int:
+    print(f"denylist check NOT RUN: {exc}", file=sys.stderr)
+    print("This is not a pass: nothing was checked.", file=sys.stderr)
+    return EXIT_NOT_RUN
+
+
 def run(denylist_setting: str, root: Path, scope: Sequence[str], allowances: Sequence[Allowance] = ()) -> int:
     try:
         if not denylist_setting.strip():
@@ -230,9 +290,7 @@ def run(denylist_setting: str, root: Path, scope: Sequence[str], allowances: Seq
                 raise NotRun(f"an allowance names {allowance.path}, which is not among the scanned files")
         matches = scan(root, files, patterns, allowances)
     except NotRun as exc:
-        print(f"denylist check NOT RUN: {exc}", file=sys.stderr)
-        print("This is not a pass: nothing was checked.", file=sys.stderr)
-        return EXIT_NOT_RUN
+        return _not_run(exc)
     for match in matches:
         where = f"{match.path}:{match.line}" if match.line else f"{match.path} (its path)"
         print(f"{where}: matches denylist line {match.denylist_line}")
@@ -277,10 +335,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar=("PATH", "LITERAL"),
         help="an exact literal a term may appear inside, only in PATH relative to --root (repeatable)",
     )
+    parser.add_argument(
+        "--public",
+        action="store_true",
+        help="scan the whole tree with the public export's allowances, as CI does; takes no paths",
+    )
     args = parser.parse_args(argv)
     allowances = [Allowance(literal) for literal in args.allow]
     allowances += [Allowance(literal, path) for path, literal in args.allow_in]
-    return run(os.environ.get(ENV_VAR, ""), args.root, args.paths or DEFAULT_SCOPE, allowances)
+    scope: Sequence[str] = args.paths or DEFAULT_SCOPE
+    if args.public:
+        if args.paths:
+            parser.error("--public scans the whole tree; give it no paths")
+        try:
+            allowances += public_allowances(args.root)
+        except NotRun as exc:
+            return _not_run(exc)
+        scope = ["."]
+    return run(os.environ.get(ENV_VAR, ""), args.root, scope, allowances)
 
 
 if __name__ == "__main__":
