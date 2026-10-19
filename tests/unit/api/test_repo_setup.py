@@ -1,4 +1,5 @@
-"""Start, review, apply and turn down a setup proposal (ADR 0019).
+"""Start, review, apply and turn down a setup proposal (ADR 0019), and read
+the readiness checklist the repo page opens on.
 
 Driven through the real app (``create_app``) on a real database, with API
 keys so the actor and the tier are the ones production sees. The executor is
@@ -8,17 +9,20 @@ a fake that creates the job row the way the real one does and starts nothing.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from embry0.api.deps import bust_api_key_cache
 from embry0.config import Embry0Config
 from embry0.services.bootstrap import render_starter_qa_yaml
+from embry0.services.credentials.resolver import CredentialMissingError
 from embry0.services.org_discovery import RepoFacts
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
@@ -569,6 +573,165 @@ async def test_skip_testing_leaves_an_existing_setup_alone(client) -> None:
     assert (await client.get(QA)).text == GOOD
 
 
+# -- readiness -------------------------------------------------------------------------
+
+READINESS = f"/api/v1/repos/{REPO}/readiness"
+PR_URL = "https://github.com/acme/widgets/pull/7"
+
+
+@contextmanager
+def _no_network() -> Iterator[list[str]]:
+    """Every request that would leave the process, recorded and refused."""
+    tried: list[str] = []
+
+    async def refuse_async(self: Any, request: httpx.Request) -> httpx.Response:
+        tried.append(str(request.url))
+        raise AssertionError(f"readiness called out to {request.url}")
+
+    def refuse(self: Any, request: httpx.Request) -> httpx.Response:
+        tried.append(str(request.url))
+        raise AssertionError(f"readiness called out to {request.url}")
+
+    with (
+        patch.object(httpx.AsyncHTTPTransport, "handle_async_request", refuse_async),
+        patch.object(httpx.HTTPTransport, "handle_request", refuse),
+    ):
+        yield tried
+
+
+def _code_account(app: Any, label: str | None = "acme-bot") -> AsyncMock:
+    resolve = (
+        AsyncMock(return_value=MagicMock(label=label))
+        if label is not None
+        else AsyncMock(side_effect=CredentialMissingError("no github credential for 'acme/widgets'"))
+    )
+    app.state.credential_resolver.resolve_forge = resolve
+    return resolve
+
+
+def _states(body: dict[str, Any]) -> list[tuple[str, str]]:
+    return [(r["key"], r["state"]) for r in body["rows"]]
+
+
+@pytest.mark.requires_postgres
+async def test_readiness_of_a_new_repository_asks_for_testing_and_calls_no_one(client, app) -> None:
+    await app.state.repos_repo.register(REPO)
+    resolve = _code_account(app)
+    with _no_network() as tried:
+        resp = await client.get(READINESS)
+    assert resp.status_code == 200, resp.text
+    assert tried == []
+    body = resp.json()
+    assert _states(body) == [
+        ("code_access", "done"),
+        ("app_values", "unknown"),
+        ("testing", "missing"),
+        ("first_task", "waiting"),
+        ("work_trigger", "unknown"),
+    ]
+    assert (body["status"], body["steps_left"], body["next_step"]) == ("steps_left", 2, "testing")
+    assert body["rows"][2]["action"] == {"kind": "start_setup", "label": "Let embry0 set up testing"}
+    assert body["rows"][0]["says"] == "Uses the GitHub account acme-bot."
+    assert body["rows"][4]["trigger_label"] == "embry0"
+    assert (body["needs_docker"], body["facts_seen_at"]) == (False, None)
+    resolve.assert_awaited_once_with("acme/widgets", "github")
+
+
+@pytest.mark.requires_postgres
+async def test_readiness_reads_what_embry0_already_stores(client, app, db_with_migrations) -> None:
+    await app.state.org_repos_repo.upsert_fact(
+        RepoFacts(
+            owner="acme",
+            repo="Acme/Widgets",
+            facts={
+                "root_visible": True,
+                "env_keys": ["DATABASE_URL", "API_TOKEN"],
+                "hooks_visible": True,
+                "hook_present": False,
+            },
+        ),
+        run_id="run-1",
+    )
+    await app.state.env_repo.set_repo(REPO, [{"key": "API_TOKEN", "value": "set", "var_type": "config"}])
+    assert (await client.put(QA, content=GOOD)).status_code == 200  # registers the repository too
+    job_id = await app.state.jobs_repo.create(repo=REPO, task="Fix the footer link")
+    await db_with_migrations.execute("UPDATE jobs SET pr_url = $2 WHERE job_id = $1", job_id, PR_URL)
+    _code_account(app)
+
+    with _no_network() as tried:
+        body = (await client.get(READINESS)).json()
+    assert tried == []
+    assert _states(body) == [
+        ("code_access", "done"),
+        ("app_values", "missing"),
+        ("testing", "done"),
+        ("first_task", "done"),
+        ("work_trigger", "missing"),
+    ]
+    assert body["rows"][1]["missing_keys"] == ["DATABASE_URL"]
+    assert body["rows"][2]["says"] == "Tests web and checks 1 thing after each change."
+    assert body["rows"][3]["pr_url"] == PR_URL
+    # Ready: code access, testing and a first pull request. A setting still
+    # without a value stays the next step, without holding that back.
+    assert (body["status"], body["steps_left"], body["next_step"]) == ("ready", 1, "app_values")
+    assert body["facts_seen_at"] is not None
+
+
+@pytest.mark.requires_postgres
+async def test_readiness_ends_a_setup_run_a_restart_cut_off(client, app, db_with_migrations) -> None:
+    await app.state.repos_repo.register(REPO)
+    _code_account(app)
+    proposal_id = await _proposal(app, status="running")
+    job_id = (await app.state.repo_setup_proposals_repo.get(proposal_id))["job_id"]
+
+    testing = (await client.get(READINESS)).json()["rows"][2]
+    assert (testing["state"], testing["job_id"], testing["proposal_id"]) == ("in_progress", job_id, proposal_id)
+
+    await _job_ended(db_with_migrations, job_id, "failed", "the orchestrator restarted")
+    body = (await client.get(READINESS)).json()
+    assert body["rows"][2]["state"] == "failed"
+    assert body["rows"][2]["says"] == (
+        "embry0 could not set up testing: embry0 stopped before it finished: the orchestrator restarted"
+    )
+    assert body["next_step"] == "testing"
+    assert (await app.state.repo_setup_proposals_repo.get(proposal_id))["status"] == "failed"
+
+
+@pytest.mark.requires_postgres
+async def test_readiness_with_a_proposal_waiting_is_a_setup_to_review(client, app) -> None:
+    await app.state.repos_repo.register(REPO)
+    _code_account(app)
+    proposal_id = await _proposal(app)
+    body = (await client.get(READINESS)).json()
+    assert (body["status"], body["next_step"]) == ("setup_to_review", "testing")
+    assert body["rows"][2]["proposal_id"] == proposal_id
+
+
+@pytest.mark.requires_postgres
+async def test_readiness_without_a_code_account_needs_an_admin(client, app) -> None:
+    await app.state.repos_repo.register(REPO)
+    _code_account(app, None)
+    body = (await client.get(READINESS)).json()
+    assert (body["status"], body["next_step"]) == ("needs_admin", "code_access")
+    assert body["rows"][0]["action"] == {"kind": "copy_admin_request", "label": "Copy a request for your admin"}
+
+
+@pytest.mark.requires_postgres
+async def test_readiness_of_an_unregistered_repository_is_404(client, app) -> None:
+    _code_account(app)
+    resp = await client.get(READINESS)
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "repo not registered"
+
+
+@pytest.mark.requires_postgres
+async def test_a_read_key_can_see_readiness(app) -> None:
+    await app.state.repos_repo.register(REPO)
+    _code_account(app)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_as(READER)) as c:
+        assert (await c.get(READINESS)).status_code == 200
+
+
 # -- wiring ---------------------------------------------------------------------------
 
 
@@ -579,3 +742,21 @@ async def test_the_app_wires_the_proposal_store(api_client) -> None:
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"proposals": []}
     assert (await api_client.get("/api/v1/repos/acme/wired/setup/proposal")).status_code == 404
+
+
+@pytest.mark.requires_postgres
+async def test_the_app_wires_readiness(api_client) -> None:
+    """Production's _init_app_state, the real credential resolver included,
+    answers readiness from stored facts without calling out."""
+    await api_client.app.state.repos_repo.register("acme/wired-readiness")
+    with _no_network() as tried:
+        resp = await api_client.get("/api/v1/repos/acme/wired-readiness/readiness")
+    assert resp.status_code == 200, resp.text
+    assert tried == []
+    assert [r["key"] for r in resp.json()["rows"]] == [
+        "code_access",
+        "app_values",
+        "testing",
+        "first_task",
+        "work_trigger",
+    ]

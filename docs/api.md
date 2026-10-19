@@ -407,6 +407,7 @@ setup until a person applies the proposal.
 | `POST /api/v1/repos/{repo}/setup/proposal/{proposal_id}/reject` | operator |
 | `POST /api/v1/repos/{repo}/setup/skip-testing` | operator |
 | `GET /api/v1/setup/proposals?status=pending` | any authenticated principal |
+| `GET /api/v1/repos/{repo}/readiness` | any authenticated principal |
 
 `GET .../setup/cost` answers `{"recorded_runs", "typical_cost_usd",
 "per_job_budget_usd", "model", "paid_from"}`: how many setup runs completed
@@ -446,6 +447,23 @@ and answers `{"revision_id"}`. Apply and reject add the audit rows
 
 `POST .../setup/skip-testing` stores the starter with `qa_required: never`
 when the repository has no test setup, and answers 409 when it has one.
+
+`GET .../readiness` is the checklist the repository page opens on. It is
+built from facts embry0 already stores, with no model call and no forge
+call: the account that resolves for the repository, what discovery read of
+it, the settings stored for it and globally, the test setup and its check,
+the latest proposal, and the newest pull request a job opened. It answers
+`{"repo", "status", "steps_left", "summary", "next_step", "rows",
+"needs_docker", "facts_seen_at"}`, or 404 for a repository that is not
+registered. `rows` are, in order, `code_access`, `app_values`,
+`testing`, `first_task` and the optional `work_trigger`, each
+`{"key", "required", "state", "title", "says", "action"}` where `action`
+is `{"kind", "label"}` or `null`. A fact embry0 does not have reads
+`unknown` and is not counted in `steps_left`; `facts_seen_at` says when
+discovery last saw the repository. `next_step` is the first required row a
+person can act on, `null` while a setup run is going. `needs_docker` is
+true when the stored test setup will not start without the Docker access an
+admin grants.
 
 ```bash
 # Start a setup run, then apply the proposal it leaves

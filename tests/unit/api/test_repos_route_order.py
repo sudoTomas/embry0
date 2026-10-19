@@ -31,6 +31,7 @@ _SUB_RESOURCES = (
     "apply",
     "reject",
     "skip-testing",
+    "readiness",
 )
 
 

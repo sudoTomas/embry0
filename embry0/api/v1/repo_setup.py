@@ -7,7 +7,8 @@ drafts a test setup, proves the app starts with it, and stores the draft as
 a setup proposal instead of the test setup. GET .../setup/proposal reads the
 latest proposal with the free check of it. Apply writes it as the test setup
 (recorded, so History can undo it); reject turns it down. POST
-.../setup/skip-testing stores a starter with testing off.
+.../setup/skip-testing stores a starter with testing off. GET .../readiness
+is the checklist the repo page opens on, built from stored facts only.
 
 Operator tier for every write, the same as saving a test setup: the router
 is mounted with ``auth_deps``, which refuses a read-scope key on POST.
@@ -22,9 +23,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.trigger_context import resolve_trigger_labels
 from embry0.api.v1.jobs import CREATE_A_JOB, start_onboard_job
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
+from embry0.services.repo_readiness import build_readiness, readiness_inputs
 from embry0.services.repo_setup import (
     ALREADY_RUNNING,
     Refused,
@@ -152,6 +155,20 @@ async def skip_setup_testing(full_repo: str, request: Request) -> dict[str, int 
     except Refused as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
     return {"revision_id": revision_id}
+
+
+@router.get("/repos/{full_repo:path}/readiness")
+async def get_readiness(full_repo: str, request: Request) -> dict[str, Any]:
+    """The checklist the repo page opens on (``build_readiness``). It reads
+    stored facts only: no model call and no forge call."""
+    registered = await request.app.state.repos_repo.get(full_repo)
+    if registered is None:
+        raise HTTPException(status_code=404, detail="repo not registered")
+    labels = await resolve_trigger_labels(request)
+    inputs = await readiness_inputs(
+        request.app.state, full_repo, registered, trigger_label=labels[0] if labels else "embry0"
+    )
+    return build_readiness(inputs)
 
 
 @router.get("/setup/proposals")
