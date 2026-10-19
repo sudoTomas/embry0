@@ -15,6 +15,7 @@
 import { type JSX, useEffect, useState } from "react";
 import { useAppArtifacts } from "@/hooks/useQaDashboard";
 import { useArtifactBlobUrl } from "@/hooks/useArtifactBlobUrl";
+import { Overlay } from "@/components/ui/Overlay";
 
 interface Props {
   runId: string;
@@ -45,12 +46,12 @@ function ScreenshotLightbox({
   }, [onClose]);
 
   return (
-    <div
+    <Overlay
       role="dialog"
       aria-modal="true"
       aria-label={`Screenshot ${filename}`}
       data-testid="qa-artifact-lightbox"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+      className="flex items-center justify-center bg-black/80 p-4"
       onClick={onClose}
     >
       <div
@@ -78,7 +79,7 @@ function ScreenshotLightbox({
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 

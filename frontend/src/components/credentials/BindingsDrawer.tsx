@@ -4,6 +4,7 @@ import { detailMessages } from "@/api/errorDetail";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
+import { Overlay } from "@/components/ui/Overlay";
 import { Select } from "@/components/ui/Select";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useCredentials, useScopedBindings, useSetScopedBindings } from "@/hooks/useCredentials";
@@ -157,8 +158,8 @@ export function BindingsDrawer({ credential, isAdmin, onClose }: BindingsDrawerP
   const lockClass = !isAdmin ? "pointer-events-none" : undefined;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm"
+    <Overlay
+      className="flex justify-end bg-black/60 backdrop-blur-sm"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -276,6 +277,6 @@ export function BindingsDrawer({ credential, isAdmin, onClose }: BindingsDrawerP
 
         {formError && <p role="alert" className="mt-4 text-sm text-destructive">{formError}</p>}
       </div>
-    </div>
+    </Overlay>
   );
 }

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Textarea } from "@/components/ui/Textarea";
 import { Select } from "@/components/ui/Select";
+import { Overlay } from "@/components/ui/Overlay";
 import { RepoSelector } from "./RepoSelector";
 import { LabelInput } from "./LabelInput";
 import { useCreateIssue } from "@/hooks/useIssues";
@@ -81,9 +82,9 @@ export function CreateIssueDialog({ onClose, onCreated, initialRepo, labelSugges
   };
 
   return (
-    <div
+    <Overlay
       ref={containerRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="flex items-center justify-center bg-black/60"
       onClick={onClose}
       onKeyDown={(e) => e.key === "Escape" && onClose()}
       role="dialog"
@@ -158,6 +159,6 @@ export function CreateIssueDialog({ onClose, onCreated, initialRepo, labelSugges
           </form>
         </CardContent>
       </Card>
-    </div>
+    </Overlay>
   );
 }

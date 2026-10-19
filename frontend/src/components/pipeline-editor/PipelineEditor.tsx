@@ -23,6 +23,7 @@ import { useGraphState } from "./hooks/useGraphState";
 import { autoLayout } from "./autoLayout";
 import { DivineRipple } from "@/components/divine/DivineRipple";
 import { Button } from "@/components/ui/Button";
+import { Overlay } from "@/components/ui/Overlay";
 import { useRenameTemplate, useCreateTemplate } from "@/hooks/usePipelines";
 import { toApiGraph } from "@/lib/graph-utils";
 import type { PipelineGraph, PipelineTemplate } from "@/lib/types";
@@ -316,8 +317,8 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
     </div>
   );
 
-  return (
-    <div className={isModal ? "fixed inset-0 z-50 bg-page flex flex-col" : "flex flex-col h-full bg-page"}>
+  const content = (
+    <>
       {header}
 
       {/* Main content */}
@@ -376,6 +377,13 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
           onClose={() => setShowTemplatePicker(false)}
         />
       )}
-    </div>
+    </>
+  );
+
+  // The modal editor covers the window, so it renders over it like a dialog.
+  return isModal ? (
+    <Overlay className="bg-page flex flex-col">{content}</Overlay>
+  ) : (
+    <div className="flex flex-col h-full bg-page">{content}</div>
   );
 }

@@ -110,6 +110,20 @@ describe("CreateIssueDialog", () => {
     expect(await offeredRepos()).toEqual(["acme/gadgets", "acme/hidden", "acme/widgets"]);
   });
 
+  // The Issues page renders it inline in a space-y stack, whose bottom
+  // margin cut 24 px off the overlay while it lived there.
+  it("renders its overlay as a child of body, outside the page that opens it", () => {
+    const { container } = render(
+      <div className="space-y-6">
+        <CreateIssueDialog onClose={vi.fn()} />
+        <p>The rest of the page</p>
+      </div>,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Create issue dialog" });
+    expect(container).not.toContainElement(dialog);
+    expect(dialog.parentElement).toBe(document.body);
+  });
+
   it("does not report a creation that failed", async () => {
     mockMutate.mockImplementation((_req, opts) => opts.onError(new Error("boom")));
     const onCreated = vi.fn();

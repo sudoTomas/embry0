@@ -5,6 +5,7 @@ import { apiErrorMessage } from "@/api/errorDetail";
 import type { SetupCost } from "@/api/repoSetup";
 import { useSetupCost, useStartSetup } from "@/hooks/useSetupProposal";
 import { Button } from "@/components/ui/Button";
+import { Overlay } from "@/components/ui/Overlay";
 import { createFocusTrap } from "@/lib/focus-trap";
 import { formatCost } from "@/lib/utils";
 
@@ -80,8 +81,8 @@ export function SetupAgentDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+    <Overlay
+      className="flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -147,6 +148,6 @@ export function SetupAgentDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }

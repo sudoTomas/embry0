@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Button } from "@/components/ui/Button";
+import { Overlay } from "@/components/ui/Overlay";
 import { X } from "lucide-react";
 import type { EnvVar, EnvVarScope } from "@/lib/types/environment";
 import { createFocusTrap } from "@/lib/focus-trap";
@@ -113,8 +114,8 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
   const canSave = !saving && key.trim().length > 0 && (isEdit || value.length > 0 || varType === "config");
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+    <Overlay
+      className="flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -246,6 +247,6 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
           </div>
         </form>
       </div>
-    </div>
+    </Overlay>
   );
 }

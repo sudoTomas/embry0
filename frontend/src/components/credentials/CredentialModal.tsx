@@ -5,6 +5,7 @@ import { detailMessages } from "@/api/errorDetail";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
+import { Overlay } from "@/components/ui/Overlay";
 import { Select } from "@/components/ui/Select";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { createFocusTrap } from "@/lib/focus-trap";
@@ -374,8 +375,8 @@ export function CredentialModal({
   const title = isRotate ? "Rotate credential" : "Create credential";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+    <Overlay
+      className="flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) requestClose();
       }}
@@ -674,6 +675,6 @@ export function CredentialModal({
           </div>
         </form>
       </div>
-    </div>
+    </Overlay>
   );
 }
