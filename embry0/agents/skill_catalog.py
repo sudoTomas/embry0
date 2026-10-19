@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from embry0.agents.skills import UnknownSkillError, closest_names, is_repository_skill
+from embry0.agents.skills import check_skill_names, is_repository_skill
 
 if TYPE_CHECKING:
     from embry0.storage.repositories.skills import SkillSourcesRepository
@@ -67,9 +67,8 @@ def check_skill_write(
 ) -> list[str]:
     """The warnings for the names a write adds; raise UnknownSkillError for unknown ones."""
     buckets = classify_skill_names(names, catalog_rows, source_rows)
-    if buckets["unknown"]:
-        known = [str(c["name"]) for c in catalog_rows]
-        raise UnknownSkillError(buckets["unknown"], {u: closest_names(u, known) for u in buckets["unknown"]})
+    # What is left once the unavailable names are set aside is checked like any catalog name.
+    check_skill_names(buckets["unknown"], {str(c["name"]) for c in catalog_rows})
     catalog = {str(c["name"]): c for c in catalog_rows}
     not_ready = _not_ready_prefixes(source_rows)
     warnings = []
