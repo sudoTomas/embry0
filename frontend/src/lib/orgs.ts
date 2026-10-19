@@ -153,6 +153,15 @@ export const SUMMARY_FIELDS: readonly { key: string; label: string }[] = [
   { key: "boot_hint", label: "boot command" },
 ];
 
+/** The environment variable an organization's token is read from (an
+ * `env:KEY` access source), or null when it acts with a stored credential or
+ * the source does not say. */
+export function envTokenKey(org: Organization): string | null {
+  if (org.credential_id) return null;
+  const source = typeof org.access.source === "string" ? org.access.source : "";
+  return source.startsWith("env:") ? source.slice(4) : null;
+}
+
 /** The account an organization acts with, in words. */
 export function credentialLabel(org: Organization, credentials: readonly Credential[] | undefined): string {
   if (org.credential_id) {

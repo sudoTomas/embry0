@@ -140,7 +140,7 @@ export function CredentialTable({
                   data-testid="credential-row"
                 >
                   <td>
-                    <div className="text-foreground">{credential.label}</div>
+                    <div className="font-mono text-xs text-foreground">{credential.label}</div>
                     <div className="text-xs text-muted-foreground sm:hidden">{providerLabel(credential.provider)}</div>
                     {credential.verified_login && (
                       <div className="text-xs text-muted-foreground">{credential.verified_login}</div>

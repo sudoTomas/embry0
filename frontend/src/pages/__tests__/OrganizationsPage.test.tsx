@@ -52,7 +52,8 @@ describe("OrganizationsPage", () => {
 
     expect(within(rows[0]).getByTestId("org-link")).toHaveAttribute("href", "/orgs/acme");
     expect(rows[0]).toHaveTextContent("GitHub");
-    expect(rows[0]).toHaveTextContent("environment (GITHUB_TOKEN__ACME)");
+    expect(rows[0]).toHaveTextContent("Environment token");
+    expect(within(rows[0]).getByText("GITHUB_TOKEN__ACME").className).toContain("font-mono");
     expect(within(rows[0]).getByTestId("access-read")).toHaveAttribute("data-state", "yes");
     expect(within(rows[0]).getByTestId("access-hooks")).toHaveAttribute("data-state", "yes");
     expect(within(rows[0]).getByTestId("access-push")).toHaveAttribute("data-state", "unknown");

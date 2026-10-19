@@ -295,7 +295,7 @@ function LlmAccount({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <span className="text-sm">{value.label ?? ""}</span>
+        <span className="font-mono text-xs">{value.label ?? ""}</span>
         {source && (
           <Badge tone={sourceTone(source)} title={source === "env" ? ENV_SOURCE_TITLE : undefined}>
             {source}
@@ -304,7 +304,7 @@ function LlmAccount({
       </div>
       <details data-testid={`llm-trace-${provider}`}>
         <summary className="cursor-pointer text-sm text-muted-foreground">Trace</summary>
-        <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-white/70">
+        <ul className="mt-1 list-disc space-y-1 pl-5 font-mono text-xs text-fg-secondary">
           {trace.map((line, index) => (
             <li key={`${index}:${line}`}>{line}</li>
           ))}
@@ -350,14 +350,14 @@ function ResolvedForge({ forge }: { forge: Exclude<ForgeEffective, { error: stri
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <span className="text-sm">{forge.label ?? ""}</span>
+        <span className="font-mono text-xs">{forge.label ?? ""}</span>
         <Badge tone={sourceTone(source)} title={source === "env" ? ENV_SOURCE_TITLE : undefined}>
           {source}
         </Badge>
       </div>
       <details data-testid="repo-accounts-trace">
         <summary className="cursor-pointer text-sm text-muted-foreground">Trace</summary>
-        <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-white/70">
+        <ul className="mt-1 list-disc space-y-1 pl-5 font-mono text-xs text-fg-secondary">
           {trace.map((line, index) => (
             <li key={`${index}:${line}`}>{line}</li>
           ))}
