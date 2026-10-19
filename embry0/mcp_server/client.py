@@ -333,6 +333,10 @@ class Embry0Client:
         execution_mode: str | None = None,
         auth_mode: str | None = None,
         mcp_servers: dict[str, Any] | None = None,
+        display_name: str | None = None,
+        avatar: str | None = None,
+        color: str | None = None,
+        tagline: str | None = None,
     ) -> dict[str, Any]:
         body = _drop_none(
             {
@@ -344,9 +348,52 @@ class Embry0Client:
                 "execution_mode": execution_mode,
                 "auth_mode": auth_mode,
                 "mcp_servers": mcp_servers,
+                "display_name": display_name,
+                "avatar": avatar,
+                "color": color,
+                "tagline": tagline,
             }
         )
         return _as_dict(await self._request("PUT", f"/api/v1/agents/{agent_type}", body=body))
+
+    async def agent_create(
+        self,
+        agent_type: str,
+        *,
+        description: str,
+        model: str,
+        tools: list[str] | None = None,
+        skills: list[str] | None = None,
+        system_prompt: str = "",
+        execution_mode: str | None = None,
+        auth_mode: str | None = None,
+        mcp_servers: dict[str, Any] | None = None,
+        display_name: str = "",
+        avatar: str = "golem",
+        color: str = "slate",
+        tagline: str = "",
+    ) -> dict[str, Any]:
+        body = _drop_none(
+            {
+                "type": agent_type,
+                "description": description,
+                "model": model,
+                "tools": tools,
+                "skills": skills,
+                "system_prompt": system_prompt,
+                "execution_mode": execution_mode,
+                "auth_mode": auth_mode,
+                "mcp_servers": mcp_servers,
+                "display_name": display_name,
+                "avatar": avatar,
+                "color": color,
+                "tagline": tagline,
+            }
+        )
+        return _as_dict(await self._request("POST", "/api/v1/agents", body=body))
+
+    async def agent_delete(self, agent_type: str) -> dict[str, Any]:
+        return _as_dict(await self._request("DELETE", f"/api/v1/agents/{agent_type}"))
 
     async def agent_reset(self, agent_type: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/agents/{agent_type}/reset"))

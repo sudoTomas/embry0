@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from embry0.agents.identity import BUILTIN_IDENTITY
+
 if TYPE_CHECKING:
     # Lazy at runtime — BUILTIN_SEED imports SYSTEM_PROMPT from this module,
     # so a top-level AgentDefinitionsRepository import would cycle (same
@@ -130,6 +132,7 @@ ONBOARDING_AGENT_SEED: dict[str, Any] = {
     "execution_mode": None,
     "auth_mode": None,
     "mcp_servers": {},
+    **BUILTIN_IDENTITY["onboarding"],
 }
 
 
@@ -146,6 +149,10 @@ async def seed_onboarding_agent(repo: AgentDefinitionsRepository) -> None:
             system_prompt=ONBOARDING_AGENT_SEED["system_prompt"],
             execution_mode=ONBOARDING_AGENT_SEED["execution_mode"],
             auth_mode=ONBOARDING_AGENT_SEED["auth_mode"],
+            display_name=ONBOARDING_AGENT_SEED["display_name"],
+            avatar=ONBOARDING_AGENT_SEED["avatar"],
+            color=ONBOARDING_AGENT_SEED["color"],
+            tagline=ONBOARDING_AGENT_SEED["tagline"],
         )
     await repo.update(
         "onboarding",
@@ -157,6 +164,10 @@ async def seed_onboarding_agent(repo: AgentDefinitionsRepository) -> None:
         execution_mode=ONBOARDING_AGENT_SEED["execution_mode"],
         auth_mode=ONBOARDING_AGENT_SEED["auth_mode"],
         mcp_servers=ONBOARDING_AGENT_SEED["mcp_servers"],
+        display_name=ONBOARDING_AGENT_SEED["display_name"],
+        avatar=ONBOARDING_AGENT_SEED["avatar"],
+        color=ONBOARDING_AGENT_SEED["color"],
+        tagline=ONBOARDING_AGENT_SEED["tagline"],
     )
     # is_builtin is deliberately outside update()'s allowed fields — only
     # seeders may mark rows builtin, via direct SQL (same as seed_qa_agent).

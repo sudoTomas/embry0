@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from embry0.agents.identity import BUILTIN_IDENTITY
+
 if TYPE_CHECKING:
     # Lazy at runtime: BUILTIN_SEED imports this module (same as the onboarding seed).
     from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
@@ -51,6 +53,7 @@ PR_REVIEWER_AGENT_SEED: dict[str, Any] = {
     "execution_mode": None,
     "auth_mode": None,
     "mcp_servers": {},
+    **BUILTIN_IDENTITY["pr-reviewer"],
 }
 
 
@@ -67,6 +70,10 @@ async def seed_pr_reviewer_agent(repo: AgentDefinitionsRepository) -> None:
             system_prompt=seed["system_prompt"],
             execution_mode=seed["execution_mode"],
             auth_mode=seed["auth_mode"],
+            display_name=seed["display_name"],
+            avatar=seed["avatar"],
+            color=seed["color"],
+            tagline=seed["tagline"],
         )
     await repo.update(
         AGENT_TYPE,
@@ -78,6 +85,10 @@ async def seed_pr_reviewer_agent(repo: AgentDefinitionsRepository) -> None:
         execution_mode=seed["execution_mode"],
         auth_mode=seed["auth_mode"],
         mcp_servers=seed["mcp_servers"],
+        display_name=seed["display_name"],
+        avatar=seed["avatar"],
+        color=seed["color"],
+        tagline=seed["tagline"],
     )
     # is_builtin is outside update()'s fields: only seeders set it (seed_onboarding_agent does the same).
     await repo._db.execute(  # noqa: SLF001

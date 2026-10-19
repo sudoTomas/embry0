@@ -4,11 +4,12 @@ Run via the ``embry0-mcp`` console script (stdio transport). Configure with
 ``EMBRY0_API_URL`` (default ``http://localhost:8200``) and ``EMBRY0_API_KEY``.
 
 Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
-``job_answer``, ``agent_update``, ``agent_reset``, ``env_set``, ``env_delete``,
-``merge_decide``, ``case_accept``, ``case_close``, ``repo_register``,
-``org_register``, ``org_webhook_install``, ``org_act``, ``qa_config_set``,
-``credential_bind``, ``host_import_tailnet``) require ``confirm=true``; without
-it they return an instructive refusal instead of acting.
+``job_answer``, ``agent_create``, ``agent_update``, ``agent_delete``,
+``agent_reset``, ``env_set``, ``env_delete``, ``merge_decide``, ``case_accept``,
+``case_close``, ``repo_register``, ``org_register``, ``org_webhook_install``,
+``org_act``, ``qa_config_set``, ``credential_bind``, ``host_import_tailnet``)
+require ``confirm=true``; without it they return an instructive refusal instead
+of acting.
 """
 
 from __future__ import annotations
@@ -402,10 +403,15 @@ async def agent_update(
     execution_mode: str | None = None,
     auth_mode: str | None = None,
     mcp_servers: dict[str, Any] | None = None,
+    display_name: str | None = None,
+    avatar: str | None = None,
+    color: str | None = None,
+    tagline: str | None = None,
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Update an agent definition (only provided fields change). execution_mode: sdk|cli;
-    auth_mode: api_key|oauth. Requires confirm=true (changes live pipeline behavior)."""
+    auth_mode: api_key|oauth; avatar and color are roster and palette ids.
+    Requires confirm=true (changes live pipeline behavior)."""
     if not confirm:
         return _confirmation_refusal("agent_update", f"update agent definition {agent_type!r}")
     return await _get_client().agent_update(
@@ -418,7 +424,57 @@ async def agent_update(
         execution_mode=execution_mode,
         auth_mode=auth_mode,
         mcp_servers=mcp_servers,
+        display_name=display_name,
+        avatar=avatar,
+        color=color,
+        tagline=tagline,
     )
+
+
+@_tool
+async def agent_create(
+    agent_type: str,
+    description: str,
+    model: str,
+    tools: list[str] | None = None,
+    skills: list[str] | None = None,
+    system_prompt: str = "",
+    execution_mode: str | None = None,
+    auth_mode: str | None = None,
+    mcp_servers: dict[str, Any] | None = None,
+    display_name: str = "",
+    avatar: str = "golem",
+    color: str = "slate",
+    tagline: str = "",
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Create a custom agent definition. avatar is one of the roster ids and color one of the palette ids
+    (see GET /agents for the builtins' values). Requires confirm=true (adds a runnable agent)."""
+    if not confirm:
+        return _confirmation_refusal("agent_create", f"create agent definition {agent_type!r}")
+    return await _get_client().agent_create(
+        agent_type,
+        description=description,
+        model=model,
+        tools=tools,
+        skills=skills,
+        system_prompt=system_prompt,
+        execution_mode=execution_mode,
+        auth_mode=auth_mode,
+        mcp_servers=mcp_servers,
+        display_name=display_name,
+        avatar=avatar,
+        color=color,
+        tagline=tagline,
+    )
+
+
+@_tool
+async def agent_delete(agent_type: str, confirm: bool = False) -> dict[str, Any]:
+    """Delete a custom agent definition (builtins answer 403). Requires confirm=true (destructive)."""
+    if not confirm:
+        return _confirmation_refusal("agent_delete", f"delete agent definition {agent_type!r}")
+    return await _get_client().agent_delete(agent_type)
 
 
 @_tool

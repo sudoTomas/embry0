@@ -93,6 +93,10 @@ async def create_agent(
             execution_mode=req.execution_mode,
             auth_mode=req.auth_mode,
             mcp_servers=req.mcp_servers,
+            display_name=req.display_name,
+            avatar=req.avatar,
+            color=req.color,
+            tagline=req.tagline,
         )
     except Exception as exc:
         if "duplicate" in str(exc).lower() or "unique" in str(exc).lower():
@@ -112,6 +116,10 @@ async def update_agent(
     # option for execution_mode/auth_mode needs a way to write NULL; the old
     # `v is not None` filter made clearing impossible over the API).
     updates = req.model_dump(exclude_unset=True)
+    # The identity columns are NOT NULL: unlike execution_mode, null has no meaning there.
+    for key in ("display_name", "avatar", "color", "tagline"):
+        if key in updates and updates[key] is None:
+            raise HTTPException(status_code=422, detail=f"{key} cannot be null")
     await _reject_if_disabled(request, updates.get("model"))
     if not updates:
         agent = await repo.get(agent_type)

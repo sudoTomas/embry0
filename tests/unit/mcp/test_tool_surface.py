@@ -18,19 +18,40 @@ from typing import Any
 from embry0.mcp_server import server
 
 EXPECTED_PARAMETERS: dict[str, list[str]] = {
+    "agent_create": [
+        "agent_type: string",
+        "auth_mode: string|null = null",
+        'avatar: string = "golem"',
+        'color: string = "slate"',
+        "confirm: boolean = false",
+        "description: string",
+        'display_name: string = ""',
+        "execution_mode: string|null = null",
+        "mcp_servers: object|null = null",
+        "model: string",
+        "skills: array|null = null",
+        'system_prompt: string = ""',
+        'tagline: string = ""',
+        "tools: array|null = null",
+    ],
+    "agent_delete": ["agent_type: string", "confirm: boolean = false"],
     "agent_get": ["agent_type: string"],
     "agent_list": [],
     "agent_reset": ["agent_type: string", "confirm: boolean = false"],
     "agent_update": [
         "agent_type: string",
         "auth_mode: string|null = null",
+        "avatar: string|null = null",
+        "color: string|null = null",
         "confirm: boolean = false",
         "description: string|null = null",
+        "display_name: string|null = null",
         "execution_mode: string|null = null",
         "mcp_servers: object|null = null",
         "model: string|null = null",
         "skills: array|null = null",
         "system_prompt: string|null = null",
+        "tagline: string|null = null",
         "tools: array|null = null",
     ],
     "case_accept": ["accepted_by: string", "case_id: string", "confirm: boolean = false"],
@@ -224,6 +245,8 @@ async def test_every_confirm_gated_tool_defaults_to_refusing():
     tools = await _wire_tools()
     gated = {name for name, tool in tools.items() if "confirm" in tool["inputSchema"].get("properties", {})}
     assert gated == {
+        "agent_create",
+        "agent_delete",
         "agent_reset",
         "agent_update",
         "case_accept",

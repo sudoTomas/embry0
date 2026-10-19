@@ -226,3 +226,50 @@ def test_builtin_seed_skill_counts_match_design_2026_05_04():
             f"  expected: {sorted(want)}\n"
             f"  got:      {sorted(got)}"
         )
+
+
+async def test_create_stores_identity_and_defaults(db_with_migrations) -> None:
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    row = await repo.create(agent_type="cartographer", description="maps", model="claude-sonnet-5")
+    assert (row["display_name"], row["avatar"], row["color"], row["tagline"]) == ("", "golem", "slate", "")
+    row = await repo.create(
+        agent_type="lantern",
+        description="lights",
+        model="claude-sonnet-5",
+        display_name="Lantern",
+        avatar="bard",
+        color="sky",
+        tagline="Sings the changelog.",
+    )
+    assert (row["display_name"], row["avatar"], row["color"]) == ("Lantern", "bard", "sky")
+
+
+async def test_update_accepts_identity_fields(db_with_migrations) -> None:
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    await repo.create(agent_type="lantern", description="lights", model="claude-sonnet-5")
+    row = await repo.update("lantern", display_name="Lantern", avatar="rogue", color="rose", tagline="t")
+    assert (row["display_name"], row["avatar"], row["color"], row["tagline"]) == ("Lantern", "rogue", "rose", "t")
+
+
+async def test_reset_restores_builtin_identity(db_with_migrations) -> None:
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    await repo.update("developer", display_name="Renamed", avatar="golem", color="slate", tagline="x")
+    row = await repo.reset("developer")
+    assert (row["display_name"], row["avatar"], row["color"]) == ("Developer", "smith", "amber"), (
+        "reset must restore the seeded identity with the rest of the row"
+    )
+
+
+async def test_every_builtin_row_carries_its_identity(agent_repo: AgentDefinitionsRepository) -> None:
+    """All nine builtin rows match BUILTIN_IDENTITY after the startup seeders run,
+    whether migration 101 wrote the identity or a seeder inserted the row."""
+    from embry0.agents.identity import BUILTIN_IDENTITY
+
+    rows = {r["type"]: r for r in await agent_repo.list_all()}
+    mismatched = {
+        agent_type: {k: rows.get(agent_type, {}).get(k) for k in ident}
+        for agent_type, ident in BUILTIN_IDENTITY.items()
+        if {k: rows.get(agent_type, {}).get(k) for k in ident} != ident
+    }
+    assert len(BUILTIN_IDENTITY) == 9
+    assert mismatched == {}, f"builtin rows whose identity differs from BUILTIN_IDENTITY: {mismatched}"

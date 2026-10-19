@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from embry0.agents.identity import BUILTIN_IDENTITY
 from embry0.workflows.qa.browser_backends import PLAYWRIGHT
 
 if TYPE_CHECKING:
@@ -168,6 +169,7 @@ QA_AGENT_SEED: dict[str, Any] = {
     "execution_mode": None,
     "auth_mode": None,
     "mcp_servers": PLAYWRIGHT.mcp_servers(),
+    **BUILTIN_IDENTITY["qa"],
 }
 
 
@@ -184,6 +186,10 @@ async def seed_qa_agent(repo: AgentDefinitionsRepository) -> None:
             system_prompt=QA_AGENT_SEED["system_prompt"],
             execution_mode=QA_AGENT_SEED["execution_mode"],
             auth_mode=QA_AGENT_SEED["auth_mode"],
+            display_name=QA_AGENT_SEED["display_name"],
+            avatar=QA_AGENT_SEED["avatar"],
+            color=QA_AGENT_SEED["color"],
+            tagline=QA_AGENT_SEED["tagline"],
         )
     # Standard fields (including mcp_servers) flow through the public update()
     # API — _ALLOWED_UPDATE_FIELDS includes "mcp_servers". is_builtin stays
@@ -199,6 +205,10 @@ async def seed_qa_agent(repo: AgentDefinitionsRepository) -> None:
         execution_mode=QA_AGENT_SEED["execution_mode"],
         auth_mode=QA_AGENT_SEED["auth_mode"],
         mcp_servers=QA_AGENT_SEED["mcp_servers"],
+        display_name=QA_AGENT_SEED["display_name"],
+        avatar=QA_AGENT_SEED["avatar"],
+        color=QA_AGENT_SEED["color"],
+        tagline=QA_AGENT_SEED["tagline"],
     )
     await repo._db.execute("UPDATE agent_definitions SET is_builtin = true WHERE type = 'qa'")
     logger.info("qa_agent_seeded")
