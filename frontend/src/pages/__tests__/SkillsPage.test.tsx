@@ -29,6 +29,7 @@ vi.mock("@/hooks/useSkills", () => ({
   anySourceSyncing: () => false,
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
+import { toast } from "sonner";
 import { SkillsPage } from "../SkillsPage";
 
 function renderPage() {
@@ -77,9 +78,22 @@ describe("SkillsPage", () => {
     renderPage();
     const row = screen.getByRole("row", { name: "team" });
     await user.click(within(row).getByRole("checkbox", { name: /enabled/i }));
-    expect(mockUpdate).toHaveBeenCalledWith({ id: "team", body: { enabled: false } });
+    expect(mockUpdate).toHaveBeenCalledWith({ id: "team", body: { enabled: false } }, expect.objectContaining({ onError: expect.any(Function) }));
     await user.click(within(row).getByRole("button", { name: /sync/i }));
-    expect(mockSync).toHaveBeenCalledWith("team");
+    expect(mockSync).toHaveBeenCalledWith("team", expect.objectContaining({ onError: expect.any(Function) }));
+  });
+  it("toasts the server detail when a toggle or sync is refused", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const row = screen.getByRole("row", { name: "team" });
+    const refused = { response: { status: 403, data: { detail: "builtin sources cannot change ref" } } };
+    await user.click(within(row).getByRole("checkbox", { name: /enabled/i }));
+    mockUpdate.mock.calls[0][1].onError(refused);
+    expect(toast.error).toHaveBeenCalledWith("builtin sources cannot change ref");
+    vi.mocked(toast.error).mockClear();
+    await user.click(within(row).getByRole("button", { name: /sync/i }));
+    mockSync.mock.calls[0][1].onError(refused);
+    expect(toast.error).toHaveBeenCalledWith("builtin sources cannot change ref");
   });
   it("edits an inline skill and saves it", async () => {
     const user = userEvent.setup();

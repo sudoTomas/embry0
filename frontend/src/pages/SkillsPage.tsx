@@ -116,13 +116,15 @@ function SourcesSection({ sources, canWrite }: { sources: SkillSource[]; canWrit
                     type="checkbox"
                     aria-label="Enabled"
                     checked={s.enabled}
-                    disabled={!canWrite}
-                    onChange={() => update.mutate({ id: s.id, body: { enabled: !s.enabled } })}
+                    disabled={!canWrite || update.isPending}
+                    onChange={() =>
+                      update.mutate({ id: s.id, body: { enabled: !s.enabled } }, { onError: (err) => toast.error(errorDetail(err)) })
+                    }
                   />
                 </td>
                 <td className={TD}>
                   <div className="flex gap-2">
-                    <Button type="button" size="sm" variant="outline" disabled={!canWrite} onClick={() => sync.mutate(s.id)}>
+                    <Button type="button" size="sm" variant="outline" disabled={!canWrite} onClick={() => sync.mutate(s.id, { onError: (err) => toast.error(errorDetail(err)) })}>
                       Sync
                     </Button>
                     <Button

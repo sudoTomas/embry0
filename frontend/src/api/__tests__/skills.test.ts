@@ -16,7 +16,7 @@ describe("skills api paths (docs/api.md, Skills and Tools)", () => {
   });
   it("writes sources", async () => {
     await createSkillSource({ id: "team", kind: "git", url: "https://example.com/acme/skills.git", ref: "v1" });
-    expect(api.post).toHaveBeenCalledWith("/skills/sources", { id: "team", kind: "git", url: "https://example.com/acme/skills.git", ref: "v1" });
+    expect(api.post).toHaveBeenCalledWith("/skills/sources", { id: "team", kind: "git", url: "https://example.com/acme/skills.git", ref: "v1" }, { suppressValidationToast: true });
     await updateSkillSource("team", { enabled: false });
     expect(api.patch).toHaveBeenCalledWith("/skills/sources/team", { enabled: false });
     await syncSkillSource("team");
@@ -26,7 +26,7 @@ describe("skills api paths (docs/api.md, Skills and Tools)", () => {
   });
   it("writes inline skills and per-agent skills with encoded names", async () => {
     await putInlineSkill("release-notes", { description: "d", body: "# b" });
-    expect(api.put).toHaveBeenCalledWith("/skills/inline/release-notes", { description: "d", body: "# b" });
+    expect(api.put).toHaveBeenCalledWith("/skills/inline/release-notes", { description: "d", body: "# b" }, { suppressValidationToast: true });
     await deleteInlineSkill("release-notes");
     expect(api.delete).toHaveBeenCalledWith("/skills/inline/release-notes");
     await addAgentSkill("developer", "superpowers:writing-plans");

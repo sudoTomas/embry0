@@ -22,7 +22,7 @@ export async function fetchSkillSources(): Promise<SkillSource[]> {
 }
 
 export async function createSkillSource(body: SkillSourceCreate): Promise<SkillSource> {
-  const { data } = await api.post<SkillSource>("/skills/sources", body);
+  const { data } = await api.post<SkillSource>("/skills/sources", body, { suppressValidationToast: true });
   return data;
 }
 
@@ -49,7 +49,7 @@ export async function putInlineSkill(
   name: string,
   body: { description: string; body: string },
 ): Promise<InlineSkill> {
-  const { data } = await api.put<InlineSkill>(`/skills/inline/${enc(name)}`, body);
+  const { data } = await api.put<InlineSkill>(`/skills/inline/${enc(name)}`, body, { suppressValidationToast: true });
   return data;
 }
 
