@@ -536,10 +536,10 @@ async def skill_source_add(
     enabled: bool = True,
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Add a skill source and start its first sync; it answers in status `pending`. kind: git|path|inline.
+    """Add a skill source and start its first sync; it answers in status `pending`. kind: git|path.
     git: url is a public https repository and ref a tag, branch or commit sha (the pin is the trust
-    decision); path: url is a directory inside the orchestrator container.
-    Requires confirm=true (code the agents will load)."""
+    decision); path: url is a directory inside the orchestrator container. Inline skills go through
+    inline_skill_put. Requires confirm=true (code the agents will load)."""
     if not confirm:
         return _confirmation_refusal("skill_source_add", f"add {kind} skill source {source_id!r}")
     return await _get_client().skill_source_add(source_id, kind=kind, url=url, ref=ref, enabled=enabled)

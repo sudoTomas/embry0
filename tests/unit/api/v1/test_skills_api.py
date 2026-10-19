@@ -154,6 +154,15 @@ async def test_create_source_refuses_a_credential_id(app):
 
 
 @pytest.mark.asyncio
+async def test_create_source_refuses_kind_inline(app):
+    """Only the builtin ``local`` source is inline; its skills are written through /skills/inline."""
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/skills/sources", json={"id": "mine", "kind": "inline"})
+    assert resp.status_code == 422, resp.text
+    app.state.skill_sources_repo.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_create_source_refused_value_is_422_with_the_message(app):
     app.state.skill_sources_repo.create = AsyncMock(
         side_effect=SkillSourceRefused("a git source is cloned anonymously over https")

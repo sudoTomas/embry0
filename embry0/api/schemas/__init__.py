@@ -451,7 +451,8 @@ class SkillSourceCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=1, max_length=40)
-    kind: str = Field(pattern="^(git|path|inline)$")
+    # Only the builtin `local` source is inline; operators write its skills through /skills/inline.
+    kind: str = Field(pattern="^(git|path)$")
     url: str = Field(default="", max_length=2000)
     ref: str = Field(default="", max_length=255)
     enabled: bool = True
