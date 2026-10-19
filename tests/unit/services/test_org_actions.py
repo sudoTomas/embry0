@@ -43,10 +43,14 @@ class FakeForge:
 
 
 class FakeRegistry:
-    """The two calls the actions make on ReposRepository, case-insensitive like ``registered_as``."""
+    """The calls the actions make on ReposRepository: ``registered_as`` is
+    case-insensitive, ``get`` and ``set_active`` take the stored spelling."""
 
     def __init__(self, *repos: str) -> None:
-        self.rows: dict[str, dict[str, Any]] = {r: {"repo": r, "notes": "", "forge": "github"} for r in repos}
+        self.rows: dict[str, dict[str, Any]] = {
+            r: {"repo": r, "notes": "", "forge": "github", "active": True} for r in repos
+        }
+        self.set_active_calls: list[tuple[str, bool]] = []
 
     async def registered_as(self, repo: str) -> str | None:
         return next((r for r in self.rows if r.lower() == repo.lower()), None)
@@ -54,8 +58,18 @@ class FakeRegistry:
     async def register(self, repo: str, notes: str = "", forge: str = "") -> dict[str, Any]:
         if forge not in ("github", "gitlab"):
             raise ValueError(f"unsupported forge {forge!r}")
-        self.rows.setdefault(repo, {"repo": repo, "notes": notes, "forge": forge})
+        self.rows.setdefault(repo, {"repo": repo, "notes": notes, "forge": forge, "active": True})
         return self.rows[repo]
+
+    async def get(self, repo: str) -> dict[str, Any] | None:
+        return self.rows.get(repo)
+
+    async def set_active(self, repo: str, active: bool) -> dict[str, Any] | None:
+        self.set_active_calls.append((repo, active))
+        row = self.rows.get(repo)
+        if row is not None:
+            row["active"] = active
+        return row
 
 
 class FakeQa:
@@ -502,6 +516,55 @@ def test_webhook_url_for_reads_only_the_webhook_setting_and_never_a_loopback(con
     assert webhook_url_for(config) == expected
 
 
+# ---- deactivate ----
+
+
+@pytest.mark.asyncio
+async def test_deactivate_is_idempotent_and_dry_run_changes_nothing() -> None:
+    ctx = context(registry=FakeRegistry("acme/widgets"))
+    dry = await run_action(ctx, "deactivate", ["acme/widgets"], dry_run=True)
+    assert outcomes(dry) == [("acme/widgets", "done")] and "would deactivate" in dry[0].detail
+    assert ctx.registry.rows["acme/widgets"]["active"] is True  # type: ignore[union-attr]
+    first = await run_action(ctx, "deactivate", ["acme/widgets"])
+    second = await run_action(ctx, "deactivate", ["acme/widgets"])
+    assert outcomes(first) == [("acme/widgets", "done")]
+    assert first[0].detail == "registration acme/widgets deactivated"
+    assert outcomes(second) == [("acme/widgets", "already")] and second[0].detail == "inactive"
+    assert ctx.registry.rows["acme/widgets"]["active"] is False  # type: ignore[union-attr]
+    assert ctx.registry.set_active_calls == [("acme/widgets", False)]  # type: ignore[union-attr]
+    assert set(ctx.registry.rows) == {"acme/widgets"}, "deactivated, never deleted"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_deactivate_acts_on_the_registered_spelling_and_leaves_an_unregistered_repo_alone() -> None:
+    ctx = context(registry=FakeRegistry("Acme/Widgets"))
+    results = await run_action(ctx, "deactivate", ["acme/widgets", "acme/gadgets"])
+    assert outcomes(results) == [("acme/widgets", "done"), ("acme/gadgets", "already")]
+    assert results[1].detail == "not registered, so nothing is active"
+    assert ctx.registry.set_active_calls == [("Acme/Widgets", False)]  # type: ignore[union-attr]
+    again = await run_action(ctx, "deactivate", ["acme/widgets"])
+    assert outcomes(again) == [("acme/widgets", "already")] and again[0].detail == "inactive as Acme/Widgets"
+    assert outcomes(await run_action(context(registry=None), "deactivate", ["acme/widgets"])) == [
+        ("acme/widgets", "failed")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_deactivate_reaches_an_archived_registration_and_no_other_action_does() -> None:
+    """ADR 0014: a registration whose repository was archived when it was
+    last listed, and deleted since, is what repo_vanished proposes. The
+    archived skip holds new work off, never the switch that turns it off."""
+    ctx = context(registry=FakeRegistry("acme/old"))
+    for action in ("register", "hook", "onboard", "watch"):
+        assert outcomes(await run_action(ctx, action, ["acme/old"])) == [("acme/old", "skipped")], action
+    dry = await run_action(ctx, "deactivate", ["acme/old"], dry_run=True)
+    assert outcomes(dry) == [("acme/old", "done")]
+    assert ctx.registry.rows["acme/old"]["active"] is True  # type: ignore[union-attr]
+    assert outcomes(await run_action(ctx, "deactivate", ["acme/old"])) == [("acme/old", "done")]
+    assert ctx.registry.rows["acme/old"]["active"] is False  # type: ignore[union-attr]
+    assert outcomes(await run_action(ctx, "deactivate", ["acme/old"])) == [("acme/old", "already")]
+
+
 def test_vocabularies_are_closed() -> None:
-    assert org_actions.ACTIONS == ("register", "hook", "onboard", "watch")
+    assert org_actions.ACTIONS == ("register", "hook", "onboard", "watch", "deactivate")
     assert org_actions.OUTCOMES == ("done", "already", "skipped", "failed")

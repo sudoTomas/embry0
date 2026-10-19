@@ -219,3 +219,55 @@ async def test_a_rescan_replaces_discovery_facts_but_keeps_the_delivery_record(
         "acme", "acme/widgets", event="issues", action="opened", delivery_id="d-1", registered=False
     )
     assert (await facts_repo.list_for_owner("acme"))[0]["facts"]["webhook_events"] == 1
+
+
+# ---- rediscovery (ADR 0014) ----
+
+
+@pytest.mark.asyncio
+async def test_start_run_opens_one_run_per_owner_even_when_starts_race(facts_repo: OrgReposRepository) -> None:
+    import asyncio
+
+    started = await asyncio.gather(*(facts_repo.start_run("Acme") for _ in range(6)), facts_repo.start_run("other"))
+    acme = [run for run in started[:6] if run is not None]
+    assert len(acme) == 1, f"six concurrent starts opened {len(acme)} runs"
+    assert started[6] is not None and started[6]["owner"] == "other", "the lock is per owner"
+    assert [r["id"] for r in await facts_repo.list_runs("acme")] == [acme[0]["id"]]
+    await facts_repo.finish_run(acme[0]["id"], summary={})
+    again = await facts_repo.start_run("acme")
+    assert again is not None and again["status"] == "running", "a finished run frees the owner"
+
+
+@pytest.mark.asyncio
+async def test_fail_interrupted_runs_closes_only_the_running_ones(facts_repo: OrgReposRepository) -> None:
+    from embry0.storage.repositories.org_repos import INTERRUPTED
+
+    done = await facts_repo.start_run("acme")
+    assert done is not None
+    await facts_repo.finish_run(done["id"], summary={"repos": 1})
+    cut = await facts_repo.start_run("acme")
+    other = await facts_repo.start_run("other")
+    assert cut is not None and other is not None
+    assert sorted(await facts_repo.fail_interrupted_runs()) == sorted([cut["id"], other["id"]])
+    runs = {r["id"]: r for r in await facts_repo.list_runs("acme")}
+    assert runs[cut["id"]]["status"] == "error" and runs[cut["id"]]["error"] == INTERRUPTED
+    assert runs[cut["id"]]["finished_at"] is not None
+    assert runs[done["id"]]["status"] == "done" and runs[done["id"]]["error"] is None
+    assert await facts_repo.running_run("acme") is None
+    assert await facts_repo.fail_interrupted_runs() == [], "a second sweep finds nothing"
+
+
+@pytest.mark.asyncio
+async def test_refresh_state_merges_embry0_state_and_keeps_the_listing_run(facts_repo: OrgReposRepository) -> None:
+    run = await facts_repo.start_run("acme")
+    assert run is not None
+    await facts_repo.upsert_fact(
+        RepoFacts(
+            owner="acme", repo="acme/gone", facts={"boot_hint": "npm run dev", "registered": True, "active": True}
+        ),
+        run_id=run["id"],
+    )
+    await facts_repo.refresh_state("acme/gone", {"registered": True, "active": False})
+    (row,) = await facts_repo.list_for_owner("acme")
+    assert row["run_id"] == run["id"]
+    assert row["facts"] == {"boot_hint": "npm run dev", "registered": True, "active": False}

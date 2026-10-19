@@ -27,20 +27,48 @@ STATUSES = ("active", "paused", "removed")
 # auto_register: a webhook delivery for a repository under this owner that is
 # not registered registers it, bound to the organization's credential, before
 # the delivery is handled, instead of only recording the need.
-SETTINGS: dict[str, type] = {"auto_register": bool}
+# rediscover_hours: run discovery again when the newest run is this many
+# hours old (ADR 0014); null, the default, leaves the owner off the schedule.
+SETTINGS: dict[str, type] = {"auto_register": bool, "rediscover_hours": int}
+
+# The settings that take null, meaning off, and the bounds of an integer setting.
+NULLABLE_SETTINGS = frozenset({"rediscover_hours"})
+SETTING_RANGES: dict[str, tuple[int, int]] = {"rediscover_hours": (1, 168)}
 
 
 def validate_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
-    """The settings a PATCH may write: known keys, right types, nothing else."""
+    """The settings a PATCH may write: known keys, right types, nothing else.
+
+    ``type(value) is`` rather than ``isinstance``: a JSON ``true`` is a Python
+    bool, which is an int, and must not pass as a number of hours.
+    """
     out: dict[str, Any] = {}
     for key, value in settings.items():
         expected = SETTINGS.get(key)
         if expected is None:
             raise ValueError(f"unknown setting {key!r}; known settings: {', '.join(sorted(SETTINGS))}")
+        nullable = key in NULLABLE_SETTINGS
+        if value is None and nullable:
+            out[key] = None
+            continue
         if type(value) is not expected:
-            raise ValueError(f"setting {key!r} must be {expected.__name__}")
+            raise ValueError(f"setting {key!r} must be {expected.__name__}{' or null' if nullable else ''}")
+        bounds = SETTING_RANGES.get(key)
+        if bounds is not None and isinstance(value, int) and not bounds[0] <= value <= bounds[1]:
+            raise ValueError(f"setting {key!r} must be from {bounds[0]} to {bounds[1]}{' or null' if nullable else ''}")
         out[key] = value
     return out
+
+
+def rediscover_hours(settings: Mapping[str, Any]) -> int | None:
+    """The owner's rediscovery interval in hours, or None when it is off.
+
+    Read defensively: ``POST /orgs`` stores its settings unvalidated, so a
+    value a PATCH would refuse reads as off here rather than as a schedule.
+    """
+    value = settings.get("rediscover_hours")
+    low, high = SETTING_RANGES["rediscover_hours"]
+    return value if type(value) is int and low <= value <= high else None
 
 
 @dataclass

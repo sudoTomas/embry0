@@ -14,11 +14,13 @@ from typing import Any, cast
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.types import Scope
 
 from embry0.api.deps import request_actor, require_admin
 from embry0.audit.helpers import emit_audit
 from embry0.services import org_discovery, org_webhooks
 from embry0.services import organizations as org_service
+from embry0.services.org_discovery import Discovery
 from embry0.services.organizations import FORGES, STATUSES, AccessProbe, Organization
 from embry0.storage.repositories.org_repos import OrgReposRepository
 from embry0.storage.repositories.organizations import OrganizationsRepository
@@ -335,6 +337,86 @@ def embry0_state_lookup(request: Request) -> org_discovery.StateLookup:
     return lookup
 
 
+#: Direct reads one run makes to confirm vanished repositories. Past it the
+#: run confirms none: that many active registrations leaving at once is a
+#: credential's sight narrowing more likely than deletions.
+VANISHED_CONFIRM_LIMIT = 50
+
+
+async def note_vanished(
+    facts_repo: OrgReposRepository,
+    owner: str,
+    run_id: str,
+    found: Discovery,
+    embry0_state: org_discovery.StateLookup,
+    client: Any,
+) -> dict[str, int]:
+    """Check every repository an earlier run listed and this one did not
+    (ADR 0014); the summary's ``vanished`` and ``vanished_confirmed``.
+
+    Such a repository left the listing, or the listing missed it: it pages
+    over newest push first, so a push between two page reads moves a
+    repository onto a page already read. Its row keeps what the forge said
+    when it was last seen, but whether embry0 holds it as an active
+    registration is read now. Each one still held is then read directly on
+    the forge (:func:`org_discovery.confirm_gone`), and only a confirmed
+    departure is stamped ``vanished_run``, the one mark the needs list
+    proposes deactivation from. Nothing is read, and nothing stamped, when
+    the page cap cut the listing short, or when more candidates than
+    :data:`VANISHED_CONFIRM_LIMIT` are held. A row only the webhook receiver
+    wrote was never listed, so it is not one; nor is a spelling this run
+    listed under another case.
+    """
+    listed = {facts.repo.lower() for facts in found.repos}
+    candidates = [
+        str(row["repo"])
+        for row in await facts_repo.list_for_owner(owner)
+        if row.get("run_id") not in (None, run_id) and str(row["repo"]).lower() not in listed
+    ]
+    counts = {"vanished": len(candidates), "vanished_confirmed": 0}
+    if not found.complete:
+        logger.warning(
+            "org_vanished_unchecked",
+            owner=owner,
+            run_id=run_id,
+            reason="listing_truncated",
+            candidates=len(candidates),
+        )
+        return counts
+    states: dict[str, dict[str, Any]] = {}
+    for repo in candidates:
+        state = await embry0_state(repo)
+        states[repo] = {"registered": bool(state.get("registered")), "active": bool(state.get("active"))}
+    held = [repo for repo, state in states.items() if state["registered"] and state["active"]]
+    verdicts: dict[str, bool | None] = {}
+    if len(held) > VANISHED_CONFIRM_LIMIT:
+        logger.warning(
+            "org_vanished_unchecked",
+            owner=owner,
+            run_id=run_id,
+            reason="over_confirm_limit",
+            candidates=len(held),
+            limit=VANISHED_CONFIRM_LIMIT,
+        )
+    else:
+        for repo in held:
+            verdicts[repo] = await org_discovery.confirm_gone(client, repo)
+            if verdicts[repo] is not True:
+                logger.info(
+                    "org_vanished_not_confirmed",
+                    owner=owner,
+                    run_id=run_id,
+                    repo=repo,
+                    answer="still there" if verdicts[repo] is False else "unknown",
+                )
+    for repo, state in states.items():
+        gone = verdicts.get(repo) is True
+        if gone:
+            counts["vanished_confirmed"] += 1
+        await facts_repo.refresh_state(repo, {**state, "vanished_run": run_id if gone else None})
+    return counts
+
+
 async def run_discovery(
     request: Request,
     owner: str,
@@ -358,17 +440,20 @@ async def run_discovery(
         async def progress(seen: int, total: int) -> None:
             await facts_repo.progress(run_id, seen=seen, total=total)
 
+        lookup = embry0_state_lookup(request)
         found = await org_discovery.discover(
             client,
             owner,
             owner_kind=owner_kind,
             hook_origins=_hook_origins(request),
-            embry0_state=embry0_state_lookup(request),
+            embry0_state=lookup,
             progress=progress,
         )
-        for facts in found:
+        for facts in found.repos:
             await facts_repo.upsert_fact(facts, run_id=run_id)
-        summary = org_discovery.summarize(found, owner_says=owner_says)
+        vanished = await note_vanished(facts_repo, owner, run_id, found, lookup, client)
+        summary = org_discovery.summarize(found.repos, owner_says=owner_says)
+        summary.update(vanished, listing_complete=found.complete)
         await facts_repo.finish_run(run_id, summary=summary)
         await orgs_repo.mark_discovered(owner, repo_count=summary["repos"])
         logger.info(
@@ -409,15 +494,28 @@ async def discover_organization(owner: str, request: Request) -> dict[str, Any]:
     return await start_discovery(request, org)
 
 
-async def start_discovery(request: Request, org: Organization) -> dict[str, Any]:
+def app_request(app: Any) -> Request:
+    """A request bound to ``app`` and to no caller, for a run nobody asked for
+    over HTTP: the rediscovery schedule's (ADR 0014). The start path reads
+    only ``request.app.state``; who started the run is ``actor``."""
+    scope: Scope = {"type": "http", "app": app, "method": "POST", "path": "/", "headers": [], "query_string": b""}
+    return Request(scope)
+
+
+async def start_discovery(request: Request, org: Organization, *, actor: str | None = None) -> dict[str, Any]:
     """Start one discovery run for an active ``org`` in the background and return its run row.
 
-    This endpoint and the organization actions (a rediscovery after a change)
-    both start runs here. The caller has checked that none is running.
+    This endpoint, the organization actions (a rediscovery after a change)
+    and the rediscovery schedule all start runs here. The caller has checked
+    that none is running; a start that loses a race with another is refused
+    with 409 by the repository's own check. ``actor`` names the starter in
+    the audit row when it is not the request's caller.
     """
     facts_repo = _facts_repo(request)
     token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
     run = await facts_repo.start_run(org.owner)
+    if run is None:
+        raise HTTPException(status_code=409, detail=f"a discovery run is already running for {org.owner}")
     access = org.access if isinstance(org.access, dict) else {}
     owner_kind = access.get("owner_kind")
     owner_says = access.get("repo_count") if isinstance(access.get("repo_count"), int) else None
@@ -432,7 +530,7 @@ async def start_discovery(request: Request, org: Organization) -> dict[str, Any]
     await emit_audit(
         getattr(request.app.state, "db", None),
         "organization.discover",
-        actor=request_actor(request),
+        actor=actor or request_actor(request),
         details={"owner": org.owner, "run_id": run["id"]},
     )
     return run

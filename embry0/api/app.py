@@ -1893,6 +1893,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.daily_digest = None
         logger.critical("daily_digest_unavailable", exc_info=True)
 
+    # ADR 0014: organization rediscovery on a schedule. A discovery run lives
+    # in the process that started it, so one a previous process left running
+    # was cut off by the restart; it is closed first, or it would hold off
+    # every later run for its owner. The loop then starts runs through the
+    # function POST /orgs/{owner}/discover uses, for the owners whose
+    # rediscover_hours setting is on (it is off by default).
+    try:
+        from embry0.api.v1.organizations import app_request, start_discovery
+        from embry0.services.org_rediscovery import ACTOR as _REDISCOVERY_ACTOR
+        from embry0.services.org_rediscovery import OrgRediscoveryLoop
+        from embry0.services.organizations import Organization as _Organization
+
+        interrupted = await app.state.org_repos_repo.fail_interrupted_runs()
+        if interrupted:
+            logger.warning("org_discovery_runs_interrupted", run_ids=interrupted)
+
+        async def _start_scheduled_discovery(org: _Organization) -> dict[str, Any]:
+            return await start_discovery(app_request(app), org, actor=_REDISCOVERY_ACTOR)
+
+        app.state.org_rediscovery = OrgRediscoveryLoop(
+            organizations=app.state.organizations_repo,
+            runs=app.state.org_repos_repo,
+            start_run=_start_scheduled_discovery,
+        )
+        rediscovery_task = asyncio.create_task(app.state.org_rediscovery.start())
+        app.state.background_tasks.add(rediscovery_task)
+        rediscovery_task.add_done_callback(app.state.background_tasks.discard)
+    except Exception:
+        app.state.org_rediscovery = None
+        logger.critical("org_rediscovery_unavailable", exc_info=True)
+
     # Merge approvals (#319 phase 2): a job's PR on an enabled repo is asked
     # about in the operator's approval chat, and a relayed "merge it" is
     # checked and merged here. The executor holds it as an optional

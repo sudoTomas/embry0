@@ -782,16 +782,18 @@ async def org_act(
     """Run one organization action over repositories discovery saw under
     ``owner``: register (the repo registry), hook (a forge webhook pointing at
     WEBHOOK_PUBLIC_URL), onboard (the onboard job, for registered repositories
-    with a boot hint) or watch (a disabled watcher stack). One outcome per
-    repository: done, already (the state exists), skipped (detail says why)
-    or failed. Idempotent: the same call twice reports already for every
-    repository the first one changed, and changes nothing. dry_run=true
-    reports what would happen without touching anything. force=true lets
-    onboard start another job where the last one completed without storing
-    a QA config. A call that changed anything starts a rediscovery
-    (``rediscovery`` in the result). Requires confirm=true for every call,
-    dry runs included, like every other gated tool: a real call creates
-    registrations, webhooks, jobs or watcher stacks."""
+    with a boot hint), watch (a disabled watcher stack) or deactivate (the
+    registry row goes inactive: the answer to a repository that left the
+    listing). One outcome per repository: done, already (the state exists),
+    skipped (detail says why) or failed. Idempotent: the same call twice
+    reports already for every repository the first one changed, and
+    changes nothing. dry_run=true reports what would happen without touching
+    anything. force=true lets onboard start another job where the last one
+    completed without storing a QA config. A call that changed anything
+    starts a rediscovery (``rediscovery`` in the result). Requires
+    confirm=true for every call, dry runs included, like every other gated
+    tool: a real call creates registrations, webhooks, jobs or watcher
+    stacks, or deactivates registrations."""
     if not confirm:
         verb = "preview" if dry_run else "run"
         return _confirmation_refusal("org_act", f"{verb} {action} on {len(repos)} repositories under {owner!r}")

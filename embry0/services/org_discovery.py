@@ -23,6 +23,8 @@ from urllib.parse import quote, urlsplit
 
 import structlog
 
+from embry0.execution.forge_client import Listing
+
 logger = structlog.get_logger(__name__)
 
 FRONTEND_PACKAGES = ("react", "vue", "svelte", "next", "nuxt", "@angular/core", "solid-js", "vite", "astro")
@@ -32,12 +34,14 @@ ENV_EXAMPLE_NAMES = (".env.example", ".env.sample", ".env.template")
 TEST_DIRS = ("tests", "test", "__tests__", "spec", "e2e", "cypress")
 # Directories a static site or a built frontend is served from.
 STATIC_DIRS = ("static", "public")
+#: The listing's runaway guard: 20 pages of 100 repositories.
+LISTING_MAX_PAGES = 20
 
 
 class _Client(Protocol):
     async def get(self, path: str, **kwargs: Any) -> Any: ...
 
-    async def paginate(self, path: str, **kwargs: Any) -> list[Any]: ...
+    async def paginate_listing(self, path: str, **kwargs: Any) -> Listing: ...
 
 
 @dataclass
@@ -68,6 +72,16 @@ class RepoFacts:
             "open_issues": self.open_issues,
             "facts": dict(self.facts),
         }
+
+
+@dataclass
+class Discovery:
+    """One walk of an owner: the facts of every repository listed, and
+    whether the listing was whole. One the page cap cut short leaves out
+    repositories that are still there (ADR 0014)."""
+
+    repos: list[RepoFacts]
+    complete: bool = True
 
 
 # What embry0 already knows about a repository, from its own tables.
@@ -294,14 +308,54 @@ async def scan_repository(
     return facts
 
 
-async def list_repositories(client: _Client, owner: str, owner_kind: str | None) -> list[dict[str, Any]]:
+async def list_repositories(client: _Client, owner: str, owner_kind: str | None) -> Listing:
+    """Every repository the forge lists under ``owner``, and whether that is all of them.
+
+    Strict: a page the forge refuses (a revoked token, a rate limit) fails
+    the run instead of ending the listing early. A short listing would read
+    as repositories gone from the owner, and the needs list would propose
+    deactivating them (ADR 0014). ``complete`` is False when the page cap
+    stopped the listing with a next page unread.
+    """
     path = (
         f"/orgs/{quote(owner, safe='')}/repos"
         if owner_kind == "organization"
         else f"/users/{quote(owner, safe='')}/repos"
     )
-    items = await client.paginate(path, params={"type": "all", "sort": "pushed", "direction": "desc"}, max_pages=20)
-    return [i for i in items if isinstance(i, dict)]
+    listing = await client.paginate_listing(
+        path,
+        params={"type": "all", "sort": "pushed", "direction": "desc"},
+        max_pages=LISTING_MAX_PAGES,
+        strict=True,
+    )
+    return Listing([i for i in listing.items if isinstance(i, dict)], complete=listing.complete)
+
+
+async def confirm_gone(client: _Client, repo: str) -> bool | None:
+    """Whether ``repo`` has left its owner, read directly: ``GET /repos/{repo}``.
+
+    The listing alone cannot say: it pages over newest push first, so a push
+    between two page reads moves a repository onto a page already read.
+    True when the forge says it is gone: 404 (deleted, or out of the
+    credential's sight), 301 (GitHub redirects a renamed or transferred
+    repository's old name), or a record under another full name. False when
+    it answers with the same repository, the case aside. None for any other
+    answer (a rate limit, a 5xx, a failed transport): unknown, which is not
+    gone.
+    """
+    try:
+        resp = await client.get(f"/repos/{repo}")
+    except Exception:  # noqa: BLE001 - a read that failed is unknown, never gone
+        return None
+    if resp.status_code in (301, 404):
+        return True
+    if resp.status_code != 200:
+        return None
+    body = _json(resp)
+    name = body.get("full_name") if isinstance(body, dict) else None
+    if not isinstance(name, str) or not name:
+        return None
+    return name.lower() != repo.lower()
 
 
 async def discover(
@@ -312,9 +366,10 @@ async def discover(
     hook_origins: tuple[str, ...],
     embry0_state: StateLookup,
     progress: Progress | None = None,
-) -> list[RepoFacts]:
+) -> Discovery:
     """Every repository under ``owner`` as facts, forge first, embry0's own state folded in."""
-    records = await list_repositories(client, owner, owner_kind)
+    listing = await list_repositories(client, owner, owner_kind)
+    records = listing.items
     total = len(records)
     out: list[RepoFacts] = []
     for index, record in enumerate(records, start=1):
@@ -324,7 +379,7 @@ async def discover(
         out.append(facts)
         if progress is not None:
             await progress(index, total)
-    return out
+    return Discovery(out, complete=listing.complete)
 
 
 def count_gap(facts: list[RepoFacts], owner_says: int) -> dict[str, Any]:

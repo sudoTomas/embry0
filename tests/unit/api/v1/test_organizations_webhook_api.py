@@ -136,6 +136,25 @@ async def test_patch_refuses_unknown_keys_and_wrong_types(app: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_patch_sets_and_clears_the_rediscovery_interval(app: Any) -> None:
+    """ADR 0014: an integer from 1 to 168 puts the owner on the schedule, null takes it off."""
+    async with _client(app) as client:
+        on = await client.patch("/api/v1/orgs/acme", json={"settings": {"rediscover_hours": 24}})
+        off = await client.patch("/api/v1/orgs/acme", json={"settings": {"rediscover_hours": None}})
+        refused = [
+            await client.patch("/api/v1/orgs/acme", json={"settings": {"rediscover_hours": value}})
+            for value in (0, 169, True, 1.5, "24")
+        ]
+    assert on.status_code == 200, on.text
+    assert on.json()["settings"] == {"rediscover_hours": 24}
+    assert off.status_code == 200 and off.json()["settings"] == {"rediscover_hours": None}
+    assert [r.status_code for r in refused] == [422] * 5
+    assert "must be from 1 to 168 or null" in refused[0].json()["detail"]
+    assert "must be int or null" in refused[2].json()["detail"]
+    assert app.state.organizations_repo.orgs["acme"].settings == {"rediscover_hours": None}
+
+
+@pytest.mark.asyncio
 async def test_patch_refuses_a_setting_outside_settings(app: Any) -> None:
     async with _client(app) as client:
         resp = await client.patch("/api/v1/orgs/acme", json={"auto_register": True})
