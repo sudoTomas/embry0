@@ -64,7 +64,7 @@ export function OrgNeedsList({
                   {g.needs.length} {g.needs.length === 1 ? "need" : "needs"}, {g.repoCount}{" "}
                   {g.repoCount === 1 ? "repository" : "repositories"}
                 </span>
-                {g.openCount > 0 && <Badge tone="gold">{g.openCount} open</Badge>}
+                {g.openCount > 0 && <Badge tone="neutral">{g.openCount} open</Badge>}
               </summary>
               <ul className="space-y-2 px-3 pb-3">
                 {g.needs.map((n) => (

@@ -125,7 +125,7 @@ function NeedRow({
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className={need.status === "open" ? "" : "text-white/40"}>{need.title}</span>
           {actionable ? (
-            <Badge tone="gold">{need.action.type}</Badge>
+            <Badge tone="neutral">{need.action.type}</Badge>
           ) : need.status === "open" ? (
             <Badge tone="neutral" title="embry0 cannot do this one for you">
               By hand

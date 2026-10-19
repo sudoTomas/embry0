@@ -38,7 +38,7 @@ export function DiscoveryStatus({ owner, run }: { owner: string; run: DiscoveryR
     return (
       <div className="space-y-2" data-testid="discovery-running">
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <Badge tone="gold">Running</Badge>
+          <Badge tone="info">Running</Badge>
           <span data-testid="discovery-progress">
             {total > 0 ? `${seen} of ${total} repositories` : "listing repositories"}
           </span>
@@ -51,7 +51,7 @@ export function DiscoveryStatus({ owner, run }: { owner: string; run: DiscoveryR
           aria-valuenow={seen}
           aria-label="Discovery progress"
         >
-          <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+          <div className="h-full bg-info transition-all" style={{ width: `${pct}%` }} />
         </div>
       </div>
     );
