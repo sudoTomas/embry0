@@ -98,7 +98,8 @@ describe("ReposPage (RAV-1301)", () => {
     const select = await screen.findByTestId("add-repo-select");
     const labels = [...select.querySelectorAll("option")].map((o) => o.textContent);
     expect(labels).toContain("acme/discoverable (private, GITHUB_TOKEN__ACME)");
-    expect(labels).toContain("octo/no-push (public, GITHUB_TOKEN, push?)");
+    // "push?" read as a question; false is a known answer.
+    expect(labels).toContain("octo/no-push (public, GITHUB_TOKEN, no push)");
   });
 
   it("lays the registry out as a table with a head row, like every record list", async () => {

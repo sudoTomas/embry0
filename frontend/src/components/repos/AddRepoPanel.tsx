@@ -43,7 +43,8 @@ function repoLabel(r: DiscoverableRepo): string {
   // A registry row names the account. An env row still names the key, never the value.
   const account = r.credential_id ? r.credential_label : r.token_env_key;
   const parts = [r.private ? "private" : "public", account];
-  if (r.push === false) parts.push("push?");
+  // The forge said this account cannot push; unknown (null) is not said.
+  if (r.push === false) parts.push("no push");
   return `${r.full_name} (${parts.join(", ")})`;
 }
 
