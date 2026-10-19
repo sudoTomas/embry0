@@ -21,8 +21,8 @@ const OPERATION_ROLE: Record<Operation, string> = {
 
 /**
  * Lore page at /about/operations — the magnum opus rendered in seven
- * patent cards plus a hero. Hand-authored static SVG, gold on dark,
- * patent-drawing chrome.
+ * patent cards plus a hero. Hand-authored static SVG in the neutral
+ * tones, patent-drawing chrome.
  *
  */
 export function AboutOperationsPage() {

@@ -46,6 +46,15 @@ describe("PatentCanvas", () => {
     }
   });
 
+  it("lays its chrome on the surface token in the neutral tones, not a hard-coded colour", () => {
+    // Rule 2 of the divine layer: colour comes from the theme tokens.
+    const { container } = render(<PatentCanvas title="T"><span>x</span></PatentCanvas>);
+    const canvas = container.firstElementChild as HTMLElement;
+    expect(canvas.className).toContain("bg-surface");
+    expect(canvas.className).toContain("text-fg-secondary");
+    expect(canvas.getAttribute("style")).toBeNull();
+  });
+
   it("carries divine-element class for the escape hatch", () => {
     const { container } = render(<PatentCanvas><span>x</span></PatentCanvas>);
     expect(container.querySelector(".divine-element")).not.toBeNull();
@@ -79,6 +88,11 @@ describe("FullGeodesicSphere", () => {
     expect(dots).toHaveLength(4);
     // Outer ring at scaled radius 78
     expect(container.querySelector('svg circle[r="78"]')).not.toBeNull();
+  });
+
+  it("sets no colour of its own, so the figure around it gives the tone", () => {
+    const { container } = render(<FullGeodesicSphere />);
+    expect(container.querySelector("svg")?.getAttribute("class")).not.toMatch(/(^|\s)text-/);
   });
 
   it("respects size prop", () => {
