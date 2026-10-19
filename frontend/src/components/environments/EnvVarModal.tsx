@@ -163,7 +163,7 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
               placeholder={effectiveScope === "qa" ? "QA_TEST_USER" : "MY_VARIABLE"}
               className="font-mono mt-1"
               disabled={isEdit}
-              autoFocus={!isEdit}
+              data-autofocus={isEdit ? undefined : true}
               aria-invalid={keyError ? true : undefined}
               aria-describedby={keyError ? "env-key-error" : undefined}
             />
@@ -183,7 +183,7 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
               placeholder={isEdit && varType === "secret" ? "Enter new value..." : ""}
               className="font-mono mt-1"
               type={varType === "secret" ? "password" : "text"}
-              autoFocus={isEdit}
+              data-autofocus={isEdit ? true : undefined}
             />
           </div>
 

@@ -15,15 +15,20 @@ function getFocusable(container: HTMLElement): HTMLElement[] {
  * Trap keyboard focus inside `container`. Returns a cleanup function that
  * removes the listener. Call inside a useEffect that runs when the modal opens.
  *
- * Also saves document.activeElement and restores it on cleanup.
+ * Also saves document.activeElement, the control that opened the modal, and
+ * restores it on cleanup. Focus moves in to the element marked
+ * `data-autofocus`, or else the first focusable one. Mark a field that way
+ * rather than with React's autoFocus: React focuses an autoFocus field while
+ * it commits the modal, before this effect runs, so the trap would save the
+ * field instead of the opener and on close restore focus to a removed node.
  */
 export function createFocusTrap(container: HTMLElement): () => void {
   const saved = document.activeElement as HTMLElement | null;
 
   // Move focus into the container on the next tick (avoids flicker).
-  const firstFocusable = getFocusable(container)[0];
-  if (firstFocusable) {
-    setTimeout(() => firstFocusable.focus(), 0);
+  const initial = container.querySelector<HTMLElement>("[data-autofocus]") ?? getFocusable(container)[0];
+  if (initial) {
+    setTimeout(() => initial.focus(), 0);
   } else if (import.meta.env.DEV) {
     console.warn("createFocusTrap: no focusable elements found in container");
   }
