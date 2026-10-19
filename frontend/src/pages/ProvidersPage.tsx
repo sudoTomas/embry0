@@ -305,7 +305,7 @@ export function ProvidersPage() {
   return (
     <div className="space-y-6 max-w-4xl">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">LLM Providers</h1>
+        <h1 className="text-xl font-bold tracking-tight">LLM providers</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Every model provider embry0 can run agents on — availability, live
           connection tests, per-model enablement, and tier assignment.

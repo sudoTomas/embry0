@@ -253,4 +253,9 @@ describe("ProvidersPage", () => {
     expect(within(xai).getByText("(default model)")).toBeInTheDocument();
     expect(within(xai).getByRole("checkbox", { name: "Enable grok-4.5" })).toBeEnabled();
   });
+
+  it("titles the page in sentence case, the name the sidebar and Settings use", async () => {
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 1, name: "LLM providers" })).toBeInTheDocument();
+  });
 });

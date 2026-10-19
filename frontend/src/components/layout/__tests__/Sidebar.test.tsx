@@ -117,12 +117,12 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     ]);
   });
 
-  it("Settings section contains Settings, LLM Providers", () => {
+  it("Settings section contains Settings, LLM providers", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Settings" })
       .parentElement as HTMLElement;
     const links = within(section).getAllByRole("link");
-    expect(links.map((a) => a.textContent?.trim())).toEqual(["Settings", "LLM Providers"]);
+    expect(links.map((a) => a.textContent?.trim())).toEqual(["Settings", "LLM providers"]);
   });
 
   it("Overview section contains a single Overview link to /", () => {
@@ -146,7 +146,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
       Repos: "/repos",
       Organizations: "/orgs",
       QA: "/qa/repos",
-      "LLM Providers": "/providers",
+      "LLM providers": "/providers",
       Watcher: "/watcher",
       Logs: "/logs",
       Sandboxes: "/sandboxes",
