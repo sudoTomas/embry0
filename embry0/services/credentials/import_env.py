@@ -15,7 +15,14 @@ from cryptography.fernet import InvalidToken
 
 from embry0.execution.xai_credential import DurableState, XaiCredentialError, XaiCredentialStore
 from embry0.services.credentials.preview import masked_preview
-from embry0.services.credentials.providers import _CLAUDE_CREDENTIALS_FILE, _claude_access_token, default_host
+from embry0.services.credentials.providers import (
+    _CLAUDE_CREDENTIALS_FILE,
+    _claude_access_token,
+    base_url_host,
+    default_host,
+    env_fallback,
+    env_fallback_metadata,
+)
 from embry0.storage.encryption import SecretsProvider
 from embry0.storage.repositories.credentials import CredentialsRepository
 
@@ -143,18 +150,18 @@ async def _llm_entries(
     claude_credentials_file: str | None,
     xai_store_path: str | None,
     grok_auth_file: str | None,
-) -> list[tuple[str, str, str, str, str, int]]:
-    """``(provider, label, kind, host, secret, priority)`` for the §3.10 LLM rows."""
-    out: list[tuple[str, str, str, str, str, int]] = []
+) -> list[tuple[str, str, str, str, str, int, dict[str, Any]]]:
+    """``(provider, label, kind, host, secret, priority, metadata)`` for the §3.10 LLM rows."""
+    out: list[tuple[str, str, str, str, str, int, dict[str, Any]]] = []
     claude_path = _CLAUDE_CREDENTIALS_FILE if claude_credentials_file is None else claude_credentials_file
     token = (env.get("CLAUDE_CODE_OAUTH_TOKEN") or "").strip()
     file_token = _claude_access_token(claude_path) or ""
     if token:
-        out.append(("anthropic", "default", "llm_oauth", default_host("anthropic"), token, 0))
+        out.append(("anthropic", "default", "llm_oauth", default_host("anthropic"), token, 0, {}))
         if file_token:
             report.skipped.append("anthropic/default: credentials file ignored because CLAUDE_CODE_OAUTH_TOKEN is set")
     elif file_token:
-        out.append(("anthropic", "default", "llm_oauth", default_host("anthropic"), file_token, 0))
+        out.append(("anthropic", "default", "llm_oauth", default_host("anthropic"), file_token, 0, {}))
 
     if xai_store_path is None:
         store_path = (env.get("XAI_CREDENTIAL_PATH") or "").strip() or str(
@@ -170,19 +177,31 @@ async def _llm_entries(
     if state is None and store_path and os.path.isfile(store_path):
         report.skipped.append("xai/default: credential file unreadable")
     elif state is not None:
-        out.append(("xai", "default", "llm_oauth", default_host("xai"), _durable_json(state), 0))
+        out.append(("xai", "default", "llm_oauth", default_host("xai"), _durable_json(state), 0, {}))
         if grok_path and os.path.isfile(grok_path):
             report.skipped.append("xai/default: grok auth file ignored because the credential file is set")
     else:
         cli_state = await _xai_state_from_cli(grok_path, secrets)
         if cli_state is not None:
-            out.append(("xai", "default", "llm_oauth", default_host("xai"), _durable_json(cli_state), 0))
+            out.append(("xai", "default", "llm_oauth", default_host("xai"), _durable_json(cli_state), 0, {}))
         elif grok_path and os.path.isfile(grok_path):
             report.skipped.append("xai/default: grok auth file unreadable")
 
     api_key = (env.get("XAI_API_KEY") or "").strip()
     if api_key:
-        out.append(("xai", "api-key", "llm_api_key", default_host("xai"), api_key, 1))
+        out.append(("xai", "api-key", "llm_api_key", default_host("xai"), api_key, 1, {}))
+
+    # The enabled OpenAI-compatible providers: one API key each, from the variable the
+    # resolver falls back to. A custom key is imported only with its base URL.
+    from embry0.agents.providers import enabled_openai_compatible
+
+    for provider in enabled_openai_compatible(env):
+        fallback = env_fallback(provider.name, env, config)
+        if fallback is None:
+            continue
+        metadata = env_fallback_metadata(provider.name, env)
+        host = base_url_host(metadata["base_url"]) if "base_url" in metadata else default_host(provider.name, env)
+        out.append((provider.name, "api-key", "llm_api_key", host, fallback[1], 0, metadata))
     return out
 
 
@@ -246,7 +265,7 @@ async def import_from_env(
         else:
             await _bind(repo, report, "global", "", provider, cid, cred_name, actor)
 
-    for provider, label, kind, host, secret, priority in await _llm_entries(
+    for provider, label, kind, host, secret, priority, metadata in await _llm_entries(
         env,
         config,
         secrets,
@@ -284,6 +303,7 @@ async def import_from_env(
                 secret_ciphertext=await secrets.encrypt(secret),
                 masked_preview=masked_preview(secret),
                 created_by=actor,
+                metadata=metadata,
             )
             report.created.append(name)
         await _bind(repo, report, "global", "", provider, str(row["id"]), name, actor, role="llm", priority=priority)

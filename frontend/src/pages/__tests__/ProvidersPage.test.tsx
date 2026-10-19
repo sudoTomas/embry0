@@ -138,6 +138,34 @@ describe("ProvidersPage", () => {
     expect(within(xai).queryByText("xai")).not.toBeInTheDocument();
   });
 
+  it("marks a model its provider serves without tool calling", async () => {
+    mockFetchModelsCatalog.mockResolvedValue({
+      ...CATALOG,
+      providers: [
+        ...CATALOG.providers,
+        {
+          name: "openai",
+          base_url: "https://api.openai.com/v1",
+          available: false,
+          credential_source: null,
+          default: false,
+          models: [
+            { model: "gpt-6.1-sol", enabled: true, tool_calling: false, pricing_usd_per_mtok: { input: 2, output: 10 } },
+            { model: "gpt-6-luna", enabled: true, tool_calling: true, pricing_usd_per_mtok: { input: 0.1, output: 0.5 } },
+          ],
+        },
+      ],
+    });
+    renderPage();
+    const openai = await screen.findByTestId("provider-card-openai");
+    const chatOnly = within(openai).getByText("gpt-6.1-sol").closest("tr")!;
+    expect(within(chatOnly).getByText("(chat-only)")).toBeInTheDocument();
+    const withTools = within(openai).getByText("gpt-6-luna").closest("tr")!;
+    expect(within(withTools).queryByText("(chat-only)")).not.toBeInTheDocument();
+    const anthropic = screen.getByTestId("provider-card-anthropic");
+    expect(within(anthropic).queryByText("(chat-only)")).not.toBeInTheDocument();
+  });
+
   it("shows model pricing in the provider table", async () => {
     renderPage();
     const anthropic = await screen.findByTestId("provider-card-anthropic");

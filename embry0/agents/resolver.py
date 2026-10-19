@@ -304,7 +304,12 @@ def resolve_agent_invocation(
         job_agent_models=job_agent_models,
     )
 
-    from embry0.agents.providers import provider_for_model, unpriced_models, unpriced_models_message
+    from embry0.agents.providers import (
+        chat_only_message,
+        provider_for_model,
+        unpriced_models,
+        unpriced_models_message,
+    )
 
     # RAV-1297 enablement: model_policy = {"default_model": ...,
     # "disabled_models": [...],
@@ -338,6 +343,14 @@ def resolve_agent_invocation(
         raise AuthConfigError(ErrorCode.INVALID_CONFIG, unpriced_models_message(unpriced))
 
     provider = provider_for_model(final_model)
+
+    # A model its provider serves without tool calling cannot run an agent that
+    # needs tools. Refused here, before the sandbox runs it, rather than run with
+    # its tools silently dropped.
+    if provider is not None and final_model in provider.chat_only_models and resolved.tools:
+        raise AuthConfigError(
+            ErrorCode.INVALID_CONFIG, chat_only_message(provider, final_model, agent_type, resolved.tools)
+        )
 
     # The caller's budget is sized for Claude; a provider whose models need more turns and
     # time for the same work scales it. Done here because this is where the model is final.

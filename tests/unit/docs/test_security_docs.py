@@ -112,12 +112,14 @@ def test_security_md_lists_every_blocked_egress_range() -> None:
 
 def _sandbox_env_llm_keys() -> dict[tuple[str, str], list[str]]:
     """For each LLM provider and credential kind, the env keys a sandbox is created with."""
+    from embry0.agents.providers import OPENAI_COMPATIBLE
     from embry0.execution.sandbox_manager import SandboxManager
-    from embry0.services.credentials.providers import LLM_PROVIDERS
+    from embry0.services.credentials.providers import llm_providers
     from embry0.services.credentials.resolver import ResolvedCredential
 
+    every = {"OPENAI_COMPATIBLE_PROVIDERS": ",".join(p.name for p in OPENAI_COMPATIBLE)}
     keys: dict[tuple[str, str], list[str]] = {}
-    for provider, spec in LLM_PROVIDERS.items():
+    for provider, spec in llm_providers(every).items():
         for kind in spec.kinds:
             secret = f"probe-secret-{provider}-{kind}"
             cred = ResolvedCredential(

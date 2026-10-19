@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 import structlog
 
+from embry0.agents.providers import XAI, ModelProvider, provider_named
 from embry0.execution.xai_credential import _XAI_403_HINT
 
 logger = structlog.get_logger(__name__)
@@ -25,7 +26,7 @@ PROBE_TIMEOUT_SECONDS = 10.0
 # Cheap authenticated read endpoints — prove reachability + auth without
 # spending tokens.
 _ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
-_XAI_MODELS_URL = "https://api.x.ai/v1/models"
+_XAI_MODELS_URL = f"{XAI.openai_base_url}{XAI.probe_path}"
 
 STATUS_OK = "ok"
 STATUS_UNAUTHORIZED = "unauthorized"
@@ -59,8 +60,29 @@ async def _http_check(source: str, url: str, headers: dict[str, str], hint_403: 
     return ProbeCheck(source, STATUS_ERROR, f"unexpected HTTP {resp.status_code}")
 
 
-async def probe_llm_secret(provider: str, kind: str, secret: str) -> ProbeCheck:
-    """Probe one secret. For xAI ``llm_oauth``, ``secret`` is the minted access token."""
+def probe_url(provider: ModelProvider, base_url: str = "") -> str:
+    """The OpenAI-compatible family's readiness probe: ``GET <root><probe_path>``.
+
+    ``base_url`` is the operator's root for a provider with none of its own (custom).
+    """
+    root = (base_url or provider.openai_base_url).rstrip("/")
+    return f"{root}{provider.probe_path}" if root else ""
+
+
+async def probe_openai_compatible(source: str, provider: ModelProvider, secret: str, base_url: str = "") -> ProbeCheck:
+    """Probe one key of an OpenAI-compatible provider: its models list (OpenRouter: its key info)."""
+    url = probe_url(provider, base_url)
+    if not url:
+        return ProbeCheck(source, STATUS_NOT_CONFIGURED, f"no base URL is configured for {provider.name}")
+    hint = _XAI_403_HINT if provider.name == "xai" else ""
+    return await _http_check(source, url, {"Authorization": f"Bearer {secret}"}, hint_403=hint)
+
+
+async def probe_llm_secret(provider: str, kind: str, secret: str, *, base_url: str = "") -> ProbeCheck:
+    """Probe one secret. For xAI ``llm_oauth``, ``secret`` is the minted access token.
+
+    ``base_url`` is a custom credential's own API root (its ``metadata.base_url``).
+    """
     if provider == "anthropic" and kind == "llm_api_key":
         return await _http_check(
             "api_key",
@@ -78,12 +100,7 @@ async def probe_llm_secret(provider: str, kind: str, secret: str) -> ProbeCheck:
             },
         )
     if provider == "xai" and kind == "llm_api_key":
-        return await _http_check(
-            "api_key",
-            _XAI_MODELS_URL,
-            {"Authorization": f"Bearer {secret}"},
-            hint_403=_XAI_403_HINT,
-        )
+        return await probe_openai_compatible("api_key", XAI, secret)
     if provider == "xai" and kind == "llm_oauth":
         return await _http_check(
             "oauth",
@@ -91,6 +108,9 @@ async def probe_llm_secret(provider: str, kind: str, secret: str) -> ProbeCheck:
             {"Authorization": f"Bearer {secret}"},
             hint_403=_XAI_403_HINT,
         )
+    catalog = provider_named(provider)
+    if catalog is not None and catalog.runtime == "chat_completions" and kind == "llm_api_key":
+        return await probe_openai_compatible("api_key", catalog, secret, base_url)
     raise ValueError(f"cannot probe {provider} {kind}")
 
 
@@ -145,6 +165,37 @@ async def probe_xai(refresher: Any = None) -> list[ProbeCheck]:
             "none", STATUS_NOT_CONFIGURED, "Neither XAI_API_KEY nor the SuperGrok OAuth credential is configured."
         )
     ]
+
+
+async def probe_chat_completions_provider(provider: ModelProvider, resolver: Any = None) -> list[ProbeCheck]:
+    """Probe the key a job with no repository binding runs ``provider`` with: the global pool, then the env.
+
+    The resolver's own answer, so the test covers what a job would get; no use is recorded.
+    Without a resolver the env key alone is probed.
+    """
+    from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
+
+    if resolver is not None:
+        try:
+            cred = await resolver.resolve_llm("", provider.name)
+        except CredentialMissingError:
+            return [_not_configured(provider)]
+        except CredentialUnavailableError as exc:
+            return [ProbeCheck("registry", STATUS_ERROR, str(exc))]
+        source = "registry" if cred.source == "registry" else "api_key"
+        return [await probe_openai_compatible(source, provider, cred.secret, str(cred.metadata.get("base_url") or ""))]
+    secret = os.environ.get(provider.api_key_env, "").strip()
+    base_url = os.environ.get(provider.base_url_env, "").strip() if provider.base_url_env else ""
+    if not secret or (provider.base_url_env and not base_url):
+        return [_not_configured(provider)]
+    return [await probe_openai_compatible("api_key", provider, secret, base_url)]
+
+
+def _not_configured(provider: ModelProvider) -> ProbeCheck:
+    needs = provider.api_key_env + (f" with {provider.base_url_env}" if provider.base_url_env else "")
+    return ProbeCheck(
+        "none", STATUS_NOT_CONFIGURED, f"No {provider.name} credential: bind one in the registry or set {needs}."
+    )
 
 
 def overall_status(checks: list[ProbeCheck]) -> str:

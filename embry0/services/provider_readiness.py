@@ -28,7 +28,7 @@ from typing import Any, Final
 import structlog
 
 from embry0.agents.model_policy import build_model_policy, resolve_tier_models
-from embry0.agents.providers import CATALOG_PROVIDERS, ModelProvider
+from embry0.agents.providers import ModelProvider, catalog_providers
 from embry0.agents.resolver import effective_agent_model
 
 logger = structlog.get_logger(__name__)
@@ -64,7 +64,7 @@ def catalog_provider_for_model(model: str) -> ModelProvider | None:
     catalog prefix is None rather than the implicit default: the runtime would hand
     such an id to the Claude CLI, which cannot run it either.
     """
-    for provider in CATALOG_PROVIDERS:
+    for provider in catalog_providers():
         if any(model.startswith(prefix) for prefix in provider.model_prefixes):
             return provider
     return None
@@ -82,7 +82,10 @@ async def provider_availability(app_state: Any, provider: ModelProvider) -> tupl
 
     Anthropic authenticates via CLAUDE_CODE_OAUTH_TOKEN and/or ANTHROPIC_API_KEY; xAI via
     its console key or the SuperGrok OAuth proxy (a provisioned refresher means grok is
-    runnable). A registry row counts only when those env sources are absent.
+    runnable); an OpenAI-compatible provider via its key variable (the custom one only
+    together with its base URL variable). A registry row counts only when those env
+    sources are absent. A provider with none of them is not ready, and a job whose model
+    routes to it fails before its sandbox exists (CREDENTIAL_MISSING).
     """
     if provider.name == "anthropic":
         oauth = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
@@ -96,11 +99,11 @@ async def provider_availability(app_state: Any, provider: ModelProvider) -> tupl
         if await _registry_has_provider(app_state, "anthropic"):
             return True, "registry"
         return False, None
-    if os.environ.get(provider.api_key_env):
+    if os.environ.get(provider.api_key_env) and (not provider.base_url_env or os.environ.get(provider.base_url_env)):
         return True, "api_key"
     if provider.name == "xai" and getattr(app_state, "xai_refresher", None) is not None:
         return True, "oauth_proxy"
-    if provider.name == "xai" and await _registry_has_provider(app_state, "xai"):
+    if await _registry_has_provider(app_state, provider.name):
         return True, "registry"
     return False, None
 
@@ -129,7 +132,7 @@ async def readiness_by_provider(app_state: Any, *, with_last_probe: bool = False
     list leaves it off because it reports readiness only.
     """
     out: dict[str, ProviderReadiness] = {}
-    for provider in CATALOG_PROVIDERS:
+    for provider in catalog_providers():
         available, source = await provider_availability(app_state, provider)
         probe = await last_probe(app_state, provider.name) if with_last_probe else None
         out[provider.name] = ProviderReadiness(provider.name, available, source, probe)
@@ -206,7 +209,7 @@ async def ensure_model_provider_ready(model: str, app_state: Any) -> None:
     """Raise ProviderNotReadyError unless a ready catalog provider serves ``model``."""
     provider = catalog_provider_for_model(model)
     if provider is None:
-        known = ", ".join(f"{p.name} ({', '.join(p.model_prefixes)})" for p in CATALOG_PROVIDERS)
+        known = ", ".join(f"{p.name} ({', '.join(p.model_prefixes)})" for p in catalog_providers())
         raise ProviderNotReadyError(
             f"no configured provider serves model {model!r}; providers and their model id prefixes: {known}"
         )
