@@ -1,5 +1,23 @@
-import { render, screen } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+
+// Browsers have AnimationEvent and jsdom does not, so without one react-dom
+// listens for the prefixed webkitAnimationEnd and a plain animationend never
+// reaches onAnimationEnd. Give jsdom the browser's event before react-dom
+// loads, so the test sends what a browser sends.
+vi.hoisted(() => {
+  if (!("AnimationEvent" in globalThis)) {
+    class AnimationEvent extends Event {
+      readonly animationName: string;
+      constructor(type: string, init: AnimationEventInit = {}) {
+        super(type, init);
+        this.animationName = init.animationName ?? "";
+      }
+    }
+    Object.assign(globalThis, { AnimationEvent });
+  }
+});
+
+import { fireEvent, render, screen } from "@testing-library/react";
 import { Embry0Mark } from "../Embry0Mark";
 
 /**
@@ -86,5 +104,83 @@ describe("Embry0Mark", () => {
     // lockup is the product's name and must not vanish with the layer.
     const { container } = render(<Embry0Mark />);
     expect(container.querySelector(".divine-element")).toBeNull();
+  });
+});
+
+/** The line's centre, the path the draw's stroke follows. */
+const CENTRE_LINE =
+  "M43.9 44.4V19.6A11.9 11.9 0 0 0 20.1 19.6V44.4A11.9 11.9 0 0 0 43.9 44.4A9.25 9.25 0 0 0 34.65 35.15A7.75 7.75 0 0 0 26.9 42.9A5.45 5.45 0 0 0 32.35 48.35A3.55 3.55 0 0 0 35.42 43.03";
+
+/** jsdom has no matchMedia, which reads as reduced motion; this says no. */
+function allowMotion() {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn(() => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} })),
+  );
+}
+
+function pathWith(svg: SVGSVGElement, d: string) {
+  const path = Array.from(svg.querySelectorAll("path")).find((p) => p.getAttribute("d") === d);
+  if (!path) throw new Error(`no path draws ${d.slice(0, 12)}...`);
+  return path;
+}
+
+function svgOf(container: HTMLElement) {
+  const svg = container.querySelector("svg");
+  if (!svg) throw new Error("Embry0Mark rendered no svg");
+  return svg;
+}
+
+describe("Embry0Mark — the line draws itself once", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete document.body.dataset.divine;
+  });
+
+  it("stays still unless asked to draw", () => {
+    allowMotion();
+    const { container } = render(<Embry0Mark />);
+    expect(svgOf(container).querySelector("mask")).toBeNull();
+  });
+
+  it("reveals the line through a mask that a stroke along its centre draws", () => {
+    allowMotion();
+    const { container } = render(<Embry0Mark draw />);
+    const svg = svgOf(container);
+    const mask = svg.querySelector("mask");
+    expect(mask, "a drawing mark masks its line").not.toBeNull();
+    expect(mask?.getAttribute("maskUnits")).toBe("userSpaceOnUse");
+    expect([mask?.getAttribute("x"), mask?.getAttribute("y")]).toEqual(["18", "5"]);
+    expect([mask?.getAttribute("width"), mask?.getAttribute("height")]).toEqual(["28", "54"]);
+    const pen = pathWith(svg, CENTRE_LINE);
+    expect(mask).toContainElement(pen);
+    expect(pen.getAttribute("pathLength")).toBe("1");
+    expect(pen.getAttribute("stroke-dasharray")).toBe("1");
+    expect(pen.getAttribute("stroke-width")).toBe("4.6");
+    expect(pen.getAttribute("class")).toBe("motion-mark-draw");
+    expect(pathWith(svg, MASTER_LINE).getAttribute("mask")).toBe(`url(#${mask?.id})`);
+    // The dot waits for the line, then arrives.
+    expect(pathWith(svg, MASTER_DOT).getAttribute("class")).toBe("text-cream motion-mark-dot");
+  });
+
+  it("rests as the master, node for node, once the dot has arrived", () => {
+    allowMotion();
+    const still = svgOf(render(<Embry0Mark />).container).outerHTML;
+    const { container } = render(<Embry0Mark draw />);
+    fireEvent.animationEnd(pathWith(svgOf(container), MASTER_DOT));
+    expect(svgOf(container).outerHTML).toBe(still);
+  });
+
+  it("shows the mark at rest at once under reduced motion", () => {
+    const still = svgOf(render(<Embry0Mark />).container).outerHTML;
+    const { container } = render(<Embry0Mark draw />);
+    expect(svgOf(container).outerHTML).toBe(still);
+  });
+
+  it("shows the mark at rest at once when the divine layer is off", () => {
+    allowMotion();
+    document.body.dataset.divine = "off";
+    const { container } = render(<Embry0Mark draw />);
+    expect(svgOf(container).querySelector("mask")).toBeNull();
   });
 });

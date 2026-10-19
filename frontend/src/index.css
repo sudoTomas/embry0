@@ -198,6 +198,36 @@ h1, h2, h3, h4, h5, h6 {
 
 /* ----- motion: shell (mark, page arrival, sidebar) ----- */
 
+/* The header's mark draws its one line as the dashboard opens: a stroke
+   along the line's centre reveals the line through a mask, then the cream
+   dot arrives where the line ends (components/divine/Embry0Mark.tsx). */
+@keyframes motion-mark-draw {
+  from { stroke-dashoffset: 1; }
+}
+
+@keyframes motion-mark-dot {
+  0%  { transform: scale(0); }
+  60% { transform: scale(1.25); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .motion-mark-draw {
+    animation: motion-mark-draw var(--motion-draw) var(--ease-travel) both;
+  }
+  .motion-mark-dot {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: motion-mark-dot var(--motion-slow) var(--ease-standard) both;
+    animation-delay: calc(var(--motion-draw) - 120ms);
+  }
+}
+
+/* The mark belongs to the divine layer, so its escape hatch stills it too
+   (components/divine/CLAUDE.md, rules 3 and 4). */
+body[data-divine="off"] .motion-mark * {
+  animation: none;
+}
+
 /* ----- motion: live numbers and rows ----- */
 
 /* ----- motion: console board ----- */

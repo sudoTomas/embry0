@@ -10,7 +10,8 @@ import { useIsNarrow } from "@/hooks/useIsNarrow";
  * The family header: a full-width 65px bar on the surface. The lockup and the
  * tagline on the left, the signed-in identity and sign-out on the right. At
  * phone width a menu button opens the sidebar drawer; at desktop width the
- * sidebar's own chevron collapses it.
+ * sidebar's own chevron collapses it. The lockup's mark draws itself once as
+ * the dashboard opens; it is the only mark that does.
  */
 export function TopBar() {
   const drawerOpen = useLayoutStore((s) => s.drawerOpen);
@@ -31,7 +32,7 @@ export function TopBar() {
           {drawerOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </Button>
       )}
-      <Embry0Mark />
+      <Embry0Mark draw />
       <span className="ml-3 hidden truncate text-sm text-fg-muted md:inline">
         Software that is alive
       </span>
