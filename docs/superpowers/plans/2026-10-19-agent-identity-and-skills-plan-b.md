@@ -1914,7 +1914,7 @@ After wave 2 lands on `feat/agent-identity-skills-b`: grep for conflict markers 
 
 ## Deploy notes (for the PR body)
 
-- No migration, no compose change, no new backend route. `infra/deploy.sh` rebuilds the orchestrator and frontend images, which is everything this plan touches; the sandbox images are not affected (nothing under `embry0/agents/`, `embry0/sandbox/` or `embry0/safety/` changes).
+- No migration, no compose change, no new backend route. `infra/deploy.sh` rebuilds the orchestrator and frontend images, which is everything this plan touches; the sandbox images are not affected: `embry0/safety/policy.py` gains one comment line, a comment-only change under `embry0/safety/`; no sandbox image rebuild needed (nothing under `embry0/agents/` or `embry0/sandbox/` changes).
 - `/skills` is a dashboard page under the existing frontend ingress; `/api/v1/skills*` and `/api/v1/tools` were published in plan A.
 - Stored templates keep loading: the editor reads legacy top-level overrides and bare skill lists, and writes `config` on the next save. The backend reads both shapes (plan A).
 - After deploy, verify on the dashboard: Agents list shows display names and tiles; the editor palette lists every agent; a template saved from the editor stores `config`; the Skills page shows both builtin sources `ready`.

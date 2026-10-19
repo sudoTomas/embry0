@@ -163,7 +163,7 @@ The slide-in drawer in the [PipelineEditor](#pipelineeditor) that lists saved [t
 The dashboard page at `/skills` (Infra, admin) that lists [skill sources](api.md#skills) with their sync status, adds git or path sources, edits inline skills (published as the builtin `local` source), and shows the resulting catalog of `plugin:skill` names.
 
 ### AgentBar
-The horizontal bar at the bottom of the [PipelineEditor](#pipelineeditor) holding draggable agent chips. Each chip carries its substance sigil and color. Drag a chip onto the canvas to place an agent node. Filters out [triage](#triage) (orchestrator-side, not a pipeline node).
+The horizontal bar at the bottom of the [PipelineEditor](#pipelineeditor) holding draggable agent chips, one per agent definition plus the terminal `output` step. Each chip shows the agent's avatar and display name in its identity colour, with the tagline as its tooltip. Drag a chip onto the canvas to place an agent node. A "New agent" link after the chips opens the agent form. Filters out [triage](#triage) (orchestrator-side, not a pipeline node).
 
 ### Replay-N
 A [command](#command) that re-executes the last N completed stages of a [job](#job) as a unit. Mirrors the Practice's `Repito los N Comandos`. Use case: a config or environment variable changed; you want stages 5-8 re-run with the new value, but not the entire pipeline.
