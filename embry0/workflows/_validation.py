@@ -7,31 +7,45 @@ must not be able to smuggle deferred tools past the registry gate).
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 _DEFERRED_TOOLS = frozenset({"CreateIssue", "RequestInput", "UpdateStatus"})
 
-# The template-node vocabulary the route-plan interpreter can execute
-# (embry0/workflows/issue_to_pr/route_plan.py AGENT_TYPE_TO_NODE + triage).
-# research/analysis/ops (RAV-604) all execute on the generic agent node.
-# RAV-1288: "review" (the runtime agent type / the surviving DB row) is
-# accepted alongside the historical template spelling "reviewer" — the
-# editor palette is fed from agent_definitions, and after the zombie
-# `reviewer` row was removed the real `review` row must be saveable.
-_EXECUTABLE_AGENT_TYPES = frozenset(
-    {"triage", "developer", "reviewer", "review", "qa", "output", "research", "analysis", "ops"}
-)
+# The node-backed template vocabulary: each of these is executed by its own
+# LangGraph node (triage, developer, review, qa, finalize_output). Every other
+# agent_type must name an agent_definitions row and runs on generic_agent
+# (spec 3.5). "reviewer" is the historical template spelling of "review".
+FIXED_NODE_TYPES = frozenset({"triage", "developer", "reviewer", "review", "qa", "output"})
 
 
-def validate_graph_definition(name: str, graph: dict[str, Any]) -> list[str]:
+def _default_agent_types() -> frozenset[str]:
+    """The rows every deployment has (BUILTIN_SEED), for callers without a database."""
+    # Imported lazily: this module is imported by the workflow registry at
+    # startup, and keeping the storage layer out of that import path avoids
+    # any chance of a circular import.
+    from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+
+    return frozenset(BUILTIN_SEED)
+
+
+def validate_graph_definition(
+    name: str, graph: dict[str, Any], agent_types: Collection[str] | None = None
+) -> list[str]:
     """Validate that a template's graph_definition is executable (RAV-601).
 
     Templates became runtime control-flow when the route-plan interpreter
     landed; the frontend editor can draw anything, but only a **single
     linear flow chain** of known agent types may save (v1 constraint —
     branching/parallel templates need interpreter support first).
+
+    ``agent_types`` is the set of agent_definitions types that exist right
+    now; the API passes the current rows and plan_route passes them at plan
+    time. ``None`` means the builtin seed. A node's ``agent_type`` must be
+    one of FIXED_NODE_TYPES or one of ``agent_types``.
     Returns a list of human-readable problems; empty = valid.
     """
+    known = FIXED_NODE_TYPES | frozenset(agent_types if agent_types is not None else _default_agent_types())
     errors: list[str] = []
     nodes = graph.get("nodes") or []
     edges = graph.get("edges") or []
@@ -53,7 +67,7 @@ def validate_graph_definition(name: str, graph: dict[str, Any]) -> list[str]:
 
     for n in nodes:
         at = n.get("agent_type")
-        if at not in _EXECUTABLE_AGENT_TYPES:
+        if at not in known:
             errors.append(f"template {name!r}: node {n.get('node_id')!r} has unknown agent_type {at!r}")
 
     flow_edges = [e for e in edges if e.get("edge_type", "flow") == "flow"]

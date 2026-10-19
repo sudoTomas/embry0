@@ -1,8 +1,9 @@
 """Generic agent node — executes non-code route-plan steps (RAV-604).
 
-``research``/``analysis``/``ops`` template steps all map to this one
-physical node. Unlike developer/review — whose prompts, output parsing,
-and retry loops are node code — a generic step's behavior comes entirely
+``research``/``analysis``/``ops`` template steps, and every custom agent
+type (spec 3.5), all map to this one physical node. Unlike
+developer/review — whose prompts, output parsing, and retry loops are
+node code — a generic step's behavior comes entirely
 from its DB ``agent_definitions`` row (system prompt + toolset), so one
 node serves every non-code agent type: it reads the CURRENT route step to
 learn which agent to run, runs it single-pass, and advances the cursor.
@@ -23,7 +24,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from embry0.execution import events
-from embry0.orchestration.nodes.agent import agent_attempt, load_agent_definition, run_agent_node
+from embry0.orchestration.nodes.agent import agent_attempt, load_agent_definition_or_none, run_agent_node
 from embry0.workflows.issue_to_pr.log_tool import grant_log_tool
 from embry0.workflows.issue_to_pr.route_plan import (
     _step_target,
@@ -92,7 +93,7 @@ async def generic_agent_node(state: dict[str, Any], config: RunnableConfig) -> d
     step = plan[cursor] if 0 <= cursor < len(plan) else None
     if step is None or _step_target(step) != "agent":
         # A dispatch bug, not an agent failure — next_route only routes here
-        # for research/analysis/ops steps. Fail loudly rather than running
+        # for steps outside the fixed node types. Fail loudly rather than running
         # the wrong agent.
         logger.error(
             "generic_agent_step_mismatch",
@@ -106,6 +107,22 @@ async def generic_agent_node(state: dict[str, Any], config: RunnableConfig) -> d
         }
 
     agent_type = str(step["agent_type"])
+    # The row wins; BUILTIN_SEED is the no-database fallback for the builtin
+    # non-code types only. A custom type without its row (deleted after the
+    # template was saved) fails the node, never KeyErrors (spec 3.5).
+    from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+
+    definition = await load_agent_definition_or_none(config, agent_type)
+    if definition is None and agent_type in BUILTIN_SEED:
+        definition = dict(BUILTIN_SEED[agent_type])
+    if definition is None:
+        logger.error("generic_agent_definition_missing", job_id=state.get("job_id"), agent_type=agent_type)
+        return {
+            "current_stage": "generic_agent_failed",
+            "errors": [f"generic_agent: no agent definition for {agent_type!r}"],
+        }
+    definition = _with_watcher_log_tool(definition, state, agent_type)
+
     writer = get_stream_writer()
     attempt = agent_attempt(state, agent_type)
     writer(events.node_started(node="generic_agent", agent=agent_type, attempt=attempt))
@@ -113,14 +130,6 @@ async def generic_agent_node(state: dict[str, Any], config: RunnableConfig) -> d
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
     credentials = configurable.get("credentials") or {}
-
-    # BUILTIN_SEED carries the canonical definition as the no-DB fallback
-    # (tests / minimal setups) — the DB row wins when present. Imported
-    # lazily like the other nodes' repository imports.
-    from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
-
-    definition = await load_agent_definition(config, agent_type, dict(BUILTIN_SEED[agent_type]))
-    definition = _with_watcher_log_tool(definition, state, agent_type)
 
     result = await run_agent_node(
         state=state,

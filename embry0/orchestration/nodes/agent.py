@@ -56,6 +56,7 @@ USER_RETRY_ROUNDS_CAP = _env_cap("USER_RETRY_ROUNDS_CAP", 5)
 # pass and review a bounded check-and-judge pass — neither should be able
 # to burn a developer-sized budget when stuck. Overridable per job via
 # pipeline_config.agent_max_turns; unknown agent types fall back to 40.
+# Custom agent types (agent_definitions rows run on generic_agent) take that default.
 DEFAULT_AGENT_MAX_TURNS: dict[str, int] = {
     "triage": 15,
     "developer": 40,
@@ -147,6 +148,21 @@ def _auth_error_updates(
     }
 
 
+async def load_agent_definition_or_none(config: Any, agent_type: str) -> dict[str, Any] | None:
+    """The DB agent_definitions row for ``agent_type``; None without a db, without a row, or on a failed read."""
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    db = configurable.get("db")
+    if db is None:
+        return None
+    try:
+        from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
+
+        return await AgentDefinitionsRepository(db).get(agent_type)
+    except Exception:
+        logger.warning("agent_definition_load_failed", agent_type=agent_type, exc_info=True)
+        return None
+
+
 async def load_agent_definition(config: Any, agent_type: str, fallback: dict[str, Any]) -> dict[str, Any]:
     """The DB agent_definitions row for ``agent_type``, or the code fallback.
 
@@ -156,18 +172,7 @@ async def load_agent_definition(config: Any, agent_type: str, fallback: dict[str
     setups without a ``db`` in configurable keep the code defaults, and a
     load failure must never block the agent run.
     """
-    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
-    db = configurable.get("db")
-    if db is None:
-        return fallback
-    try:
-        from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
-
-        row = await AgentDefinitionsRepository(db).get(agent_type)
-    except Exception:
-        logger.warning("agent_definition_load_failed", agent_type=agent_type, exc_info=True)
-        return fallback
-    return row or fallback
+    return await load_agent_definition_or_none(config, agent_type) or fallback
 
 
 async def _provider_config_row(config: Any, *, failure_event: str) -> dict[str, Any] | None:

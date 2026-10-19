@@ -441,3 +441,65 @@ async def test_an_operator_request_still_outranks_the_pin():
     }
     out = await plan_route_node(state, _config(_repo_with_code_default()))
     assert out["route_template_name"] == "review-only"
+
+
+def _bot_graph():
+    return {
+        "nodes": [
+            {"node_id": "t", "agent_type": "triage"},
+            {"node_id": "b", "agent_type": "release-bot"},
+            {"node_id": "o", "agent_type": "output"},
+        ],
+        "edges": [
+            {"edge_id": "e1", "source": "t", "target": "b", "edge_type": "flow"},
+            {"edge_id": "e2", "source": "b", "target": "o", "edge_type": "flow"},
+        ],
+    }
+
+
+def _repo_with_bot():
+    return _FakeTemplatesRepo(
+        [
+            _row("1", "bot-run", _bot_graph()),
+            _row("2", "review-only", BUILTIN_PIPELINE_TEMPLATES["review-only"]["graph_definition"], kind="code"),
+        ]
+    )
+
+
+def _config_with_db(repo, rows):
+    """A configurable with a ``db`` whose AgentDefinitionsRepository lists ``rows``."""
+    config = _config(repo)
+    config["configurable"]["db"] = object()
+    return config, patch(
+        "embry0.storage.repositories.agent_definitions.AgentDefinitionsRepository.list_all",
+        AsyncMock(return_value=rows),
+    )
+
+
+@pytest.mark.asyncio
+async def test_template_naming_an_existing_custom_agent_resolves():
+    config, rows = _config_with_db(_repo_with_bot(), [{"type": "release-bot"}])
+    with rows:
+        out = await plan_route_node(_state(pipeline_template="bot-run", job_kind="code"), config)
+    assert out["route_template_name"] == "bot-run"
+    assert [s["agent_type"] for s in out["route_plan"]] == ["release-bot", "output"]
+
+
+@pytest.mark.asyncio
+async def test_template_naming_a_deleted_custom_agent_is_skipped_with_the_log():
+    """Spec 3.5: a row deleted after the template was saved skips the template at plan time."""
+    config, rows = _config_with_db(_repo_with_bot(), [{"type": "developer"}])
+    with rows, patch("embry0.workflows.issue_to_pr.plan_route.logger") as log:
+        out = await plan_route_node(_state(pipeline_template="bot-run", job_kind="code"), config)
+    assert out["route_template_name"] == "review-only", "the kind default must win over the broken template"
+    assert any(
+        c.args and c.args[0] == "plan_route_template_invalid" and c.kwargs.get("template") == "bot-run"
+        for c in log.warning.call_args_list
+    ), log.warning.call_args_list
+
+
+@pytest.mark.asyncio
+async def test_no_db_means_the_builtin_types_only():
+    """Without a database the validator falls back to the seed types; a custom template is skipped."""
+    out = await plan_route_node(_state(pipeline_template="bot-run", job_kind="code"), _config(_repo_with_bot()))
+    assert out["route_template_name"] == "review-only"

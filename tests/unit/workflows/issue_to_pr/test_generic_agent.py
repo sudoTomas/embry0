@@ -1,6 +1,6 @@
 """Generic agent node — non-code route steps (RAV-604)."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -189,3 +189,45 @@ def test_route_after_generic_agent_chains_generic_steps():
         "qa": {},
     }
     assert route_after_generic_agent(state) == "agent"
+
+
+@pytest.mark.asyncio
+async def test_custom_agent_runs_its_row():
+    """Spec 3.5: a custom type runs the agent_definitions row; BUILTIN_SEED is not consulted."""
+    row = {"type": "release-bot", "model": "m", "tools": ["Read"], "skills": [], "system_prompt": "bot"}
+    captured: dict = {}
+    with (
+        patch("embry0.workflows.issue_to_pr.generic_agent.run_agent_node", _stub_run(captured)),
+        patch("embry0.workflows.issue_to_pr.generic_agent.load_agent_definition_or_none", AsyncMock(return_value=row)),
+    ):
+        out = await generic_agent_node(_state(agent_type="release-bot", extra_steps=("output",)), _config())
+    assert captured["agent_type"] == "release-bot"
+    assert captured["agent_definition"] == row
+    assert out["current_stage"] == "release-bot_complete"
+    assert out["route_cursor"] == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_custom_row_fails_the_node_with_a_message():
+    captured: dict = {}
+    with (
+        patch("embry0.workflows.issue_to_pr.generic_agent.run_agent_node", _stub_run(captured)),
+        patch("embry0.workflows.issue_to_pr.generic_agent.load_agent_definition_or_none", AsyncMock(return_value=None)),
+    ):
+        out = await generic_agent_node(_state(agent_type="release-bot"), _config())
+    assert captured == {}, "the agent must not run without a definition"
+    assert out["current_stage"] == "generic_agent_failed"
+    assert out["errors"] == ["generic_agent: no agent definition for 'release-bot'"]
+    assert route_after_generic_agent(out) == "end"
+
+
+@pytest.mark.asyncio
+async def test_builtin_type_keeps_the_seed_fallback():
+    """A builtin non-code type (research) still runs from BUILTIN_SEED without a database."""
+    captured: dict = {}
+    with (
+        patch("embry0.workflows.issue_to_pr.generic_agent.run_agent_node", _stub_run(captured)),
+        patch("embry0.workflows.issue_to_pr.generic_agent.load_agent_definition_or_none", AsyncMock(return_value=None)),
+    ):
+        await generic_agent_node(_state(agent_type="research", extra_steps=("output",)), _config())
+    assert captured["agent_definition"] == BUILTIN_SEED["research"]

@@ -85,18 +85,19 @@ def build_route_plan(graph_definition: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _step_target(step: dict[str, Any]) -> str:
-    """Dispatcher key for a step ('developer' | 'review' | 'qa' | 'output' | 'agent')."""
+    """Dispatcher key for a step ('developer' | 'review' | 'qa' | 'output' | 'agent').
+
+    Every type outside the fixed node vocabulary is an agent_definitions row
+    and runs on generic_agent (spec 3.5).
+    """
     mapping = {
         "developer": "developer",
         "reviewer": "review",
         "review": "review",
         "qa": "qa",
         "output": "output",
-        "research": "agent",
-        "analysis": "agent",
-        "ops": "agent",
     }
-    return mapping[step["agent_type"]]
+    return mapping.get(step["agent_type"], "agent")
 
 
 def next_route(state: dict[str, Any]) -> str:
@@ -143,12 +144,10 @@ def step_template_config(state: dict[str, Any], run_agent_type: str) -> dict[str
         "review": "review",
         "qa": "qa",
         "output": "output",
-        # Non-code agents (RAV-604): template agent_type IS the runtime type.
-        "research": "research",
-        "analysis": "analysis",
-        "ops": "ops",
     }
-    if step_to_runtime.get(step.get("agent_type", "")) != run_agent_type:
+    agent_type = str(step.get("agent_type", ""))
+    # Any other type is its own runtime type: the row named by the template runs (spec 3.5).
+    if step_to_runtime.get(agent_type, agent_type) != run_agent_type:
         return None
     return _config_overrides(step.get("config") or {}, run_agent_type)
 
