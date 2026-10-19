@@ -6,6 +6,7 @@ import { JobStatusBadge } from "./JobStatusBadge";
 import { EmptyJobsState } from "./EmptyJobsState";
 import { formatCost, formatDate } from "@/lib/utils";
 import { statusLabel } from "@/lib/status";
+import { jobTitle, shortJobId } from "@/lib/jobTitle";
 import { Link, useNavigate } from "react-router";
 import { X, Eye, GitPullRequest } from "lucide-react";
 import type { JobResponse } from "@/lib/types";
@@ -88,9 +89,13 @@ export function JobsTable({
                   role="link"
                   aria-label={`View job ${job.job_id}`}
                 >
-                  <td className="whitespace-nowrap font-mono text-xs">{job.job_id.slice(0, 8)}</td>
+                  <td className="whitespace-nowrap font-mono text-xs">
+                    <span title={job.job_id}>{shortJobId(job.job_id)}</span>
+                  </td>
                   <td className="hidden whitespace-nowrap font-mono text-xs sm:table-cell">{job.repo}</td>
-                  <td className="w-full max-w-0 truncate sm:w-auto sm:max-w-[200px]">{job.task}</td>
+                  <td className="w-full max-w-0 truncate sm:w-auto sm:max-w-[200px]" title={job.task}>
+                    {jobTitle(job.task)}
+                  </td>
                   <td>
                     <JobStatusBadge status={job.status} />
                   </td>
