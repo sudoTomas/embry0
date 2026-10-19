@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mockPatch = vi.fn();
@@ -22,7 +22,6 @@ function renderSetting(o: Organization, isAdmin = true) {
 }
 
 const hours = () => screen.getByTestId("org-rediscover-hours") as HTMLInputElement;
-const toggle = () => screen.getByTestId("org-rediscover-on") as HTMLInputElement;
 
 beforeEach(() => {
   mockPatch.mockReset().mockImplementation(async (owner: string, settings: Record<string, unknown>) =>
@@ -33,11 +32,17 @@ beforeEach(() => {
 describe("RediscoverSetting", () => {
   it("shows the current interval, with nothing to save until it changes", () => {
     renderSetting(org({ settings: { rediscover_hours: 24 } }));
-    expect(toggle().checked).toBe(true);
     expect(hours().value).toBe("24");
+    expect(screen.getByLabelText("Hours between discovery runs, empty for off")).toBe(hours());
     expect(screen.queryByTestId("org-rediscover-save")).toBeNull();
-    // The header's one gold is not a settings checkbox.
-    expect(toggle().className).not.toContain("accent-primary");
+    expect(screen.getByTestId("org-rediscover-off")).toHaveTextContent("Turn off");
+  });
+
+  it("has no checkbox and no gold: the act panel's need checkboxes keep the page's one selection style", () => {
+    renderSetting(org({ settings: { rediscover_hours: 24 } }));
+    const setting = screen.getByTestId("org-rediscover-setting");
+    expect(within(setting).queryByRole("checkbox")).toBeNull();
+    expect(setting.innerHTML).not.toMatch(/accent-|bg-primary/);
   });
 
   it("saves a new interval with PATCH settings.rediscover_hours", async () => {
@@ -49,28 +54,42 @@ describe("RediscoverSetting", () => {
     await waitFor(() => expect(screen.queryByTestId("org-rediscover-save")).toBeNull());
   });
 
-  it("turns the schedule off with null", async () => {
+  it("turns the schedule off with null: Turn off empties the field, and Save sends it", async () => {
     renderSetting(org({ settings: { rediscover_hours: 24 } }));
-    fireEvent.click(toggle());
-    expect(hours()).toBeDisabled();
+    fireEvent.click(screen.getByTestId("org-rediscover-off"));
+    expect(hours().value).toBe("");
+    expect(screen.getByText("(off)")).toBeInTheDocument();
+    expect(screen.getByTestId("org-rediscover-current")).toHaveTextContent("now every 24 hours");
+    // Nothing is sent before Save.
+    expect(mockPatch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId("org-rediscover-save"));
     await waitFor(() => expect(mockPatch).toHaveBeenCalledWith("acme", { rediscover_hours: null }));
   });
 
-  it("reads an owner off the schedule as off, and offers 24 hours when switched on", async () => {
+  it("reads an emptied field as off", async () => {
+    renderSetting(org({ settings: { rediscover_hours: 24 } }));
+    fireEvent.change(hours(), { target: { value: "  " } });
+    expect(screen.queryByTestId("org-rediscover-invalid")).toBeNull();
+    fireEvent.click(screen.getByTestId("org-rediscover-save"));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledWith("acme", { rediscover_hours: null }));
+  });
+
+  it("reads an owner off the schedule as off, and switches it on with a number of hours", async () => {
     renderSetting(org({ settings: {} }));
-    expect(toggle().checked).toBe(false);
-    expect(hours()).toBeDisabled();
+    expect(hours().value).toBe("");
     expect(screen.getByText("(off)")).toBeInTheDocument();
-    fireEvent.click(toggle());
-    expect(hours().value).toBe("24");
+    expect(screen.queryByTestId("org-rediscover-off")).toBeNull();
+    expect(screen.queryByTestId("org-rediscover-save")).toBeNull();
+    fireEvent.change(hours(), { target: { value: "24" } });
+    expect(screen.queryByText("(off)")).toBeNull();
+    expect(screen.getByTestId("org-rediscover-current")).toHaveTextContent("now off");
     fireEvent.click(screen.getByTestId("org-rediscover-save"));
     await waitFor(() => expect(mockPatch).toHaveBeenCalledWith("acme", { rediscover_hours: 24 }));
   });
 
   it("refuses an interval outside 1 to 168 before sending it", () => {
     renderSetting(org({ settings: { rediscover_hours: 24 } }));
-    for (const bad of ["0", "169", "2.5", ""]) {
+    for (const bad of ["0", "169", "2.5", "1e2", "-3", "six"]) {
       fireEvent.change(hours(), { target: { value: bad } });
       expect(screen.getByTestId("org-rediscover-invalid")).toBeInTheDocument();
       expect(screen.getByTestId("org-rediscover-save")).toBeDisabled();
