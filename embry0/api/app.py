@@ -1617,7 +1617,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.skills.sync import SkillSourceSync
 
     app.state.skill_sync = SkillSourceSync(
-        app.state.skill_store, app.state.skill_sources_repo, app.state.inline_skills_repo
+        app.state.skill_store,
+        app.state.skill_sources_repo,
+        app.state.inline_skills_repo,
+        path_root=config.skills_path_root,
+        # A re-sync keeps the older trees; this removes those no sandbox mounts.
+        after_publish=sandbox_mgr.gc_skill_trees,
     )
     skill_sync_task = asyncio.create_task(app.state.skill_sync.sync_missing())
     app.state.background_tasks.add(skill_sync_task)

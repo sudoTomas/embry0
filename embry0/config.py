@@ -450,6 +450,10 @@ class Embry0Config(BaseSettings):
     # rootless daemon runs on the host, so infra/docker-compose.rootless.yml
     # bind-mounts a host directory and sets this to that directory.
     skills_store_daemon_path: Path | None = None
+    # The directory a `path` skill source must live under, as the orchestrator
+    # sees it; a source that resolves outside it fails its sync. None refuses
+    # every `path` source.
+    skills_path_root: Path | None = None
     # #523: the in-stack registry refuses anonymous clients. A directory holding
     # `username` and `password` files (compose mounts the registry-auth volume
     # there); at startup the login is written into the orchestrator's docker CLI
