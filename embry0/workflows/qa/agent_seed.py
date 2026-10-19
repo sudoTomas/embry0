@@ -195,6 +195,8 @@ async def seed_qa_agent(repo: AgentDefinitionsRepository) -> None:
     # API — _ALLOWED_UPDATE_FIELDS includes "mcp_servers". is_builtin stays
     # outside that set on purpose: only seeders should mark a row as builtin,
     # so we set it via direct SQL.
+    # Identity is written only on create: an operator's edits survive a reboot, and
+    # POST /agents/{type}/reset is the explicit restore path.
     await repo.update(
         "qa",
         description=QA_AGENT_SEED["description"],
@@ -205,10 +207,6 @@ async def seed_qa_agent(repo: AgentDefinitionsRepository) -> None:
         execution_mode=QA_AGENT_SEED["execution_mode"],
         auth_mode=QA_AGENT_SEED["auth_mode"],
         mcp_servers=QA_AGENT_SEED["mcp_servers"],
-        display_name=QA_AGENT_SEED["display_name"],
-        avatar=QA_AGENT_SEED["avatar"],
-        color=QA_AGENT_SEED["color"],
-        tagline=QA_AGENT_SEED["tagline"],
     )
     await repo._db.execute("UPDATE agent_definitions SET is_builtin = true WHERE type = 'qa'")
     logger.info("qa_agent_seeded")

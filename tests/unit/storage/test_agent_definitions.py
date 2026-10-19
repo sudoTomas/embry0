@@ -273,3 +273,31 @@ async def test_every_builtin_row_carries_its_identity(agent_repo: AgentDefinitio
     }
     assert len(BUILTIN_IDENTITY) == 9
     assert mismatched == {}, f"builtin rows whose identity differs from BUILTIN_IDENTITY: {mismatched}"
+
+
+def _force_syncing_seeders():
+    from embry0.workflows.onboard.agent_seed import seed_onboarding_agent
+    from embry0.workflows.pr_review.agent_seed import seed_pr_reviewer_agent
+    from embry0.workflows.qa.agent_seed import seed_qa_agent
+
+    return [
+        pytest.param("qa", seed_qa_agent, id="qa"),
+        pytest.param("onboarding", seed_onboarding_agent, id="onboarding"),
+        pytest.param("pr-reviewer", seed_pr_reviewer_agent, id="pr-reviewer"),
+    ]
+
+
+@pytest.mark.parametrize(("agent_type", "seeder"), _force_syncing_seeders())
+async def test_reseeding_keeps_identity_edits_and_resyncs_the_rest(db_with_migrations, agent_type, seeder) -> None:
+    """The per-boot sync restores the seed's behaviour fields but never an operator's identity edits;
+    POST /agents/{type}/reset is the explicit restore path for identity."""
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    await seeder(repo)
+    await repo.update(agent_type, display_name="Renamed", avatar="rogue", color="rose", description="edited")
+    await seeder(repo)
+    row = await repo.get(agent_type)
+    assert row is not None
+    assert (row["display_name"], row["avatar"], row["color"]) == ("Renamed", "rogue", "rose"), (
+        f"re-running the {agent_type} seeder reverted the operator's identity edits"
+    )
+    assert row["description"] == BUILTIN_SEED[agent_type]["description"], "the seeder must still re-sync description"

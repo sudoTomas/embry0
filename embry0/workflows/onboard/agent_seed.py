@@ -154,6 +154,8 @@ async def seed_onboarding_agent(repo: AgentDefinitionsRepository) -> None:
             color=ONBOARDING_AGENT_SEED["color"],
             tagline=ONBOARDING_AGENT_SEED["tagline"],
         )
+    # Identity is written only on create: an operator's edits survive a reboot, and
+    # POST /agents/{type}/reset is the explicit restore path.
     await repo.update(
         "onboarding",
         description=ONBOARDING_AGENT_SEED["description"],
@@ -164,10 +166,6 @@ async def seed_onboarding_agent(repo: AgentDefinitionsRepository) -> None:
         execution_mode=ONBOARDING_AGENT_SEED["execution_mode"],
         auth_mode=ONBOARDING_AGENT_SEED["auth_mode"],
         mcp_servers=ONBOARDING_AGENT_SEED["mcp_servers"],
-        display_name=ONBOARDING_AGENT_SEED["display_name"],
-        avatar=ONBOARDING_AGENT_SEED["avatar"],
-        color=ONBOARDING_AGENT_SEED["color"],
-        tagline=ONBOARDING_AGENT_SEED["tagline"],
     )
     # is_builtin is deliberately outside update()'s allowed fields — only
     # seeders may mark rows builtin, via direct SQL (same as seed_qa_agent).

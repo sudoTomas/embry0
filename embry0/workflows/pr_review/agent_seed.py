@@ -75,6 +75,8 @@ async def seed_pr_reviewer_agent(repo: AgentDefinitionsRepository) -> None:
             color=seed["color"],
             tagline=seed["tagline"],
         )
+    # Identity is written only on create: an operator's edits survive a reboot, and
+    # POST /agents/{type}/reset is the explicit restore path.
     await repo.update(
         AGENT_TYPE,
         description=seed["description"],
@@ -85,10 +87,6 @@ async def seed_pr_reviewer_agent(repo: AgentDefinitionsRepository) -> None:
         execution_mode=seed["execution_mode"],
         auth_mode=seed["auth_mode"],
         mcp_servers=seed["mcp_servers"],
-        display_name=seed["display_name"],
-        avatar=seed["avatar"],
-        color=seed["color"],
-        tagline=seed["tagline"],
     )
     # is_builtin is outside update()'s fields: only seeders set it (seed_onboarding_agent does the same).
     await repo._db.execute(  # noqa: SLF001
