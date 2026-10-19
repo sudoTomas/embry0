@@ -112,12 +112,14 @@ export function AgentFormPage() {
     if (!existing) return;
     const isCustomModel = !offeredModels.includes(existing.model);
     const mcp = existing.mcp_servers;
-    // Through identityOf so a backend predating identity still yields valid ids.
+    // Avatar and colour through identityOf so a backend predating identity
+    // still yields valid ids; the text fields as stored, so an empty display
+    // name keeps showing the slug after a save.
     const identity = identityOf(existing);
     setForm({
       type: existing.type,
-      display_name: identity.displayName,
-      tagline: identity.tagline,
+      display_name: existing.display_name ?? "",
+      tagline: existing.tagline ?? "",
       avatar: identity.avatar,
       color: identity.color,
       description: existing.description ?? "",

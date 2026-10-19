@@ -321,6 +321,17 @@ describe("identity and skills (spec 3.6)", () => {
     expect(screen.getByLabelText(/display name/i)).toHaveValue("Grok Dev");
     expect(screen.getByTitle("Grok Dev")).toHaveAttribute("data-avatar", "bard");
   });
+  it("keeps an empty display name empty through an edit and save", async () => {
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, display_name: "", avatar: "bard", color: "sky", tagline: "" }, isLoading: false });
+    const user = userEvent.setup();
+    renderEdit("grok-dev");
+    expect(screen.getByLabelText(/display name/i)).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: /save agent/i }));
+    expect(mockUpdateMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ display_name: "", tagline: "", avatar: "bard", color: "sky" }),
+      expect.anything(),
+    );
+  });
   it("lists tools from the catalog grouped by source and keeps an unknown current tool", () => {
     mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, tools: ["Read", "mcp__legacy__thing"] }, isLoading: false });
     renderEdit("grok-dev");
