@@ -6,6 +6,8 @@ PUT schema-validates the body as qa.yaml v2 and upserts the DB row
 (auto-registering the repo) — the manual counterpart of the onboard
 pipeline's write. DELETE removes the config row; the repo stays registered.
 Both writes are recorded in the repo's history (ADR 0019) and audited.
+POST .../check runs the free check (services/qa_config_check.py) on a
+document without storing it.
 """
 
 from __future__ import annotations
@@ -17,6 +19,8 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from embry0.api.deps import request_actor
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
+from embry0.services.qa_config_check import check_qa_config
+from embry0.workflows.qa.qa_yaml_errors import plain_errors
 
 router = APIRouter()
 
@@ -51,7 +55,8 @@ async def put_qa_config(full_repo: str, request: Request) -> dict[str, Any]:
     try:
         parse_qa_yaml_v2(text)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=422, detail=f"qa.yaml v2 validation failed: {exc}") from exc
+        detail = "\n".join(plain_errors(exc)) + "\n\nTechnical details:\n" + str(exc)
+        raise HTTPException(status_code=422, detail=detail) from exc
     configs_repo = request.app.state.qa_configs_repo
     try:
         row, revision_id = await configs_repo.upsert_recorded(full_repo, text, updated_by=request_actor(request))
@@ -70,3 +75,20 @@ async def delete_qa_config(full_repo: str, request: Request) -> None:
     revision_id = await configs_repo.delete_recorded(full_repo, actor=request_actor(request))
     if revision_id is not None:
         await _audit(request, "repo.qa_config_deleted", {"repo": full_repo, "revision_id": revision_id})
+
+
+@router.post("/repos/{full_repo:path}/qa-config/check")
+async def check_repo_qa_config(full_repo: str, request: Request) -> dict[str, Any]:
+    """Check a test setup the way a run would use it. Stores nothing."""
+    text = (await request.body()).decode("utf-8", errors="replace")
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="empty body — send the qa.yaml v2 text")
+    state = request.app.state
+    env_keys = {str(v["key"]) for v in await state.env_repo.get_global()}
+    env_keys |= {str(v["key"]) for v in await state.env_repo.get_repo(full_repo)}
+    return await check_qa_config(
+        text,
+        profiles_repo=state.profiles_repo,
+        env_keys=env_keys,
+        docker_access=await state.repos_repo.docker_access(full_repo),
+    )

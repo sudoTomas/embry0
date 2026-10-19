@@ -86,7 +86,7 @@ export function OnboardRepoPage() {
           isAxiosError(error) && typeof error.response?.data?.detail === "string"
             ? error.response.data.detail
             : null;
-        if (detail && detail.includes("already exists")) {
+        if (detail && detail.includes("already has a test setup")) {
           setForceDetail(detail);
         } else {
           setServerError(detail ?? (error instanceof Error ? error.message : "Bootstrap failed"));
