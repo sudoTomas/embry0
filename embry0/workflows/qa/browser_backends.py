@@ -75,6 +75,17 @@ class BrowserBackend:
         return {key: value.format(path=path) for key, value in self.storage_state_env.items()}
 
 
+# Advertised by @playwright/mcp but deliberately kept out of the QA agent's
+# allowlist (the same reasoning as the vibium exclusions below):
+# run_code_unsafe executes arbitrary Playwright code in the MCP process,
+# and emulate_media changes the rendering context of the page under test.
+PLAYWRIGHT_EXCLUDED_TOOLS: frozenset[str] = frozenset(
+    {
+        "mcp__playwright__browser_run_code_unsafe",
+        "mcp__playwright__browser_emulate_media",
+    }
+)
+
 PLAYWRIGHT = BrowserBackend(
     name="playwright",
     mcp_server_name="playwright",
@@ -89,6 +100,9 @@ PLAYWRIGHT = BrowserBackend(
     # Chrome stable (Playwright MCP's default), and the QA sandbox has no
     # system Chrome at /opt/google/chrome.
     mcp_args=("--headless", "--browser", "chromium"),
+    # Every tool the image's @playwright/mcp advertises except
+    # PLAYWRIGHT_EXCLUDED_TOOLS; CI runs the server from the built image and
+    # checks that the two sets together are exactly its tools/list (#81).
     tool_names=(
         "mcp__playwright__browser_navigate",
         "mcp__playwright__browser_navigate_back",
@@ -96,6 +110,7 @@ PLAYWRIGHT = BrowserBackend(
         "mcp__playwright__browser_type",
         "mcp__playwright__browser_press_key",
         "mcp__playwright__browser_snapshot",
+        "mcp__playwright__browser_find",
         "mcp__playwright__browser_take_screenshot",
         "mcp__playwright__browser_console_messages",
         "mcp__playwright__browser_network_requests",
