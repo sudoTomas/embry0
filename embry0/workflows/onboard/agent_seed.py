@@ -154,14 +154,14 @@ async def seed_onboarding_agent(repo: AgentDefinitionsRepository) -> None:
             color=ONBOARDING_AGENT_SEED["color"],
             tagline=ONBOARDING_AGENT_SEED["tagline"],
         )
-    # Identity is written only on create: an operator's edits survive a reboot, and
+    # Identity and skills are written only on create: an operator's edits and the
+    # skills added through POST /agents/{type}/skills survive a reboot, and
     # POST /agents/{type}/reset is the explicit restore path.
     await repo.update(
         "onboarding",
         description=ONBOARDING_AGENT_SEED["description"],
         model=ONBOARDING_AGENT_SEED["model"],
         tools=ONBOARDING_AGENT_SEED["tools"],
-        skills=ONBOARDING_AGENT_SEED["skills"],
         system_prompt=ONBOARDING_AGENT_SEED["system_prompt"],
         execution_mode=ONBOARDING_AGENT_SEED["execution_mode"],
         auth_mode=ONBOARDING_AGENT_SEED["auth_mode"],

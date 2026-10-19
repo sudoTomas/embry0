@@ -75,14 +75,14 @@ async def seed_pr_reviewer_agent(repo: AgentDefinitionsRepository) -> None:
             color=seed["color"],
             tagline=seed["tagline"],
         )
-    # Identity is written only on create: an operator's edits survive a reboot, and
+    # Identity and skills are written only on create: an operator's edits and the
+    # skills added through POST /agents/{type}/skills survive a reboot, and
     # POST /agents/{type}/reset is the explicit restore path.
     await repo.update(
         AGENT_TYPE,
         description=seed["description"],
         model=seed["model"],
         tools=seed["tools"],
-        skills=seed["skills"],
         system_prompt=seed["system_prompt"],
         execution_mode=seed["execution_mode"],
         auth_mode=seed["auth_mode"],

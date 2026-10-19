@@ -289,15 +289,22 @@ def _force_syncing_seeders():
 
 @pytest.mark.parametrize(("agent_type", "seeder"), _force_syncing_seeders())
 async def test_reseeding_keeps_identity_edits_and_resyncs_the_rest(db_with_migrations, agent_type, seeder) -> None:
-    """The per-boot sync restores the seed's behaviour fields but never an operator's identity edits;
-    POST /agents/{type}/reset is the explicit restore path for identity."""
+    """The per-boot sync restores the seed's behaviour fields but never an operator's identity edits
+    or added skills; POST /agents/{type}/reset is the explicit restore path for both."""
     repo = AgentDefinitionsRepository(db_with_migrations)
     await seeder(repo)
-    await repo.update(agent_type, display_name="Renamed", avatar="rogue", color="rose", description="edited")
+    seeded_skills = list(BUILTIN_SEED[agent_type]["skills"])
+    added = [*seeded_skills, "superpowers:brainstorming"]
+    await repo.update(
+        agent_type, display_name="Renamed", avatar="rogue", color="rose", description="edited", skills=added
+    )
     await seeder(repo)
     row = await repo.get(agent_type)
     assert row is not None
     assert (row["display_name"], row["avatar"], row["color"]) == ("Renamed", "rogue", "rose"), (
         f"re-running the {agent_type} seeder reverted the operator's identity edits"
     )
+    assert row["skills"] == added, f"re-running the {agent_type} seeder undid an added skill: {row['skills']}"
     assert row["description"] == BUILTIN_SEED[agent_type]["description"], "the seeder must still re-sync description"
+    reset = await repo.reset(agent_type)
+    assert reset["skills"] == seeded_skills, "reset returns the skills to the seed"
