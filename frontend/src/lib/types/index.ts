@@ -16,3 +16,4 @@ export type { ProviderConfig, ProviderConfigUpdate, ConnectionTestResult } from 
 export type { AgentDefinition, AgentCreateRequest, AgentUpdateRequest } from "./agents";
 export * from "./qaDashboard";
 export * from "./credentials";
+export * from "./skills";
