@@ -123,13 +123,14 @@ describe("RunningCard", () => {
       expect(screen.getByTestId("live-indicator")).toHaveTextContent("Polling");
     });
 
-    it("shows the pulsing Live indicator while the WS is connected", () => {
+    it("shows the breathing Live indicator while the WS is connected", () => {
       vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ isConnected: true }));
       renderCard({ job: makeJob() });
 
       const indicator = screen.getByTestId("live-indicator");
       expect(indicator).toHaveTextContent("Live");
-      expect(indicator.querySelector(".animate-pulse")).not.toBeNull();
+      expect(indicator.querySelector(".motion-breathe")).not.toBeNull();
+      expect(indicator.querySelector(".animate-pulse")).toBeNull();
     });
 
     it("prefers live cost over the polled row when the stream has ticked", () => {
@@ -137,6 +138,20 @@ describe("RunningCard", () => {
       renderCard({ job: makeJob({ total_cost_usd: 0.33 }) });
 
       expect(screen.getByTestId("cost-line")).toHaveTextContent("$0.90");
+    });
+  });
+
+  describe("running light", () => {
+    it("runs a light along the card's top edge while the job runs", () => {
+      renderCard({ job: makeJob() });
+      expect(screen.getByTestId("running-light")).toBeInTheDocument();
+      expect(screen.getByRole("link").className).toContain("relative");
+    });
+
+    it("stops the light once the stream reports the job over", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ isComplete: true }));
+      renderCard({ job: makeJob() });
+      expect(screen.queryByTestId("running-light")).toBeNull();
     });
   });
 });

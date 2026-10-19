@@ -291,6 +291,32 @@ body[data-divine="off"] .motion-mark * {
 }
 
 /* ----- motion: console board ----- */
+/* A running card's top edge: a short faint light travels along it while
+   the job runs (components/console/RunningLight.tsx pauses it off screen).
+   Under reduced motion it is not drawn: a light standing still says
+   nothing. */
+@keyframes console-light-run {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(300%); }
+}
+.console-light-run {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-cream) 45%, transparent),
+    transparent
+  );
+  opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .console-light-run {
+    opacity: 1;
+    animation: console-light-run 2.4s var(--ease-travel) infinite;
+  }
+  .console-light[data-paused] .console-light-run {
+    animation-play-state: paused;
+  }
+}
 
 /* ----- motion: job journey ----- */
 

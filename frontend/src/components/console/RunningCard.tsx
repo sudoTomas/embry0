@@ -5,6 +5,7 @@ import { useLiveJobSummary } from "@/hooks/useLiveJobSummary";
 import { formatCost } from "@/lib/utils";
 import type { JobResponse } from "@/lib/types";
 import { ConsoleCardShell } from "./ConsoleCardShell";
+import { RunningLight } from "./RunningLight";
 
 /** Budget-meter thresholds per the board spec: amber from 80% of cap, red at
  * overrun. Intentionally louder-later than getCostBarColor (which warns at
@@ -48,10 +49,11 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
   return (
     <ConsoleCardShell
       job={job}
+      className="relative"
       headerRight={
         <span data-testid="live-indicator" className="inline-flex items-center gap-1.5 text-[10px]">
           <span
-            className={`h-1.5 w-1.5 rounded-full ${summary.isConnected ? "bg-success animate-pulse" : "bg-white/20"}`}
+            className={`h-1.5 w-1.5 rounded-full ${summary.isConnected ? "bg-success motion-breathe" : "bg-white/20"}`}
           />
           <span className={summary.isConnected ? "text-success" : "text-white/30"}>
             {summary.isConnected ? "Live" : "Polling"}
@@ -78,6 +80,9 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
         </span>
         {job.started_at && <span>{formatDuration(elapsedMs)}</span>}
       </div>
+      {/* The light runs while the job does: once the stream reports the end,
+          it stops before the next poll moves the card to its lane. */}
+      {!summary.isComplete && <RunningLight />}
       {budgetRatio != null && (
         <div data-testid="budget-meter" className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[0.06]">
           <div
