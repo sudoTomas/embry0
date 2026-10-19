@@ -52,7 +52,7 @@ export function UsersAdminPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <UsersRound size={18} className="text-primary" />
+          <UsersRound size={18} className="text-fg-muted" />
           <h1 className="text-xl font-bold">Users</h1>
           {users.data && (
             <span className="text-sm text-muted-foreground">{users.data.total}</span>

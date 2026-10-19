@@ -55,7 +55,7 @@ export function AuditPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <ScrollText size={18} className="text-primary" />
+        <ScrollText size={18} className="text-fg-muted" />
         <h1 className="text-xl font-bold">Audit</h1>
         {audit.data && <span className="text-sm text-muted-foreground">{audit.data.total}</span>}
       </div>
@@ -146,7 +146,7 @@ export function AuditPage() {
                           <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">{entry.actor}</td>
                           <td className="hidden font-mono text-xs sm:table-cell">
                             {entry.issue_id ? (
-                              <Link to={`/issues/${entry.issue_id}`} className="text-primary hover:underline">
+                              <Link to={`/issues/${entry.issue_id}`} className="text-fg hover:text-primary hover:underline">
                                 {entry.issue_id.slice(0, 12)}
                               </Link>
                             ) : (

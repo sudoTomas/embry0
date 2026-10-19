@@ -36,7 +36,7 @@ export function QaRunDetailPage() {
         {" · "}
         <Link
           to={`/qa/runs/${encodeURIComponent(data.job_id)}/affected`}
-          className="text-primary hover:underline"
+          className="text-fg hover:text-primary hover:underline"
           data-testid="affected-set-link"
         >
           Affected set

@@ -132,7 +132,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
         </p>
         <Link
           to={`/qa/repos/${encodeURIComponent(repo)}/config`}
-          className="text-xs text-primary hover:underline mt-1 inline-block"
+          className="text-xs text-fg hover:text-primary hover:underline mt-1 inline-block"
           data-testid="repo-prefs-qa-config-link"
         >
           Edit QA config →

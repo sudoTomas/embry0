@@ -283,7 +283,7 @@ export function IssueDetailPage(): JSX.Element {
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={(e) => e.stopPropagation()}
-                            className="ml-auto flex items-center gap-1 text-xs text-primary hover:underline"
+                            className="ml-auto flex items-center gap-1 text-xs text-fg hover:text-primary hover:underline"
                           >
                             PR <ExternalLink className="h-3 w-3" />
                           </a>
@@ -375,7 +375,7 @@ export function IssueDetailPage(): JSX.Element {
                             href={issue.tracker_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-primary hover:underline"
+                            className="text-fg hover:text-primary hover:underline"
                           >
                             <ExternalLink className="h-3.5 w-3.5" />
                           </a>

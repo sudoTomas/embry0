@@ -87,7 +87,7 @@ export function RepoDetailPage() {
           <h2 className="text-section font-semibold">Environment</h2>
           <Link
             to={`/environments?repo=${encodeURIComponent(full)}`}
-            className="ml-auto text-sm text-primary hover:underline"
+            className="ml-auto text-sm text-fg hover:text-primary hover:underline"
             data-testid="repo-env-manage-link"
           >
             Manage in Environments →

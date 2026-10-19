@@ -100,7 +100,7 @@ export function ReposPage() {
 
       <p className="text-sm text-white/60" data-testid="repos-orgs-pointer">
         Looking after every repository under one owner?{" "}
-        <Link to="/orgs" className="text-primary hover:underline">
+        <Link to="/orgs" className="text-fg hover:text-primary hover:underline">
           Add it as an organization
         </Link>
         .

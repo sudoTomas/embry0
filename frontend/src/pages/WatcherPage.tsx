@@ -104,7 +104,7 @@ export function WatcherPage() {
                   <td className="hidden tabular-nums text-muted-foreground sm:table-cell">{run.log_lines}</td>
                   <td className="whitespace-nowrap">
                     {run.job_id ? (
-                      <Link to={`/jobs/${run.job_id}`} className="font-mono text-xs text-primary hover:underline">
+                      <Link to={`/jobs/${run.job_id}`} className="font-mono text-xs text-fg hover:text-primary hover:underline">
                         {run.job_id.slice(0, 12)}
                       </Link>
                     ) : (
@@ -118,7 +118,7 @@ export function WatcherPage() {
                           href={run.tracker_url}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-primary hover:underline"
+                          className="text-fg hover:text-primary hover:underline"
                         >
                           {run.tracker_key}
                         </a>

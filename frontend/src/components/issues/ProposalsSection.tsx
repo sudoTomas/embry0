@@ -72,7 +72,7 @@ export function ProposalsSection() {
     return (
       <div role="alert" className="rounded-lg border border-amber-400/20 px-4 py-3 text-sm text-muted-foreground">
         Could not load the watcher&apos;s proposals.{" "}
-        <button className="text-primary hover:underline" onClick={() => proposals.refetch()}>
+        <button className="text-fg hover:text-primary hover:underline" onClick={() => proposals.refetch()}>
           Retry
         </button>
       </div>
@@ -182,7 +182,7 @@ export function ProposalsSection() {
                         href={tracker.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-primary hover:underline"
+                        className="text-fg hover:text-primary hover:underline"
                       >
                         {tracker.key}
                       </a>
@@ -202,7 +202,7 @@ export function ProposalsSection() {
                       {isOrgNeed(proposal) ? (
                         <Link
                           to={`/orgs/${encodeURIComponent(ownerOf(proposal))}`}
-                          className="text-xs text-primary hover:underline"
+                          className="text-xs text-fg hover:text-primary hover:underline"
                         >
                           Answer on {ownerOf(proposal)}
                         </Link>
@@ -215,7 +215,7 @@ export function ProposalsSection() {
                           href={tracker.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                          className="inline-flex items-center gap-1 text-xs text-fg hover:text-primary hover:underline"
                         >
                           Accept by label in {trackerName(tracker.kind)}
                           <ExternalLink className="h-3 w-3" />

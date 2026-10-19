@@ -60,7 +60,7 @@ export function QaAppHistoryPage() {
                   <td className="font-mono">
                     <Link
                       to={`/qa/runs/${encodeURIComponent(h.job_id)}`}
-                      className="text-primary hover:underline"
+                      className="text-fg hover:text-primary hover:underline"
                     >
                       {h.job_id}
                     </Link>
