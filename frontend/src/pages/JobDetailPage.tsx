@@ -264,7 +264,7 @@ export function JobDetailPage() {
       {job.status === "partial" && (
         <div className="px-4 py-3 rounded-lg border border-warning/20 bg-warning/[0.06]">
           <div className="text-sm font-medium text-warning mb-1">Pipeline partly passed</div>
-          {job.error_message && <div className="text-xs text-white/50">{job.error_message}</div>}
+          {job.error_message && <div className="text-xs text-fg-muted">{job.error_message}</div>}
         </div>
       )}
 

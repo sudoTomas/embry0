@@ -120,7 +120,7 @@ export function OrgReposTable({ repos }: { repos: readonly OrgRepoFacts[] }) {
                           {r.repo}
                         </Link>
                       ) : (
-                        <span className="font-medium text-white/70" title="Not registered in embry0">
+                        <span className="font-medium text-fg-secondary" title="Not registered in embry0">
                           {r.repo}
                         </span>
                       )}

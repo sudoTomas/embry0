@@ -24,7 +24,7 @@ export function PageError({
         </Button>
       )}
       {back && (
-        <Link to={back.to} className="text-sm text-white/60 hover:underline">
+        <Link to={back.to} className="text-sm text-fg-secondary hover:underline">
           {back.label}
         </Link>
       )}
