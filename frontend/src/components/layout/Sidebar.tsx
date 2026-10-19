@@ -1,6 +1,8 @@
-import { NavLink } from "react-router";
+import { useLayoutEffect, useRef } from "react";
+import { NavLink, useLocation } from "react-router";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { prefersReducedMotion } from "@/hooks/useReducedMotion";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useAwaitingIndicator } from "@/hooks/useAwaitingIndicator";
@@ -94,6 +96,81 @@ function NavItemLink({
   return link;
 }
 
+/** The marker's own height in px (its h-8, an item's height): an item of
+ * another height scales it to fit. */
+const MARKER_HEIGHT = 32;
+
+/**
+ * The active item's marker: one 2 px bar on the nav's left edge that travels
+ * to the item a route lands on, so the eye follows the move instead of
+ * hunting for the new item. Same emphasis as the active item's gold text.
+ *
+ * It stands at the link marked aria-current="page", measured when the route
+ * changes and when a section changes height (the rail hides the group
+ * labels, an admin entry arrives), never per frame. Only a move from one
+ * item to another glides (data-glide, index.css "motion: shell"); a first
+ * placement or a re-measure jumps, reduced motion always jumps, and with no
+ * active item there is no marker.
+ */
+function ActiveItemMarker() {
+  const { pathname } = useLocation();
+  const markerRef = useRef<HTMLSpanElement>(null);
+  // Where the marker stands now: the item's href and the transform that put
+  // it there.
+  const standing = useRef<{ href: string | null; transform: string } | null>(null);
+
+  useLayoutEffect(() => {
+    const marker = markerRef.current;
+    const nav = marker?.parentElement;
+    if (!marker || !nav) return;
+
+    const place = () => {
+      const link = nav.querySelector<HTMLElement>('a[aria-current="page"]');
+      if (!link) {
+        marker.hidden = true;
+        standing.current = null;
+        return;
+      }
+      const href = link.getAttribute("href");
+      const box = link.getBoundingClientRect();
+      const top = box.top - nav.getBoundingClientRect().top + nav.scrollTop;
+      const transform = `translateY(${top}px) scaleY(${box.height / MARKER_HEIGHT})`;
+      const from = standing.current;
+      // Nothing moved: leave a glide that is under way alone.
+      if (from?.href === href && from.transform === transform) return;
+      const glide = from !== null && from.href !== href && !prefersReducedMotion();
+      marker.toggleAttribute("data-glide", glide);
+      marker.style.transform = transform;
+      marker.hidden = false;
+      standing.current = { href, transform };
+    };
+
+    place();
+    // A section's height is what moves the items below it; a change of width
+    // alone (the column opening or closing) moves nothing, so it is skipped.
+    const heights = new WeakMap<Element, number>();
+    const observer = new ResizeObserver((entries) => {
+      let moved = false;
+      for (const entry of entries) {
+        if (heights.get(entry.target) !== entry.contentRect.height) moved = true;
+        heights.set(entry.target, entry.contentRect.height);
+      }
+      if (moved) place();
+    });
+    nav.querySelectorAll("section").forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, [pathname]);
+
+  return (
+    <span
+      ref={markerRef}
+      aria-hidden="true"
+      data-testid="nav-active-marker"
+      className="motion-nav-marker pointer-events-none absolute left-0 top-0 h-8 w-0.5 origin-top bg-primary"
+    />
+  );
+}
+
 export function Sidebar() {
   const desktopOpen = useLayoutStore((s) => s.sidebarOpen);
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
@@ -146,7 +223,7 @@ export function Sidebar() {
         className={cn(
           // 32 px items and a 6 px gap leave room for the group labels, so
           // the whole nav still fits a 1440x900 screen.
-          "flex flex-1 flex-col gap-1.5 pb-3",
+          "relative flex flex-1 flex-col gap-1.5 pb-3",
           narrow && "pt-3",
           // The rail keeps its overflow visible so the hover labels can show.
           sidebarOpen ? "overflow-y-auto" : "overflow-visible",
@@ -181,6 +258,8 @@ export function Sidebar() {
             </div>
           </section>
         ))}
+        {/* Last, so it paints over the active item's background. */}
+        <ActiveItemMarker />
       </nav>
 
       <div className="shrink-0 border-t border-border py-2.5">

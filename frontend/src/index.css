@@ -228,6 +228,15 @@ body[data-divine="off"] .motion-mark * {
   animation: none;
 }
 
+/* The sidebar's active marker glides to the item a route lands on;
+   Sidebar.tsx sets data-glide for that move only, so a re-measure (the
+   rail collapsing, a section growing) jumps. */
+@media (prefers-reduced-motion: no-preference) {
+  .motion-nav-marker[data-glide] {
+    transition: transform var(--motion-base) var(--ease-travel);
+  }
+}
+
 /* ----- motion: live numbers and rows ----- */
 
 /* ----- motion: console board ----- */

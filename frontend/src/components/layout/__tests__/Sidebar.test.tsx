@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { QueueResponse } from "@/lib/types";
@@ -18,13 +18,13 @@ vi.mock("@/api/queue", () => ({
 
 import { Sidebar } from "../Sidebar";
 
-function renderSidebar() {
+function renderSidebar(path = "/") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/"]}>
+      <MemoryRouter initialEntries={[path]}>
         <Sidebar />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -218,3 +218,115 @@ describe("Sidebar — Console awaiting-input prominence", () => {
     expect(document.title).toBe("embry0 — Software that is alive");
   });
 });
+
+describe("Sidebar — the active item's marker travels with the route", () => {
+  /** jsdom has no matchMedia, which reads as reduced motion; this says no
+   * (and not narrow, so the desktop column stays). */
+  function allowMotion() {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} })),
+    );
+  }
+
+  /** jsdom lays nothing out: give an element the box a browser would. */
+  function placeBox(el: Element, top: number, height = 32) {
+    vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+      top,
+      height,
+      bottom: top + height,
+      left: 0,
+      right: 224,
+      width: 224,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    } as DOMRect);
+  }
+
+  function markerAndNav() {
+    const marker = screen.getByTestId("nav-active-marker");
+    const nav = marker.parentElement;
+    if (!nav) throw new Error("the marker sits in no nav");
+    return { marker, nav };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("stands one quiet marker at the active item, inside the nav", () => {
+    renderSidebar("/jobs");
+    expect(screen.getAllByTestId("nav-active-marker")).toHaveLength(1);
+    const { marker, nav } = markerAndNav();
+    expect(nav.tagName).toBe("NAV");
+    expect(marker.hidden).toBe(false);
+    expect(marker).toHaveAttribute("aria-hidden", "true");
+    expect(marker.className).toContain("bg-primary");
+  });
+
+  it("shows no marker where no item is active", () => {
+    renderSidebar("/about/operations");
+    expect(markerAndNav().marker.hidden).toBe(true);
+  });
+
+  it("glides the marker to the item the route lands on", () => {
+    allowMotion();
+    renderSidebar("/");
+    const { marker, nav } = markerAndNav();
+    expect(marker.hasAttribute("data-glide"), "the first placement jumps").toBe(false);
+    placeBox(nav, 100);
+    placeBox(screen.getByRole("link", { name: "Jobs" }), 300);
+    fireEvent.click(screen.getByRole("link", { name: "Jobs" }));
+    expect(marker.style.transform).toBe("translateY(200px) scaleY(1)");
+    expect(marker.hasAttribute("data-glide"), "a move to another item glides").toBe(true);
+  });
+
+  it("jumps to the item under reduced motion", () => {
+    renderSidebar("/");
+    const { marker, nav } = markerAndNav();
+    placeBox(nav, 100);
+    placeBox(screen.getByRole("link", { name: "Jobs" }), 300);
+    fireEvent.click(screen.getByRole("link", { name: "Jobs" }));
+    expect(marker.style.transform).toBe("translateY(200px) scaleY(1)");
+    expect(marker.hasAttribute("data-glide")).toBe(false);
+  });
+
+  it("re-places at once when a section's height moves the item, and not otherwise", () => {
+    const reports: ResizeObserverCallback[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(report: ResizeObserverCallback) {
+          reports.push(report);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    allowMotion();
+    renderSidebar("/");
+    const { marker, nav } = markerAndNav();
+    const jobs = screen.getByRole("link", { name: "Jobs" });
+    placeBox(nav, 100);
+    placeBox(jobs, 300);
+    fireEvent.click(jobs);
+    const report = reports[reports.length - 1];
+    const section = nav.querySelector("section") as Element;
+    const sized = (height: number) =>
+      [{ target: section, contentRect: { height } }] as unknown as ResizeObserverEntry[];
+
+    // An observer's first report moves nothing: the glide under way stays.
+    report(sized(40), {} as ResizeObserver);
+    expect(marker.hasAttribute("data-glide")).toBe(true);
+    expect(marker.style.transform).toBe("translateY(200px) scaleY(1)");
+
+    // A section grew and the item moved: the marker follows at once.
+    placeBox(jobs, 260);
+    report(sized(0), {} as ResizeObserver);
+    expect(marker.style.transform).toBe("translateY(160px) scaleY(1)");
+    expect(marker.hasAttribute("data-glide")).toBe(false);
+  });
+});
+

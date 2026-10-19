@@ -91,6 +91,24 @@ describe("Sidebar at phone width — a drawer, not a column", () => {
     expect(useLayoutStore.getState().drawerOpen).toBe(false);
   });
 
+  it("stands the active item's marker in the phone drawer", () => {
+    pretendViewport(true);
+    useLayoutStore.setState({ drawerOpen: true });
+    renderShell();
+    const marker = screen.getByTestId("nav-active-marker");
+    expect(screen.getByTestId("sidebar")).toContainElement(marker);
+    expect(marker.hidden).toBe(false);
+  });
+
+  it("stands the active item's marker in the collapsed rail", () => {
+    pretendViewport(false);
+    useLayoutStore.setState({ sidebarOpen: false });
+    renderShell();
+    const marker = screen.getByTestId("nav-active-marker");
+    expect(screen.getByTestId("sidebar")).toContainElement(marker);
+    expect(marker.hidden).toBe(false);
+  });
+
   it("does not persist the drawer flag across reloads", () => {
     pretendViewport(true);
     useLayoutStore.setState({ drawerOpen: true });
