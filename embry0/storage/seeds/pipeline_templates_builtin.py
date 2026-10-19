@@ -279,7 +279,8 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
         "design-audit",
         "design-auditor",
         "Read-only: triage → design-auditor → output. Measures the frontend against the design "
-        "standard in the job and delivers ranked findings with a reproducible 0 to 100 score.",
+        "standard in the job and delivers ranked findings with two reproducible 0 to 100 scores: "
+        "conformance to the standard and code hygiene.",
     ),
 }
 

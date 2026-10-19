@@ -26,6 +26,7 @@ from embry0.services.standards import (
     record_audit_completion,
     validate_standard,
 )
+from embry0.workflows.issue_to_pr.specialist_agents import DESIGN_AUDITOR_SYSTEM_PROMPT
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "standards-audit"
 
@@ -148,6 +149,9 @@ def test_the_audit_task_carries_the_whole_active_standard_and_the_contract() -> 
     assert json.dumps(VALUES, indent=2, sort_keys=True) in task
     assert "Dense tables, one accent." in task and "- acme/site" in task
     assert "`Score: N`" in task and "## Findings" in task
+    assert "1. First line: `Score: N`, the conformance score" in task
+    assert "2. Second line: `Hygiene: M`, the hygiene score" in task
+    assert task.index("`Score: N`") < task.index("`Hygiene: M`") < task.index("## Findings")
     assert "Read only: change no file, open no pull request, push nothing." in task
     assert "- `one-accent` (in src/charts): the charts need a second hue" in task
 
@@ -167,6 +171,27 @@ def test_a_scored_report_fixture_parses() -> None:
     assert (result.score, result.findings_open) == (72, 3), (
         "the findings table is the one under ## Findings, not the measurements table"
     )
+
+
+def test_a_two_score_report_reads_the_conformance_score_and_the_findings() -> None:
+    report = (FIXTURES / "two-score-report.md").read_text()
+    assert parse_score(report) == 83, "N is the conformance score on the first line; Hygiene is never read"
+    result = parse_audit_report(report)
+    assert (result.score, result.findings_open) == (83, 5), "the scores table after the findings is not findings"
+
+
+def test_the_two_score_fixture_follows_the_auditors_contract() -> None:
+    lines = (FIXTURES / "two-score-report.md").read_text().splitlines()
+    assert lines[0] == "Score: 83" and lines[1] == "Hygiene: 25"
+    assert "| Severity | Rule | Location | Evidence | Proposed fix |" in lines
+    assert "\n| Severity | Rule | Location | Evidence | Proposed fix |\n" in DESIGN_AUDITOR_SYSTEM_PROMPT
+    # Its parts add up to its scores: each score's weights sum to 100, so a
+    # score is 100 minus the points its parts lost.
+    rows = [line.split("|")[1:-1] for line in lines if line.startswith("| ") and line.count("|") == 5]
+    lost = {cells[0].strip(): float(cells[3]) for cells in rows if cells[3].strip().replace(".", "").isdigit()}
+    conformance = ("palette", "accent", "type", "radii", "shell", "tables")
+    assert round(100 - sum(lost[p] for p in conformance)) == 83
+    assert round(100 - sum(v for p, v in lost.items() if p not in conformance)) == 25
 
 
 def test_a_clean_report_fixture_has_no_findings() -> None:
@@ -196,6 +221,9 @@ def test_an_unscored_report_fixture_has_no_score_and_no_findings() -> None:
         ("Score: 1000", None),
         ("Scoreboard: 5", None),
         ("Intro\n\nScore: 55\n\nScore: 10", 55),
+        ("Score: 81\nHygiene: 27", 81),
+        ("Hygiene: 27\nScore: 81", 81),
+        ("Hygiene: 27", None),
         ("Score: 101", None),
         ("Score: high", None),
         ("The score: 80 is good", None),

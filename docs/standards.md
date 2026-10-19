@@ -117,7 +117,7 @@ The state is stored per repository, lowercase, in `repo_standard_state`. `GET /a
 | `mode` | `off`, `advise` or `enforce` |
 | `exceptions` | what the repository is excused from |
 | `last_audit_job_id` | the newest audit started; it may still be running, or may have failed |
-| `score` | 0 to 100, from the newest audit that completed; null before one has, or when its report had no score |
+| `score` | the conformance score, 0 to 100, from the newest audit that completed; null before one has, or when its report had no score |
 | `findings_open` | the rows of that audit's findings table |
 | `last_audit_at` | when that audit completed |
 
@@ -127,15 +127,44 @@ The state is stored per repository, lowercase, in `repo_standard_state`. `GET /a
 
 The job runs on the template against a clone of the repository, and its task carries the whole active standard: schema, values, prose, references and the repository's exceptions, with the report contract:
 
-1. The report's first line is `Score: N`, a whole number from 0 to 100.
-2. A `## Findings` heading follows, with one markdown table: `Severity | Rule | Location | Evidence | Proposed fix`, one row per finding, at most 40 rows. With nothing to report, the heading is followed by `No findings.` and no table.
+1. The report's first line is `Score: N`, the conformance score, a whole number from 0 to 100.
+2. Its second line is `Hygiene: M`, the hygiene score, a whole number from 0 to 100.
+3. A `## Findings` heading follows, with one markdown table: `Severity | Rule | Location | Evidence | Proposed fix`, one row per finding, at most 40 rows. With nothing to report, the heading is followed by `No findings.` and no table.
 
 When the job completes, embry0 reads its report deliverable (the job's result summary when there is none) and writes onto the repository's state:
 
 - `score` is N from the first line that starts with the word `Score` and a number once markdown emphasis is removed, with N from 0 to 100 and any text after it (`Score: 72`, `**Score:** 72/100`, `**Score** - 72/100, commit abc1234`). No such line leaves the score null, and the log says `standard_audit_without_score`.
 - `findings_open` is the number of body rows of the findings table: the first table with a `Severity` or `Location` column under a heading that names findings, else the first table under such a heading. A report with no such heading uses its first table with a `Severity` or `Location` column. A row whose every cell is empty, a dash or "none" is not counted.
 
+The `Hygiene` line is not stored: it is read in the report.
+
 Only the repository whose newest audit is that job is written, so an older audit that finishes late writes nothing, and a failed audit leaves the score of the last completed one. When an admin switches the repository to mode `off` between the checks and the start, the job is cancelled before it runs and the answer is a 409. When the switch comes while the audit runs, the job runs to its end and its result is not recorded: a repository in mode `off` keeps the score it had.
+
+### How a design audit scores
+
+The design auditor's measurement script computes both scores from what it measured, so the same commit gives the same scores. A use is one value in a declaration: a CSS property, an inline style, a style object, an SVG attribute or a utility class. A token reference counts as a use of the token's value.
+
+**Conformance** (the `Score` line, stored as `score`) is how closely the interface renders the standard: 100 times the weighted mean of these shares.
+
+| part | weight | share |
+|---|---|---|
+| palette | 20 | the standard's colour roles whose value has at least one use |
+| accent | 20 | saturated colour uses within 20 degrees of hue of the accent, over those plus the uses near neither the accent nor a status colour; 0 when the accent is never used |
+| type | 20 | the mean of two shares: the font-size uses on the type scale, and the font roles that some font-family use starts with |
+| radii | 10 | the border-radius uses whose every part is in the radius set |
+| shell | 15 | the other roles (layout widths and heights, gutters, control heights, easing) with at least one use |
+| tables | 15 | tables over tables plus card grids |
+
+**Hygiene** (the `Hygiene` line, in the report only) is how much drift the code carries beside it: 100 times one minus the weighted mean of these fractions.
+
+| part | weight | fraction lost |
+|---|---|---|
+| raw colours | 40 | r / (r + 10), where r is the raw colour literals outside the token declarations per 1,000 lines of UI code |
+| off-scale sizes | 20 | the distinct font sizes off the scale, over all distinct font sizes |
+| off-set radii | 20 | the distinct radius values off the set, over all distinct radius values |
+| extra families | 20 | the distinct named font families outside the font roles, over all distinct named families |
+
+No part deducts an absolute count. Counts of stray values grow with an app's size, so a fixed deduction per stray value puts every real app near 0 and ranks nothing; a share, or a rate per 1,000 lines of UI code, ranks apps of any size. A part the standard leaves undefined, or with nothing in the app to measure, drops out with its weight. A finding costs what its part would gain were it alone fixed: it is `high` at 3 conformance points or more, `medium` at 1 conformance point or 5 hygiene points or more, and `low` below, so hygiene alone never makes a finding `high`. The full method, with the colour, size and font rules, is the design auditor's system prompt (`DESIGN_AUDITOR_SYSTEM_PROMPT` in `embry0/workflows/issue_to_pr/specialist_agents.py`).
 
 ## API
 
