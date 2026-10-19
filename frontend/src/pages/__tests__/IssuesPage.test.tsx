@@ -8,6 +8,7 @@ const mockFetchProposals = vi.fn();
 
 vi.mock("@/hooks/useIssues", () => ({
   useIssues: () => mockUseIssues(),
+  useIssueBoard: () => ({ issues: [], totals: {}, isLoading: false, isError: false, refetch: vi.fn() }),
   useUpdateIssue: () => ({ mutate: vi.fn() }),
 }));
 vi.mock("@/api/cases", () => ({
