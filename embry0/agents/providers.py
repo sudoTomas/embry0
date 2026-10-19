@@ -364,6 +364,16 @@ def unpriced_models_message(models: Iterable[str]) -> str:
     )
 
 
+def chat_only_models(models: Iterable[str]) -> list[str]:
+    """The ids in ``models`` their routed provider serves without tool calling."""
+    found: set[str] = set()
+    for model in models:
+        provider = provider_for_model(model) if model else None
+        if provider is not None and model in provider.chat_only_models:
+            found.add(model)
+    return sorted(found)
+
+
 def chat_only_message(provider: ModelProvider, model: str, agent_type: str, tools: Iterable[str]) -> str:
     """The refusal for an agent that needs tools on a model served without tool calling."""
     return (

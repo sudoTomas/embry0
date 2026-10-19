@@ -262,7 +262,7 @@ async def update_provider(
         # must stay mutually consistent — a disabled model in a tier slot
         # would make the tier fallback itself broken. #465: the same goes for
         # the default model, which every agent of every job resolves to.
-        from embry0.agents.providers import known_models, unpriced_models, unpriced_models_message
+        from embry0.agents.providers import chat_only_models, known_models, unpriced_models, unpriced_models_message
 
         current = await repo.get()
         new_default = updates.get("default_model")
@@ -278,6 +278,20 @@ async def update_provider(
         )
         if unpriced:
             raise HTTPException(status_code=422, detail=unpriced_models_message(unpriced))
+        # Every agent with tools resolves to the default model or a tier one; a
+        # chat-only model there would leave each of them refused at run time.
+        chat_only = chat_only_models(
+            str(updates.get(key) or "") for key in ("default_model", "model_heavy", "model_medium", "model_light")
+        )
+        if chat_only:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"chat-only model(s) cannot be the default or a tier model: {', '.join(chat_only)} — their "
+                    "provider serves them without tool calling, and the agents these settings reach use tools "
+                    "(docs/providers.md)"
+                ),
+            )
         disabled = set(
             updates["disabled_models"] if "disabled_models" in updates else current.get("disabled_models") or []
         )

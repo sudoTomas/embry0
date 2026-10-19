@@ -150,6 +150,8 @@ its catalogue entry, `"tool_calling": false` in `GET /config/models`, and
 "(chat-only)" on the LLM Providers page. The resolver refuses it for an agent
 that has tools, with `ERR_INVALID_CONFIG` before the sandbox runs, rather than
 run the agent with its tools dropped; an agent with no tools can run on it.
+`PUT /config/provider` answers 422 to a chat-only default or tier model, since
+the agents those settings reach have tools.
 Today that is `gpt-6.1-sol`: OpenAI serves it on chat completions without tool
 calling and offers its tools only on the Responses API, which embry0 does not
 speak.
