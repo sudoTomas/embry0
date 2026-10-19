@@ -56,8 +56,9 @@ export function JobDetailPage() {
   const missing = isNotFound(error);
   const { data: jobInputs } = useJobInputs(missing ? "" : (jobId ?? ""), job?.status);
 
-  // A job that does not exist has no event stream to open.
-  const { events, isConnected, latestCost, pipelineGraph } = useJobLogs(missing ? undefined : jobId);
+  // The event stream opens once the job is known to exist: a missing job
+  // has none, and opening it before the 404 mints a token for nothing.
+  const { events, isConnected, latestCost, pipelineGraph } = useJobLogs(job ? jobId : undefined);
   const { agents, prUrl, interruptData } = useAgentStates(events, job?.status, pipelineGraph);
   const activeAgents = agents.filter((a) => a.status === "running");
   const completedAgents = agents.filter((a) => a.status === "completed" || a.status === "failed");

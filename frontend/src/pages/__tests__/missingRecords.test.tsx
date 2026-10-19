@@ -15,7 +15,13 @@ const state = vi.hoisted(() => ({ jobError: null as unknown, issueError: null as
 const useJobLogs = vi.hoisted(() => vi.fn());
 
 vi.mock("@/hooks/useJobs", () => ({
-  useJob: () => ({ data: undefined, isLoading: false, isError: !!state.jobError, error: state.jobError, refetch: vi.fn() }),
+  useJob: () => ({
+    data: undefined,
+    isLoading: state.jobError === null,
+    isError: !!state.jobError,
+    error: state.jobError,
+    refetch: vi.fn(),
+  }),
 }));
 vi.mock("@/hooks/useInputs", () => ({ useJobInputs: () => ({ data: [] }) }));
 vi.mock("@/hooks/useTraces", () => ({ useTraces: () => ({ data: undefined }) }));
@@ -59,7 +65,20 @@ describe("a job that does not exist", () => {
     expect(screen.getByText("No job job-doesnotexist")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /All jobs/ })).toHaveAttribute("href", "/jobs");
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-    expect(useJobLogs.mock.calls.at(-1)?.[0], "a missing job must not open its event stream").toBeUndefined();
+    expect(useJobLogs.mock.calls.length).toBeGreaterThan(0);
+    expect(
+      useJobLogs.mock.calls.every((c) => c[0] === undefined),
+      "a missing job must not open its event stream, not even before its 404 arrives",
+    ).toBe(true);
+  });
+
+  it("opens no event stream while the job is still unknown", () => {
+    // Before GET /jobs/{id} answers, the job may not exist: minting a stream
+    // token and opening a WebSocket for it is the 404's cost paid up front.
+    state.jobError = null;
+    useJobLogs.mockClear();
+    renderAt("/jobs/job-1");
+    expect(useJobLogs.mock.calls.every((c) => c[0] === undefined)).toBe(true);
   });
 
   it("a job that failed to load offers Retry", () => {

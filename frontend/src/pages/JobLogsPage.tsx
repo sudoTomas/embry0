@@ -22,8 +22,9 @@ export function JobLogsPage() {
   // so late joiners get it too); per-node live state is derived from the
   // node_started/node_completed/qa_* events the stream already carries.
   const { data: job, error: jobError } = useJob(jobId);
-  // A job that does not exist has no event stream to open.
   const missing = isNotFound(jobError);
+  // The event stream opens once the job is known to exist: a missing job
+  // has none, and opening it before the 404 mints a token for nothing.
   const {
     events,
     isConnected,
@@ -33,7 +34,7 @@ export function JobLogsPage() {
     latestTokensOut,
     latestTurns,
     pipelineGraph,
-  } = useJobLogs(missing ? undefined : jobId);
+  } = useJobLogs(job ? jobId : undefined);
 
   const effectiveGraph = pipelineGraph ?? null;
   const jobFinished = isTerminalStatus(job?.status);
