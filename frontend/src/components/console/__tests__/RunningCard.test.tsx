@@ -129,8 +129,14 @@ describe("RunningCard", () => {
 
       const indicator = screen.getByTestId("live-indicator");
       expect(indicator).toHaveTextContent("Live");
-      expect(indicator.querySelector(".motion-breathe")).not.toBeNull();
-      expect(indicator.querySelector(".animate-pulse")).toBeNull();
+      // The dot breathes through index.css's motion-breathe, which stands
+      // still under reduced motion. A bare animate-* utility would run
+      // whatever the setting; one behind motion-safe: is a class named
+      // "motion-safe:animate-pulse", so a ".animate-pulse" query never saw it.
+      const dot = indicator.firstElementChild!;
+      expect(dot).toHaveClass("motion-breathe");
+      const classes = [indicator, ...indicator.querySelectorAll("*")].flatMap((el) => [...el.classList]);
+      expect(classes.filter((c) => c.startsWith("animate-"))).toEqual([]);
     });
 
     it("prefers live cost over the polled row when the stream has ticked", () => {
