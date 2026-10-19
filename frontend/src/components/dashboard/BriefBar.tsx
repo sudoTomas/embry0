@@ -1,10 +1,11 @@
-import { Fragment } from "react";
+import { Fragment, useRef } from "react";
 import { Link } from "react-router";
 import { format } from "date-fns";
 import { useQueue } from "@/hooks/useQueue";
 import { useProposals } from "@/hooks/useProposals";
 import { usePendingMergeApprovals } from "@/hooks/useMergeApprovals";
 import { usePendingSetupProposals } from "@/hooks/useSetupProposal";
+import { useTweenedNumber } from "@/hooks/useTweenedNumber";
 import { cn } from "@/lib/utils";
 
 interface BriefItem {
@@ -94,7 +95,7 @@ export function BriefBar() {
       {items.map((item) => {
         const body = (
           <>
-            <b className="font-bold tabular-nums">{item.count}</b> {item.text}
+            <BriefCount count={item.count} /> {item.text}
           </>
         );
         const tone = cn(itemTone(item), "whitespace-nowrap");
@@ -118,6 +119,20 @@ export function BriefBar() {
         );
       })}
     </div>
+  );
+}
+
+/** One bold number of the brief. The first paint shows it as it is; when a
+ * poll changes it, it travels to the new value and bumps once, so the change
+ * is seen. Inline-block, because a transform does not apply to an inline
+ * box. */
+function BriefCount({ count }: { count: number }) {
+  const ref = useRef<HTMLElement>(null);
+  const shown = useTweenedNumber(count, { tickRef: ref });
+  return (
+    <b ref={ref} className="inline-block font-bold tabular-nums">
+      {Math.round(shown ?? count)}
+    </b>
   );
 }
 

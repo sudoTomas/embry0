@@ -1,6 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+import { TWEEN_MS } from "@/hooks/useTweenedNumber";
 
 type FakeQuery<T> = { data: T | undefined; isPending: boolean; isError: boolean };
 const ready = <T,>(data: T): FakeQuery<T> => ({ data, isPending: false, isError: false });
@@ -31,6 +32,11 @@ beforeEach(() => {
   );
   mockApprovals.mockReturnValue(ready([{ id: "a1", status: "pending" }]));
   mockSetups.mockReturnValue(ready([]));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
 });
 
 const pending = (id: string, repo: string) => ({ id, repo, created_at: "2026-10-18T10:00:00Z" });
@@ -150,5 +156,36 @@ describe("BriefBar", () => {
     renderBar();
     const weekday = new Date().toLocaleDateString("en-US", { weekday: "long" });
     expect(screen.getByTestId("brief-bar")).toHaveTextContent(weekday);
+  });
+
+  it("shows a count as it is on first paint, then travels to a changed one and bumps it once", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+    let queued: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => queued.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const frame = (now: number) => {
+      const due = queued;
+      queued = [];
+      act(() => due.forEach((cb) => cb(now)));
+    };
+    const animate = vi.fn();
+    HTMLElement.prototype.animate = animate;
+
+    const { rerender } = renderBar();
+    expect(screen.getByTestId("brief-running")).toHaveTextContent("4 running");
+    expect(animate).not.toHaveBeenCalled();
+
+    mockQueue.mockReturnValue(ready({ depth: 10, pending: 7, running: 5, awaiting_input: 2, paused: 1 }));
+    rerender(
+      <MemoryRouter>
+        <BriefBar />
+      </MemoryRouter>,
+    );
+    expect(animate).toHaveBeenCalledTimes(1);
+    expect(animate.mock.contexts[0]).toBe(screen.getByTestId("brief-running").querySelector("b"));
+    frame(0);
+    frame(TWEEN_MS);
+    expect(screen.getByTestId("brief-running")).toHaveTextContent("5 running");
+    expect(screen.getByTestId("brief-awaiting")).toHaveTextContent("2 awaiting input");
   });
 });
