@@ -17,7 +17,7 @@ function noGlow(container: HTMLElement) {
 }
 
 describe("selected pipeline nodes", () => {
-  it("rings a selected start node in its gold, with no glow", () => {
+  it("rings a selected start node in its own colour, with no glow", () => {
     const { container } = render(
       <ReactFlowProvider>
         <StartEndNode {...props({ nodeRole: "start" }, true)} />
