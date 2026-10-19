@@ -142,7 +142,7 @@ export function ConsolePage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold">Console</h1>
+          <h1 className="title-pixel text-2xl font-bold">Console</h1>
           <HeartbeatBadge lastUpdatedAt={dataUpdatedAt || null} />
         </div>
         <Button onClick={() => setShowCreate((s) => !s)}>

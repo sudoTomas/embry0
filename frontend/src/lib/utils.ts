@@ -78,7 +78,7 @@ export function highlightJson(json: string): Array<{ text: string; className: st
       segments.push({ text: match[3], className: "text-warning" });
     } else if (match[4] != null) {
       // Boolean
-      segments.push({ text: match[4], className: "text-role-explorer" });
+      segments.push({ text: match[4], className: "text-palette-cyan" });
     } else if (match[5] != null) {
       // null
       segments.push({ text: match[5], className: "text-muted-foreground" });

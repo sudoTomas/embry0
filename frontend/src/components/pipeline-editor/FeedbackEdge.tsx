@@ -10,7 +10,7 @@ export function FeedbackEdge(props: EdgeProps) {
     <>
       <BaseEdge
         path={edgePath}
-        style={{ stroke: "#f87171", strokeWidth: 1.5, strokeDasharray: "6 4" }}
+        style={{ stroke: "var(--color-feedback)", strokeWidth: 1.5, strokeDasharray: "6 4" }}
       />
       {loopConfig?.max_loops && (
         <EdgeLabelRenderer>
@@ -23,7 +23,7 @@ export function FeedbackEdge(props: EdgeProps) {
               borderRadius: "10px",
               background: "rgba(248,113,113,0.12)",
               border: "1px solid rgba(248,113,113,0.25)",
-              color: "#f87171",
+              color: "var(--color-feedback)",
               fontSize: "10px",
               fontWeight: 600,
               whiteSpace: "nowrap",

@@ -177,7 +177,7 @@ export function LogsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Logs</h1>
+      <h1 className="title-pixel text-2xl font-bold">Logs</h1>
 
       <form onSubmit={onSubmit} className="flex flex-wrap items-end gap-2">
         <div className="w-64">

@@ -64,8 +64,7 @@ export function TopBar() {
 
   return (
     <header
-      className="flex h-14 items-center gap-4 border-b border-white/[0.06] px-4"
-      style={{ background: 'linear-gradient(180deg, rgba(12,16,21,0.95) 0%, rgba(9,9,11,0.95) 100%)' }}
+      className="flex h-14 items-center gap-4 border-b border-white/[0.06] bg-linear-to-b from-canvas/95 to-background/95 px-4"
     >
       <Button variant="ghost" size="icon" onClick={onToggle} aria-label={toggleLabel}>
         {panelOpen ? (

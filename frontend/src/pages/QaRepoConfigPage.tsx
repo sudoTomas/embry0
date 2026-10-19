@@ -15,7 +15,7 @@ export function QaRepoConfigPage() {
       <Link to={`/qa/repos/${encodeURIComponent(repo!)}`} className="text-sm text-white/50 hover:underline">
         ← {repo}
       </Link>
-      <h1 className="text-2xl font-bold">QA config</h1>
+      <h1 className="title-pixel text-2xl font-bold">QA config</h1>
       <QaConfigEditor repo={`${owner}/${name}`} />
     </div>
   );

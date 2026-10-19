@@ -83,11 +83,11 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
         edgeTypes={edgeTypes}
         fitView
         proOptions={{ hideAttribution: true }}
-        className="bg-[#0c0e12]"
+        className="bg-canvas"
       >
         <Background color="rgba(255,255,255,0.018)" gap={24} />
-        <MiniMap className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !w-[120px] !h-[75px]" nodeColor="#ffffff20" />
-        <Controls className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !shadow-lg" />
+        <MiniMap className="!bg-card/90 !border-white/[0.06] !w-[120px] !h-[75px]" nodeColor="color-mix(in srgb, var(--color-foreground) 12%, transparent)" />
+        <Controls className="!bg-card/90 !border-white/[0.06] !shadow-lg" />
       </ReactFlow>
     </div>
   );
@@ -184,7 +184,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
 
   const header = isModal ? (
     /* Modal header */
-    <div className="h-14 shrink-0 border-b border-white/[0.08] flex items-center justify-between px-4 bg-[#0f1117]">
+    <div className="h-14 shrink-0 border-b border-white/[0.08] flex items-center justify-between px-4 bg-card">
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -230,7 +230,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
     </div>
   ) : (
     /* Page header */
-    <div className="h-14 shrink-0 border-b border-white/[0.08] flex items-center justify-between px-4 bg-[#0f1117]">
+    <div className="h-14 shrink-0 border-b border-white/[0.08] flex items-center justify-between px-4 bg-card">
       <div className="flex items-center gap-3">
         <input
           type="text"
@@ -286,7 +286,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
   );
 
   return (
-    <div className={isModal ? "fixed inset-0 z-50 bg-[#09090b] flex flex-col" : "flex flex-col h-full bg-[#09090b]"}>
+    <div className={isModal ? "fixed inset-0 z-50 bg-background flex flex-col" : "flex flex-col h-full bg-background"}>
       {header}
 
       {/* Main content */}

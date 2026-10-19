@@ -77,7 +77,7 @@ function LandingView({
       {/* Page header */}
       <div className="shrink-0 flex items-center justify-between px-6 py-5 border-b border-white/[0.06]">
         <div>
-          <h1 className="text-xl font-semibold text-white">Pipelines</h1>
+          <h1 className="title-pixel text-xl font-semibold text-white">Pipelines</h1>
           <p className="text-xs text-white/40 mt-0.5">Design and manage agent pipeline templates</p>
         </div>
         <Button type="button" onClick={onNewPipeline} data-testid="new-pipeline">

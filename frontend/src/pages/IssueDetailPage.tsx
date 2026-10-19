@@ -121,7 +121,7 @@ export function IssueDetailPage(): JSX.Element {
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold truncate leading-tight">{issue.title}</h1>
+            <h1 className="title-pixel text-2xl font-bold truncate leading-tight">{issue.title}</h1>
             {issue.active_agent && <AgentIndicator agentType={issue.active_agent} size="md" />}
           </div>
           <div className="flex items-center gap-2 mt-0.5">

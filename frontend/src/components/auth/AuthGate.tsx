@@ -150,7 +150,7 @@ function AccessDenied() {
   const user = useAuthStore((s) => s.user);
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="embry0-card w-full max-w-sm p-8 text-center">
+      <div className="rounded-lg border border-border bg-card w-full max-w-sm p-8 text-center">
         <span className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-destructive/20 bg-destructive/5">
           <ShieldX size={20} className="text-destructive" />
         </span>
@@ -208,7 +208,7 @@ function ApiKeyPrompt({ sessionExpired }: { sessionExpired: boolean }) {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="embry0-card w-full max-w-sm p-8">
+      <div className="rounded-lg border border-border bg-card w-full max-w-sm p-8">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
           <span className="flex h-12 w-12 items-center justify-center rounded-full border border-cyan-500/20 bg-cyan-500/5">
             <KeyRound size={20} className="text-primary" />

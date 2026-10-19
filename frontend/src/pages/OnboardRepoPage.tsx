@@ -106,7 +106,7 @@ export function OnboardRepoPage() {
     const enc = encodeURIComponent(result.repo);
     return (
       <div className="space-y-4 p-6 max-w-2xl">
-        <h1 className="text-2xl font-bold">Repo onboarded</h1>
+        <h1 className="title-pixel text-2xl font-bold">Repo onboarded</h1>
         <Card className="p-4 space-y-4" data-testid="bootstrap-success">
           <div className="space-y-1 text-sm">
             <p className="font-medium">{result.repo}</p>
@@ -172,7 +172,7 @@ export function OnboardRepoPage() {
       <Link to="/repos" className="text-sm text-white/50 hover:underline">
         ← Repos
       </Link>
-      <h1 className="text-2xl font-bold">Onboard a repo</h1>
+      <h1 className="title-pixel text-2xl font-bold">Onboard a repo</h1>
       <p className="text-sm text-white/60">
         Verifies the GitHub repo, registers a starter qa.yaml (v2) in the external config store,
         and optionally seeds sandbox preferences. Everything is refinable in the QA config editor
