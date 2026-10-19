@@ -52,6 +52,12 @@ describe("TopBar breadcrumbs (RAV-1058 IA sweep)", () => {
     expect(breadcrumb().queryByText("-")).toBeNull();
   });
 
+  it("labels /skills as Skills, matching the sidebar", () => {
+    renderAt("/skills");
+    expect(breadcrumb().getByText("Skills")).toBeInTheDocument();
+    expect(breadcrumb().queryAllByText("embry0")).toHaveLength(1);
+  });
+
   it("labels /providers as LLM Providers, matching the sidebar", () => {
     renderAt("/providers");
     expect(breadcrumb().getByText("LLM Providers")).toBeInTheDocument();

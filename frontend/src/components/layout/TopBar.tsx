@@ -29,6 +29,7 @@ const breadcrumbMap: Record<string, string> = {
   // Both routes fell back to the app name, so the crumb read "embry0 / embry0".
   credentials: "Credentials",
   providers: "LLM Providers",
+  skills: "Skills",
 };
 
 /** Known static second segments get a proper label; dynamic segments (job
