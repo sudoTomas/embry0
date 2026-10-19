@@ -34,10 +34,10 @@ export function EnvVarTable({
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <div className="relative">
-          <KeyRound size={40} className="text-white/10 relative" />
+          <KeyRound size={40} className="text-fg-muted relative" />
         </div>
-        <p className="text-white/25 text-sm mt-4 font-medium">No environment variables configured</p>
-        <p className="text-white/[0.12] text-xs mt-1">Click &ldquo;Add Variable&rdquo; to set global defaults</p>
+        <p className="text-fg-secondary text-sm mt-4 font-medium">No environment variables configured</p>
+        <p className="text-fg-muted text-xs mt-1">Click &ldquo;Add variable&rdquo; to set global defaults</p>
       </div>
     );
   }

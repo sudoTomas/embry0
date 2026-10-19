@@ -320,16 +320,16 @@ export function EnvironmentsPage() {
               </Card>
             )}
 
-            {/* App Config section */}
+            {/* App config section */}
             <section className="space-y-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-section font-semibold">App Config</h2>
+                  <h2 className="text-section font-semibold">App config</h2>
                   <p className="text-sm text-muted-foreground">{APP_DESCRIPTION}</p>
                 </div>
                 <Button size="sm" onClick={() => openGlobalAdd("app")}>
                   <Plus className="h-4 w-4 mr-1" />
-                  Add Variable
+                  Add variable
                 </Button>
               </div>
               <Card className="p-0">
@@ -350,16 +350,16 @@ export function EnvironmentsPage() {
               </Card>
             </section>
 
-            {/* QA Test Credentials section */}
+            {/* QA test credentials section */}
             <section className="space-y-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-section font-semibold">QA Test Credentials</h2>
+                  <h2 className="text-section font-semibold">QA test credentials</h2>
                   <p className="text-sm text-muted-foreground">{QA_DESCRIPTION}</p>
                 </div>
                 <Button size="sm" onClick={() => openGlobalAdd("qa")}>
                   <Plus className="h-4 w-4 mr-1" />
-                  Add QA Variable
+                  Add QA variable
                 </Button>
               </div>
               <Card className="p-0">
@@ -377,10 +377,10 @@ export function EnvironmentsPage() {
                     showRequired
                     emptyState={
                       <div className="flex flex-col items-center justify-center py-12 text-center">
-                        <p className="text-white/25 text-sm font-medium">
+                        <p className="text-fg-secondary text-sm font-medium">
                           No QA test credentials configured
                         </p>
-                        <p className="text-white/[0.12] text-xs mt-1">
+                        <p className="text-fg-muted text-xs mt-1">
                           Add credentials with keys like{" "}
                           <code className="font-mono">QA_TEST_USER</code> for QA agent runs
                         </p>
@@ -417,7 +417,7 @@ export function EnvironmentsPage() {
                     htmlFor="show-resolved"
                     className="text-sm text-muted-foreground cursor-pointer"
                   >
-                    Show resolved (App Config)
+                    Show resolved (app config)
                   </label>
                 </div>
               )}
@@ -431,16 +431,16 @@ export function EnvironmentsPage() {
 
             {validRepo ? (
               <div className="space-y-6">
-                {/* App Config section */}
+                {/* App config section */}
                 <section className="space-y-3">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h2 className="text-section font-semibold">App Config</h2>
+                      <h2 className="text-section font-semibold">App config</h2>
                       <p className="text-sm text-muted-foreground">{APP_DESCRIPTION}</p>
                     </div>
                     <Button size="sm" onClick={() => openRepoAdd("app")} type="button">
                       <Plus className="h-4 w-4 mr-1" />
-                      Add Variable
+                      Add variable
                     </Button>
                   </div>
                   <Card className="p-0">
@@ -464,13 +464,13 @@ export function EnvironmentsPage() {
                         emptyState={
                           <div className="flex flex-col items-center justify-center py-16 text-center">
                             <div className="relative">
-                              <FolderOpen size={40} className="text-white/10 relative" />
+                              <FolderOpen size={40} className="text-fg-muted relative" />
                             </div>
-                            <p className="text-white/25 text-sm mt-4 font-medium">
+                            <p className="text-fg-secondary text-sm mt-4 font-medium">
                               No app config variables for this repository
                             </p>
-                            <p className="text-white/[0.12] text-xs mt-1">
-                              Click &ldquo;Add Variable&rdquo; to set repository-specific overrides
+                            <p className="text-fg-muted text-xs mt-1">
+                              Click &ldquo;Add variable&rdquo; to set repository-specific overrides
                             </p>
                           </div>
                         }
@@ -479,16 +479,16 @@ export function EnvironmentsPage() {
                   </Card>
                 </section>
 
-                {/* QA Test Credentials section */}
+                {/* QA test credentials section */}
                 <section className="space-y-3">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h2 className="text-section font-semibold">QA Test Credentials</h2>
+                      <h2 className="text-section font-semibold">QA test credentials</h2>
                       <p className="text-sm text-muted-foreground">{QA_DESCRIPTION}</p>
                     </div>
                     <Button size="sm" onClick={() => openRepoAdd("qa")} type="button">
                       <Plus className="h-4 w-4 mr-1" />
-                      Add QA Variable
+                      Add QA variable
                     </Button>
                   </div>
                   <Card className="p-0">
@@ -506,10 +506,10 @@ export function EnvironmentsPage() {
                         showRequired
                         emptyState={
                           <div className="flex flex-col items-center justify-center py-12 text-center">
-                            <p className="text-white/25 text-sm font-medium">
+                            <p className="text-fg-secondary text-sm font-medium">
                               No QA test credentials configured
                             </p>
-                            <p className="text-white/[0.12] text-xs mt-1">
+                            <p className="text-fg-muted text-xs mt-1">
                               Add credentials with keys like{" "}
                               <code className="font-mono">QA_TEST_USER</code> for QA agent runs on
                               this repository
@@ -525,10 +525,10 @@ export function EnvironmentsPage() {
               <Card className="p-0">
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                   <div className="relative">
-                    <FolderOpen size={40} className="text-white/10 relative" />
+                    <FolderOpen size={40} className="text-fg-muted relative" />
                   </div>
-                  <p className="text-white/25 text-sm mt-4 font-medium">No repository selected</p>
-                  <p className="text-white/[0.12] text-xs mt-1">
+                  <p className="text-fg-secondary text-sm mt-4 font-medium">No repository selected</p>
+                  <p className="text-fg-muted text-xs mt-1">
                     Select a repository above to manage its environment variables
                   </p>
                 </div>
