@@ -22,9 +22,12 @@ interface PendingInput {
 interface QuestionsFormProps {
   inputs: PendingInput[];
   onAnswer: (inputId: string, answer: string) => Promise<void>;
+  /** Each question sits in its own amber box. A board card is that box
+   * already: it passes false, so the question is not boxed and padded twice. */
+  framed?: boolean;
 }
 
-export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Element {
+export function QuestionsForm({ inputs, onAnswer, framed = true }: QuestionsFormProps): JSX.Element {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -86,9 +89,12 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
         return (
           <div
             key={input.id}
-            className="border border-amber-500/20 rounded p-3 bg-amber-500/[0.03]"
+            className={framed ? "border border-amber-500/20 rounded p-3 bg-amber-500/[0.03]" : undefined}
           >
-            <div id={questionId} className="flex items-baseline gap-2 mb-2">
+            {/* Where the box is narrow (a board card) the question takes the
+                line below its number and node, so it has the box's whole
+                width rather than what is left beside them. */}
+            <div id={questionId} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 mb-2">
               <span className="text-amber-400 font-mono text-xs">{idx + 1}.</span>
               {input.asking_node && (
                 <span className="text-[10px] uppercase text-amber-400/60">
@@ -97,7 +103,7 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
               )}
               <p
                 data-testid="question-text"
-                className="min-w-0 flex-1 break-words text-sm text-white/90 [overflow-wrap:anywhere]"
+                className="min-w-0 flex-1 basis-80 break-words text-sm text-white/90 [overflow-wrap:anywhere]"
               >
                 <QuestionText text={input.question} />
               </p>

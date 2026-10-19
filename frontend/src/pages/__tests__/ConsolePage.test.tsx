@@ -168,6 +168,31 @@ describe("ConsolePage — board lanes", () => {
     expect(within(screen.getByTestId("board-column-failed")).getByText("Broken task")).toBeInTheDocument();
   });
 
+  it("gives the Needs-you lane twice a lane's share on a wide screen while an agent waits", async () => {
+    mockFetchJobs.mockResolvedValue(
+      jobList([
+        makeJob({ job_id: "wait0001aaaa", status: "awaiting_input", task: "Blocked task" }),
+        makeJob({ job_id: "run00001aaaa", status: "running", task: "Running task" }),
+      ]),
+    );
+    renderPage();
+    await screen.findByText("Running task");
+    // A fifth of the board left the agent's question a few words a line.
+    // The other lanes keep the width their cards' header rows need.
+    const board = screen.getByTestId("board-column-needs_you").parentElement!;
+    expect(board).toHaveClass("xl:grid-cols-[minmax(0,2fr)_repeat(4,minmax(11.5rem,1fr))]");
+    expect(board).not.toHaveClass("xl:grid-cols-5");
+  });
+
+  it("keeps the lanes equal while no agent waits", async () => {
+    mockFetchJobs.mockResolvedValue(
+      jobList([makeJob({ job_id: "run00001aaaa", status: "running", task: "Running task" })]),
+    );
+    renderPage();
+    await screen.findByText("Running task");
+    expect(screen.getByTestId("board-column-needs_you").parentElement).toHaveClass("xl:grid-cols-5");
+  });
+
   it("still renders the board when a job carries a status this build does not know", async () => {
     mockFetchJobs.mockResolvedValue(
       jobList([

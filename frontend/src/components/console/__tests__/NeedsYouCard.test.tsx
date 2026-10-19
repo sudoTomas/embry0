@@ -86,6 +86,15 @@ describe("NeedsYouCard", () => {
       });
     });
 
+    it("gives the question the card's width: no second box inside the card", () => {
+      renderCard({ job: makeJob({ status: "awaiting_input" }), jobInputs: [makeJobInput()] });
+      // The card is the amber box. A box of its own inside it took the
+      // question another 26px of a lane a fifth of the board wide.
+      const box = screen.getByTestId("question-text").parentElement!.parentElement!;
+      expect(box).not.toHaveClass("border");
+      expect(box).not.toHaveClass("p-3");
+    });
+
     it("renders no form when there are no renderable inputs", () => {
       renderCard({
         job: makeJob({ status: "paused" }),

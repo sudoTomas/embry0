@@ -23,6 +23,7 @@ import { FilterSelect } from "@/components/ui/FilterSelect";
 import { ALL_JOB_STATUSES } from "@/lib/types/jobs";
 import { statusLabel } from "@/lib/status";
 import type { JobResponse } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 /** Board poll cadence (spec Increment 1: card membership from useJobs at 5s;
  * the HeartbeatBadge staleness thresholds are tuned to this). */
@@ -117,6 +118,12 @@ export function ConsolePage() {
   const needsYouIds = useMemo(() => lanes.needs_you.map((job) => job.job_id), [lanes]);
   const questionsAnswered = useJobInputsAnswered(needsYouIds);
   const painted = useFirstPaint(hasAnswered(jobs) && questionsAnswered);
+
+  // An agent's question needs a line long enough to read: on a wide screen,
+  // while one waits, its lane takes twice a lane's share. The other lanes
+  // keep the width their cards' header rows need (repo, id, status pill).
+  // Only once painted, so no skeleton lane moves as the jobs come in.
+  const roomForQuestion = painted && lanes.needs_you.length > 0;
 
   const totalCards = BOARD_COLUMNS.reduce((n, col) => n + lanes[col.id].length, 0);
   const hasFilters = Boolean(statusFilter || repoFilter);
@@ -213,7 +220,10 @@ export function ConsolePage() {
           <GlideBoard glide={glide} layout={lanes} paintKey={painted ? paintKey : "first-paint"}>
             <div
               key={painted ? "board" : "first-paint"}
-              className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-5 items-start"
+              className={cn(
+                "grid grid-cols-1 gap-3 md:grid-cols-3 items-start",
+                roomForQuestion ? "xl:grid-cols-[minmax(0,2fr)_repeat(4,minmax(11.5rem,1fr))]" : "xl:grid-cols-5",
+              )}
             >
               {BOARD_COLUMNS.map((column) => (
                 <BoardColumn

@@ -68,6 +68,7 @@ export const NeedsYouCard = memo(function NeedsYouCard({ job, jobInputs }: Needs
         // shell's card-level navigate.
         <div className="mt-3" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
           <QuestionsForm
+            framed={false}
             inputs={formInputs}
             onAnswer={async (inputId, text) => {
               await answer.mutateAsync({ issueId: issueIdByInput[inputId], jobId: job.job_id, inputId, answer: text });
