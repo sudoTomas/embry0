@@ -152,6 +152,14 @@ describe("TracesTable", () => {
     expect(cell.colSpan).toBe(cell.closest("table")!.tHead!.rows[0].cells.length);
   });
 
+  it("marks the open trace's row on the overlay, not a gold wash: a selection is not gold", () => {
+    renderTable();
+    const row = screen.getByRole("button", { name: "View trace run-fixture-1" });
+    fireEvent.click(row);
+    expect(row).toHaveClass("bg-overlay");
+    expect(row.getAttribute("class")).not.toMatch(/(^|\s)bg-primary/);
+  });
+
   it("opens a trace without a gold border: gold marks only what needs a person", () => {
     renderTable();
     const row = screen.getByRole("button", { name: "View trace run-fixture-1" });
