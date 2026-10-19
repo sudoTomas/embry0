@@ -77,7 +77,8 @@ const credential: Credential = {
 
 const node = { id: "n1", position: { x: 0, y: 0 }, data: { agentType: "coder" } } as Node;
 
-/** Every dialog that traps focus, and the ways a person closes it. */
+/** Every dialog that traps focus, and the ways a person closes it. The
+ * screenshot lightbox is pinned in its own tests. */
 const DIALOGS: { name: string; closes: string[]; dialog: (close: () => void) => ReactNode }[] = [
   {
     name: "add variable",
