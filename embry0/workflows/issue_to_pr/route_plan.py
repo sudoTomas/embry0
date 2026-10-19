@@ -22,8 +22,9 @@ logger = structlog.get_logger(__name__)
 # Template agent_type → physical LangGraph node. ``qa`` maps to the head of
 # the whole QA chain (init_orchestrator → orchestrate_qa → qa_report →
 # qa_failure_bookkeeping) — one template step, internal edges untouched.
-# The non-code agents (RAV-604) share one generic node that reads the
-# current route step to know which agent definition to run.
+# Every type outside FIXED_NODE_TYPES (the builtin non-code agents listed
+# here and any custom agent_definitions row) runs on the one generic_agent
+# node, which reads the current route step to know which definition to run.
 AGENT_TYPE_TO_NODE: dict[str, str] = {
     "developer": "developer",
     "reviewer": "review",
@@ -199,7 +200,8 @@ def _config_overrides(cfg: dict[str, Any], run_agent_type: str) -> dict[str, Any
         out["agent_models"] = {run_agent_type: cfg["model"]}
     if cfg.get("tools"):
         out["agent_tools"] = {run_agent_type: list(cfg["tools"])}
-    if cfg.get("skills"):
+    # `is not None`: a stored bare [] is the legacy "replace with nothing".
+    if cfg.get("skills") is not None:
         out["agent_skills"] = {run_agent_type: cfg["skills"]}
     return out or None
 

@@ -271,3 +271,14 @@ def test_pipeline_graph_maps_a_custom_type_onto_generic_agent():
     )
     bot = next(n for n in graph["nodes"] if n["agent_type"] == "release-bot")
     assert bot["physical_node"] == "generic_agent", "the live view lights custom steps up through generic_agent"
+
+
+def test_step_template_config_keeps_a_bare_empty_skills_list() -> None:
+    """A stored bare ``[]`` is the legacy "replace with nothing"; normalize_delta honours it."""
+    from embry0.workflows.issue_to_pr.route_plan import step_template_config
+
+    plan = build_route_plan(
+        {"nodes": [{"node_id": "d", "agent_type": "developer", "config": {"skills": []}}], "edges": []}
+    )
+    got = step_template_config({"route_plan": plan, "route_cursor": 0}, "developer")
+    assert got == {"agent_skills": {"developer": []}}, f"a bare [] was dropped before the resolver: {got!r}"
