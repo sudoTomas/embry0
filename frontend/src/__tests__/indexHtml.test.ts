@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import indexHtml from "../../index.html?raw";
+import faviconSvg from "../../public/favicon.svg?raw";
 
 /**
  * The browser tab and the home screen show the embry0 mark. index.html links
@@ -50,5 +51,12 @@ describe("index.html icons", () => {
     for (const href of [...hrefs, "/favicon.ico"]) {
       expect(PUBLIC_FILES, `public${href} is missing`).toContain(href);
     }
+  });
+
+  it("darkens the favicon's dot on a light tab bar, where the cream dot vanished", () => {
+    const svg = new DOMParser().parseFromString(faviconSvg, "image/svg+xml");
+    const css = svg.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(/@media\s*\(prefers-color-scheme:\s*light\)\s*\{\s*\.d\s*\{\s*fill:\s*#0a0a0f/);
+    expect(svg.querySelectorAll("path.d")).toHaveLength(1);
   });
 });
