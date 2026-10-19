@@ -57,6 +57,19 @@ describe("CredentialTable", () => {
     expect(row).not.toHaveTextContent("llm_api_key");
   });
 
+  it("shows the kind of an OpenAI-compatible key, not its API host", () => {
+    render(<CredentialTable credentials={[
+      cred({ id: "cred-00000000000c", provider: "openai", kind: "llm_api_key", host: "api.openai.com", label: "openai-key" }),
+      cred({ id: "cred-00000000000d", provider: "custom", kind: "llm_api_key", host: "10.0.0.5", label: "ollama" }),
+    ]} isAdmin {...handlers()} />);
+    const [openai, custom] = screen.getAllByTestId("credential-row");
+    expect(openai).toHaveTextContent("OpenAI");
+    expect(openai).toHaveTextContent("API key");
+    expect(openai).not.toHaveTextContent("api.openai.com");
+    expect(custom).toHaveTextContent("Custom");
+    expect(custom).toHaveTextContent("API key");
+  });
+
   it("names the default commit author in words, never the internal fallback", () => {
     render(<CredentialTable credentials={[cred({ git_author_name: null, git_author_email: null })]} isAdmin {...handlers()} />);
     const cell = screen.getByText("embry0 default");
