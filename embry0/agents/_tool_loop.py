@@ -1,7 +1,9 @@
 """The agentic tool loop shared by the CLI-free executors.
 
-One loop, any wire format. ``DirectXaiExecutor`` drives it over the Anthropic
-Messages API (pointed at the xai-proxy); another API needs only a new wire.
+One loop, two wire formats. ``DirectXaiExecutor`` drives it over the Anthropic
+Messages API (pointed at the xai-proxy); ``OpenAICompatibleExecutor`` drives it
+over OpenAI chat completions, for the OpenAI-compatible provider family
+(``embry0/agents/providers.py``, ``docs/providers.md``).
 
 The loop owns everything the Claude CLI gives for free, which both wires need in
 the same shape:
@@ -43,6 +45,7 @@ from embry0.agents.executor import (
 from embry0.agents.invocation import AgentInvocation
 from embry0.agents.mcp_client import (
     MCP_TOOL_PREFIX,
+    McpClientError,
     McpStdioClient,
     anthropic_tool_defs,
     call_mcp_tool,
@@ -159,6 +162,50 @@ def merge_consecutive_roles(messages: list[dict[str, Any]]) -> list[dict[str, An
         else:
             merged.append(dict(message))
     return merged
+
+
+def mcp_client_from_config(server_name: str, server_cfg: Any) -> McpStdioClient:
+    """Build (not start) the stdio client for one ``mcp_servers`` entry.
+
+    Only stdio transport is supported — the per-sandbox server lifecycle is tied to
+    this process.
+    """
+    cfg = server_cfg if isinstance(server_cfg, dict) else {}
+    transport = str(cfg.get("type", "stdio"))
+    if transport != "stdio":
+        raise McpClientError(f"mcp server {server_name!r}: unsupported transport {transport!r} (only stdio)")
+    command = str(cfg.get("command", ""))
+    if not command:
+        raise McpClientError(f"mcp server {server_name!r}: no command configured")
+    return McpStdioClient(
+        server_name,
+        command,
+        args=[str(a) for a in cfg.get("args") or []],
+        env={str(k): str(v) for k, v in (cfg.get("env") or {}).items()},
+    )
+
+
+def price_run(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+) -> float | None:
+    """A run's cost from catalog pricing: these APIs report tokens, not a cost.
+
+    None when the model has no price entry (#219): the price table is the only
+    accounting these executors have, so an unpriced model is an error to record,
+    never a silent $0. Prices cache reads and writes with the same factors as
+    the SDK path, so cost_update agrees with the summed turn_usage.
+    """
+    return price_usage(
+        model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_creation_tokens=cache_creation_tokens,
+    )
 
 
 def error_output(agent_type: str, message: str) -> AgentOutput:

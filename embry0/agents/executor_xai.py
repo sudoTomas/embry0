@@ -25,10 +25,18 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
-from embry0.agents._tool_loop import ToolCall, ToolResult, Turn, Usage, error_output, run_tool_loop
+from embry0.agents._tool_loop import (
+    ToolCall,
+    ToolResult,
+    Turn,
+    Usage,
+    error_output,
+    mcp_client_from_config,
+    price_run,
+    run_tool_loop,
+)
 from embry0.agents.invocation import AgentInvocation
-from embry0.agents.mcp_client import McpClientError, McpStdioClient
-from embry0.agents.providers import price_usage
+from embry0.agents.mcp_client import McpStdioClient
 from embry0.agents.xai_tools import execute_tool
 from embry0.execution.agent_runner import AgentOutput
 from embry0.safety.error_codes import XAI_DENIAL_CODES, ErrorCode, classify_agent_error
@@ -55,45 +63,13 @@ def _make_client(base_url: str, auth_token: str) -> Any:
 def _make_mcp_client(server_name: str, server_cfg: Any) -> McpStdioClient:
     """Build (not start) the stdio client for one ``mcp_servers`` entry.
 
-    Module-level seam tests monkeypatch to inject a fake. Only stdio transport is
-    supported — the per-sandbox server lifecycle is tied to this process.
+    Module-level seam tests monkeypatch to inject a fake.
     """
-    cfg = server_cfg if isinstance(server_cfg, dict) else {}
-    transport = str(cfg.get("type", "stdio"))
-    if transport != "stdio":
-        raise McpClientError(f"mcp server {server_name!r}: unsupported transport {transport!r} (only stdio)")
-    command = str(cfg.get("command", ""))
-    if not command:
-        raise McpClientError(f"mcp server {server_name!r}: no command configured")
-    return McpStdioClient(
-        server_name,
-        command,
-        args=[str(a) for a in cfg.get("args") or []],
-        env={str(k): str(v) for k, v in (cfg.get("env") or {}).items()},
-    )
+    return mcp_client_from_config(server_name, server_cfg)
 
 
-def _compute_cost(
-    model: str,
-    input_tokens: int,
-    output_tokens: int,
-    cache_read_tokens: int = 0,
-    cache_creation_tokens: int = 0,
-) -> float | None:
-    """Cost from provider pricing (xAI compat layer returns no total_cost_usd).
-
-    None when the model has no price entry (#219): the price table is the only
-    accounting this executor has, so an unpriced model is an error to record,
-    never a silent $0. Prices cache reads and writes with the same factors as
-    the SDK path, so cost_update agrees with the summed turn_usage.
-    """
-    return price_usage(
-        model,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cache_read_tokens=cache_read_tokens,
-        cache_creation_tokens=cache_creation_tokens,
-    )
+_compute_cost = price_run
+"""Cost from provider pricing (xAI compat layer returns no total_cost_usd); None when unpriced."""
 
 
 def _block_type(block: Any) -> str:
