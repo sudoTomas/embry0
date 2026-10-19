@@ -1,7 +1,8 @@
 import { ReactFlow, ReactFlowProvider, Background, type Node, type Edge } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useMemo, useCallback } from "react";
-import { deserializeGraph, getAgentColor, getAgentCategory } from "@/lib/graph-utils";
+import { deserializeGraph } from "@/lib/graph-utils";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import type { PipelineGraph } from "@/lib/types";
 import type { NodeLiveState } from "@/lib/pipeline-live";
 import type { NodeProps } from "@xyflow/react";
@@ -12,8 +13,8 @@ import type { NodeProps } from "@xyflow/react";
 
 function LiveAgentNode({ data }: NodeProps) {
   const agentType = data.agentType as string;
-  const color = getAgentColor(agentType);
-  const category = getAgentCategory(agentType);
+  const identity = useAgentIdentity(agentType);
+  const color = identity.hex;
   const label = (data.label as string) || agentType;
   const state = data.state as string | undefined;
   const cost = data.costUsd as number | undefined;
@@ -44,7 +45,7 @@ function LiveAgentNode({ data }: NodeProps) {
             className="text-[10px] uppercase tracking-wider"
             style={{ color: `${color}B0` }}
           >
-            {category}
+            {identity.displayName}
           </div>
           <div className="text-[13px] font-semibold text-slate-200 mt-0.5">
             {label}

@@ -3,6 +3,7 @@ import { render, screen, within, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { QueueResponse } from "@/lib/types";
+import { useAuthStore } from "@/stores/authStore";
 
 vi.mock("@/stores/layoutStore", () => ({
   useLayoutStore: (selector?: (s: { sidebarOpen: boolean }) => unknown) =>
@@ -33,6 +34,7 @@ function renderSidebar() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useAuthStore.setState({ status: "checking", authMode: null, user: null });
   mockFetchQueue.mockResolvedValue({
     depth: 0,
     pending: 0,
@@ -93,6 +95,30 @@ describe("Sidebar — unified IA (ticket 011)", () => {
       "Environments",
       "Credentials",
     ]);
+  });
+
+  it("Infra section adds Skills after Agents for an admin session", () => {
+    useAuthStore.setState({ status: "authenticated", authMode: "session", user: { email: "a@example.com", name: "A", tier: "admin" } });
+    renderSidebar();
+    const section = screen.getByRole("heading", { level: 3, name: "Infra" })
+      .parentElement as HTMLElement;
+    const links = within(section).getAllByRole("link");
+    expect(links.map((a) => a.textContent?.trim())).toEqual([
+      "Sandboxes",
+      "Agents",
+      "Skills",
+      "Environments",
+      "Credentials",
+    ]);
+    expect(screen.getByRole("link", { name: "Skills" })).toHaveAttribute("href", "/skills");
+  });
+
+  it("Infra section hides Skills from the operator tier", () => {
+    useAuthStore.setState({ status: "authenticated", authMode: "session", user: { email: "o@example.com", name: "O", tier: "operator" } });
+    renderSidebar();
+    const section = screen.getByRole("heading", { level: 3, name: "Infra" })
+      .parentElement as HTMLElement;
+    expect(within(section).queryByRole("link", { name: "Skills" })).toBeNull();
   });
 
   it("Pipelines & QA section contains Pipelines, Repos, Organizations, QA (central registry, ADR 0010)", () => {

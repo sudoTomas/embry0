@@ -56,6 +56,23 @@ const modelsState = vi.hoisted(() => {
   return { NO_CATALOG, CATALOG, NO_CREDENTIALS, current: NO_CATALOG };
 });
 vi.mock("@/hooks/useModels", () => ({ useModels: () => modelsState.current }));
+// Hoisted so each hook call returns the same array, as react-query does.
+const catalogs = vi.hoisted(() => ({
+  tools: [
+    { name: "Read", source: "builtin", description: "" },
+    { name: "Bash", source: "builtin", description: "" },
+    { name: "mcp__playwright__browser_click", source: "mcp:playwright", description: "" },
+  ],
+  skills: [
+    { name: "superpowers:writing-plans", source_id: "superpowers", description: "Plans", available: true, status: "ready" },
+  ],
+}));
+vi.mock("@/hooks/useTools", () => ({ useTools: () => ({ data: catalogs.tools, isLoading: false }) }));
+vi.mock("@/hooks/useSkills", () => ({ useSkills: () => ({ data: catalogs.skills, isLoading: false }) }));
+const toastWarning = vi.fn();
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: (...a: unknown[]) => toastWarning(...a) },
+}));
 
 import { AgentFormPage } from "../AgentFormPage";
 
@@ -72,18 +89,33 @@ const EXISTING = {
   is_builtin: true,
 };
 
+const GROK_DEV_ROW = {
+  ...EXISTING,
+  type: "grok-dev",
+  description: "Writes code on grok",
+  model: "grok-4.5",
+  tools: ["Read"],
+  skills: [] as string[],
+  is_builtin: false,
+};
+
 function renderEdit(type = "developer") {
   return render(
     <MemoryRouter initialEntries={[`/agents/${type}`]}>
       <Routes>
         <Route path="/agents/:type" element={<AgentFormPage />} />
+        <Route path="/agents" element={<p>agents list</p>} />
       </Routes>
     </MemoryRouter>,
   );
 }
 
+const renderNew = () => renderEdit("new");
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockUpdateMutate.mockReset();
+  mockCreateMutate.mockReset();
   modelsState.current = modelsState.NO_CATALOG;
   mockUseAgent.mockReturnValue({ data: EXISTING, isLoading: false });
 });
@@ -264,5 +296,71 @@ describe("AgentFormPage provider readiness from the catalog", () => {
     mockUseAgent.mockReturnValue({ data: undefined, isLoading: false });
     renderEdit("new");
     expect(screen.getByLabelText("Model")).toHaveValue("claude-sonnet-5");
+  });
+});
+
+describe("identity and skills (spec 3.6)", () => {
+  it("creates an agent with its identity", async () => {
+    mockUseAgent.mockReturnValue({ data: undefined, isLoading: false });
+    const user = userEvent.setup();
+    renderNew();
+    await user.type(screen.getByLabelText(/type \(slug\)/i), "release-bot");
+    await user.type(screen.getByLabelText(/display name/i), "Release Bot");
+    await user.type(screen.getByLabelText(/tagline/i), "Ships it.");
+    await user.selectOptions(screen.getByLabelText(/^avatar$/i), "rogue");
+    await user.click(screen.getByRole("radio", { name: "cyan" }));
+    await user.click(screen.getByRole("button", { name: /save agent/i }));
+    expect(mockCreateMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "release-bot", display_name: "Release Bot", tagline: "Ships it.", avatar: "rogue", color: "cyan" }),
+      expect.anything(),
+    );
+  });
+  it("populates identity from the row and shows the preview tile", () => {
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, display_name: "Grok Dev", avatar: "bard", color: "sky", tagline: "" }, isLoading: false });
+    renderEdit("grok-dev");
+    expect(screen.getByLabelText(/display name/i)).toHaveValue("Grok Dev");
+    expect(screen.getByTitle("Grok Dev")).toHaveAttribute("data-avatar", "bard");
+  });
+  it("keeps an empty display name empty through an edit and save", async () => {
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, display_name: "", avatar: "bard", color: "sky", tagline: "" }, isLoading: false });
+    const user = userEvent.setup();
+    renderEdit("grok-dev");
+    expect(screen.getByLabelText(/display name/i)).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: /save agent/i }));
+    expect(mockUpdateMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ display_name: "", tagline: "", avatar: "bard", color: "sky" }),
+      expect.anything(),
+    );
+  });
+  it("lists tools from the catalog grouped by source and keeps an unknown current tool", () => {
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, tools: ["Read", "mcp__legacy__thing"] }, isLoading: false });
+    renderEdit("grok-dev");
+    expect(screen.getByText("builtin")).toBeInTheDocument();
+    expect(screen.getByText("mcp:playwright")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "mcp__legacy__thing" })).toBeChecked();
+  });
+  it("adds a catalog skill through the picker and keeps a repository skill", async () => {
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, skills: ["commit-standard"] }, isLoading: false });
+    const user = userEvent.setup();
+    renderEdit("grok-dev");
+    await user.click(screen.getByRole("option", { name: /superpowers:writing-plans/ }));
+    await user.click(screen.getByRole("button", { name: /save agent/i }));
+    expect(mockUpdateMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ skills: ["commit-standard", "superpowers:writing-plans"] }),
+      expect.anything(),
+    );
+  });
+  it("toasts every warning the save returns", async () => {
+    mockUseAgent.mockReturnValue({ data: GROK_DEV_ROW, isLoading: false });
+    mockUpdateMutate.mockImplementation((_u, opts) => opts?.onSuccess?.({ ...GROK_DEV_ROW, warnings: ["superpowers:x is not available"] }));
+    const user = userEvent.setup();
+    renderEdit("grok-dev");
+    await user.click(screen.getByRole("button", { name: /save agent/i }));
+    expect(toastWarning).toHaveBeenCalledWith("superpowers:x is not available");
+  });
+  it("names orphan skills", () => {
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, skills: ["old:skill"], orphan_skills: ["old:skill"] }, isLoading: false });
+    renderEdit("grok-dev");
+    expect(screen.getByText(/no source lists/i)).toHaveTextContent("old:skill");
   });
 });

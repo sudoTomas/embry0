@@ -241,3 +241,44 @@ def test_step_template_config_passes_a_skills_delta_through() -> None:
     )
     got = step_template_config({"route_plan": plan, "route_cursor": 0}, "developer")
     assert got == {"agent_skills": {"developer": delta}}, f"the step's skills delta was reshaped: {got!r}"
+
+
+def test_custom_agent_step_dispatches_to_the_generic_node():
+    from embry0.workflows.issue_to_pr.route_plan import _step_target, step_template_config
+
+    plan = build_route_plan(
+        {
+            "nodes": [
+                {"node_id": "t", "agent_type": "triage"},
+                {"node_id": "b", "agent_type": "release-bot", "config": {"model": "model-for-bot"}},
+            ],
+            "edges": [{"edge_id": "e", "source": "t", "target": "b", "edge_type": "flow"}],
+        }
+    )
+    assert _step_target(plan[0]) == "agent", "a custom agent type runs on generic_agent"
+    assert next_route({"route_plan": plan, "route_cursor": 0, "qa": {}}) == "agent"
+    cfg = step_template_config({"route_plan": plan, "route_cursor": 0}, "release-bot")
+    assert cfg == {"agent_models": {"release-bot": "model-for-bot"}}, "a custom step's config reaches its own type"
+    assert step_template_config({"route_plan": plan, "route_cursor": 0}, "developer") is None
+
+
+def test_pipeline_graph_maps_a_custom_type_onto_generic_agent():
+    from embry0.workflows.issue_to_pr.plan_route import build_pipeline_graph
+
+    graph = build_pipeline_graph(
+        job_id="job-1",
+        plan=[{"agent_type": "release-bot", "node_id": "b", "config": {}}],
+    )
+    bot = next(n for n in graph["nodes"] if n["agent_type"] == "release-bot")
+    assert bot["physical_node"] == "generic_agent", "the live view lights custom steps up through generic_agent"
+
+
+def test_step_template_config_keeps_a_bare_empty_skills_list() -> None:
+    """A stored bare ``[]`` is the legacy "replace with nothing"; normalize_delta honours it."""
+    from embry0.workflows.issue_to_pr.route_plan import step_template_config
+
+    plan = build_route_plan(
+        {"nodes": [{"node_id": "d", "agent_type": "developer", "config": {"skills": []}}], "edges": []}
+    )
+    got = step_template_config({"route_plan": plan, "route_cursor": 0}, "developer")
+    assert got == {"agent_skills": {"developer": []}}, f"a bare [] was dropped before the resolver: {got!r}"

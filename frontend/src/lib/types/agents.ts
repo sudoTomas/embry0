@@ -36,6 +36,15 @@ export interface AgentDefinition {
   provider?: string | null;
   /** The provider has a credential configured right now. */
   provider_ready?: boolean;
+  /** Identity (docs/api.md, Agents); absent on a backend that predates it. */
+  display_name?: string;
+  avatar?: string;
+  color?: string;
+  tagline?: string;
+  /** Catalog-shaped skills no source lists (`GET /agents/{type}` only). */
+  orphan_skills?: string[];
+  /** Write responses only: skills accepted from a source that is not ready. */
+  warnings?: string[];
   created_at?: string;
   updated_at?: string;
 }
@@ -50,6 +59,10 @@ export interface AgentCreateRequest {
   execution_mode?: AgentExecutionMode | null;
   auth_mode?: AgentAuthMode | null;
   mcp_servers?: Record<string, unknown>;
+  display_name?: string;
+  avatar?: string;
+  color?: string;
+  tagline?: string;
 }
 
 /** PUT semantics (RAV-1058): omitted fields stay untouched; an explicitly-sent
@@ -63,4 +76,9 @@ export interface AgentUpdateRequest {
   execution_mode?: AgentExecutionMode | null;
   auth_mode?: AgentAuthMode | null;
   mcp_servers?: Record<string, unknown> | null;
+  /** Not nullable on the backend: a null here is a 422. */
+  display_name?: string;
+  avatar?: string;
+  color?: string;
+  tagline?: string;
 }

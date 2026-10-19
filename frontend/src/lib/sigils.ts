@@ -95,7 +95,7 @@ export const STAGE_SIGILS: Record<Stage, string> = {
 };
 
 /**
- * Map an agent category (returned by getAgentCategory()) to a stage.
+ * Map an agent type to a stage.
  * Categories outside this map get no sigil — the renderer returns null.
  */
 export function categoryToStage(category: string | undefined | null): Stage | null {

@@ -103,6 +103,7 @@ def app():
         repo = MagicMock()
         for method in ("create", "update", "get"):
             setattr(repo, method, AsyncMock(return_value={}))
+        repo.list_all = AsyncMock(return_value=[])  # template saves read the agent rows
         setattr(app.state, name, repo)
     return app
 

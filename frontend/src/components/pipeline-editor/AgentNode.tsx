@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { getAgentColor, getAgentCategory } from "@/lib/graph-utils";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { AlchemicalSigil } from "@/components/divine/AlchemicalSigil";
 import { categoryToStage } from "@/lib/sigils";
 
@@ -8,24 +8,22 @@ const HALO_RADIUS = 30; // SVG units, viewBox 0..64
 
 /**
  * Spherical agent node — geodesic-identity primitive scaled up to a 96px
- * pipeline-editor node. Outer ring takes the agent category color at 50%;
+ * pipeline-editor node. Outer ring takes the agent's identity color at 50%;
  * the inner geodesic sigil stays on text-primary (gold) so the system's
  * signature shows on every node while the operator still gets an
- * at-a-glance category cue from the surrounding ring.
+ * at-a-glance identity cue from the surrounding ring.
  *
  */
 export function AgentNode({ data, selected }: NodeProps) {
   const agentType = data.agentType as string;
-  const color = getAgentColor(agentType);
-  const category = getAgentCategory(agentType);
+  const identity = useAgentIdentity(agentType);
+  const color = identity.hex;
   const label = (data.label as string) || agentType;
   const tools = data.tools as string[] | undefined;
   const model = data.model as string | undefined;
   const budget = data.maxBudgetUsd as number | undefined;
   // Resolve directly from agentType — categoryToStage handles aliases
-  // (developer→develop, reviewer/validator→validate, etc.). Going through
-  // getAgentCategory() returns Title-cased "Development" which has no
-  // matching stage entry.
+  // (developer→develop, reviewer/validator→validate, etc.).
   const stage = categoryToStage(agentType);
 
   const shortModel = model?.replace("claude-", "").split("-")[0] ?? null;
@@ -103,7 +101,7 @@ export function AgentNode({ data, selected }: NodeProps) {
           className="text-[9px] uppercase tracking-widest font-semibold truncate w-full text-center"
           style={{ color: `${color}BB` }}
         >
-          {category}
+          {identity.displayName}
         </div>
         <div className="text-[12px] font-bold text-slate-100 truncate w-full text-center">
           {label}

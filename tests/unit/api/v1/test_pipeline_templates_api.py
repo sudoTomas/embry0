@@ -293,3 +293,91 @@ async def test_updating_a_missing_template_with_an_unknown_skill_is_404(app):
         )
     assert r.status_code == 404, r.text
     app.state.templates_repo.update.assert_not_awaited()
+
+
+def _bot_graph():
+    return {
+        **SAMPLE_GRAPH,
+        "nodes": [{"node_id": "t", "agent_type": "triage"}, {"node_id": "b", "agent_type": "release-bot"}],
+        "edges": [{"edge_id": "e1", "source": "t", "target": "b", "edge_type": "flow"}],
+    }
+
+
+def _agents(*types: str) -> MagicMock:
+    repo = MagicMock()
+    repo.list_all = AsyncMock(return_value=[{"type": t} for t in types])
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_a_template_may_name_any_agent_row(app):
+    app.state.agent_defs_repo = _agents("developer", "release-bot")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _bot_graph()},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 201, r.text
+
+
+@pytest.mark.asyncio
+async def test_a_template_naming_a_missing_agent_row_is_refused(app):
+    app.state.agent_defs_repo = _agents("developer")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _bot_graph()},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 422
+    assert "unknown agent_type 'release-bot'" in r.text
+    app.state.templates_repo.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_validate_route_knows_the_agent_rows(app):
+    app.state.agent_defs_repo = _agents("release-bot")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/v1/pipelines/validate", json=_bot_graph(), headers={"X-Requested-With": "XMLHttpRequest"}
+        )
+    assert r.json() == {"valid": True, "errors": []}
+
+
+@pytest.mark.asyncio
+async def test_an_update_may_name_any_agent_row(app):
+    app.state.agent_defs_repo = _agents("release-bot")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/v1/pipelines/templates/tmpl-1",
+            json={"graph_definition": _bot_graph()},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_a_failing_agent_rows_read_degrades_to_the_builtin_types(app):
+    """As at plan time: the rows cannot be read, so the builtin types decide; no 500."""
+    from structlog.testing import capture_logs
+
+    broken = MagicMock()
+    broken.list_all = AsyncMock(side_effect=RuntimeError("database is down"))
+    app.state.agent_defs_repo = broken
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with capture_logs() as logs:
+            ok = await client.post(
+                "/api/v1/pipelines/templates",
+                json={"name": "t", "graph_definition": SAMPLE_GRAPH},
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+        custom = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _bot_graph()},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert ok.status_code == 201, ok.text
+    assert any(e["event"] == "template_agent_types_unavailable" for e in logs), logs
+    assert custom.status_code == 422, custom.text
+    assert "unknown agent_type 'release-bot'" in custom.text

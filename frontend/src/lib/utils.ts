@@ -49,16 +49,6 @@ export function getCostBarColor(used: number, budget: number): string {
 }
 
 /**
- * Extract a role key from a subagent name.
- * e.g. "developer_agent" -> "developer", "validator_v2" -> "validator"
- */
-export function extractRole(agentName: string): string | undefined {
-  const lower = agentName.toLowerCase();
-  const roles = ["developer", "validator", "explorer", "triage"];
-  return roles.find((r) => lower.includes(r));
-}
-
-/**
  * Syntax-highlight a JSON string with Tailwind text color spans.
  * Returns an array of React-renderable elements.
  */
@@ -107,4 +97,13 @@ export function highlightJson(json: string): Array<{ text: string; className: st
   }
 
   return segments;
+}
+
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  return `${m}m ${rs}s`;
 }

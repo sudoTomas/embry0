@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, renderHook, screen } from "@testing-library/react";
+
+vi.mock("@/hooks/useAgents", () => ({
+  useAgents: () => ({ data: [{ type: "developer", display_name: "Developer", avatar: "smith", color: "amber", tagline: "" }], isLoading: false }),
+}));
+
 import { AgentCard } from "../AgentCard";
 import { useAgentStates, type AgentState } from "@/hooks/useAgentStates";
 import { loadFixture } from "@/lib/__tests__/fixtures";
@@ -13,7 +18,7 @@ describe("AgentCard", () => {
     const developer = fixtureAgents()[1];
     render(<AgentCard agent={developer} expanded />);
 
-    expect(screen.getByText("developer")).toBeInTheDocument();
+    expect(screen.getByText("Developer")).toBeInTheDocument();
     // Task, its nested Grep, Bash and Edit: the count includes the subagent's call.
     expect(screen.getByText(/4 tool calls/)).toBeInTheDocument();
     expect(screen.getByText(/\$0\.05/)).toBeInTheDocument();
@@ -33,14 +38,22 @@ describe("AgentCard", () => {
   it.each([false, true])("names the graph node beside an agent that differs from it (expanded: %s)", (expanded) => {
     const qa: AgentState = { ...fixtureAgents()[1], agent: "qa", node: "orchestrate_qa" };
     render(<AgentCard agent={qa} expanded={expanded} />);
-    expect(screen.getByText("qa")).toBeInTheDocument();
+    expect(screen.getByText("QA")).toBeInTheDocument();
     expect(screen.queryByText("orchestrate_qa"), "a card whose node differs from its agent must name the node").not.toBeNull();
   });
 
   it.each([false, true])("shows the name once when the node equals the agent (expanded: %s)", (expanded) => {
     const dev: AgentState = { ...fixtureAgents()[1], agent: "developer", node: "developer" };
     render(<AgentCard agent={dev} expanded={expanded} />);
-    expect(screen.getAllByText("developer"), "agent === node must not repeat the name").toHaveLength(1);
+    expect(screen.getAllByText("Developer"), "agent === node must not repeat the name").toHaveLength(1);
+  });
+
+  it.each([false, true])("paints the agent from its identity row (expanded: %s)", (expanded) => {
+    const running: AgentState = { ...fixtureAgents()[1], status: "running", agent: "developer", node: "developer" };
+    const { container } = render(<AgentCard agent={running} expanded={expanded} />);
+    const name = screen.getByText("Developer");
+    expect(name, "the name span carries the slug as its title").toHaveAttribute("title", "developer");
+    expect(container.querySelector('[data-avatar="smith"]'), "the tile is the row's avatar").not.toBeNull();
   });
 
   it("shows a failed run's error code after its summary", () => {

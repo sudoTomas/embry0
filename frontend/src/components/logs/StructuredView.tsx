@@ -1,9 +1,9 @@
 import { useMemo } from "react";
 import { Virtuoso } from "react-virtuoso";
 import { ToolCallCard } from "./ToolCallCard";
-import { cn, extractRole } from "@/lib/utils";
-import { ROLE_COLORS, ROLE_BG_COLORS, ROLE_LABELS } from "@/lib/constants";
-import { ROLE_ICON_MAP } from "@/lib/roleIcons";
+import { cn } from "@/lib/utils";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
+import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import type { LogEvent } from "@/lib/types";
 
 interface StructuredViewProps {
@@ -29,7 +29,7 @@ type StructuredItem =
   | { kind: "turn"; turnNumber: number; timestamp: string }
   | { kind: "system"; message: string; timestamp: string }
   | { kind: "error"; message: string; code?: string; timestamp: string }
-  | { kind: "agent-transition"; role: string; name: string; timestamp: string };
+  | { kind: "agent-transition"; name: string; timestamp: string };
 
 export function StructuredView({ events, isComplete = false }: StructuredViewProps) {
   const items = useMemo(() => {
@@ -70,7 +70,6 @@ export function StructuredView({ events, isComplete = false }: StructuredViewPro
         case "subagent_start":
           result.push({
             kind: "agent-transition",
-            role: extractRole(event.name) ?? "",
             name: event.name,
             timestamp: event.timestamp,
           });
@@ -134,7 +133,7 @@ export function StructuredView({ events, isComplete = false }: StructuredViewPro
         const item = items[i];
         switch (item.kind) {
           case "agent-transition":
-            return <AgentTransitionMarker role={item.role} name={item.name} />;
+            return <AgentTransitionMarker name={item.name} />;
           case "tool":
             return <ToolCallNode call={item.data} />;
           case "turn":
@@ -192,20 +191,17 @@ function ToolCallNode({ call }: { call: ToolCall }) {
   );
 }
 
-function AgentTransitionMarker({ role, name }: { role: string; name: string }) {
-  const textColor = ROLE_COLORS[role] ?? "text-muted-foreground";
-  const bgColor = ROLE_BG_COLORS[role];
-  const label = ROLE_LABELS[role] ?? name;
-  const IconComponent = ROLE_ICON_MAP[role];
-
+function AgentTransitionMarker({ name }: { name: string }) {
+  const identity = useAgentIdentity(name);
   return (
     <div className="flex items-center gap-3 py-2">
-      <div className={cn("h-px flex-1", bgColor ?? "bg-border")} style={{ opacity: 0.4 }} />
-      <div className={cn("inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full", textColor, bgColor ? `${bgColor}/15` : "bg-muted")}>
-        {IconComponent && <IconComponent className="h-3.5 w-3.5" />}
-        <span>{label} Agent</span>
+      <div className="h-px flex-1" style={{ background: identity.hex, opacity: 0.4 }} />
+      <div className={cn("inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border",
+        identity.classes.text, identity.classes.bg, identity.classes.border)}>
+        <AgentAvatar identity={identity} size={16} />
+        <span>{identity.displayName} Agent</span>
       </div>
-      <div className={cn("h-px flex-1", bgColor ?? "bg-border")} style={{ opacity: 0.4 }} />
+      <div className="h-px flex-1" style={{ background: identity.hex, opacity: 0.4 }} />
     </div>
   );
 }

@@ -120,6 +120,8 @@ class TemplateInvalidError(RuntimeError):
 # node_started/node_completed stream events represent it. The frontend uses
 # this (via each graph node's ``physical_node``) to light nodes up live.
 # ``qa`` is special — the QA chain streams qa_* events, not node_started.
+# Every type not listed is an agent_definitions row and runs on
+# generic_agent (spec 3.5), so the lookup defaults to it.
 _PHYSICAL_NODE: dict[str, str] = {
     "triage": "triage",
     "developer": "developer",
@@ -167,7 +169,7 @@ def build_pipeline_graph(
                 "x": position.get("x", _NODE_BASE_X + index * _NODE_SPACING_X),
                 "y": position.get("y", _NODE_BASE_Y),
             },
-            "physical_node": _PHYSICAL_NODE.get(agent_type, agent_type),
+            "physical_node": _PHYSICAL_NODE.get(agent_type, "generic_agent"),
         }
 
     nodes: list[dict[str, Any]] = []
@@ -270,6 +272,25 @@ async def pinned_triage_template_config(state: dict[str, Any], templates_repo: A
     return triage_template_config(row.get("graph_definition") or {})
 
 
+async def _known_agent_types(config: RunnableConfig) -> set[str] | None:
+    """The agent_definitions types that exist now, for the validator; None without a database.
+
+    A read failure is logged and treated like no database (the builtin seed
+    types): a template naming a custom agent is then skipped with the usual
+    log rather than crashing the job, and the kind default runs.
+    """
+    db = config["configurable"].get("db")
+    if db is None:
+        return None
+    try:
+        from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
+
+        return {str(row["type"]) for row in await AgentDefinitionsRepository(db).list_all()}
+    except Exception:
+        logger.warning("plan_route_agent_types_unavailable", exc_info=True)
+        return None
+
+
 async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Resolve template → route_plan snapshot. Resolution order:
 
@@ -327,6 +348,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
             candidates.append(("explicit", await _find_template(templates_repo, name=requested)))
         candidates.append(("kind_default", await _find_template(templates_repo, kind=job_kind)))
 
+        agent_types = await _known_agent_types(config)
         for tier, row in candidates:
             if row is None:
                 if tier == "explicit":
@@ -337,7 +359,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
                     )
                 continue
             graph = row.get("graph_definition") or {}
-            problems = validate_graph_definition(row["name"], graph)
+            problems = validate_graph_definition(row["name"], graph, agent_types)
             if problems:
                 logger.warning("plan_route_template_invalid", template=row["name"], problems=problems)
                 if tier == "explicit":

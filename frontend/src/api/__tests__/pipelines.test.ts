@@ -105,6 +105,23 @@ describe("pipelines API client — boundary mappers", () => {
     });
   });
 
+  it("createTemplate returns the write's warnings", async () => {
+    (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: {
+        id: "t1",
+        name: "n",
+        description: "d",
+        sandbox_profile: null,
+        graph_definition: SAMPLE_GRAPH,
+        created_at: "2026-05-04T00:00:00Z",
+        updated_at: "2026-05-04T00:00:00Z",
+        warnings: ["superpowers:x is not available: source pending"],
+      },
+    });
+    const created = await createTemplate("n", "d", SAMPLE_GRAPH);
+    expect(created.warnings).toEqual(["superpowers:x is not available: source pending"]);
+  });
+
   it("renameTemplate uses PUT and only sends provided fields", async () => {
     (api.put as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: {

@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { Bot, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Plus, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { IconBox } from "@/components/ui/IconBox";
 import { useAgents, useDeleteAgent, useResetAgent } from "@/hooks/useAgents";
+import { useIdentityLookup } from "@/hooks/useAgentIdentity";
+import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import type { AgentDefinition } from "@/lib/types/agents";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { agentTypeToOperation } from "@/components/divine/operations";
@@ -18,6 +19,7 @@ export function AgentsPage() {
   const deleteAgent = useDeleteAgent();
   const resetAgent = useResetAgent();
   const navigate = useNavigate();
+  const lookup = useIdentityLookup();
 
   const [filter, setFilter] = useState<Filter>("all");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -108,110 +110,120 @@ export function AgentsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.04]">
-                {filtered.map((agent: AgentDefinition) => (
-                  <tr
-                    key={agent.type}
-                    onClick={() => handleRowClick(agent.type)}
-                    className="cursor-pointer hover:bg-white/[0.02] transition-colors"
-                  >
-                    {/* Type */}
-                    <td className="px-6 py-3">
-                      <div className="flex items-center gap-2.5">
-                        {(() => {
-                          const op = agentTypeToOperation(agent.type);
-                          return op ? (
-                            <span className="flex items-center justify-center w-8 h-8 shrink-0">
-                              <OperationGlyph operation={op} size={28} titled />
-                            </span>
-                          ) : (
-                            <IconBox icon={Bot} color="#d4af37" size="sm" />
-                          );
-                        })()}
-                        <div>
-                          <div className="text-sm font-medium text-white/90">{agent.type}</div>
-                          {agent.is_builtin && (
-                            <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 border border-cyan-500/20">
-                              built-in
-                            </span>
+                {filtered.map((agent: AgentDefinition) => {
+                  const identity = lookup(agent.type);
+                  return (
+                    <tr
+                      key={agent.type}
+                      onClick={() => handleRowClick(agent.type)}
+                      className="cursor-pointer hover:bg-white/[0.02] transition-colors"
+                    >
+                      {/* Type */}
+                      <td className="px-6 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <AgentAvatar identity={identity} size={28} />
+                          <div>
+                            <div className="text-sm font-semibold text-white/90">{identity.displayName}</div>
+                            {identity.displayName !== agent.type && (
+                              <div className="font-mono text-xs text-white/40">{agent.type}</div>
+                            )}
+                            {agent.is_builtin && (
+                              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 border border-cyan-500/20">
+                                built-in
+                              </span>
+                            )}
+                          </div>
+                          {(() => {
+                            const op = agentTypeToOperation(agent.type);
+                            return op ? (
+                              <span className="flex items-center justify-center w-8 h-8 shrink-0">
+                                <OperationGlyph operation={op} size={28} titled />
+                              </span>
+                            ) : null;
+                          })()}
+                        </div>
+                      </td>
+
+                      {/* Description */}
+                      <td className="px-6 py-3 max-w-xs">
+                        {identity.tagline && (
+                          <p className="text-sm italic text-white/50 truncate">{identity.tagline}</p>
+                        )}
+                        <p className="text-sm text-white/60 truncate">{agent.description || "—"}</p>
+                      </td>
+
+                      {/* Model */}
+                      <td className="px-6 py-3">
+                        <span className="text-sm font-mono text-white/60">{agent.model}</span>
+                      </td>
+
+                      {/* Provider: the catalog provider the model routes to, and
+                          whether it has a credential now (GET /agents). */}
+                      <td className="px-6 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-white/60">{agent.provider ?? "none"}</span>
+                          {agent.provider_ready === true && <Badge tone="success">ready</Badge>}
+                          {agent.provider_ready === false && (
+                            <Badge
+                              tone="error"
+                              title={
+                                agent.provider
+                                  ? "No credential is configured for this provider"
+                                  : "No configured provider serves this model"
+                              }
+                            >
+                              not ready
+                            </Badge>
                           )}
                         </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    {/* Description */}
-                    <td className="px-6 py-3 max-w-xs">
-                      <p className="text-sm text-white/60 truncate">{agent.description || "—"}</p>
-                    </td>
+                      {/* Tools count */}
+                      <td className="px-6 py-3">
+                        <span className="text-sm text-white/60">{agent.tools?.length ?? 0}</span>
+                      </td>
 
-                    {/* Model */}
-                    <td className="px-6 py-3">
-                      <span className="text-sm font-mono text-white/60">{agent.model}</span>
-                    </td>
+                      {/* Skills count */}
+                      <td className="px-6 py-3">
+                        <span className="text-sm text-white/60" title={(agent.skills ?? []).join(", ")}>
+                          {agent.skills?.length ?? 0}
+                        </span>
+                      </td>
 
-                    {/* Provider: the catalog provider the model routes to, and
-                        whether it has a credential now (GET /agents). */}
-                    <td className="px-6 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-white/60">{agent.provider ?? "none"}</span>
-                        {agent.provider_ready === true && <Badge tone="success">ready</Badge>}
-                        {agent.provider_ready === false && (
-                          <Badge
-                            tone="error"
-                            title={
-                              agent.provider
-                                ? "No credential is configured for this provider"
-                                : "No configured provider serves this model"
-                            }
-                          >
-                            not ready
-                          </Badge>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Tools count */}
-                    <td className="px-6 py-3">
-                      <span className="text-sm text-white/60">{agent.tools?.length ?? 0}</span>
-                    </td>
-
-                    {/* Skills count */}
-                    <td className="px-6 py-3">
-                      <span className="text-sm text-white/60">{agent.skills?.length ?? 0}</span>
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-6 py-3">
-                      <div
-                        className="flex items-center justify-end gap-2"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {agent.is_builtin ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleReset(agent.type)}
-                            disabled={resetAgent.isPending}
-                            className={confirmReset === agent.type ? "border-orange-500/40 text-orange-400 hover:bg-orange-500/10" : ""}
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                            {confirmReset === agent.type ? "Confirm Reset" : "Reset"}
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleDelete(agent.type)}
-                            disabled={deleteAgent.isPending}
-                            className={confirmDelete === agent.type ? "border-destructive/40 text-destructive hover:bg-destructive/10" : ""}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            {confirmDelete === agent.type ? "Confirm Delete" : "Delete"}
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      {/* Actions */}
+                      <td className="px-6 py-3">
+                        <div
+                          className="flex items-center justify-end gap-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {agent.is_builtin ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleReset(agent.type)}
+                              disabled={resetAgent.isPending}
+                              className={confirmReset === agent.type ? "border-orange-500/40 text-orange-400 hover:bg-orange-500/10" : ""}
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              {confirmReset === agent.type ? "Confirm Reset" : "Reset"}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDelete(agent.type)}
+                              disabled={deleteAgent.isPending}
+                              className={confirmDelete === agent.type ? "border-destructive/40 text-destructive hover:bg-destructive/10" : ""}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              {confirmDelete === agent.type ? "Confirm Delete" : "Delete"}
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

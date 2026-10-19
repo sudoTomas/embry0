@@ -2,6 +2,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
+vi.mock("@/hooks/useAgents", () => ({
+  useAgents: () => ({ data: [{ type: "developer", display_name: "Developer", avatar: "smith", color: "amber", tagline: "" }], isLoading: false }),
+}));
+
 vi.mock("@/hooks/useLiveJobSummary", () => ({
   useLiveJobSummary: vi.fn(),
 }));
@@ -59,6 +63,22 @@ describe("RunningCard", () => {
       vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "review", attempt: 2 }));
       renderCard({ job: makeJob() });
       expect(screen.getByTestId("stage-badge")).toHaveTextContent("review#2");
+    });
+
+    it("colours the badge from the stage's identity", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "review", attempt: 1 }));
+      const { unmount } = renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-badge").className, "review: builtin fallback, no row").toContain("text-rose-400");
+      unmount();
+
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "qa", attempt: 1 }));
+      const second = renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-badge").className, "qa: builtin fallback, no row").toContain("text-emerald-400");
+      second.unmount();
+
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "developer", attempt: 1 }));
+      renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-badge").className, "developer: the row's colour").toContain("text-amber-400");
     });
 
     it("omits the badge when neither the stream nor the row knows a stage", () => {

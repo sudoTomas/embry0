@@ -2,6 +2,7 @@
 
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from embry0.agents.skills import normalize_delta
@@ -12,6 +13,8 @@ from embry0.services.model_enablement import UnpricedModelError, ensure_models_p
 from embry0.storage.repositories.pipeline_templates import PipelineTemplatesRepository
 from embry0.workflows._validation import validate_graph_definition
 from embry0.workflows.issue_to_pr.route_plan import node_config
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -57,6 +60,20 @@ def _stored_added_skills(template: dict[str, Any] | None) -> set[str]:
     return names
 
 
+async def _known_agent_types(request: Request) -> set[str] | None:
+    """The agent_definitions types that exist now; None when the app has no
+    repository (tests) or the read fails, so the builtin types decide, as at
+    plan time (plan_route)."""
+    repo = getattr(request.app.state, "agent_defs_repo", None)
+    if repo is None:
+        return None
+    try:
+        return {str(a["type"]) for a in await repo.list_all()}
+    except Exception:
+        logger.warning("template_agent_types_unavailable", exc_info=True)
+        return None
+
+
 async def _check_template_skills(request: Request, graph: dict[str, Any] | None) -> list[str]:
     """Check every name the graph adds; return the warnings."""
     return await check_added_skills(request, _added_skills(graph))
@@ -88,7 +105,7 @@ async def create_template(
 ) -> dict[str, Any]:
     # RAV-601: templates are runtime control-flow now — only executable
     # graphs (single linear chain of known agent types) may save.
-    problems = validate_graph_definition(req.name, req.graph_definition)
+    problems = validate_graph_definition(req.name, req.graph_definition, await _known_agent_types(request))
     if problems:
         raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(req.graph_definition)
@@ -120,7 +137,9 @@ async def update_template(
     graph = updates.get("graph_definition")
     added: list[str] = []
     if "graph_definition" in updates:
-        problems = validate_graph_definition(str(template_id), updates["graph_definition"])
+        problems = validate_graph_definition(
+            str(template_id), updates["graph_definition"], await _known_agent_types(request)
+        )
         if problems:
             raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(graph)
@@ -161,8 +180,8 @@ async def duplicate_template(
 
 
 @router.post("/pipelines/validate")
-async def validate_pipeline(graph: dict[str, Any]) -> dict[str, Any]:
+async def validate_pipeline(graph: dict[str, Any], request: Request) -> dict[str, Any]:
     # Delegates to the same validator the save path uses so the frontend
     # editor gets identical diagnostics (RAV-601).
-    errors = validate_graph_definition(graph.get("name") or "pipeline", graph)
+    errors = validate_graph_definition(graph.get("name") or "pipeline", graph, await _known_agent_types(request))
     return {"valid": len(errors) == 0, "errors": errors}

@@ -1,3 +1,5 @@
+import type { SkillsDelta } from "@/lib/skills";
+
 export interface NodePosition {
   x: number;
   y: number;
@@ -6,6 +8,21 @@ export interface NodePosition {
 export interface SandboxConfig {
   image?: string | null;
   environment?: Record<string, string>;
+}
+
+/** A template node's per-node overrides (backend `node_config`, route_plan.py). */
+export interface AgentNodeConfig {
+  model?: string | null;
+  max_budget_usd?: number | null;
+  max_turns?: number | null;
+  effort?: string | null;
+  tools?: string[] | null;
+  skills?: SkillsDelta | string[] | null;
+  prompt_prepend?: string | null;
+  prompt_append?: string | null;
+  custom_prompt?: string | null;
+  custom_tools?: string[] | null;
+  sandbox?: SandboxConfig | null;
 }
 
 export interface AgentNode {
@@ -19,12 +36,14 @@ export interface AgentNode {
    * `pipeline_graph` event; absent on editor/template graphs.
    */
   physical_node?: string;
+  config?: AgentNodeConfig | null;
+  /** Legacy (pre-#78) top-level overrides, read only; the editor writes `config`. */
   model?: string | null;
   max_budget_usd?: number | null;
   max_turns?: number | null;
   effort?: string | null;
   tools?: string[] | null;
-  skills?: string[] | null;
+  skills?: string[] | SkillsDelta | null;
   prompt_prepend?: string | null;
   prompt_append?: string | null;
   custom_prompt?: string | null;
@@ -70,6 +89,8 @@ export interface PipelineTemplate {
   description: string;
   graph: PipelineGraph;
   created_at: string;
+  /** Write responses only: non-fatal problems the backend found (e.g. a skill whose source is not ready). */
+  warnings?: string[];
 }
 
 export interface PipelineTemplateSummary {
@@ -88,12 +109,4 @@ export interface AgentTypeInfo {
   default_max_turns: number;
   default_max_budget_usd: number;
   available_skills: string[];
-}
-
-export interface SkillConfig {
-  name: string;
-  mode: "autonomous" | "guided" | "interactive";
-  auto_answer_categories?: string[] | null;
-  escalation_categories?: string[] | null;
-  context_hints?: Record<string, string> | null;
 }

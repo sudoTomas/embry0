@@ -15,10 +15,14 @@ import { AgentsPage } from "../AgentsPage";
 const AGENTS = [
   {
     type: "developer",
+    display_name: "Developer",
+    avatar: "smith",
+    color: "amber",
+    tagline: "Forges the change.",
     description: "Writes code",
     model: "claude-opus-5",
     tools: ["Read", "Edit"],
-    skills: [],
+    skills: ["superpowers:writing-plans"],
     system_prompt: "",
     is_builtin: true,
     provider: "anthropic",
@@ -106,5 +110,21 @@ describe("AgentsPage provider column", () => {
     const row = rowOf("developer");
     expect(within(row).queryByText("ready")).not.toBeInTheDocument();
     expect(within(row).queryByText("not ready")).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentsPage identity", () => {
+  it("shows the row's display name, tagline and avatar tile, and names the skills on hover", () => {
+    renderPage();
+    const row = rowOf("developer");
+    expect(within(row).getByText("Developer")).toBeInTheDocument();
+    expect(within(row).getByText("Forges the change.")).toBeInTheDocument();
+    expect(row.querySelector('[data-avatar="smith"]'), "the row's avatar tile").not.toBeNull();
+    expect(within(row).getByTitle("superpowers:writing-plans")).toHaveTextContent("1");
+  });
+
+  it("paints a row without identity fields as the default golem", () => {
+    renderPage();
+    expect(rowOf("mystery").querySelector('[data-avatar="golem"]'), "the default avatar tile").not.toBeNull();
   });
 });
