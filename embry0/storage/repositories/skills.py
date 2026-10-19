@@ -46,8 +46,8 @@ def validate_source_url(kind: str, url: str) -> str:
         raise SkillSourceRefused("a git source is cloned anonymously over https; only https:// urls are accepted")
     if parts.username or parts.password:
         raise SkillSourceRefused("a git source url must not carry credentials")
-    host = (parts.hostname or "").lower()
-    if not host or host in _LOCAL_HOSTS or host.endswith(".local") or "." not in host:
+    host = (parts.hostname or "").lower().rstrip(".")
+    if not host or host in _LOCAL_HOSTS or host.endswith((".local", ".localhost", ".internal")) or "." not in host:
         raise SkillSourceRefused("a git source url must name a public host")
     try:
         ipaddress.ip_address(host)

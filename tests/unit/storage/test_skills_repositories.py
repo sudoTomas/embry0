@@ -27,6 +27,9 @@ from embry0.storage.repositories.skills import (
         "https://printer.local/skills.git",
         "https://intranet/skills.git",
         "ssh://example.com/skills.git",
+        "https://localhost./x.git",
+        "https://foo.localhost/x.git",
+        "https://metadata.google.internal/x.git",
     ],
 )
 def test_validate_source_url_refuses_non_public_https(url: str) -> None:
