@@ -354,6 +354,19 @@ describe("RepoDetailPage (RAV-1253)", () => {
     expect(screen.queryByText(/Hidden from lists/)).not.toBeInTheDocument();
   });
 
+  it("paints the page once the setup status is known, so nothing moves under the reader", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    let answer: (value: unknown) => void = () => {};
+    mockFetchReadiness.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    renderPage();
+    await waitFor(() => expect(mockFetchRepoDetail).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("heading", { name: "acme/widgets" })).not.toBeInTheDocument();
+    answer(READINESS);
+    await screen.findByRole("heading", { name: "acme/widgets" });
+    expect(screen.getByTestId("repo-readiness-chip")).toBeInTheDocument();
+  });
+
   it("still renders the page when the setup status fails to load", async () => {
     mockFetchRepoDetail.mockResolvedValue(DETAIL);
     mockFetchReadiness.mockRejectedValue(new Error("boom"));

@@ -49,6 +49,14 @@ export function RepoDetailPage() {
   if (detail.isError)
     return <PageError message={`Failed to load ${full}`} onRetry={() => void detail.refetch()} />;
   if (detail.isLoading || !detail.data) return <TableSkeleton />;
+  // Readiness lands a few ms after the detail; painting between the two drew
+  // the checklist's short placeholder, then pushed the page down (a layout
+  // shift of 0.47 on a phone). Wait for its first answer or first failed
+  // attempt, read from the stored update times: the checklist's own mount
+  // refetches a failed query, and waiting on isLoading would unmount it again.
+  const readinessAnswered =
+    readiness.dataUpdatedAt > 0 || readiness.errorUpdatedAt > 0 || readiness.failureCount > 0;
+  if (!readinessAnswered) return <TableSkeleton />;
 
   const repo = detail.data;
 
