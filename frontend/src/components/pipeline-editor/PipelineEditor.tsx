@@ -32,6 +32,8 @@ const edgeTypes = { feedbackEdge: FeedbackEdge };
 interface PipelineEditorProps {
   mode?: "modal" | "page";
   initialGraph?: PipelineGraph;
+  /** The saved template the page opened, so Save writes back to it. */
+  initialTemplate?: Pick<PipelineTemplate, "template_id" | "name">;
   onApply?: (graph: PipelineGraph) => void;
   onClose?: () => void;
 }
@@ -92,7 +94,7 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
   );
 }
 
-export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose }: PipelineEditorProps) {
+export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, onApply, onClose }: PipelineEditorProps) {
   const graphState = useGraphState(initialGraph);
   const {
     nodes,
@@ -114,8 +116,10 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
   const [rippleKey, setRippleKey] = useState(0);
 
   // Page-mode state
-  const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
-  const [pipelineName, setPipelineName] = useState("Untitled pipeline");
+  const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(initialTemplate?.template_id ?? null);
+  const [pipelineName, setPipelineName] = useState(
+    initialTemplate?.name || initialGraph?.name || "Untitled pipeline",
+  );
 
   const renameMutation = useRenameTemplate();
   const createMutation = useCreateTemplate();
