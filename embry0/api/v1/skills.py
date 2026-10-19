@@ -45,7 +45,7 @@ async def _run_sync(sync: SkillSourceSync, source_id: str) -> None:
     try:
         await sync.sync(source_id)
     except SkillSyncBusy:
-        logger.info("skill_sync_already_running", source_id=source_id)
+        logger.warning("skill_source_sync_busy", source_id=source_id)
     except Exception:
         logger.exception("skill_sync_crashed", source_id=source_id)
 
@@ -181,6 +181,9 @@ async def delete_source(source_id: str, request: Request) -> dict[str, Any]:
     row = await repo.get(source_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"no skill source {source_id!r}")
+    # Before the reference scan: a 409 would tell the caller to remove skills, and that still ends in 403.
+    if row["is_builtin"]:
+        raise HTTPException(status_code=403, detail=f"cannot delete built-in skill source {source_id!r}")
     prefix = (row["plugin_name"] or row["id"]) + ":"
     refs = await _references(request, lambda s: s.startswith(prefix))
     if refs:

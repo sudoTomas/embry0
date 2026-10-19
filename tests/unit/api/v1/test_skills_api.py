@@ -39,6 +39,18 @@ def _source(source_id: str = "mine", **overrides: Any) -> dict[str, Any]:
     return row
 
 
+class _Recording(set):
+    """A background-task set that remembers every task added, after the task has left it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.added: list[asyncio.Task[Any]] = []
+
+    def add(self, task: asyncio.Task[Any]) -> None:
+        self.added.append(task)
+        super().add(task)
+
+
 @pytest.fixture
 def app():
     app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
@@ -114,6 +126,7 @@ async def test_get_source_404_when_missing(app):
 @pytest.mark.asyncio
 async def test_create_source_stores_audits_and_schedules_a_sync(app):
     body = {"id": "mine", "kind": "git", "url": "https://example.com/skills.git", "ref": "main"}
+    app.state.background_tasks = _Recording()
     with patch(_AUDIT, new_callable=AsyncMock) as audit:
         async with _client(app) as client:
             resp = await client.post("/api/v1/skills/sources", json=body)
@@ -123,6 +136,7 @@ async def test_create_source_stores_audits_and_schedules_a_sync(app):
     app.state.skill_sources_repo.create.assert_awaited_once_with(
         source_id="mine", kind="git", url="https://example.com/skills.git", ref="main", enabled=True
     )
+    assert len(app.state.background_tasks.added) == 1, "the sync runs as a tracked background task"
     app.state.skill_sync.sync.assert_awaited_once_with("mine")
     assert _actions(audit) == ["skill_source.created"]
 
@@ -237,15 +251,6 @@ async def test_sync_route_409_when_a_sync_is_running(app):
 
 @pytest.mark.asyncio
 async def test_a_busy_background_sync_does_not_leak_an_exception(app):
-    class _Recording(set):
-        def __init__(self) -> None:
-            super().__init__()
-            self.added: list[asyncio.Task[Any]] = []
-
-        def add(self, task: asyncio.Task[Any]) -> None:
-            self.added.append(task)
-            super().add(task)
-
     app.state.background_tasks = _Recording()
     app.state.skill_sync.sync = AsyncMock(side_effect=SkillSyncBusy("mine"))
     with patch(_AUDIT, new_callable=AsyncMock):
@@ -293,6 +298,22 @@ async def test_delete_builtin_source_is_403(app):
     async with _client(app) as client:
         resp = await client.delete("/api/v1/skills/sources/mine")
     assert resp.status_code == 403
+    app.state.skill_store.remove_source.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_referenced_builtin_source_is_403_not_409(app):
+    app.state.skill_sources_repo.get = AsyncMock(
+        return_value=_source("superpowers", is_builtin=True, skills=[{"name": "writing-plans"}])
+    )
+    app.state.agent_defs_repo.list_all = AsyncMock(
+        return_value=[{"type": "developer", "skills": ["superpowers:writing-plans"]}]
+    )
+    async with _client(app) as client:
+        resp = await client.delete("/api/v1/skills/sources/superpowers")
+    assert resp.status_code == 403, resp.text
+    assert "built-in" in resp.text
+    app.state.skill_sources_repo.delete.assert_not_awaited()
     app.state.skill_store.remove_source.assert_not_called()
 
 
