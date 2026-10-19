@@ -72,7 +72,8 @@
       "node",
       "parent_tool_use_id",
       "prev_seq",
-      "run_id"
+      "run_id",
+      "skill_sources"
     ],
     "required": [
       "max_turns",

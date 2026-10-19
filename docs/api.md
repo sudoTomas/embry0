@@ -387,7 +387,7 @@ The route closes with code 1000 after forwarding `job_finished`, or straight aft
 <!-- events:begin -->
 | Type | Required fields | Optional fields |
 |---|---|---|
-| `agent_started` | `max_turns`, `model`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `prev_seq`, `run_id` |
+| `agent_started` | `max_turns`, `model`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `prev_seq`, `run_id`, `skill_sources` |
 | `turn_start` | `model`, `timestamp`, `turn_number`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `prev_seq`, `run_id` |
 | `turn_usage` | `cache_creation_tokens`, `cache_read_tokens`, `cost_usd`, `input_tokens`, `model`, `output_tokens`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `prev_seq`, `run_id` |
 | `text` | `text`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `original_length`, `parent_tool_use_id`, `prev_seq`, `run_id`, `truncated` |

@@ -25,7 +25,9 @@ interface Truncatable {
   original_length?: number;
 }
 
-export interface AgentStartedContract extends ContractBase { type: "agent_started"; model: string; max_turns: number }
+export interface AgentStartedContract extends ContractBase {
+  type: "agent_started"; model: string; max_turns: number; skill_sources?: string[];
+}
 export interface TurnStartContract extends ContractBase { type: "turn_start"; turn_number: number; model: string }
 export interface TurnUsageContract extends ContractBase {
   type: "turn_usage"; input_tokens: number; output_tokens: number; cache_read_tokens: number;
@@ -116,7 +118,7 @@ const sorted = <const T extends readonly string[]>(fields: T): readonly T[number
 
 /** Same contract as data. Keys and field lists must equal docs/contracts/events.json (sorted). */
 export const EVENT_FIELDS = {
-  agent_started: { required: ["max_turns", "model", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
+  agent_started: { required: ["max_turns", "model", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "skill_sources"]) },
   turn_start: { required: ["model", "timestamp", "turn_number", "type"], optional: [...BASE_OPTIONAL] },
   turn_usage: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "input_tokens", "model", "output_tokens", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
   text: { required: ["text", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC]) },
