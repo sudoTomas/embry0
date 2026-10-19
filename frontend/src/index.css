@@ -319,11 +319,20 @@ body[data-divine="off"] .motion-mark * {
 }
 
 /* ----- motion: job journey ----- */
+@keyframes tool-call-arrive {
+  from { opacity: 0; }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   /* A stop on a job's line glides to its new place when a stage joins the
      line, rather than jumping there (components/jobs/JobLine.tsx). */
   .job-line-stop {
     transition: transform var(--motion-base) var(--ease-travel);
+  }
+  /* A tool call that streams in after the first paint: opacity only and
+     no stagger, so the live log stays readable at speed. */
+  .tool-call-arrive {
+    animation: tool-call-arrive var(--motion-fast) var(--ease-standard);
   }
 }
 
