@@ -89,6 +89,8 @@ export interface PipelineTemplate {
   description: string;
   graph: PipelineGraph;
   created_at: string;
+  /** Write responses only: non-fatal problems the backend found (e.g. a skill whose source is not ready). */
+  warnings?: string[];
 }
 
 export interface PipelineTemplateSummary {
@@ -107,12 +109,4 @@ export interface AgentTypeInfo {
   default_max_turns: number;
   default_max_budget_usd: number;
   available_skills: string[];
-}
-
-export interface SkillConfig {
-  name: string;
-  mode: "autonomous" | "guided" | "interactive";
-  auto_answer_categories?: string[] | null;
-  escalation_categories?: string[] | null;
-  context_hints?: Record<string, string> | null;
 }

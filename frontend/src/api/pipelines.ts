@@ -26,6 +26,8 @@ interface ApiTemplateSummary {
 
 interface ApiTemplate extends ApiTemplateSummary {
   graph_definition: PipelineGraph;
+  /** Create and update responses only. */
+  warnings?: string[];
 }
 
 function mapSummary(row: ApiTemplateSummary): PipelineTemplateSummary {
@@ -44,6 +46,7 @@ function mapTemplate(row: ApiTemplate): PipelineTemplate {
     description: row.description,
     graph: row.graph_definition,
     created_at: row.created_at,
+    warnings: row.warnings,
   };
 }
 

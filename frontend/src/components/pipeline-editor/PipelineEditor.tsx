@@ -10,6 +10,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { X, Save, FolderOpen, LayoutGrid } from "lucide-react";
+import { toast } from "sonner";
 import { AgentNode } from "./AgentNode";
 import { StartEndNode } from "./StartEndNode";
 import { FeedbackEdge } from "./FeedbackEdge";
@@ -142,11 +143,18 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
   const handleSave = useCallback(() => {
     if (!currentTemplateId) return;
     const graph = toApiGraph(serialize(pipelineName));
-    renameMutation.mutate({
-      templateId: currentTemplateId,
-      name: pipelineName,
-      graph,
-    });
+    renameMutation.mutate(
+      {
+        templateId: currentTemplateId,
+        name: pipelineName,
+        graph,
+      },
+      {
+        onSuccess: (saved) => {
+          saved.warnings?.forEach((w) => toast.warning(w));
+        },
+      },
+    );
   }, [currentTemplateId, pipelineName, serialize, renameMutation]);
 
   const handleAutoArrange = useCallback(() => {
@@ -164,6 +172,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
       { name, description: "", graph },
       {
         onSuccess: (created) => {
+          created.warnings?.forEach((w) => toast.warning(w));
           setCurrentTemplateId(created.template_id);
           setPipelineName(name);
         },

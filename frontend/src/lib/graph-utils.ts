@@ -1,5 +1,6 @@
 import type { Node, Edge } from "@xyflow/react";
-import type { AgentNode, PipelineEdge, PipelineGraph, PipelineMetadata, EdgeType } from "./types";
+import { normalizeDelta, isEmptyDelta, type NormalizedDelta } from "@/lib/skills";
+import type { AgentNode, AgentNodeConfig, PipelineEdge, PipelineGraph, PipelineMetadata, EdgeType } from "./types";
 
 /**
  * DFS-based cycle detection. Returns set of edge IDs that are back-edges.
@@ -68,35 +69,33 @@ export function serializeGraph(
         agent_type: role === "start" ? "__start__" : "__end__",
         label: role === "start" ? "START" : "END",
         position: { x: n.position.x, y: n.position.y },
-        model: null,
-        max_budget_usd: null,
-        max_turns: null,
-        effort: null,
-        tools: null,
-        skills: null,
-        prompt_prepend: null,
-        prompt_append: null,
-        custom_prompt: null,
-        custom_tools: null,
-        sandbox: null,
+        config: {},
       };
     }
+    // #78: overrides live under `config`, only the keys that are set, in the
+    // order of the shared fixture tests/fixtures/templates/editor-config-shape.json.
+    const config: AgentNodeConfig = {};
+    const set = <K extends keyof AgentNodeConfig>(k: K, v: AgentNodeConfig[K] | undefined) => {
+      if (v !== undefined && v !== null) config[k] = v;
+    };
+    set("model", d.model as string | undefined);
+    set("max_budget_usd", d.maxBudgetUsd as number | undefined);
+    set("max_turns", d.maxTurns as number | undefined);
+    set("effort", d.effort as string | undefined);
+    set("tools", d.tools as string[] | undefined);
+    const delta = d.skills as NormalizedDelta | null | undefined;
+    if (delta && !isEmptyDelta(delta)) config.skills = { add: delta.add, remove: delta.remove };
+    set("prompt_prepend", d.promptPrepend as string | undefined);
+    set("prompt_append", d.promptAppend as string | undefined);
+    set("custom_prompt", d.customPrompt as string | undefined);
+    set("custom_tools", d.customTools as string[] | undefined);
+    set("sandbox", d.sandbox as AgentNodeConfig["sandbox"]);
     return {
       node_id: n.id,
       agent_type: d.agentType as string,
       label: (d.label as string) ?? "",
       position: { x: n.position.x, y: n.position.y },
-      model: (d.model as string | undefined) ?? null,
-      max_budget_usd: (d.maxBudgetUsd as number | undefined) ?? null,
-      max_turns: (d.maxTurns as number | undefined) ?? null,
-      effort: (d.effort as string | undefined) ?? null,
-      tools: (d.tools as string[] | undefined) ?? null,
-      skills: (d.skills as string[] | undefined) ?? null,
-      prompt_prepend: (d.promptPrepend as string | undefined) ?? null,
-      prompt_append: (d.promptAppend as string | undefined) ?? null,
-      custom_prompt: (d.customPrompt as string | undefined) ?? null,
-      custom_tools: (d.customTools as string[] | undefined) ?? null,
-      sandbox: (d.sandbox as AgentNode["sandbox"]) ?? null,
+      config,
     };
   });
 
@@ -155,6 +154,28 @@ export function deserializeGraph(graph: PipelineGraph): { nodes: Node[]; edges: 
         data: { nodeRole: role },
       };
     }
+    // #78: `config` when present, else the legacy (pre-#78) top-level keys.
+    const legacy: AgentNodeConfig = {
+      model: n.model,
+      max_budget_usd: n.max_budget_usd,
+      max_turns: n.max_turns,
+      effort: n.effort,
+      tools: n.tools,
+      skills: n.skills,
+      prompt_prepend: n.prompt_prepend,
+      prompt_append: n.prompt_append,
+      custom_prompt: n.custom_prompt,
+      custom_tools: n.custom_tools,
+      sandbox: n.sandbox,
+    };
+    const cfg: AgentNodeConfig = n.config && typeof n.config === "object" ? n.config : legacy;
+    let skills: NormalizedDelta | null;
+    try {
+      const delta = normalizeDelta(cfg.skills);
+      skills = isEmptyDelta(delta) ? null : delta;
+    } catch {
+      skills = null;
+    }
     return {
       id: n.node_id,
       type: "agentNode",
@@ -162,17 +183,17 @@ export function deserializeGraph(graph: PipelineGraph): { nodes: Node[]; edges: 
       data: {
         agentType: n.agent_type,
         label: n.label || n.agent_type,
-        model: n.model,
-        maxBudgetUsd: n.max_budget_usd,
-        maxTurns: n.max_turns,
-        effort: n.effort,
-        tools: n.tools,
-        skills: n.skills,
-        promptPrepend: n.prompt_prepend,
-        promptAppend: n.prompt_append,
-        customPrompt: n.custom_prompt,
-        customTools: n.custom_tools,
-        sandbox: n.sandbox,
+        model: cfg.model ?? null,
+        maxBudgetUsd: cfg.max_budget_usd ?? null,
+        maxTurns: cfg.max_turns ?? null,
+        effort: cfg.effort ?? null,
+        tools: cfg.tools ?? null,
+        skills,
+        promptPrepend: cfg.prompt_prepend ?? null,
+        promptAppend: cfg.prompt_append ?? null,
+        customPrompt: cfg.custom_prompt ?? null,
+        customTools: cfg.custom_tools ?? null,
+        sandbox: cfg.sandbox ?? null,
       },
     };
   });

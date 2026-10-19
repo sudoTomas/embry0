@@ -90,3 +90,37 @@ describe("toApiGraph", () => {
     expect(nodes.filter((n) => n.type === "agentNode").map((n) => n.id)).toEqual(["triage", "developer"]);
   });
 });
+
+import fixtureText from "../../../../tests/fixtures/templates/editor-config-shape.json?raw";
+import { serializeGraph } from "@/lib/graph-utils";
+import type { Node, Edge } from "@xyflow/react";
+
+describe("serializeGraph writes overrides under config (#78, shared fixture)", () => {
+  const fixture = JSON.parse(fixtureText) as PipelineGraph;
+  const rf = deserializeGraph(fixture);
+  it("round-trips the fixture byte for byte", () => {
+    const out = serializeGraph(rf.nodes, rf.edges, fixture.metadata, fixture.name, fixture.graph_id);
+    expect(JSON.stringify(out, null, 2) + "\n").toBe(fixtureText);
+  });
+  it("writes nothing at the node's top level but node_id, agent_type, label, position, config", () => {
+    const out = serializeGraph(rf.nodes, rf.edges, fixture.metadata, fixture.name, fixture.graph_id);
+    for (const n of out.nodes) expect(Object.keys(n).sort()).toEqual(["agent_type", "config", "label", "node_id", "position"]);
+  });
+  it("reads a legacy node (top-level overrides, bare skills list) as config with replace", () => {
+    const legacy = { ...fixture, nodes: [{ node_id: "d", agent_type: "developer", position: { x: 0, y: 0 }, model: "m", skills: ["a:x"] }] } as PipelineGraph;
+    const data = deserializeGraph(legacy).nodes[0].data as Record<string, unknown>;
+    expect(data.model).toBe("m");
+    expect(data.skills).toEqual({ add: ["a:x"], remove: "*" });
+    const out = serializeGraph(deserializeGraph(legacy).nodes, [], fixture.metadata, "x", "g");
+    expect(out.nodes[0].config).toEqual({ model: "m", skills: { add: ["a:x"], remove: "*" } });
+  });
+  it("prefers config over legacy keys when both exist", () => {
+    const both = { ...fixture, nodes: [{ node_id: "d", agent_type: "developer", position: { x: 0, y: 0 }, model: "old", config: { model: "new" } }] } as PipelineGraph;
+    expect((deserializeGraph(both).nodes[0].data as Record<string, unknown>).model).toBe("new");
+  });
+  it("drops an empty delta", () => {
+    const n: Node = { id: "d", type: "agentNode", position: { x: 0, y: 0 }, data: { agentType: "developer", label: "Developer", skills: { add: [], remove: [] } } };
+    const out = serializeGraph([n], [] as Edge[], fixture.metadata, "x", "g");
+    expect(out.nodes[0].config).toEqual({});
+  });
+});

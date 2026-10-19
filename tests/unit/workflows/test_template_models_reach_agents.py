@@ -9,6 +9,8 @@ the real resolver, so a mapping that drops a type fails here.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -244,3 +246,26 @@ async def test_triage_runs_with_the_named_templates_triage_config() -> None:
     assert got == {"agent_models": {"triage": "model-for-triage"}}, (
         f"triage ran without the named template's triage config: {got!r}"
     )
+
+
+_FIXTURE = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "templates" / "editor-config-shape.json"
+
+
+def test_the_editor_serializer_fixture_reaches_step_template_config() -> None:
+    """#78: the frontend serializer's output (tests/fixtures/templates/editor-config-shape.json,
+    pinned byte for byte by frontend/src/lib/__tests__/graph-utils.test.ts) resolves on the backend."""
+    from embry0.workflows._validation import validate_graph_definition
+
+    graph = json.loads(_FIXTURE.read_text())
+    assert validate_graph_definition("fixture", graph, agent_types={"release-bot"}) == []
+    plan = build_route_plan(graph)
+    assert [s["agent_type"] for s in plan] == ["developer", "release-bot"]
+    dev = step_template_config({"route_plan": plan, "route_cursor": 0}, "developer")
+    assert dev == {
+        "agent_models": {"developer": "model-for-developer"},
+        "agent_tools": {"developer": ["Read", "Edit"]},
+        "agent_skills": {"developer": {"add": ["superpowers:writing-plans"], "remove": ["local:house-style"]}},
+    }
+    assert _resolved_model("developer", dev) == "model-for-developer"
+    bot = step_template_config({"route_plan": plan, "route_cursor": 1}, "release-bot")
+    assert bot == {"agent_skills": {"release-bot": {"add": ["local:release-notes"], "remove": "*"}}}

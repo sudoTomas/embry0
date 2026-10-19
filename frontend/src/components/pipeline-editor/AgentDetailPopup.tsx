@@ -4,8 +4,11 @@ import { X, ChevronDown, ChevronRight } from "lucide-react";
 import { useAgents } from "@/hooks/useAgents";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
+import { useSkills } from "@/hooks/useSkills";
+import { SkillPicker } from "@/components/skills/SkillPicker";
 import { cn } from "@/lib/utils";
-import type { SkillConfig } from "@/lib/types";
+import { normalizeDelta, effectiveSkills, isEmptyDelta, type NormalizedDelta } from "@/lib/skills";
+import type { SkillCatalogEntry } from "@/lib/types";
 import { SANDBOX_IMAGE_PLACEHOLDER } from "@/lib/branding";
 import { createFocusTrap } from "@/lib/focus-trap";
 
@@ -162,34 +165,6 @@ function TagInput({ tags, onChange, placeholder }: TagInputProps) {
   );
 }
 
-function SkillAddInput({ onAdd }: { onAdd: (name: string) => void }) {
-  const [input, setInput] = useState("");
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" || e.key === ",") {
-      e.preventDefault();
-      if (input.trim()) {
-        onAdd(input);
-        setInput("");
-      }
-    }
-  };
-  return (
-    <input
-      value={input}
-      onChange={(e) => setInput(e.target.value)}
-      onKeyDown={handleKeyDown}
-      onBlur={() => {
-        if (input.trim()) {
-          onAdd(input);
-          setInput("");
-        }
-      }}
-      placeholder="Add skill..."
-      className="mt-1.5 w-full bg-white/[0.04] border border-white/[0.08] rounded-md px-2.5 py-1.5 text-xs text-white/80 outline-none focus:border-white/20 transition-colors placeholder:text-white/20"
-    />
-  );
-}
-
 /* ------------------------------------------------------------------ */
 /*  Read-mode pill for tools / skills                                  */
 /* ------------------------------------------------------------------ */
@@ -211,6 +186,13 @@ function ReadPill({
       {label}
     </span>
   );
+}
+
+interface SkillActions {
+  setAdded: (names: string[]) => void;
+  removeDefinitionSkill: (name: string) => void;
+  keepDefinitionSkill: (name: string) => void;
+  keepAllDefinitionSkills: () => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -255,29 +237,32 @@ export function AgentDetailPopup({
 
   const tools = Array.isArray(d.tools) ? (d.tools as string[]) : [];
 
-  const skillConfigs: SkillConfig[] = useMemo(() => {
-    if (!Array.isArray(d.skills)) return [];
-    return (d.skills as (string | SkillConfig)[]).map((s) =>
-      typeof s === "string" ? { name: s, mode: "autonomous" as const } : s,
-    );
+  /* ---- skills: the node's delta over the definition's skills (#78) ---- */
+  const { data: catalog, isLoading: catalogLoading } = useSkills();
+  const definitionSkills = useMemo(() => agentDef?.skills ?? [], [agentDef]);
+  const delta: NormalizedDelta = useMemo(() => {
+    try {
+      return normalizeDelta(d.skills);
+    } catch {
+      return { add: [], remove: [] };
+    }
   }, [d.skills]);
-  const skillNames = skillConfigs.map((s) => s.name);
-
-  const updateSkillMode = (index: number, mode: SkillConfig["mode"]) => {
-    const updated = [...skillConfigs];
-    updated[index] = { ...updated[index], mode };
-    onUpdate({ skills: updated.length ? updated : null });
-  };
-  const addSkill = (name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed || skillNames.includes(trimmed)) return;
-    onUpdate({
-      skills: [...skillConfigs, { name: trimmed, mode: "autonomous" as const }],
-    });
-  };
-  const removeSkill = (index: number) => {
-    const updated = skillConfigs.filter((_, i) => i !== index);
-    onUpdate({ skills: updated.length ? updated : null });
+  const effective = useMemo(
+    () => effectiveSkills(definitionSkills, delta),
+    [definitionSkills, delta],
+  );
+  const commit = (next: NormalizedDelta) =>
+    onUpdate({ skills: isEmptyDelta(next) ? null : next });
+  const skillActions: SkillActions = {
+    setAdded: (names) => commit({ ...delta, add: names }),
+    removeDefinitionSkill: (name) =>
+      commit({ ...delta, remove: delta.remove === "*" ? "*" : [...delta.remove, name] }),
+    keepDefinitionSkill: (name) =>
+      commit({
+        ...delta,
+        remove: delta.remove === "*" ? "*" : delta.remove.filter((s) => s !== name),
+      }),
+    keepAllDefinitionSkills: () => commit({ ...delta, remove: [] }),
   };
 
   /* ---- prompt preview text ---- */
@@ -356,11 +341,13 @@ export function AgentDetailPopup({
               color={color}
               models={models}
               tools={tools}
-              skillConfigs={skillConfigs}
+              definitionSkills={definitionSkills}
+              delta={delta}
+              effective={effective}
+              catalog={catalog ?? []}
+              catalogLoading={catalogLoading}
+              skillActions={skillActions}
               onUpdate={onUpdate}
-              updateSkillMode={updateSkillMode}
-              addSkill={addSkill}
-              removeSkill={removeSkill}
               advancedOpen={advancedOpen}
               setAdvancedOpen={setAdvancedOpen}
               onCancel={() => setEditing(false)}
@@ -372,7 +359,7 @@ export function AgentDetailPopup({
               displayModel={displayModel}
               promptPreview={promptPreview}
               tools={tools}
-              skillNames={skillNames}
+              effective={effective}
               onEdit={() => setEditing(true)}
             />
           )}
@@ -397,7 +384,7 @@ function ReadMode({
   displayModel,
   promptPreview,
   tools,
-  skillNames,
+  effective,
   onEdit,
 }: {
   color: string;
@@ -405,7 +392,7 @@ function ReadMode({
   displayModel: string;
   promptPreview: string;
   tools: string[];
-  skillNames: string[];
+  effective: string[];
   onEdit: () => void;
 }) {
   return (
@@ -468,11 +455,11 @@ function ReadMode({
         {/* Skills card */}
         <div className="flex-1 rounded-lg border border-purple-500/15 bg-purple-500/[0.02] px-3 py-2.5">
           <div className="text-[11px] font-semibold text-purple-400 mb-1.5">
-            &#10023; Skills
+            &#10023; Effective skills
           </div>
           <div className="flex flex-wrap gap-1">
-            {skillNames.length > 0 ? (
-              skillNames.map((s) => (
+            {effective.length > 0 ? (
+              effective.map((s) => (
                 <ReadPill
                   key={s}
                   label={s}
@@ -514,11 +501,13 @@ function EditMode({
   color,
   models,
   tools,
-  skillConfigs,
+  definitionSkills,
+  delta,
+  effective,
+  catalog,
+  catalogLoading,
+  skillActions,
   onUpdate,
-  updateSkillMode,
-  addSkill,
-  removeSkill,
   advancedOpen,
   setAdvancedOpen,
   onCancel,
@@ -527,11 +516,13 @@ function EditMode({
   color: string;
   models: string[];
   tools: string[];
-  skillConfigs: SkillConfig[];
+  definitionSkills: string[];
+  delta: NormalizedDelta;
+  effective: string[];
+  catalog: SkillCatalogEntry[];
+  catalogLoading: boolean;
+  skillActions: SkillActions;
   onUpdate: (data: Record<string, unknown>) => void;
-  updateSkillMode: (index: number, mode: SkillConfig["mode"]) => void;
-  addSkill: (name: string) => void;
-  removeSkill: (index: number) => void;
   advancedOpen: boolean;
   setAdvancedOpen: React.Dispatch<React.SetStateAction<boolean>>;
   onCancel: () => void;
@@ -632,27 +623,78 @@ function EditMode({
           />
         </div>
         <div>
-          <FieldLabel>Skills</FieldLabel>
-          <div className="space-y-1.5">
-            {skillConfigs.map((skill, idx) => (
-              <div key={skill.name} className="flex items-center gap-1.5">
-                <TagPill label={skill.name} onRemove={() => removeSkill(idx)} />
-                <FieldSelect
-                  id={`adp-skill-mode-${idx}`}
-                  value={skill.mode}
-                  onChange={(e) =>
-                    updateSkillMode(idx, e.target.value as SkillConfig["mode"])
-                  }
-                  className="!w-auto !px-1.5 !py-0.5 !text-[10px]"
-                >
-                  <option value="autonomous">Autonomous</option>
-                  <option value="guided">Guided</option>
-                  <option value="interactive">Interactive</option>
-                </FieldSelect>
-              </div>
-            ))}
+          <FieldLabel>Added</FieldLabel>
+          <div data-testid="skills-added">
+            <SkillPicker
+              id="adp-skills-add"
+              value={delta.add}
+              onChange={skillActions.setAdded}
+              catalog={catalog}
+              isLoading={catalogLoading}
+            />
           </div>
-          <SkillAddInput onAdd={addSkill} />
+        </div>
+        <div>
+          <FieldLabel>Removed</FieldLabel>
+          <div data-testid="skills-removed" className="flex flex-wrap gap-1.5">
+            {delta.remove === "*" ? (
+              <div className="flex items-center gap-2 text-[11px] text-amber-300/80">
+                <span>All of the definition's skills (replace)</span>
+                <button
+                  type="button"
+                  className="underline hover:text-amber-200 transition-colors"
+                  onClick={skillActions.keepAllDefinitionSkills}
+                >
+                  Keep the definition's skills
+                </button>
+              </div>
+            ) : (
+              <>
+                {delta.remove.map((name) => (
+                  <TagPill
+                    key={name}
+                    label={name}
+                    onRemove={() => skillActions.keepDefinitionSkill(name)}
+                  />
+                ))}
+                {definitionSkills
+                  .filter((s) => !(delta.remove as string[]).includes(s))
+                  .map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      aria-label={`Remove ${name} from this node`}
+                      onClick={() => skillActions.removeDefinitionSkill(name)}
+                      className="inline-flex items-center gap-1 rounded-full border border-dashed border-white/[0.12] px-2 py-0.5 text-[11px] text-white/50 hover:text-white/80 hover:border-white/30 transition-colors"
+                    >
+                      <span className="font-mono">{name}</span>
+                      <span className="text-white/30">remove</span>
+                    </button>
+                  ))}
+                {delta.remove.length === 0 && definitionSkills.length === 0 && (
+                  <span className="text-[11px] text-white/20">None</span>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+        <div>
+          <FieldLabel>Effective</FieldLabel>
+          <div data-testid="skills-effective" className="flex flex-wrap gap-1">
+            {effective.length > 0 ? (
+              effective.map((s) => (
+                <ReadPill
+                  key={s}
+                  label={s}
+                  className="bg-purple-500/10 text-purple-400/80 border border-purple-500/20"
+                />
+              ))
+            ) : (
+              <span className="text-[11px] text-white/20">
+                None (the repository's own skills load unfiltered)
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
