@@ -71,8 +71,9 @@ export function WatcherPage() {
           description="Tick results land here when the scheduled watcher runs or you trigger one manually."
         />
       ) : (
-        // Below sm the window, log count, job and detail step aside, so when,
-        // what happened and the proposal fit a phone on one line per tick.
+        // Below sm the window, log count, proposal and detail step aside, so
+        // when, what happened and the analysis job (the row's link) fit a
+        // phone on one line per tick.
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="data-table">
             <thead>
@@ -81,8 +82,8 @@ export function WatcherPage() {
                 <th>Action</th>
                 <th className="hidden sm:table-cell">Window</th>
                 <th className="hidden sm:table-cell">Log lines</th>
-                <th className="hidden sm:table-cell">Analysis job</th>
-                <th>Proposal</th>
+                <th>Analysis job</th>
+                <th className="hidden sm:table-cell">Proposal</th>
                 <th className="hidden sm:table-cell">Detail</th>
               </tr>
             </thead>
@@ -101,7 +102,7 @@ export function WatcherPage() {
                     {windowLabel(run.window_start, run.window_end)}
                   </td>
                   <td className="hidden tabular-nums text-muted-foreground sm:table-cell">{run.log_lines}</td>
-                  <td className="hidden whitespace-nowrap sm:table-cell">
+                  <td className="whitespace-nowrap">
                     {run.job_id ? (
                       <Link to={`/jobs/${run.job_id}`} className="font-mono text-xs text-primary hover:underline">
                         {run.job_id.slice(0, 12)}
@@ -110,7 +111,7 @@ export function WatcherPage() {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </td>
-                  <td className="whitespace-nowrap">
+                  <td className="hidden whitespace-nowrap sm:table-cell">
                     {run.tracker_key ? (
                       run.tracker_url ? (
                         <a

@@ -61,14 +61,14 @@ export function JobsTable({
           />
         </div>
 
-        {/* Below sm the repo, cost and created columns step aside and the task
-            takes the room that is left, so the status pill and the actions stay
-            on a phone screen and every row keeps one line. */}
+        {/* Below sm the job id, repo, cost and created columns step aside and
+            the task takes the room that is left, with the short job id under
+            it, so the status pill and the actions stay on a phone screen. */}
         <div className="overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>
-                <th scope="col">Job ID</th>
+                <th scope="col" className="hidden sm:table-cell">Job ID</th>
                 <th scope="col" className="hidden sm:table-cell">Repo</th>
                 <th scope="col">Task</th>
                 <th scope="col">Status</th>
@@ -88,9 +88,12 @@ export function JobsTable({
                   role="link"
                   aria-label={`View job ${job.job_id}`}
                 >
-                  <td className="whitespace-nowrap font-mono text-xs">{job.job_id.slice(0, 8)}</td>
+                  <td className="hidden whitespace-nowrap font-mono text-xs sm:table-cell">{job.job_id.slice(0, 8)}</td>
                   <td className="hidden whitespace-nowrap font-mono text-xs sm:table-cell">{job.repo}</td>
-                  <td className="w-full max-w-0 truncate sm:w-auto sm:max-w-[200px]">{job.task}</td>
+                  <td className="w-full max-w-0 sm:w-auto sm:max-w-[200px]">
+                    <div className="truncate">{job.task}</div>
+                    <div className="font-mono text-xs text-fg-muted sm:hidden">{job.job_id.slice(0, 8)}</div>
+                  </td>
                   <td>
                     <JobStatusBadge status={job.status} />
                   </td>
