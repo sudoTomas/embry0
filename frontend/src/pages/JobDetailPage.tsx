@@ -16,6 +16,7 @@ import { AwaitingInputCard } from "@/components/jobs/AwaitingInputCard";
 import { useJobLogs } from "@/hooks/useJobLogs";
 import { useAgentStates } from "@/hooks/useAgentStates";
 import { AgentCard } from "@/components/jobs/AgentCard";
+import { JobLine } from "@/components/jobs/JobLine";
 import { PausedBanner } from "@/components/jobs/PausedBanner";
 import { TracesTable } from "@/components/traces/TracesTable";
 import { CostBreakdownTable } from "@/components/jobs/CostBreakdownTable";
@@ -122,7 +123,6 @@ export function JobDetailPage() {
         forge: registeredRepos?.find((r) => r.repo === job.repo)?.forge ?? null,
       })
     : null;
-  const isActive = job.status === "running" || job.status === "awaiting_input";
 
   const handleResume = async (choice: string, guidance?: string) => {
     try {
@@ -214,18 +214,11 @@ export function JobDetailPage() {
         {job.task}
       </div>
 
-      {/* Progress bar */}
-      {isActive && (
-        <div className="h-[3px] bg-white/[0.06] rounded-full overflow-hidden">
-          <div
-            className="h-full rounded-full transition-all duration-500"
-            data-testid="job-progress-fill"
-            style={{
-              width: `${totalPhases > 0 ? ((completedPhases + activeAgents.length * 0.5) / totalPhases) * 100 : 0}%`,
-              background: job.status === "awaiting_input" ? "var(--color-warning)" : "var(--color-info)",
-            }}
-          />
-        </div>
+      {/* The job's journey. It holds its place from the first paint of a job
+          that has started: its stages arrive with the event log, often
+          seconds later, and must not push the page down when they do. */}
+      {job.status !== "pending" && (
+        <JobLine agents={agents} graph={pipelineGraph} status={job.status} prUrl={displayPrUrl} />
       )}
 
       {/* PR link */}

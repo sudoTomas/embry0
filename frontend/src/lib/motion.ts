@@ -26,3 +26,15 @@ export function tick(el: Element | null, scale = 1.18): void {
     { duration: 280, easing: EASE_STANDARD },
   );
 }
+
+/**
+ * A motion token from index.css in ms, read where a script needs it, or
+ * `fallback` without styles (jsdom). The built stylesheet writes "1400ms" as
+ * "1.4s", so the unit decides.
+ */
+export function motionMs(el: Element, token: string, fallback: number): number {
+  const value = getComputedStyle(el).getPropertyValue(token).trim();
+  const n = parseFloat(value);
+  if (!Number.isFinite(n)) return fallback;
+  return value.endsWith("ms") ? n : value.endsWith("s") ? n * 1000 : n;
+}

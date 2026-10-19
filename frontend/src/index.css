@@ -319,6 +319,13 @@ body[data-divine="off"] .motion-mark * {
 }
 
 /* ----- motion: job journey ----- */
+@media (prefers-reduced-motion: no-preference) {
+  /* A stop on a job's line glides to its new place when a stage joins the
+     line, rather than jumping there (components/jobs/JobLine.tsx). */
+  .job-line-stop {
+    transition: transform var(--motion-base) var(--ease-travel);
+  }
+}
 
 /* ----- motion: repository setup ----- */
 
