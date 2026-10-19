@@ -23,6 +23,8 @@ import { DeliverablesCard } from "@/components/jobs/DeliverablesCard";
 import { QATab } from "@/components/qa/QATab";
 import { resumeJob, discardJob } from "@/api/jobs";
 import { isTerminalStatus } from "@/lib/jobStatus";
+import { isNotFound } from "@/api/errorDetail";
+import { PageError } from "@/components/PageError";
 import { toastApiError } from "@/api/errorToast";
 
 function useElapsedTime(startedAt: string | null, finishedAt: string | null) {
@@ -50,10 +52,12 @@ const TRACES_PAGE_SIZE = 25;
 
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
-  const { data: job, isLoading, isError, refetch } = useJob(jobId);
-  const { data: jobInputs } = useJobInputs(jobId ?? "", job?.status);
+  const { data: job, isLoading, isError, error, refetch } = useJob(jobId);
+  const missing = isNotFound(error);
+  const { data: jobInputs } = useJobInputs(missing ? "" : (jobId ?? ""), job?.status);
 
-  const { events, isConnected, latestCost, pipelineGraph } = useJobLogs(jobId);
+  // A job that does not exist has no event stream to open.
+  const { events, isConnected, latestCost, pipelineGraph } = useJobLogs(missing ? undefined : jobId);
   const { agents, prUrl, interruptData } = useAgentStates(events, job?.status, pipelineGraph);
   const activeAgents = agents.filter((a) => a.status === "running");
   const completedAgents = agents.filter((a) => a.status === "completed" || a.status === "failed");
@@ -96,7 +100,9 @@ export function JobDetailPage() {
     prevStatusRef.current = job?.status ?? null;
   }, [job?.status]);
 
-  if (isError) return <div className="p-8 text-center text-destructive">Failed to load job</div>;
+  if (missing) return <PageError message={`No job ${jobId}`} back={{ to: "/jobs", label: "All jobs" }} />;
+  if (isError)
+    return <PageError message="Failed to load job" onRetry={() => void refetch()} back={{ to: "/jobs", label: "All jobs" }} />;
   if (isLoading || !job) return <div className="p-8 text-center text-white/40">Loading...</div>;
 
   const displayPrUrl = prUrl || job.pr_url;

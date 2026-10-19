@@ -127,7 +127,7 @@ describe("RepoDetailPage (RAV-1253)", () => {
   });
 
   it("shows a clear error for unregistered repos", async () => {
-    mockFetchRepoDetail.mockRejectedValue(new Error("404"));
+    mockFetchRepoDetail.mockRejectedValue(Object.assign(new Error("404"), { response: { status: 404 } }));
     renderPage();
     expect(await screen.findByText(/not registered in embry0/)).toBeInTheDocument();
   });

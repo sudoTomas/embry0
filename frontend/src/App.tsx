@@ -6,11 +6,12 @@ import { AuthGate } from "@/components/auth/AuthGate";
 import { router } from "@/router";
 
 // Don't retry on 429 (rate limit) — retrying compounds the problem and the
-// dashboard's polling tick will pick up the data on the next cycle anyway.
+// dashboard's polling tick will pick up the data on the next cycle anyway —
+// nor on 404: a record that does not exist stays missing.
 // Other errors get one retry (short network blip absorption).
 function shouldRetry(failureCount: number, error: unknown): boolean {
   const status = (error as { response?: { status?: number } } | undefined)?.response?.status;
-  if (status === 429) return false;
+  if (status === 429 || status === 404) return false;
   return failureCount < 1;
 }
 

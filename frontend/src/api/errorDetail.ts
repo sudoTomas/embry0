@@ -72,3 +72,8 @@ export function apiErrorMessage(error: unknown, fallback = "The request failed")
   if (typeof e?.message === "string" && e.message.trim()) return e.message.trim();
   return fallback;
 }
+
+/** Whether a request failed because the record does not exist (HTTP 404). */
+export function isNotFound(error: unknown): boolean {
+  return (error as { response?: { status?: unknown } } | null)?.response?.status === 404;
+}

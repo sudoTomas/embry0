@@ -5,6 +5,8 @@ import { useJob } from "@/hooks/useJobs";
 import { useJobInputs } from "@/hooks/useInputs";
 import { deriveNodeStates, filterEventsForNode } from "@/lib/pipeline-live";
 import { isTerminalStatus } from "@/lib/jobStatus";
+import { isNotFound } from "@/api/errorDetail";
+import { PageError } from "@/components/PageError";
 import { LogViewer } from "@/components/logs/LogViewer";
 import { PipelineGraphView } from "@/components/pipeline/PipelineGraphView";
 import { AgentFilterTabs } from "@/components/logs/AgentFilterTabs";
@@ -14,6 +16,13 @@ import { ArrowLeft, X } from "lucide-react";
 
 export function JobLogsPage() {
   const { jobId } = useParams<{ jobId: string }>();
+  // Load job data for completion detection. RAV-1285: the graph arrives on
+  // the `pipeline_graph` event plan_route emits (persisted + WS-replayed,
+  // so late joiners get it too); per-node live state is derived from the
+  // node_started/node_completed/qa_* events the stream already carries.
+  const { data: job, error: jobError } = useJob(jobId);
+  // A job that does not exist has no event stream to open.
+  const missing = isNotFound(jobError);
   const {
     events,
     isConnected,
@@ -23,13 +32,8 @@ export function JobLogsPage() {
     latestTokensOut,
     latestTurns,
     pipelineGraph,
-  } = useJobLogs(jobId);
+  } = useJobLogs(missing ? undefined : jobId);
 
-  // Load job data for completion detection. RAV-1285: the graph arrives on
-  // the `pipeline_graph` event plan_route emits (persisted + WS-replayed,
-  // so late joiners get it too); per-node live state is derived from the
-  // node_started/node_completed/qa_* events the stream already carries.
-  const { data: job } = useJob(jobId);
   const effectiveGraph = pipelineGraph ?? null;
   const jobFinished = isTerminalStatus(job?.status);
   const effectiveIsComplete = isComplete || jobFinished;
@@ -40,7 +44,7 @@ export function JobLogsPage() {
     [effectiveGraph, events, job?.status],
   );
 
-  const { data: jobInputs } = useJobInputs(jobId ?? "", job?.status);
+  const { data: jobInputs } = useJobInputs(missing ? "" : (jobId ?? ""), job?.status);
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
@@ -60,6 +64,8 @@ export function JobLogsPage() {
     const node = effectiveGraph.nodes.find((n) => n.node_id === selectedNodeId);
     return node?.label || node?.agent_type || selectedNodeId;
   }, [selectedNodeId, effectiveGraph]);
+
+  if (missing) return <PageError message={`No job ${jobId}`} back={{ to: "/jobs", label: "All jobs" }} />;
 
   return (
     <div className="space-y-4">

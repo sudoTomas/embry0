@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Select } from "@/components/ui/Select";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { PageError } from "@/components/PageError";
+import { isNotFound } from "@/api/errorDetail";
 import { IssueStatusBadge } from "@/components/issues/IssueStatusBadge";
 import { IssuePriorityBadge } from "@/components/issues/IssuePriorityBadge";
 import { AgentIndicator } from "@/components/issues/AgentIndicator";
@@ -31,7 +32,7 @@ export function IssueDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  const { data: issue, isLoading, isError, refetch } = useIssue(id);
+  const { data: issue, isLoading, isError, error, refetch } = useIssue(id);
   const { data: activity = [] } = useIssueActivity(id);
   const triageIssue = useTriageIssue();
   const syncIssue = useSyncIssue();
@@ -75,6 +76,7 @@ export function IssueDetailPage(): JSX.Element {
       });
   };
 
+  if (isNotFound(error)) return <PageError message={`No issue ${id}`} back={{ to: "/issues", label: "All issues" }} />;
   if (isError) return <PageError message="Failed to load issue" onRetry={() => refetch()} />;
   if (isLoading || !issue) return <TableSkeleton columns={4} rows={8} />;
 
