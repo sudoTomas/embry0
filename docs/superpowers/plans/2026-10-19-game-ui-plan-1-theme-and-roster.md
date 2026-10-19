@@ -1916,7 +1916,9 @@ Branch `feat/game-ui` (worktree `/Users/tomas/repos/embry0-worktrees/game-ui`) a
 
 After each wave, on the integration branch: merge the wave's task branches (fast-forward or merge commit, no squash), grep the tree for conflict markers, grep the touched files for duplicate `function` and `export const` definitions, then the frontend gate (`npm run build && npm run lint && npm test` in `frontend/`) and the backend guards that read the docs and the frontend tree (`.venv/bin/python -m pytest tests/unit/docs tests/unit/test_user_facing_text.py -q`). The name denylist runs in CI (`scripts/check_denylist.py` with the private list); before pushing, read the diff once for a host, customer or person name.
 
-After wave 2: the whole-branch review (Opus, `superpowers:requesting-code-review`), one fix wave, re-review, then `gh pr create` against `main` with the spec, the plan and this summary in the body. Manual check before merging: the dashboard on a deployment with one running job (console cards and the job graph animate; sprites static under reduced motion in DevTools' rendering emulation), the agents list and form, and a template in the editor; screenshots in the PR.
+After wave 1: a contact sheet of every avatar in every state (twelve rows, six states, 64 px, both frames of a two-frame state side by side), rendered from `COMPILED` into one HTML file in the session scratchpad and screenshotted. The sheet goes into the PR for the human review of the art; redraws land as a fix-wave task before merge.
+
+After wave 2: the whole-branch review (Opus, `superpowers:requesting-code-review`), one fix wave, re-review, then `gh pr create` against `main` with the spec, the plan, the contact sheet and this summary in the body. Manual check before merging: the dashboard on a deployment with one running job (console cards and the job graph animate; sprites static under reduced motion in DevTools' rendering emulation), the agents list and form, and a template in the editor; screenshots in the PR.
 
 ## Deploy notes
 
