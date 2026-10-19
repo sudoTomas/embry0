@@ -210,7 +210,7 @@ export function AddRepoPanel() {
               key={f}
               type="button"
               size="sm"
-              variant={forge === f ? "default" : "ghost"}
+              variant={forge === f ? "secondary" : "ghost"}
               onClick={() => {
                 setForge(f);
                 setSelected("");

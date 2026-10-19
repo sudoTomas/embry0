@@ -207,7 +207,7 @@ export function ProposalsSection() {
                           Answer on {ownerOf(proposal)}
                         </Link>
                       ) : tracker && ACCEPTED_HERE.has(tracker.kind) ? (
-                        <Button size="xs" disabled={busy} onClick={() => handleAccept(proposal)}>
+                        <Button size="xs" variant="secondary" disabled={busy} onClick={() => handleAccept(proposal)}>
                           Accept
                         </Button>
                       ) : tracker?.url ? (

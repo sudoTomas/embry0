@@ -116,7 +116,9 @@ const FRAMES: Record<Operation, ReactElement> = {
 /**
  * Static glyph form of an alchemical operation — the still-frame of
  * its `<DivineOperation>` animation. Used as decorative chrome where
- * a panel, page, or section "belongs to" one operation.
+ * a panel, page, or section "belongs to" one operation. Drawn in the muted
+ * body colour: chrome never takes the gold, which marks the one thing on a
+ * page to act on.
  *
  * Renders unchanged regardless of `prefers-reduced-motion` (no motion
  * to suppress) and regardless of `body[data-divine="off"]` is overridden
@@ -137,7 +139,7 @@ export function OperationGlyph({
       width={size}
       height={size}
       viewBox="0 0 64 64"
-      className={`divine-element text-primary ${className ?? ""}`}
+      className={`divine-element text-fg-muted ${className ?? ""}`}
       role={titled ? "img" : "presentation"}
       aria-label={titled ? titleText : undefined}
     >

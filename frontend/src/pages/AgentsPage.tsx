@@ -146,7 +146,7 @@ export function AgentsPage() {
                                   <OperationGlyph operation={op} size={28} titled />
                                 </span>
                               ) : (
-                                <IconBox icon={Bot} color="var(--color-primary)" size="sm" className="hidden sm:flex" />
+                                <IconBox icon={Bot} color="var(--color-fg-muted)" size="sm" className="hidden sm:flex" />
                               );
                             })()}
                             <div>

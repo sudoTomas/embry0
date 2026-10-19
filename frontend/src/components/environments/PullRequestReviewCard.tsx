@@ -196,7 +196,7 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
         <code>/embry0 review</code>.
       </p>
 
-      <Button size="sm" onClick={handleSave} disabled={locked || setPrefs.isPending || !dirty}>
+      <Button size="sm" variant="secondary" onClick={handleSave} disabled={locked || setPrefs.isPending || !dirty}>
         {setPrefs.isPending ? "Saving…" : "Save review settings"}
       </Button>
     </Card>

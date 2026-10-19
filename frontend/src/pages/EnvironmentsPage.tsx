@@ -357,7 +357,7 @@ export function EnvironmentsPage() {
                   <h2 className="text-section font-semibold">QA test credentials</h2>
                   <p className="text-sm text-muted-foreground">{QA_DESCRIPTION}</p>
                 </div>
-                <Button size="sm" onClick={() => openGlobalAdd("qa")}>
+                <Button size="sm" variant="secondary" onClick={() => openGlobalAdd("qa")}>
                   <Plus className="h-4 w-4 mr-1" />
                   Add QA variable
                 </Button>
@@ -486,7 +486,7 @@ export function EnvironmentsPage() {
                       <h2 className="text-section font-semibold">QA test credentials</h2>
                       <p className="text-sm text-muted-foreground">{QA_DESCRIPTION}</p>
                     </div>
-                    <Button size="sm" onClick={() => openRepoAdd("qa")} type="button">
+                    <Button size="sm" variant="secondary" onClick={() => openRepoAdd("qa")} type="button">
                       <Plus className="h-4 w-4 mr-1" />
                       Add QA variable
                     </Button>

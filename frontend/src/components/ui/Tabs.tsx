@@ -90,7 +90,9 @@ export function TabsTrigger({ value, children, className }: TabsTriggerProps) {
       aria-controls={`tab-panel-${value}`}
       className={cn(
         "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-semibold ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
-        current === value ? "bg-overlay text-primary" : "text-fg-muted hover:text-fg",
+        // The family's one selection style: the body colour on the overlay.
+        // Gold is for the page's primary action, never a selected tab.
+        current === value ? "bg-overlay text-fg" : "text-fg-muted hover:text-fg",
         className,
       )}
       onClick={() => onValueChange(value)}
