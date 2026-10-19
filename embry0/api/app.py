@@ -1636,6 +1636,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(audit_sweep_task)
     audit_sweep_task.add_done_callback(app.state.background_tasks.discard)
 
+    # ADR 0017: job log retention. The sweep object always exists, so the
+    # admin preview can dry-run it at any number of days; its loop runs only
+    # with JOB_LOG_RETENTION_DAYS set (one sweep now, then daily: a deploy
+    # more often than daily must not keep postponing it).
+    from embry0.services.job_log_retention import JobLogRetentionSweep
+    from embry0.storage.repositories.job_log_retention import JobLogRetentionRepository
+
+    app.state.job_log_retention = JobLogRetentionSweep(
+        JobLogRetentionRepository(db), retention_days=config.job_log_retention_days
+    )
+    if app.state.job_log_retention.enabled:
+        job_log_retention_task = asyncio.create_task(app.state.job_log_retention.start())
+        app.state.background_tasks.add(job_log_retention_task)
+        job_log_retention_task.add_done_callback(app.state.background_tasks.discard)
+    logger.info("job_log_retention_configured", retention_days=config.job_log_retention_days)
+
     # #270: which trigger label dispatch matches on, and whether the DB row,
     # .env or the code default supplied it (DB wins; a shadowed .env warns).
     await app.state.integration_repo.log_effective_trigger_labels()

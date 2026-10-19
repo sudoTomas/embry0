@@ -671,7 +671,13 @@ class Embry0Config(BaseSettings):
     minio_root_password: SecretSetting = ""
     qa_artifact_retention_days: int = Field(default=14, gt=0, le=3650)
 
-    @field_validator("audit_log_path", mode="before")
+    # Code retention (ADR 0017). Unset (the default) keeps everything, as
+    # before. Set, a daily sweep replaces the code in job events older than
+    # this many days (Write/Edit/Bash inputs, every tool result) with a marker
+    # that keeps the tool, file path, size and hash.
+    job_log_retention_days: int | None = Field(default=None, gt=0, le=3650)
+
+    @field_validator("audit_log_path", "job_log_retention_days", mode="before")
     @classmethod
     def _empty_str_to_none(cls, v: object) -> object:
         if v == "":

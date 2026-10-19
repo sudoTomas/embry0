@@ -33,10 +33,15 @@ export interface TurnUsageContract extends ContractBase {
 }
 export interface TextContract extends ContractBase, Truncatable { type: "text"; text: string }
 export interface ThinkingContract extends ContractBase, Truncatable { type: "thinking"; text: string }
-export interface ToolCallContract extends ContractBase {
+/** Set on a stored event whose code the job log retention sweep replaced (ADR 0017). */
+interface Redactable {
+  redacted?: Record<string, unknown>;
+}
+
+export interface ToolCallContract extends ContractBase, Redactable {
   type: "tool_call"; tool_id: string; tool_name: string; summary: string; tool_input: Record<string, unknown>;
 }
-export interface ToolResultContract extends ContractBase, Truncatable { type: "tool_result"; tool_id: string; content: string; is_error: boolean }
+export interface ToolResultContract extends ContractBase, Truncatable, Redactable { type: "tool_result"; tool_id: string; content: string; is_error: boolean }
 export interface SubagentStartContract extends ContractBase { type: "subagent_start"; tool_id: string; name: string }
 export interface SubagentEndContract extends ContractBase { type: "subagent_end"; tool_id: string; is_error: boolean }
 export interface ContextCompactedContract extends ContractBase { type: "context_compacted"; pre_tokens?: number }
@@ -121,8 +126,8 @@ export const EVENT_FIELDS = {
   turn_usage: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "input_tokens", "model", "output_tokens", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
   text: { required: ["text", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC]) },
   thinking: { required: ["text", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC]) },
-  tool_call: { required: ["summary", "timestamp", "tool_id", "tool_input", "tool_name", "type"], optional: [...BASE_OPTIONAL] },
-  tool_result: { required: ["content", "is_error", "timestamp", "tool_id", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC]) },
+  tool_call: { required: ["summary", "timestamp", "tool_id", "tool_input", "tool_name", "type"], optional: sorted([...BASE_OPTIONAL, "redacted"]) },
+  tool_result: { required: ["content", "is_error", "timestamp", "tool_id", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC, "redacted"]) },
   subagent_start: { required: ["name", "timestamp", "tool_id", "type"], optional: [...BASE_OPTIONAL] },
   subagent_end: { required: ["is_error", "timestamp", "tool_id", "type"], optional: [...BASE_OPTIONAL] },
   context_compacted: { required: ["timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "pre_tokens"]) },
