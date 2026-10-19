@@ -1,7 +1,7 @@
 // The Job page shows a finished job's outcome and deliverables whatever
 // finished status it reached: a merged PR, a skipped or a partial run too,
 // not only "completed".
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -12,6 +12,8 @@ vi.mock("@/hooks/useJobs", () => ({ useJob: () => ({ data: job.current, isLoadin
 vi.mock("@/hooks/useInputs", () => ({ useJobInputs: () => ({ data: [] }) }));
 vi.mock("@/hooks/useTraces", () => ({ useTraces: () => ({ data: { traces: [], total: 0 } }) }));
 vi.mock("@/hooks/useJobLogs", () => ({ useJobLogs: () => ({ events: [], isConnected: false, latestCost: 0, pipelineGraph: null }) }));
+const repos = vi.hoisted(() => ({ current: [] as unknown[] }));
+vi.mock("@/hooks/useRepos", () => ({ useRegisteredRepos: () => ({ data: repos.current }) }));
 vi.mock("@/components/jobs/DeliverablesCard", () => ({ DeliverablesCard: ({ jobId }: { jobId: string }) => <div data-testid="deliverables">{jobId}</div> }));
 
 import { JobDetailPage } from "../JobDetailPage";
@@ -33,6 +35,10 @@ function renderJob(overrides: Partial<JobResponse>) {
     </QueryClientProvider>,
   );
 }
+
+beforeEach(() => {
+  repos.current = [];
+});
 
 describe("a finished job's outcome on the Job page", () => {
   it("a merged job shows its success and its deliverables", () => {
@@ -65,10 +71,48 @@ describe("the Job page's issue link", () => {
     expect(link).toHaveAttribute("href", "/issues/iss-42");
   });
 
-  it("never builds a github.com link, and shows no link without an issue row", () => {
+  it("shows no issue link for a job with no repository", () => {
     renderJob({ status: "running", finished_at: null, issue_id: null, issue_number: 7, repo: null });
     expect(screen.queryByRole("link", { name: /Issue #7/ })).toBeNull();
     expect(document.querySelector('a[href*="github.com"]')).toBeNull();
+  });
+
+  // A job made through POST /jobs (the Create job dialog, the MCP job_create
+  // tool) carries an issue number but no issue row: it links to the issue on
+  // its own forge, read from the pull request's URL or the repository's row.
+  it("links an issue-less GitHub job to the issue on GitHub", () => {
+    renderJob({
+      status: "pr_merged", issue_id: null, issue_number: 651, repo: "acme/app",
+      pr_url: "https://github.com/acme/app/pull/700",
+    });
+    const link = screen.getByRole("link", { name: /Issue #651/ });
+    expect(link).toHaveAttribute("href", "https://github.com/acme/app/issues/651");
+  });
+
+  it("links an issue-less GitLab job to the issue on its own GitLab host", () => {
+    renderJob({
+      status: "completed", issue_id: null, issue_number: 12, repo: "group/sub/project",
+      pr_url: "https://gitlab.example.com/group/sub/project/-/merge_requests/3",
+    });
+    const link = screen.getByRole("link", { name: /Issue #12/ });
+    expect(link).toHaveAttribute("href", "https://gitlab.example.com/group/sub/project/-/issues/12");
+    expect(document.querySelector('a[href*="github.com"]')).toBeNull();
+  });
+
+  it("links an issue-less job with no pull request by its registered repository's forge", () => {
+    repos.current = [{ repo: "acme/app", forge: "github" }];
+    renderJob({ status: "running", finished_at: null, issue_id: null, issue_number: 9, repo: "acme/app" });
+    expect(screen.getByRole("link", { name: /Issue #9/ })).toHaveAttribute("href", "https://github.com/acme/app/issues/9");
+  });
+
+  it("shows no issue link where the forge's address is unknown", () => {
+    // A GitLab instance can be self-managed: without a merge request URL its
+    // host is unknown here, and a guessed link would lead nowhere.
+    repos.current = [{ repo: "group/project", forge: "gitlab" }];
+    renderJob({ status: "running", finished_at: null, issue_id: null, issue_number: 5, repo: "group/project" });
+    expect(screen.queryByRole("link", { name: /Issue #5/ })).toBeNull();
+    renderJob({ status: "running", finished_at: null, issue_id: null, issue_number: 6, repo: "acme/unregistered" });
+    expect(screen.queryByRole("link", { name: /Issue #6/ })).toBeNull();
   });
 });
 

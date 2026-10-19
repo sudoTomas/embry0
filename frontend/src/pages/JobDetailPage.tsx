@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useParams } from "react-router";
-import { ArrowLeft, Clock, DollarSign, Layers } from "lucide-react";
+import { ArrowLeft, Clock, DollarSign, ExternalLink, Layers } from "lucide-react";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { DivineRipple } from "@/components/divine/DivineRipple";
 import { jobToOperation, shouldFireCompletionFlare } from "@/components/divine/operations";
@@ -8,6 +8,7 @@ import { buttonVariants } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { useJob } from "@/hooks/useJobs";
+import { useRegisteredRepos } from "@/hooks/useRepos";
 import { useJobInputs } from "@/hooks/useInputs";
 import { useTraces } from "@/hooks/useTraces";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
@@ -23,6 +24,7 @@ import { DeliverablesCard } from "@/components/jobs/DeliverablesCard";
 import { QATab } from "@/components/qa/QATab";
 import { resumeJob, discardJob } from "@/api/jobs";
 import { isTerminalStatus } from "@/lib/jobStatus";
+import { forgeIssueUrl } from "@/lib/forgeLinks";
 import { isNotFound } from "@/api/errorDetail";
 import { PageError } from "@/components/PageError";
 import { toastApiError } from "@/api/errorToast";
@@ -60,6 +62,11 @@ export function JobDetailPage() {
   // has none, and opening it before the 404 mints a token for nothing.
   const { events, isConnected, latestCost, pipelineGraph } = useJobLogs(job ? jobId : undefined);
   const { agents, prUrl, interruptData } = useAgentStates(events, job?.status, pipelineGraph);
+  // A job with an issue number but no issue row (made through POST /jobs)
+  // links to the issue on its forge; the repository's row names the forge
+  // when there is no pull request yet.
+  const issueOnForgeOnly = !!job && !job.issue_id && job.issue_number != null && !!job.repo;
+  const { data: registeredRepos } = useRegisteredRepos({ enabled: issueOnForgeOnly });
   const activeAgents = agents.filter((a) => a.status === "running");
   const completedAgents = agents.filter((a) => a.status === "completed" || a.status === "failed");
   const pendingAgents = agents.filter((a) => a.status === "pending");
@@ -107,6 +114,14 @@ export function JobDetailPage() {
   if (isLoading || !job) return <div className="p-8 text-center text-white/40">Loading...</div>;
 
   const displayPrUrl = prUrl || job.pr_url;
+  const forgeIssueLink = issueOnForgeOnly
+    ? forgeIssueUrl({
+        repo: job.repo,
+        issueNumber: job.issue_number,
+        prUrl: displayPrUrl,
+        forge: registeredRepos?.find((r) => r.repo === job.repo)?.forge ?? null,
+      })
+    : null;
   const isActive = job.status === "running" || job.status === "awaiting_input";
 
   const handleResume = async (choice: string, guidance?: string) => {
@@ -171,14 +186,26 @@ export function JobDetailPage() {
           )}
         </div>
         {/* The job's issue row, which links on to its tracker (GitHub, GitLab
-            or Linear): a link built here assumed github.com for every forge. */}
-        {job.issue_id && (
+            or Linear): a link built here assumed github.com for every forge.
+            A job with no issue row links to the issue on its own forge. */}
+        {job.issue_id ? (
           <Link
             to={`/issues/${job.issue_id}`}
             className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1 text-xs h-7")}
           >
             {job.issue_number ? `Issue #${job.issue_number}` : "Issue"}
           </Link>
+        ) : (
+          forgeIssueLink && (
+            <a
+              href={forgeIssueLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1 text-xs h-7")}
+            >
+              Issue #{job.issue_number} <ExternalLink className="w-3 h-3" aria-hidden="true" />
+            </a>
+          )
         )}
       </div>
 
