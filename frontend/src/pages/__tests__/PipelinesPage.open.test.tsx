@@ -75,3 +75,23 @@ describe("opening a saved pipeline", () => {
     expect(screen.getByText("Valid")).toBeInTheDocument();
   });
 });
+
+// Golden touch: one gold action per view, the one to take. A saved pipeline
+// is saved in place; a new one can only be saved as a template.
+describe("the pipeline editor's gold action", () => {
+  it("is Save for an opened saved pipeline, with Save As beside it", async () => {
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /Quick fix/ }));
+    await screen.findByPlaceholderText("Pipeline name...");
+    expect(screen.getByRole("button", { name: /^Save$/ })).toHaveClass("bg-primary");
+    expect(screen.getByRole("button", { name: /^Save As$/ })).not.toHaveClass("bg-primary");
+  });
+
+  it("is Save As for a new pipeline, which has nothing to save in place", async () => {
+    renderPage();
+    fireEvent.click(screen.getByTestId("new-pipeline"));
+    await screen.findByPlaceholderText("Pipeline name...");
+    expect(screen.getByRole("button", { name: /^Save As$/ })).toHaveClass("bg-primary");
+    expect(screen.getByRole("button", { name: /^Save$/ })).not.toHaveClass("bg-primary");
+  });
+});

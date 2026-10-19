@@ -22,6 +22,7 @@ import { TemplateDrawer } from "./TemplateDrawer";
 import { useGraphState } from "./hooks/useGraphState";
 import { autoLayout } from "./autoLayout";
 import { DivineRipple } from "@/components/divine/DivineRipple";
+import { Button } from "@/components/ui/Button";
 import { useRenameTemplate, useCreateTemplate } from "@/hooks/usePipelines";
 import { toApiGraph } from "@/lib/graph-utils";
 import type { PipelineGraph, PipelineTemplate } from "@/lib/types";
@@ -260,23 +261,28 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
           <FolderOpen size={13} />
           Templates
         </button>
-        <button
+        {/* One gold action: Save once the pipeline is a saved template,
+            Save As while it is new and can only be saved as a copy. */}
+        <Button
           type="button"
+          size="sm"
+          variant={currentTemplateId ? "default" : "outline"}
           onClick={handleSave}
           disabled={!currentTemplateId || nodes.length === 0 || renameMutation.isPending}
-          className="flex items-center gap-1.5 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-30 text-white/70 text-xs font-medium px-3 py-1.5 rounded-md transition-colors"
+          className="gap-1.5"
         >
           <Save size={13} />
           Save
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          size="sm"
+          variant={currentTemplateId ? "outline" : "default"}
           onClick={handleSaveAs}
           disabled={nodes.length === 0 || createMutation.isPending}
-          className="h-[30px] rounded-md bg-primary px-3.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-30"
         >
           Save As
-        </button>
+        </Button>
       </div>
     </div>
   );
