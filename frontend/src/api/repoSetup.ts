@@ -183,6 +183,13 @@ export interface ApplyProposalResult {
   revision_id: number | null;
 }
 
+/** A test setup waiting for a person to review it (GET /setup/proposals?status=pending). */
+export interface PendingSetupProposal {
+  id: string;
+  repo: string;
+  created_at: string;
+}
+
 export async function fetchSetupCost(fullRepo: string): Promise<SetupCost> {
   const { data } = await api.get<SetupCost>(`/repos/${fullRepo}/setup/cost`);
   return data;
@@ -232,4 +239,12 @@ export async function applyProposal(
 
 export async function rejectProposal(fullRepo: string, proposalId: string): Promise<void> {
   await api.post(`/repos/${fullRepo}/setup/proposal/${proposalId}/reject`);
+}
+
+/** Every repository's test setup waiting for review, for the Overview's Needs-you brief. */
+export async function fetchPendingProposals(): Promise<PendingSetupProposal[]> {
+  const { data } = await api.get<{ proposals: PendingSetupProposal[] }>("/setup/proposals", {
+    params: { status: "pending" },
+  });
+  return data.proposals;
 }

@@ -9,7 +9,14 @@ vi.mock("../client", () => ({
   },
 }));
 
-import { applyProposal, fetchProposal, fetchSetupCost, rejectProposal, startSetup } from "../repoSetup";
+import {
+  applyProposal,
+  fetchPendingProposals,
+  fetchProposal,
+  fetchSetupCost,
+  rejectProposal,
+  startSetup,
+} from "../repoSetup";
 
 beforeEach(() => {
   get.mockReset();
@@ -71,5 +78,15 @@ describe("repo setup API", () => {
     post.mockResolvedValue({ data: {} });
     await rejectProposal("group/sub/project", "prop-abc");
     expect(post).toHaveBeenCalledWith("/repos/group/sub/project/setup/proposal/prop-abc/reject");
+  });
+
+  it("lists the setups waiting for review across every repository", async () => {
+    const proposals = [
+      { id: "prop-abc", repo: "acme/widgets", created_at: "2026-10-18T10:00:00Z" },
+      { id: "prop-def", repo: "group/sub/project", created_at: "2026-10-18T11:00:00Z" },
+    ];
+    get.mockResolvedValue({ data: { proposals } });
+    await expect(fetchPendingProposals()).resolves.toEqual(proposals);
+    expect(get).toHaveBeenCalledWith("/setup/proposals", { params: { status: "pending" } });
   });
 });

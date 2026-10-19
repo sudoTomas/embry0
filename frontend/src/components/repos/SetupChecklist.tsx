@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -20,6 +21,7 @@ import { useRepoReadiness, useSkipTesting } from "@/hooks/useRepoReadiness";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button, buttonVariants } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { CreateIssueDialog } from "@/components/issues/CreateIssueDialog";
 import { SetupAgentDialog } from "@/components/repos/SetupAgentDialog";
 import { SetupProposalCard } from "@/components/repos/SetupProposalCard";
 import { providerLabel } from "@/lib/status";
@@ -68,8 +70,6 @@ function actionHref(row: ReadinessRow, repo: string): string | null {
   switch (row.action?.kind) {
     case "open_environment":
       return `/environments?repo=${encodeURIComponent(repo)}`;
-    case "create_issue":
-      return "/issues";
     case "view_job":
       return row.job_id ? `/jobs/${row.job_id}` : null;
     default:
@@ -95,12 +95,24 @@ interface ChecklistRowProps {
   skipping: boolean;
   onSkip: () => void;
   onStartSetup: () => void;
+  onFirstTask: () => void;
   /** The setup proposal card is open under this row (testing only). */
   cardOpen: boolean;
   onToggleCard: () => void;
 }
 
-function ChecklistRow({ row, gold, repo, forge, skipping, onSkip, onStartSetup, cardOpen, onToggleCard }: ChecklistRowProps) {
+function ChecklistRow({
+  row,
+  gold,
+  repo,
+  forge,
+  skipping,
+  onSkip,
+  onStartSetup,
+  onFirstTask,
+  cardOpen,
+  onToggleCard,
+}: ChecklistRowProps) {
   const action = row.action;
   const href = action ? actionHref(row, repo) : null;
   const variant = gold ? "default" : "outline";
@@ -129,6 +141,11 @@ function ChecklistRow({ row, gold, repo, forge, skipping, onSkip, onStartSetup, 
           )}
           {(action?.kind === "start_setup" || action?.kind === "fix_setup") && !cardActs && (
             <Button variant={variant} size="sm" onClick={onStartSetup}>
+              {action.label}
+            </Button>
+          )}
+          {action?.kind === "create_issue" && (
+            <Button variant={variant} size="sm" onClick={onFirstTask}>
               {action.label}
             </Button>
           )}
@@ -208,7 +225,9 @@ export function ReadinessChip({ readiness }: { readiness: Readiness }) {
 export function SetupChecklist({ repo, forge }: { repo: string; forge: Forge }) {
   const readiness = useRepoReadiness(repo);
   const skip = useSkipTesting(repo);
+  const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [firstTaskOpen, setFirstTaskOpen] = useState(false);
   const [cardOpen, setCardOpen] = useState(false);
   const data = readiness.data;
 
@@ -265,6 +284,7 @@ export function SetupChecklist({ repo, forge }: { repo: string; forge: Forge }) 
             skipping={skip.isPending}
             onSkip={onSkip}
             onStartSetup={() => setDialogOpen(true)}
+            onFirstTask={() => setFirstTaskOpen(true)}
             cardOpen={cardOpen}
             onToggleCard={() => setCardOpen((open) => !open)}
           />
@@ -284,6 +304,13 @@ export function SetupChecklist({ repo, forge }: { repo: string; forge: Forge }) 
         repo={repo}
         onStarted={() => setCardOpen(false)}
         onClose={() => setDialogOpen(false)}
+      />
+    )}
+    {firstTaskOpen && (
+      <CreateIssueDialog
+        initialRepo={repo}
+        onCreated={() => void queryClient.invalidateQueries({ queryKey: ["repo-readiness", repo] })}
+        onClose={() => setFirstTaskOpen(false)}
       />
     )}
     </>

@@ -114,10 +114,7 @@ export function IssuesPage() {
 
       {/* Create dialog */}
       {showCreate && (
-        <CreateIssueDialog
-          onClose={() => setShowCreate(false)}
-          repos={repoOptions}
-        />
+        <CreateIssueDialog onClose={() => setShowCreate(false)} />
       )}
 
       <ProposalsSection />

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   applyProposal,
+  fetchPendingProposals,
   fetchProposal,
   fetchSetupCost,
   rejectProposal,
@@ -17,12 +18,15 @@ export function proposalRefetchInterval(data: SetupProposal | null | undefined):
   return data?.status === "running" ? POLL_MS : false;
 }
 
-/** Everything on the repo page a setup run or a decision on its proposal can change. */
+const PENDING_KEY = ["setup-proposals", "pending"];
+
+/** Everything a setup run or a decision on its proposal can change: the repo page and the Needs-you count. */
 function invalidateAfterSetup(qc: QueryClient, fullRepo: string) {
   for (const queryKey of [
     ["repo-readiness", fullRepo],
     ["repo-history", fullRepo],
     ["repo-setup-proposal", fullRepo],
+    PENDING_KEY,
   ]) {
     void qc.invalidateQueries({ queryKey });
   }
@@ -73,5 +77,14 @@ export function useRejectProposal(fullRepo: string) {
   return useMutation({
     mutationFn: (id: string) => rejectProposal(fullRepo, id),
     onSuccess: () => invalidateAfterSetup(qc, fullRepo),
+  });
+}
+
+/** Test setups waiting for review across every repository, polled like the other Needs-you sources. */
+export function usePendingSetupProposals() {
+  return useQuery({
+    queryKey: PENDING_KEY,
+    queryFn: fetchPendingProposals,
+    refetchInterval: POLL_MS,
   });
 }

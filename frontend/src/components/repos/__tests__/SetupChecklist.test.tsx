@@ -22,6 +22,34 @@ vi.mock("@/api/repoSetup", () => ({
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+// The issue dialog has its own tests; here it only has to show what it was opened with.
+vi.mock("@/components/issues/CreateIssueDialog", () => ({
+  CreateIssueDialog: ({
+    initialRepo,
+    onClose,
+    onCreated,
+  }: {
+    initialRepo?: string;
+    onClose: () => void;
+    onCreated?: () => void;
+  }) => (
+    <div role="dialog" aria-label="Create issue dialog" data-initial-repo={initialRepo}>
+      <button
+        type="button"
+        onClick={() => {
+          onCreated?.();
+          onClose();
+        }}
+      >
+        Create Issue
+      </button>
+      <button type="button" onClick={onClose}>
+        Cancel
+      </button>
+    </div>
+  ),
+}));
+
 import { SetupChecklist } from "../SetupChecklist";
 import { readinessRefetchInterval } from "@/hooks/useRepoReadiness";
 
@@ -155,6 +183,21 @@ const FAILED = readiness({
       proposal_id: "prop-abc",
     }),
     FIRST_WAITING,
+    TRIGGER_UNKNOWN,
+  ],
+});
+
+const FIRST_TASK = readiness({
+  steps_left: 1,
+  next_step: "first_task",
+  summary: "embry0 can read this code, open pull requests and test your app.",
+  rows: [
+    CODE_DONE,
+    VALUES_DONE,
+    row("testing", "done", "Tests web and checks 3 things after each change."),
+    row("first_task", "missing", "Give embry0 something small and low-risk. It opens a pull request for you to review.", {
+      action: { kind: "create_issue", label: "Give embry0 a first task" },
+    }),
     TRIGGER_UNKNOWN,
   ],
 });
@@ -470,9 +513,50 @@ describe("SetupChecklist", () => {
     mockFetchSetupCost.mockReturnValue(new Promise(() => {}));
     await userEvent.setup().click(within(rowEl("testing")).getByRole("button", { name: "Let embry0 fix the setup" }));
     expect(screen.getByRole("dialog", { name: "Let embry0 set up testing" })).toBeInTheDocument();
-    expect(within(rowEl("first_task")).getByRole("link", { name: "Give embry0 a first task" })).toHaveAttribute(
-      "href",
-      "/issues",
+    expect(within(rowEl("first_task")).getByRole("button", { name: "Give embry0 a first task" })).toBeInTheDocument();
+    expect(within(rowEl("first_task")).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("gives embry0 a first task from the row, with this repository chosen", async () => {
+    const user = userEvent.setup();
+    const card = await renderWith(FIRST_TASK);
+    const give = within(rowEl("first_task")).getByRole("button", { name: "Give embry0 a first task" });
+    expect(goldElements(card)).toEqual([give]);
+    expect(screen.queryByRole("dialog", { name: "Create issue dialog" })).not.toBeInTheDocument();
+
+    await user.click(give);
+    expect(screen.getByRole("dialog", { name: "Create issue dialog" })).toHaveAttribute(
+      "data-initial-repo",
+      "acme/widgets",
+    );
+  });
+
+  it("refreshes the setup status once the first task is created", async () => {
+    const user = userEvent.setup();
+    await renderWith(FIRST_TASK);
+    await user.click(screen.getByRole("button", { name: "Give embry0 a first task" }));
+    await user.click(screen.getByRole("button", { name: "Create Issue" }));
+    expect(screen.queryByRole("dialog", { name: "Create issue dialog" })).not.toBeInTheDocument();
+    await waitFor(() => expect(mockFetchReadiness).toHaveBeenCalledTimes(2));
+  });
+
+  it("closes the first-task dialog on cancel without refreshing anything", async () => {
+    const user = userEvent.setup();
+    await renderWith(FIRST_TASK);
+    await user.click(screen.getByRole("button", { name: "Give embry0 a first task" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Create issue dialog" })).not.toBeInTheDocument();
+    expect(mockFetchReadiness).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the first-task dialog on a nested GitLab repository's own path", async () => {
+    const user = userEvent.setup();
+    mockFetchReadiness.mockResolvedValue({ ...FIRST_TASK, repo: "group/sub/project" });
+    renderChecklist("group/sub/project", "gitlab");
+    await user.click(await screen.findByRole("button", { name: "Give embry0 a first task" }));
+    expect(screen.getByRole("dialog", { name: "Create issue dialog" })).toHaveAttribute(
+      "data-initial-repo",
+      "group/sub/project",
     );
   });
 
