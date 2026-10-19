@@ -60,6 +60,16 @@ EXPECTED_TOOLS = {
     "credential_list",
     "credential_resolve",
     "credential_bind",
+    "skill_list",
+    "skill_source_list",
+    "skill_source_add",
+    "skill_source_sync",
+    "skill_source_remove",
+    "inline_skill_put",
+    "inline_skill_remove",
+    "agent_skill_add",
+    "agent_skill_remove",
+    "tool_list",
 }
 
 CONFIRM_GATED = {
@@ -82,6 +92,13 @@ CONFIRM_GATED = {
     "org_act",
     "qa_config_set",
     "credential_bind",
+    "skill_source_add",
+    "skill_source_sync",
+    "skill_source_remove",
+    "inline_skill_put",
+    "inline_skill_remove",
+    "agent_skill_add",
+    "agent_skill_remove",
 }
 
 

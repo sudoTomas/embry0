@@ -398,6 +398,44 @@ class Embry0Client:
     async def agent_reset(self, agent_type: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/agents/{agent_type}/reset"))
 
+    async def agent_skill_add(self, agent_type: str, skill_name: str) -> dict[str, Any]:
+        return _as_dict(await self._request("POST", f"/api/v1/agents/{agent_type}/skills/{skill_name}"))
+
+    async def agent_skill_remove(self, agent_type: str, skill_name: str) -> dict[str, Any]:
+        return _as_dict(await self._request("DELETE", f"/api/v1/agents/{agent_type}/skills/{skill_name}"))
+
+    # ------------------------------------------------------------------- skills
+
+    async def skill_list(self) -> list[dict[str, Any]]:
+        return _as_list(await self._request("GET", "/api/v1/skills"))
+
+    async def skill_source_list(self) -> list[dict[str, Any]]:
+        return _as_list(await self._request("GET", "/api/v1/skills/sources"))
+
+    async def skill_source_add(
+        self, source_id: str, *, kind: str, url: str = "", ref: str = "", enabled: bool = True
+    ) -> dict[str, Any]:
+        body = {"id": source_id, "kind": kind, "url": url, "ref": ref, "enabled": enabled}
+        return _as_dict(await self._request("POST", "/api/v1/skills/sources", body=body))
+
+    async def skill_source_sync(self, source_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("POST", f"/api/v1/skills/sources/{source_id}/sync"))
+
+    async def skill_source_remove(self, source_id: str) -> dict[str, Any]:
+        return _as_dict(await self._request("DELETE", f"/api/v1/skills/sources/{source_id}"))
+
+    async def inline_skill_put(self, name: str, *, description: str, body: str) -> dict[str, Any]:
+        payload = {"description": description, "body": body}
+        return _as_dict(await self._request("PUT", f"/api/v1/skills/inline/{name}", body=payload))
+
+    async def inline_skill_remove(self, name: str) -> dict[str, Any]:
+        return _as_dict(await self._request("DELETE", f"/api/v1/skills/inline/{name}"))
+
+    # -------------------------------------------------------------------- tools
+
+    async def tool_list(self) -> list[dict[str, Any]]:
+        return _as_list(await self._request("GET", "/api/v1/tools"))
+
     # ---------------------------------------------------------------- templates
 
     async def template_list(self) -> list[dict[str, Any]]:
