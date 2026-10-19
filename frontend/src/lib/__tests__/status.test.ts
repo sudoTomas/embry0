@@ -54,3 +54,10 @@ describe("providerLabel — provider names as their makers spell them", () => {
     expect(providerLabel(raw)).toBe(words);
   });
 });
+
+describe("statusTone — gold is the accent, never a status", () => {
+  it("draws a proposed draft in the warn colour, like other work waiting for a person", () => {
+    expect(statusTone("proposed")).toBe("warning");
+    expect(statusTone("awaiting_input")).toBe("warning");
+  });
+});

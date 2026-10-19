@@ -23,8 +23,10 @@ import { TableSkeleton } from "@/components/TableSkeleton";
 import { parseRepoList } from "@/lib/repoList";
 import { formatDateTime } from "@/lib/utils";
 
+// The admin scope stands out in the standard's fifth status hue; gold stays
+// for the page's primary action.
 const SCOPE_TONES: Record<ApiKey["scope"], BadgeTone> = {
-  admin: "gold",
+  admin: "purple",
   operate: "neutral",
   merge: "warning",
   read: "neutral",

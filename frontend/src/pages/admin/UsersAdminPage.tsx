@@ -11,8 +11,10 @@ import { TableSkeleton } from "@/components/TableSkeleton";
 import { statusLabel } from "@/lib/status";
 import { formatDateTime } from "@/lib/utils";
 
+// The admin tier stands out in the standard's fifth status hue; gold stays
+// for the page's primary action.
 const TIER_TONES: Record<AdminUser["tier"], BadgeTone> = {
-  admin: "gold",
+  admin: "purple",
   operator: "neutral",
   none: "neutral",
 };

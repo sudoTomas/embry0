@@ -37,7 +37,8 @@ const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
   inconclusive: { label: "Inconclusive", tone: "warning" },
 
   // Watcher ticks
-  proposed: { label: "Proposed", tone: "gold" },
+  // A draft waiting for a person to decide: the warn colour, never the accent.
+  proposed: { label: "Proposed", tone: "warning" },
   deferred: { label: "Filing deferred", tone: "warning" },
   no_issue: { label: "Nothing found", tone: "neutral" },
   skipped_quiet: { label: "Quiet", tone: "neutral" },

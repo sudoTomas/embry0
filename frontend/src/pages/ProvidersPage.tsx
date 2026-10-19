@@ -97,7 +97,7 @@ function ProviderCard({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <CardTitle className="text-section">{providerLabel(provider.name)}</CardTitle>
-            {provider.default && <Badge tone="gold">Default provider</Badge>}
+            {provider.default && <Badge tone="neutral">Default provider</Badge>}
             {provider.available ? (
               <Badge tone="success">Available</Badge>
             ) : (
