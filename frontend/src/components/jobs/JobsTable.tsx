@@ -95,7 +95,9 @@ export function JobsTable({
                   </td>
                   <td className="hidden whitespace-nowrap font-mono text-xs sm:table-cell">{job.repo}</td>
                   <td className="w-full max-w-0 sm:w-auto sm:max-w-[200px]" title={job.task}>
-                    <div className="truncate">{jobTitle(job.task)}</div>
+                    {/* Two lines on a phone, where one cut every design audit to
+                        "Design audit of ra..." and told none apart; one from sm up. */}
+                    <div className="line-clamp-2 break-words sm:line-clamp-1">{jobTitle(job.task)}</div>
                     <div className="font-mono text-xs text-fg-muted sm:hidden" title={job.job_id}>
                       {shortJobId(job.job_id)}
                     </div>
