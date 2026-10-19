@@ -61,6 +61,11 @@ export interface OrgRepoFacts {
   open_issues: number | null;
   facts: Record<string, unknown>;
   seen_at: string | null;
+  /** What it takes embry0 to maintain the repository, in one sentence read
+   * from the facts by rules (ADR 0015). Absent from an older server. */
+  maintain_hint?: string;
+  /** The actions that sentence names, in the order they are taken. */
+  maintain_steps?: NeedActionType[];
 }
 
 export type NeedActionType = "register" | "hook" | "onboard" | "watch" | "setting" | "credential" | "none";

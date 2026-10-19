@@ -62,6 +62,27 @@ describe("OrgReposTable", () => {
     expect(screen.getByText("No repository matches these filters.")).toBeInTheDocument();
   });
 
+  it("shows what each repository takes to maintain under its name, and nothing when the server sent none", () => {
+    const hint = "Not registered; a UI with a dev script, so register, then onboard to draft QA.";
+    render(
+      <MemoryRouter>
+        <OrgReposTable
+          repos={[
+            repo("widgets", { frontend: true, boot_hint: "npm run dev" }, { maintain_hint: hint, maintain_steps: ["register", "onboard"] }),
+            repo("gadgets"),
+          ]}
+        />
+      </MemoryRouter>,
+    );
+    const [widgets, gadgets] = rows();
+    const shown = within(widgets).getByTestId("org-repo-hint");
+    expect(shown).toHaveTextContent(hint);
+    expect(shown).toHaveClass("text-muted-foreground");
+    const name = within(widgets).getByTestId("org-repo-link");
+    expect(name.compareDocumentPosition(shown) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(gadgets).queryByTestId("org-repo-hint")).toBeNull();
+  });
+
   it("says so when discovery stored nothing", () => {
     render(
       <MemoryRouter>

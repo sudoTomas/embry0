@@ -45,3 +45,4 @@ If your work contradicts a record here, say so explicitly rather than silently o
 | [0012](0012-organization-webhook.md) | One organization webhook replaces a webhook per repository; a delivery for an unregistered repository under it is recorded as a need, or registers the repository when the organization says so, and is then handled as before | accepted (2026-10-16) |
 | [0013](0013-hosts.md) | A host is a first-class record, apart from the repository; a tailnet is one source of hosts | accepted (2026-10-16) |
 | [0014](0014-organization-standards.md) | A standard is a schema embry0 ships and values the organization holds, keyed by the forge owner; a repository starts in mode off and is never audited there | accepted (2026-10-18) |
+| [0015](0015-maintain-hints.md) | What a repository takes to maintain is read from its facts by rules, never a model | accepted (2026-10-18) |
