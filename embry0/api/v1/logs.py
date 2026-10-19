@@ -1,9 +1,13 @@
 """Container-log query API (RAV-1057) — Loki proxy for on-demand investigation.
 
 The scheduled watcher (RAV-657) analyzes logs autonomously; this endpoint is
-the interactive lane: embry0-mcp's ``logs_query`` tool calls it so a chat
-agent can read production logs on request and file issues, with the
-human's in-chat approval as the gate.
+the interactive lane: the dashboard's Logs page, embry0-mcp's ``logs_query``
+tool and the sandbox context-proxy read production logs through it.
+
+Production logs carry personal data, so both routes need operator tier
+(``require_log_reader``: a read or merge key gets 403), and every line
+returned goes through the log-text redactor (``embry0/safety/redaction.py``,
+with the operator's ``LOG_REDACTION_FIELDS``) whoever asks.
 """
 
 import re
@@ -15,9 +19,27 @@ import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from embry0.safety.redaction import redact_bounded, redact_log_text, secret_env_values
+
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["logs"])
+
+# Per-line ceiling applied before redaction, so the cost of one response does
+# not depend on how long a line Loki happens to hold (up to `limit` lines).
+# The context-proxy's own ceiling is the same; it redacts again, and
+# redaction is idempotent.
+MAX_LINE_CHARS = 2000
+_TRUNCATED = " … [line truncated]"
+
+
+def _redacted_line(raw: str, known: list[str]) -> str:
+    line = raw.strip()
+
+    def redact(text: str) -> str:
+        return redact_log_text(text, known)
+
+    return redact_bounded(line, MAX_LINE_CHARS, redact=redact) + (_TRUNCATED if len(line) > MAX_LINE_CHARS else "")
 
 
 def _escape_logql(value: str) -> str:
@@ -54,9 +76,9 @@ async def list_log_containers(request: Request) -> dict[str, Any]:
 
     Operator surface — deliberately unfiltered. The sandbox context-proxy
     allowlist (CONTEXT_PROXY_CONTAINER_ALLOWLIST) exists because agent
-    tools must not read customer-data-bearing logs; this page is the
-    SSO/API-key-gated operator dashboard, the same trust level as the
-    reveal endpoints, so it surfaces everything promtail ships.
+    tools must not read customer-data-bearing logs; this route serves the
+    operator dashboard at operator tier, so it lists everything promtail
+    ships, and the lines ``/logs/query`` returns from them are redacted.
     """
     config = request.app.state.config
     loki_url = getattr(config, "watcher_loki_url", "")
@@ -108,7 +130,8 @@ async def query_logs(
     ``container`` matches the Docker container name (substring);
     ``containers`` is a comma-separated list of exact names and
     wins over ``container``; ``search`` is a regex line filter; ``logql``
-    overrides all of them with a raw LogQL query.
+    overrides all of them with a raw LogQL query. Each line is redacted and
+    cut to ``MAX_LINE_CHARS``, and a cut line ends with a marker.
     """
     config = request.app.state.config
     loki_url = getattr(config, "watcher_loki_url", "")
@@ -151,7 +174,8 @@ async def query_logs(
                 )
             )
     entries.sort(key=lambda e: e[0], reverse=True)
-    lines = [entry for _, entry in entries[:limit]]
+    known = secret_env_values()
+    lines = [{**entry, "line": _redacted_line(entry["line"], known)} for _, entry in entries[:limit]]
     logger.info("logs_queried", query=query, since_minutes=since_minutes, returned=len(lines))
     return {
         "query": query,

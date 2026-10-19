@@ -1315,7 +1315,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # pool here.
     context_proxy_key = config.api_key
     try:
-        context_proxy_key = await ApiKeysRepository(db).rotate_service_key("svc-context-proxy", scope="read")
+        from embry0.api.deps import CONTEXT_PROXY_SERVICE_KEY
+
+        context_proxy_key = await ApiKeysRepository(db).rotate_service_key(CONTEXT_PROXY_SERVICE_KEY, scope="read")
         logger.info("context_proxy_service_key_rotated")
     except Exception as exc:  # noqa: BLE001
         logger.warning("context_proxy_service_key_rotation_failed", error=str(exc))
@@ -2212,7 +2214,7 @@ def create_app(
 
 
 def _register_routers(app: FastAPI) -> None:
-    from embry0.api.deps import require_admin, require_auth
+    from embry0.api.deps import require_admin, require_auth, require_log_reader
     from embry0.api.v1 import (
         agents,
         api_keys,
@@ -2280,8 +2282,9 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"], dependencies=auth_deps)
     # RAV-603: typed job outputs (pr/report/artifact/message) + artifact download.
     app.include_router(deliverables.router, prefix="/api/v1", tags=["deliverables"], dependencies=auth_deps)
-    # RAV-1057: on-demand container-log queries (Loki proxy).
-    app.include_router(logs.router, prefix="/api/v1", tags=["logs"], dependencies=auth_deps)
+    # RAV-1057: on-demand container-log queries (Loki proxy). Operator tier
+    # and the context-proxy's service key only: the lines carry personal data.
+    app.include_router(logs.router, prefix="/api/v1", tags=["logs"], dependencies=[require_auth, require_log_reader])
     # #634: the live log tail is an EventSource, so its route takes a
     # job-scoped token as well as the header. Included first: the artifacts
     # router's `{path:path}` catch-all would otherwise shadow it.

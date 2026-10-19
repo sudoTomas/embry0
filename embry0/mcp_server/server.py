@@ -469,7 +469,10 @@ async def logs_query(
     investigation. container: Docker container name substring (e.g. "api");
     search: regex line filter (e.g. "(?i)error|exception"); since_minutes: lookback
     window (max 1440); limit: max lines (default 200, max 1000); logql: raw LogQL
-    override for advanced queries. Keep limit modest — lines land in your context."""
+    override for advanced queries. Keep limit modest — lines land in your context.
+    Needs an operate-scope key or above. Lines come back redacted (secrets, e-mail
+    addresses and the operator's personal-data fields replaced) and cut at 2000
+    characters."""
     return await _get_client().logs_query(
         container=container, search=search, since_minutes=since_minutes, limit=limit, logql=logql
     )
@@ -590,8 +593,9 @@ async def case_close(
     given up), "non_code" (nothing to change in code), "cancelled" (the finding was
     withdrawn), "self_resolved" (it stopped by itself), "embry0" (embry0's own merge).
     embry0 refuses (409) a case that is already closed. Closing is terminal but keeps
-    history: a later recurrence opens a new case pointing at this one. Requires
-    confirm=true."""
+    history: a later recurrence opens a new case pointing at this one. A case with
+    origin "org" is an organization need: closing it dismisses the need and needs an
+    admin-scope key. Requires confirm=true."""
     if not confirm:
         return _confirmation_refusal("case_close", f"close case {case_id} as {resolution_path or 'its existing path'}")
     return await _get_client().case_close(case_id, resolution_path=resolution_path, note=note, closed_by=closed_by)
@@ -640,7 +644,9 @@ async def merge_decide(
 async def env_list(repo: str | None = None) -> dict[str, Any]:
     """List environment variables — global set by default, or a repo's set when repo
     ("group/name", or a GitLab subgroup path like "group/subgroup/project") is given.
-    Secret values are always masked as "****"; there is no tool to read secret values."""
+    Secret values are always masked as "****"; there is no tool to read secret values.
+    A secret's masked_preview shows at most its last 2 characters, and only for a
+    secret of 12 characters or more."""
     return await _get_client().env_list(repo=repo)
 
 

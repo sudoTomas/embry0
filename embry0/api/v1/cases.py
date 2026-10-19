@@ -35,7 +35,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from embry0.api.deps import get_healing_cases_repo, request_actor
+from embry0.api.deps import ensure_admin, get_healing_cases_repo, request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas.cases import CaseDetailResponse, CaseListResponse, CaseSummary
 from embry0.api.trigger_context import current_linear_sync, linear_trigger_context
@@ -183,14 +183,19 @@ async def close_case(
     arrives afterwards is kept as history, and a later regression opens a new
     case pointing at this one — so this never hides a recurrence.
 
-    Refused — nothing written — when the case does not exist (404), is already
-    closed (409), or names no ``resolution_path`` and has none of its own
-    (422). The path must be one the ledger knows; anything else is 422 rather
-    than a row the database would reject at write time.
+    Refused — nothing written — when the case does not exist (404), is an
+    organization need's case (origin ``org``) and the caller is not admin tier
+    (403, as dismissing the need is), is already closed (409), or names no
+    ``resolution_path`` and has none of its own (422). The path must be one
+    the ledger knows; anything else is 422 rather than a row the database
+    would reject at write time.
     """
     case = await cases.get(case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="case not found")
+    if str(case.get("origin")) == Origin.ORG:
+        # Closing it dismisses the organization need, which is admin work.
+        await ensure_admin(request)
     if str(case.get("stage")) == Stage.CLOSED:
         raise HTTPException(status_code=409, detail="the case is already closed")
 

@@ -123,7 +123,44 @@ curl http://localhost:8200/api/v1/repos/owner/repo/environment/detect \
   -H "X-Requested-With: XMLHttpRequest"
 ```
 
+A list response carries each secret as `****` plus a `masked_preview`:
+eight `•` and the secret's last 2 characters when it has 12 or more, eight
+`•` alone otherwise.
+
+A PUT replaces the whole set. A secret sent back as `****`, the value the
+list responses carry, keeps its stored value, so a client can write one
+variable without revealing the others: the MCP `env_set` tool, and
+`env_delete` on the global set, work that way and need only operator tier. A
+secret sent as `****` for a key with no stored secret is refused with a 400.
+
 Some keys are refused with a 422, matched case-insensitively. The same check drops them again at sandbox start, from stored rows and from profile `env_defaults`. These keys are the infrastructure credentials and proxy URLs, plus every variable that would redirect a sandbox's traffic or load code into its processes: proxy routing, TLS verification, the dynamic loader, `PATH`/`HOME`/`SHELL`, shell and interpreter startup hooks, and the `GIT_`, `CLAUDE_`, `BUN_` and `GROK_` namespaces. `NODE_OPTIONS` and the JVM option variables (`JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`, `JAVA_OPTS`, `MAVEN_OPTS`, `GRADLE_OPTS`) are accepted, but only with memory flags. The authoritative list is `embry0/execution/auth_provider.py`. A 422 on these routes never echoes the submitted value.
+
+## Container logs
+
+`GET /api/v1/logs/query` reads container logs from Loki, newest first:
+`container` matches a container name by substring, `containers` is a
+comma-separated list of exact names, `search` is a regex line filter,
+`since_minutes` goes up to 1440 and `limit` up to 1000, and `logql` replaces
+all of them with a raw LogQL query. `GET /api/v1/logs/containers` lists the
+container names Loki holds. The dashboard's Logs page and the MCP
+`logs_query` tool use them.
+
+Production logs carry personal data, so both routes need operator tier: an
+operate or admin key, an SSO session or the master key. A read or merge key
+gets a 403. The one read-scope key they admit is the context-proxy's own
+service key (`svc-context-proxy`, rotated at every boot), which forwards
+allowlisted queries for the sandboxes enrolled with it.
+
+Every line returned goes through the log-text redactor
+(`embry0/safety/redaction.py`), whoever asks: secrets, e-mail addresses, long
+opaque runs and the values of the `LOG_REDACTION_FIELDS` fields
+([configuration.md](configuration.md)) are replaced. A line longer than 2000
+characters is cut and ends with `… [line truncated]`. The redactor is
+regex-based, so it is not a guarantee.
+
+```bash
+curl "http://localhost:8200/api/v1/logs/query?container=api&search=error&since_minutes=30&limit=50"
+```
 
 ## Credentials
 
@@ -360,16 +397,17 @@ revokes every key. The plaintext appears once, in the mint response. Settings
 
 A key may be limited to a list of repositories with `allowed_repos`. A
 restricted key is refused, with a 403 whose detail starts with
-`repo_not_allowed:`, whenever it would start or continue work on any other
-repository:
+`repo_not_allowed:`, whenever it would start, continue or stop work on any
+other repository:
 
 - `POST /jobs` (every pipeline; a job with no repository, such as an `http`
-  or `none` context, is refused too), `POST /jobs/{id}/resume` and
-  `POST /jobs/{id}/inputs/{input_id}/answer`;
+  or `none` context, is refused too), `POST /jobs/{id}/resume`,
+  `POST /jobs/{id}/inputs/{input_id}/answer` and `POST /jobs/{id}/cancel`;
 - `POST /issues` (an issue without a repository is refused),
   `PUT /issues/{id}` (the issue's repository and, when it changes, the new
-  one), `POST /issues/{id}/triage`, `POST /issues/{id}/sync` and
-  `POST /issues/{id}/inputs/{input_id}/answer`;
+  one), `POST /issues/{id}/triage`, `POST /issues/{id}/sync`,
+  `POST /issues/{id}/inputs/{input_id}/answer` and `DELETE /issues/{id}`
+  (the issue and each child issue it cancels);
 - `POST /cases/{id}/accept`, `POST /merge-approvals/{id}/decide`,
   `POST /watcher/run` (the stack ticked), `POST /qa/images/build` and
   `POST /repos/bootstrap`.
@@ -483,3 +521,4 @@ The route closes with code 1000 after forwarding `job_finished`, or straight aft
 - `GET /api/v1/cases` and `GET /api/v1/cases/{case_id}` — the ledger's read API (#278): one case per finding, from detection to a healed verdict. See `docs/glossary.md`, "Healing case".
   - `?awaiting_decision=true` is "what is waiting for a person": watcher drafts with a ticket that nobody has accepted or rejected — the list the dashboard shows as **Proposals** above the issue list. It is the proposal cap's own rule without the age window, so a draft that aged out of the cap is still listed, and a draft whose ticket was finished or deleted in its tracker is not. It also lists a finding a `not_healed` verdict sent back for a retry nobody has accepted yet (#658), which holds no slot of the cap, and an organization need waiting for a person (origin `org`, [ADR 0011](adr/0011-organization-needs.md)), which holds none either and is answered on the needs list, never accepted. `?open_only=true` is a different question (every case not yet `closed`, which includes alerts, findings with no ticket, and merged, deployed and verified cases); `?stage=tracked` is not it either (a person's ticket passes through `tracked`, and a draft whose ticket is gone stays there).
 - `POST /api/v1/cases/{case_id}/accept` — accept a watcher finding and dispatch the pipeline on its draft, exactly as adding the trigger label would; refuses anything that is not a `tracked` watcher finding of an enabled watcher stack of this orchestrator (#378). A GitHub draft is dispatched directly. A Linear draft gets the trigger label put on the ticket and is dispatched through the Linear trigger path (#460); a refusal says what happened to the ticket, and a ticket whose Linear project resolves to another repo than the case's is refused untouched. A GitLab draft is still accepted in GitLab (`409`). A finding a `not_healed` verdict sent back is accepted here whatever its tracker: the retry is a new job on the issue of the failed attempt, which is reopened if its merge closed it, and the ticket is not touched (#658). Body: `{"accepted_by": "<name>"}`. `202` always carries a `job_id`. On the merge-scope allowlist. See `docs/self-watching.md`, "Accepting a finding without the label".
+- `POST /api/v1/cases/{case_id}/close` — settle a case a person has decided: `{"resolution_path": "out_of_band", "note": "…", "closed_by": "<name>"}`, with `resolution_path` required unless the case already carries one; `409` on a closed case. A case whose origin is `org` is an organization need, and closing it dismisses the need, so it needs the admin tier, as `POST /api/v1/orgs/{owner}/needs/{need_id}/dismiss` does; any other case is operator tier.

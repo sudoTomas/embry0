@@ -291,6 +291,8 @@ def _delete_issue_request(executor):
     request.app.state.issue_executor = executor
     request.app.state.config = MagicMock(audit_log_path=None)
     request.app.state.db = MagicMock()
+    # No key principal: a session caller, which no repository allowlist restricts.
+    request.state.principal = None
     return request
 
 
