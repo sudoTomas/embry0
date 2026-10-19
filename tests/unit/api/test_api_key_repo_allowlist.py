@@ -1,7 +1,7 @@
-"""A per-key repository allowlist, enforced at every route that starts work.
+"""A per-key repository allowlist, enforced at every route that starts or stops work.
 
-A key minted with ``allowed_repos`` may start or continue work only on those
-repositories; a key without one is unaffected. Each entry point is driven
+A key minted with ``allowed_repos`` may start, continue, stop or delete work
+only on those repositories; a key without one is unaffected. Each entry point is driven
 through the real app (``create_app``) with three callers: an unrestricted
 key, a key restricted to ``acme/widgets``, and the master key.
 """
@@ -113,13 +113,16 @@ def app() -> Any:
     executor.start_onboard_job = AsyncMock(return_value="job-new")
     executor.execute = AsyncMock(return_value="job-new")
     executor.resume_or_execute = AsyncMock()
+    executor.cancel_job = AsyncMock()
     state.issue_executor = executor
+    jobs.list_all = AsyncMock(return_value=([], 0))
 
     issues = MagicMock()
     issues.get = AsyncMock(side_effect=lambda issue_id: _issue_row(issue_id) or _issue_row("iss-allowed"))
     issues.create = AsyncMock(return_value="iss-allowed")
     issues.update = AsyncMock()
     issues.update_parent_status = AsyncMock()
+    issues.get_children = AsyncMock(return_value=[])
     state.issues_repo = issues
     state.github_sync = None
 
@@ -169,7 +172,8 @@ def _auth(token: str) -> dict[str, str]:
 
 
 def _refused(response: Any) -> bool:
-    detail = response.json().get("detail") if response.headers.get("content-type") == "application/json" else None
+    is_json = response.content and response.headers.get("content-type") == "application/json"
+    detail = response.json().get("detail") if is_json else None
     return response.status_code == 403 and isinstance(detail, str) and detail.startswith("repo_not_allowed")
 
 
@@ -219,6 +223,9 @@ ENTRY_POINTS: list[tuple[str, str, str, Any, Any]] = [
     ("triage an issue", "POST", "/api/v1/issues/{issue}/triage", None, None),
     ("sync an issue", "POST", "/api/v1/issues/{issue}/sync", None, None),
     ("answer on an issue", "POST", "/api/v1/issues/{issue}/inputs/{input}/answer", _ANSWER, _ANSWER),
+    # Stopping or destroying a repository's work is work on that repository.
+    ("cancel a job", "POST", "/api/v1/jobs/{job}/cancel", None, None),
+    ("delete an issue", "DELETE", "/api/v1/issues/{issue}", None, None),
     ("accept a finding", "POST", "/api/v1/cases/{case}/accept", {}, {}),
     ("decide a merge", "POST", "/api/v1/merge-approvals/{approval}/decide", _DECIDE, _DECIDE),
     ("run the watcher", "POST", "/api/v1/watcher/run?stack={stack}", None, None),
@@ -264,6 +271,8 @@ def test_a_restricted_key_is_refused_on_another_repository(app, label, method, t
     assert not state.issue_executor.execute.await_count, f"{label}: an issue was dispatched anyway"
     assert not state.issue_executor.submit_job.call_count, f"{label}: a job was submitted anyway"
     assert not state.issue_executor.schedule_resume.call_count, f"{label}: a job was resumed anyway"
+    assert not state.issue_executor.cancel_job.await_count, f"{label}: a job was cancelled anyway"
+    assert not state.issues_repo.update.await_count, f"{label}: an issue was changed anyway"
     assert not state.issues_repo.create.await_count, f"{label}: an issue was created anyway"
     assert not state.merge_approvals.decide.await_count, f"{label}: a merge was decided anyway"
     assert not state.watcher_services[OTHER].run_once.await_count, f"{label}: the watcher ran anyway"
@@ -295,6 +304,14 @@ def test_a_restricted_key_cannot_move_its_issue_to_another_repository(app) -> No
     response = _call(app, LIMITED_TOKEN, "PUT", "/api/v1/issues/{issue}", {"repo": OTHER}, "allowed")
     assert _refused(response), f"an issue was moved out of the allowlist: {response.text}"
     assert not app.state.issues_repo.update.await_count, "the issue was updated anyway"
+
+
+def test_a_restricted_key_cannot_delete_its_issue_with_a_child_in_another_repository(app) -> None:
+    child = {**_issue_row("iss-other"), "id": "iss-child", "parent_issue_id": "iss-allowed"}
+    app.state.issues_repo.get_children = AsyncMock(return_value=[child])
+    response = _call(app, LIMITED_TOKEN, "DELETE", "/api/v1/issues/{issue}", None, "allowed")
+    assert _refused(response), f"a child issue on {OTHER} was cancelled through its parent: {response.text}"
+    assert not app.state.issues_repo.update.await_count, "an issue was cancelled anyway"
 
 
 def test_a_restricted_key_runs_the_only_watcher_only_when_it_is_listed(app) -> None:

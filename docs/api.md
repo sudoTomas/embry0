@@ -349,16 +349,17 @@ revokes every key. The plaintext appears once, in the mint response. Settings
 
 A key may be limited to a list of repositories with `allowed_repos`. A
 restricted key is refused, with a 403 whose detail starts with
-`repo_not_allowed:`, whenever it would start or continue work on any other
-repository:
+`repo_not_allowed:`, whenever it would start, continue or stop work on any
+other repository:
 
 - `POST /jobs` (every pipeline; a job with no repository, such as an `http`
-  or `none` context, is refused too), `POST /jobs/{id}/resume` and
-  `POST /jobs/{id}/inputs/{input_id}/answer`;
+  or `none` context, is refused too), `POST /jobs/{id}/resume`,
+  `POST /jobs/{id}/inputs/{input_id}/answer` and `POST /jobs/{id}/cancel`;
 - `POST /issues` (an issue without a repository is refused),
   `PUT /issues/{id}` (the issue's repository and, when it changes, the new
-  one), `POST /issues/{id}/triage`, `POST /issues/{id}/sync` and
-  `POST /issues/{id}/inputs/{input_id}/answer`;
+  one), `POST /issues/{id}/triage`, `POST /issues/{id}/sync`,
+  `POST /issues/{id}/inputs/{input_id}/answer` and `DELETE /issues/{id}`
+  (the issue and each child issue it cancels);
 - `POST /cases/{id}/accept`, `POST /merge-approvals/{id}/decide`,
   `POST /watcher/run` (the stack ticked), `POST /qa/images/build` and
   `POST /repos/bootstrap`.

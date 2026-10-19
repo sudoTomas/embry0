@@ -480,6 +480,7 @@ async def cancel_job(job_id: str, request: Request, jobs: JobsRepository = Depen
     job = await jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    await enforce_repo_allowlist(request, job.get("repo"), action="cancel a job")
     if job["status"] not in ("pending", "running", "awaiting_input", "paused"):
         raise HTTPException(status_code=409, detail=f"Cannot cancel job in {job['status']} state")
 

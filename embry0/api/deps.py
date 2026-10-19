@@ -57,7 +57,8 @@ class Principal:
     key_name: str | None = None
     email: str | None = None
     # Repositories this key may start work on; None = unrestricted. Enforced
-    # by embry0.api.repo_allowlist at each route that starts or continues work.
+    # by embry0.api.repo_allowlist at each route that starts, continues or
+    # stops work.
     allowed_repos: tuple[str, ...] | None = None
     # An unowned key: minted by an admin or rotated by the orchestrator at boot.
     service: bool = False
