@@ -57,3 +57,17 @@ describe("a finished job's outcome on the Job page", () => {
     expect(screen.queryByTestId("deliverables")).toBeNull();
   });
 });
+
+describe("the Job page's issue link", () => {
+  it("opens the job's embry0 issue, whatever forge or tracker holds it", () => {
+    renderJob({ status: "running", finished_at: null, issue_id: "iss-42", issue_number: 42, repo: "group/sub/project" });
+    const link = screen.getByRole("link", { name: /Issue #42/ });
+    expect(link).toHaveAttribute("href", "/issues/iss-42");
+  });
+
+  it("never builds a github.com link, and shows no link without an issue row", () => {
+    renderJob({ status: "running", finished_at: null, issue_id: null, issue_number: 7, repo: null });
+    expect(screen.queryByRole("link", { name: /Issue #7/ })).toBeNull();
+    expect(document.querySelector('a[href*="github.com"]')).toBeNull();
+  });
+});

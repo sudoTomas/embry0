@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useParams } from "react-router";
-import { ArrowLeft, ExternalLink, Clock, DollarSign, Layers } from "lucide-react";
+import { ArrowLeft, Clock, DollarSign, Layers } from "lucide-react";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { DivineRipple } from "@/components/divine/DivineRipple";
 import { jobToOperation, shouldFireCompletionFlare } from "@/components/divine/operations";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonVariants } from "@/components/ui/Button";
+import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { useJob } from "@/hooks/useJobs";
 import { useJobInputs } from "@/hooks/useInputs";
@@ -160,12 +161,15 @@ export function JobDetailPage() {
             </span>
           )}
         </div>
-        {job.issue_number && (
-          <a href={`https://github.com/${job.repo}/issues/${job.issue_number}`} target="_blank" rel="noopener noreferrer">
-            <Button variant="outline" size="sm" className="gap-1 text-xs h-7">
-              Issue #{job.issue_number} <ExternalLink className="w-3 h-3" />
-            </Button>
-          </a>
+        {/* The job's issue row, which links on to its tracker (GitHub, GitLab
+            or Linear): a link built here assumed github.com for every forge. */}
+        {job.issue_id && (
+          <Link
+            to={`/issues/${job.issue_id}`}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1 text-xs h-7")}
+          >
+            {job.issue_number ? `Issue #${job.issue_number}` : "Issue"}
+          </Link>
         )}
       </div>
 
