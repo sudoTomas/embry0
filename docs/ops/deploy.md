@@ -16,6 +16,10 @@ rotation are [backup-restore.md](backup-restore.md).
   - `mcp` runs the **orchestrator image** (`image: embry0-orchestrator`, no build of its own), so every orchestrator rebuild leaves it on the old image until it is recreated too; the script recreates it with the orchestrator. Left out of the manual recipe until 2026-09-23, when a deploy shipped a four-day-old MCP server next to a fresh orchestrator.
   - **Deploy marker.** On success the script pushes one line, `deployed <sha>: <services>`, to Loki under `{job="embry0-deploy"}` (URL: `EMBRY0_DEPLOY_LOKI_URL`, else `WATCHER_LOKI_URL` from the root `.env`; unset = no marker, said on stderr). The self stack's `deploy_logql` override selects that job label, and that is how a self case gets past `merged` — a deploy done without the marker leaves its cases there. See `docs/self-watching.md`.
 - `infra/deploy.sh` builds the orchestrator and frontend, or the services you name. It does not rebuild the sandbox, QA or proxy images: a change to the code baked into them needs a [rebuild recipe](#images-registry-pins-and-rebuilds) too.
+- **The release that adds skill sources** (migration 101) brings a compose change and a sandbox change:
+  - The `skills-store` volume, mounted at `/skills` in `orchestrator` and at `/skills:ro` in `dind`, is created by the first `docker compose up` after the release. Because `dind`'s configuration changed, that first `infra/deploy.sh` also recreates `dind` (compose converges a changed dependency of a service it brings up), which restarts the sandbox daemon and kills every sandbox, the sandboxes of paused and awaiting-input jobs included: deploy this release with no job active, not just none `running`. The orchestrator image rebuild creates `/skills` owned by the `orchestrator` user, and the empty named volume takes that ownership on first use.
+  - `embry0/agents/config_builder.py`, `embry0/agents/invocation.py` and `embry0/sandbox/runner.py` are baked into the sandbox images, so run the sandbox [rebuild recipe](#images-registry-pins-and-rebuilds) too. Until then the skill trees are mounted into sandboxes and the agents ignore them.
+  - At first boot the orchestrator syncs the builtin `superpowers` and `local` sources in the background, which needs outbound https to the `superpowers` repository's host; `GET /api/v1/skills/sources` shows `pending` until each is `ready`. To check a deployment: both sources `ready`, `GET /api/v1/skills` lists `superpowers:*`, and a job's `agent_started` event carries `skill_sources`.
 - The frontend is served via nginx on port 8200 and proxies `/api` to the orchestrator container.
 - Always verify health after restart: `curl -s http://localhost:8200/health`
 
@@ -57,7 +61,9 @@ stops a job without losing it (#307):
    drains never count, so a long job may cross any number of deploys.
 
 Restarting `dind` (or the rootless daemon) still kills every sandbox, and
-with them the jobs; `infra/deploy.sh` never touches it. A recreate is safe;
+with them the jobs; `infra/deploy.sh` touches it only when a release changes
+`dind`'s own compose configuration (compose then recreates it as a dependency,
+as the skill-sources release above does). An orchestrator recreate is safe;
 the deploy script still asks before one while a job runs because of the
 re-run node in 2.
 

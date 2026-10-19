@@ -668,6 +668,16 @@ graph LR
 
 **Sandbox env surface:** The container env holds the LLM credential (see the Credentials row above), the global and repository environment variables, secrets included, and orchestrator config such as `EMBRY0_GIT_PROXY_URL`. No forge token. The per-sandbox proxy bearer is in files (git's config, the xAI and context-proxy token files), not the env. See [`SECURITY.md`](../SECURITY.md#what-does-not-hold) for what that exposes.
 
+### Skills store and mounts
+
+Skills reach a sandbox as Agent SDK plugins from a store the orchestrator fills ([API](api.md#skills)). The store is the `skills-store` compose volume, mounted at `/skills` in `orchestrator` (read-write) and in `dind` (`:ro`), because the bind mounts below are resolved in the sandbox daemon's namespace. Each source has `/skills/<source_id>/<resolved_sha>/`, a plugin root (`.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`), and `/skills/<source_id>/current`, one line naming the tree sandboxes mount. A sync fills a staging directory beside the tree, renames it into place, rewrites `current`, and removes the older trees; a failed sync leaves the previous tree and `current` as they were. `SKILLS_STORE_PATH` (default `/skills`) is the orchestrator's path and `SKILLS_STORE_DAEMON_PATH` (default: the same) the daemon's, which under the rootless overlay is the host directory that daemon sees ([configuration](configuration.md)).
+
+**Mounts.** Every sandbox gets `-v /skills/<id>/<sha>:/opt/embry0/skills/<id>:ro` for each enabled source whose `current` tree exists, read at create time; `status` is informational, so a source whose latest re-sync failed keeps its previous tree mounted. A source with no tree on disk is skipped with `skill_source_mount_missing` rather than failing `docker run`, and startup re-syncs every enabled source whose `current` is missing. A source that becomes ready after a sandbox was created is not visible to that job. `agent_started` events carry `skill_sources: [<source ids>]`, the sources that sandbox mounted.
+
+**SDK options.** `build_sdk_options` passes `plugins=[{"type": "local", "path": "/opt/embry0/skills/<id>"}]`, one per mounted source, and `skills=<effective list>` as the allowlist, or `None` when the list is empty so the target repository's own `.claude/skills` keep loading unfiltered. `setting_sources` stays `["project"]`. `embry0/agents/config_builder.py`, `embry0/agents/invocation.py` and `embry0/sandbox/runner.py` are baked into the sandbox images, so the sandbox images must be rebuilt ([recipe](ops/deploy.md#images-registry-pins-and-rebuilds)) before these options take effect; until then the trees are mounted and unused. The direct xAI executor does not load skills.
+
+**What the orchestrator runs.** A git source is the one place the orchestrator runs git itself, on a public tree an admin pinned. It runs with hooks (`core.hooksPath=/dev/null`), every transport but https (`protocol.allow=never`), redirects, submodules, fsmonitor, and system and global config disabled, no terminal prompt, a throwaway `HOME`, and a 120 s timeout that kills git's whole process group. Before cloning it resolves the url's host and refuses it unless every address is global and not multicast. The checked-out tree loses its `.git`, must stay under 64 MiB and carry at least one `skills/*/SKILL.md`, and a symlink anywhere in it fails the sync; a `path` source is copied with links kept as links so the same check refuses them. Two gaps remain. The address check is check-then-use: git resolves the host again itself, so a DNS answer that changes between the two (rebinding) is not covered. And an IPv6 answer that embeds an IPv4 address through NAT64 (`64:ff9b::/96`) or the IPv4-compatible and IPv4-translated forms counts as global, so an internal IPv4 address behind one of those prefixes is not refused; an IPv4-mapped (`::ffff:`) answer is judged by the IPv4 address it carries. The size cap is checked on the finished checkout, not during the transfer. Inside the sandbox a plugin's files are in the same trust domain as the target repository's `.claude/` directory: they run as the agent user under the same Ring 2 and Ring 3 enforcement.
+
 ### Sandbox Image Management
 
 The `SandboxImageManager` handles image lifecycle inside DinD:
@@ -1200,6 +1210,15 @@ erDiagram
 
 LangGraph checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are managed by `langgraph-checkpoint-postgres` and provide pause/resume, time-travel debugging, and state inspection.
 
+### Skill Storage
+
+Two tables, both from migration 101; the trees themselves live in the skills store ([Skills store and mounts](#skills-store-and-mounts)), not in Postgres.
+
+| Table | Holds |
+|---|---|
+| `skill_sources` | One row per source (`git`, `path` or `inline`): url and requested `ref`, the `resolved_sha` the store holds, the `plugin_name` that prefixes its skill names, the `skills` catalog read at sync, `status` (`pending`, `ready`, `error`) with the redacted `error`, `enabled`, `is_builtin`, and `credential_id`, reserved and always null |
+| `inline_skills` | SKILL.md documents written through the API (`name`, `description`, `body`), rendered into the builtin `local` source |
+
 ### Environment Variable Storage (Plan J)
 
 Per-repo and global environment variables are stored in `global_environment` / `repo_environment`. Variables of type `secret` are Fernet-encrypted at rest using a key derived from `ENVIRONMENT_SECRET_KEY` via PBKDF2-HMAC-SHA256. Responses mask secret values (`****`); a separate `/reveal` endpoint returns plaintext and emits an `environment.secret_revealed` audit event.
@@ -1302,6 +1321,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 73 | what became of a job's pull request, apart from how the job ended (#279, #280) | `jobs.delivery_state` (`none`/`pr_open`/`merged`/`closed`, seeded from `status` + `pr_url`), `jobs.delivery_state_at` (the forge's time; `jobs.updated_at` preserved) |
 | 74 | bound the analyses a full draft cap no longer bounds (#283) | `watcher_runs.analysed_under_full_cap` |
 | 75 | pre-built QA image base digest; exactly one active image per repo — deactivates all but the newest active row per repo, deletes nothing (#334) | `qa_image_tags.base_image`, `.base_image_digest`, `ck_qa_image_tags_base_pair`, `uq_qa_image_tags_one_active_per_repo` |
+| 101 | agent identity (`display_name`, `avatar`, `color`, `tagline`, with the builtins' values written for rows still at the defaults), skill sources and inline skills | `agent_definitions.{display_name, avatar, color, tagline}`, `skill_sources`, `inline_skills` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

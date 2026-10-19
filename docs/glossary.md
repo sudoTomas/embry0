@@ -74,7 +74,7 @@ A reusable, parametric [pipeline](#pipeline) shape. The [seven operations](#the-
 The [PipelineEditor](#pipelineeditor) lets operators compose pipelines from four kinds of building block, ordered from atomic to composite:
 
 ### Energy
-The atomic unit. A single capability, skill reference, or data value. Examples: a specific [agent](#agents) type, a specific tool (lint, typecheck), a specific environment variable. Identified by a stable [original ID](#stable-id) (e.g. `OP04` for the conjoin operation, `SP0014` for a superpowers skill). Energies are the leaves of pipeline graphs.
+The atomic unit. A single capability, skill reference, or data value. Examples: a specific [agent](#agents) type, a specific tool (lint, typecheck), a specific environment variable. Identified by a stable [original ID](#stable-id) (e.g. `OP04` for the conjoin operation). Energies are the leaves of pipeline graphs. A skill is referenced by its `plugin:skill` name; it has no second id.
 
 ### Function
 A pure, side-effect-light transform over a [container](#contenedor). Takes inputs, returns diagnostics or a transformed value, does not mutate persistent state. Examples (proposed): `f_lint(target)`, `f_typecheck(target)`, `f_test(target)`, `f_search(query)`, `f_format(target)`. Functions can be chained; a function's output is another function's input. Mirrors the Practice's `f_luz()`, `f_conocimiento()`.
@@ -191,14 +191,13 @@ Bidirectional integrity envelope. The Practice's pattern: "nada de afuera afecte
 ## Identifiers
 
 ### Stable ID
-A prefix-disambiguated, sequence-numbered identifier that survives renames. Format: `<PREFIX>##` (e.g., `OP04` for the conjoin operation, `SP0014` for a superpowers skill). The slug (`conjoin`, `tdd`) is the human handle; the stable ID is the durable reference cited in audit logs, PR metadata, and cross-document references. Borrowed from the Practice's `A0050`, `P0007`, `M_00` pattern. Pairs with [Revision Date](#revision-date).
+A prefix-disambiguated, sequence-numbered identifier that survives renames. Format: `<PREFIX>##` (e.g., `OP04` for the conjoin operation). The slug (`conjoin`) is the human handle; the stable ID is the durable reference cited in audit logs, PR metadata, and cross-document references. Borrowed from the Practice's `A0050`, `P0007`, `M_00` pattern. Pairs with [Revision Date](#revision-date).
 
 Current ID prefixes:
 
 | Prefix | Domain | Example |
 |---|---|---|
 | `OP` | Operations | `OP04` (conjoin) |
-| `SP` | Superpowers skills | `SP0014` (planned) |
 
 ### Revision Date
 ISO-8601 (`YYYY-MM-DD`) date marking the last semantic change to a [stable-ID](#stable-id) entity. Bump when behavior changes, not on cosmetic edits. Together, `(id, rev)` answers "what version of OP04 was this pipeline built against?" and lets the system flag drift when an old pipeline is loaded against a newer operation definition.

@@ -90,6 +90,81 @@ curl -X POST http://localhost:8200/api/v1/sandbox-profiles \
   -d '{"name": "java-17", "base_image": "embry0-sandbox-java:17", "memory": "12g"}'
 ```
 
+## Skills
+
+The skills agents load, and where they come from ([architecture](architecture.md#skills-store-and-mounts)). Reads need any authenticated principal; every mutation needs the `admin` tier and writes an audit row (`skill_source.created`, `skill_source.updated`, `skill_source.synced`, `skill_source.deleted`, `inline_skill.written`, `inline_skill.deleted`).
+
+A skill is named `<plugin_name>:<skill>`, for example `superpowers:writing-plans`: the plugin name from its source's `.claude-plugin/plugin.json` (the source id when there is none), then the skill's directory or frontmatter name. A source is `git` (a public repository pinned to a tag, branch or commit), `path` (a directory inside the orchestrator container) or `inline` (the SKILL.md documents written through `/skills/inline`, published as the builtin `local` source). Two sources are builtin: `superpowers` (git, pinned in code) and `local` (inline).
+
+| Endpoint | Tier | Body and answer |
+|---|---|---|
+| `GET /api/v1/skills` | read | The catalog, sorted by name: `[{name, source_id, description, available, status}]`. `available` is true when the source is `ready` and enabled; `status` is the source's, or `disabled` |
+| `GET /api/v1/skills/sources` | read | Every source row (`id`, `kind`, `url`, `ref`, `resolved_sha`, `plugin_name`, `skills`, `status`, `error`, `enabled`, `is_builtin`, `synced_at`, ...) plus `syncing` |
+| `GET /api/v1/skills/sources/{id}` | read | One source; 404 when there is none |
+| `POST /api/v1/skills/sources` | admin | `{id, kind, url, ref, enabled}`; 201 with the row in `pending`, and a sync starts in the background. 422 for a refused source (`id` not `^[a-z][a-z0-9-]{0,39}$`, a git url that is not `https://`, carries credentials, or names an IP literal or a local name, a relative path, any `credential_id`); 409 when the id exists |
+| `PATCH /api/v1/skills/sources/{id}` | admin | `{ref?, enabled?}`; a `ref` change starts a sync. 403 for a `ref` on a builtin (its pin is in code); 422 for a `ref` on a non-git source |
+| `POST /api/v1/skills/sources/{id}/sync` | admin | 202 `{"id", "status": "syncing"}`; 409 while a sync of that source runs |
+| `DELETE /api/v1/skills/sources/{id}` | admin | Removes the row and its store directory. 403 for a builtin; 409 with `agents` and `templates` naming what still references its skills |
+| `GET /api/v1/skills/inline` | read | The inline skill rows: `name`, `description`, `body`, `created_at`, `updated_at` |
+| `PUT /api/v1/skills/inline/{name}` | admin | `{description, body}`, upsert; `body` is the SKILL.md content below the frontmatter, at most 64 KiB. Re-syncs `local`. 422 for a name not `^[a-z][a-z0-9-]{0,63}$` |
+| `DELETE /api/v1/skills/inline/{name}` | admin | Re-syncs `local`. 409 with `agents` and `templates` while anything references `local:<name>` |
+
+```bash
+# Add a pinned public skill repository; it answers "pending" and syncs in the background
+curl -X POST http://localhost:8200/api/v1/skills/sources \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"id": "team", "kind": "git", "url": "https://example.com/acme/skills.git", "ref": "v1.2.0"}'
+
+# Write a skill in place; agents name it local:release-notes
+curl -X PUT http://localhost:8200/api/v1/skills/inline/release-notes \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"description": "Write release notes from merged PRs", "body": "# Release notes\n\nList each merged PR ..."}'
+```
+
+A sync failure never fails the request that started it: the source shows `status: error` and the redacted message in `error`, and the tree it had stays in the store. A sync clones or copies into a staging directory and renames it into place, so a sandbox created mid-sync sees the old tree or the new one.
+
+**Validation and effective skills.** `POST /agents`, `PUT /agents/{type}`, `POST /agents/{type}/skills/{name}` and template saves refuse a skill name the catalog does not know with a 422 that names the closest known names. A known name whose source is pending, disabled or in error is accepted. An agent runs with its *effective* skills: the definition's list, then the template node's delta (`config.skills`), then triage's (`pipeline_config.agent_skills[<type>]`). A delta is `{"add": [...], "remove": [...]}` with `remove` applied first, or `"remove": "*"` to drop everything before the adds; a bare list is the older replace form, read as `{"add": list, "remove": "*"}`. When the effective list is non-empty it is an allowlist, so a skill the target repository ships under `.claude/skills` loads only when it is listed too; when it is empty, the repository's own skills load unfiltered.
+
+## Tools
+
+`GET /api/v1/tools` (read) lists the tool names an agent definition can name, as `[{name, source, description}]`: the Claude Code builtins under `source: "builtin"` (`Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, `NotebookEdit`, `Task`), each registered browser backend's MCP tools under `source: "mcp:<backend>"` (`embry0/workflows/qa/browser_backends.py`), and the log tool under `source: "mcp:context"`.
+
+## Agents
+
+Agent definitions: the model, tools, skills and prompt each agent type runs with, and how it looks on the dashboard. Reads need any authenticated principal; every mutation needs the `admin` tier.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/agents` | read |
+| `GET /api/v1/agents/{type}` | read |
+| `POST /api/v1/agents` | admin |
+| `PUT /api/v1/agents/{type}` | admin |
+| `DELETE /api/v1/agents/{type}` | admin; 403 for a builtin |
+| `POST /api/v1/agents/{type}/reset` | admin |
+| `POST /api/v1/agents/{type}/skills/{name}` | admin |
+| `DELETE /api/v1/agents/{type}/skills/{name}` | admin |
+
+**Identity.** Every definition carries four identity fields, which `POST` accepts, `PUT` changes and both reads return:
+
+| Field | Default | Rule |
+|---|---|---|
+| `display_name` | `""` | At most 60 characters; empty shows the slug |
+| `avatar` | `golem` | One of the roster ids |
+| `color` | `slate` | One of the palette ids |
+| `tagline` | `""` | At most 140 characters |
+
+The roster, the palette and the builtins' own values are in [`docs/contracts/identity.json`](contracts/identity.json), written from `embry0/agents/identity.py`; an id outside them is a 422 that lists the allowed ones. These columns are not nullable, so a `PUT` that sends one as `null` is a 422. `POST /agents/{type}/reset` restores a builtin's identity with the rest of the row.
+
+**One skill at a time.** `POST /agents/{type}/skills/{name}` adds one catalog skill and `DELETE` removes one, each returning the agent; adding a skill it already has, or removing one it does not, changes nothing and writes no audit row. Otherwise each writes `agent.skill_added` or `agent.skill_removed`. An unknown name is a 422 naming the closest known ones. `GET /agents/{type}` also returns `orphan_skills`: the agent's skills that no source lists. They keep running; only a write that sends them again is refused.
+
+```bash
+# Give the developer one more skill
+curl -X POST http://localhost:8200/api/v1/agents/developer/skills/superpowers:writing-plans \
+  -H "X-Requested-With: XMLHttpRequest"
+```
+
 ## Environment variables
 
 ```bash
