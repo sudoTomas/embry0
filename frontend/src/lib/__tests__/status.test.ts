@@ -49,6 +49,7 @@ describe("providerLabel — provider names as their makers spell them", () => {
     ["openai", "OpenAI"],
     ["github", "GitHub"],
     ["GitLab", "GitLab"],
+    ["linear", "Linear"],
     ["telegram", "Telegram"],
   ])("%s -> %s", (raw, words) => {
     expect(providerLabel(raw)).toBe(words);

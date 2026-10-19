@@ -7,6 +7,7 @@ import { setRepoCredentials } from "@/api/credentials";
 import { fetchDiscoverableRepos, type DiscoverableRepo } from "@/api/github";
 import { fetchDiscoverableProjects, type GitLabProject } from "@/api/gitlab";
 import { fetchRepoDetail, registerRepo, type Forge, type RegisteredRepo } from "@/api/repos";
+import { providerLabel } from "@/lib/status";
 import { useDiscoverableRepos } from "@/hooks/useGitHub";
 import { useDiscoverableProjects } from "@/hooks/useGitLab";
 import { Badge } from "@/components/ui/Badge";
@@ -217,7 +218,7 @@ export function AddRepoPanel() {
               }}
               data-testid={`add-repo-forge-${f}`}
             >
-              {f === "github" ? "GitHub" : "GitLab"}
+              {providerLabel(f)}
             </Button>
           ))}
         </div>

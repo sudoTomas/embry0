@@ -13,7 +13,7 @@ import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { Badge } from "@/components/ui/Badge";
 import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
-import { statusLabel } from "@/lib/status";
+import { providerLabel, statusLabel } from "@/lib/status";
 import { formatDateTime } from "@/lib/utils";
 
 /** RAV-1253: the unified per-repo view — registry state, QA config editor,
@@ -55,7 +55,7 @@ export function RepoDetailPage() {
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
           <h1 className="text-xl font-bold">{full}</h1>
           <Badge tone="neutral" data-testid="repo-detail-forge">
-            {repo.forge === "gitlab" ? "GitLab" : "GitHub"}
+            {providerLabel(repo.forge)}
           </Badge>
           {repo.active ? <Badge tone="success">Active</Badge> : <Badge tone="neutral">Inactive</Badge>}
           {repo.has_qa_config ? (

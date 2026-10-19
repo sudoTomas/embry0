@@ -82,6 +82,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
   github: "GitHub",
   gitlab: "GitLab",
+  linear: "Linear",
 };
 
 /** A provider name in words; one the map does not know reads in sentence case. */

@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { formatDateTime } from "@/lib/utils";
+import { providerLabel } from "@/lib/status";
 import { useAcceptProposal, useProposals, useRejectProposal } from "@/hooks/useProposals";
 import type { HealingCase } from "@/lib/types";
 
@@ -21,10 +22,8 @@ const ACCEPTED_HERE = new Set(["github", "linear"]);
  */
 const LABELLED_ON_ACCEPT = new Set(["linear"]);
 
-const TRACKER_NAMES: Record<string, string> = { linear: "Linear", github: "GitHub", gitlab: "GitLab" };
-
 function trackerName(kind: string | undefined): string {
-  return (kind && TRACKER_NAMES[kind]) || kind || "its tracker";
+  return kind ? providerLabel(kind) : "its tracker";
 }
 
 function detailOf(error: unknown, fallback: string): string {
