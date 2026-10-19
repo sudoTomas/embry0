@@ -206,6 +206,22 @@ def test_security_md_tier_claims_match_the_routes() -> None:
     assert not problems, "\n".join(problems)
 
 
+def test_security_md_names_metrics_among_the_routes_without_auth() -> None:
+    """/metrics takes no credential, so 'API authentication' must list it."""
+    from embry0.api.app import create_app
+    from embry0.api.deps import _admin_dependency, _auth_dependency
+    from embry0.config import Embry0Config
+    from tests.fixtures.routes import app_routes
+
+    app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
+    routes = [route for route in app_routes(app) if route.path == "/metrics"]
+    assert routes, "the app serves no /metrics route"
+    calls = {d.call for route in routes if route.dependant is not None for d in route.dependant.dependencies}
+    assert not calls & {_admin_dependency, _auth_dependency}, "/metrics takes auth now; update SECURITY.md"
+    para = _paragraph(_security_section(HOLDS), "API authentication.")
+    assert "`/metrics`" in para, "SECURITY.md 'API authentication' leaves out /metrics, which takes no credential"
+
+
 def test_security_md_states_the_profile_isolation_rules() -> None:
     """'Profile isolation fields' names the check, every field it covers, and the values it allows (#553)."""
     from pydantic import ValidationError

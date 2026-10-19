@@ -10,9 +10,10 @@ rotation are [backup-restore.md](backup-restore.md).
 
 - **Two `.env` files — know which one you're editing.** Container runtime env comes from the **repo-root `.env`** (`env_file: ../.env` on the orchestrator service): all secrets and tokens (`GITHUB_TOKEN`, `GITHUB_TOKEN__<OWNER>`, `CLAUDE_CODE_OAUTH_TOKEN`, `PROXY_ADMIN_TOKEN`, `API_KEY`, tunnel tokens) must be edited there. `infra/.env` feeds only docker-compose `${…}` interpolation (`POSTGRES_*`, `PROD_PORT`, `COMPOSE_PROFILES`, resource caps) and is not loaded into any container. The values both files carry (`POSTGRES_*`, `MINIO_ROOT_*`, `CLOUDFLARED_TUNNEL_TOKEN`) must be equal (`infra/.env.example`); any other secret still in `infra/.env` is dead weight. When another doc says "`.env`" for a secret, it means the root file.
 - embry0 runs in Docker via `infra/docker-compose.yml`. After any code changes, you **must** rebuild and restart the affected containers — with the deploy script, which also leaves the deploy marker the self stack needs (below):
-  - Both: `infra/deploy.sh` (from the `main` checkout; refuses on any other branch, and refuses while a job is `running` unless `EMBRY0_DEPLOY_FORCE=1`: the recreate interrupts it, and although it resumes, the step it was in runs again — see [Deploying while jobs run](#deploying-while-jobs-run))
+  - Both: `infra/deploy.sh` (from the `main` checkout; refuses on any other branch and on a checkout with uncommitted or untracked changes, which the build would ship under the committed sha; refuses while a job is `running`, and when the running-jobs check gets anything but a 200, such as a 401 from a wrong `API_KEY`, unless `EMBRY0_DEPLOY_FORCE=1`: the recreate interrupts a running job, and although it resumes, the step it was in runs again — see [Deploying while jobs run](#deploying-while-jobs-run))
   - Backend only: `infra/deploy.sh orchestrator` — Frontend only: `infra/deploy.sh frontend`
-  - What it runs, if you need it by hand: `cd infra && docker compose build orchestrator frontend && docker compose up -d orchestrator mcp frontend --force-recreate`, then `infra/deploy.sh marker <sha> orchestrator frontend` for the marker.
+  - **nginx and a recreated orchestrator.** nginx looks the orchestrator's address up once, when it loads its config, and a recreated orchestrator can come back on another one: nginx then answers `/api`, `/ws`, `/webhook` and `/health` with 502. `infra/deploy.sh orchestrator` reloads nginx after the recreate. Any recipe that recreates the orchestrator without the frontend needs the same step after it: `docker compose exec frontend nginx -s reload`, from `infra/`.
+  - What it runs, if you need it by hand: `cd infra && docker compose build orchestrator frontend && docker compose up -d --force-recreate --no-deps orchestrator mcp frontend`, then `infra/deploy.sh marker <sha> orchestrator frontend` for the marker.
   - `mcp` runs the **orchestrator image** (`image: embry0-orchestrator`, no build of its own), so every orchestrator rebuild leaves it on the old image until it is recreated too; the script recreates it with the orchestrator. Left out of the manual recipe until 2026-09-23, when a deploy shipped a four-day-old MCP server next to a fresh orchestrator.
   - **Deploy marker.** On success the script pushes one line, `deployed <sha>: <services>`, to Loki under `{job="embry0-deploy"}` (URL: `EMBRY0_DEPLOY_LOKI_URL`, else `WATCHER_LOKI_URL` from the root `.env`; unset = no marker, said on stderr). The self stack's `deploy_logql` override selects that job label, and that is how a self case gets past `merged` — a deploy done without the marker leaves its cases there. See `docs/self-watching.md`.
 - `infra/deploy.sh` builds the orchestrator and frontend, or the services you name. It does not rebuild the sandbox, QA or proxy images: a change to the code baked into them needs a [rebuild recipe](#images-registry-pins-and-rebuilds) too.
@@ -45,7 +46,7 @@ stops a job without losing it (#307):
    from its start — its agent turn's spend is spent twice. A job that never
    started, or stopped before its graph began, starts again from its launch
    record. Each says so on its timeline.
-3. **What still fails.** A QA or onboard job that had begun its graph
+3. **What still fails.** A QA, onboard or pr-review job that had begun its graph
    (their sub-sandboxes are not re-enrolled), a job with nothing to resume
    from, and a job whose sandbox is gone (the daemon restarted with it:
    `ERR_SANDBOX_GONE`) fail as before. One the drain stopped reads
@@ -57,7 +58,9 @@ stops a job without losing it (#307):
    drains never count, so a long job may cross any number of deploys.
 
 Restarting `dind` (or the rootless daemon) still kills every sandbox, and
-with them the jobs; `infra/deploy.sh` never touches it. A recreate is safe;
+with them the jobs; `infra/deploy.sh` never touches it: it recreates only the
+services it names, with `--no-deps`, so a changed `dind` config waits until
+you recreate `dind` by name. A recreate is safe;
 the deploy script still asks before one while a job runs because of the
 re-run node in 2.
 

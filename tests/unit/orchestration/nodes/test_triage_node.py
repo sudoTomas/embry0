@@ -1,5 +1,4 @@
 import json
-from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -206,33 +205,6 @@ def test_parse_triage_response_preserves_escaped_quotes_in_strings():
     )
     decision = parse_triage_response(raw)
     assert decision["reasoning"] == 'looked like "{"ok": true}" to me'
-
-
-@dataclass
-class MockAgentResult:
-    success: bool = True
-    raw_output: str = ""
-    error: str | None = None
-    usage: dict | None = None
-
-
-@pytest.mark.skip(
-    reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
-    "Rewrite using a real agent_runner mock + container_id if coverage of "
-    "run_triage_node is needed."
-)
-@pytest.mark.asyncio
-async def test_run_triage_node_success():
-    """Skipped — run_triage_node (in-process SDK path) was deleted."""
-
-
-@pytest.mark.skip(
-    reason="In-process triage fallback removed in Plan A finalisation (2026-04-28). "
-    "Low-confidence escalation logic lives in triage_node (sandbox path)."
-)
-@pytest.mark.asyncio
-async def test_low_confidence_triggers_needs_info():
-    """Skipped — run_triage_node (in-process SDK path) was deleted."""
 
 
 @pytest.mark.asyncio

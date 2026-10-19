@@ -416,8 +416,21 @@ curl http://localhost:8200/api/v1/sandboxes/active \
 
 ## WebSocket streaming
 
+The handshake takes a short-lived token scoped to one job, never an API key.
+Mint it with an operator or admin key; a read or merge key gets 403, and can
+page the same events from `GET /api/v1/jobs/{job_id}/logs/events?since_seq=`
+instead. A browser signed in with SSO needs no token: the session cookie
+authenticates the handshake.
+
 ```javascript
-const ws = new WebSocket('ws://localhost:8200/ws/jobs/{job_id}/events');
+// 1. Mint a token for this job (expires_in: 900 seconds).
+const { token } = await fetch(`http://localhost:8200/api/v1/jobs/${jobId}/events-token`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${apiKey}`, 'X-Requested-With': 'XMLHttpRequest' },
+}).then((r) => r.json());
+
+// 2. Present it as the subprotocol; the server echoes it back on accept.
+const ws = new WebSocket(`ws://localhost:8200/ws/jobs/${jobId}/events`, [`embry0.token.${token}`]);
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   // every event: { type, timestamp, event_seq, ...fields }

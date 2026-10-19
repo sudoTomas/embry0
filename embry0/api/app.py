@@ -1036,7 +1036,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         not_started = "Orchestrator restarted before the job started; nothing ran. Dispatch it again."
         drained = (
             "Orchestrator shut down during the job and could not resume it "
-            "(QA and onboard jobs, and jobs without a checkpoint, start over). Dispatch it again."
+            "(QA, onboard and pr-review jobs, and jobs without a checkpoint, start over). Dispatch it again."
         )
         orphaned_ids = await boot_jobs_repo.fail_orphaned(
             ErrorCode.ORPHANED.value,

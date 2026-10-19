@@ -126,7 +126,7 @@ the provider does not declare fails the run with `ERR_QA_CONFIG_INVALID`.
 | `e2e` | e2e block \| null | none | See below. |
 | `auth` | auth block \| null | none | Pre-authenticate the QA browser via a Playwright storageState — see the `auth:` section below. |
 | `acceptance_criteria_template` | list of str | `[]` | Default criteria the QA agent drives per app. |
-| `browser_backend` | str \| null | none | Browser backend the QA agent drives (`playwright` today; `vibium` when #233 lands — validated against the backend registry, unknown names are parse errors). Unset inherits the deployment default (`qa_browser_backend_default`, itself `playwright`). Full precedence: job override > `app_local` > `apps.<name>` > `defaults` > deployment default. |
+| `browser_backend` | str \| null | none | Browser backend the QA agent drives (`playwright` or `vibium`, both baked into the QA image — validated against the backend registry, unknown names are parse errors). Unset inherits the deployment default (`qa_browser_backend_default`, itself `playwright`). Full precedence: job override > `app_local` > `apps.<name>` > `defaults` > deployment default. |
 | `guardrails` | list of str | `[]` | EMB-31: absolute DO-NOT rules for the QA agent (e.g. "never click Send"). Injected into `job.json` and enforced by the agent's system prompt; violations are reported as `anomalies[]` with `category: guardrail_violation` and surfaced prominently on the dashboard. **Merged as a UNION** with per-app/app-local guardrails — a narrower layer can add rules but never remove inherited ones (unlike acceptance criteria, which replace). |
 
 ### Docker access (`mode: dind`)
