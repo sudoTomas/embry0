@@ -22,6 +22,12 @@ const FILL: Record<CharClass, string> = {
   h: "color-mix(in srgb, var(--sprite-fill) 70%, white)",
   e: "var(--color-foreground)",
 };
+/** The pending frame is outline only; in the background colour it vanishes on every surface, so it is a dim tint instead. */
+const PENDING_OUTLINE = "color-mix(in srgb, var(--sprite-fill) 45%, transparent)";
+
+function fillFor(cls: CharClass, state: SpriteState): string {
+  return cls === "o" && state === "pending" ? PENDING_OUTLINE : FILL[cls];
+}
 const ORDER: CharClass[] = ["o", "f", "h", "e"];
 
 /** One avatar in one state: a 16x16 SVG, tinted by the palette token, stepping between two frames by CSS. */
@@ -47,7 +53,7 @@ export function Sprite({ avatar, color, state, size = 32, label, className }: Sp
       {frames.map((paths, i) => (
         <g key={i} className="sprite-frame" data-frame={i}>
           {ORDER.filter((k) => paths[k]).map((k) => (
-            <path key={k} d={paths[k]} fill={FILL[k]} />
+            <path key={k} d={paths[k]} fill={fillFor(k, state)} />
           ))}
         </g>
       ))}

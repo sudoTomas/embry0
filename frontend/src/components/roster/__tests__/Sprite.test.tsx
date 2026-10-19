@@ -40,6 +40,16 @@ describe("Sprite", () => {
     expect(svg.getAttribute("aria-label")).toBe("golem, idle");
   });
 
+  it("draws the pending outline as a dim tint, not the background colour it would vanish into", () => {
+    const { container, rerender } = render(<Sprite avatar="smith" color="amber" state="pending" />);
+    let fills = [...container.querySelectorAll("path")].map((p) => p.getAttribute("fill"));
+    expect(fills).toEqual(["color-mix(in srgb, var(--sprite-fill) 45%, transparent)"]);
+    rerender(<Sprite avatar="smith" color="amber" state="idle" />);
+    fills = [...container.querySelectorAll("path")].map((p) => p.getAttribute("fill"));
+    expect(fills).toContain("var(--color-background)");
+    expect(fills).not.toContain("color-mix(in srgb, var(--sprite-fill) 45%, transparent)");
+  });
+
   it("defaults to 32 px", () => {
     const { container } = render(<Sprite avatar="bard" color="gold" state="pending" />);
     expect(container.querySelector("svg")).toHaveAttribute("height", "32");
