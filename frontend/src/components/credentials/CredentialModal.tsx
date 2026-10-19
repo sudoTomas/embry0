@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { createFocusTrap } from "@/lib/focus-trap";
+import { ENABLE_SETTING, isLlmProvider, llmProviderStates, type LlmProviderName } from "@/lib/llmProviders";
+import { providerLabel } from "@/lib/status";
 import type { Credential, CredentialCreate, CredentialProvider } from "@/lib/types/credentials";
 
 /** Same vocabulary as embry0/api/schemas/credentials.py `_LABEL` (1–64). */
@@ -22,12 +24,12 @@ const KNOWN_FIELDS = new Set([
   "git_author_email",
 ]);
 
-type FieldName = "provider" | "host" | "label" | "secret" | "git_author_name" | "git_author_email";
+type FieldName = "provider" | "host" | "label" | "secret" | "git_author_name" | "git_author_email" | "base_url";
 type FieldErrors = Partial<Record<FieldName, string>>;
 
 export type CredentialModalMode = { mode: "create" } | { mode: "rotate"; credential: Credential };
 
-type AccountKind = "forge_token" | "claude_oauth" | "claude_api_key" | "grok_api_key";
+type AccountKind = "forge_token" | "claude_oauth" | "llm_api_key";
 
 interface DeviceLoginView {
   loginId: string;
@@ -43,6 +45,9 @@ export interface CredentialModalProps {
   /** The device-login poll creates the row. The page refetches when it finishes. */
   onDeviceLoginDone?(): void;
   gitlabHost: string | null;
+  /** GET /config/models providers: the LLM providers this deployment enables.
+   * Undefined until it answers, when the backend decides on save. */
+  catalogProviders?: readonly { name: string }[];
 }
 
 /**
@@ -56,6 +61,32 @@ function gitAuthorEmailError(value: string): string | null {
   if (!trimmed) return null;
   if (!trimmed.includes("@") || /\s/.test(trimmed)) {
     return "Git author email must contain '@' and no whitespace.";
+  }
+  return null;
+}
+
+function parseUrl(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A custom provider's API root, by the backend's rule (`_custom_base_url` in
+ * embry0/api/schemas/credentials.py): an http(s) URL with a host, and no
+ * credentials, query or fragment. The server checks it again.
+ */
+function baseUrlError(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return "Base URL is required for a custom provider.";
+  const url = parseUrl(trimmed);
+  if (!url || (url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname) {
+    return "Base URL must be an http(s) URL with a host, e.g. http://10.0.0.5:11434/v1.";
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    return "Base URL must not carry credentials, a query or a fragment.";
   }
   return null;
 }
@@ -124,6 +155,7 @@ export function CredentialModal({
   onClose,
   onDeviceLoginDone,
   gitlabHost,
+  catalogProviders,
 }: CredentialModalProps) {
   const isRotate = modeSpec.mode === "rotate";
   const containerRef = useRef<HTMLDivElement>(null);
@@ -134,6 +166,8 @@ export function CredentialModal({
 
   const [accountKind, setAccountKind] = useState<AccountKind>("forge_token");
   const [provider, setProvider] = useState<Extract<CredentialProvider, "github" | "gitlab">>("github");
+  const [llmProvider, setLlmProvider] = useState<LlmProviderName>("anthropic");
+  const [baseUrl, setBaseUrl] = useState("");
   const [deviceLogin, setDeviceLogin] = useState<DeviceLoginView | null>(null);
   const [deviceStatus, setDeviceStatus] = useState<"pending" | "done" | "expired" | "error" | null>(null);
   const [label, setLabel] = useState("");
@@ -145,6 +179,9 @@ export function CredentialModal({
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  const llmStates = llmProviderStates(catalogProviders);
+  const notEnabled = llmStates.filter((entry) => entry.state === "not_enabled").map((entry) => entry.name);
 
   const requestClose = useCallback(() => {
     setSecret("");
@@ -226,6 +263,15 @@ export function CredentialModal({
           errors.provider = "GitLab needs a configured host.";
         }
       }
+      if (accountKind === "llm_api_key") {
+        if (notEnabled.includes(llmProvider)) {
+          errors.provider = `${providerLabel(llmProvider)} is not enabled in this deployment.`;
+        }
+        if (llmProvider === "custom") {
+          const urlProblem = baseUrlError(baseUrl);
+          if (urlProblem) errors.base_url = urlProblem;
+        }
+      }
     }
 
     if (Object.keys(errors).length > 0) {
@@ -297,11 +343,15 @@ export function CredentialModal({
     if (accountKind === "claude_oauth") {
       return { kind: "llm_oauth", provider: "anthropic", label: trimmedLabel, secret: trimmedSecret };
     }
-    if (accountKind === "claude_api_key") {
-      return { kind: "llm_api_key", provider: "anthropic", label: trimmedLabel, secret: trimmedSecret };
-    }
-    if (accountKind === "grok_api_key") {
-      return { kind: "llm_api_key", provider: "xai", label: trimmedLabel, secret: trimmedSecret };
+    if (accountKind === "llm_api_key") {
+      const body: CredentialCreate = {
+        kind: "llm_api_key",
+        provider: llmProvider,
+        label: trimmedLabel,
+        secret: trimmedSecret,
+      };
+      if (llmProvider === "custom") body.metadata = { base_url: baseUrl.trim() };
+      return body;
     }
     const name = gitAuthorName.trim();
     const email = gitAuthorEmail.trim();
@@ -356,19 +406,90 @@ export function CredentialModal({
                   value={accountKind}
                   onChange={(e) => {
                     const value = e.target.value;
-                    if (value === "claude_oauth" || value === "claude_api_key" || value === "grok_api_key") {
+                    if (value === "claude_oauth" || value === "llm_api_key") {
                       setAccountKind(value);
                     } else {
                       setAccountKind("forge_token");
                     }
+                    clearField("provider");
                   }}
                 >
                   <option value="forge_token">Forge token</option>
+                  <option value="llm_api_key">LLM API key</option>
                   <option value="claude_oauth">Claude OAuth token</option>
-                  <option value="claude_api_key">Claude API key</option>
-                  <option value="grok_api_key">Grok API key</option>
                 </Select>
               </div>
+
+              {accountKind === "llm_api_key" && (
+              <>
+              <div>
+                <Label htmlFor="credential-llm-provider">Provider</Label>
+                <Select
+                  id="credential-llm-provider"
+                  className="mt-1"
+                  value={llmProvider}
+                  aria-invalid={fieldErrors.provider ? true : undefined}
+                  aria-describedby={
+                    [
+                      notEnabled.length > 0 ? "credential-llm-provider-hint" : "",
+                      fieldErrors.provider ? "credential-llm-provider-error" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ") || undefined
+                  }
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (isLlmProvider(value)) setLlmProvider(value);
+                    clearField("provider");
+                    clearField("base_url");
+                  }}
+                >
+                  {llmStates.map(({ name, state }) => (
+                    <option key={name} value={name} disabled={state === "not_enabled"}>
+                      {state === "not_enabled" ? `${providerLabel(name)} (not enabled)` : providerLabel(name)}
+                    </option>
+                  ))}
+                </Select>
+                {notEnabled.length > 0 && (
+                  <p id="credential-llm-provider-hint" className="mt-1 text-xs text-muted-foreground">
+                    Not enabled in this deployment: {notEnabled.map(providerLabel).join(", ")}. Name a provider in{" "}
+                    <span className="font-mono">{ENABLE_SETTING}</span> and restart the orchestrator to add its key.
+                  </p>
+                )}
+                {fieldErrors.provider && (
+                  <FieldAlert id="credential-llm-provider-error">{fieldErrors.provider}</FieldAlert>
+                )}
+              </div>
+
+              {llmProvider === "custom" && (
+                <div>
+                  <Label htmlFor="credential-base-url">Base URL</Label>
+                  <Input
+                    id="credential-base-url"
+                    value={baseUrl}
+                    onChange={(e) => {
+                      setBaseUrl(e.target.value);
+                      clearField("base_url");
+                    }}
+                    placeholder="http://10.0.0.5:11434/v1"
+                    className="mt-1 font-mono"
+                    autoComplete="off"
+                    aria-invalid={fieldErrors.base_url ? true : undefined}
+                    aria-describedby={
+                      fieldErrors.base_url ? "credential-base-url-hint credential-base-url-error" : "credential-base-url-hint"
+                    }
+                  />
+                  <p id="credential-base-url-hint" className="mt-1 text-xs text-muted-foreground">
+                    The root of the server&apos;s OpenAI-compatible API. A server that checks no key still needs a
+                    placeholder secret.
+                  </p>
+                  {fieldErrors.base_url && (
+                    <FieldAlert id="credential-base-url-error">{fieldErrors.base_url}</FieldAlert>
+                  )}
+                </div>
+              )}
+              </>
+              )}
 
               {accountKind === "forge_token" && (
               <>

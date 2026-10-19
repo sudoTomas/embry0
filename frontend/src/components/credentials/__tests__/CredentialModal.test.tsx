@@ -1,5 +1,5 @@
 // frontend/src/components/credentials/__tests__/CredentialModal.test.tsx
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialModal } from "../CredentialModal";
@@ -49,11 +49,12 @@ describe("CredentialModal", () => {
     expect(screen.getByRole("option", { name: /gitlab/i })).toBeDisabled();
   });
 
-  it("submits a Claude API key as an anthropic llm_api_key", async () => {
+  it("submits an Anthropic API key as an anthropic llm_api_key", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
     render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={onSubmit} onClose={vi.fn()} gitlabHost={null} />);
-    await user.selectOptions(screen.getByLabelText(/^kind/i), "claude_api_key");
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
+    expect(screen.getByLabelText(/^provider/i)).toHaveValue("anthropic");
     await user.type(screen.getByLabelText(/label/i), "claude-default");
     await user.type(screen.getByLabelText(/^secret/i), "sk-ant-placeholder");
     await user.click(screen.getByRole("button", { name: /^create$/i }));
@@ -63,6 +64,136 @@ describe("CredentialModal", () => {
       label: "claude-default",
       secret: "sk-ant-placeholder",
     });
+  });
+
+  it("offers every LLM provider by its maker's name and says which are not enabled", async () => {
+    const user = userEvent.setup();
+    render(
+      <CredentialModal
+        modeSpec={{ mode: "create" }}
+        onSubmit={vi.fn()}
+        onClose={vi.fn()}
+        gitlabHost={null}
+        catalogProviders={[{ name: "anthropic" }, { name: "xai" }, { name: "openai" }, { name: "custom" }]}
+      />,
+    );
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
+    const select = screen.getByLabelText(/^provider/i);
+    const options = within(select).getAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual([
+      "Anthropic",
+      "xAI",
+      "OpenAI",
+      "OpenRouter (not enabled)",
+      "Google (not enabled)",
+      "Groq (not enabled)",
+      "DeepSeek (not enabled)",
+      "Custom",
+    ]);
+    expect(options.filter((o) => (o as HTMLOptionElement).disabled).map((o) => (o as HTMLOptionElement).value)).toEqual([
+      "openrouter",
+      "google",
+      "groq",
+      "deepseek",
+    ]);
+    expect(screen.getByText(/not enabled in this deployment: openrouter, google, groq, deepseek/i)).toHaveTextContent(
+      "OPENAI_COMPATIBLE_PROVIDERS",
+    );
+  });
+
+  it("submits an enabled OpenAI-compatible key with no host and no metadata", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(
+      <CredentialModal
+        modeSpec={{ mode: "create" }}
+        onSubmit={onSubmit}
+        onClose={vi.fn()}
+        gitlabHost={null}
+        catalogProviders={[{ name: "anthropic" }, { name: "xai" }, { name: "deepseek" }]}
+      />,
+    );
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
+    await user.selectOptions(screen.getByLabelText(/^provider/i), "deepseek");
+    await user.type(screen.getByLabelText(/label/i), "api-key");
+    await user.type(screen.getByLabelText(/^secret/i), "sk-placeholder");
+    await user.click(screen.getByRole("button", { name: /^create$/i }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      kind: "llm_api_key",
+      provider: "deepseek",
+      label: "api-key",
+      secret: "sk-placeholder",
+    });
+  });
+
+  it("submits a custom key with the API root it needs", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(
+      <CredentialModal
+        modeSpec={{ mode: "create" }}
+        onSubmit={onSubmit}
+        onClose={vi.fn()}
+        gitlabHost={null}
+        catalogProviders={[{ name: "anthropic" }, { name: "xai" }, { name: "custom" }]}
+      />,
+    );
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
+    expect(screen.queryByLabelText(/^base url/i)).toBeNull();
+    await user.selectOptions(screen.getByLabelText(/^provider/i), "custom");
+    await user.type(screen.getByLabelText(/^base url/i), " http://10.0.0.5:11434/v1 ");
+    await user.type(screen.getByLabelText(/label/i), "ollama");
+    await user.type(screen.getByLabelText(/^secret/i), "placeholder");
+    await user.click(screen.getByRole("button", { name: /^create$/i }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      kind: "llm_api_key",
+      provider: "custom",
+      label: "ollama",
+      secret: "placeholder",
+      metadata: { base_url: "http://10.0.0.5:11434/v1" },
+    });
+  });
+
+  it("refuses a custom key whose API root the backend would refuse, no submit", async () => {
+    const onSubmit = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <CredentialModal
+        modeSpec={{ mode: "create" }}
+        onSubmit={onSubmit}
+        onClose={vi.fn()}
+        gitlabHost={null}
+        catalogProviders={[{ name: "anthropic" }, { name: "xai" }, { name: "custom" }]}
+      />,
+    );
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
+    await user.selectOptions(screen.getByLabelText(/^provider/i), "custom");
+    await user.type(screen.getByLabelText(/label/i), "ollama");
+    await user.type(screen.getByLabelText(/^secret/i), "placeholder");
+    await user.click(screen.getByRole("button", { name: /^create$/i }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/base url is required/i);
+    await user.type(screen.getByLabelText(/^base url/i), "http://user:pw@10.0.0.5:11434/v1");
+    await user.click(screen.getByRole("button", { name: /^create$/i }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/credentials, a query or a fragment/i);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("says a provider is not enabled instead of sending it", async () => {
+    const onSubmit = vi.fn();
+    const user = userEvent.setup();
+    const props = { modeSpec: { mode: "create" } as const, onSubmit, onClose: vi.fn(), gitlabHost: null };
+    const { rerender } = render(<CredentialModal {...props} />);
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
+    // Before the catalog answers the family is offered and the backend decides.
+    expect(screen.getByRole("option", { name: "OpenAI" })).toBeEnabled();
+    expect(screen.queryByText(/not enabled in this deployment/i)).toBeNull();
+    await user.selectOptions(screen.getByLabelText(/^provider/i), "openai");
+    rerender(<CredentialModal {...props} catalogProviders={[{ name: "anthropic" }, { name: "xai" }]} />);
+    await user.type(screen.getByLabelText(/label/i), "api-key");
+    await user.type(screen.getByLabelText(/^secret/i), "sk-placeholder");
+    await user.click(screen.getByRole("button", { name: /^create$/i }));
+    expect(screen.getByRole("alert")).toHaveTextContent("OpenAI is not enabled in this deployment.");
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("polls xAI device login on the interval from the start response", async () => {

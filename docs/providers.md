@@ -124,8 +124,10 @@ connection** calls `GET <API root>/models` with the key a job with no
 repository binding would get (the global pool, then the env); OpenRouter's
 `/models` answers without a key, so for it the test calls `/key`. The
 outcome is the provider's `last_probe`, read back from the audit log like
-every other provider's. The dashboard's create-credential dialog does not
-offer these providers yet: use the API or the env.
+every other provider's. The dashboard's create-credential dialog
+(Credentials, **Add credential**, kind **LLM API key**) offers every provider,
+and for `custom` asks for the base URL; a provider this deployment has not
+enabled is listed as not enabled and cannot be picked.
 
 The sandbox receives the key as `EMBRY0_LLM_<PROVIDER>_API_KEY`
 (`EMBRY0_LLM_OPENAI_API_KEY`, …, `EMBRY0_LLM_CUSTOM_API_KEY`) and a custom

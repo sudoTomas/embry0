@@ -17,6 +17,7 @@ import {
   useUpdateCredential,
   useVerifyCredential,
 } from "@/hooks/useCredentials";
+import { useModelsCatalog } from "@/hooks/useProvider";
 import type { Credential, CredentialCreate, ImportEnvReport } from "@/lib/types/credentials";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -87,6 +88,8 @@ export function CredentialsPage() {
   const verifyCredential = useVerifyCredential();
   const deleteCredential = useDeleteCredential();
   const importEnv = useImportEnvCredentials();
+  // The providers page's catalog: which LLM providers the create dialog can take.
+  const catalog = useModelsCatalog();
 
   const [modal, setModal] = useState<OpenModal | null>(null);
   const [bindingsFor, setBindingsFor] = useState<Credential | null>(null);
@@ -248,6 +251,7 @@ export function CredentialsPage() {
         <CredentialModal
           modeSpec={modal}
           gitlabHost={null}
+          catalogProviders={catalog.data?.providers}
           onSubmit={onModalSubmit}
           onDeviceLoginDone={() => {
             void credentialsQuery.refetch();
