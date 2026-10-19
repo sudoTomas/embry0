@@ -101,6 +101,15 @@ describe("StructuredView", () => {
     expect(card?.className).not.toMatch(/(^|\s)border-primary/);
   });
 
+  it("names a tool in the neutral foreground, not gold", () => {
+    // Every card carries a tool name; gold is kept for the one thing on the
+    // view that needs a person.
+    renderVirtual(<StructuredView events={loadFixture("issue-to-pr")} />);
+    const name = screen.getAllByText("Read", { selector: "button span" })[0];
+    expect(name.className).toContain("text-foreground");
+    expect(name.className).not.toMatch(/(^|\s)text-primary/);
+  });
+
   it("pre-contract job: the error line shows its text and the tool call renders", () => {
     renderVirtual(<StructuredView events={loadFixture("legacy-rows")} />);
     expect(screen.queryByText("legacy boom"), "the legacy error text is missing").not.toBeNull();

@@ -51,7 +51,7 @@ export function ToolCallCard({ tool, input, output, error, isActive, children }:
         ) : (
           <ChevronRight className="h-3.5 w-3.5 shrink-0" />
         )}
-        <span className="font-mono font-medium text-primary">{tool}</span>
+        <span className="font-mono font-medium text-foreground">{tool}</span>
 
         {!isActive &&
           (error ? (

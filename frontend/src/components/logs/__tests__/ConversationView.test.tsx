@@ -3,6 +3,9 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { ConversationView } from "../ConversationView";
 import { loadFixture } from "@/lib/__tests__/fixtures";
 
+/** A gold fill, wash, text or frame. */
+const GOLD = /(^|\s)(bg|text|border|fill|stroke)-primary(\/\d+)?(\s|$)/;
+
 describe("ConversationView", () => {
   it("shows a tool call's summary in the header and its tool_input as the body", () => {
     render(<ConversationView events={loadFixture("issue-to-pr")} />);
@@ -19,6 +22,15 @@ describe("ConversationView", () => {
     const block = screen.getByText("Read README.md").closest("button")?.parentElement;
     expect(block?.className).toContain("border-border");
     expect(block?.className).not.toMatch(/(^|\s)border-primary/);
+  });
+
+  it("names tools and the assistant in the neutral tones, never gold", () => {
+    // A transcript repeats tool names and the Assistant label on every
+    // turn; none of them is the one thing on the view that needs a person.
+    const { container } = render(<ConversationView events={loadFixture("issue-to-pr")} />);
+    expect(screen.getAllByText("Assistant").length, "no Assistant label rendered").toBeGreaterThan(0);
+    const gold = [...container.querySelectorAll("*")].filter((el) => GOLD.test(el.getAttribute("class") ?? ""));
+    expect(gold.map((el) => `${el.tagName.toLowerCase()} "${el.textContent?.trim() ?? ""}"`)).toEqual([]);
   });
 
   it("numbers turns within each run", () => {

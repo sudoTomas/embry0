@@ -209,8 +209,8 @@ function TurnCard({ turn }: { turn: ConversationTurn }) {
       {turn.assistantBlocks.length > 0 && (
         <div className="pl-1">
           <div className="flex items-center gap-1.5 mb-1">
-            <Bot className="h-3.5 w-3.5 text-primary" />
-            <span className="text-xs font-medium text-primary">Assistant</span>
+            <Bot className="h-3.5 w-3.5 text-fg-secondary" />
+            <span className="text-xs font-medium text-foreground">Assistant</span>
           </div>
           <div className="space-y-1 pl-5">
             {turn.assistantBlocks.map((block, i) => (
@@ -307,8 +307,8 @@ function ToolUseBlockView({ block }: { block: ConversationToolUseBlock }) {
           ? <ChevronDown className="h-3 w-3 shrink-0" />
           : <ChevronRight className="h-3 w-3 shrink-0" />
         }
-        <Wrench className="h-3 w-3 text-primary shrink-0" />
-        <span className="font-mono font-medium text-primary">{block.name}</span>
+        <Wrench className="h-3 w-3 text-muted-foreground shrink-0" />
+        <span className="font-mono font-medium text-foreground">{block.name}</span>
         {block.summary && <span className="font-mono text-muted-foreground truncate">{block.summary}</span>}
       </button>
       {expanded && (

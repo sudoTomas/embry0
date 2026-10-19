@@ -27,7 +27,7 @@ export function AgentFilterTabs({ nodeStates, selectedNodeId, onSelect }: AgentF
         className={cn(
           "px-3 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap",
           selectedNodeId === null
-            ? "bg-overlay text-primary"
+            ? "bg-overlay text-foreground"
             : "text-muted-foreground hover:text-foreground hover:bg-muted"
         )}
       >
@@ -50,7 +50,7 @@ export function AgentFilterTabs({ nodeStates, selectedNodeId, onSelect }: AgentF
             className={cn(
               "px-3 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap flex items-center gap-1.5",
               selectedNodeId === nodeId
-                ? "bg-overlay text-primary"
+                ? "bg-overlay text-foreground"
                 : "text-muted-foreground hover:text-foreground hover:bg-muted"
             )}
           >
