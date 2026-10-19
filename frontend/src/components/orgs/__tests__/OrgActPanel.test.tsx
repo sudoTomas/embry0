@@ -103,7 +103,7 @@ describe("OrgActPanel", () => {
     renderPanel();
     fireEvent.click(within(needRow("n1")).getByTestId("org-act-checkbox"));
     fireEvent.click(screen.getByTestId("org-act-preview-button"));
-    expect(await screen.findByTestId("org-act-error")).toHaveTextContent("register: acme/a is archived");
+    expect(await screen.findByTestId("org-act-error")).toHaveTextContent("Register: acme/a is archived");
     expect(screen.getByTestId("org-act-apply-button")).toBeDisabled();
   });
 
@@ -125,7 +125,7 @@ describe("OrgActPanel", () => {
     expect(within(needRow("n1")).getByTestId("org-act-checkbox")).toBeDisabled();
   });
 
-  it("says Watch adds a disabled watcher stack, and a dry run says what it would do", async () => {
+  it("names the watch action for what it does, a disabled watcher stack, wherever it shows", async () => {
     // The watch action adds a stack that stays disabled until someone sets
     // its LogQL; neither its name nor a preview's "Done" may read as if
     // watching starts.
@@ -136,11 +136,24 @@ describe("OrgActPanel", () => {
       results: body.repos.map((repo) => ({ repo, outcome: "done", detail: "would add a disabled watcher stack filing to github" })),
     }));
     renderPanel(needs([need("w1", "not_watched", ["acme/d"])]));
-    expect(needRow("w1")).toHaveTextContent(/adds a disabled watcher stack/i);
-    fireEvent.click(within(needRow("w1")).getByTestId("org-act-checkbox"));
+    const row = needRow("w1");
+    expect(within(row).getByText("Add a disabled watcher stack"), "the need's badge").toBeInTheDocument();
+    expect(row).toHaveTextContent(/watching starts once you set its LogQL/i);
+
+    fireEvent.click(within(row).getByTestId("org-act-checkbox"));
+    expect(screen.getByText("Add a disabled watcher stack 1. Preview first."), "the plan summary").toBeInTheDocument();
+
     fireEvent.click(screen.getByTestId("org-act-preview-button"));
     const preview = await screen.findByTestId("org-act-preview");
+    const [previewRow] = within(preview).getAllByTestId("org-act-result-row");
+    expect(within(previewRow).getByText("Add a disabled watcher stack"), "the dry run's row").toBeInTheDocument();
     expect(within(preview).queryByText("Done")).toBeNull();
     expect(within(preview).getByText("Would do")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("org-act-apply-button"));
+    const results = await screen.findByTestId("org-act-results");
+    const [appliedRow] = within(results).getAllByTestId("org-act-result-row");
+    expect(within(appliedRow).getByText("Add a disabled watcher stack"), "the results column").toBeInTheDocument();
+    expect(screen.getByTestId("org-act-panel").textContent, "the raw action name never shows").not.toMatch(/\bwatch\b/i);
   });
 });

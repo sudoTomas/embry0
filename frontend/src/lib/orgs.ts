@@ -111,6 +111,19 @@ export function groupNeeds(needs: readonly OrgNeed[]): NeedGroup[] {
     }));
 }
 
+/** Each action as the words a person reads, never the raw API name. */
+export const ACTION_LABELS: Readonly<Record<OrgActionName, string>> = {
+  register: "Register",
+  hook: "Add webhook",
+  onboard: "Onboard",
+  // The stack it adds stays off until its LogQL is set and it is enabled.
+  watch: "Add a disabled watcher stack",
+};
+
+export function actionLabel(action: string): string {
+  return ACTION_LABELS[action as OrgActionName] ?? action;
+}
+
 /** Registering comes first: hooking, onboarding and watching act on registered repositories. */
 export const ACTION_ORDER: readonly OrgActionName[] = ["register", "hook", "onboard", "watch"];
 
