@@ -18,6 +18,7 @@ import {
   type ContextConfig,
   type RepoContext,
 } from "@/api/config";
+import { toastApiError } from "@/api/errorToast";
 
 export default function ContextTab() {
   const qc = useQueryClient();
@@ -76,7 +77,7 @@ export default function ContextTab() {
       qc.invalidateQueries({ queryKey: ["global-context"] });
       toast.success("Global context saved");
     } catch (e) {
-      toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+      toastApiError(e, "Failed");
     } finally {
       setGlobalSaving(false);
     }
@@ -112,7 +113,7 @@ export default function ContextTab() {
       qc.invalidateQueries({ queryKey: ["repo-contexts"] });
       toast.success(`Context saved for ${selectedForm.repo}`);
     } catch (e) {
-      toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+      toastApiError(e, "Failed");
     }
   };
 
@@ -122,7 +123,7 @@ export default function ContextTab() {
       qc.invalidateQueries({ queryKey: ["repo-contexts"] });
       toast.success(`Context removed for ${repo}`);
     } catch (e) {
-      toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+      toastApiError(e, "Failed");
     }
   };
 
@@ -145,7 +146,7 @@ export default function ContextTab() {
       setSelectedRepo(trimmed);
       toast.success(`Added context for ${trimmed}`);
     } catch (e) {
-      toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+      toastApiError(e, "Failed");
     }
   };
 

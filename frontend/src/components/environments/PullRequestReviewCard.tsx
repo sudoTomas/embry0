@@ -8,6 +8,7 @@ import { useRepoPreferences, useSetRepoPreferences } from "@/hooks/useRepoPrefer
 import { useModels } from "@/hooks/useModels";
 import type { PrReviewDepth, PrReviewReadyAuthors, PrReviewSettings } from "@/api/repoPreferences";
 import { cn } from "@/lib/utils";
+import { toastApiError } from "@/api/errorToast";
 
 const DEFAULTS: PrReviewSettings = { enabled: false, depth: "full", model: null, ready_authors: "team" };
 
@@ -80,7 +81,7 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
           toast.success("Pull request review settings saved");
           setDirty(false);
         },
-        onError: (e: Error) => toast.error(`Failed: ${e.message}`),
+        onError: (e: Error) => toastApiError(e, "Failed"),
       },
     );
   };

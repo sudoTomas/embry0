@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAnswerInput } from "@/hooks/useInputs";
 import type { JobInput } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 interface AutoAnswerCardProps {
   input: JobInput;
@@ -25,7 +26,7 @@ export function AutoAnswerCard({ input, jobId }: AutoAnswerCardProps) {
     if (!override.trim()) return;
     answerMutation.mutate(
       { issueId: input.issue_id, jobId, inputId: input.id, answer: override },
-      { onSuccess: () => setShowOverride(false) },
+      { onSuccess: () => setShowOverride(false), onError: (e) => toastApiError(e, "Failed to submit the override") },
     );
   };
 

@@ -25,6 +25,7 @@ import { DivineRipple } from "@/components/divine/DivineRipple";
 import { useRenameTemplate, useCreateTemplate } from "@/hooks/usePipelines";
 import { toApiGraph } from "@/lib/graph-utils";
 import type { PipelineGraph, PipelineTemplate } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 const nodeTypes = { agentNode: AgentNode, startEndNode: StartEndNode };
 const edgeTypes = { feedbackEdge: FeedbackEdge };
@@ -146,11 +147,10 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
   const handleSave = useCallback(() => {
     if (!currentTemplateId) return;
     const graph = toApiGraph(serialize(pipelineName));
-    renameMutation.mutate({
-      templateId: currentTemplateId,
-      name: pipelineName,
-      graph,
-    });
+    renameMutation.mutate(
+      { templateId: currentTemplateId, name: pipelineName, graph },
+      { onError: (e) => toastApiError(e, "Failed to save the pipeline") },
+    );
   }, [currentTemplateId, pipelineName, serialize, renameMutation]);
 
   const handleAutoArrange = useCallback(() => {
@@ -171,6 +171,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
           setCurrentTemplateId(created.template_id);
           setPipelineName(name);
         },
+        onError: (e) => toastApiError(e, "Failed to save the pipeline"),
       },
     );
   }, [pipelineName, serialize, createMutation]);

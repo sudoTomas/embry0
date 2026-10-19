@@ -22,6 +22,7 @@ import { formatDate } from "@/lib/utils";
 import { formatCost } from "@/lib/utils";
 import { statusLabel } from "@/lib/status";
 import type { NotificationChannel } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 const NOTIFICATION_CHANNELS = ["dashboard", "telegram", "github", "linear", "gitlab", "slack"] as NotificationChannel[];
 
@@ -50,7 +51,7 @@ export function IssueDetailPage(): JSX.Element {
   }, [issue?.notification_channels]);
 
   const handleFieldUpdate = (field: string, value: unknown): void => {
-    updateIssue.mutate({ id: issue!.id, [field]: value });
+    updateIssue.mutate({ id: issue!.id, [field]: value }, { onError: (e) => toastApiError(e, "Failed to update") });
   };
 
   const toggleChannel = (ch: NotificationChannel): void => {
@@ -69,7 +70,7 @@ export function IssueDetailPage(): JSX.Element {
       .catch((e: unknown) => {
         // Roll back the optimistic state on failure.
         setChannels(channels);
-        toast.error(e instanceof Error ? e.message : "Failed to update notification channels");
+        toastApiError(e, "Failed to update notification channels");
       });
   };
 
@@ -87,14 +88,14 @@ export function IssueDetailPage(): JSX.Element {
         result.dispatch_error
           ? toast.error(`Triage did not start: ${result.dispatch_error}`)
           : toast.success("Triage started"),
-      onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to triage"),
+      onError: (e) => toastApiError(e, "Failed to triage"),
     });
   };
 
   const handleSync = () => {
     syncIssue.mutate(id!, {
       onSuccess: () => toast.success("Synced with GitHub"),
-      onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to sync"),
+      onError: (e) => toastApiError(e, "Failed to sync"),
     });
   };
 
@@ -104,7 +105,7 @@ export function IssueDetailPage(): JSX.Element {
     if (!confirm("Cancel this issue? Its running jobs are cancelled too.")) return;
     deleteIssue.mutate(id!, {
       onSuccess: () => toast.success("Issue cancelled"),
-      onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to cancel"),
+      onError: (e) => toastApiError(e, "Failed to cancel"),
     });
   };
 

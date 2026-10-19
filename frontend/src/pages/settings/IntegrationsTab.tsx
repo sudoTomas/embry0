@@ -11,6 +11,7 @@ import { PageError } from "@/components/PageError";
 import { toast } from "sonner";
 import { Copy } from "lucide-react";
 import type { IntegrationConfigUpdate } from "@/lib/types/integrations";
+import { toastApiError } from "@/api/errorToast";
 
 export default function IntegrationsTab() {
   const { data: integrationConfig, isLoading, isError, refetch } = useIntegrationConfig();
@@ -136,7 +137,7 @@ export default function IntegrationsTab() {
         setChangedSecrets(new Set());
         toast.success("Integration settings saved");
       },
-      onError: (e) => toast.error(`Failed: ${e.message}`),
+      onError: (e) => toastApiError(e, "Failed"),
     });
   };
 

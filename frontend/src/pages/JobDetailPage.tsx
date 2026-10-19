@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, ExternalLink, Clock, DollarSign, Layers } from "lucide-react";
-import { toast } from "sonner";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { DivineRipple } from "@/components/divine/DivineRipple";
 import { jobToOperation, shouldFireCompletionFlare } from "@/components/divine/operations";
@@ -22,6 +21,7 @@ import { AgentFailuresCard } from "@/components/jobs/AgentFailuresCard";
 import { DeliverablesCard } from "@/components/jobs/DeliverablesCard";
 import { QATab } from "@/components/qa/QATab";
 import { resumeJob, discardJob } from "@/api/jobs";
+import { toastApiError } from "@/api/errorToast";
 
 function useElapsedTime(startedAt: string | null, finishedAt: string | null) {
   const [elapsed, setElapsed] = useState("");
@@ -105,7 +105,7 @@ export function JobDetailPage() {
       await resumeJob(job.job_id, choice, guidance);
       refetch();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to resume job");
+      toastApiError(err, "Failed to resume job");
     }
   };
 
@@ -114,7 +114,7 @@ export function JobDetailPage() {
       await discardJob(job.job_id);
       refetch();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to discard job");
+      toastApiError(err, "Failed to discard job");
     }
   };
 

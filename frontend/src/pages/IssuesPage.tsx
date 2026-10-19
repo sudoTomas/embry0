@@ -12,6 +12,7 @@ import { useIssueBoard, useIssues, useUpdateIssue } from "@/hooks/useIssues";
 import { useIssuesStore } from "@/stores/issuesStore";
 import { ISSUE_BOARD_COLUMNS } from "@/lib/constants";
 import type { IssueStatus } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 const LIMIT = 20;
 const BOARD_STATUSES = ISSUE_BOARD_COLUMNS.map((c) => c.status);
@@ -63,7 +64,10 @@ export function IssuesPage() {
   }, []);
 
   const handleBoardStatusChange = useCallback((issueId: string, newStatus: string) => {
-    updateIssue.mutate({ id: issueId, status: newStatus as IssueStatus });
+    updateIssue.mutate(
+      { id: issueId, status: newStatus as IssueStatus },
+      { onError: (e) => toastApiError(e, "Failed to move the issue") },
+    );
   }, [updateIssue]);
 
   const repoOptions: string[] = data

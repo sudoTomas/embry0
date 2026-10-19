@@ -1,4 +1,3 @@
-import { isAxiosError } from "axios";
 import { formatDistanceToNow } from "date-fns";
 import { ExternalLink } from "lucide-react";
 import { Link } from "react-router";
@@ -6,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { useAcceptProposal, useProposals, useRejectProposal } from "@/hooks/useProposals";
 import type { HealingCase } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 /**
  * Trackers whose drafts the API accepts (POST /cases/{id}/accept). The others —
@@ -24,11 +24,6 @@ const TRACKER_NAMES: Record<string, string> = { linear: "Linear", github: "GitHu
 
 function trackerName(kind: string | undefined): string {
   return (kind && TRACKER_NAMES[kind]) || kind || "its tracker";
-}
-
-function detailOf(error: unknown, fallback: string): string {
-  const detail = isAxiosError(error) ? error.response?.data?.detail : undefined;
-  return typeof detail === "string" ? detail : fallback;
 }
 
 /**
@@ -89,7 +84,7 @@ export function ProposalsSection() {
     if (!confirm(`Accept "${proposal.title}"? ${effect}`)) return;
     accept.mutate(proposal.id, {
       onSuccess: (result) => toast.success(`Accepted — job ${result.job_id.slice(0, 12)} started`),
-      onError: (e) => toast.error(detailOf(e, "Could not accept the proposal")),
+      onError: (e) => toastApiError(e),
     });
   };
 
@@ -99,7 +94,7 @@ export function ProposalsSection() {
       return;
     reject.mutate(proposal.id, {
       onSuccess: () => toast.success(`Dismissed. Reopen it from the ${owner} needs list.`),
-      onError: (e) => toast.error(detailOf(e, "Could not dismiss the need")),
+      onError: (e) => toastApiError(e, "Could not dismiss the need"),
     });
   };
 
@@ -114,7 +109,7 @@ export function ProposalsSection() {
       return;
     reject.mutate(proposal.id, {
       onSuccess: () => toast.success(`Rejected. ${ticket} is still open in ${where}.`),
-      onError: (e) => toast.error(detailOf(e, "Could not reject the proposal")),
+      onError: (e) => toastApiError(e, "Could not reject the proposal"),
     });
   };
 

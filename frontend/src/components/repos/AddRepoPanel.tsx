@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { toastApiError } from "@/api/errorToast";
 
 // RAV-1301: the central Add-repo flow. The dropdown is fed by the discovery
 // endpoint — everything the configured GitHub tokens can see minus the
@@ -150,7 +151,7 @@ export function AddRepoPanel() {
       void queryClient.invalidateQueries({ queryKey: ["gitlab", "discoverable-projects"] });
       void queryClient.invalidateQueries({ queryKey: ["qa-dashboard"] });
     },
-    onError: () => toast.error("Failed to register repo — expected a path like owner/name"),
+    onError: (e) => toastApiError(e, "Failed to register repo"),
   });
 
   const registerAndOnboard = useMutation({
@@ -163,7 +164,7 @@ export function AddRepoPanel() {
       void queryClient.invalidateQueries({ queryKey: ["gitlab", "discoverable-projects"] });
       void navigate(`/repos/onboard?repo=${encodeURIComponent(outcome.row.repo)}`);
     },
-    onError: () => toast.error("Failed to register repo — expected a path like owner/name"),
+    onError: (e) => toastApiError(e, "Failed to register repo"),
   });
 
   const refresh = async () => {

@@ -9,7 +9,7 @@ import {
   type OrgNeed,
   type OrgNeeds,
 } from "@/api/orgs";
-import { formatErrorDetail } from "@/api/errorDetail";
+import { apiErrorMessage } from "@/api/errorDetail";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -43,7 +43,7 @@ const OUTCOME_TONE: Record<OrgActionResult["outcome"], BadgeTone> = {
 function errorText(err: unknown): string {
   const response = (err as { response?: { status?: number; data?: { detail?: unknown } } }).response;
   if (response?.status === 403) return "Acting on needs requires admin scope.";
-  return formatErrorDetail(response?.data?.detail) ?? (err instanceof Error ? err.message : "The request failed.");
+  return apiErrorMessage(err);
 }
 
 function selectionKey(ids: ReadonlySet<string>): string {

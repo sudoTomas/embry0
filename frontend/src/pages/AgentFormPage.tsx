@@ -21,6 +21,7 @@ import { useAgent, useCreateAgent, useUpdateAgent } from "@/hooks/useAgents";
 import { useModels } from "@/hooks/useModels";
 import { providerForModel } from "@/lib/providers";
 import type { AgentCreateRequest, AgentUpdateRequest } from "@/lib/types/agents";
+import { toastApiError } from "@/api/errorToast";
 
 const AVAILABLE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
 
@@ -204,7 +205,7 @@ export function AgentFormPage() {
           toast.success("Agent updated");
           navigate("/agents");
         },
-        onError: (e) => toast.error(`Failed: ${e.message}`),
+        onError: (e) => toastApiError(e, "Failed"),
       });
     } else {
       const create: AgentCreateRequest = {
@@ -223,7 +224,7 @@ export function AgentFormPage() {
           toast.success("Agent created");
           navigate("/agents");
         },
-        onError: (e) => toast.error(`Failed: ${e.message}`),
+        onError: (e) => toastApiError(e, "Failed"),
       });
     }
   };

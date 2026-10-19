@@ -15,6 +15,7 @@ import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { agentTypeToOperation } from "@/components/divine/operations";
 import { specialistVisual } from "@/lib/specialistAgents";
 import { cn } from "@/lib/utils";
+import { toastApiError } from "@/api/errorToast";
 
 type Filter = "all" | "builtin" | "custom";
 
@@ -44,7 +45,7 @@ export function AgentsPage() {
     }
     deleteAgent.mutate(type, {
       onSuccess: () => toast.success(`Agent "${type}" deleted`),
-      onError: (e) => toast.error(`Failed to delete: ${e.message}`),
+      onError: (e) => toastApiError(e, "Failed to delete"),
     });
     setConfirmDelete(null);
   };
@@ -56,7 +57,7 @@ export function AgentsPage() {
     }
     resetAgent.mutate(type, {
       onSuccess: () => toast.success(`Agent "${type}" reset to defaults`),
-      onError: (e) => toast.error(`Failed to reset: ${e.message}`),
+      onError: (e) => toastApiError(e, "Failed to reset"),
     });
     setConfirmReset(null);
   };

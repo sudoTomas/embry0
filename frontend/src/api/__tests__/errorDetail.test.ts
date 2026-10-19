@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detailMessages, formatErrorDetail } from "../errorDetail";
+import { detailMessages, formatErrorDetail, apiErrorMessage } from "../errorDetail";
 
 describe("formatErrorDetail", () => {
   it("returns a string detail unchanged, trimmed", () => {
@@ -54,5 +54,25 @@ describe("detailMessages", () => {
     ]);
     expect(detailMessages(" one ")).toEqual(["one"]);
     expect(detailMessages(undefined)).toEqual([]);
+  });
+});
+
+describe("apiErrorMessage", () => {
+  it("is the API's detail, not axios's status sentence", () => {
+    const err = { message: "Request failed with status code 409", response: { status: 409, data: { detail: "already running" } } };
+    expect(apiErrorMessage(err)).toBe("already running");
+  });
+
+  it("names the status when the API sent no detail", () => {
+    expect(apiErrorMessage({ message: "Request failed with status code 403", response: { status: 403 } }, "Could not save"))
+      .toBe("Could not save (HTTP 403)");
+  });
+
+  it("says the server is unreachable on a network failure", () => {
+    expect(apiErrorMessage({ code: "ERR_NETWORK", message: "Network Error" })).toBe("Network error — cannot reach the server");
+  });
+
+  it("is a thrown Error's own message", () => {
+    expect(apiErrorMessage(new Error("answerInput requires issueId or jobId"))).toBe("answerInput requires issueId or jobId");
   });
 });

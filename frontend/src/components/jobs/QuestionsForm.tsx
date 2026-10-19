@@ -1,5 +1,6 @@
 import { useState, type JSX } from "react";
 import { Button } from "@/components/ui/Button";
+import { apiErrorMessage } from "@/api/errorDetail";
 
 interface PendingInput {
   id: string;
@@ -58,7 +59,7 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
     const newErrors: Record<string, string> = {};
     results.forEach((r, idx) => {
       if (r.status === "rejected") {
-        newErrors[toSubmit[idx].id] = String(r.reason).slice(0, 200);
+        newErrors[toSubmit[idx].id] = apiErrorMessage(r.reason).slice(0, 200);
       }
     });
     setErrors(newErrors);

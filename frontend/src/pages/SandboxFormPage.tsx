@@ -16,6 +16,7 @@ import {
 } from "@/hooks/useSandboxProfiles";
 import type { SandboxProfile } from "@/api/sandbox-profiles";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
 
 type ProfileForm = Omit<SandboxProfile, "created_at" | "updated_at" | "is_builtin">;
 
@@ -175,7 +176,7 @@ export function SandboxFormPage() {
           toast.success(`Updated "${form.name}"`);
           navigate("/sandboxes");
         },
-        onError: (err) => toast.error(`Failed to update: ${err.message}`),
+        onError: (err) => toastApiError(err, "Failed to update"),
       });
     } else {
       createMutation.mutate(payload, {
@@ -183,7 +184,7 @@ export function SandboxFormPage() {
           toast.success(`Created "${form.name}"`);
           navigate("/sandboxes");
         },
-        onError: (err) => toast.error(`Failed to create: ${err.message}`),
+        onError: (err) => toastApiError(err, "Failed to create"),
       });
     }
   };
@@ -196,7 +197,7 @@ export function SandboxFormPage() {
         toast.success(`Reset "${name}"`);
         navigate("/sandboxes");
       },
-      onError: (err) => toast.error(`Failed to reset: ${(err as Error).message}`),
+      onError: (err) => toastApiError(err, "Failed to reset"),
     });
   };
 

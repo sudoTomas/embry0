@@ -63,7 +63,8 @@ describe("opening a saved pipeline", () => {
     const save = screen.getByRole("button", { name: /^Save$/ });
     expect(save, "a saved template must be savable in place, not only as a copy").toBeEnabled();
     fireEvent.click(save);
-    await waitFor(() => expect(rename).toHaveBeenCalledWith(expect.objectContaining({ templateId: "tpl-1", name: "Quick fix" })));
+    await waitFor(() => expect(rename).toHaveBeenCalled());
+    expect(rename.mock.calls[0][0]).toMatchObject({ templateId: "tpl-1", name: "Quick fix" });
   });
 
   it("connects Start and End to the graph it loads", async () => {

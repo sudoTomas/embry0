@@ -10,6 +10,7 @@ import { useSandboxProfiles, useDeleteSandboxProfile } from "@/hooks/useSandboxP
 import { useActiveSandboxes } from "@/hooks/useActiveSandboxes";
 import type { SandboxProfile } from "@/api/sandbox-profiles";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
 
 export function SandboxesPage() {
   const [activeTab, setActiveTab] = useState<string>("profiles");
@@ -57,7 +58,7 @@ function ProfilesTab() {
     if (!confirm(`Delete sandbox profile "${name}"?`)) return;
     deleteMutation.mutate(name, {
       onSuccess: () => toast.success(`Deleted "${name}"`),
-      onError: (err) => toast.error(`Failed to delete: ${err.message}`),
+      onError: (err) => toastApiError(err, "Failed to delete"),
     });
   };
 
