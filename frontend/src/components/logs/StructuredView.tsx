@@ -127,7 +127,7 @@ export function StructuredView({ events, isComplete = false }: StructuredViewPro
 
   return (
     <Virtuoso
-      style={{ height: "calc(100vh - 280px)" }}
+      style={{ height: "calc(100dvh - 280px)", overscrollBehavior: "contain" }}
       className="space-y-2"
       totalCount={items.length}
       itemContent={(i) => {

@@ -77,4 +77,26 @@ describe("AppLayout", () => {
     expect(screen.queryByTestId("feedback-fab")).toBeNull();
     expect(screen.queryByTestId("command-palette")).toBeNull();
   });
+  it("sizes the shell to the visible viewport and keeps a scroll inside the content", () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={["/jobs"]}>
+        <Routes>
+          <Route element={<AppLayout />}>
+            <Route path="jobs" element={<div>jobs</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    // 100vh is the viewport with a phone's browser bar hidden, so with the bar
+    // shown the shell's bottom sat behind it and could not be scrolled into view.
+    const shell = container.querySelector("[data-density]") as HTMLElement;
+    expect(shell.className).toContain("h-dvh");
+    expect(shell.className).not.toContain("h-screen");
+    // The content is the only scroller: it must not chain its scroll into the
+    // shell (the header and sidebar bounced) or shift when its scrollbar shows.
+    const main = screen.getByRole("main");
+    expect(main.className).toContain("overscroll-contain");
+    expect(main.className).toContain("[scrollbar-gutter:stable]");
+  });
 });
+

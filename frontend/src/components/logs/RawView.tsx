@@ -81,7 +81,7 @@ export function RawView({ events }: RawViewProps) {
   return (
     <Virtuoso
       className="bg-background rounded-md border font-mono text-xs p-4"
-      style={{ height: "calc(100vh - 280px)" }}
+      style={{ height: "calc(100dvh - 280px)", overscrollBehavior: "contain" }}
       totalCount={events.length}
       itemContent={(i) => <RawEventRow event={events[i]} />}
       followOutput="smooth"

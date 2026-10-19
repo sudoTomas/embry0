@@ -15,13 +15,13 @@ export function AppLayout() {
   const densityMode = useLayoutStore((s) => s.densityMode);
   const isRoot = useLocation().pathname === "/";
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground" data-density={densityMode}>
+    <div className="flex h-dvh flex-col bg-background text-foreground" data-density={densityMode}>
       <TopBar />
       <div className="flex min-h-0 flex-1">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {isRoot ? <BriefBar /> : <Breadcrumbs />}
-          <main className="flex-1 overflow-auto p-[var(--density-padding)]">
+          <main className="flex-1 overflow-auto overscroll-contain [scrollbar-gutter:stable] p-[var(--density-padding)]">
             <Outlet />
           </main>
         </div>

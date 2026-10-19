@@ -98,6 +98,14 @@
   border-color: var(--color-border);
 }
 
+/* The shell is fixed to the viewport and only <main> scrolls, so the page itself
+   must never rubber-band: on a trackpad or a phone it bounced the header and
+   sidebar with it. */
+html,
+body {
+  overscroll-behavior: none;
+}
+
 body {
   margin: 0;
   background-color: var(--color-background);

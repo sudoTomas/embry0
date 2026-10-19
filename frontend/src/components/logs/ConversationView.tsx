@@ -166,7 +166,7 @@ export function ConversationView({ events }: ConversationViewProps) {
   return (
     <div
       ref={containerRef}
-      className="space-y-1 overflow-auto h-[calc(100vh-280px)]"
+      className="space-y-1 overflow-auto overscroll-contain h-[calc(100dvh-280px)]"
       onScroll={handleScroll}
     >
       {hasMore && (
