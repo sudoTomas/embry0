@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { AgentIndicator } from "@/components/issues/AgentIndicator";
+import { QuestionText } from "@/components/jobs/QuestionText";
 import { useIssueInputs, useAnswerIssueInput } from "@/hooks/useIssueInputs";
 import { formatDate } from "@/lib/utils";
 import type { InputResponse } from "@/lib/types";
@@ -43,7 +44,12 @@ function QuestionRow({ input, issueId }: { input: InputResponse; issueId: string
             auto
           </span>
         )}
-        <p className="text-sm text-foreground/90 leading-relaxed">{input.question}</p>
+        <p
+          data-testid="issue-question-text"
+          className="min-w-0 flex-1 break-words text-sm leading-relaxed text-foreground/90 [overflow-wrap:anywhere]"
+        >
+          <QuestionText text={input.question} />
+        </p>
       </div>
 
       {/* Response area */}

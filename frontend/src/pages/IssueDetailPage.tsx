@@ -110,8 +110,9 @@ export function IssueDetailPage(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start gap-4">
+      {/* Header. It wraps: on a phone the actions take a line of their own
+          under the title instead of running off the right edge. */}
+      <div className="flex flex-wrap items-start gap-4">
         <Button variant="ghost" size="icon" onClick={() => navigate("/issues")} aria-label="Back to issues">
           <ArrowLeft className="h-4 w-4" />
         </Button>
@@ -135,7 +136,7 @@ export function IssueDetailPage(): JSX.Element {
         </div>
 
         {/* Action buttons */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <Button
             size="sm"
             variant="outline"
@@ -144,7 +145,7 @@ export function IssueDetailPage(): JSX.Element {
             className="gap-1.5"
           >
             <Send className="h-3.5 w-3.5" />
-            {triageIssue.isPending ? "Triaging..." : "Send to Triage"}
+            {triageIssue.isPending ? "Triaging..." : "Send to triage"}
           </Button>
 
           {canSync && (
