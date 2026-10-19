@@ -59,6 +59,8 @@ class Principal:
     # Repositories this key may start work on; None = unrestricted. Enforced
     # by embry0.api.repo_allowlist at each route that starts or continues work.
     allowed_repos: tuple[str, ...] | None = None
+    # An unowned key: minted by an admin or rotated by the orchestrator at boot.
+    service: bool = False
 
 
 # RAV-1056 Phase A: per-request session gate against the users table
@@ -190,6 +192,7 @@ async def resolve_bearer_principal(app: Any, token: str) -> Principal | None:
         key_name=key_name,
         email=email or None,
         allowed_repos=allowed_repos,
+        service=user_id is None,
     )
 
 
@@ -346,6 +349,39 @@ async def authenticate_stream(request: Request, scope: str, token: str | None) -
 
 # Stricter dependency for admin-tier operations.
 require_admin = Depends(_admin_dependency)
+
+
+#: The context-proxy's service key, rotated at every boot (app.py). It is
+#: read scope, and the log routes admit it by name: the proxy forwards only
+#: allowlisted, quota'd container queries for the sandboxes enrolled with it.
+CONTEXT_PROXY_SERVICE_KEY = "svc-context-proxy"
+
+
+async def _log_reader_dependency(
+    request: Request,
+    authorization: str = Header(default=""),
+) -> None:
+    """Gate for the container-log routes: operator tier and up.
+
+    Production log lines carry personal data, so a read or merge key is
+    refused; the lines that do go out are redacted in the route. The one
+    read-scope key admitted is the context-proxy's own unowned service key.
+    Applied on top of require_auth; skipped only under AUTH_DEV_MODE."""
+    if request.app.state.config.auth_dev_mode:
+        return
+    if authorization:
+        principal = await _bearer_principal_or_401(request, authorization)
+        if principal.tier in (TIER_OPERATOR, TIER_ADMIN):
+            return
+        if principal.service and principal.key_name == CONTEXT_PROXY_SERVICE_KEY:
+            return
+        raise HTTPException(status_code=403, detail="reading container logs needs an operate-scope key or above")
+    if await _resolve_session_auth(request) is not None:
+        return
+    raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+
+require_log_reader = Depends(_log_reader_dependency)
 
 
 def get_config(request: Request) -> Any:

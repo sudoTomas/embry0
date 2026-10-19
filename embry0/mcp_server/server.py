@@ -467,7 +467,10 @@ async def logs_query(
     investigation. container: Docker container name substring (e.g. "api");
     search: regex line filter (e.g. "(?i)error|exception"); since_minutes: lookback
     window (max 1440); limit: max lines (default 200, max 1000); logql: raw LogQL
-    override for advanced queries. Keep limit modest — lines land in your context."""
+    override for advanced queries. Keep limit modest — lines land in your context.
+    Needs an operate-scope key or above. Lines come back redacted (secrets, e-mail
+    addresses and the operator's personal-data fields replaced) and cut at 2000
+    characters."""
     return await _get_client().logs_query(
         container=container, search=search, since_minutes=since_minutes, limit=limit, logql=logql
     )

@@ -118,6 +118,33 @@ curl http://localhost:8200/api/v1/repos/owner/repo/environment/detect \
 
 Some keys are refused with a 422, matched case-insensitively. The same check drops them again at sandbox start, from stored rows and from profile `env_defaults`. These keys are the infrastructure credentials and proxy URLs, plus every variable that would redirect a sandbox's traffic or load code into its processes: proxy routing, TLS verification, the dynamic loader, `PATH`/`HOME`/`SHELL`, shell and interpreter startup hooks, and the `GIT_`, `CLAUDE_`, `BUN_` and `GROK_` namespaces. `NODE_OPTIONS` and the JVM option variables (`JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`, `JAVA_OPTS`, `MAVEN_OPTS`, `GRADLE_OPTS`) are accepted, but only with memory flags. The authoritative list is `embry0/execution/auth_provider.py`. A 422 on these routes never echoes the submitted value.
 
+## Container logs
+
+`GET /api/v1/logs/query` reads container logs from Loki, newest first:
+`container` matches a container name by substring, `containers` is a
+comma-separated list of exact names, `search` is a regex line filter,
+`since_minutes` goes up to 1440 and `limit` up to 1000, and `logql` replaces
+all of them with a raw LogQL query. `GET /api/v1/logs/containers` lists the
+container names Loki holds. The dashboard's Logs page and the MCP
+`logs_query` tool use them.
+
+Production logs carry personal data, so both routes need operator tier: an
+operate or admin key, an SSO session or the master key. A read or merge key
+gets a 403. The one read-scope key they admit is the context-proxy's own
+service key (`svc-context-proxy`, rotated at every boot), which forwards
+allowlisted queries for the sandboxes enrolled with it.
+
+Every line returned goes through the log-text redactor
+(`embry0/safety/redaction.py`), whoever asks: secrets, e-mail addresses, long
+opaque runs and the values of the `LOG_REDACTION_FIELDS` fields
+([configuration.md](configuration.md)) are replaced. A line longer than 2000
+characters is cut and ends with `… [line truncated]`. The redactor is
+regex-based, so it is not a guarantee.
+
+```bash
+curl "http://localhost:8200/api/v1/logs/query?container=api&search=error&since_minutes=30&limit=50"
+```
+
 ## Credentials
 
 Forge accounts and their bindings ([`docs/credentials.md`](credentials.md)). Reads need any authenticated principal; every mutation needs the `admin` tier and writes a `credential.*` audit row. Secrets are write-only: no endpoint returns one, and there is no reveal endpoint.
