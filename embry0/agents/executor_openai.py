@@ -60,6 +60,16 @@ class ProviderHTTPError(RuntimeError):
         super().__init__(f"{provider} answered HTTP {status}: {detail}")
         self.status = status
 
+    @property
+    def error_code(self) -> ErrorCode:
+        """The code a run that failed this way carries; classify_failure reads it too."""
+        status = getattr(self, "status", 0)
+        if status == 429:
+            return ErrorCode.PROVIDER_RATE_LIMITED
+        if status in (401, 403):
+            return ErrorCode.AUTH_REJECTED
+        return classify_agent_error(str(self)) or ErrorCode.UPSTREAM_HTTP
+
 
 def _make_client(base_url: str, api_key: str) -> httpx.AsyncClient:
     """The HTTP client for one run. A module-level seam tests may replace."""
@@ -236,10 +246,7 @@ class _ChatCompletionsWire:
 
     def failure(self, exc: BaseException) -> tuple[str | None, str]:
         if isinstance(exc, ProviderHTTPError):
-            if exc.status == 429:
-                return ErrorCode.PROVIDER_RATE_LIMITED.value, str(exc)
-            if exc.status in (401, 403):
-                return ErrorCode.AUTH_REJECTED.value, str(exc)
+            return exc.error_code.value, str(exc)
         if isinstance(exc, httpx.TransportError):
             message = f"{self._provider} unreachable: {type(exc).__name__}: {exc}"
             return ErrorCode.UPSTREAM_HTTP.value, message

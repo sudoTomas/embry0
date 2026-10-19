@@ -183,6 +183,13 @@ def test_a_rejected_key_is_auth_rejected_without_echoing_the_key(custom) -> None
     assert len(custom.chat_requests()) == 1, "a 401 is not retried"
 
 
+def test_another_http_failure_is_an_upstream_error(custom) -> None:
+    custom.answer({"error": {"message": "model llama9 not found"}}, status=404)
+    out = _run(_invocation())
+    assert out.error_code == "ERR_UPSTREAM_HTTP" and "model llama9 not found" in out.error_message
+    assert len(custom.chat_requests()) == 1, "a 404 is not retried"
+
+
 def test_a_server_error_is_retried(custom) -> None:
     custom.answer({"error": {"message": "overloaded"}}, status=503)
     custom.answer(completion(content="recovered"))
