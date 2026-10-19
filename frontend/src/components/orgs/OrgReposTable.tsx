@@ -112,9 +112,19 @@ export function OrgReposTable({ repos }: { repos: readonly OrgRepoFacts[] }) {
               <tr key={r.repo} data-testid="org-repo-row">
                 <td className={TD}>
                   <div className="flex flex-col gap-0.5">
-                    <Link to={`/repos/${r.repo}`} className="font-medium hover:underline" data-testid="org-repo-link">
-                      {r.repo}
-                    </Link>
+                    {/* Only a registered repository has an embry0 page; the
+                        others are registered from the needs above. */}
+                    <span data-testid="org-repo-name">
+                      {r.facts.registered === true ? (
+                        <Link to={`/repos/${r.repo}`} className="font-medium hover:underline" data-testid="org-repo-link">
+                          {r.repo}
+                        </Link>
+                      ) : (
+                        <span className="font-medium text-white/70" title="Not registered in embry0">
+                          {r.repo}
+                        </span>
+                      )}
+                    </span>
                     {r.maintain_hint && (
                       <span className="max-w-md text-xs text-muted-foreground" data-testid="org-repo-hint">
                         {r.maintain_hint}
