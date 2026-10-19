@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import { useQueue } from "@/hooks/useQueue";
 import { useProposals } from "@/hooks/useProposals";
 import { usePendingMergeApprovals } from "@/hooks/useMergeApprovals";
+import { usePendingSetupProposals } from "@/hooks/useSetupProposal";
 import { cn } from "@/lib/utils";
 
 interface BriefItem {
@@ -33,15 +34,16 @@ function plural(count: number, one: string, many: string): string {
  * The Overview's one-line brief, under the header like the sibling
  * dashboards': today's date, what waits for a person, and what is running,
  * each number bold and linked to the page that answers it. Every number comes
- * from a poll the dashboard already runs (queue, proposals) or the merge-ask
- * list; a source that is off or failing leaves its item out. Below the sm
- * breakpoint the items wrap onto a second line instead of scrolling out of
- * sight.
+ * from a poll the dashboard already runs (queue, proposals), the merge-ask
+ * list or the test setups waiting for review; a source that is off or failing
+ * leaves its item out. Below the sm breakpoint the items wrap onto a second
+ * line instead of scrolling out of sight.
  */
 export function BriefBar() {
   const queue = useQueue();
   const proposals = useProposals();
   const approvals = usePendingMergeApprovals();
+  const setupProposals = usePendingSetupProposals();
 
   const cases = proposals.data?.cases ?? [];
   const orgNeeds = cases.filter((c) => c.origin === "org").length;
@@ -49,6 +51,7 @@ export function BriefBar() {
   const awaiting = queue.data?.awaiting_input ?? 0;
   const paused = queue.data?.paused ?? 0;
   const asks = approvals.data?.length ?? 0;
+  const setups = setupProposals.data ?? [];
 
   const items: BriefItem[] = [
     { key: "awaiting", count: awaiting, text: "awaiting input", to: "/console", needsPerson: true },
@@ -56,6 +59,14 @@ export function BriefBar() {
     { key: "approvals", count: asks, text: plural(asks, "merge approval asked", "merge approvals asked"), needsPerson: true },
     { key: "org-needs", count: orgNeeds, text: plural(orgNeeds, "organization need", "organization needs"), to: "/orgs", needsPerson: true },
     { key: "drafts", count: drafts, text: plural(drafts, "draft ticket to decide", "draft tickets to decide"), to: "/issues", needsPerson: true },
+    {
+      key: "setups",
+      count: setups.length,
+      text: plural(setups.length, "test setup to review", "test setups to review"),
+      // One setup opens its repository's page, where the review card is; several open the list.
+      to: setups.length === 1 ? `/repos/${setups[0].repo}` : "/repos",
+      needsPerson: true,
+    },
   ].filter((item) => item.count > 0);
 
   if (queue.data) {

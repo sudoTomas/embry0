@@ -9,22 +9,25 @@ import { Select } from "@/components/ui/Select";
 import { RepoSelector } from "./RepoSelector";
 import { LabelInput } from "./LabelInput";
 import { useCreateIssue } from "@/hooks/useIssues";
-import { useGitHubRepos } from "@/hooks/useGitHub";
+import { useRegisteredRepos } from "@/hooks/useRepos";
 import type { IssuePriority } from "@/lib/types";
 import { createFocusTrap } from "@/lib/focus-trap";
 import { toastApiError } from "@/api/errorToast";
 
 interface CreateIssueDialogProps {
   onClose: () => void;
-  repos?: string[];
+  /** Called once the issue is created, before the dialog closes. */
+  onCreated?: () => void;
+  /** Open on this repository, for a first task from its page. */
+  initialRepo?: string;
   labelSuggestions?: string[];
 }
 
-export function CreateIssueDialog({ onClose, repos = [], labelSuggestions = [] }: CreateIssueDialogProps) {
+export function CreateIssueDialog({ onClose, onCreated, initialRepo, labelSuggestions = [] }: CreateIssueDialogProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [repo, setRepo] = useState("");
+  const [repo, setRepo] = useState(initialRepo ?? "");
   const [priority, setPriority] = useState<IssuePriority>("medium");
   const [labels, setLabels] = useState<string[]>([]);
   const [githubSync, setGithubSync] = useState(false);
@@ -41,19 +44,20 @@ export function CreateIssueDialog({ onClose, repos = [], labelSuggestions = [] }
     };
   }, []);
 
-  // Pull every repo the GITHUB_TOKEN can see; merge with the locally-known
-  // ones (repos that already have issues) so a user can pick from either set.
-  const { data: gh, isLoading: ghLoading, isError: ghError } = useGitHubRepos();
+  // Only registered repositories: embry0 refuses to start work on any other
+  // (ERR_REPO_UNREGISTERED). The repository this dialog was opened for is
+  // registered even when it is hidden from lists, so it stays on offer.
+  const { data: registered, isLoading: reposLoading, isError: reposError } = useRegisteredRepos();
   const repoOptions = useMemo(() => {
-    const fromGitHub = gh?.repos.map((r) => r.full_name) ?? [];
-    const merged = new Set<string>([...fromGitHub, ...repos]);
-    return Array.from(merged).sort();
-  }, [gh, repos]);
-  const repoHelpText = ghError
-    ? "Could not load repos from GitHub — check GITHUB_TOKEN. Falls back to repos with existing issues."
-    : ghLoading
-      ? "Loading repos from GitHub…"
-      : `${repoOptions.length} repo${repoOptions.length === 1 ? "" : "s"} available`;
+    const names = new Set<string>((registered ?? []).map((r) => r.repo));
+    if (initialRepo) names.add(initialRepo);
+    return Array.from(names).sort();
+  }, [registered, initialRepo]);
+  const repoHelpText = reposError
+    ? "Could not load the registered repositories."
+    : reposLoading
+      ? "Loading repositories…"
+      : "Only repositories registered in embry0 are listed.";
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +72,7 @@ export function CreateIssueDialog({ onClose, repos = [], labelSuggestions = [] }
           } else {
             toast.success("Issue created");
           }
+          onCreated?.();
           onClose();
         },
         onError: (err) => toastApiError(err, "Failed to create issue"),
@@ -94,6 +99,11 @@ export function CreateIssueDialog({ onClose, repos = [], labelSuggestions = [] }
               <div className="md:col-span-2">
                 <Label htmlFor="issue-title">Title</Label>
                 <Input id="issue-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Issue title" required />
+                {initialRepo && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Pick something small and low-risk. embry0 opens a pull request for you to review. It never merges.
+                  </p>
+                )}
               </div>
               <div className="md:col-span-2">
                 <Label htmlFor="issue-body">Description</Label>

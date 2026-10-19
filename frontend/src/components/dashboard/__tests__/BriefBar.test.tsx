@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
 type FakeQuery<T> = { data: T | undefined; isPending: boolean; isError: boolean };
@@ -11,6 +11,8 @@ const mockApprovals = vi.fn();
 vi.mock("@/hooks/useQueue", () => ({ useQueue: () => mockQueue() }));
 vi.mock("@/hooks/useProposals", () => ({ useProposals: () => mockProposals() }));
 vi.mock("@/hooks/useMergeApprovals", () => ({ usePendingMergeApprovals: () => mockApprovals() }));
+const mockSetups = vi.fn();
+vi.mock("@/hooks/useSetupProposal", () => ({ usePendingSetupProposals: () => mockSetups() }));
 
 import { BriefBar } from "../BriefBar";
 
@@ -28,7 +30,10 @@ beforeEach(() => {
     ready({ cases: [{ id: "c1", origin: "org" }, { id: "c2", origin: "org" }, { id: "c3", origin: "watcher" }] }),
   );
   mockApprovals.mockReturnValue(ready([{ id: "a1", status: "pending" }]));
+  mockSetups.mockReturnValue(ready([]));
 });
+
+const pending = (id: string, repo: string) => ({ id, repo, created_at: "2026-10-18T10:00:00Z" });
 
 describe("BriefBar", () => {
   it("says what waits for a person and what runs, each number linked to its page", () => {
@@ -87,6 +92,58 @@ describe("BriefBar", () => {
     renderBar();
     expect(screen.queryByTestId("brief-approvals")).toBeNull();
     expect(screen.getByTestId("brief-awaiting")).toBeInTheDocument();
+  });
+
+  it("counts one test setup to review and links to its repository", () => {
+    mockSetups.mockReturnValue(ready([pending("prop-abc", "acme/widgets")]));
+    renderBar();
+    const setups = screen.getByTestId("brief-setups");
+    expect(setups).toHaveTextContent("1 test setup to review");
+    expect(setups).toHaveAttribute("href", "/repos/acme/widgets");
+  });
+
+  it("links a nested GitLab repository by its whole path", () => {
+    mockSetups.mockReturnValue(ready([pending("prop-abc", "group/sub/project")]));
+    renderBar();
+    expect(screen.getByTestId("brief-setups")).toHaveAttribute("href", "/repos/group/sub/project");
+  });
+
+  it("counts several test setups to review and links to the repositories list", () => {
+    mockSetups.mockReturnValue(ready([pending("prop-abc", "acme/widgets"), pending("prop-def", "acme/gadgets")]));
+    renderBar();
+    const setups = screen.getByTestId("brief-setups");
+    expect(setups).toHaveTextContent("2 test setups to review");
+    expect(setups).toHaveAttribute("href", "/repos");
+  });
+
+  it("writes test setups to review in the body colour, gold only on hover", () => {
+    mockSetups.mockReturnValue(ready([pending("prop-abc", "acme/widgets")]));
+    renderBar();
+    const setups = screen.getByTestId("brief-setups").className;
+    expect(setups).toContain("text-fg");
+    expect(setups).toContain("hover:text-primary");
+    expect(setups).not.toContain("text-warning");
+    expect(setups).not.toMatch(/(^| )text-primary/);
+  });
+
+  it("leaves test setups out at zero, and when their source fails", () => {
+    renderBar();
+    expect(screen.queryByTestId("brief-setups")).toBeNull();
+    cleanup();
+    mockSetups.mockReturnValue({ data: undefined, isPending: false, isError: true });
+    renderBar();
+    expect(screen.queryByTestId("brief-setups")).toBeNull();
+    expect(screen.getByTestId("brief-awaiting")).toBeInTheDocument();
+  });
+
+  it("says something waits when the only item is a test setup to review", () => {
+    mockQueue.mockReturnValue(ready({ depth: 0, pending: 0, running: 0, awaiting_input: 0, paused: 0 }));
+    mockProposals.mockReturnValue(ready({ cases: [] }));
+    mockApprovals.mockReturnValue(ready([]));
+    mockSetups.mockReturnValue(ready([pending("prop-abc", "acme/widgets")]));
+    renderBar();
+    expect(screen.queryByText("Nothing waits for you")).not.toBeInTheDocument();
+    expect(screen.getByTestId("brief-setups")).toHaveTextContent("1 test setup to review");
   });
 
   it("opens with today's date", () => {
