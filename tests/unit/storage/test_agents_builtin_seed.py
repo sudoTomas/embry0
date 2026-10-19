@@ -87,3 +87,33 @@ async def test_seeder_never_overwrites_existing_rows():
     await seed_missing_builtin_agents(repo)  # type: ignore[arg-type]
     assert repo.created == []
     assert repo._db.executed == []
+
+
+_SPECIALIST_TYPES = (
+    "kintsugi",
+    "gardener",
+    "interrogator",
+    "why",
+    "how",
+    "blast-radius",
+    "comment-sicko",
+    "design-auditor",
+)
+
+
+@pytest.mark.asyncio
+async def test_seeder_adds_the_specialists_to_a_database_that_predates_them():
+    repo = _FakeRepo(set(BUILTIN_SEED) - set(_SPECIALIST_TYPES))
+    await seed_missing_builtin_agents(repo)  # type: ignore[arg-type]
+
+    assert sorted(t for t, _ in repo.created) == sorted(_SPECIALIST_TYPES)
+    assert sorted(params[0] for _sql, params in repo._db.executed) == sorted(_SPECIALIST_TYPES)
+    for agent_type, fields in repo.created:
+        assert fields == BUILTIN_SEED[agent_type], agent_type
+
+    # The next startup finds them and inserts nothing.
+    repo.created.clear()
+    repo._db.executed.clear()
+    await seed_missing_builtin_agents(repo)  # type: ignore[arg-type]
+    assert repo.created == []
+    assert repo._db.executed == []

@@ -30,6 +30,17 @@
   --color-role-validator: #22c55e;
   --color-role-triage: #a855f7;
 
+  /* Specialist agent roles (lib/specialistAgents.ts). Each names a color
+     already in this palette, so the eight read distinctly without a new one. */
+  --color-role-kintsugi: var(--color-primary);
+  --color-role-gardener: var(--color-success);
+  --color-role-interrogator: var(--color-role-triage);
+  --color-role-why: var(--color-role-explorer);
+  --color-role-how: var(--color-foreground);
+  --color-role-blast-radius: var(--color-destructive);
+  --color-role-comment-sicko: var(--color-warning);
+  --color-role-design-auditor: var(--color-stage-publish);
+
   /* Pipeline stage colors (cool → warm gradient) */
   --color-stage-triage: #a855f7;
   --color-stage-explore: #06b6d4;

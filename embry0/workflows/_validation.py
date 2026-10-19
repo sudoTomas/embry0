@@ -9,18 +9,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from embry0.workflows.issue_to_pr.route_plan import GENERIC_AGENT_TYPES
+
 _DEFERRED_TOOLS = frozenset({"CreateIssue", "RequestInput", "UpdateStatus"})
 
 # The template-node vocabulary the route-plan interpreter can execute
 # (embry0/workflows/issue_to_pr/route_plan.py AGENT_TYPE_TO_NODE + triage).
-# research/analysis/ops (RAV-604) all execute on the generic agent node.
+# research/analysis/ops and the specialists all execute on the
+# generic agent node (GENERIC_AGENT_TYPES).
 # RAV-1288: "review" (the runtime agent type / the surviving DB row) is
 # accepted alongside the historical template spelling "reviewer" — the
 # editor palette is fed from agent_definitions, and after the zombie
 # `reviewer` row was removed the real `review` row must be saveable.
-_EXECUTABLE_AGENT_TYPES = frozenset(
-    {"triage", "developer", "reviewer", "review", "qa", "output", "research", "analysis", "ops"}
-)
+_EXECUTABLE_AGENT_TYPES = frozenset({"triage", "developer", "reviewer", "review", "qa", "output", *GENERIC_AGENT_TYPES})
 
 
 def validate_graph_definition(name: str, graph: dict[str, Any]) -> list[str]:

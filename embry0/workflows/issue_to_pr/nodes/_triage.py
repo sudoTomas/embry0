@@ -26,6 +26,7 @@ from embry0.workflows.issue_to_pr.nodes._common import (
     _format_user_answers_block,
     _max_turns_recovery_session,
 )
+from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_TEMPLATE_NAMES
 
 logger = structlog.get_logger(__name__)
 
@@ -140,6 +141,9 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             template_rows = []
         template_lines = []
         for row in template_rows:
+            # A specialist runs only when the job names its template.
+            if row["name"] in SPECIALIST_TEMPLATE_NAMES:
+                continue
             entry = f"- {row['name']}"
             if row.get("default_for_kind"):
                 entry += f" [default for job_kind={row['default_for_kind']}]"

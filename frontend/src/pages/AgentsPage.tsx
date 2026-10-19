@@ -10,6 +10,8 @@ import { useAgents, useDeleteAgent, useResetAgent } from "@/hooks/useAgents";
 import type { AgentDefinition } from "@/lib/types/agents";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { agentTypeToOperation } from "@/components/divine/operations";
+import { specialistVisual } from "@/lib/specialistAgents";
+import { cn } from "@/lib/utils";
 
 type Filter = "all" | "builtin" | "custom";
 
@@ -118,6 +120,21 @@ export function AgentsPage() {
                     <td className="px-6 py-3">
                       <div className="flex items-center gap-2.5">
                         {(() => {
+                          const specialist = specialistVisual(agent.type);
+                          if (specialist) {
+                            const Icon = specialist.icon;
+                            return (
+                              <span
+                                data-testid={`agent-mark-${agent.type}`}
+                                className={cn(
+                                  "flex items-center justify-center w-8 h-8 shrink-0 rounded-lg border",
+                                  specialist.tone,
+                                )}
+                              >
+                                <Icon className="w-4 h-4" aria-hidden="true" />
+                              </span>
+                            );
+                          }
                           const op = agentTypeToOperation(agent.type);
                           return op ? (
                             <span className="flex items-center justify-center w-8 h-8 shrink-0">

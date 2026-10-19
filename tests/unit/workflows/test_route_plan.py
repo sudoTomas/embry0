@@ -28,6 +28,9 @@ def test_builtin_seeds_linearize():
     assert [s["agent_type"] for s in _plan("research-default")] == ["research", "output"]
     assert [s["agent_type"] for s in _plan("analysis-default")] == ["analysis", "output"]
     assert [s["agent_type"] for s in _plan("ops-default")] == ["ops", "output"]
+    # One route per specialist; test_specialist_agents.py covers the rest.
+    assert [s["agent_type"] for s in _plan("kintsugi-trace")] == ["kintsugi", "output"]
+    assert [s["agent_type"] for s in _plan("comment-pass")] == ["comment-sicko", "output"]
 
 
 def test_builtin_seeds_cover_every_kind_exactly_once():

@@ -152,6 +152,9 @@ The pluggable unit that supplies the [QA](#qa) agent's browser. A backend bundle
 ### Output
 The agent that closes the loop — merges the PR, performs [Distill](#distill) (extract reusable template) and [Coagulate](#coagulate) (ship + record). Substance sigils: Aqua Vitae 🜈 (Distill), Sol ☉ (Coagulate).
 
+### Specialist agents
+Eight read-only built-in agents that each do one job on a cloned repository and return one Markdown report: `kintsugi` (template `kintsugi-trace`), `gardener` (`garden`), `interrogator` (`interrogate`), `why` (`why`), `how` (`how`), `blast-radius` (`blast-radius`), `comment-sicko` (`comment-pass`) and `design-auditor` (`design-audit`). Like research and analysis they run on the generic agent node, so each one's behavior is its system prompt; their tools stop at Read, Glob, Grep and Bash, and they open no pull request. Each template is `triage → agent → output`, and a job reaches one only by naming it: triage is not offered them. The job is recorded as an analysis job, and the report is its deliverable. See [docs/specialist-agents.md](specialist-agents.md). (2026-10)
+
 ---
 
 ## Pipeline Editor Internals

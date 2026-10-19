@@ -58,6 +58,13 @@ curl -X POST http://localhost:8200/api/v1/jobs \
   -d '{"repo": "owner/repo", "branch": "main", "pipeline": "qa",
        "qa": {"acceptance_criteria": ["home page loads with no console errors"]}}'
 
+# Run a specialist agent: name its template (docs/specialist-agents.md).
+curl -X POST http://localhost:8200/api/v1/jobs \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"repo": "owner/repo", "pipeline_template": "kintsugi-trace",
+       "task": "Trace the cracks in this repository."}'
+
 # QA artifact endpoints (presigned-GET redirects + SSE log stream).
 curl http://localhost:8200/api/v1/jobs/{job_id}/qa/attempts
 curl http://localhost:8200/api/v1/jobs/{job_id}/qa/attempts/1/result

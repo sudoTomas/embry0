@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
 const mockUseAgents = vi.fn();
@@ -106,5 +106,69 @@ describe("AgentsPage provider column", () => {
     const row = rowOf("developer");
     expect(within(row).queryByText("ready")).not.toBeInTheDocument();
     expect(within(row).queryByText("not ready")).not.toBeInTheDocument();
+  });
+});
+
+// The eight read-only specialists the backend seeds as built-ins.
+const SPECIALISTS = [
+  "kintsugi",
+  "gardener",
+  "interrogator",
+  "why",
+  "how",
+  "blast-radius",
+  "comment-sicko",
+  "design-auditor",
+];
+
+const SPECIALIST_ROWS = SPECIALISTS.map((type) => ({
+  type,
+  description: `${type} does one job. Read-only.`,
+  model: "claude-sonnet-5",
+  tools: ["Read", "Glob", "Grep", "Bash"],
+  skills: [],
+  system_prompt: "prompt",
+  is_builtin: true,
+  provider: "anthropic",
+  provider_ready: true,
+}));
+
+describe("AgentsPage specialist agents", () => {
+  beforeEach(() => {
+    mockUseAgents.mockReturnValue({ data: [...SPECIALIST_ROWS, AGENTS[1]], isLoading: false });
+  });
+
+  it("shows each specialist as built-in, with Reset and no Delete", () => {
+    renderPage();
+    for (const type of SPECIALISTS) {
+      const row = rowOf(type);
+      expect(within(row).getByText("built-in")).toBeInTheDocument();
+      expect(within(row).getByRole("button", { name: /reset/i })).toBeInTheDocument();
+      expect(within(row).queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
+    }
+  });
+
+  it("keeps them under the Built-in filter and out of Custom", () => {
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Built-in" }));
+    for (const type of SPECIALISTS) expect(rowOf(type)).toBeInTheDocument();
+    expect(screen.queryByText("grok-dev", { selector: "div" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Custom" }));
+    for (const type of SPECIALISTS) {
+      expect(screen.queryByText(type, { selector: "div" })).not.toBeInTheDocument();
+    }
+  });
+
+  it("gives each specialist its own icon and its own role color", () => {
+    renderPage();
+    const marks = SPECIALISTS.map((type) => within(rowOf(type)).getByTestId(`agent-mark-${type}`));
+    SPECIALISTS.forEach((type, i) => {
+      expect(marks[i].className).toContain(`text-role-${type}`);
+      expect(marks[i].className).toContain(`border-role-${type}/25`);
+    });
+    const icons = marks.map((mark) => mark.querySelector("svg")?.getAttribute("class") ?? "");
+    expect(icons.every((cls) => cls.includes("lucide-"))).toBe(true);
+    expect(new Set(icons).size).toBe(SPECIALISTS.length);
   });
 });

@@ -1,6 +1,7 @@
 import type { Node, Edge } from "@xyflow/react";
 import { useAgents } from "@/hooks/useAgents";
 import { getAgentColor } from "@/lib/graph-utils";
+import { SPECIALIST_AGENT_TYPES } from "@/lib/specialistAgents";
 import { cn } from "@/lib/utils";
 
 function hasPathStartToEnd(nodes: Node[], edges: Edge[]): boolean {
@@ -54,6 +55,7 @@ const TEMPLATE_AGENT_TYPES = new Set([
   "research",
   "analysis",
   "ops",
+  ...SPECIALIST_AGENT_TYPES,
 ]);
 
 export function AgentBar({ nodes, edges }: AgentBarProps) {
