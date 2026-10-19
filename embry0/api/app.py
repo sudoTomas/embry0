@@ -40,6 +40,7 @@ from embry0.storage.repositories.repo_preferences import RepoPreferencesReposito
 from embry0.storage.repositories.repo_qa_configs import RepoQAConfigsRepository
 from embry0.storage.repositories.repos import ReposRepository
 from embry0.storage.repositories.sandbox_profiles import SandboxProfilesRepository
+from embry0.storage.repositories.skills import InlineSkillsRepository, SkillSourcesRepository
 from embry0.storage.repositories.traces import TracesRepository
 from embry0.storage.repositories.users import UsersRepository
 from embry0.workflows.issue_to_pr.graph import IssueToprWorkflow
@@ -699,6 +700,8 @@ async def _init_app_state(
     app.state.context_repo = ContextConfigRepository(db)
     app.state.budget_repo = BudgetConfigRepository(db)
     app.state.agent_defs_repo = AgentDefinitionsRepository(db)
+    app.state.skill_sources_repo = SkillSourcesRepository(db)
+    app.state.inline_skills_repo = InlineSkillsRepository(db)
     app.state.templates_repo = PipelineTemplatesRepository(db)
     app.state.integration_repo = IntegrationConfigRepository(db)
     app.state.provider_repo = ProviderConfigRepository(db)
@@ -934,6 +937,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.storage.seeds.agents_builtin import seed_missing_builtin_agents
 
     await seed_missing_builtin_agents(AgentDefinitionsRepository(db))
+
+    # Builtin skill sources (superpowers pinned by sha, and the inline
+    # `local` source). Insert-if-missing; operator edits are kept.
+    from embry0.storage.seeds.skill_sources_builtin import seed_builtin_skill_sources
+
+    await seed_builtin_skill_sources(SkillSourcesRepository(db))
 
     # #278: give every historical watcher proposal a healing case. Idempotent,
     # and fail-open — a ledger gap must never keep the orchestrator down.
