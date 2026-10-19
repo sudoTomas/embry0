@@ -265,6 +265,31 @@ body[data-divine="off"] .motion-mark * {
   .data-table > tbody > tr:nth-child(11) { --row-turn: 10; }
 }
 
+/* A status badge that changed rings once (ui/Badge.tsx): an outline of the
+   badge expands and fades, one gesture, the dissipation shape. It scales
+   more in height than in width, so around a short wide pill the outline
+   grows by about the same few pixels on every side. */
+@keyframes motion-ring {
+  from { opacity: 0.7; transform: scale(1); }
+  to   { opacity: 0; transform: scale(1.12, 1.5); }
+}
+
+/* At rest the ring is invisible, so it shows nothing if it never animates.
+   Its border colour is set here, not with a Tailwind class: the global
+   `* { border-color }` rule above is unlayered and outranks any utility. */
+.motion-ring {
+  border: 1px solid currentColor;
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .motion-ring {
+    /* A plain ease-out, as the divine ripple's: --ease-standard spends
+       nearly all of its change in the first 150 ms, too soon to see. */
+    animation: motion-ring var(--motion-slow) ease-out;
+  }
+}
+
 /* ----- motion: console board ----- */
 
 /* ----- motion: job journey ----- */
