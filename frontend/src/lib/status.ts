@@ -80,6 +80,8 @@ export const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   xai: "xAI",
   openai: "OpenAI",
+  openrouter: "OpenRouter",
+  deepseek: "DeepSeek",
   github: "GitHub",
   gitlab: "GitLab",
   linear: "Linear",
