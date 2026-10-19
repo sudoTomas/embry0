@@ -77,7 +77,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
           authenticated: boolean;
           tier: string | null;
           api_key_login?: boolean;
-        }>("/auth/check");
+        }>("/auth/check", { suppressErrorToast: true });
         if (cancelled) return;
         setSsoEnabled(check.data.sso_enabled);
         setApiKeyLogin(check.data.api_key_login !== false);
