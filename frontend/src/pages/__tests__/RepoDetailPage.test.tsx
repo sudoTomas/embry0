@@ -43,8 +43,8 @@ vi.mock("@/components/repos/RepoDockerAccessSection", () => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-const mockFetchJob = vi.fn();
-vi.mock("@/api/jobs", () => ({ fetchJob: (...a: unknown[]) => mockFetchJob(...a) }));
+const mockFetchJobs = vi.fn();
+vi.mock("@/api/jobs", () => ({ fetchJobs: (...a: unknown[]) => mockFetchJobs(...a) }));
 
 import { RepoDetailPage } from "../RepoDetailPage";
 
@@ -130,7 +130,7 @@ describe("RepoDetailPage (RAV-1253)", () => {
   });
 
   it("shows the repository's standards row with a link to the audit job, above the QA config", async () => {
-    mockFetchJob.mockResolvedValue({ job_id: "job-9", status: "completed" });
+    mockFetchJobs.mockResolvedValue({ jobs: [], total: 0, offset: 0, limit: 200 });
     mockFetchRepoDetail.mockResolvedValue({
       ...DETAIL,
       standards: [

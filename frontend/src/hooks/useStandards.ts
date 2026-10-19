@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchJob } from "@/api/jobs";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { fetchJobs } from "@/api/jobs";
 import {
   fetchOwnerStandards,
   fetchStandardVersions,
@@ -8,10 +8,36 @@ import {
   startStandardAudit,
   type StandardMode,
 } from "@/api/standards";
-import { isTerminalStatus } from "@/lib/jobStatus";
 
-/** While an audit runs, its job is read this often. */
+/** While an audit runs, the unfinished jobs are read this often. */
 export const AUDIT_POLL_MS = 10_000;
+
+/** A job's statuses before it finishes, in the order it usually moves through
+ * them. The server refuses a second audit while the newest is in any of them. */
+export const UNFINISHED_JOB_STATUSES = ["pending", "running", "awaiting_input", "paused"] as const;
+
+/** The jobs list's largest page. */
+const UNFINISHED_LIST_LIMIT = 200;
+
+/** Under "jobs", so creating or cancelling a job reads it again too. */
+export const UNFINISHED_JOBS_KEY = ["jobs", { unfinished: true }] as const;
+
+/**
+ * The status of every unfinished job, by id, from the jobs list in brief:
+ * one small request per unfinished status, however many repositories are
+ * audited, where a job's own read carries the whole standard in its task.
+ * The statuses are read one after another in the order a job moves, so a
+ * job that moves on between two reads is seen twice rather than missed. A
+ * job past the page's 200 is missed; the server's 409 still refuses it.
+ */
+export async function fetchUnfinishedJobs(): Promise<Record<string, string>> {
+  const byId: Record<string, string> = {};
+  for (const status of UNFINISHED_JOB_STATUSES) {
+    const { jobs } = await fetchJobs({ status, limit: UNFINISHED_LIST_LIMIT });
+    for (const job of jobs) byId[job.job_id] = job.status;
+  }
+  return byId;
+}
 
 export function useOwnerStandards(owner: string) {
   return useQuery({
@@ -30,42 +56,41 @@ export function useStandardVersions(owner: string, kind: string, enabled = true)
 }
 
 /**
- * The status of each audit job, by id. Each job is read with the job page's
- * own query key, so both share one cache entry, and polls until it
- * finishes. When a job this view saw unfinished finishes, the owner's
- * states and the repository details are read again: that is when an audit's
- * score and findings land. A job that cannot be read has no status.
+ * The status of each audit job that is unfinished, by id; a finished or
+ * unknown job is not in the map. The unfinished jobs are read from the jobs
+ * list, read afresh on each visit (an audit may have started elsewhere since)
+ * and polled only while one of these audits is in it. When an audit
+ * this view saw unfinished leaves it, the owner's states and the repository
+ * details are read again: that is when an audit's score and findings land.
  */
 export function useAuditJobStatuses(owner: string, jobIds: readonly string[]): Map<string, string> {
   const qc = useQueryClient();
-  const results = useQueries({
-    queries: jobIds.map((id) => ({
-      queryKey: ["jobs", id],
-      queryFn: () => fetchJob(id),
-      retry: false,
-      refetchInterval: (query: { state: { data?: { status?: string } } }) =>
-        isTerminalStatus(query.state.data?.status) ? false : AUDIT_POLL_MS,
-    })),
+  const ids = new Set(jobIds);
+  const unfinished = useQuery({
+    queryKey: UNFINISHED_JOBS_KEY,
+    queryFn: fetchUnfinishedJobs,
+    enabled: jobIds.length > 0,
+    staleTime: 0,
+    retry: false,
+    refetchInterval: (query) => (Object.keys(query.state.data ?? {}).some((id) => ids.has(id)) ? AUDIT_POLL_MS : false),
   });
   const statuses = new Map<string, string>();
-  results.forEach((result, i) => {
-    const status = result.data?.status;
-    if (typeof status === "string") statuses.set(jobIds[i], status);
-  });
+  for (const id of jobIds) {
+    const status = unfinished.data?.[id];
+    if (status) statuses.set(id, status);
+  }
 
-  const busy = jobIds.filter((id) => statuses.has(id) && !isTerminalStatus(statuses.get(id)));
-  const finished = jobIds.filter((id) => isTerminalStatus(statuses.get(id)));
-  const busyKey = busy.join(",");
-  const finishedKey = finished.join(",");
+  const busyKey = [...statuses.keys()].join(",");
   const seenBusy = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const done = finishedKey.split(",").filter((id) => id && seenBusy.current.has(id));
-    seenBusy.current = new Set(busyKey.split(",").filter(Boolean));
+    const busy = new Set(busyKey.split(",").filter(Boolean));
+    const done = [...seenBusy.current].filter((id) => !busy.has(id));
+    seenBusy.current = busy;
     if (done.length > 0) {
       void qc.invalidateQueries({ queryKey: ["standards", owner] });
       void qc.invalidateQueries({ queryKey: ["repos", "detail"] });
     }
-  }, [busyKey, finishedKey, owner, qc]);
+  }, [busyKey, owner, qc]);
 
   return statuses;
 }
@@ -82,7 +107,8 @@ export function useSetRepoMode(owner: string, kind: string) {
   });
 }
 
-/** Start an audit (operator); the new job id lands on the state, so the states are read again. */
+/** Start an audit (operator); the new job id lands on the state and the job
+ * is unfinished, so the states and the unfinished jobs are read again. */
 export function useStartAudit(owner: string, kind: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -90,6 +116,7 @@ export function useStartAudit(owner: string, kind: string) {
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ["standards", owner] });
       void qc.invalidateQueries({ queryKey: ["repos", "detail"] });
+      void qc.invalidateQueries({ queryKey: UNFINISHED_JOBS_KEY });
     },
   });
 }

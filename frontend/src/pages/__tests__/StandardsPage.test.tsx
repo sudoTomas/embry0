@@ -3,7 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const api = { standards: vi.fn(), versions: vi.fn(), repos: vi.fn(), orgs: vi.fn(), org: vi.fn(), job: vi.fn() };
+const api = { standards: vi.fn(), versions: vi.fn(), repos: vi.fn(), orgs: vi.fn(), org: vi.fn(), jobs: vi.fn(), job: vi.fn() };
 vi.mock("@/api/standards", async () => {
   const actual = await vi.importActual<typeof import("@/api/standards")>("@/api/standards");
   return {
@@ -21,7 +21,10 @@ vi.mock("@/api/orgs", async () => {
     fetchOrganization: (...a: unknown[]) => api.org(...a),
   };
 });
-vi.mock("@/api/jobs", () => ({ fetchJob: (...a: unknown[]) => api.job(...a) }));
+vi.mock("@/api/jobs", () => ({
+  fetchJobs: (...a: unknown[]) => api.jobs(...a),
+  fetchJob: (...a: unknown[]) => api.job(...a),
+}));
 
 import { useAuthStore } from "@/stores/authStore";
 import { org } from "@/components/orgs/__tests__/fixtures";
@@ -55,7 +58,7 @@ beforeEach(() => {
   );
   api.versions.mockResolvedValue([standard(), standard({ id: "std-0", version: 1, status: "superseded" })]);
   api.repos.mockResolvedValue([{ repo: "acme/low" }, { repo: "acme/quiet" }, { repo: "other/x" }]);
-  api.job.mockResolvedValue({ job_id: "job-1", status: "completed" });
+  api.jobs.mockResolvedValue({ jobs: [], total: 0, offset: 0, limit: 200 });
 });
 
 describe("StandardsPage", () => {
@@ -135,6 +138,24 @@ describe("StandardsPage", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Design standard" })).toBeInTheDocument();
     // No GET /orgs/<owner>, which would answer 404 for this owner on every load.
     expect(api.org).not.toHaveBeenCalled();
+  });
+
+  it("finds an unfinished audit in the jobs list, not by reading each job", async () => {
+    api.standards.mockResolvedValue(
+      ownerStandards({ repos: [state("acme/low", { mode: "advise", last_audit_job_id: "job-1" })] }),
+    );
+    api.jobs.mockImplementation(async ({ status }: { status: string }) => ({
+      jobs: status === "running" ? [{ job_id: "job-1", status: "running" }] : [],
+      total: 0,
+      offset: 0,
+      limit: 200,
+    }));
+    renderPage();
+    const job = await screen.findByTestId("standard-audit-job");
+    expect(await within(job).findByText("Running")).toBeInTheDocument();
+    expect(screen.getByTestId("standard-audit-button")).toBeDisabled();
+    expect(api.jobs).toHaveBeenCalledTimes(4);
+    expect(api.job).not.toHaveBeenCalled();
   });
 
   it("offers a retry when the standards do not load", async () => {

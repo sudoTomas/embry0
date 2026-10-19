@@ -3,8 +3,8 @@ import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const mockFetchJob = vi.fn();
-vi.mock("@/api/jobs", () => ({ fetchJob: (...a: unknown[]) => mockFetchJob(...a) }));
+const mockFetchJobs = vi.fn();
+vi.mock("@/api/jobs", () => ({ fetchJobs: (...a: unknown[]) => mockFetchJobs(...a) }));
 
 import type { RepoStandardState } from "@/api/standards";
 import { RepoStandardsRow } from "../RepoStandardsRow";
@@ -22,7 +22,12 @@ function renderRow(standards: RepoStandardState[] | undefined, repo = "acme/widg
 }
 
 beforeEach(() => {
-  mockFetchJob.mockReset().mockResolvedValue({ job_id: "job-7", status: "running" });
+  mockFetchJobs.mockReset().mockImplementation(async ({ status }: { status: string }) => ({
+    jobs: status === "running" ? [{ job_id: "job-7", status: "running" }] : [],
+    total: 0,
+    offset: 0,
+    limit: 200,
+  }));
 });
 
 describe("RepoStandardsRow", () => {
@@ -45,7 +50,7 @@ describe("RepoStandardsRow", () => {
     const job = within(row).getByTestId("repo-standard-job");
     expect(job).toHaveAttribute("href", "/jobs/job-7");
     expect(await within(job).findByText("Running")).toBeInTheDocument();
-    expect(mockFetchJob).toHaveBeenCalledWith("job-7");
+    expect(mockFetchJobs).toHaveBeenCalledWith({ status: "running", limit: 200 });
   });
 
   it("reads a repository never audited as off, with no score and no job", () => {
@@ -54,7 +59,7 @@ describe("RepoStandardsRow", () => {
     expect(screen.getByTestId("repo-standard-score")).toHaveTextContent("none yet");
     expect(screen.getByTestId("repo-standard-findings")).toHaveTextContent("-");
     expect(screen.queryByTestId("repo-standard-job")).toBeNull();
-    expect(mockFetchJob).not.toHaveBeenCalled();
+    expect(mockFetchJobs).not.toHaveBeenCalled();
   });
 
   it("links a nested GitLab repository to its top-level owner's standard", () => {
