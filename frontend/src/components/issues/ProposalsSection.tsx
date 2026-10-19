@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { useAcceptProposal, useProposals, useRejectProposal } from "@/hooks/useProposals";
 import type { HealingCase } from "@/lib/types";
 import { toastApiError } from "@/api/errorToast";
+import { useIsAdmin } from "@/stores/authStore";
 
 /**
  * Trackers whose drafts the API accepts (POST /cases/{id}/accept). The others —
@@ -58,6 +59,7 @@ function filedAt(proposal: HealingCase): string {
  * of a deployment with no watcher and no organization is unchanged.
  */
 export function ProposalsSection() {
+  const isAdmin = useIsAdmin();
   const proposals = useProposals();
   const accept = useAcceptProposal();
   const reject = useRejectProposal();
@@ -217,10 +219,14 @@ export function ProposalsSection() {
                           Accept by label in {trackerName(tracker?.kind)}
                         </span>
                       )}
+                      {/* Dismissing a need is admin work (the organization
+                          route requires admin), so only an admin gets it. */}
                       {isOrgNeed(proposal) ? (
-                        <Button size="xs" variant="outline" disabled={busy} onClick={() => handleDismiss(proposal)}>
-                          Dismiss
-                        </Button>
+                        isAdmin && (
+                          <Button size="xs" variant="outline" disabled={busy} onClick={() => handleDismiss(proposal)}>
+                            Dismiss
+                          </Button>
+                        )
                       ) : (
                         <Button size="xs" variant="outline" disabled={busy} onClick={() => handleReject(proposal)}>
                           Reject
