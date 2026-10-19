@@ -46,11 +46,28 @@ async def test_migration_101_adds_identity_columns_and_tables(db_with_migrations
 
 @pytest.mark.requires_postgres
 async def test_migration_101_writes_builtin_identities(db_with_migrations) -> None:
-    row = await db_with_migrations.fetchrow(
-        "SELECT display_name, avatar, color FROM agent_definitions WHERE type = 'developer'"
-    )
-    assert row is not None
-    assert (row["display_name"], row["avatar"], row["color"]) == ("Developer", "smith", "amber")
+    """Every builtin row the migrations pre-populate carries BUILTIN_IDENTITY, all four fields.
+
+    Rows a seeder inserts at startup (absent before seeding) are skipped; the
+    seeders write identity on create, pinned in test_agent_definitions.py.
+    """
+    from embry0.agents.identity import BUILTIN_IDENTITY
+
+    fields = ("display_name", "avatar", "color", "tagline")
+    rows = {
+        r["type"]: r
+        for r in await db_with_migrations.fetch(
+            "SELECT type, display_name, avatar, color, tagline FROM agent_definitions WHERE type = ANY($1)",
+            list(BUILTIN_IDENTITY),
+        )
+    }
+    assert "developer" in rows, f"the migrations pre-populate no developer row: {sorted(rows)}"
+    mismatched = {
+        agent_type: {f: rows[agent_type][f] for f in fields}
+        for agent_type, identity in BUILTIN_IDENTITY.items()
+        if agent_type in rows and any(rows[agent_type][f] != identity[f] for f in fields)
+    }
+    assert mismatched == {}, f"migration 101 wrote identities that differ from BUILTIN_IDENTITY: {mismatched}"
 
 
 @pytest.mark.requires_postgres
