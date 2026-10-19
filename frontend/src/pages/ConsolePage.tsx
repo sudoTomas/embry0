@@ -5,7 +5,8 @@ import { useJobs } from "@/hooks/useJobs";
 import { useQueue } from "@/hooks/useQueue";
 import { useConfig } from "@/hooks/useConfig";
 import { useGlide } from "@/hooks/useGlide";
-import { useJobInputs } from "@/hooks/useInputs";
+import { useJobInputs, useJobInputsAnswered } from "@/hooks/useInputs";
+import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
 import { BOARD_COLUMNS, groupJobsByColumn, type BoardColumnId } from "@/lib/boardColumns";
 import { BoardColumn } from "@/components/console/BoardColumn";
 import { RunningCard } from "@/components/console/RunningCard";
@@ -85,7 +86,8 @@ export function ConsolePage() {
     () => ({ limit: BOARD_FETCH_LIMIT, status: statusFilter, repo: repoFilter }),
     [statusFilter, repoFilter],
   );
-  const { data, isLoading, isError, refetch, dataUpdatedAt } = useJobs(jobFilters, BOARD_POLL_MS);
+  const jobs = useJobs(jobFilters, BOARD_POLL_MS);
+  const { data, isLoading, isError, refetch, dataUpdatedAt } = jobs;
   const { data: queue } = useQueue();
   const { data: config } = useConfig();
 
@@ -107,6 +109,14 @@ export function ConsolePage() {
     );
     return grouped;
   }, [visibleJobs]);
+
+  // The board paints once the jobs and the questions of the jobs that need
+  // someone are in. Painted before, the lanes stood as skeletons, then took
+  // cards of other heights, and a question grew its card under the lanes
+  // below it: on a phone, where the lanes stack, that pushed them all down.
+  const needsYouIds = useMemo(() => lanes.needs_you.map((job) => job.job_id), [lanes]);
+  const questionsAnswered = useJobInputsAnswered(needsYouIds);
+  const painted = useFirstPaint(hasAnswered(jobs) && questionsAnswered);
 
   const totalCards = BOARD_COLUMNS.reduce((n, col) => n + lanes[col.id].length, 0);
   const hasFilters = Boolean(statusFilter || repoFilter);
@@ -196,14 +206,21 @@ export function ConsolePage() {
         ) : boardEmpty ? (
           <EmptyJobsState variant="console" onNewJob={() => setShowCreate(true)} />
         ) : (
-          <GlideBoard glide={glide} layout={lanes} paintKey={paintKey}>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-5 items-start">
+          // The first paint draws the lanes anew. Keyed by it, they are new
+          // nodes rather than the skeleton lanes moved, and a layout shift
+          // counts only nodes that stay and move; to the glide it is a fresh
+          // paint, so no lane travels from where its skeleton stood.
+          <GlideBoard glide={glide} layout={lanes} paintKey={painted ? paintKey : "first-paint"}>
+            <div
+              key={painted ? "board" : "first-paint"}
+              className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-5 items-start"
+            >
               {BOARD_COLUMNS.map((column) => (
                 <BoardColumn
                   key={column.id}
                   column={column}
                   count={lanes[column.id].length}
-                  isLoading={isLoading}
+                  isLoading={isLoading || !painted}
                   paintKey={paintKey}
                 >
                   {laneCards(column.id)}

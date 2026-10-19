@@ -1,16 +1,35 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJobInputs, answerInput } from "@/api/inputs";
 import { isTerminalStatus } from "@/lib/jobStatus";
+import { hasAnswered, type QueryAnswers } from "@/hooks/useFirstPaint";
+
+/** One job's questions: the key and fetch every reader of them shares. */
+function jobInputsQuery(jobId: string) {
+  return { queryKey: ["job-inputs", jobId], queryFn: () => fetchJobInputs(jobId) };
+}
 
 /** jobStatus, when known, stops the poll once the job is finished: its
  * questions can no longer change. */
 export function useJobInputs(jobId: string, jobStatus?: string) {
   return useQuery({
-    queryKey: ["job-inputs", jobId],
-    queryFn: () => fetchJobInputs(jobId),
+    ...jobInputsQuery(jobId),
     enabled: !!jobId,
     refetchInterval: isTerminalStatus(jobStatus) ? false : 5000,
   });
+}
+
+const allAnswered = (results: QueryAnswers[]) => results.every(hasAnswered);
+
+/**
+ * Whether each of these jobs' questions has had its first answer. It starts
+ * the fetches when nothing else has, so a view can wait on them before it
+ * draws the cards that show them; it polls nothing itself, the cards do. It
+ * re-renders only when the answer flips.
+ */
+export function useJobInputsAnswered(jobIds: readonly string[]): boolean {
+  const queries = useMemo(() => jobIds.map((jobId) => jobInputsQuery(jobId)), [jobIds]);
+  return useQueries({ queries, combine: allAnswered });
 }
 
 export interface AnswerInputVars {

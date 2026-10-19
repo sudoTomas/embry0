@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Routes, Route, useLocation, useParams } from "react-router";
 import type {
@@ -158,9 +158,10 @@ describe("ConsolePage — board lanes", () => {
     renderPage();
 
     // findByText waits out the first-load skeleton; lane placement is then
-    // asserted through the column testids.
-    const running = screen.getByTestId("board-column-running");
-    expect(await within(running).findByText("Running task")).toBeInTheDocument();
+    // asserted through the column testids, read after it: the first paint
+    // draws the lanes anew.
+    await screen.findByText("Running task");
+    expect(within(screen.getByTestId("board-column-running")).getByText("Running task")).toBeInTheDocument();
     expect(within(screen.getByTestId("board-column-queued")).getByText("Queued task")).toBeInTheDocument();
     expect(within(screen.getByTestId("board-column-needs_you")).getByText("Blocked task")).toBeInTheDocument();
     expect(within(screen.getByTestId("board-column-done")).getByText("Finished task")).toBeInTheDocument();
@@ -175,8 +176,8 @@ describe("ConsolePage — board lanes", () => {
       ]),
     );
     renderPage();
-    const running = screen.getByTestId("board-column-running");
-    expect(await within(running).findByText("Running task")).toBeInTheDocument();
+    await screen.findByText("Running task");
+    expect(within(screen.getByTestId("board-column-running")).getByText("Running task")).toBeInTheDocument();
     expect(within(screen.getByTestId("board-column-failed")).getByText("Newer task")).toBeInTheDocument();
   });
 
@@ -199,8 +200,9 @@ describe("ConsolePage — board lanes", () => {
     );
     renderPage();
 
+    await screen.findByText("Fresh finish");
     const done = screen.getByTestId("board-column-done");
-    expect(await within(done).findByText("Fresh finish")).toBeInTheDocument();
+    expect(within(done).getByText("Fresh finish")).toBeInTheDocument();
     expect(within(done).queryByText("Ancient finish")).toBeNull();
     expect(within(done).getByTestId("count-pill")).toHaveTextContent("1");
   });
@@ -208,6 +210,55 @@ describe("ConsolePage — board lanes", () => {
   it("renders the dispatch-a-job empty state when nothing exists", async () => {
     renderPage();
     expect(await screen.findByText("Nothing running — dispatch a job")).toBeInTheDocument();
+  });
+});
+
+describe("ConsolePage — the first paint", () => {
+  const blocked = makeJob({ job_id: "wait0001aaaa", status: "awaiting_input", task: "Blocked task" });
+  const running = makeJob({ job_id: "run00001aaaa", status: "running", task: "Running task" });
+  const question: JobInput = {
+    id: "in-1",
+    issue_id: null,
+    job_id: "wait0001aaaa",
+    asking_node: "triage",
+    question: "Which branch should this land on?",
+    importance: "blocking",
+    auto_answer: null,
+    answer: null,
+    answered_by: null,
+    status: "pending",
+    created_at: RECENT,
+    answered_at: null,
+  };
+
+  it("holds the lanes until a Needs-you job's question is in, then draws them anew", async () => {
+    mockFetchJobs.mockResolvedValue(jobList([blocked, running]));
+    let answer: (inputs: JobInput[]) => void = () => {};
+    mockFetchJobInputs.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    renderPage();
+
+    // The jobs are in and the lanes count them, but no card is drawn: the
+    // question would grow its card and push the lanes below it down.
+    await waitFor(() =>
+      expect(within(screen.getByTestId("board-column-running")).getByTestId("count-pill")).toHaveTextContent("1"),
+    );
+    expect(screen.queryByText("Running task")).toBeNull();
+    const heldLane = screen.getByTestId("board-column-running");
+
+    await act(async () => answer([question]));
+    expect(await screen.findByText("Running task")).toBeInTheDocument();
+    expect(screen.getByTestId("needs-you-question")).toHaveTextContent("Which branch should this land on?");
+    // New lanes, not the skeleton lanes moved: a layout shift counts the
+    // nodes that stay and move.
+    expect(screen.getByTestId("board-column-running")).not.toBe(heldLane);
+  });
+
+  it("does not hold the lanes on a question fetch that fails", async () => {
+    mockFetchJobs.mockResolvedValue(jobList([blocked, running]));
+    mockFetchJobInputs.mockRejectedValue(new Error("boom"));
+    renderPage();
+    expect(await screen.findByText("Running task")).toBeInTheDocument();
+    expect(screen.getByTestId("needs-you-question")).toHaveTextContent("Pipeline paused");
   });
 });
 
@@ -245,8 +296,8 @@ describe("ConsolePage — URL-synced state", () => {
     );
     renderPage("/console?label=batch:demo-recruit-v1.4&tab=runs");
     // Board renders directly — the ?tab=/?label= params are simply ignored.
-    const running = screen.getByTestId("board-column-running");
-    expect(await within(running).findByText("Running task")).toBeInTheDocument();
+    await screen.findByText("Running task");
+    expect(within(screen.getByTestId("board-column-running")).getByText("Running task")).toBeInTheDocument();
     expect(screen.queryByRole("tab")).toBeNull();
     expect(screen.queryByTestId("label-filter-chip")).toBeNull();
     expect(screen.queryByText(/Increment 2/)).toBeNull();
@@ -363,7 +414,8 @@ describe("ConsolePage — motion when a poll moves a job", () => {
       jobList([makeJob({ job_id: "move0001aaaa", status: "pending", task: "Moving task" })]),
     );
     const { client } = renderPage();
-    expect(await within(screen.getByTestId("board-column-queued")).findByText("Moving task")).toBeInTheDocument();
+    await screen.findByText("Moving task");
+    expect(within(screen.getByTestId("board-column-queued")).getByText("Moving task")).toBeInTheDocument();
     expect(animated).toEqual([]);
 
     mockFetchJobs.mockResolvedValue(
@@ -379,6 +431,18 @@ describe("ConsolePage — motion when a poll moves a job", () => {
       within(screen.getByTestId("board-column-queued")).getByTestId("count-pill"),
       within(screen.getByTestId("board-column-running")).getByTestId("count-pill"),
     ]);
+  });
+
+  it("draws the first board in place: no lane glides from where its skeleton stood", async () => {
+    // While skeletons stand in the lanes, everything sits 500 px lower, as
+    // the lanes below a stack of skeletons do on a phone.
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ left: 0, top: document.querySelector(".animate-pulse") ? 500 : 0 }) as DOMRect,
+    );
+    mockFetchJobs.mockResolvedValue(jobList([makeJob({ status: "pending", task: "Queued task" })]));
+    renderPage();
+    await screen.findByText("Queued task");
+    expect(glides()).toEqual([]);
   });
 
   it("glides nothing and ticks no count when a filter change reflows the board", async () => {
