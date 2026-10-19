@@ -86,6 +86,25 @@ def _name_tag(ref: str) -> str:
     return ref.rsplit("/", 1)[-1]
 
 
+def _repository(ref: str) -> str:
+    """The repository a tag or digest reference is in: ``registry:5000/embry0-qa-x``."""
+    return ref.partition("@")[0] if "@" in ref else ref.rpartition(":")[0]
+
+
+def removal_refs(refs: Sequence[str]) -> list[str]:
+    """The references to give ``rmi`` so that all of ``refs`` go, none of them named once gone.
+
+    Untagging a repository's last tag also drops that repository's digest
+    references. Every pushed bake has a local tag, a registry tag and a
+    registry digest, and ``rmi`` of all three deleted the image at the second
+    tag, then failed on the digest with "No such image" (Docker 27.5.1). So a
+    digest reference is named only when no tag of its repository is: an image
+    left with a digest alone.
+    """
+    tagged = {_repository(ref) for ref in refs if "@" not in ref}
+    return [ref for ref in refs if "@" not in ref or _repository(ref) not in tagged]
+
+
 @dataclass(frozen=True, slots=True)
 class QAImage:
     """A daemon image that carries at least one ``embry0-qa-*`` reference."""
@@ -94,7 +113,7 @@ class QAImage:
     name: str
     tags: frozenset[str]  # name:tag, registry host stripped
     digests: frozenset[str]  # sha256:...
-    refs: tuple[str, ...]  # its QA references as the daemon spells them: what removal names
+    refs: tuple[str, ...]  # its QA references as the daemon spells them: what removal takes away
     created_at: datetime | None
 
 
@@ -328,7 +347,7 @@ class QAImageRetentionSweep:
             }
             if not dry_run:
                 try:
-                    await self._runtime.remove_image_refs(image.refs)
+                    await self._runtime.remove_image_refs(removal_refs(image.refs))
                 except Exception as exc:  # noqa: BLE001 — e.g. a container appeared since the check
                     result.failed.append(image.id)
                     logger.warning("qa_image_retention_remove_failed", image=image.id, error=str(exc)[:200])

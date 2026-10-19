@@ -315,7 +315,9 @@ class AgentRuntime(Protocol):
         """Remove these tags and digest references, without ``--force``.
 
         The image itself goes with its last reference, and the daemon refuses
-        to remove the last reference of an image a container uses.
+        to remove the last reference of an image a container uses. Untagging a
+        repository's last tag also drops that repository's digest references,
+        so naming one of those after it fails ("No such image").
         """
         ...
 

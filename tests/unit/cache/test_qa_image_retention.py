@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
-from embry0.cache.qa_image_retention import QAImageRetentionSweep, Reason, decide_volume, qa_image
+from embry0.cache.qa_image_retention import QAImageRetentionSweep, Reason, decide_volume, qa_image, removal_refs
 from embry0.cache.volume_ownership import volume_labels
 from embry0.execution.runtime.protocol import ContainerSummary, DiskUsage, ImageSummary, VolumeSummary
 from embry0.storage.repositories.qa_image_tags import QAImageTagRow
@@ -49,6 +51,19 @@ def _volume(name: str, repo: str, created: datetime, *, instance: str | None = I
     )
 
 
+def _repository(ref: str) -> str:
+    """``registry:5000/embry0-qa-x:t1`` and ``registry:5000/embry0-qa-x@sha256:d`` -> ``registry:5000/embry0-qa-x``."""
+    if "@" in ref:
+        return ref.partition("@")[0]
+    repo, _, tag = ref.rpartition(":")
+    return repo if "/" not in tag else ref
+
+
+def _single_reference(refs: list[str]) -> bool:
+    """Docker's test for "the last reference": one repository, at most one tag."""
+    return len({_repository(r) for r in refs}) == 1 and sum("@" not in r for r in refs) <= 1
+
+
 class FakeRuntime:
     """The sandbox daemon, as far as the sweep reads and changes it."""
 
@@ -64,9 +79,15 @@ class FakeRuntime:
         self.image_users = image_users or {}
         self.volumes = volumes or []
         self.volume_users = volume_users or {}
+        # The references each image still has; an image with none left is deleted.
+        self.refs = {i.id: [*i.repo_tags, *i.repo_digests] for i in images}
         self.removed_refs: list[list[str]] = []
         self.removed_volumes: list[str] = []
         self.volume_filters: list[list[str]] = []
+
+    @property
+    def deleted(self) -> set[str]:
+        return {i.id for i in self.images} - set(self.refs)
 
     async def disk_usage(self) -> DiskUsage:
         return DiskUsage(
@@ -74,14 +95,47 @@ class FakeRuntime:
         )
 
     async def list_images(self) -> list[ImageSummary]:
-        return list(self.images)
+        return [
+            replace(
+                i,
+                repo_tags=tuple(r for r in self.refs[i.id] if "@" not in r),
+                repo_digests=tuple(r for r in self.refs[i.id] if "@" in r),
+            )
+            for i in self.images
+            if i.id in self.refs
+        ]
 
     async def list_containers(self, *, ancestor: str | None = None, volume: str | None = None, **_: Any) -> list:
         n = self.image_users.get(ancestor or "", 0) if ancestor else self.volume_users.get(volume or "", 0)
         return [ContainerSummary(f"c{i}", f"sandbox-{i}", "", "Exited", "") for i in range(n)]
 
     async def remove_image_refs(self, refs: list[str]) -> None:
+        """What ``docker rmi <refs...>`` does (Docker 27): each reference in turn, errors raised at the end.
+
+        Untagging a repository's last tag also drops that repository's digest
+        references, and an image left with no reference is deleted, so naming
+        one of its references after that fails with "No such image". The last
+        reference of an image a container uses is refused.
+        """
         self.removed_refs.append(list(refs))
+        errors: list[str] = []
+        for ref in refs:
+            image_id = next((i for i, held in self.refs.items() if ref in held), None)
+            if image_id is None:
+                errors.append(f"Error response from daemon: No such image: {ref}")
+                continue
+            held = self.refs[image_id]
+            if self.image_users.get(image_id) and _single_reference(held):
+                errors.append(f"conflict: unable to remove repository reference {ref!r} (must force)")
+                continue
+            held.remove(ref)
+            repo = _repository(ref)
+            if "@" not in ref and not any("@" not in r and _repository(r) == repo for r in held):
+                held[:] = [r for r in held if not ("@" in r and _repository(r) == repo)]
+            if not held:
+                del self.refs[image_id]
+        if errors:
+            raise RuntimeError("\n".join(errors))
 
     async def list_volumes(self, *, labels: list[str], timeout: int = 10) -> list[str]:
         self.volume_filters.append(list(labels))
@@ -204,8 +258,44 @@ async def test_a_replaced_image_goes_once_its_replacement_is_older_than_the_rete
     assert _removed_ids(runtime) == {"sha256:t1"}, (
         "t1 was replaced 90 days ago and must go; t2 was the selected image until 10 days ago and must stay"
     )
-    assert runtime.removed_refs[0] == [f"{NAME}:t1", f"{REG}/{NAME}:t1", f"{REG}/{NAME}@sha256:d1"]
+    assert runtime.removed_refs[0] == [f"{NAME}:t1", f"{REG}/{NAME}:t1"], "the digest goes with the registry tag"
     assert result.counts()["image_bytes"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_a_pushed_image_is_reported_removed_not_failed() -> None:
+    """Every bake is pushed: local tag, registry tag and registry digest. rmi of all three removed
+    the image, then failed on the digest the last tag had already taken with it (measured on
+    Docker 27.5.1), so the sweep logged a removed image as failed and left it out of its counts."""
+    runtime = FakeRuntime(
+        [_image("sha256:t1", "t1", _ago(120), digest="sha256:d1"), _image("sha256:t2", "t2", _ago(90))]
+    )
+    rows = [_row("t1", _ago(120), active=False, digest="sha256:d1"), _row("t2", _ago(90), active=True)]
+
+    result = await _sweep(runtime, rows).run_once(now=NOW)
+
+    assert runtime.deleted == {"sha256:t1"}
+    assert result.failed == [], f"a removed image was reported as failed: {result.failed}"
+    assert [i["id"] for i in result.images] == ["sha256:t1"] and result.counts()["image_bytes"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_an_image_a_container_takes_after_the_check_stays_and_is_reported_failed() -> None:
+    """Without --force the daemon refuses the last tag of an image a container uses, digests named or not."""
+    runtime = FakeRuntime([_image("sha256:t1", "t1", _ago(120), digest="sha256:d1")], image_users={"sha256:t1": 1})
+    runtime.list_containers = AsyncMock(return_value=[])  # type: ignore[method-assign]  # it started after the check
+
+    result = await _sweep(runtime, []).run_once(now=NOW)
+
+    assert runtime.deleted == set(), "an image a container uses was removed"
+    assert (result.failed, result.images) == (["sha256:t1"], [])
+
+
+def test_rmi_names_a_digest_only_when_no_tag_of_its_repository_is_named() -> None:
+    local, tag, digest = f"{NAME}:t1", f"{REG}/{NAME}:t1", f"{REG}/{NAME}@sha256:d1"
+    assert removal_refs([local, tag, digest]) == [local, tag]
+    assert removal_refs([local, digest]) == [local, digest], "the local tag does not take the registry digest"
+    assert removal_refs([digest]) == [digest]
 
 
 @pytest.mark.asyncio
@@ -304,15 +394,20 @@ async def test_without_an_instance_id_no_volume_is_touched() -> None:
 
 @pytest.mark.asyncio
 async def test_a_dry_run_decides_the_same_and_removes_nothing() -> None:
-    images = [_image("sha256:t1", "t1", _ago(120)), _image("sha256:t2", "t2", _ago(10))]
-    rows = [_row("t1", _ago(120), active=False), _row("t2", _ago(100), active=True)]
+    images = [
+        _image("sha256:t1", "t1", _ago(120), digest="sha256:d1"),
+        _image("sha256:t2", "t2", _ago(10), digest="sha256:d2"),
+    ]
+    rows = [_row("t1", _ago(120), active=False, digest="sha256:d1"), _row("t2", _ago(100), active=True)]
     volumes = [_volume("vol-old", "acme/old", _ago(100))]
     dry_runtime = FakeRuntime(list(images), volumes=list(volumes))
 
     preview = await _sweep(dry_runtime, rows).run_once(dry_run=True, now=NOW)
 
     assert dry_runtime.removed_refs == [] and dry_runtime.removed_volumes == []
-    real = await _sweep(FakeRuntime(list(images), volumes=list(volumes)), rows).run_once(now=NOW)
+    real_runtime = FakeRuntime(list(images), volumes=list(volumes))
+    real = await _sweep(real_runtime, rows).run_once(now=NOW)
+    assert real_runtime.deleted == {"sha256:t1"}
     assert preview.as_dict() == real.as_dict(), "the dry run must report exactly what the sweep then removes"
     assert (preview.counts()["images"], preview.counts()["volumes"]) == (1, 1)
 
