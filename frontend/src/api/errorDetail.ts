@@ -14,7 +14,9 @@ function itemMessage(item: unknown, withField: boolean): string {
   if (!item || typeof item !== "object") return "";
   const rec = item as { loc?: unknown; msg?: unknown; message?: unknown };
   const raw = typeof rec.msg === "string" ? rec.msg : typeof rec.message === "string" ? rec.message : "";
-  const msg = raw.trim();
+  // pydantic prefixes a validator's ValueError with "Value error, ", which
+  // tells the operator nothing.
+  const msg = raw.trim().replace(/^Value error, /, "");
   if (!msg || !withField || !Array.isArray(rec.loc)) return msg;
   const path = rec.loc.filter((part, index) => !(index === 0 && REQUEST_PARTS.has(String(part))));
   return path.length > 0 ? `${path.map(String).join(".")}: ${msg}` : msg;

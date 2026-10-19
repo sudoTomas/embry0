@@ -14,13 +14,13 @@ import { RepoPicker } from "@/components/RepoPicker";
 import { useRegisteredRepos } from "@/hooks/useRepos";
 import { EnvVarTable } from "@/components/environments/EnvVarTable";
 import { EnvVarModal } from "@/components/environments/EnvVarModal";
-import { envErrorText } from "@/components/environments/envErrorText";
 import { DetectBanner } from "@/components/environments/DetectBanner";
 import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
 import { PullRequestReviewCard } from "@/components/environments/PullRequestReviewCard";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { FolderOpen, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
 import type { EnvVar, EnvVarScope, DetectedEnvVar } from "@/lib/types/environment";
 
 type LocationScope = "global" | "repo";
@@ -162,7 +162,7 @@ export function EnvironmentsPage() {
     const merged = mergeForSave(globalVars, null, key);
     setGlobalEnv.mutate(merged, {
       onSuccess: () => toast.success(`Deleted "${key}"`),
-      onError: (e) => toast.error(`Failed: ${envErrorText(e)}`),
+      onError: (e) => toastApiError(e, "Failed"),
     });
   };
 
@@ -191,7 +191,7 @@ export function EnvironmentsPage() {
       { fullRepo: selectedRepo, variables: merged },
       {
         onSuccess: () => toast.success(`Deleted "${key}"`),
-        onError: (e) => toast.error(`Failed: ${envErrorText(e)}`),
+        onError: (e) => toastApiError(e, "Failed"),
       },
     );
   };
@@ -224,7 +224,7 @@ export function EnvironmentsPage() {
       {
         onSuccess: () =>
           toast.success(`Imported ${toAdd.length} variable${toAdd.length !== 1 ? "s" : ""}`),
-        onError: (e) => toast.error(`Failed: ${envErrorText(e)}`),
+        onError: (e) => toastApiError(e, "Failed"),
       },
     );
   };

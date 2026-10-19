@@ -16,6 +16,13 @@ describe("formatErrorDetail", () => {
     ).toBe("env.0.name: Field required; limit: Input should be a valid integer");
   });
 
+  it("drops pydantic's 'Value error, ' prefix from a validator's message", () => {
+    expect(
+      formatErrorDetail([{ loc: ["body", "variables", 0, "key"], msg: "Value error, Key 'X' is reserved." }]),
+    ).toBe("variables.0.key: Key 'X' is reserved.");
+    expect(detailMessages([{ msg: "Value error, Key 'X' is reserved." }])).toEqual(["Key 'X' is reserved."]);
+  });
+
   it("shows a whole-body error without a field prefix", () => {
     expect(formatErrorDetail([{ loc: ["body"], msg: "Input should be a valid dictionary" }])).toBe(
       "Input should be a valid dictionary",
