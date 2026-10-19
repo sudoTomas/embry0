@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -191,3 +191,86 @@ async def test_get_agent_lists_skills_missing_from_the_catalog(app):
         resp = await client.get("/api/v1/agents/developer")
     assert resp.status_code == 200
     assert resp.json()["orphan_skills"] == ["gone:skill"]
+
+
+_AUDIT = "embry0.api.v1._audit.emit_audit"
+
+
+def _lantern(*skills: str) -> dict:
+    return {"type": "lantern", "model": "claude-sonnet-5", "skills": list(skills)}
+
+
+@pytest.mark.asyncio
+async def test_add_agent_skill_appends_and_audits(app):
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans", "superpowers:brainstorming")
+    app.state.agent_defs_repo.get = AsyncMock(return_value=_lantern("superpowers:brainstorming"))
+    app.state.agent_defs_repo.update = AsyncMock(return_value={"type": "lantern"})
+    with patch(_AUDIT, new_callable=AsyncMock) as audit:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_CSRF) as client:
+            resp = await client.post("/api/v1/agents/lantern/skills/superpowers:writing-plans")
+    assert resp.status_code == 200, resp.text
+    app.state.agent_defs_repo.update.assert_awaited_once_with(
+        "lantern", skills=["superpowers:brainstorming", "superpowers:writing-plans"]
+    )
+    assert [c.args[1] for c in audit.await_args_list] == ["agent.skill_added"]
+
+
+@pytest.mark.asyncio
+async def test_add_agent_skill_is_idempotent(app):
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans")
+    app.state.agent_defs_repo.get = AsyncMock(return_value=_lantern("superpowers:writing-plans"))
+    app.state.agent_defs_repo.update = AsyncMock()
+    with patch(_AUDIT, new_callable=AsyncMock) as audit:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_CSRF) as client:
+            resp = await client.post("/api/v1/agents/lantern/skills/superpowers:writing-plans")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["skills"] == ["superpowers:writing-plans"]
+    app.state.agent_defs_repo.update.assert_not_awaited()
+    audit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_add_agent_skill_unknown_is_422(app):
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans")
+    app.state.agent_defs_repo.get = AsyncMock(return_value=_lantern())
+    app.state.agent_defs_repo.update = AsyncMock()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_CSRF) as client:
+        resp = await client.post("/api/v1/agents/lantern/skills/superpowers:writing-plan")
+    assert resp.status_code == 422
+    assert "superpowers:writing-plans" in resp.text
+    app.state.agent_defs_repo.update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_add_agent_skill_missing_agent_is_404(app):
+    app.state.skill_sources_repo = _catalog("superpowers:writing-plans")
+    app.state.agent_defs_repo.get = AsyncMock(return_value=None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_CSRF) as client:
+        resp = await client.post("/api/v1/agents/lantern/skills/superpowers:writing-plans")
+    assert resp.status_code == 404
+    assert "Agent type not found" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_remove_agent_skill_drops_it_and_audits(app):
+    app.state.agent_defs_repo.get = AsyncMock(
+        return_value=_lantern("superpowers:brainstorming", "superpowers:writing-plans")
+    )
+    app.state.agent_defs_repo.update = AsyncMock(return_value={"type": "lantern"})
+    with patch(_AUDIT, new_callable=AsyncMock) as audit:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_CSRF) as client:
+            resp = await client.delete("/api/v1/agents/lantern/skills/superpowers:writing-plans")
+    assert resp.status_code == 200, resp.text
+    app.state.agent_defs_repo.update.assert_awaited_once_with("lantern", skills=["superpowers:brainstorming"])
+    assert [c.args[1] for c in audit.await_args_list] == ["agent.skill_removed"]
+
+
+@pytest.mark.asyncio
+async def test_remove_agent_skill_absent_is_200_without_a_write(app):
+    app.state.agent_defs_repo.get = AsyncMock(return_value=_lantern("superpowers:brainstorming"))
+    app.state.agent_defs_repo.update = AsyncMock()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_CSRF) as client:
+        resp = await client.delete("/api/v1/agents/lantern/skills/superpowers:writing-plans")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["skills"] == ["superpowers:brainstorming"]
+    app.state.agent_defs_repo.update.assert_not_awaited()

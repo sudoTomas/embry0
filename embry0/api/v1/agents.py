@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from embry0.agents.skills import UnknownSkillError, check_skill_names
 from embry0.api.deps import get_agent_defs_repo, require_admin
 from embry0.api.schemas import AgentCreateRequest, AgentUpdateRequest
+from embry0.api.v1._audit import audit
 from embry0.services.model_enablement import (
     DisabledModelError,
     UnpricedModelError,
@@ -180,3 +181,42 @@ async def reset_agent(
         return await repo.reset(agent_type)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/agents/{agent_type}/skills/{skill_name}", dependencies=[require_admin])
+async def add_agent_skill(
+    agent_type: str,
+    skill_name: str,
+    request: Request,
+    repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
+) -> dict[str, Any]:
+    """Add one catalog skill to an agent; adding one it already has is a no-op."""
+    agent = await repo.get(agent_type)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent type not found")
+    await check_catalog_skills(request, [skill_name])
+    skills = list(agent.get("skills") or [])
+    if skill_name in skills:
+        return agent
+    updated = await repo.update(agent_type, skills=[*skills, skill_name])
+    await audit(request, "agent.skill_added", agent_type=agent_type, skill=skill_name)
+    return updated
+
+
+@router.delete("/agents/{agent_type}/skills/{skill_name}", dependencies=[require_admin])
+async def remove_agent_skill(
+    agent_type: str,
+    skill_name: str,
+    request: Request,
+    repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
+) -> dict[str, Any]:
+    """Remove one skill from an agent; removing one it does not have is a no-op."""
+    agent = await repo.get(agent_type)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent type not found")
+    skills = list(agent.get("skills") or [])
+    if skill_name not in skills:
+        return agent
+    updated = await repo.update(agent_type, skills=[s for s in skills if s != skill_name])
+    await audit(request, "agent.skill_removed", agent_type=agent_type, skill=skill_name)
+    return updated
