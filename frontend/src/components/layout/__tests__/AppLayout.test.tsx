@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router";
+import { useState } from "react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { Link, MemoryRouter, Routes, Route } from "react-router";
 
 // Stub the layout sub-components so this test focuses on the shell contract
 // rather than re-asserting sidebar/topbar behavior (covered elsewhere).
@@ -97,6 +98,85 @@ describe("AppLayout", () => {
     const main = screen.getByRole("main");
     expect(main.className).toContain("overscroll-contain");
     expect(main.className).toContain("[scrollbar-gutter:stable]");
+  });
+});
+
+/** A page with state of its own, a tab link (a search change) and a link to
+ * another page (a path change). */
+function StatefulPage({ name }: { name: string }) {
+  const [clicks, setClicks] = useState(0);
+  return (
+    <div>
+      <h1>{name}</h1>
+      <button type="button" onClick={() => setClicks((n) => n + 1)}>
+        clicked {clicks}
+      </button>
+      <Link to="?tab=second">second tab</Link>
+      <Link to="/issues">to issues</Link>
+    </div>
+  );
+}
+
+function renderShellAt(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route element={<AppLayout />}>
+          <Route path="jobs" element={<StatefulPage name="jobs" />} />
+          <Route path="issues" element={<StatefulPage name="issues" />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+/** The cell the routed page arrives in: main's one child. */
+function pageCell() {
+  const cell = screen.getByRole("main").firstElementChild;
+  if (!(cell instanceof HTMLElement)) throw new Error("main holds no page cell");
+  return cell;
+}
+
+describe("AppLayout — each page arrives as it opens", () => {
+  it("brings the page in through .motion-enter while the shell around it stays put", () => {
+    renderShellAt("/jobs");
+    const cell = pageCell();
+    expect(cell.className).toContain("motion-enter");
+    expect(cell).toContainElement(screen.getByRole("heading", { name: "jobs" }));
+    expect(cell).not.toContainElement(screen.getByTestId("stub-topbar"));
+    expect(cell).not.toContainElement(screen.getByTestId("stub-sidebar"));
+    expect(cell).not.toContainElement(screen.getByRole("navigation", { name: "Breadcrumb" }));
+  });
+
+  it("brings the next page in afresh when the path changes", () => {
+    renderShellAt("/jobs");
+    const before = pageCell();
+    fireEvent.click(screen.getByRole("link", { name: "to issues" }));
+    expect(screen.getByRole("heading", { name: "issues" })).toBeInTheDocument();
+    const after = pageCell();
+    expect(after, "a new path mounts a new cell, so its arrival plays").not.toBe(before);
+    expect(after.className).toContain("motion-enter");
+  });
+
+  it("keeps the page, its state and its cell when only the search changes", () => {
+    renderShellAt("/jobs");
+    fireEvent.click(screen.getByRole("button", { name: "clicked 0" }));
+    const before = pageCell();
+    fireEvent.click(screen.getByRole("link", { name: "second tab" }));
+    expect(pageCell(), "a tab or a filter must not replay the arrival").toBe(before);
+    expect(screen.getByRole("button", { name: "clicked 1" })).toBeInTheDocument();
+  });
+
+  it("lets a page fill the content area's height and still end on its padding", () => {
+    renderShellAt("/jobs");
+    // One grid cell at least as tall as main: a page's h-full resolves against
+    // it (the pipeline editor fills the area), and a page taller than main
+    // grows the cell, so main's bottom padding still follows the content.
+    const cell = pageCell();
+    expect(cell.className).toContain("grid");
+    expect(cell.className).toContain("min-h-full");
+    expect(cell.className).toContain("grid-rows-[1fr]");
+    expect(cell.className).toContain("grid-cols-[minmax(0,1fr)]");
   });
 });
 
