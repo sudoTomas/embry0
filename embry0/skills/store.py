@@ -65,8 +65,11 @@ class SkillStore:
         target = self.tree_path(source_id, sha)
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
-            shutil.rmtree(target)
-        Path(staged).rename(target)
+            # The same content is already live and may be bind-mounted into
+            # running sandboxes: keep it, drop the redundant copy.
+            shutil.rmtree(staged, ignore_errors=True)
+        else:
+            Path(staged).rename(target)
         pointer = self.source_dir(source_id) / CURRENT
         tmp = pointer.with_suffix(".tmp")
         tmp.write_text(sha + "\n", encoding="utf-8")
@@ -78,10 +81,14 @@ class SkillStore:
         return target
 
     def mounts(self, sources: Iterable[Mapping[str, Any]]) -> list[SkillMount]:
-        """One mount per ready, enabled source whose current tree is on disk."""
+        """One mount per enabled source whose current tree is on disk.
+
+        ``status`` is informational: a failed re-sync keeps the previous tree,
+        and that tree stays mounted.
+        """
         out: list[SkillMount] = []
         for src in sources:
-            if src.get("status") != "ready" or not src.get("enabled"):
+            if not src.get("enabled"):
                 continue
             source_id = str(src["id"])
             sha = self.current_sha(source_id)

@@ -8,12 +8,14 @@ after the url's host resolved to public addresses.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import ipaddress
 import json
 import os
 import re
 import shutil
+import signal
 import socket
 import tempfile
 from collections.abc import Awaitable, Callable
@@ -44,6 +46,9 @@ _GIT_SAFETY = (
     "core.fsmonitor=false",
     "-c",
     "submodule.recurse=false",
+    # The address check vets the url's host only; a redirect would reach another.
+    "-c",
+    "http.followRedirects=false",
 )
 
 ResolveHost = Callable[[str], Awaitable[list[str]]]
@@ -68,7 +73,14 @@ def parse_skill_frontmatter(text: str) -> tuple[str | None, str]:
         key, sep, value = line.partition(":")
         if not sep:
             continue
-        value = value.strip().strip("'\"")
+        value = value.strip()
+        if value.startswith('"'):
+            try:
+                value = str(json.loads(value))
+            except json.JSONDecodeError:
+                value = value.strip('"')
+        else:
+            value = value.strip("'\"")
         if key.strip() == "name":
             name = value or None
         elif key.strip() == "description":
@@ -84,8 +96,19 @@ async def resolve_host_addresses(host: str) -> list[str]:
 
 
 def _is_non_public(address: str) -> bool:
+    # is_global covers private, loopback, link-local, reserved, unspecified and
+    # 100.64.0.0/10; it calls some multicast ranges global, hence the second test.
     ip = ipaddress.ip_address(address)
-    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    return not ip.is_global or ip.is_multicast
+
+
+def _frontmatter_value(value: str) -> str:
+    """One line, double-quoted: a JSON string is a valid YAML double-quoted scalar."""
+    return json.dumps(" ".join(value.split()))
+
+
+def _render_skill_md(name: str, description: str, body: str) -> str:
+    return f"---\nname: {_frontmatter_value(name)}\ndescription: {_frontmatter_value(description)}\n---\n{body}"
 
 
 def _git_env(home: Path) -> dict[str, str]:
@@ -147,6 +170,14 @@ class SkillSourceSync:
                 message = redact_log_text(str(exc))
                 logger.warning("skill_source_sync_failed", source_id=source_id, error=message)
                 return await self._repo.mark_error(source_id, message)
+            except Exception as exc:
+                # Anything else (a plugin.json in a foreign encoding, ...) must
+                # still leave the row errored, never pending forever.
+                if staged is not None:
+                    shutil.rmtree(staged, ignore_errors=True)
+                message = redact_log_text(f"{type(exc).__name__}: {exc}")
+                logger.exception("skill_source_sync_crashed", source_id=source_id, error=message)
+                return await self._repo.mark_error(source_id, message)
             updated = await self._repo.mark_synced(source_id, resolved_sha=sha, plugin_name=plugin_name, skills=skills)
             logger.info("skill_source_synced", source_id=source_id, sha=sha, skills=len(skills))
             return updated
@@ -172,13 +203,14 @@ class SkillSourceSync:
             sha = await self._clone(row["url"], row["ref"], staged)
         elif kind == "path":
             self._copy_dir(Path(row["url"]), staged)
-            sha = _content_hash(staged)
         elif kind == "inline":
             await self._render_inline(staged)
-            sha = _content_hash(staged)
         else:
             raise SkillSyncError(f"unknown source kind {kind!r}")
+        _refuse_symlinks(staged)
         self._check_size(staged)
+        if kind != "git":
+            sha = _content_hash(staged)
         plugin_name = self._ensure_plugin_json(staged, default_name=row["id"])
         skills = _catalog(staged)
         if kind != "inline" and not skills:
@@ -234,12 +266,19 @@ class SkillSourceSync:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.DEVNULL,
+            # Its own process group, so a timeout reaches git's helpers too
+            # (remote-https, index-pack), not only the git process.
+            start_new_session=True,
         )
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout=self._git_timeout)
         except TimeoutError:
-            proc.kill()
-            await proc.communicate()
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+            await proc.wait()
             raise SkillSyncError(f"git {args[0]} timed out after {self._git_timeout:g}s") from None
         if proc.returncode != 0:
             raise SkillSyncError(f"git {args[0]} failed: {err.decode('utf-8', 'replace').strip()[:500]}")
@@ -249,15 +288,15 @@ class SkillSourceSync:
         if not source.is_dir():
             raise SkillSyncError(f"{source} is not a directory in the orchestrator container")
         shutil.rmtree(staged, ignore_errors=True)
-        shutil.copytree(source, staged, symlinks=False, ignore=shutil.ignore_patterns(".git"))
+        # Copy links as links, never their targets; _refuse_symlinks then refuses them.
+        shutil.copytree(source, staged, symlinks=True, ignore=shutil.ignore_patterns(".git"))
 
     async def _render_inline(self, staged: Path) -> None:
         for row in await self._inline.list_all():
             skill_dir = staged / "skills" / row["name"]
             skill_dir.mkdir(parents=True, exist_ok=True)
-            description = str(row["description"]).replace("\n", " ").strip()
             (skill_dir / "SKILL.md").write_text(
-                f"---\nname: {row['name']}\ndescription: {description}\n---\n{row['body']}", encoding="utf-8"
+                _render_skill_md(str(row["name"]), str(row["description"]), str(row["body"])), encoding="utf-8"
             )
         (staged / "skills").mkdir(parents=True, exist_ok=True)
 
@@ -281,6 +320,15 @@ class SkillSourceSync:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"name": default_name, "version": "0.0.0"}, indent=2) + "\n", encoding="utf-8")
         return default_name
+
+
+def _refuse_symlinks(staged: Path) -> None:
+    """The tree is mounted into every sandbox; a link could expose anything the orchestrator can read."""
+    for dirpath, dirnames, filenames in os.walk(staged, followlinks=False):
+        for name in sorted(dirnames + filenames):
+            path = Path(dirpath) / name
+            if path.is_symlink():
+                raise SkillSyncError(f"the tree contains a symlink: {path.relative_to(staged)}")
 
 
 def _catalog(staged: Path) -> list[dict[str, str]]:
