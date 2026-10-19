@@ -18,6 +18,7 @@ import { PageError } from "@/components/PageError";
 import { Button } from "@/components/ui/Button";
 import { FilterSelect } from "@/components/ui/FilterSelect";
 import { ALL_JOB_STATUSES } from "@/lib/types/jobs";
+import { statusLabel } from "@/lib/status";
 import type { JobResponse } from "@/lib/types";
 
 /** Board poll cadence (spec Increment 1: card membership from useJobs at 5s;
@@ -142,11 +143,11 @@ export function ConsolePage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold">Console</h1>
+          <h1 className="text-xl font-bold">Console</h1>
           <HeartbeatBadge lastUpdatedAt={dataUpdatedAt || null} />
         </div>
         <Button onClick={() => setShowCreate((s) => !s)}>
-          <Plus className="h-4 w-4 mr-2" /> New Job
+          <Plus className="h-4 w-4 mr-2" /> New job
         </Button>
       </div>
 
@@ -158,6 +159,7 @@ export function ConsolePage() {
             label="Statuses"
             value={statusFilter}
             options={[...ALL_JOB_STATUSES]}
+            optionLabel={statusLabel}
             onChange={(v) => setParam("status", v)}
           />
           <FilterSelect

@@ -12,13 +12,13 @@ describe("Badge", () => {
     render(<Badge tone="success">ok</Badge>);
     const el = screen.getByText("ok");
     expect(el.className).toContain("text-success");
-    expect(el.className).toContain("bg-success/10");
+    expect(el.className).toContain("bg-teal-dim");
   });
 
   it("falls back to neutral tone when no tone is provided", () => {
     render(<Badge>x</Badge>);
     const el = screen.getByText("x");
-    expect(el.className).toContain("text-white/70");
+    expect(el.className).toContain("text-fg-secondary");
   });
 
   it("merges a custom className", () => {

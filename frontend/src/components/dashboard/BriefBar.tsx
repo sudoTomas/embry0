@@ -1,0 +1,113 @@
+import { Fragment } from "react";
+import { Link } from "react-router";
+import { format } from "date-fns";
+import { useQueue } from "@/hooks/useQueue";
+import { useProposals } from "@/hooks/useProposals";
+import { usePendingMergeApprovals } from "@/hooks/useMergeApprovals";
+import { cn } from "@/lib/utils";
+
+interface BriefItem {
+  key: string;
+  count: number;
+  text: string;
+  /** Where the number is answered; the merge asks are answered in the approval chat. */
+  to?: string;
+  /** Waits for a person: amber, and only shown above zero. */
+  needsPerson: boolean;
+}
+
+/** Amber for what waits for a person; blue only for live work above zero, so
+ * an idle "0 running" reads muted rather than as a second accent. */
+function itemTone(item: BriefItem): string {
+  if (item.needsPerson) return "text-warning";
+  return item.count > 0 ? "text-info" : "text-fg-muted";
+}
+
+function plural(count: number, one: string, many: string): string {
+  return count === 1 ? one : many;
+}
+
+/**
+ * The Overview's one-line brief, under the header like the sibling
+ * dashboards': today's date, what waits for a person, and what is running,
+ * each number bold and linked to the page that answers it. Every number comes
+ * from a poll the dashboard already runs (queue, proposals) or the merge-ask
+ * list; a source that is off or failing leaves its item out. Below the sm
+ * breakpoint the items wrap onto a second line instead of scrolling out of
+ * sight.
+ */
+export function BriefBar() {
+  const queue = useQueue();
+  const proposals = useProposals();
+  const approvals = usePendingMergeApprovals();
+
+  const cases = proposals.data?.cases ?? [];
+  const orgNeeds = cases.filter((c) => c.origin === "org").length;
+  const drafts = cases.length - orgNeeds;
+  const awaiting = queue.data?.awaiting_input ?? 0;
+  const paused = queue.data?.paused ?? 0;
+  const asks = approvals.data?.length ?? 0;
+
+  const items: BriefItem[] = [
+    { key: "awaiting", count: awaiting, text: "awaiting input", to: "/console", needsPerson: true },
+    { key: "paused", count: paused, text: "paused", to: "/console", needsPerson: true },
+    { key: "approvals", count: asks, text: plural(asks, "merge approval asked", "merge approvals asked"), needsPerson: true },
+    { key: "org-needs", count: orgNeeds, text: plural(orgNeeds, "organization need", "organization needs"), to: "/orgs", needsPerson: true },
+    { key: "drafts", count: drafts, text: plural(drafts, "draft ticket to decide", "draft tickets to decide"), to: "/issues", needsPerson: true },
+  ].filter((item) => item.count > 0);
+
+  if (queue.data) {
+    items.push(
+      { key: "running", count: queue.data.running, text: "running", to: "/jobs", needsPerson: false },
+      { key: "queued", count: queue.data.pending, text: "queued", to: "/jobs", needsPerson: false },
+    );
+  }
+
+  const settled = !queue.isPending && !proposals.isPending;
+  const nobodyNeeded = settled && !items.some((item) => item.needsPerson);
+
+  return (
+    <div
+      data-testid="brief-bar"
+      className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-[var(--density-padding)] py-1.5 text-sm sm:h-9 sm:flex-nowrap sm:gap-x-0 sm:overflow-x-auto sm:py-0 sm:[scrollbar-width:none]"
+    >
+      <span className="whitespace-nowrap text-fg-secondary">{format(new Date(), "EEEE, MMMM d")}</span>
+      {nobodyNeeded && (
+        <>
+          <Divider />
+          <span className="whitespace-nowrap text-fg-muted">Nothing waits for you</span>
+        </>
+      )}
+      {items.map((item) => {
+        const body = (
+          <>
+            <b className="font-bold tabular-nums">{item.count}</b> {item.text}
+          </>
+        );
+        const tone = cn(itemTone(item), "whitespace-nowrap");
+        return (
+          <Fragment key={item.key}>
+            <Divider />
+            {item.to ? (
+              <Link
+                to={item.to}
+                data-testid={`brief-${item.key}`}
+                className={cn(tone, "hover:underline")}
+              >
+                {body}
+              </Link>
+            ) : (
+              <span data-testid={`brief-${item.key}`} className={tone} title="Answered in the approval chat">
+                {body}
+              </span>
+            )}
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function Divider() {
+  return <span aria-hidden="true" className="mx-4 hidden h-4 w-px shrink-0 bg-border-strong sm:block" />;
+}

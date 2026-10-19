@@ -16,7 +16,7 @@ const CHIP: Record<SenseState, string> = {
 };
 
 function SenseChips({ row }: { row: OrgRepoFacts }) {
-  if (row.archived) return <Badge tone="neutral">archived</Badge>;
+  if (row.archived) return <Badge tone="neutral">Archived</Badge>;
   return (
     <span className="inline-flex gap-1 whitespace-nowrap">
       {SENSES.map((sense) => {
@@ -97,9 +97,9 @@ export function OrgReposTable({ repos }: { repos: readonly OrgRepoFacts[] }) {
         </span>
       </div>
       <div className={TABLE_BOX}>
-        <table className="w-full min-w-[900px] text-sm" data-testid="org-repos-table">
+        <table className="data-table min-w-[900px]" data-testid="org-repos-table">
           <thead>
-            <tr className="border-b border-white/[0.06]">
+            <tr>
               <th scope="col" className={TH}>Repository</th>
               <th scope="col" className={TH}>Language</th>
               <th scope="col" className={TH}>Pushed</th>
@@ -109,7 +109,7 @@ export function OrgReposTable({ repos }: { repos: readonly OrgRepoFacts[] }) {
           </thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.repo} className="border-b border-white/[0.04] last:border-0" data-testid="org-repo-row">
+              <tr key={r.repo} data-testid="org-repo-row">
                 <td className={TD}>
                   <div className="flex flex-col gap-0.5">
                     <Link to={`/repos/${r.repo}`} className="font-medium hover:underline" data-testid="org-repo-link">

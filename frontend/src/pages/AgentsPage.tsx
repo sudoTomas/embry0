@@ -6,12 +6,15 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { IconBox } from "@/components/ui/IconBox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { useAgents, useDeleteAgent, useResetAgent } from "@/hooks/useAgents";
 import type { AgentDefinition } from "@/lib/types/agents";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { agentTypeToOperation } from "@/components/divine/operations";
 
 type Filter = "all" | "builtin" | "custom";
+
+const FILTER_LABELS: Record<Filter, string> = { all: "All", builtin: "Built-in", custom: "Custom" };
 
 export function AgentsPage() {
   const { data: agents, isLoading } = useAgents();
@@ -58,165 +61,164 @@ export function AgentsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <Tabs
+      defaultValue="all"
+      value={filter}
+      onValueChange={(v) => setFilter(v as Filter)}
+      className="space-y-6"
+    >
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Agents</h1>
+        <h1 className="text-xl font-bold">Agents</h1>
         <Link to="/agents/new">
           <Button>
             <Plus className="w-4 h-4" />
-            New Agent
+            New agent
           </Button>
         </Link>
       </div>
 
-      {/* Filter bar */}
-      <div className="flex gap-1 p-1 rounded-lg bg-white/[0.03] border border-white/[0.06] w-fit">
-        {(["all", "builtin", "custom"] as Filter[]).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors capitalize ${
-              filter === f
-                ? "bg-white/[0.08] text-white"
-                : "text-white/40 hover:text-white/70"
-            }`}
-          >
-            {f === "all" ? "All" : f === "builtin" ? "Built-in" : "Custom"}
-          </button>
+      {/* Filter: the shared tab bar, so the selected state matches every other tab set. */}
+      <TabsList>
+        {(Object.keys(FILTER_LABELS) as Filter[]).map((f) => (
+          <TabsTrigger key={f} value={f}>
+            {FILTER_LABELS[f]}
+          </TabsTrigger>
         ))}
-      </div>
+      </TabsList>
 
-      {/* Table */}
-      <Card>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="py-12 text-center text-white/40 text-sm">Loading...</div>
-          ) : filtered.length === 0 ? (
-            <div className="py-12 text-center text-white/40 text-sm">No agents found</div>
-          ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-white/[0.06]">
-                  <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Type</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Description</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Model</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Provider</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Tools</th>
-                  <th className="text-left px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Skills</th>
-                  <th className="text-right px-6 py-3 text-xs font-medium text-white/40 uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/[0.04]">
-                {filtered.map((agent: AgentDefinition) => (
-                  <tr
-                    key={agent.type}
-                    onClick={() => handleRowClick(agent.type)}
-                    className="cursor-pointer hover:bg-white/[0.02] transition-colors"
-                  >
-                    {/* Type */}
-                    <td className="px-6 py-3">
-                      <div className="flex items-center gap-2.5">
-                        {(() => {
-                          const op = agentTypeToOperation(agent.type);
-                          return op ? (
-                            <span className="flex items-center justify-center w-8 h-8 shrink-0">
-                              <OperationGlyph operation={op} size={28} titled />
-                            </span>
-                          ) : (
-                            <IconBox icon={Bot} color="#d4af37" size="sm" />
-                          );
-                        })()}
-                        <div>
-                          <div className="text-sm font-medium text-white/90">{agent.type}</div>
-                          {agent.is_builtin && (
-                            <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 border border-cyan-500/20">
-                              built-in
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* Description */}
-                    <td className="px-6 py-3 max-w-xs">
-                      <p className="text-sm text-white/60 truncate">{agent.description || "—"}</p>
-                    </td>
-
-                    {/* Model */}
-                    <td className="px-6 py-3">
-                      <span className="text-sm font-mono text-white/60">{agent.model}</span>
-                    </td>
-
-                    {/* Provider: the catalog provider the model routes to, and
-                        whether it has a credential now (GET /agents). */}
-                    <td className="px-6 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-white/60">{agent.provider ?? "none"}</span>
-                        {agent.provider_ready === true && <Badge tone="success">ready</Badge>}
-                        {agent.provider_ready === false && (
-                          <Badge
-                            tone="error"
-                            title={
-                              agent.provider
-                                ? "No credential is configured for this provider"
-                                : "No configured provider serves this model"
-                            }
-                          >
-                            not ready
-                          </Badge>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Tools count */}
-                    <td className="px-6 py-3">
-                      <span className="text-sm text-white/60">{agent.tools?.length ?? 0}</span>
-                    </td>
-
-                    {/* Skills count */}
-                    <td className="px-6 py-3">
-                      <span className="text-sm text-white/60">{agent.skills?.length ?? 0}</span>
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-6 py-3">
-                      <div
-                        className="flex items-center justify-end gap-2"
-                        onClick={(e) => e.stopPropagation()}
+      {/* Table: the panel of the selected filter tab. Below sm only the type,
+          the provider's readiness and the action stay, so nothing important
+          scrolls out of a phone screen. */}
+      <TabsContent value={filter} className="mt-0">
+        <Card>
+          <CardContent className="p-0">
+            {isLoading ? (
+              <div className="py-12 text-center text-white/40 text-sm">Loading...</div>
+            ) : filtered.length === 0 ? (
+              <div className="py-12 text-center text-white/40 text-sm">No agents found</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th className="hidden sm:table-cell">Description</th>
+                      <th className="hidden sm:table-cell">Model</th>
+                      <th>Provider</th>
+                      <th className="hidden sm:table-cell">Tools</th>
+                      <th className="hidden sm:table-cell">Skills</th>
+                      <th className="text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((agent: AgentDefinition) => (
+                      <tr
+                        key={agent.type}
+                        onClick={() => handleRowClick(agent.type)}
+                        className="cursor-pointer"
                       >
-                        {agent.is_builtin ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleReset(agent.type)}
-                            disabled={resetAgent.isPending}
-                            className={confirmReset === agent.type ? "border-orange-500/40 text-orange-400 hover:bg-orange-500/10" : ""}
+                        {/* Type */}
+                        <td>
+                          <div className="flex items-center gap-2.5">
+                            {(() => {
+                              const op = agentTypeToOperation(agent.type);
+                              return op ? (
+                                <span className="hidden sm:flex items-center justify-center w-8 h-8 shrink-0">
+                                  <OperationGlyph operation={op} size={28} titled />
+                                </span>
+                              ) : (
+                                <IconBox icon={Bot} color="var(--color-primary)" size="sm" className="hidden sm:flex" />
+                              );
+                            })()}
+                            <div>
+                              <div className="whitespace-nowrap text-sm font-medium text-white/90">{agent.type}</div>
+                              {agent.is_builtin && <Badge tone="neutral">Built-in</Badge>}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Description */}
+                        <td className="hidden max-w-xs sm:table-cell">
+                          <p className="text-sm text-white/60 truncate">{agent.description || "—"}</p>
+                        </td>
+
+                        {/* Model */}
+                        <td className="hidden sm:table-cell">
+                          <span className="text-sm font-mono text-white/60">{agent.model}</span>
+                        </td>
+
+                        {/* Provider: the catalog provider the model routes to, and
+                            whether it has a credential now (GET /agents). */}
+                        <td>
+                          <div className="flex items-center gap-2">
+                            <span className="hidden text-sm text-white/60 sm:inline">{agent.provider ?? "none"}</span>
+                            {agent.provider_ready === true && <Badge tone="success">Ready</Badge>}
+                            {agent.provider_ready === false && (
+                              <Badge
+                                tone="error"
+                                title={
+                                  agent.provider
+                                    ? "No credential is configured for this provider"
+                                    : "No configured provider serves this model"
+                                }
+                              >
+                                Not ready
+                              </Badge>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Tools count */}
+                        <td className="hidden sm:table-cell">
+                          <span className="text-sm text-white/60">{agent.tools?.length ?? 0}</span>
+                        </td>
+
+                        {/* Skills count */}
+                        <td className="hidden sm:table-cell">
+                          <span className="text-sm text-white/60">{agent.skills?.length ?? 0}</span>
+                        </td>
+
+                        {/* Actions */}
+                        <td>
+                          <div
+                            className="flex items-center justify-end gap-2"
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                            {confirmReset === agent.type ? "Confirm Reset" : "Reset"}
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleDelete(agent.type)}
-                            disabled={deleteAgent.isPending}
-                            className={confirmDelete === agent.type ? "border-destructive/40 text-destructive hover:bg-destructive/10" : ""}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            {confirmDelete === agent.type ? "Confirm Delete" : "Delete"}
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+                            {agent.is_builtin ? (
+                              <Button
+                                variant="outline"
+                                size="xs"
+                                onClick={() => handleReset(agent.type)}
+                                disabled={resetAgent.isPending}
+                                className={confirmReset === agent.type ? "border-warning/40 text-warning hover:bg-warning/10" : ""}
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                {confirmReset === agent.type ? "Confirm reset" : "Reset"}
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="xs"
+                                onClick={() => handleDelete(agent.type)}
+                                disabled={deleteAgent.isPending}
+                                className={confirmDelete === agent.type ? "border-destructive/40 text-destructive hover:bg-destructive/10" : ""}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                {confirmDelete === agent.type ? "Confirm delete" : "Delete"}
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </TabsContent>
+    </Tabs>
   );
 }

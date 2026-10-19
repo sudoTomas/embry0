@@ -18,6 +18,7 @@ import { useNeedStatus } from "@/hooks/useOrgs";
 import { groupNeeds, isActionable, planActions } from "@/lib/orgs";
 import { cn } from "@/lib/utils";
 import { NeedsEndpointMissing } from "./OrgNeedsList";
+import { statusLabel } from "@/lib/status";
 import { TABLE_BOX, TD, TH } from "./styles";
 
 interface ResultRow extends OrgActionResult {
@@ -60,9 +61,9 @@ function ResultsTable({ outcome }: { outcome: RunOutcome }) {
       )}
       {outcome.rows.length > 0 && (
         <div className={TABLE_BOX}>
-          <table className="w-full min-w-[560px] text-sm">
+          <table className="data-table min-w-[560px]">
             <thead>
-              <tr className="border-b border-white/[0.06]">
+              <tr>
                 <th scope="col" className={TH}>Action</th>
                 <th scope="col" className={TH}>Repository</th>
                 <th scope="col" className={TH}>Outcome</th>
@@ -73,13 +74,12 @@ function ResultsTable({ outcome }: { outcome: RunOutcome }) {
               {outcome.rows.map((r) => (
                 <tr
                   key={`${r.action}:${r.repo}`}
-                  className="border-b border-white/[0.04] last:border-0"
                   data-testid="org-act-result-row"
                 >
                   <td className={cn(TD, "whitespace-nowrap")}>{r.action}</td>
                   <td className={cn(TD, "font-mono text-xs")}>{r.repo}</td>
                   <td className={TD}>
-                    <Badge tone={OUTCOME_TONE[r.outcome] ?? "neutral"}>{r.outcome}</Badge>
+                    <Badge tone={OUTCOME_TONE[r.outcome] ?? "neutral"}>{statusLabel(r.outcome)}</Badge>
                   </td>
                   <td className={cn(TD, "text-white/60")}>{r.detail}</td>
                 </tr>
@@ -128,10 +128,10 @@ function NeedRow({
             <Badge tone="gold">{need.action.type}</Badge>
           ) : need.status === "open" ? (
             <Badge tone="neutral" title="embry0 cannot do this one for you">
-              by hand
+              By hand
             </Badge>
           ) : (
-            <Badge tone="neutral">{need.status}</Badge>
+            <Badge tone="neutral">{statusLabel(need.status)}</Badge>
           )}
           <span className="text-xs text-muted-foreground">
             {need.repos.length} {need.repos.length === 1 ? "repository" : "repositories"}
@@ -288,7 +288,7 @@ export function OrgActPanel({
           )}
           {groupNeeds(open).map((g) => (
             <section key={g.kind} className="rounded-lg border border-white/[0.06] px-3 py-2" data-testid="org-act-group">
-              <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <h3 className="label-caps">
                 {g.label} ({g.needs.length})
               </h3>
               <ul className="divide-y divide-white/[0.04]">

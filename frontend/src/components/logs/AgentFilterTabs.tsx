@@ -27,7 +27,7 @@ export function AgentFilterTabs({ nodeStates, selectedNodeId, onSelect }: AgentF
         className={cn(
           "px-3 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap",
           selectedNodeId === null
-            ? "bg-primary text-primary-foreground"
+            ? "bg-overlay text-primary"
             : "text-muted-foreground hover:text-foreground hover:bg-muted"
         )}
       >
@@ -50,7 +50,7 @@ export function AgentFilterTabs({ nodeStates, selectedNodeId, onSelect }: AgentF
             className={cn(
               "px-3 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap flex items-center gap-1.5",
               selectedNodeId === nodeId
-                ? "bg-primary text-primary-foreground"
+                ? "bg-overlay text-primary"
                 : "text-muted-foreground hover:text-foreground hover:bg-muted"
             )}
           >
@@ -58,8 +58,8 @@ export function AgentFilterTabs({ nodeStates, selectedNodeId, onSelect }: AgentF
               className={cn(
                 "text-[10px]",
                 state.state === "running" && "animate-spin",
-                state.state === "completed" && "text-green-400",
-                state.state === "failed" && "text-red-400"
+                state.state === "completed" && "text-success",
+                state.state === "failed" && "text-destructive"
               )}
             >
               {icon}

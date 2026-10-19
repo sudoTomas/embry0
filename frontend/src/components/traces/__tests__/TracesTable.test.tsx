@@ -110,8 +110,8 @@ describe("TracesTable", () => {
 
   it("offers exactly the storage result values in the result filter", () => {
     renderTable();
-    expect(optionLabels(screen.getByRole("combobox", { name: "Result" }))).toEqual([
-      "All Result",
+    expect(optionLabels(screen.getByRole("combobox", { name: "Results" }))).toEqual([
+      "All results",
       "success",
       "error",
       "running",
@@ -122,8 +122,8 @@ describe("TracesTable", () => {
     renderTable();
     await screen.findByRole("option", { name: "reviewer" });
     expect(fetchAgents).toHaveBeenCalled();
-    expect(optionLabels(screen.getByRole("combobox", { name: "Agent" }))).toEqual([
-      "All Agent",
+    expect(optionLabels(screen.getByRole("combobox", { name: "Agents" }))).toEqual([
+      "All agents",
       "developer",
       "reviewer",
     ]);

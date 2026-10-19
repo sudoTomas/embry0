@@ -8,11 +8,11 @@ interface ToolCallStreamProps {
 
 const TOOL_COLORS: Record<string, string> = {
   Read: "text-amber-400",
-  Write: "text-emerald-400",
-  Edit: "text-emerald-400",
-  Bash: "text-blue-400",
-  Glob: "text-cyan-400",
-  Grep: "text-cyan-400",
+  Write: "text-success",
+  Edit: "text-success",
+  Bash: "text-fg-secondary",
+  Glob: "text-fg-secondary",
+  Grep: "text-fg-secondary",
 };
 
 /** One call's row, then its subagent's calls indented beneath it. */
@@ -26,7 +26,7 @@ function renderRow(tc: ToolCallEntry, key: string, depth: number, isLast: boolea
         {tc.subagent && <span className="text-[10px] text-white/30 shrink-0">{tc.subagent.name}</span>}
         <span className="text-white/60 flex-1 min-w-0 truncate">{tc.input}</span>
         {hasResult && (
-          <span className={tc.is_error ? "text-red-400" : "text-green-400"}>
+          <span className={tc.is_error ? "text-destructive" : "text-success"}>
             {tc.is_error ? "\u2717" : "\u2713"}
           </span>
         )}

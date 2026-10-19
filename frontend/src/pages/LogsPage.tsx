@@ -73,7 +73,7 @@ function ContainerMultiSelect({
         <div
           role="listbox"
           aria-multiselectable="true"
-          className="absolute z-20 mt-1 max-h-64 w-64 overflow-auto rounded-md border border-border bg-[#0c1015] p-2 shadow-lg"
+          className="absolute z-20 mt-1 max-h-64 w-64 overflow-auto rounded-md border border-border bg-overlay p-2 shadow-lg"
         >
           <button
             type="button"
@@ -177,7 +177,7 @@ export function LogsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Logs</h1>
+      <h1 className="text-xl font-bold">Logs</h1>
 
       <form onSubmit={onSubmit} className="flex flex-wrap items-end gap-2">
         <div className="w-64">
@@ -261,14 +261,14 @@ export function LogsPage() {
             <div
               data-testid="logs-tail"
               onScroll={onTailScroll}
-              className="max-h-[65vh] overflow-auto rounded-lg border border-border bg-[#0c1015] p-3 font-mono text-xs leading-5"
+              className="max-h-[65vh] overflow-auto rounded-lg border border-border bg-overlay p-3 font-mono text-xs leading-5"
             >
               {result.lines.map((line, i) => (
                 <div key={`${line.ts}-${i}`} className="flex gap-3 whitespace-pre-wrap break-all">
                   <span className="shrink-0 text-white/30">
                     {new Date(line.ts).toLocaleTimeString()}
                   </span>
-                  <span className="shrink-0 text-cyan-300/70">{line.container}</span>
+                  <span className="shrink-0 text-fg-secondary">{line.container}</span>
                   <span className="text-white/80">{line.line}</span>
                 </div>
               ))}

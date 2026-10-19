@@ -108,45 +108,53 @@ beforeEach(() => {
 });
 
 describe("DashboardPage", () => {
-  it("renders all seven embry0-sourced tiles when the backend is healthy", () => {
+  it("renders the six embry0-sourced tiles when the backend is healthy", () => {
     renderPage();
 
-    // Live counts come from /queue — not Companion.
-    expect(within(screen.getByTestId("tile-Running")).getByText("4")).toBeInTheDocument();
-    expect(within(screen.getByTestId("tile-Queued")).getByText("7")).toBeInTheDocument();
-    // Needs You = awaiting_input + paused.
-    expect(within(screen.getByTestId("tile-Needs You")).getByText("3")).toBeInTheDocument();
+    // Live counts come from /queue — not Companion. Queued rides on the
+    // Running tile, under its label.
+    const running = screen.getByTestId("tile-Running");
+    expect(within(running).getByText("4")).toBeInTheDocument();
+    expect(within(running).getByText(/7 queued/)).toBeInTheDocument();
+    // Needs you = awaiting_input + paused.
+    expect(within(screen.getByTestId("tile-Needs you")).getByText("3")).toBeInTheDocument();
 
     // Orchestrator-sourced derived metrics.
-    expect(within(screen.getByTestId("tile-Job Success Rate")).getByText("90%")).toBeInTheDocument();
-    expect(within(screen.getByTestId("tile-Cost Today")).getByText("$3.45")).toBeInTheDocument();
+    expect(within(screen.getByTestId("tile-Job success")).getByText("90%")).toBeInTheDocument();
+    const cost = screen.getByTestId("tile-Cost today");
+    expect(within(cost).getByText("$3.45")).toBeInTheDocument();
+    expect(within(cost).getByText(/\$47\.50 this month/)).toBeInTheDocument();
     expect(
-      within(screen.getByTestId("tile-Cost This Month")).getByText("$47.50"),
-    ).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("tile-Cache Hit Rate")).getByText("80%"),
+      within(screen.getByTestId("tile-Cache hit rate")).getByText("80%"),
     ).toBeInTheDocument();
   });
 
-  it("presents no Companion-sourced data: single orchestrator heartbeat only", () => {
+  it("presents no Companion-sourced data, and leaves the orchestrator's state to the sidebar", () => {
     renderPage();
-    const strip = screen.getByTestId("heartbeat-strip");
-    expect(within(strip).getByLabelText(/orchestrator/i)).toBeInTheDocument();
-    expect(within(strip).queryByLabelText(/agent/i)).toBeNull();
+    expect(screen.queryByTestId("heartbeat-strip")).toBeNull();
+    expect(screen.queryByLabelText(/agent/i)).toBeNull();
+  });
+
+  it("tints a tile that is a status: running, and work that needs a person", () => {
+    renderPage();
+    expect(within(screen.getByTestId("tile-Running")).getByText("4").className).toContain("text-info");
+    expect(within(screen.getByTestId("tile-Needs you")).getByText("3").className).toContain("text-warning");
+    expect(within(screen.getByTestId("tile-Job success")).getByText("90%").className).toContain("text-fg");
   });
 
   // Guards the assay finding: "Cost Today" must come from the orchestrator's
   // daily_cost_usd, and the monthly figure must never leak into Today.
-  it("sources Cost Today from orchestrator daily_cost_usd", () => {
+  it("sources Cost today from orchestrator daily_cost_usd", () => {
     renderPage();
-    const tile = screen.getByTestId("tile-Cost Today");
+    const tile = screen.getByTestId("tile-Cost today");
+    // The value is today's figure; the month is only the line under the label.
     expect(within(tile).getByText("$3.45")).toBeInTheDocument();
     expect(within(tile).queryByText("$47.50")).toBeNull();
   });
 
   // Guards the assay finding: pass rate must use the orchestrator's existing
   // success_rate field, not be re-derived from completed/failed.
-  it("sources Job Success Rate directly from orchestrator success_rate", () => {
+  it("sources Job success directly from orchestrator success_rate", () => {
     mockUseStats.mockReturnValue(
       ready({
         ...ORCH_OK.data!,
@@ -158,7 +166,7 @@ describe("DashboardPage", () => {
     );
     renderPage();
     expect(
-      within(screen.getByTestId("tile-Job Success Rate")).getByText("90%"),
+      within(screen.getByTestId("tile-Job success")).getByText("90%"),
     ).toBeInTheDocument();
   });
 
@@ -185,32 +193,33 @@ describe("DashboardPage", () => {
     );
     renderPage();
     expect(
-      within(screen.getByTestId("tile-Job Success Rate")).getByText("40%"),
+      within(screen.getByTestId("tile-Job success")).getByText("40%"),
     ).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("tile-Succeeded or Merged")).getByText("60%"),
-    ).toBeInTheDocument();
+    // The blended "succeeded or merged" rate repeated both and is gone.
+    expect(screen.queryByText("60%")).toBeNull();
     // 39 job rows carry a merged PR, but they are 34 distinct pull requests:
     // the tile says "PRs", so it counts PRs.
-    const merged = screen.getByTestId("tile-PRs Merged");
+    const merged = screen.getByTestId("tile-PRs merged");
     expect(within(merged).getByText("34")).toBeInTheDocument();
     expect(within(merged).queryByText("39")).toBeNull();
-    expect(within(merged).getByText(/human-finished/)).toBeInTheDocument();
+    // Whose work it was stays said, under the tiles rather than inside one.
+    expect(within(merged).queryByText(/human-finished/)).toBeNull();
+    expect(screen.getByText(/human-finished/)).toBeInTheDocument();
   });
 
   it("falls back to success_rate against a backend that predates the split", () => {
     renderPage();
     expect(
-      within(screen.getByTestId("tile-Job Success Rate")).getByText("90%"),
+      within(screen.getByTestId("tile-Job success")).getByText("90%"),
     ).toBeInTheDocument();
-    expect(within(screen.getByTestId("tile-PRs Merged")).getByText("0")).toBeInTheDocument();
+    expect(within(screen.getByTestId("tile-PRs merged")).getByText("0")).toBeInTheDocument();
   });
 
   it("renders every tile in loading state while queries are pending", () => {
     mockUseStats.mockReturnValue(loading());
     mockUseQueue.mockReturnValue(loading());
     renderPage();
-    for (const label of ["Running", "Queued", "Needs You", "Job Success Rate", "Cost Today"]) {
+    for (const label of ["Running", "Needs you", "Job success", "Cost today"]) {
       expect(screen.getByTestId(`tile-${label}`)).toHaveAttribute("data-state", "loading");
     }
   });
@@ -218,29 +227,24 @@ describe("DashboardPage", () => {
   it("scopes an outage to the failing source: queue tiles error, stats tiles stay ready", () => {
     mockUseQueue.mockReturnValue(errored());
     renderPage();
-    for (const label of ["Running", "Queued", "Needs You"]) {
+    for (const label of ["Running", "Needs you"]) {
       expect(screen.getByTestId(`tile-${label}`)).toHaveAttribute("data-state", "error");
     }
-    for (const label of ["Job Success Rate", "Cost Today", "Cost This Month"]) {
+    for (const label of ["Job success", "Cost today", "Cache hit rate"]) {
       expect(screen.getByTestId(`tile-${label}`)).toHaveAttribute("data-state", "ready");
     }
-  });
-
-  it("shows the live-activity band when the queue has activity", () => {
-    renderPage();
-    // 4 running / 7 queued / 2 awaiting input from QUEUE_OK.
-    expect(screen.getByText("running")).toBeInTheDocument();
-    expect(screen.getByText("awaiting input")).toBeInTheDocument();
   });
 
   it("renders recent issues and watcher runs panels", () => {
     renderPage();
 
-    const issues = screen.getByTestId("panel-Recent Issues");
+    const issues = screen.getByTestId("panel-Recent issues");
     expect(within(issues).getByText("acme/app#42")).toBeInTheDocument();
+    // Readable words on the pill, never the raw enum.
+    expect(within(issues).getByText("Completed")).toBeInTheDocument();
 
     const watcher = screen.getByTestId("panel-Watcher");
-    expect(within(watcher).getByText("proposed")).toBeInTheDocument();
+    expect(within(watcher).getByText("Proposed")).toBeInTheDocument();
     expect(within(watcher).getByText("RAV-999")).toBeInTheDocument();
   });
 

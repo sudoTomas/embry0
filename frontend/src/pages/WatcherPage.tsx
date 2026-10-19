@@ -51,7 +51,7 @@ export function WatcherPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Watcher</h1>
+        <h1 className="text-xl font-bold">Watcher</h1>
         <Button disabled={tick.isPending} onClick={() => tick.mutate()}>
           <Play className="mr-2 h-4 w-4" />
           {tick.isPending ? "Running tick… (can take minutes)" : "Run tick now"}
@@ -75,35 +75,37 @@ export function WatcherPage() {
           description="Tick results land here when the scheduled watcher runs or you trigger one manually."
         />
       ) : (
+        // Below sm the window, log count, job and detail step aside, so when,
+        // what happened and the proposal fit a phone on one line per tick.
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
-                <th className="px-4 py-2">When</th>
-                <th className="px-4 py-2">Action</th>
-                <th className="px-4 py-2">Window</th>
-                <th className="px-4 py-2">Log lines</th>
-                <th className="px-4 py-2">Analysis job</th>
-                <th className="px-4 py-2">Proposal</th>
-                <th className="px-4 py-2">Detail</th>
+              <tr>
+                <th>When</th>
+                <th>Action</th>
+                <th className="hidden sm:table-cell">Window</th>
+                <th className="hidden sm:table-cell">Log lines</th>
+                <th className="hidden sm:table-cell">Analysis job</th>
+                <th>Proposal</th>
+                <th className="hidden sm:table-cell">Detail</th>
               </tr>
             </thead>
             <tbody>
               {runs.data.map((run) => (
-                <tr key={run.id} className="border-b border-white/[0.04] last:border-0">
-                  <td className="whitespace-nowrap px-4 py-2 text-muted-foreground">
+                <tr key={run.id}>
+                  <td className="whitespace-nowrap text-muted-foreground">
                     {formatDate(run.created_at)}
                   </td>
-                  <td className="px-4 py-2">
+                  <td>
                     <Badge tone={watcherActionTone(run.action)}>
                       {watcherActionLabel(run.action)}
                     </Badge>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-2 text-xs text-muted-foreground">
+                  <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">
                     {windowLabel(run.window_start, run.window_end)}
                   </td>
-                  <td className="px-4 py-2 tabular-nums text-muted-foreground">{run.log_lines}</td>
-                  <td className="px-4 py-2">
+                  <td className="hidden tabular-nums text-muted-foreground sm:table-cell">{run.log_lines}</td>
+                  <td className="hidden whitespace-nowrap sm:table-cell">
                     {run.job_id ? (
                       <Link to={`/jobs/${run.job_id}`} className="font-mono text-xs text-primary hover:underline">
                         {run.job_id.slice(0, 12)}
@@ -112,7 +114,7 @@ export function WatcherPage() {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-2">
+                  <td className="whitespace-nowrap">
                     {run.tracker_key ? (
                       run.tracker_url ? (
                         <a
@@ -131,7 +133,7 @@ export function WatcherPage() {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </td>
-                  <td className="max-w-xs truncate px-4 py-2 text-muted-foreground" title={run.detail ?? undefined}>
+                  <td className="hidden max-w-xs truncate text-muted-foreground sm:table-cell" title={run.detail ?? undefined}>
                     {run.detail ?? "—"}
                   </td>
                 </tr>

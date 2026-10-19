@@ -51,7 +51,7 @@ export function ConsoleCardShell({ job, className, style, headerRight, children 
         {hasIssue && (
           <span
             data-testid="issue-chip"
-            className="shrink-0 rounded-md border border-cyan-500/25 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-mono text-cyan-300"
+            className="shrink-0 rounded px-1.5 py-0.5 text-2xs font-mono bg-white/[0.06] text-fg-secondary"
           >
             {job.issue_number != null ? `#${job.issue_number}` : "issue"}
           </span>

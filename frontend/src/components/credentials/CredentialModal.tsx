@@ -343,7 +343,7 @@ export function CredentialModal({
           <X className="h-4 w-4" />
         </button>
 
-        <h2 className="text-lg font-semibold mb-5">{title}</h2>
+        <h2 className="text-section font-semibold mb-5">{title}</h2>
 
         <form onSubmit={handleSubmit} noValidate autoComplete="off" className="space-y-4">
           {!isRotate && (

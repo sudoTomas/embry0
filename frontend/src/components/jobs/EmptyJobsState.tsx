@@ -16,9 +16,9 @@ export function EmptyJobsState({ variant = "jobs", onNewJob }: EmptyJobsStatePro
     return (
       <div className="flex flex-col items-center justify-center py-16 px-4">
         <div className="mb-6">
-          <IconBox icon={Workflow} color="#06b6d4" size="lg" />
+          <IconBox icon={Workflow} color="var(--color-fg-secondary)" size="lg" />
         </div>
-        <h3 className="text-lg font-semibold text-white/70 mb-2">
+        <h3 className="text-section font-semibold text-fg-secondary mb-2">
           Nothing running — dispatch a job
         </h3>
         <p className="text-sm text-white/30 text-center max-w-sm mb-6">
@@ -26,7 +26,7 @@ export function EmptyJobsState({ variant = "jobs", onNewJob }: EmptyJobsStatePro
         </p>
         <Button size="sm" className="gap-1.5" onClick={onNewJob}>
           <Plus className="w-3.5 h-3.5" />
-          New Job
+          New job
         </Button>
       </div>
     );
@@ -35,9 +35,9 @@ export function EmptyJobsState({ variant = "jobs", onNewJob }: EmptyJobsStatePro
   return (
     <div className="flex flex-col items-center justify-center py-16 px-4">
       <div className="mb-6">
-        <IconBox icon={Workflow} color="#06b6d4" size="lg" />
+        <IconBox icon={Workflow} color="var(--color-fg-secondary)" size="lg" />
       </div>
-      <h3 className="text-lg font-semibold text-white/70 mb-2">No jobs yet</h3>
+      <h3 className="text-section font-semibold text-fg-secondary mb-2">No jobs yet</h3>
       <p className="text-sm text-white/30 text-center max-w-sm mb-6">
         Jobs are created when GitHub issues are labeled or via the API. Create an issue to get started.
       </p>

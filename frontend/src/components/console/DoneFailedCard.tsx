@@ -14,7 +14,7 @@ import { ConsoleCardShell } from "./ConsoleCardShell";
 const PR_PILL: Record<string, { label: string; className: string }> = {
   merged: {
     label: "PR merged",
-    className: "border-purple-400/25 bg-purple-400/10 text-purple-400 hover:bg-purple-400/20",
+    className: "border-purple/25 bg-purple/10 text-purple hover:bg-purple/20",
   },
   closed: {
     label: "PR closed",

@@ -102,7 +102,7 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
   };
 
   return (
-    <div className="absolute inset-y-0 left-0 z-30 w-[260px] bg-[#131520] border-r border-white/[0.08] flex flex-col shadow-2xl animate-in slide-in-from-left duration-200">
+    <div className="absolute inset-y-0 left-0 z-30 w-[260px] bg-surface border-r border-white/[0.08] flex flex-col shadow-2xl animate-in slide-in-from-left duration-200">
       {/* Header */}
       <div className="h-12 shrink-0 flex items-center justify-between px-3 border-b border-white/[0.08]">
         <span className="text-xs font-semibold text-white/70 uppercase tracking-wider">Templates</span>
@@ -175,7 +175,7 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
             {menuOpenId === t.template_id && (
               <div
                 ref={menuRef}
-                className="absolute right-2 top-8 z-40 w-32 rounded-md border border-white/[0.1] bg-[#1a1d2e] shadow-xl py-1"
+                className="absolute right-2 top-8 z-40 w-32 rounded-md border border-white/[0.1] bg-overlay shadow-xl py-1"
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
@@ -195,7 +195,7 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
                 <button
                   type="button"
                   onClick={() => handleDelete(t.template_id)}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400/70 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-destructive/70 hover:bg-destructive/10 hover:text-destructive transition-colors"
                 >
                   <Trash2 size={11} /> Delete
                 </button>

@@ -47,7 +47,7 @@ export function RepoDockerAccessSection({ repo, dockerAccess }: { repo: string; 
         {dockerAccess ? (
           <Badge tone="warning">Docker access granted</Badge>
         ) : (
-          <Badge tone="neutral">no Docker access</Badge>
+          <Badge tone="neutral">No Docker access</Badge>
         )}
         {isAdmin ? (
           <Button

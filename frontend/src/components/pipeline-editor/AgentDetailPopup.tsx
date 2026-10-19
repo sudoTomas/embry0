@@ -306,12 +306,12 @@ export function AgentDetailPopup({
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        className="w-[560px] max-h-[85vh] overflow-y-auto rounded-2xl"
+        className="w-[560px] max-h-[85vh] overflow-y-auto rounded-lg"
         onClick={(e) => e.stopPropagation()}
         style={{
           border: `1px solid ${color}33`,
-          background: `linear-gradient(170deg, ${color}0A 0%, #0f1419 15%, #0f1419 100%)`,
-          boxShadow: `0 0 60px ${color}10, 0 25px 50px rgba(0,0,0,0.5)`,
+          background: "var(--color-surface)",
+          boxShadow: "0 25px 50px rgb(0 0 0 / 0.5)",
           animation: "popup-in 0.25s ease-out",
         }}
       >
@@ -319,7 +319,7 @@ export function AgentDetailPopup({
         <div className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06]">
           {/* Icon box */}
           <div
-            className="shrink-0 w-[44px] h-[44px] rounded-xl flex items-center justify-center"
+            className="shrink-0 w-[44px] h-[44px] rounded-lg flex items-center justify-center"
             style={{
               backgroundColor: `${color}26`,
               border: `1px solid ${color}4D`,
@@ -447,8 +447,8 @@ function ReadMode({
       {/* Tools & Skills side-by-side */}
       <div className="flex gap-3 mb-5">
         {/* Tools card */}
-        <div className="flex-1 rounded-lg border border-cyan-500/15 bg-cyan-500/[0.02] px-3 py-2.5">
-          <div className="text-[11px] font-semibold text-cyan-400 mb-1.5">
+        <div className="flex-1 rounded-lg border border-border bg-white/[0.03] px-3 py-2.5">
+          <div className="text-2xs font-semibold text-fg-muted mb-1.5">
             &#9889; Tools
           </div>
           <div className="flex flex-wrap gap-1">
@@ -457,7 +457,7 @@ function ReadMode({
                 <ReadPill
                   key={t}
                   label={t}
-                  className="bg-cyan-500/10 text-cyan-400/80 border border-cyan-500/20"
+                  className="bg-white/[0.06] text-fg-secondary"
                 />
               ))
             ) : (
@@ -467,8 +467,8 @@ function ReadMode({
         </div>
 
         {/* Skills card */}
-        <div className="flex-1 rounded-lg border border-purple-500/15 bg-purple-500/[0.02] px-3 py-2.5">
-          <div className="text-[11px] font-semibold text-purple-400 mb-1.5">
+        <div className="flex-1 rounded-lg border border-purple/15 bg-purple/[0.02] px-3 py-2.5">
+          <div className="text-[11px] font-semibold text-purple mb-1.5">
             &#10023; Skills
           </div>
           <div className="flex flex-wrap gap-1">
@@ -477,7 +477,7 @@ function ReadMode({
                 <ReadPill
                   key={s}
                   label={s}
-                  className="bg-purple-500/10 text-purple-400/80 border border-purple-500/20"
+                  className="bg-purple/10 text-purple/80 border border-purple/20"
                 />
               ))
             ) : (

@@ -2,9 +2,9 @@ import type { OrgAccess } from "@/api/orgs";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 
 const GRANTS = [
-  { key: "read", label: "read", yes: "can list repositories", no: "cannot list repositories" },
-  { key: "hooks", label: "hooks", yes: "can manage webhooks", no: "cannot manage webhooks" },
-  { key: "push", label: "push", yes: "can push", no: "cannot push" },
+  { key: "read", label: "Read", yes: "can list repositories", no: "cannot list repositories" },
+  { key: "hooks", label: "Hooks", yes: "can manage webhooks", no: "cannot manage webhooks" },
+  { key: "push", label: "Push", yes: "can push", no: "cannot push" },
 ] as const;
 
 /**
@@ -16,7 +16,7 @@ export function AccessChips({ access }: { access: Partial<OrgAccess> | null | un
   if (!access || access.read === undefined) {
     return (
       <Badge tone="neutral" title="No probe has run for this organization">
-        not probed
+        Not probed
       </Badge>
     );
   }
@@ -30,7 +30,7 @@ export function AccessChips({ access }: { access: Partial<OrgAccess> | null | un
         return (
           <span key={g.key} data-testid={`access-${g.key}`} data-state={state}>
             <Badge tone={tone} title={title}>
-              {state === "no" ? `no ${g.label}` : state === "unknown" ? `${g.label}?` : g.label}
+              {state === "no" ? `No ${g.label.toLowerCase()}` : state === "unknown" ? `${g.label}?` : g.label}
             </Badge>
           </span>
         );

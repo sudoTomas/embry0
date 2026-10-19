@@ -3,19 +3,20 @@ import { render, screen } from "@testing-library/react";
 import { BoardColumn } from "../BoardColumn";
 import type { BoardColumnConfig } from "@/lib/boardColumns";
 
-const NEEDS_YOU: BoardColumnConfig = { id: "needs_you", label: "needs you", tint: "amber" };
-const DONE: BoardColumnConfig = { id: "done", label: "done", tint: "success" };
-const RUNNING: BoardColumnConfig = { id: "running", label: "running", tint: "neutral" };
+const NEEDS_YOU: BoardColumnConfig = { id: "needs_you", label: "Needs you", tint: "amber" };
+const DONE: BoardColumnConfig = { id: "done", label: "Done", tint: "success" };
+const RUNNING: BoardColumnConfig = { id: "running", label: "Running", tint: "neutral" };
 
 describe("BoardColumn", () => {
-  it("renders the lowercase label and count pill", () => {
+  it("renders the sentence-case label and count pill", () => {
     render(
       <BoardColumn column={RUNNING} count={3}>
         <div>card</div>
       </BoardColumn>,
     );
 
-    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.getByText("Running").className).not.toContain("lowercase");
     expect(screen.getByTestId("count-pill")).toHaveTextContent("3");
     expect(screen.getByText("card")).toBeInTheDocument();
   });
@@ -42,8 +43,8 @@ describe("BoardColumn", () => {
       </>,
     );
 
-    expect(screen.getByText("needs you").className).toContain("text-amber-400");
-    expect(screen.getByText("done").className).toContain("text-success");
+    expect(screen.getByText("Needs you").className).toContain("text-amber-400");
+    expect(screen.getByText("Done").className).toContain("text-success");
   });
 
   it("renders an empty placeholder so an empty Needs You lane stays visible", () => {

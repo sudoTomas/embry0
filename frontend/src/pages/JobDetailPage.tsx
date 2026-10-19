@@ -94,7 +94,7 @@ export function JobDetailPage() {
     prevStatusRef.current = job?.status ?? null;
   }, [job?.status]);
 
-  if (isError) return <div className="p-8 text-center text-red-400">Failed to load job</div>;
+  if (isError) return <div className="p-8 text-center text-destructive">Failed to load job</div>;
   if (isLoading || !job) return <div className="p-8 text-center text-white/40">Loading...</div>;
 
   const displayPrUrl = prUrl || job.pr_url;
@@ -135,9 +135,9 @@ export function JobDetailPage() {
             </span>
           )}
         </span>
-        <div className="flex-1 min-w-0">
+        <div className="min-w-[12rem] flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-sm truncate">{job.repo}</span>
+            <span className="truncate text-section font-bold">{job.repo}</span>
             <JobStatusBadge status={job.status} />
           </div>
           <div className="text-[10px] text-white/30 font-mono">{job.job_id}</div>
@@ -180,7 +180,7 @@ export function JobDetailPage() {
             className="h-full rounded-full transition-all duration-500"
             style={{
               width: `${totalPhases > 0 ? ((completedPhases + activeAgents.length * 0.5) / totalPhases) * 100 : 0}%`,
-              background: "linear-gradient(90deg, #06b6d4, #a855f7)",
+              background: "var(--color-primary)",
             }}
           />
         </div>
@@ -188,9 +188,9 @@ export function JobDetailPage() {
 
       {/* PR link */}
       {displayPrUrl && (
-        <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-md bg-violet-500/[0.08] border border-violet-500/20">
-          <span className="text-violet-300">&#x1F517;</span>
-          <a href={displayPrUrl} target="_blank" rel="noopener noreferrer" className="text-violet-400 hover:underline truncate">
+        <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-md bg-purple/[0.08] border border-purple/20">
+          <span className="text-purple">&#x1F517;</span>
+          <a href={displayPrUrl} target="_blank" rel="noopener noreferrer" className="text-purple hover:underline truncate">
             {displayPrUrl}
           </a>
         </div>
@@ -198,12 +198,12 @@ export function JobDetailPage() {
 
       {/* Success banner */}
       {job.status === "completed" && (
-        <div className="px-4 py-3 rounded-lg border border-green-500/20 bg-green-500/[0.06] flex items-center gap-3">
-          <span className="text-green-400 text-lg">&#x2713;</span>
+        <div className="px-4 py-3 rounded-lg border border-success/20 bg-success/[0.06] flex items-center gap-3">
+          <span className="text-success text-lg">&#x2713;</span>
           <div>
-            <div className="text-sm font-medium text-green-300">Pipeline completed successfully</div>
+            <div className="text-sm font-medium text-success">Pipeline completed successfully</div>
             {displayPrUrl && (
-              <a href={displayPrUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-violet-400 hover:underline">
+              <a href={displayPrUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-purple hover:underline">
                 {displayPrUrl}
               </a>
             )}
@@ -218,11 +218,11 @@ export function JobDetailPage() {
 
       {/* Error banner */}
       {job.status === "failed" && job.error_message && (
-        <div className="px-4 py-3 rounded-lg border border-red-500/20 bg-red-500/[0.06]">
-          <div className="text-sm font-medium text-red-400 mb-1">&#x2717; Pipeline failed</div>
+        <div className="px-4 py-3 rounded-lg border border-destructive/20 bg-destructive/[0.06]">
+          <div className="text-sm font-medium text-destructive mb-1">&#x2717; Pipeline failed</div>
           <div className="text-xs text-white/50">{job.error_message}</div>
           {job.error_code && (
-            <div className="mt-1 text-[11px] font-mono text-red-300/70">{job.error_code}</div>
+            <div className="mt-1 text-[11px] font-mono text-destructive/70">{job.error_code}</div>
           )}
         </div>
       )}
@@ -231,8 +231,8 @@ export function JobDetailPage() {
 
       {/* Expired banner */}
       {job.status === "expired" && (
-        <div className="px-4 py-3 rounded-lg border border-zinc-500/20 bg-zinc-500/[0.06]">
-          <div className="text-sm text-zinc-400">Job expired — sandbox discarded</div>
+        <div className="px-4 py-3 rounded-lg border border-border bg-overlay">
+          <div className="text-sm text-fg-muted">Job expired — sandbox discarded</div>
         </div>
       )}
 
@@ -275,7 +275,7 @@ export function JobDetailPage() {
           <div className="space-y-2">
             {/* Completed agents in grid */}
             {completedAgents.length > 0 && (
-              <div className={`grid gap-2 ${completedAgents.length >= 3 ? "grid-cols-3" : completedAgents.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
+              <div className={`grid gap-2 ${completedAgents.length >= 3 ? "grid-cols-1 sm:grid-cols-3" : completedAgents.length === 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
                 {completedAgents.map((agent) => (
                   <AgentCard key={agent.runId} agent={agent} />
                 ))}
@@ -284,7 +284,7 @@ export function JobDetailPage() {
 
             {/* Active agents — full width or side by side */}
             {activeAgents.length > 0 && (
-              <div className={`grid gap-2 ${activeAgents.length >= 2 ? "grid-cols-2" : "grid-cols-1"}`}>
+              <div className={`grid gap-2 ${activeAgents.length >= 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
                 {activeAgents.map((agent) => (
                   <AgentCard key={agent.runId} agent={agent} expanded />
                 ))}
@@ -293,7 +293,7 @@ export function JobDetailPage() {
 
             {/* Pending agents in grid */}
             {pendingAgents.length > 0 && (
-              <div className={`grid gap-2 ${pendingAgents.length >= 3 ? "grid-cols-3" : pendingAgents.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
+              <div className={`grid gap-2 ${pendingAgents.length >= 3 ? "grid-cols-1 sm:grid-cols-3" : pendingAgents.length === 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
                 {pendingAgents.map((agent) => (
                   <AgentCard key={agent.runId} agent={agent} />
                 ))}
@@ -332,7 +332,7 @@ export function JobDetailPage() {
       {/* Connection indicator */}
       {job.status !== "pending" && job.status !== "expired" && (
         <div className="flex items-center gap-2 text-[10px] text-white/30">
-          <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-green-400 animate-pulse" : "bg-white/20"}`} />
+          <span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-success animate-pulse" : "bg-white/20"}`} />
           <span>{isConnected ? "Live" : "Disconnected"}</span>
           <span className="ml-auto">{events.length} events</span>
         </div>

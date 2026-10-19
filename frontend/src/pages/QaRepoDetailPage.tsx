@@ -16,17 +16,17 @@ export function QaRepoDetailPage() {
   const failing = data.length - passing;
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4">
       <Link to="/qa/repos" className="text-sm text-white/50 hover:underline">
         ← all repos
       </Link>
-      <h1 className="text-2xl font-bold">{repo}</h1>
+      <h1 className="text-xl font-bold">{repo}</h1>
       <p className="text-sm text-white/60">
         Last {data.length} runs · {passing} passed · {failing} failed
         {" · "}
         <Link
           to={`/qa/repos/${encodeURIComponent(repo)}/cache`}
-          className="text-cyan-300 hover:underline"
+          className="text-primary hover:underline"
           data-testid="cache-analytics-link"
         >
           Cache analytics
@@ -34,7 +34,7 @@ export function QaRepoDetailPage() {
         {" · "}
         <Link
           to={`/qa/repos/${encodeURIComponent(repo)}/flake`}
-          className="text-cyan-300 hover:underline"
+          className="text-primary hover:underline"
           data-testid="flake-heatmap-link"
         >
           Flake heatmap
@@ -42,7 +42,7 @@ export function QaRepoDetailPage() {
         {" · "}
         <Link
           to={`/qa/repos/${encodeURIComponent(repo)}/config`}
-          className="text-cyan-300 hover:underline"
+          className="text-primary hover:underline"
           data-testid="qa-config-link"
         >
           QA config
@@ -55,10 +55,22 @@ export function QaRepoDetailPage() {
           description="Once a QA run completes against this repo, it will appear here."
         />
       ) : (
-        <div className="space-y-2">
-          {data.map((run) => (
-            <QaRunRow key={run.job_id} run={run} />
-          ))}
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th scope="col">Run</th>
+                <th scope="col">Status</th>
+                <th scope="col" className="num">Apps</th>
+                <th scope="col" className="num">Started</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((run) => (
+                <QaRunRow key={run.job_id} run={run} />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

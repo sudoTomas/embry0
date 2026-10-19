@@ -143,7 +143,7 @@ function NetworkEntryBody({ raw }: { raw: string }): JSX.Element {
   if (parsed === null) {
     return (
       <>
-        <div className="mb-1 text-xs text-yellow-300">
+        <div className="mb-1 text-xs text-warning">
           Unrecognised JSON shape — showing raw body.
         </div>
         <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-sm bg-black/40 px-2 py-1 text-xs text-white/70">
@@ -156,9 +156,9 @@ function NetworkEntryBody({ raw }: { raw: string }): JSX.Element {
     return <div className="text-xs text-white/40">No entries.</div>;
   }
   return (
-    <table className="w-full table-fixed text-xs">
+    <table className="data-table table-fixed">
       <thead>
-        <tr className="text-left text-white/50">
+        <tr>
           <th className="w-16">Method</th>
           <th>URL</th>
           <th className="w-16">Status</th>
@@ -166,7 +166,7 @@ function NetworkEntryBody({ raw }: { raw: string }): JSX.Element {
       </thead>
       <tbody>
         {parsed.map((row, idx) => (
-          <tr key={idx} className="border-t border-white/10">
+          <tr key={idx}>
             <td className="font-mono text-white/80">{row.method}</td>
             <td className="truncate font-mono text-white/70" title={row.url}>
               {row.url}

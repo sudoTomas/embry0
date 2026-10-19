@@ -166,7 +166,7 @@ export default function IntegrationsTab() {
             Reset
           </Button>
           <Button onClick={handleSave} disabled={updateIntegration.isPending || !hasChanges}>
-            {updateIntegration.isPending ? "Saving..." : "Save Changes"}
+            {updateIntegration.isPending ? "Saving..." : "Save changes"}
           </Button>
         </div>
       </div>
@@ -178,7 +178,7 @@ export default function IntegrationsTab() {
       {/* Webhook Configuration */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Webhook Configuration</CardTitle>
+          <CardTitle className="text-lg">Webhook configuration</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -192,7 +192,7 @@ export default function IntegrationsTab() {
               </div>
             </div>
             <div>
-              <Label>Trigger Labels</Label>
+              <Label>Trigger labels</Label>
               <div className="mt-1">
                 <TagInput
                   value={form.trigger_labels}
@@ -206,7 +206,7 @@ export default function IntegrationsTab() {
               </p>
             </div>
             <div>
-              <Label>HMAC Secret</Label>
+              <Label>HMAC secret</Label>
               <div className="mt-1">
                 <MaskedSecretInput
                   isSet={integrationConfig.webhook_secret_set}
@@ -222,7 +222,7 @@ export default function IntegrationsTab() {
       {/* Outbound event webhooks (RAV-1052) */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Outbound Events</CardTitle>
+          <CardTitle className="text-lg">Outbound events</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -241,7 +241,7 @@ export default function IntegrationsTab() {
               </p>
             </div>
             <div>
-              <Label>Signing Secret</Label>
+              <Label>Signing secret</Label>
               <div className="mt-1">
                 <MaskedSecretInput
                   isSet={integrationConfig.webhook_notify_secret_set}
@@ -266,7 +266,7 @@ export default function IntegrationsTab() {
         <CardContent>
           <div className="space-y-4">
             <div>
-              <Label>API Key</Label>
+              <Label>API key</Label>
               <div className="mt-1">
                 <MaskedSecretInput
                   isSet={integrationConfig.linear_api_key_set}
@@ -281,7 +281,7 @@ export default function IntegrationsTab() {
               </p>
             </div>
             <div>
-              <Label>Webhook Secret</Label>
+              <Label>Webhook secret</Label>
               <div className="mt-1">
                 <MaskedSecretInput
                   isSet={integrationConfig.linear_webhook_secret_set}
@@ -295,7 +295,7 @@ export default function IntegrationsTab() {
               </p>
             </div>
             <div>
-              <Label htmlFor="linear_repo_map">Project / Team → Repo Map</Label>
+              <Label htmlFor="linear_repo_map">Project / team → repo map</Label>
               <Input
                 id="linear_repo_map"
                 value={form.linear_repo_map}
@@ -339,7 +339,7 @@ export default function IntegrationsTab() {
         <CardContent>
           <div className="space-y-4">
             <div>
-              <Label>Bot Token</Label>
+              <Label>Bot token</Label>
               <div className="mt-1">
                 <MaskedSecretInput
                   isSet={integrationConfig.telegram_bot_token_set}

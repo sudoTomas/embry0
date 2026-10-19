@@ -133,10 +133,10 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
           <X className="h-4 w-4" />
         </button>
 
-        <h2 className="text-lg font-semibold mb-1">
+        <h2 className="text-section font-semibold mb-1">
           {isEdit ? "Edit Variable" : "Add Variable"}
           {effectiveScope === "qa" && (
-            <span className="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-purple-500/10 text-purple-300 ring-1 ring-inset ring-purple-500/20 align-middle">
+            <span className="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-purple/10 text-purple ring-1 ring-inset ring-purple/20 align-middle">
               QA
             </span>
           )}
@@ -194,7 +194,7 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
                 onClick={() => setVarType("config")}
                 className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
                   varType === "config"
-                    ? "bg-green-500/15 text-green-400 ring-1 ring-green-500/30"
+                    ? "bg-success/15 text-success ring-1 ring-success/30"
                     : "bg-white/[0.03] text-muted-foreground hover:bg-white/[0.06]"
                 }`}
               >

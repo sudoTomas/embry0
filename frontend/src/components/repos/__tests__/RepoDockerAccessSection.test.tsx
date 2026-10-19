@@ -41,7 +41,7 @@ describe("RepoDockerAccessSection (#522)", () => {
     renderSection(false);
     expect(screen.getByText(DOCKER_ACCESS_WARNING)).toBeInTheDocument();
     expect(DOCKER_ACCESS_WARNING).toMatch(/shared Docker daemon, including the proxies holding your tokens/);
-    expect(screen.getByText("no Docker access")).toBeInTheDocument();
+    expect(screen.getByText("No Docker access")).toBeInTheDocument();
   });
 
   it("gives an operator no control over the grant", () => {

@@ -248,7 +248,7 @@ describe("ConsolePage — New Job launch flow", () => {
 
     // Header button opens the minimal form (context fixed to git: no
     // pipeline/profile fields exist on it).
-    fireEvent.click(screen.getAllByRole("button", { name: /New Job/ })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /New job/ })[0]);
     const repoSelect = await screen.findByLabelText("Repository");
     // Repo picker options come from the GitHub listing.
     await waitFor(() => expect(within(repoSelect).getByText("acme/widgets")).toBeInTheDocument());
@@ -275,7 +275,7 @@ describe("ConsolePage — New Job launch flow", () => {
     await screen.findByText("Nothing running — dispatch a job");
     const invalidate = vi.spyOn(client, "invalidateQueries");
 
-    fireEvent.click(screen.getAllByRole("button", { name: /New Job/ })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /New job/ })[0]);
     const repoSelect = await screen.findByLabelText("Repository");
     await waitFor(() => expect(within(repoSelect).getByText("acme/widgets")).toBeInTheDocument());
     fireEvent.change(repoSelect, { target: { value: "acme/widgets" } });

@@ -153,6 +153,23 @@ describe("Sidebar — unified IA (ticket 011)", () => {
   });
 });
 
+describe("Sidebar — the orchestrator's live state at its foot", () => {
+  it("reads live once the queue poll answers", async () => {
+    renderSidebar();
+    const pill = screen.getByTestId("orchestrator-status");
+    await waitFor(() => expect(pill).toHaveAttribute("data-state", "live"));
+    expect(within(pill).getByRole("status")).toHaveAccessibleName("Orchestrator live");
+  });
+
+  it("reads unreachable when the queue poll fails", async () => {
+    mockFetchQueue.mockRejectedValue(new Error("down"));
+    renderSidebar();
+    const pill = screen.getByTestId("orchestrator-status");
+    await waitFor(() => expect(pill).toHaveAttribute("data-state", "down"));
+    expect(within(pill).getByRole("status")).toHaveAccessibleName("Orchestrator unreachable");
+  });
+});
+
 describe("Sidebar — Console awaiting-input prominence", () => {
   it("badges the Console entry with the awaiting_input + paused count", async () => {
     mockFetchQueue.mockResolvedValue({

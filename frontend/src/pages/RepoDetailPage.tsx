@@ -12,7 +12,8 @@ import { PullRequestReviewCard } from "@/components/environments/PullRequestRevi
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { Badge } from "@/components/ui/Badge";
-import { Card } from "@/components/ui/Card";
+import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
+import { statusLabel } from "@/lib/status";
 
 /** RAV-1253: the unified per-repo view — registry state, QA config editor,
  * environment (masked), forge account, sandbox preferences, and recent QA runs. */
@@ -45,21 +46,21 @@ export function RepoDetailPage() {
   const repo = detail.data;
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <div>
         <Link to="/qa/repos" className="text-sm text-white/50 hover:underline">
           ← Repos
         </Link>
-        <div className="mt-1 flex items-center gap-3">
-          <h1 className="text-2xl font-bold">{full}</h1>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <h1 className="text-xl font-bold">{full}</h1>
           <Badge tone="neutral" data-testid="repo-detail-forge">
             {repo.forge === "gitlab" ? "GitLab" : "GitHub"}
           </Badge>
-          {repo.active ? <Badge tone="success">active</Badge> : <Badge tone="neutral">inactive</Badge>}
+          {repo.active ? <Badge tone="success">Active</Badge> : <Badge tone="neutral">Inactive</Badge>}
           {repo.has_qa_config ? (
             <Badge tone="success">QA config stored</Badge>
           ) : (
-            <Badge tone="warning">no QA config</Badge>
+            <Badge tone="warning">No QA config</Badge>
           )}
         </div>
         {repo.notes && <p className="mt-1 text-sm text-white/60">{repo.notes}</p>}
@@ -73,19 +74,19 @@ export function RepoDetailPage() {
 
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <FileCode2 className="h-4 w-4 text-white/50" />
-          <h2 className="text-lg font-semibold">QA config</h2>
+          <FileCode2 className="h-4 w-4 text-fg-muted" />
+          <h2 className="text-section font-semibold">QA config</h2>
         </div>
         <QaConfigEditor repo={full} />
       </section>
 
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <KeyRound className="h-4 w-4 text-white/50" />
-          <h2 className="text-lg font-semibold">Environment</h2>
+          <KeyRound className="h-4 w-4 text-fg-muted" />
+          <h2 className="text-section font-semibold">Environment</h2>
           <Link
             to={`/environments?repo=${encodeURIComponent(full)}`}
-            className="ml-auto text-sm text-cyan-300 hover:underline"
+            className="ml-auto text-sm text-primary hover:underline"
             data-testid="repo-env-manage-link"
           >
             Manage in Environments →
@@ -94,89 +95,108 @@ export function RepoDetailPage() {
         {envVars.length === 0 ? (
           <p className="text-sm text-muted-foreground">No repo-scoped environment variables.</p>
         ) : (
-          <Card className="divide-y divide-white/5 p-0">
-            {envVars.map((v) => (
-              <div
-                key={v.key}
-                className="flex items-center gap-3 px-4 py-2 text-sm"
-                data-testid="repo-env-row"
-              >
-                <code className="font-mono">{v.key}</code>
-                <Badge tone={v.var_type === "secret" ? "warning" : "neutral"}>{v.var_type}</Badge>
-                {v.scope === "qa" && <Badge tone="info">qa</Badge>}
-                <span className="ml-auto font-mono text-white/50">
-                  {v.var_type === "secret" ? "****" : v.value}
-                </span>
-              </div>
-            ))}
-          </Card>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Key</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {envVars.map((v) => (
+                  <tr key={v.key} data-testid="repo-env-row">
+                    <td className="font-mono text-xs">{v.key}</td>
+                    <td className="whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Badge tone={v.var_type === "secret" ? "warning" : "neutral"}>{statusLabel(v.var_type)}</Badge>
+                        {v.scope === "qa" && <Badge tone="neutral">QA</Badge>}
+                      </span>
+                    </td>
+                    <td className="w-full max-w-0 truncate font-mono text-xs text-fg-muted">
+                      {v.var_type === "secret" ? "****" : v.value}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <KeyRound className="h-4 w-4 text-white/50" />
-          <h2 className="text-lg font-semibold">Accounts</h2>
+          <KeyRound className="h-4 w-4 text-fg-muted" />
+          <h2 className="text-section font-semibold">Accounts</h2>
         </div>
         <RepoAccountsSection repo={repo.repo} forge={repo.forge} />
       </section>
 
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <Settings2 className="h-4 w-4 text-white/50" />
-          <h2 className="text-lg font-semibold">Sandbox preferences</h2>
+          <Settings2 className="h-4 w-4 text-fg-muted" />
+          <h2 className="text-section font-semibold">Sandbox preferences</h2>
         </div>
         <RepoPreferencesSection repo={full} />
       </section>
 
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <GitPullRequest className="h-4 w-4 text-white/50" />
-          <h2 className="text-lg font-semibold">Pull request review</h2>
+          <GitPullRequest className="h-4 w-4 text-fg-muted" />
+          <h2 className="text-section font-semibold">Pull request review</h2>
         </div>
         <PullRequestReviewCard repo={full} />
       </section>
 
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <ShieldAlert className="h-4 w-4 text-white/50" />
-          <h2 className="text-lg font-semibold">Docker access</h2>
+          <ShieldAlert className="h-4 w-4 text-fg-muted" />
+          <h2 className="text-section font-semibold">Docker access</h2>
         </div>
         <RepoDockerAccessSection repo={repo.repo} dockerAccess={repo.docker_access === true} />
       </section>
 
       <section className="space-y-2">
         <div className="flex items-center gap-2">
-          <ListChecks className="h-4 w-4 text-white/50" />
-          <h2 className="text-lg font-semibold">Recent QA runs</h2>
+          <ListChecks className="h-4 w-4 text-fg-muted" />
+          <h2 className="text-section font-semibold">Recent QA runs</h2>
         </div>
         {(runs.data ?? []).length === 0 ? (
           <p className="text-sm text-muted-foreground">No QA runs yet.</p>
         ) : (
-          <Card className="divide-y divide-white/5 p-0">
-            {(runs.data ?? []).map((run) => (
-              <Link
-                key={run.job_id}
-                to={`/qa/runs/${run.job_id}`}
-                className="flex items-center gap-3 px-4 py-2 text-sm hover:bg-white/[0.03]"
-                data-testid="repo-run-row"
-              >
-                <code className="font-mono text-white/70">{run.job_id}</code>
-                <Badge
-                  tone={
-                    run.overall_status === "passed"
-                      ? "success"
-                      : run.overall_status === "failed"
-                        ? "error"
-                        : "warning"
-                  }
-                >
-                  {run.overall_status}
-                </Badge>
-                <span className="ml-auto text-white/50">{run.started_at}</span>
-              </Link>
-            ))}
-          </Card>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Run</th>
+                  <th scope="col">Status</th>
+                  <th scope="col" className="num">Started</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(runs.data ?? []).map((run) => (
+                  <tr key={run.job_id}>
+                    <td className="w-full max-w-0 truncate">
+                      <Link
+                        to={`/qa/runs/${run.job_id}`}
+                        className="font-mono text-xs text-fg hover:text-primary hover:underline"
+                        data-testid="repo-run-row"
+                      >
+                        {run.job_id}
+                      </Link>
+                    </td>
+                    <td className="w-px">
+                      <RunStatusBadge status={run.overall_status} />
+                    </td>
+                    <td className="num whitespace-nowrap text-fg-muted">
+                      {new Date(run.started_at).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     </div>

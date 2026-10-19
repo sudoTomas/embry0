@@ -4,10 +4,10 @@ interface AgentIndicatorProps {
 }
 
 const AGENT_CHARACTERS: Record<string, { char: string; color: string; label: string }> = {
-  triage: { char: "🔍", color: "text-purple-400", label: "Triaging" },
+  triage: { char: "🔍", color: "text-purple", label: "Triaging" },
   developer: { char: "🔧", color: "text-amber-400", label: "Developing" },
-  validator: { char: "🛡️", color: "text-green-400", label: "Validating" },
-  reviewer: { char: "👁️", color: "text-cyan-400", label: "Reviewing" },
+  validator: { char: "🛡️", color: "text-success", label: "Validating" },
+  reviewer: { char: "👁️", color: "text-purple", label: "Reviewing" },
 };
 
 export function AgentIndicator({ agentType, size = "sm" }: AgentIndicatorProps) {

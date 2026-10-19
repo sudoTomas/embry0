@@ -286,7 +286,7 @@ export function EnvironmentsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Environments</h1>
+        <h1 className="text-xl font-bold">Environments</h1>
       </div>
 
       <Tabs defaultValue="global" value={activeTab} onValueChange={setActiveTab}>
@@ -311,7 +311,7 @@ export function EnvironmentsPage() {
                       key={r.repo}
                       type="button"
                       onClick={() => jumpToRepo(r.repo)}
-                      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-mono bg-blue-500/10 text-blue-400 ring-1 ring-inset ring-blue-500/20 hover:bg-blue-500/20 transition-colors cursor-pointer"
+                      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-mono bg-overlay text-fg-secondary ring-1 ring-inset ring-border-strong hover:text-fg hover:ring-primary/40 transition-colors cursor-pointer"
                     >
                       {r.repo} ({r.env_var_count})
                     </button>
@@ -324,7 +324,7 @@ export function EnvironmentsPage() {
             <section className="space-y-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold">App Config</h2>
+                  <h2 className="text-section font-semibold">App Config</h2>
                   <p className="text-sm text-muted-foreground">{APP_DESCRIPTION}</p>
                 </div>
                 <Button size="sm" onClick={() => openGlobalAdd("app")}>
@@ -354,7 +354,7 @@ export function EnvironmentsPage() {
             <section className="space-y-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold">QA Test Credentials</h2>
+                  <h2 className="text-section font-semibold">QA Test Credentials</h2>
                   <p className="text-sm text-muted-foreground">{QA_DESCRIPTION}</p>
                 </div>
                 <Button size="sm" onClick={() => openGlobalAdd("qa")}>
@@ -435,7 +435,7 @@ export function EnvironmentsPage() {
                 <section className="space-y-3">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h2 className="text-lg font-semibold">App Config</h2>
+                      <h2 className="text-section font-semibold">App Config</h2>
                       <p className="text-sm text-muted-foreground">{APP_DESCRIPTION}</p>
                     </div>
                     <Button size="sm" onClick={() => openRepoAdd("app")} type="button">
@@ -464,7 +464,6 @@ export function EnvironmentsPage() {
                         emptyState={
                           <div className="flex flex-col items-center justify-center py-16 text-center">
                             <div className="relative">
-                              <div className="absolute inset-0 bg-blue-500/5 blur-2xl rounded-full scale-150" />
                               <FolderOpen size={40} className="text-white/10 relative" />
                             </div>
                             <p className="text-white/25 text-sm mt-4 font-medium">
@@ -484,7 +483,7 @@ export function EnvironmentsPage() {
                 <section className="space-y-3">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h2 className="text-lg font-semibold">QA Test Credentials</h2>
+                      <h2 className="text-section font-semibold">QA Test Credentials</h2>
                       <p className="text-sm text-muted-foreground">{QA_DESCRIPTION}</p>
                     </div>
                     <Button size="sm" onClick={() => openRepoAdd("qa")} type="button">
@@ -526,7 +525,6 @@ export function EnvironmentsPage() {
               <Card className="p-0">
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                   <div className="relative">
-                    <div className="absolute inset-0 bg-white/[0.03] blur-2xl rounded-full scale-150" />
                     <FolderOpen size={40} className="text-white/10 relative" />
                   </div>
                   <p className="text-white/25 text-sm mt-4 font-medium">No repository selected</p>

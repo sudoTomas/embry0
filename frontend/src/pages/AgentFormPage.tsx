@@ -252,7 +252,7 @@ export function AgentFormPage() {
             ) : null;
           })()}
           <div className="flex flex-col">
-            <h1 className="text-2xl font-bold leading-tight">
+            <h1 className="text-xl font-bold leading-tight">
               {isEdit ? `Edit Agent: ${typeParam}` : "New Agent"}
             </h1>
             {(() => {
@@ -304,7 +304,7 @@ export function AgentFormPage() {
                 placeholder="Describe what this agent does..."
                 value={form.description}
                 onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-                className="mt-1 min-h-[80px] bg-[#0c1015] border-white/[0.08]"
+                className="mt-1 min-h-[80px] bg-overlay border-white/[0.08]"
               />
             </div>
           </div>
@@ -359,7 +359,7 @@ export function AgentFormPage() {
                     <span>No configured provider serves this model</span>
                   )}
                   {chosenProvider.ready ? (
-                    <Badge tone="success">ready</Badge>
+                    <Badge tone="success">Ready</Badge>
                   ) : (
                     <Badge
                       tone="error"
@@ -369,7 +369,7 @@ export function AgentFormPage() {
                           : "No configured provider serves this model"
                       }
                     >
-                      not ready
+                      Not ready
                     </Badge>
                   )}
                 </p>
@@ -389,7 +389,7 @@ export function AgentFormPage() {
                       type="checkbox"
                       checked={form.tools.includes(tool)}
                       onChange={() => handleToolToggle(tool)}
-                      className="w-4 h-4 rounded accent-cyan-500"
+                      className="w-4 h-4 rounded accent-primary"
                     />
                     <span className="text-sm text-white/70 font-mono">{tool}</span>
                   </label>
@@ -452,7 +452,7 @@ export function AgentFormPage() {
                 placeholder={'{\n  "my-server": { "type": "stdio", "command": "my-mcp", "args": ["--flag"] }\n}'}
                 value={form.mcpServersText}
                 onChange={(e) => setForm((prev) => ({ ...prev, mcpServersText: e.target.value }))}
-                className="mt-1 font-mono text-sm min-h-[120px] bg-[#0c1015] border-white/[0.08]"
+                className="mt-1 font-mono text-sm min-h-[120px] bg-overlay border-white/[0.08]"
               />
               <p className="text-xs text-white/30 mt-1">
                 Object mapping server name → config, injected into the sandbox agent. Leave empty for none. The QA
@@ -477,7 +477,7 @@ export function AgentFormPage() {
               placeholder="Enter the system prompt for this agent..."
               value={form.system_prompt}
               onChange={(e) => setForm((prev) => ({ ...prev, system_prompt: e.target.value }))}
-              className="mt-1 font-mono text-sm min-h-[160px] bg-[#0c1015] border-white/[0.08]"
+              className="mt-1 font-mono text-sm min-h-[160px] bg-overlay border-white/[0.08]"
             />
           </div>
         </CardContent>

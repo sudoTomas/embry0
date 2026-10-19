@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { List, LayoutGrid, Plus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { IssueListView } from "@/components/issues/IssueListView";
@@ -9,7 +10,6 @@ import { CreateIssueDialog } from "@/components/issues/CreateIssueDialog";
 import { ProposalsSection } from "@/components/issues/ProposalsSection";
 import { useIssues, useUpdateIssue } from "@/hooks/useIssues";
 import { useIssuesStore } from "@/stores/issuesStore";
-import { cn } from "@/lib/utils";
 import type { IssueStatus } from "@/lib/types";
 
 const LIMIT = 20;
@@ -62,11 +62,16 @@ export function IssuesPage() {
     : [];
 
   return (
-    <div className="space-y-6">
+    <Tabs
+      defaultValue="list"
+      value={viewMode}
+      onValueChange={(v) => setViewMode(v as typeof viewMode)}
+      className="space-y-6"
+    >
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold">Issues</h1>
+          <h1 className="text-xl font-bold">Issues</h1>
           {data && (
             <span className="inline-flex items-center rounded-full bg-white/[0.06] px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
               {data.total}
@@ -75,39 +80,21 @@ export function IssuesPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* View toggle */}
-          <div className="flex items-center rounded-lg border border-white/[0.1] overflow-hidden">
-            <button
-              onClick={() => setViewMode("list")}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors",
-                viewMode === "list"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-white"
-              )}
-              aria-label="List view"
-            >
+          {/* View toggle: the shared tab bar, one selected style app-wide. */}
+          <TabsList>
+            <TabsTrigger value="list" className="gap-1.5">
               <List className="h-4 w-4" />
               List
-            </button>
-            <button
-              onClick={() => setViewMode("board")}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors",
-                viewMode === "board"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-white"
-              )}
-              aria-label="Board view"
-            >
+            </TabsTrigger>
+            <TabsTrigger value="board" className="gap-1.5">
               <LayoutGrid className="h-4 w-4" />
               Board
-            </button>
-          </div>
+            </TabsTrigger>
+          </TabsList>
 
           <Button onClick={() => setShowCreate(!showCreate)}>
             <Plus className="h-4 w-4 mr-1" />
-            Create Issue
+            Create issue
           </Button>
         </div>
       </div>
@@ -122,31 +109,33 @@ export function IssuesPage() {
 
       <ProposalsSection />
 
-      {/* Content */}
-      {isError ? (
-        <PageError message="Failed to load issues" onRetry={() => refetch()} />
-      ) : isLoading ? (
-        <TableSkeleton columns={8} rows={6} />
-      ) : data ? (
-        viewMode === "list" ? (
-          <IssueListView
-            issues={data.issues}
-            total={data.total}
-            offset={offset}
-            limit={LIMIT}
-            filters={{ status: statusFilter, priority: priorityFilter, repo: repoFilter }}
-            repoOptions={repoOptions}
-            onStatusChange={handleStatusChange}
-            onPriorityChange={handlePriorityChange}
-            onRepoChange={handleRepoChange}
-            onSearchChange={handleSearchChange}
-            searchValue={search}
-            onPageChange={setOffset}
-          />
-        ) : (
-          <IssueBoardView issues={data.issues} onStatusChange={handleBoardStatusChange} />
-        )
-      ) : null}
-    </div>
+      {/* Content: the panel of the selected view tab. */}
+      <TabsContent value={viewMode} className="mt-0">
+        {isError ? (
+          <PageError message="Failed to load issues" onRetry={() => refetch()} />
+        ) : isLoading ? (
+          <TableSkeleton columns={8} rows={6} />
+        ) : data ? (
+          viewMode === "list" ? (
+            <IssueListView
+              issues={data.issues}
+              total={data.total}
+              offset={offset}
+              limit={LIMIT}
+              filters={{ status: statusFilter, priority: priorityFilter, repo: repoFilter }}
+              repoOptions={repoOptions}
+              onStatusChange={handleStatusChange}
+              onPriorityChange={handlePriorityChange}
+              onRepoChange={handleRepoChange}
+              onSearchChange={handleSearchChange}
+              searchValue={search}
+              onPageChange={setOffset}
+            />
+          ) : (
+            <IssueBoardView issues={data.issues} onStatusChange={handleBoardStatusChange} />
+          )
+        ) : null}
+      </TabsContent>
+    </Tabs>
   );
 }

@@ -11,18 +11,18 @@ export type BoardColumnTint = "amber" | "success" | "neutral";
 
 export interface BoardColumnConfig {
   id: BoardColumnId;
-  /** Lowercase header label. */
+  /** Sentence-case header label. */
   label: string;
   tint: BoardColumnTint;
 }
 
 /** Column order and header treatment, left to right. */
 export const BOARD_COLUMNS: readonly BoardColumnConfig[] = [
-  { id: "needs_you", label: "needs you", tint: "amber" },
-  { id: "queued", label: "queued", tint: "neutral" },
-  { id: "running", label: "running", tint: "neutral" },
-  { id: "done", label: "done", tint: "success" },
-  { id: "failed", label: "failed", tint: "neutral" },
+  { id: "needs_you", label: "Needs you", tint: "amber" },
+  { id: "queued", label: "Queued", tint: "neutral" },
+  { id: "running", label: "Running", tint: "neutral" },
+  { id: "done", label: "Done", tint: "success" },
+  { id: "failed", label: "Failed", tint: "neutral" },
 ];
 
 /**

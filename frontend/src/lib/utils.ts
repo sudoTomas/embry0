@@ -1,6 +1,12 @@
 import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge } from "tailwind-merge";
 import { format, formatDistanceToNow } from "date-fns";
+
+// The theme's own font sizes (index.css @theme --text-*). Without them
+// tailwind-merge reads `text-nav` as a colour and drops it next to `text-fg`.
+const twMerge = extendTailwindMerge({
+  extend: { theme: { text: ["nav", "section", "tile"] } },
+});
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

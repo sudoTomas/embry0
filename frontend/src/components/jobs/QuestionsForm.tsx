@@ -95,7 +95,7 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
 
             {/* Read-only: an answer already exists (e.g. via Telegram). */}
             {isAnswered && (
-              <p className="text-sm text-emerald-300/90 italic">
+              <p className="text-sm text-success/90 italic">
                 Answered.
               </p>
             )}
@@ -103,11 +103,11 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
             {/* Auto-answered: show the suggestion. Stays visible even while
                 the user types an override so they can compare. */}
             {isAutoAnswered && (
-              <div className="mb-2 px-2 py-1.5 rounded bg-emerald-500/[0.06] border border-emerald-500/20">
-                <p className="text-xs uppercase tracking-wide text-emerald-400/70 mb-0.5">
+              <div className="mb-2 px-2 py-1.5 rounded bg-success/[0.06] border border-success/20">
+                <p className="text-xs uppercase tracking-wide text-success/70 mb-0.5">
                   Auto-answered
                 </p>
-                <p className="text-sm text-emerald-300/90 whitespace-pre-wrap">
+                <p className="text-sm text-success/90 whitespace-pre-wrap">
                   {input.auto_answer ?? "(no suggestion recorded)"}
                 </p>
               </div>
@@ -178,7 +178,7 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
             )}
 
             {errors[input.id] && (
-              <p className="mt-1 text-xs text-red-400">{errors[input.id]}</p>
+              <p className="mt-1 text-xs text-destructive">{errors[input.id]}</p>
             )}
           </div>
         );

@@ -19,7 +19,7 @@ export function QaRunDetailPage() {
   if (!runId || isLoading || !data) return <TableSkeleton />;
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4">
       <Link
         to={`/qa/repos/${encodeURIComponent(data.repo)}`}
         className="text-sm text-white/50 hover:underline"
@@ -27,7 +27,7 @@ export function QaRunDetailPage() {
         ← {data.repo}
       </Link>
       <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-bold font-mono">{data.job_id}</h1>
+        <h1 className="text-xl font-bold font-mono">{data.job_id}</h1>
         <RunStatusBadge status={data.overall_status} />
       </div>
       <p className="text-sm text-white/60">
@@ -35,7 +35,7 @@ export function QaRunDetailPage() {
         {" · "}
         <Link
           to={`/qa/runs/${encodeURIComponent(data.job_id)}/affected`}
-          className="text-cyan-300 hover:underline"
+          className="text-primary hover:underline"
           data-testid="affected-set-link"
         >
           Affected set

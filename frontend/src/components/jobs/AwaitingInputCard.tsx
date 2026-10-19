@@ -45,11 +45,10 @@ export function AwaitingInputCard({ jobInputs, jobId }: AwaitingInputCardProps) 
 
   return (
     <div
-      className="rounded-2xl p-6"
+      className="rounded-lg p-5"
       style={{
-        background: "linear-gradient(135deg, rgba(245,158,11,0.05), rgba(9,9,11,0.98))",
-        border: "1px solid rgba(245,158,11,0.2)",
-        boxShadow: "0 0 20px rgba(245,158,11,0.05)",
+        background: "var(--color-surface)",
+        border: "1px solid color-mix(in srgb, var(--color-amber) 35%, transparent)",
       }}
     >
       <div className="flex items-center gap-3 mb-4">

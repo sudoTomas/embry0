@@ -167,7 +167,7 @@ export function BindingsDrawer({ credential, isAdmin, onClose }: BindingsDrawerP
           <X className="h-4 w-4" />
         </button>
 
-        <h2 className="pr-8 text-lg font-semibold">{title}</h2>
+        <h2 className="pr-8 text-section font-semibold">{title}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           {bindingCount} {bindingCount === 1 ? "binding" : "bindings"} on this credential. The list
           below is only the scope in the form.

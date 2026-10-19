@@ -22,6 +22,7 @@ import {
 import { ORG_WIZARD_PATH, credentialLabel } from "@/lib/orgs";
 import { useAuthStore } from "@/stores/authStore";
 import { cn, formatDate } from "@/lib/utils";
+import { statusLabel } from "@/lib/status";
 import type { ReactNode } from "react";
 
 function httpStatus(err: unknown): number | undefined {
@@ -33,7 +34,7 @@ function Section({ icon: Icon, title, children }: { icon: typeof Building2; titl
     <section className="min-w-0 space-y-2">
       <div className="flex items-center gap-2">
         <Icon className="h-4 w-4 text-white/50" />
-        <h2 className="text-lg font-semibold">{title}</h2>
+        <h2 className="text-section font-semibold">{title}</h2>
       </div>
       {children}
     </section>
@@ -91,10 +92,10 @@ export function OrganizationPage() {
           ← Organizations
         </Link>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold">{o.display_name || o.owner}</h1>
+          <h1 className="text-xl font-bold">{o.display_name || o.owner}</h1>
           <Badge tone="neutral">{o.forge === "gitlab" ? "GitLab" : "GitHub"}</Badge>
           <Badge tone={o.status === "active" ? "success" : o.status === "paused" ? "warning" : "neutral"}>
-            {o.status}
+            {statusLabel(o.status)}
           </Badge>
           <AccessChips access={o.access} />
           <Button

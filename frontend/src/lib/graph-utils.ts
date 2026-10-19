@@ -4,20 +4,20 @@ import type { AgentNode, PipelineEdge, PipelineGraph, PipelineMetadata, EdgeType
 // Canonical color map for React Flow nodes. Tailwind class equivalents are in constants.ts (ROLE_COLORS).
 // Agent type -> color category
 const AGENT_COLORS: Record<string, string> = {
-  explorer: "#06b6d4", // cyan
-  "frontend-explorer": "#06b6d4",
+  explorer: "#3b82f6", // blue
+  "frontend-explorer": "#3b82f6",
   developer: "#f59e0b", // amber
   "code-gen": "#f59e0b",
   "docs-writer": "#f59e0b",
-  "test-runner": "#22c55e", // green
-  "lint-checker": "#22c55e",
-  "type-checker": "#22c55e",
-  "visual-validator": "#22c55e",
-  reviewer: "#a855f7", // purple
-  "security-reviewer": "#a855f7",
-  triage: "#a855f7",
-  validator: "#22c55e", // green
-  output: "#f43f5e", // rose
+  "test-runner": "#10b981", // teal
+  "lint-checker": "#10b981",
+  "type-checker": "#10b981",
+  "visual-validator": "#10b981",
+  reviewer: "#a78bfa", // purple
+  "security-reviewer": "#a78bfa",
+  triage: "#a78bfa",
+  validator: "#10b981", // teal
+  output: "#f97316", // orange
   custom: "#6b7280", // gray
 };
 

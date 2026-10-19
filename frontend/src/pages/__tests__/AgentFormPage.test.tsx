@@ -138,7 +138,7 @@ describe("AgentFormPage provider readiness without the catalog", () => {
     renderEdit();
     const hint = screen.getByTestId("model-provider-readiness");
     expect(hint).toHaveTextContent("xai");
-    expect(hint).toHaveTextContent("not ready");
+    expect(hint).toHaveTextContent("Not ready");
   });
 
   it("marks a ready provider", () => {
@@ -149,8 +149,8 @@ describe("AgentFormPage provider readiness without the catalog", () => {
     renderEdit();
     const hint = screen.getByTestId("model-provider-readiness");
     expect(hint).toHaveTextContent("anthropic");
-    expect(hint).toHaveTextContent("ready");
-    expect(hint).not.toHaveTextContent("not ready");
+    expect(hint).toHaveTextContent("Ready");
+    expect(hint).not.toHaveTextContent("Not ready");
   });
 
   it("shows nothing when the backend sends no readiness", () => {
@@ -201,7 +201,7 @@ describe("AgentFormPage provider readiness from the catalog", () => {
     expect(option("grok-4.7")).toBeDisabled();
     const hint = screen.getByTestId("model-provider-readiness");
     expect(hint).toHaveTextContent("xai");
-    expect(hint).toHaveTextContent("not ready");
+    expect(hint).toHaveTextContent("Not ready");
   });
 
   it("keeps every model and the saved one when this process sees no credential at all", () => {
@@ -219,7 +219,7 @@ describe("AgentFormPage provider readiness from the catalog", () => {
     expect(option("claude-haiku-4-5")).toBeDisabled();
     const hint = screen.getByTestId("model-provider-readiness");
     expect(hint).toHaveTextContent("anthropic");
-    expect(hint).toHaveTextContent("not ready");
+    expect(hint).toHaveTextContent("Not ready");
   });
 
   it("starts a new agent on Custom when no model is ready, every model still listed", () => {
@@ -237,7 +237,7 @@ describe("AgentFormPage provider readiness from the catalog", () => {
     renderEdit();
     const hint = () => screen.getByTestId("model-provider-readiness");
     expect(hint()).toHaveTextContent("anthropic");
-    expect(hint()).not.toHaveTextContent("not ready");
+    expect(hint()).not.toHaveTextContent("Not ready");
 
     await user.selectOptions(screen.getByLabelText("Model"), "__custom__");
     expect(screen.queryByTestId("model-provider-readiness")).not.toBeInTheDocument();
@@ -245,12 +245,12 @@ describe("AgentFormPage provider readiness from the catalog", () => {
     const custom = screen.getByPlaceholderText("Enter model ID");
     await user.type(custom, "grok-4.5");
     expect(hint()).toHaveTextContent("xai");
-    expect(hint()).toHaveTextContent("not ready");
+    expect(hint()).toHaveTextContent("Not ready");
 
     await user.clear(custom);
     await user.type(custom, "gpt-4o");
     expect(hint()).toHaveTextContent("No configured provider serves this model");
-    expect(hint()).toHaveTextContent("not ready");
+    expect(hint()).toHaveTextContent("Not ready");
   });
 
   it("starts a new agent on the first ready model when the default is not offered", () => {

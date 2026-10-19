@@ -56,7 +56,7 @@ describe("WatcherPage", () => {
   it("renders the tick trail with action, job link, and Linear proposal link", () => {
     renderPage();
     const table = screen.getByRole("table");
-    expect(within(table).getByText("proposed")).toBeInTheDocument();
+    expect(within(table).getByText("Proposed")).toBeInTheDocument();
     expect(within(table).getByRole("link", { name: "job-abc123de" })).toHaveAttribute(
       "href",
       "/jobs/job-abc123def456",
@@ -73,8 +73,8 @@ describe("WatcherPage", () => {
     );
     renderPage();
     const table = screen.getByRole("table");
-    expect(within(table).getByText("analysis withheld")).toBeInTheDocument();
-    expect(within(table).queryByText("skipped unparseable")).not.toBeInTheDocument();
+    expect(within(table).getByText("Analysis withheld")).toBeInTheDocument();
+    expect(within(table).queryByText(/skipped.unparseable/i)).not.toBeInTheDocument();
   });
 
   it("runs a tick on demand and refreshes the trail", async () => {

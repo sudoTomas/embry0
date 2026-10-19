@@ -70,7 +70,7 @@ export function JobLogsPage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold">Agent Logs</h1>
+          <h1 className="text-xl font-bold">Agent Logs</h1>
           <p className="text-sm text-muted-foreground font-mono">{jobId}</p>
         </div>
         <Link to={`/jobs/${jobId}`}>

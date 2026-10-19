@@ -27,7 +27,7 @@ const OPERATION_ROLE: Record<Operation, string> = {
  */
 export function AboutOperationsPage() {
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6 animate-fade-up">
+    <div className="max-w-6xl mx-auto space-y-6 animate-fade-up">
       {/* Hero */}
       <PatentCanvas
         date="MAY 04, 2026"

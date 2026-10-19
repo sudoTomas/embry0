@@ -123,10 +123,10 @@ export function ProposalsSection() {
   return (
     <section aria-labelledby="proposals-heading" className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 id="proposals-heading" className="text-lg font-semibold text-amber-400">
+        <h2 id="proposals-heading" className="text-section font-semibold">
           Proposals
         </h2>
-        <span className="inline-flex items-center rounded-full bg-amber-400/10 px-2.5 py-0.5 text-xs font-medium text-amber-400">
+        <span className="inline-flex items-center rounded bg-amber-dim px-1.5 py-0.5 text-2xs font-semibold tabular-nums text-warning">
           {proposals.data?.total ?? rows.length}
         </span>
         <p className="text-sm text-muted-foreground">
@@ -135,13 +135,13 @@ export function ProposalsSection() {
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-amber-400/20">
-        <table className="w-full text-sm">
+        <table className="data-table">
           <thead>
-            <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
-              <th className="px-4 py-2">Proposal</th>
-              <th className="px-4 py-2">Ticket</th>
-              <th className="px-4 py-2">Waiting</th>
-              <th className="px-4 py-2 text-right">Decision</th>
+            <tr>
+              <th>Proposal</th>
+              <th className="hidden sm:table-cell">Ticket</th>
+              <th className="hidden sm:table-cell">Waiting</th>
+              <th className="text-right">Decision</th>
             </tr>
           </thead>
           <tbody>
@@ -149,11 +149,13 @@ export function ProposalsSection() {
               const tracker = proposal.tracker;
               const filed = filedAt(proposal);
               return (
-                <tr key={proposal.id} className="border-b border-white/[0.04] last:border-0">
+                <tr key={proposal.id}>
                   {/* The one flexible column: it takes what the others leave and
                       truncates, so the decision stays on screen without a
-                      sideways scroll. The repo rides under the title. */}
-                  <td className="w-full min-w-[14rem] max-w-0 px-4 py-2">
+                      sideways scroll. The repo rides under the title. Below sm
+                      the ticket and waiting columns step aside and the decision
+                      wraps, so Accept and Reject stay on a phone screen. */}
+                  <td className="w-full min-w-[7rem] max-w-0 sm:min-w-[14rem]">
                     <div className="truncate" title={proposal.title}>
                       {proposal.title}
                     </div>
@@ -169,7 +171,7 @@ export function ProposalsSection() {
                       <div className="truncate font-mono text-xs text-muted-foreground">{proposal.repo}</div>
                     )}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-2">
+                  <td className="hidden whitespace-nowrap sm:table-cell">
                     {isOrgNeed(proposal) ? (
                       <span className="text-muted-foreground">Organization need</span>
                     ) : tracker?.url ? (
@@ -187,13 +189,13 @@ export function ProposalsSection() {
                     )}
                   </td>
                   <td
-                    className="whitespace-nowrap px-4 py-2 text-muted-foreground"
+                    className="hidden whitespace-nowrap text-muted-foreground sm:table-cell"
                     title={new Date(filed).toLocaleString()}
                   >
                     {formatDistanceToNow(new Date(filed))}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-2">
-                    <div className="flex items-center justify-end gap-2">
+                  <td className="sm:whitespace-nowrap">
+                    <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 whitespace-nowrap sm:flex-nowrap">
                       {isOrgNeed(proposal) ? (
                         <Link
                           to={`/orgs/${encodeURIComponent(ownerOf(proposal))}`}
@@ -202,7 +204,7 @@ export function ProposalsSection() {
                           Answer on {ownerOf(proposal)}
                         </Link>
                       ) : tracker && ACCEPTED_HERE.has(tracker.kind) ? (
-                        <Button size="sm" disabled={busy} onClick={() => handleAccept(proposal)}>
+                        <Button size="xs" disabled={busy} onClick={() => handleAccept(proposal)}>
                           Accept
                         </Button>
                       ) : tracker?.url ? (
@@ -221,11 +223,11 @@ export function ProposalsSection() {
                         </span>
                       )}
                       {isOrgNeed(proposal) ? (
-                        <Button size="sm" variant="outline" disabled={busy} onClick={() => handleDismiss(proposal)}>
+                        <Button size="xs" variant="outline" disabled={busy} onClick={() => handleDismiss(proposal)}>
                           Dismiss
                         </Button>
                       ) : (
-                        <Button size="sm" variant="outline" disabled={busy} onClick={() => handleReject(proposal)}>
+                        <Button size="xs" variant="outline" disabled={busy} onClick={() => handleReject(proposal)}>
                           Reject
                         </Button>
                       )}
