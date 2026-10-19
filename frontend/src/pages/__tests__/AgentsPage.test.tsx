@@ -1,6 +1,6 @@
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
 const mockUseAgents = vi.fn();
