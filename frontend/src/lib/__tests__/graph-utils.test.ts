@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { toApiGraph, deserializeGraph, injectStartEndNodes } from "@/lib/graph-utils";
 import type { PipelineGraph, AgentNode } from "@/lib/types";
 
@@ -122,5 +122,18 @@ describe("serializeGraph writes overrides under config (#78, shared fixture)", (
     const n: Node = { id: "d", type: "agentNode", position: { x: 0, y: 0 }, data: { agentType: "developer", label: "Developer", skills: { add: [], remove: [] } } };
     const out = serializeGraph([n], [] as Edge[], fixture.metadata, "x", "g");
     expect(out.nodes[0].config).toEqual({});
+  });
+});
+
+vi.mock("sonner", () => ({ toast: { warning: vi.fn(), error: vi.fn(), success: vi.fn() } }));
+import { toast } from "sonner";
+
+describe("an unreadable skills override", () => {
+  it("is dropped and the drop is announced", () => {
+    vi.mocked(toast.warning).mockClear();
+    const bad = { ...JSON.parse(fixtureText), nodes: [{ node_id: "d", agent_type: "developer", position: { x: 0, y: 0 }, config: { skills: { add: "nope" } } }] } as PipelineGraph;
+    const data = deserializeGraph(bad).nodes[0].data as Record<string, unknown>;
+    expect(data.skills).toBeNull();
+    expect(toast.warning).toHaveBeenCalledWith("Node d: its skills override could not be read and was dropped");
   });
 });

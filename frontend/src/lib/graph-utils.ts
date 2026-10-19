@@ -1,4 +1,5 @@
 import type { Node, Edge } from "@xyflow/react";
+import { toast } from "sonner";
 import { normalizeDelta, isEmptyDelta, type NormalizedDelta } from "@/lib/skills";
 import type { AgentNode, AgentNodeConfig, PipelineEdge, PipelineGraph, PipelineMetadata, EdgeType } from "./types";
 
@@ -174,6 +175,7 @@ export function deserializeGraph(graph: PipelineGraph): { nodes: Node[]; edges: 
       const delta = normalizeDelta(cfg.skills);
       skills = isEmptyDelta(delta) ? null : delta;
     } catch {
+      toast.warning(`Node ${n.node_id}: its skills override could not be read and was dropped`);
       skills = null;
     }
     return {
