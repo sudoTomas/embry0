@@ -60,6 +60,7 @@ describe("theme tokens", () => {
   });
 
   it("has no second token set, no role or stage tokens and no dead keyframes", () => {
+    expect(css.length, "the stylesheet was read (vitest empties ?raw CSS without the css.include entry)").toBeGreaterThan(5_000);
     expect(css).not.toMatch(/--embry0-/);
     expect(css).not.toContain(".embry0-card");
     expect(css).not.toContain(".embry0-spinner");
