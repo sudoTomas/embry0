@@ -1,11 +1,13 @@
 // The Pipeline tab's agent cards arrive in turn on the first paint, and a
 // card that changes group (waiting, running, done) arrives again in its new
-// place, at once rather than in a turn it no longer has.
+// place, at once rather than in a turn it no longer has. In each group the
+// cards follow the order the job travels its stages.
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { JobResponse, LogEvent, PipelineGraph } from "@/lib/types";
+import { loadFixture } from "@/lib/__tests__/fixtures";
 
 const job = vi.hoisted(() => ({ current: null as unknown }));
 const logs = vi.hoisted(() => ({ events: [] as unknown[], graph: null as unknown }));
@@ -77,5 +79,24 @@ describe("the Job page's agent cards", () => {
     expect(cardOf("developer"), "a card that changes group arrives in its new place").not.toBe(developerRunning);
     expect(turnOf("developer"), "a card arriving after the first paint does not wait for a turn").toBe("0");
     expect(turnOf("review")).toBe("0");
+  });
+
+  it("follow the order the job travels its stages", () => {
+    // One agent runs onboarding's analyze step; its first step, init_onboard,
+    // runs without one and so has no run of its own.
+    const onboarding = loadFixture("onboarding");
+    const graphEvent = onboarding.find((e) => e.type === "pipeline_graph");
+    logs.graph = graphEvent?.type === "pipeline_graph" ? graphEvent.graph : null;
+    logs.events = onboarding;
+    render(page());
+    const steps = Array.from(screen.getByRole("tabpanel").querySelectorAll(".motion-enter"), (c) => c.querySelector(".font-mono")?.textContent);
+    expect(steps, "the step the job ran first is the first card, not the analyze run").toEqual([
+      "init_onboard",
+      "analyze",
+      "validate",
+      "smoke",
+      "write_config",
+      "cleanup",
+    ]);
   });
 });

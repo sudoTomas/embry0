@@ -30,6 +30,7 @@ import { isNotFound } from "@/api/errorDetail";
 import { PageError } from "@/components/PageError";
 import { toastApiError } from "@/api/errorToast";
 import { motionIndex } from "@/lib/motion";
+import { inPipelineOrder } from "@/lib/pipelineOrder";
 
 function useElapsedTime(startedAt: string | null, finishedAt: string | null) {
   const [elapsed, setElapsed] = useState("");
@@ -85,9 +86,12 @@ export function JobDetailPage() {
   // when there is no pull request yet.
   const issueOnForgeOnly = !!job && !job.issue_id && job.issue_number != null && !!job.repo;
   const { data: registeredRepos } = useRegisteredRepos({ enabled: issueOnForgeOnly });
-  const activeAgents = agents.filter((a) => a.status === "running");
-  const completedAgents = agents.filter((a) => a.status === "completed" || a.status === "failed");
-  const pendingAgents = agents.filter((a) => a.status === "pending");
+  // The cards keep their groups (done, running, waiting) and, in each, the
+  // order the job travels them, as its line does.
+  const journey = inPipelineOrder(agents, pipelineGraph);
+  const activeAgents = journey.filter((a) => a.status === "running");
+  const completedAgents = journey.filter((a) => a.status === "completed" || a.status === "failed");
+  const pendingAgents = journey.filter((a) => a.status === "pending");
 
   // Traces tab state
   const [traceFilters, setTraceFilters] = useState<{ agent_type?: string; result?: string }>({});
