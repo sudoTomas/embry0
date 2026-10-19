@@ -230,6 +230,11 @@ describe("StandardReposTable", () => {
     expect(screen.getByText("No repository matches this filter.")).toBeInTheDocument();
   });
 
+  it("counts a single repository in the singular", () => {
+    renderTable({ rows: standardRows("acme", "design", [{ repo: "acme/only" }], []) });
+    expect(screen.getByTestId("standard-repos-counts")).toHaveTextContent("1 repository · 0 enforce · 0 advise · 1 off");
+  });
+
   it("says so when the owner has no registered repository", () => {
     renderTable({ rows: [] });
     expect(screen.getByText("No registered repositories under this owner")).toBeInTheDocument();

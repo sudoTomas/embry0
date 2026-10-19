@@ -224,7 +224,7 @@ export function StandardReposTable({ owner, kind, rows, hasStandard, isAdmin, ca
           data-testid="standard-repos-filter"
         />
         <span className="text-xs text-muted-foreground" data-testid="standard-repos-counts">
-          {matched ? `${matched.length} of ${rows.length}` : `${rows.length} repositories`}
+          {matched ? `${matched.length} of ${rows.length}` : `${rows.length} ${rows.length === 1 ? "repository" : "repositories"}`}
           {` · ${counts.enforce} enforce · ${counts.advise} advise · ${counts.off} off`}
         </span>
       </div>
