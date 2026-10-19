@@ -2,7 +2,8 @@
 
 Mirrors the qa agent seed pattern (embry0/workflows/qa/agent_seed.py):
 SYSTEM_PROMPT is the DB-seeded system prompt; seed_onboarding_agent()
-idempotently upserts the row at orchestrator startup.
+inserts the row at orchestrator startup when it is missing. An edit to the
+row is kept; POST /agents/onboarding/reset restores this seed.
 
 The agent runs inside a sandbox with the target repo cloned read-only at
 /workspace and must write a schema-v2 qa.yaml draft to
@@ -134,21 +135,11 @@ ONBOARDING_AGENT_SEED: dict[str, Any] = {
 
 
 async def seed_onboarding_agent(repo: AgentDefinitionsRepository) -> None:
-    """Idempotently upsert the onboarding agent definition (qa-seed pattern)."""
-    existing = await repo.get("onboarding")
-    if existing is None:
-        await repo.create(
-            agent_type="onboarding",
-            description=ONBOARDING_AGENT_SEED["description"],
-            model=ONBOARDING_AGENT_SEED["model"],
-            tools=ONBOARDING_AGENT_SEED["tools"],
-            skills=ONBOARDING_AGENT_SEED["skills"],
-            system_prompt=ONBOARDING_AGENT_SEED["system_prompt"],
-            execution_mode=ONBOARDING_AGENT_SEED["execution_mode"],
-            auth_mode=ONBOARDING_AGENT_SEED["auth_mode"],
-        )
-    await repo.update(
-        "onboarding",
+    """Insert the onboarding agent definition when it is missing (qa-seed pattern)."""
+    if await repo.get("onboarding") is not None:
+        return
+    await repo.create(
+        agent_type="onboarding",
         description=ONBOARDING_AGENT_SEED["description"],
         model=ONBOARDING_AGENT_SEED["model"],
         tools=ONBOARDING_AGENT_SEED["tools"],

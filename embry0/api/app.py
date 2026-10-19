@@ -917,18 +917,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await seed_builtin_pipeline_templates(PipelineTemplatesRepository(db))
 
-    # Seed the qa agent definition. Idempotent — upserts on every boot so the
-    # canonical system prompt and MCP server config stay in sync with the code.
+    # Seed the qa agent definition when it is missing. Insert-if-missing, like
+    # every built-in agent: an operator's edit survives a restart, and
+    # POST /agents/{type}/reset puts the seed back.
     from embry0.workflows.qa.agent_seed import seed_qa_agent
 
     await seed_qa_agent(AgentDefinitionsRepository(db))
 
-    # Seed the onboarding agent definition (EMB-50), same idempotent pattern.
+    # Seed the onboarding agent definition (EMB-50), same insert-if-missing pattern.
     from embry0.workflows.onboard.agent_seed import seed_onboarding_agent
 
     await seed_onboarding_agent(AgentDefinitionsRepository(db))
 
-    # Seed the pull request reviewer (#30), same idempotent pattern.
+    # Seed the pull request reviewer (#30), same insert-if-missing pattern.
     from embry0.workflows.pr_review.agent_seed import seed_pr_reviewer_agent
 
     await seed_pr_reviewer_agent(AgentDefinitionsRepository(db))

@@ -5,8 +5,9 @@ Migration 3 inserted the original builtin agent rows, so agents added to
 database. This seeder runs at orchestrator startup and inserts any
 ``BUILTIN_SEED`` agent that is missing — insert-if-missing only, never
 overwriting: builtin rows are operator-editable, and the explicit
-``POST /agents/{type}/reset`` endpoint is the restore path. (The qa and
-onboarding agents are force-synced separately by their own seeders.)
+``POST /agents/{type}/reset`` endpoint is the restore path. (The qa,
+onboarding and pr-reviewer agents have their own seeders, which run first
+and are insert-if-missing too.)
 """
 
 from typing import Any

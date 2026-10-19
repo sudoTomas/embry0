@@ -1,5 +1,6 @@
 """Builtin definition for the `qa` agent — the validator that boots a target
-app and exercises it via Playwright MCP. Seeded at orchestrator startup."""
+app and exercises it via Playwright MCP. Seeded at orchestrator startup when
+missing; an edit to the row is kept, and reset restores this seed."""
 
 from __future__ import annotations
 
@@ -172,25 +173,15 @@ QA_AGENT_SEED: dict[str, Any] = {
 
 
 async def seed_qa_agent(repo: AgentDefinitionsRepository) -> None:
-    """Idempotently upsert the qa agent definition."""
-    existing = await repo.get("qa")
-    if existing is None:
-        await repo.create(
-            agent_type="qa",
-            description=QA_AGENT_SEED["description"],
-            model=QA_AGENT_SEED["model"],
-            tools=QA_AGENT_SEED["tools"],
-            skills=QA_AGENT_SEED["skills"],
-            system_prompt=QA_AGENT_SEED["system_prompt"],
-            execution_mode=QA_AGENT_SEED["execution_mode"],
-            auth_mode=QA_AGENT_SEED["auth_mode"],
-        )
-    # Standard fields (including mcp_servers) flow through the public update()
-    # API — _ALLOWED_UPDATE_FIELDS includes "mcp_servers". is_builtin stays
-    # outside that set on purpose: only seeders should mark a row as builtin,
-    # so we set it via direct SQL.
-    await repo.update(
-        "qa",
+    """Insert the qa agent definition when it is missing.
+
+    Insert-if-missing, like every built-in agent: an operator's edit survives
+    a restart, and ``POST /agents/qa/reset`` puts the seed back.
+    """
+    if await repo.get("qa") is not None:
+        return
+    await repo.create(
+        agent_type="qa",
         description=QA_AGENT_SEED["description"],
         model=QA_AGENT_SEED["model"],
         tools=QA_AGENT_SEED["tools"],
@@ -200,5 +191,7 @@ async def seed_qa_agent(repo: AgentDefinitionsRepository) -> None:
         auth_mode=QA_AGENT_SEED["auth_mode"],
         mcp_servers=QA_AGENT_SEED["mcp_servers"],
     )
+    # is_builtin is outside update()'s fields on purpose: only seeders mark a
+    # row as builtin, so it is set via direct SQL.
     await repo._db.execute("UPDATE agent_definitions SET is_builtin = true WHERE type = 'qa'")
     logger.info("qa_agent_seeded")
