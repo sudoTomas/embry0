@@ -34,7 +34,7 @@ function NavItemLink({
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          "relative flex h-9 w-full items-center gap-3 text-nav font-semibold transition-colors",
+          "relative flex h-8 w-full items-center gap-3 text-nav font-semibold transition-colors",
           sidebarOpen ? "px-4" : "justify-center",
           "text-fg-secondary hover:bg-overlay hover:text-fg",
           isActive && "bg-overlay !text-primary",
@@ -144,7 +144,9 @@ export function Sidebar() {
 
       <nav
         className={cn(
-          "flex flex-1 flex-col gap-2.5 pb-3",
+          // 32 px items and a 6 px gap leave room for the group labels, so
+          // the whole nav still fits a 1440x900 screen.
+          "flex flex-1 flex-col gap-1.5 pb-3",
           narrow && "pt-3",
           // The rail keeps its overflow visible so the hover labels can show.
           sidebarOpen ? "overflow-y-auto" : "overflow-visible",
@@ -152,9 +154,18 @@ export function Sidebar() {
       >
         {NAV_GROUPS.map((group) => (
           <section key={group.label} aria-label={group.label}>
-            {/* Groups read by spacing, like the sibling dashboards' lists;
-                the group name stays for screen readers. */}
-            <h3 className="sr-only">{group.label}</h3>
+            {/* A quiet label over each group, aligned with the item icons.
+                Overview is a group of one and needs none; the collapsed rail
+                has no room, so there the name stays for screen readers. */}
+            <h3
+              className={cn(
+                sidebarOpen && group.label !== "Overview"
+                  ? "truncate px-4 pb-0.5 text-2xs font-semibold uppercase tracking-wider text-fg-muted"
+                  : "sr-only",
+              )}
+            >
+              {group.label}
+            </h3>
             <div className="flex flex-col">
               {group.items
                 .filter((item) => !item.adminOnly || isAdmin)

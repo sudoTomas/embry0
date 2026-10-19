@@ -59,6 +59,15 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     ]);
   });
 
+  it("shows a quiet uppercase label over each group but Overview, a group of one", () => {
+    renderSidebar();
+    const work = screen.getByRole("heading", { level: 3, name: "Work" });
+    expect(work.className).not.toContain("sr-only");
+    expect(work.className).toContain("uppercase");
+    expect(work.className).toContain("text-fg-muted");
+    expect(screen.getByRole("heading", { level: 3, name: "Overview" }).className).toContain("sr-only");
+  });
+
   it("Operations section contains Watcher, Logs in that order (Deploys removed with the RAV-658 deployer)", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Operations" })
