@@ -29,6 +29,18 @@ watcher lines is a quiet tick. This holds whatever the stack's LogQL says; a
 test reads every `logger.<level>("…")` event name in the watcher family from
 the source and fails if one falls outside the prefixes.
 
+The same guard drops embry0's own log reads. An analysis drills down through
+`GET /api/v1/logs/query`, and so do the dashboard's Logs page and
+`logs_query` over MCP. Each read leaves lines that quote its query: every
+hop's access line carries it in the URL, and the route logs it as
+`logs_queried`. A query is made of the words a selector looks for
+(`Traceback`, `ERROR`), so before this guard each analysis seeded the next
+tick with its own drill-down, and the tick paid to read it: 10 of 50 runs on
+one deployment. A line counts as a log read when it carries
+`/api/v1/logs/query?` or its `event` is `logs_queried` (`LOG_QUERY_URL`,
+`LOG_QUERY_EVENTS`); a traceback raised inside the route is a separate line
+and is kept.
+
 "The watcher is broken" is deliberately not the watcher's to report. The
 dead-man alerts in the monitoring stack (`Embry0WatcherNoVerdict3h`,
 `Embry0WatcherBacklogStall`, `Embry0WatcherAnalysisFailureRate`,
@@ -69,13 +81,15 @@ consequences shape the selector:
   in-process, by parsing it (`embry0/services/log_levels.py`); the selector
   only narrows on the literal `"level": "(error|critical)"`.
 
-The selector; the second line is `LOGQL_OWN_EVENTS_EXCLUSION` from
-`embry0/services/watcher_recursion.py`, so it cannot drift from the guard:
+The selector; the second line is `LOGQL_OWN_EVENTS_EXCLUSION` and the third
+`LOGQL_LOG_QUERY_EXCLUSION`, both from `embry0/services/watcher_recursion.py`,
+so neither can drift from the guard:
 
 ```
 {compose_project="embry0"}
   |~ "\"level\": \"(error|critical)\"|Traceback"
   !~ "\"event\": \"(watcher_|log_signatures_|log_clustering_)"
+  != "/api/v1/logs/query?" !~ "\"event\": \"(logs_queried)\""
 ```
 
 Measured on a production deployment (2026-09-24, Loki 2.9.8):
@@ -159,7 +173,7 @@ deployment's fork or clone of this repository.
    curl -X PUT -H "Authorization: Bearer $API_KEY" -H "X-Requested-With: XMLHttpRequest" \
      -H "Content-Type: application/json" \
      http://localhost:8200/api/v1/watcher/stacks/<owner>/embry0 -d '{
-       "logql": "{compose_project=\"embry0\"} |~ \"\\\"level\\\": \\\"(error|critical)\\\"|Traceback\" !~ \"\\\"event\\\": \\\"(watcher_|log_signatures_|log_clustering_)\"",
+       "logql": "{compose_project=\"embry0\"} |~ \"\\\"level\\\": \\\"(error|critical)\\\"|Traceback\" !~ \"\\\"event\\\": \\\"(watcher_|log_signatures_|log_clustering_)\" != \"/api/v1/logs/query?\" !~ \"\\\"event\\\": \\\"(logs_queried)\\\"\"",
        "tracker": "github",
        "settings": {"min_log_lines": 1, "max_open_proposals": 2, "max_full_cap_analyses_per_day": 2, "job_budget_usd": 1.0},
        "enabled": true
