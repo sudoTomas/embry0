@@ -47,3 +47,4 @@ If your work contradicts a record here, say so explicitly rather than silently o
 | [0014](0014-organization-standards.md) | A standard is a schema embry0 ships and values the organization holds, keyed by the forge owner; a repository starts in mode off and is never audited there | accepted (2026-10-18) |
 | [0015](0015-maintain-hints.md) | What a repository takes to maintain is read from its facts by rules, never a model | accepted (2026-10-18) |
 | [0016](0016-rediscovery-schedule.md) | An organization can be rediscovered on a schedule; a repository that left the listing, once a direct read confirms it gone, is proposed for deactivation, never deactivated on its own | accepted (2026-10-18) |
+| [0017](0017-openai-compatible-providers.md) | OpenAI-compatible providers run on embry0's own tool loop over chat completions, each off until the deployment enables it | accepted (2026-10-18) |

@@ -6,6 +6,11 @@ Anthropic-SDK-compatible backend is **provider configuration**, not a new
 runtime. MCP servers (the QA browser backends — Playwright/Vibium), the Ring-3 safety hook, session
 resume, and token/trace plumbing all apply unchanged.
 
+A provider that speaks only OpenAI chat completions (OpenAI, OpenRouter,
+Gemini, Groq, DeepSeek, or a model server of your own such as Ollama, vLLM or
+LM Studio) runs on embry0's own tool loop instead, off until the deployment
+enables it: see [OpenAI-compatible providers](#openai-compatible-providers).
+
 ## Registry
 
 `embry0/agents/providers.py`. Routing is per-agent by model id: when a
@@ -38,6 +43,146 @@ To bring a new grok model into service, add it to `models` and
 and cached-input pricing) is listed under the limits below.
 
 The account is a row in the credential registry (`docs/credentials.md`): an xAI `llm_api_key` is injected as `XAI_API_KEY`, and an xAI `llm_oauth` is served by the xai-proxy for that credential id. `XAI_API_KEY` in the orchestrator `.env` is the resolver's last step, and an import source, not the only place a grok job can authenticate.
+
+## OpenAI-compatible providers
+
+Most model providers, and every self-hosted model server, speak OpenAI chat
+completions rather than the Anthropic API. embry0 treats them as one family
+(`OPENAI_COMPATIBLE` in `embry0/agents/providers.py`). An agent whose model
+routes to one runs on `OpenAICompatibleExecutor`
+(`embry0/agents/executor_openai.py`): the tool loop the direct xAI executor
+uses (`embry0/agents/_tool_loop.py`), over `POST <API root>/chat/completions`.
+The Claude CLI is not involved, so the CLI's MCP, hooks and session resume are
+replaced by the loop's own: builtin tools and MCP stdio servers, every call
+gated by `gate_tool_call` in the sandbox, and the text-transcript resume.
+
+**Off by default.** `OPENAI_COMPATIBLE_PROVIDERS` in the root `.env` names the
+providers this deployment offers, comma-separated, for example
+`OPENAI_COMPATIBLE_PROVIDERS=openai,deepseek,custom`. A provider it does not
+name routes no model, is listed on no catalog surface (`GET /config/models`,
+the LLM Providers page, `GET /agents`), and takes no credential. With the
+setting unset every model routes as before. The orchestrator reads it per
+request; the sandbox does not need it.
+
+| Provider | Model ids | API root | Key (env fallback) | Listed models, $/Mtok in / out | Tool calling |
+|---|---|---|---|---|---|
+| `openai` | `gpt-…` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | `gpt-6-luna` 0.10 / 0.50, `gpt-6.1-sol` 2.00 / 10.00 | `gpt-6-luna` yes (embry0 sends `reasoning_effort: none`, which OpenAI requires for tools on chat completions); `gpt-6.1-sol` **chat-only** |
+| `openrouter` | `openrouter/<vendor>/<model>` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `openrouter/openai/gpt-6.1-sol` 2.00 / 10.00 | per model: OpenRouter lists the ones that take tools at `openrouter.ai/models?supported_parameters=tools` |
+| `google` | `gemini-…` | `https://generativelanguage.googleapis.com/v1beta/openai` | `GEMINI_API_KEY` | `gemini-3.8-flash` 0.75 / 3.75, `gemini-4-argon` 2.00 / 10.00 | yes: Gemini's OpenAI-compatible endpoint takes `tools` |
+| `groq` | `groq/<model>` | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` | `groq/openai/gpt-oss-120b` 0.15 / 0.60, `groq/openai/gpt-oss-20b` 0.075 / 0.30 | yes: Groq states every hosted model supports tool use |
+| `deepseek` | `deepseek-…` | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `deepseek-flash` 0.30 / 1.20, `deepseek-v4-pro` 1.32 / 3.96 | yes |
+| `custom` | `custom/<model>` | the operator's: the credential's `metadata.base_url`, or `CUSTOM_LLM_BASE_URL` | `CUSTOM_LLM_API_KEY` | any model the server serves, recorded at $0 | what the server and model support (below) |
+
+The `openrouter/`, `groq/` and `custom/` prefixes only route: embry0 strips
+them, so the provider is asked for `openai/gpt-oss-120b`, or for the
+`llama3.3:70b` of `custom/llama3.3:70b`. The other providers' own ids carry a
+prefix of their own.
+
+Prices are the providers' published list prices, read from their pricing
+pages on 2026-10-18, and like the rest of this catalogue they are metadata,
+not billing truth. What they leave out: Gemini's rates above are
+introductory (`gemini-4-argon` becomes $4 / $20 on 2026-12-01,
+`gemini-3.8-flash` $1.50 / $7.50 on 2027-01-01); DeepSeek bills half outside
+its peak hours and the table carries the peak rate; OpenRouter passes the
+upstream price through and charges a fee on credit purchases, which is not
+modelled. A model of these providers runs only when it is listed with a price,
+as for grok (#219); to bring another into service, add it to `models` and
+`pricing_usd_per_mtok` together. A custom server bills nothing per token, so
+any `custom/` model is priced at $0 instead of refused, and a job's
+`budget_usd` does not bound it. A `custom/` id is not listed, so it cannot be
+the default model; an agent definition or a job's `agent_models` can name it.
+
+### Adding a key
+
+1. Name the provider in `OPENAI_COMPATIBLE_PROVIDERS` and restart the
+   orchestrator.
+2. Store the key in the [credential registry](credentials.md) and bind it,
+   at global scope for every repository or at repo or owner scope:
+
+   ```bash
+   curl -X POST "$EMBRY0/api/v1/credentials" -H 'X-Requested-With: XMLHttpRequest' \
+     -H 'Content-Type: application/json' \
+     -d '{"kind": "llm_api_key", "provider": "deepseek", "label": "api-key", "secret": "sk-..."}'
+   curl -X PUT "$EMBRY0/api/v1/credentials/bindings" -H 'X-Requested-With: XMLHttpRequest' \
+     -H 'Content-Type: application/json' \
+     -d '{"scope_kind": "global", "scope_value": "", "bindings": [{"credential_id": "cred-...", "role": "llm"}]}'
+   ```
+
+   A `custom` key also carries its API root:
+   `"metadata": {"base_url": "http://10.0.0.5:11434/v1"}` (http or https, no
+   credentials, query or fragment in the URL); the credential's host is that
+   URL's. A server that checks no key (Ollama, LM Studio, vLLM started
+   without `--api-key`) still needs one stored: any placeholder will do.
+   These providers take `llm_api_key` only.
+3. Or put the key in the root `.env` under the variable in the table (for
+   `custom`, with `CUSTOM_LLM_BASE_URL`). That is the resolver's last step;
+   `embry0 credentials import-env` moves it into the registry and binds it
+   globally.
+
+The LLM Providers page then shows the provider as available. **Test
+connection** calls `GET <API root>/models` with the key a job with no
+repository binding would get (the global pool, then the env); OpenRouter's
+`/models` answers without a key, so for it the test calls `/key`. The
+outcome is the provider's `last_probe`, read back from the audit log like
+every other provider's. The dashboard's create-credential dialog does not
+offer these providers yet: use the API or the env.
+
+The sandbox receives the key as `EMBRY0_LLM_<PROVIDER>_API_KEY`
+(`EMBRY0_LLM_OPENAI_API_KEY`, …, `EMBRY0_LLM_CUSTOM_API_KEY`) and a custom
+root as `EMBRY0_LLM_CUSTOM_BASE_URL`, not under the usual names: a repository
+that sets its own `OPENAI_API_KEY` for its app keeps it. The `EMBRY0_LLM_`
+namespace is reserved, since a repository value there could swap the account
+an agent bills or send its conversation to another server. Like every LLM
+credential in a sandbox (ADR 0008), any code the job runs can read it: use a
+key with a spending limit.
+
+### What tool calling requires
+
+An embry0 agent works through tools (Read, Write, Edit, Bash, Glob, Grep, and
+for QA the browser's MCP tools). embry0 sends them as chat-completions
+function tools; the model must answer with `tool_calls`, which the sandbox
+runs after `gate_tool_call` and answers with `tool` messages until the model
+stops calling tools. So a model runs an agent only when its provider serves it
+with tool calling on this API.
+
+A model a provider serves without it is **chat-only**: `chat_only_models` in
+its catalogue entry, `"tool_calling": false` in `GET /config/models`, and
+"(chat-only)" on the LLM Providers page. The resolver refuses it for an agent
+that has tools, with `ERR_INVALID_CONFIG` before the sandbox runs, rather than
+run the agent with its tools dropped; an agent with no tools can run on it.
+Today that is `gpt-6.1-sol`: OpenAI serves it on chat completions without tool
+calling and offers its tools only on the Responses API, which embry0 does not
+speak.
+
+For a `custom` server, tool calling is the server's and the model's: Ollama
+needs a model with tool support, vLLM needs `--enable-auto-tool-choice` and a
+`--tool-call-parser` for the model, LM Studio needs a model with tool use. A
+server that ignores `tools` makes the agent answer in prose and stop; the run
+ends with no tool calls and nothing done. A custom server usually sits on the
+operator's network, which the sandbox egress drop blocks, so a job that runs
+on one declares that host as an egress exception for its sandbox. The
+exception is the whole address, every port: put the model server on a machine
+that serves nothing else.
+
+### Mechanics and limits
+
+- **Not verified against the real APIs.** The executor's tests run it against
+  a fake OpenAI-compatible HTTP server (`tests/fixtures/openai_compatible_server.py`).
+  Run one developer and review loop per model before relying on it, as for grok.
+- **Image rebuild.** The executor runs in the sandbox, so it takes effect after
+  the sandbox images are rebuilt ([`docs/ops/deploy.md`](ops/deploy.md)).
+- **Claude-sized budgets.** These providers declare no turn or time factor;
+  how many turns their models need for embry0's agents is not measured.
+- **Retries, no fallback.** 408, 409, 429 and 5xx answers are retried twice;
+  then the run fails, 429 as `ERR_PROVIDER_RATE_LIMITED`, 401 and 403 as
+  `ERR_AUTH_REJECTED`. A failing provider is not swapped for another.
+- **Cached input** is read from `usage.prompt_tokens_details.cached_tokens` and
+  priced at a tenth of the input rate, the estimate used for every provider.
+- **xAI is a member of the family** for its readiness probe, the same
+  `GET https://api.x.ai/v1/models`; its agents keep the runtime above (the
+  Agent SDK over the Anthropic-compatible endpoint, or `DirectXaiExecutor`).
+  Running grok on the chat-completions executor would change existing grok
+  jobs, so it is not done here.
 
 ## Using grok on a job
 
@@ -117,10 +262,14 @@ Limits, stated rather than fixed:
 ## Provider readiness
 
 A model is served by the catalogue provider whose id prefix it carries:
-`claude-` for Anthropic, `grok-` for xAI. Whether that provider can run it
-depends on a credential: for Anthropic `CLAUDE_CODE_OAUTH_TOKEN` or
-`ANTHROPIC_API_KEY`, for xAI `XAI_API_KEY` or the OAuth proxy, or for either a
-row in the credential registry. The runtime notices a missing credential only
+`claude-` for Anthropic, `grok-` for xAI, and the prefixes of the enabled
+[OpenAI-compatible providers](#openai-compatible-providers). Whether that
+provider can run it depends on a credential: for Anthropic
+`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, for xAI `XAI_API_KEY` or the
+OAuth proxy, for an OpenAI-compatible provider its key variable (`custom`
+with `CUSTOM_LLM_BASE_URL`), or for any of them a row in the credential
+registry. A provider with none is not ready, and a job whose model routes to
+it fails with `ERR_CREDENTIAL_MISSING` before its sandbox exists. The runtime notices a missing credential only
 when the agent runs, after the job was dispatched. Two surfaces answer before
 that, from the same sources (`embry0/services/provider_readiness.py`):
 

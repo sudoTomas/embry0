@@ -10,12 +10,13 @@ A credential has a `kind`, a `provider`, a `host`, a `label` unique per provider
 |---|---|---|
 | `forge_token` | `github`, `gitlab` | clone, push, pull and merge requests, forge API calls |
 | `llm_oauth`, `llm_api_key` | `anthropic`, `xai` | agent runs |
+| `llm_api_key` | `openai`, `openrouter`, `google`, `groq`, `deepseek`, `custom`, each once `OPENAI_COMPATIBLE_PROVIDERS` names it ([providers.md](providers.md#openai-compatible-providers)) | agent runs |
 | `ssh_key` | `ssh` | orchestrator-side deploys (later release) |
 | `tailnet_api_key` | `tailscale` | reading a tailnet's devices to import and probe [hosts](hosts.md) |
 
 **This release stores forge tokens and LLM accounts.** `POST /api/v1/credentials` accepts `forge_token`, `llm_oauth` and `llm_api_key`. xAI `llm_oauth` is the exception: that route answers 422, and the row is created by device-code login or by `embry0 credentials import-env`. `ssh_key` is still a later release. Env values remain the last step when no binding matches.
 
-A `tailnet_api_key` is created with `POST /api/v1/credentials` at host `api.tailscale.com`, with `metadata` `{"tailnet": "<name>"}` (`-`, the key's own tailnet, when omitted); `metadata` is refused on every other kind. It binds only at global scope, with role `tailnet`, and has no env fallback. [hosts.md](hosts.md) has the scope the key needs.
+A `tailnet_api_key` is created with `POST /api/v1/credentials` at host `api.tailscale.com`, with `metadata` `{"tailnet": "<name>"}` (`-`, the key's own tailnet, when omitted). A `custom` LLM key carries `{"base_url": "<API root>"}` and its host is that URL's; `metadata` is refused on every other credential. It binds only at global scope, with role `tailnet`, and has no env fallback. [hosts.md](hosts.md) has the scope the key needs.
 
 A credential's `host` must be the forge's own host in this release: `github.com` for GitHub, the host of `GITLAB_URL` for GitLab. Leave it empty and it defaults to that; anything else is a 422, because clone URLs and API bases are still single-host.
 
@@ -67,10 +68,11 @@ What the sandbox receives:
 | anthropic | `llm_api_key` | `ANTHROPIC_API_KEY`, and the OAuth token is unset |
 | xai | `llm_api_key` | `XAI_API_KEY` |
 | xai | `llm_oauth` | nothing in env; the xai-proxy serves that credential id |
+| openai, openrouter, google, groq, deepseek, custom | `llm_api_key` | `EMBRY0_LLM_<PROVIDER>_API_KEY`, and for custom `EMBRY0_LLM_CUSTOM_BASE_URL` |
 
 `auth_mode=oauth` needs an anthropic `llm_oauth` account. `auth_mode=api_key` needs an anthropic `llm_api_key` account, from the registry or the env step below. A mismatch raises the existing `ERR_MISSING_OAUTH_TOKEN` or `ERR_MISSING_API_KEY`. A grok model does not take the Anthropic check.
 
-Env fallback, only when no registry row is usable. For Anthropic it follows the deployment's `DEFAULT_AUTH_MODE`: with `api_key`, `ANTHROPIC_API_KEY` and nothing else; otherwise `CLAUDE_CODE_OAUTH_TOKEN`, then the orchestrator's Claude credentials file. For xAI, `XAI_API_KEY`. Each key logs `credential_env_fallback` once. A repo, job or agent that overrides the auth mode away from the deployment default needs a registry account of the matching kind. `ANTHROPIC_API_KEY` is not an import source.
+Env fallback, only when no registry row is usable. For Anthropic it follows the deployment's `DEFAULT_AUTH_MODE`: with `api_key`, `ANTHROPIC_API_KEY` and nothing else; otherwise `CLAUDE_CODE_OAUTH_TOKEN`, then the orchestrator's Claude credentials file. For xAI, `XAI_API_KEY`. For an enabled OpenAI-compatible provider, its key variable (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, or `CUSTOM_LLM_API_KEY` together with `CUSTOM_LLM_BASE_URL`). Each key logs `credential_env_fallback` once. A repo, job or agent that overrides the auth mode away from the deployment default needs a registry account of the matching kind. `ANTHROPIC_API_KEY` is not an import source.
 
 **Quarantine.** A terminal `ERR_PROVIDER_RATE_LIMITED` sets `quarantined_until` to now plus `CREDENTIAL_RATE_LIMIT_QUARANTINE_SECONDS` (default 900). `ERR_PROVIDER_QUOTA_EXHAUSTED` lasts until the reset the provider named, when it named one, capped at eight days (`QUOTA_RESET_QUARANTINE_MAX`); otherwise it uses `CREDENTIAL_QUOTA_QUARANTINE_SECONDS` (default 3600). `ERR_AUTH_REJECTED` quarantines with no until, so an operator clears it. The hook attributes the failure to the terminal agent output's provider, so a 429 on xAI leaves the Anthropic account alone. A missing provider on that output quarantines every LLM account the job used.
 
@@ -119,6 +121,7 @@ What it reads in this release, and what it creates:
 | `CLAUDE_CODE_OAUTH_TOKEN`, else the Claude credentials file | anthropic `llm_oauth`, label `default` | global, llm, priority 0 |
 | `XAI_CREDENTIAL_PATH`, else `/home/orchestrator/.grok/auth.json` | xai `llm_oauth`, label `default` | global, llm, priority 0 |
 | `XAI_API_KEY` | xai `llm_api_key`, label `api-key` | global, llm, priority 1 |
+| an enabled OpenAI-compatible provider's key variable (`custom`: with `CUSTOM_LLM_BASE_URL`) | that provider's `llm_api_key`, label `api-key` | global, llm, priority 0 |
 
 `XAI_GROK_CLI_STORE`, when set, replaces `/home/orchestrator/.grok/auth.json` as the Grok CLI file the importer reads. `ANTHROPIC_API_KEY` is not imported. The credential file wins over the Grok CLI file when both exist. The stored xAI oauth secret is the JSON payload `refresh_token`, `client_id`, `token_endpoint`. The access token is not stored.
 

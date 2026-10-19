@@ -48,6 +48,11 @@ describes what embry0 does rather than listing changes.
   a job names its pipeline template, that return one report on a repository:
   kintsugi, gardener, interrogator, why, how, blast-radius, comment-sicko and
   design-auditor ([docs/specialist-agents.md](docs/specialist-agents.md)).
+- **OpenAI-compatible providers.** Agents can run on OpenAI, OpenRouter,
+  Gemini, Groq, DeepSeek or a model server of the operator's own (Ollama,
+  vLLM, LM Studio) through embry0's own tool loop over chat completions. Each
+  is off until `OPENAI_COMPATIBLE_PROVIDERS` names it
+  ([docs/providers.md](docs/providers.md#openai-compatible-providers)).
 - **MCP server** (`embry0-mcp`, and `embry0-mcp-http` for the hosted endpoint).
 
 ### Upgrade notes
@@ -62,3 +67,7 @@ describes what embry0 does rather than listing changes.
   agent with one of those names is kept, and its specialist template runs it
   in place of the built-in
   ([reserved names](docs/specialist-agents.md#reserved-names)).
+- **Reserved environment namespace.** A repository environment variable that
+  starts with `EMBRY0_LLM_` is refused, and a stored one is no longer
+  injected: the OpenAI-compatible providers' keys and base URL use that
+  namespace in the sandbox. Rename such a variable before you upgrade.
