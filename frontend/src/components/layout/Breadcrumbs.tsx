@@ -100,6 +100,11 @@ function crumbsFor(pathname: string): Crumb[] {
     return [head, { label: third, mono: true }, ...tail];
   }
 
+  // /orgs/<owner>/standards: the owner, then the page under it.
+  if (first === "orgs" && third === "standards") {
+    return [head, { label: second, mono: true }, { label: "Design standard" }];
+  }
+
   const label = secondSegmentMap[second];
   return [head, label ? { label } : { label: second, mono: true }];
 }

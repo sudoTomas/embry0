@@ -77,9 +77,9 @@ Registering an owner changes nothing for any repository until a need is
 applied ([ADR 0010](adr/0010-organizations.md)). The wizard lives at
 `/orgs/-/new`, and each organization keeps a page at `/orgs/<owner>` with
 the latest discovery, a Rediscover button, the rediscovery schedule (every
-1 to 168 hours, or off; an admin changes it in place) and the same act
-panel; no owner name starts with `-`, so an owner named `new` keeps its
-page too. A server
+1 to 168 hours, or off; an admin changes it in place), the same act panel
+and a line on its design standard ([standards.md](standards.md#in-the-dashboard));
+no owner name starts with `-`, so an owner named `new` keeps its page too. A server
 without the probe, needs or actions route (FastAPI's own 404 or 405) says
 so in place of that step instead of failing; any other error is shown.
 

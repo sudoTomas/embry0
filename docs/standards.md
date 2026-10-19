@@ -137,6 +137,14 @@ When the job completes, embry0 reads its report deliverable (the job's result su
 
 Only the repository whose newest audit is that job is written, so an older audit that finishes late writes nothing, and a failed audit leaves the score of the last completed one. When an admin switches the repository to mode `off` between the checks and the start, the job is cancelled before it runs and the answer is a 409. When the switch comes while the audit runs, the job runs to its end and its result is not recorded: a repository in mode `off` keeps the score it had.
 
+## In the dashboard
+
+The organization page (`/orgs/<owner>`) has a **Design standard** line: the active version, how many repositories are held to it (mode advise or enforce) and the lowest score, with a link to the Standards view at `/orgs/<owner>/standards`.
+
+The Standards view lists every registered repository under the owner, lowest score first and those without a score last, each with its mode, score, open findings and newest audit job. An admin changes a repository's mode in place. An operator starts an audit; the button is off in mode off, without an active standard and while the repository's previous audit is pending or running, and a 409 shows its detail under the row. The one gold control is the Audit button of the first repository held to the standard that has never been audited and can be audited now; with none, nothing is gold. Below the table are the active standard itself (prose, references, the colour roles as swatches with their values, the other roles, the type scale and the rules) and its versions.
+
+The dashboard has no editor for the standard's JSON: a new version is written with `PUT /api/v1/standards/{owner}/{kind}`, and the view names that path.
+
 ## API
 
 Reads need any authenticated principal and an audit needs an operator; writing a standard and setting a mode need the `admin` tier. Every write records an audit row: `standard.updated` (owner, kind, version and the version it superseded), `standard.repo_mode_set` (repository, mode and the number of exceptions) and `standard.audit_started` (repository, version and job id).

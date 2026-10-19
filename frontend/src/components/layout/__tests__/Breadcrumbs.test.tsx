@@ -68,6 +68,12 @@ describe("Breadcrumbs", () => {
     expect(breadcrumb().queryByText("-")).toBeNull();
   });
 
+  it("names the owner and the page on an organization's design standard", () => {
+    renderAt("/orgs/acme/standards");
+    expect(trail()).toBe("Organizations/acme/Design standard");
+    expect(breadcrumb().getByText("acme").className).toContain("font-mono");
+  });
+
   it("keeps dynamic second segments raw", () => {
     renderAt("/jobs/job-abc123");
     expect(breadcrumb().getByText("Jobs")).toBeInTheDocument();

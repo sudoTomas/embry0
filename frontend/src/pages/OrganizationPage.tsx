@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router";
-import { Building2, ClipboardList, FolderGit2, Radar, Wrench } from "lucide-react";
+import { Building2, ClipboardList, FolderGit2, Radar, Ruler, Wrench } from "lucide-react";
 import { formatErrorDetail } from "@/api/errorDetail";
 import { AccessChips } from "@/components/orgs/AccessChips";
 import { DiscoveryStatus } from "@/components/orgs/DiscoveryStatus";
@@ -7,6 +7,7 @@ import { OrgActPanel } from "@/components/orgs/OrgActPanel";
 import { OrgNeedsList } from "@/components/orgs/OrgNeedsList";
 import { OrgReposTable } from "@/components/orgs/OrgReposTable";
 import { RediscoverSetting } from "@/components/orgs/RediscoverSetting";
+import { OrgStandardSummary } from "@/components/standards/OrgStandardSummary";
 import { PageError } from "@/components/PageError";
 import { Badge } from "@/components/ui/Badge";
 import { Button, buttonVariants } from "@/components/ui/Button";
@@ -146,6 +147,10 @@ export function OrganizationPage() {
         ) : (
           <OrgActPanel owner={o.owner} needs={needs.data} isAdmin={isAdmin} />
         )}
+      </Section>
+
+      <Section icon={Ruler} title="Design standard">
+        <OrgStandardSummary owner={o.owner} />
       </Section>
 
       <Section icon={FolderGit2} title="Repositories">
