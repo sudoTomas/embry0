@@ -36,6 +36,10 @@
   --color-primary-dim: rgb(212 175 55 / 0.12);
   --color-primary-foreground: #0a0a0f;
 
+  /* The brand cream: the dot of the embry0 mark, the life inside the zero.
+     Not a second accent; only the mark uses it. */
+  --color-cream: #f5f1e6;
+
   /* Semantic names the components use, pointed at the skeleton above. */
   --color-background: var(--color-page);
   --color-foreground: var(--color-fg);
