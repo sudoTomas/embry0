@@ -108,12 +108,38 @@ def test_build_sdk_options_passes_plugins_and_skills_allowlist() -> None:
         {"source_id": "superpowers", "plugin_name": "superpowers", "container_path": "/opt/embry0/skills/superpowers"},
         {"source_id": "local", "plugin_name": "local", "container_path": "/opt/embry0/skills/local"},
     )
-    opts = build_sdk_options(_inv(skills=["superpowers:writing-plans"], skill_mounts=mounts))
+    opts = build_sdk_options(_inv(skills=["superpowers:writing-plans", "local:house-style"], skill_mounts=mounts))
     assert opts.plugins == [
         {"type": "local", "path": "/opt/embry0/skills/superpowers"},
         {"type": "local", "path": "/opt/embry0/skills/local"},
     ]
-    assert opts.skills == ["superpowers:writing-plans"]
+    assert opts.skills == ["superpowers:writing-plans", "local:house-style"]
+
+
+_THREE_MOUNTS = (
+    {"source_id": "superpowers", "plugin_name": "superpowers", "container_path": "/opt/embry0/skills/superpowers"},
+    {"source_id": "local", "plugin_name": "local", "container_path": "/opt/embry0/skills/local"},
+    {"source_id": "house", "plugin_name": "house-rules", "container_path": "/opt/embry0/skills/house"},
+)
+
+
+def test_build_sdk_options_loads_only_the_plugins_whose_skills_the_agent_lists() -> None:
+    """A plugin brings its hooks: an agent that lists none of its skills must not load it."""
+    opts = build_sdk_options(_inv(skills=["house-rules:style", "house-rules:tone"], skill_mounts=_THREE_MOUNTS))
+    assert opts.plugins == [{"type": "local", "path": "/opt/embry0/skills/house"}], "unlisted plugins were loaded"
+
+
+def test_build_sdk_options_empty_skills_loads_no_plugin() -> None:
+    opts = build_sdk_options(_inv(skills=[], skill_mounts=_THREE_MOUNTS))
+    assert opts.plugins == [], "an agent with no skills loaded every plugin and its hooks"
+    assert opts.skills is None
+
+
+def test_build_sdk_options_a_repository_skill_selects_no_plugin() -> None:
+    """A bare name (no colon) is one of the repository's own .claude/skills."""
+    opts = build_sdk_options(_inv(skills=["code-review", "local"], skill_mounts=_THREE_MOUNTS))
+    assert opts.plugins == []
+    assert opts.skills == ["code-review", "local"]
 
 
 def test_build_sdk_options_empty_skills_means_no_filter() -> None:
