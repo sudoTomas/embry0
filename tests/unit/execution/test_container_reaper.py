@@ -8,6 +8,7 @@ import pytest
 
 from embry0.execution.image_manager import ContainerReaper
 from embry0.execution.runtime import DockerRuntime
+from embry0.execution.sandbox_manager import SandboxManager
 
 SANDBOX_LABELS = ("embry0.managed=true", "embry0.role=sandbox")
 # Before any sandbox carried the label (#616).
@@ -43,7 +44,7 @@ class _Daemon:
         docker.run_cmd = AsyncMock(side_effect=self._run)
         return docker
 
-    async def _run(self, cmd, timeout=None):
+    async def _run(self, cmd, timeout=None, **_):
         if cmd[1] == "ps":
             found = self.containers
             for i, arg in enumerate(cmd):
@@ -66,7 +67,10 @@ def _reaper(daemon: _Daemon, active: set[str] | None = None, error: Exception | 
         jobs_repo.fetch_active_sandbox_containers = AsyncMock(side_effect=error)
     else:
         jobs_repo.fetch_active_sandbox_containers = AsyncMock(return_value=set(active or ()))
-    return ContainerReaper(DockerRuntime(daemon.client()), max_age_hours=24, jobs_repo=jobs_repo)
+    docker = daemon.client()
+    runtime = DockerRuntime(docker)
+    sandbox = SandboxManager(docker, proxy_manager=MagicMock(unenroll_sandbox=AsyncMock()), runtime=runtime)
+    return ContainerReaper(runtime, max_age_hours=24, jobs_repo=jobs_repo, sandbox_manager=sandbox)
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# The ID `docker run` prints, which create() keys every enrollment by.
+_FULL_CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
+
 # One Maven local repository for every JVM dev sandbox. The wrapper downloads
 # Maven itself on first use; doing that inside a 15-minute agent run leaves
 # no time to compile. The volume lives in DinD and is created on first mount.
@@ -982,8 +985,35 @@ class SandboxManager:
         """Stop scrubbing the container's bearers: unenrolled, they open nothing."""
         unregister_known_secrets(self._bearers.pop(container, ()))
 
+    async def _full_container_id(self, container: str) -> str:
+        """The full ID of ``container``, which may be given as a name or a short ID.
+
+        Unresolvable (already removed, or docker not answering): the reference
+        as given, since there is then nothing left to look up.
+        """
+        if _FULL_CONTAINER_ID.fullmatch(container):
+            return container
+        try:
+            out = await self._docker.run_cmd(
+                self._docker.build_inspect_id_cmd(container), timeout=10, expected_failure=True
+            )
+        except (RuntimeError, TimeoutError):
+            return container
+        full = str(out).strip()
+        return full if _FULL_CONTAINER_ID.fullmatch(full) else container
+
     async def destroy(self, container: str, timeout: int = 10) -> None:
-        """Stop and remove a sandbox container."""
+        """Stop and remove a sandbox container: the one teardown path.
+
+        Every caller tears a sandbox down here, the stale-container reaper and
+        the paused-job expiry included, so each gets the proxy unenroll, the
+        egress-rule removal and the bearer release. ``container`` may be a
+        name or a short ID (the reaper has the one ``docker ps`` prints, the
+        expiry and the cancel path the name): it is resolved first to the full
+        ID that create() enrolled the sandbox and kept its bearers under.
+        Never raises for a docker failure, a timeout included.
+        """
+        container = await self._full_container_id(container)
         # Unenroll first so the proxy stops accepting the bearer; if this races
         # with `docker rm -f` below the worst case is a stale entry that the next
         # enrollment overwrites (sandbox_id == container_id; docker IDs are unique).
@@ -1009,16 +1039,19 @@ class SandboxManager:
             else:
                 logger.debug("sandbox_egress_clear_skipped", container=container)
 
+        # run_cmd raises TimeoutError for a hung command, and TimeoutError is
+        # not a RuntimeError: caught here too, so a stop that hangs still
+        # reaches the forced rm and destroy never raises for docker.
         try:
             stop_cmd = self._docker.build_stop_cmd(container, timeout=timeout)
             await self._docker.run_cmd(stop_cmd)
-        except RuntimeError:
+        except (RuntimeError, TimeoutError):
             logger.warning("sandbox_stop_failed", container=container)
 
         try:
             rm_cmd = self._docker.build_rm_cmd(container)
             await self._docker.run_cmd(rm_cmd)
-        except RuntimeError:
+        except (RuntimeError, TimeoutError):
             logger.warning("sandbox_rm_failed", container=container)
 
         logger.info("sandbox_destroyed", container=container)

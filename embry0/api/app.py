@@ -1239,6 +1239,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         jobs_repo=JobsRepository(db, metrics=loop_metrics),
         issues_repo=IssuesRepository(db),
         database_url=config.database_url,
+        sandbox_manager=sandbox_mgr,
     )
     reaper.start()
     app.state.container_reaper = reaper
