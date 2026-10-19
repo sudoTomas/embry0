@@ -143,6 +143,8 @@ The organization page (`/orgs/<owner>`) has a **Design standard** line: the acti
 
 The Standards view lists every registered repository under the owner, lowest score first and those without a score last, each with its mode, score, open findings and newest audit job. An admin changes a repository's mode in place. An operator starts an audit; the button is off in mode off, without an active standard and while the repository's previous audit is pending or running, and a 409 shows its detail under the row. The one gold control is the Audit button of the first repository held to the standard that has never been audited and can be audited now; with none, nothing is gold. Below the table are the active standard itself (prose, references, the colour roles as swatches with their values, the other roles, the type scale and the rules) and its versions.
 
+A repository's page shows one line per kind: its mode, the score and findings of its newest completed audit, and a link to its newest audit job.
+
 The dashboard has no editor for the standard's JSON: a new version is written with `PUT /api/v1/standards/{owner}/{kind}`, and the view names that path.
 
 ## API
