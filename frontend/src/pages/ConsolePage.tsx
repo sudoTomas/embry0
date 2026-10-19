@@ -173,12 +173,15 @@ export function ConsolePage() {
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-bold">Console</h1>
-          <HeartbeatBadge lastUpdatedAt={dataUpdatedAt || null} />
+          <HeartbeatBadge lastUpdatedAt={dataUpdatedAt || null} connecting={!hasAnswered(jobs)} />
         </div>
         {/* While an agent waits on someone, answering it is the page's one
-            gold action, so New job steps down to the secondary tone. */}
+            gold action, so New job steps down to the secondary tone. Until
+            the jobs are in, the page does not know which it is: New job
+            waits in the secondary tone, rather than lighting gold and
+            going out when they show an agent waiting. */}
         <Button
-          variant={lanes.needs_you.length > 0 ? "secondary" : "default"}
+          variant={data && lanes.needs_you.length === 0 ? "default" : "secondary"}
           onClick={() => setShowCreate((s) => !s)}
         >
           <Plus className="h-4 w-4 mr-2" /> New job

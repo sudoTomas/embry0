@@ -346,6 +346,44 @@ describe("ConsolePage — on a phone", () => {
   });
 });
 
+describe("ConsolePage — the one gold action", () => {
+  const newJob = () => screen.getAllByRole("button", { name: /New job/ })[0];
+
+  it("holds New job in the secondary tone until the jobs say whether an agent waits", async () => {
+    let answer: (list: JobListResponse) => void = () => {};
+    mockFetchJobs.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    renderPage();
+
+    // Gold before the jobs were in went out again the moment they showed
+    // an agent waiting, whose answer is the page's one gold action.
+    expect(newJob()).toHaveClass("bg-overlay");
+    expect(newJob()).not.toHaveClass("bg-primary");
+    expect(screen.getByTestId("heartbeat-badge")).toHaveTextContent("Connecting…");
+    expect(screen.getByTestId("heartbeat-badge")).not.toHaveTextContent("OFFLINE");
+
+    await act(async () => answer(jobList([makeJob({ status: "running", task: "Running task" })])));
+    await waitFor(() => expect(newJob()).toHaveClass("bg-primary"));
+    expect(screen.getByTestId("heartbeat-badge")).toHaveTextContent(/Updated \d+s ago/);
+  });
+
+  it("leaves New job secondary once the jobs show an agent waiting", async () => {
+    mockFetchJobs.mockResolvedValue(
+      jobList([makeJob({ job_id: "wait0001aaaa", status: "awaiting_input", task: "Blocked task" })]),
+    );
+    renderPage();
+    await screen.findByText("Blocked task");
+    expect(newJob()).toHaveClass("bg-overlay");
+  });
+
+  it("leaves New job secondary and reads OFFLINE when the jobs fail to load", async () => {
+    mockFetchJobs.mockRejectedValue(new Error("unreachable"));
+    renderPage();
+    await screen.findByText("Failed to load jobs");
+    expect(newJob()).toHaveClass("bg-overlay");
+    expect(screen.getByTestId("heartbeat-badge")).toHaveTextContent("OFFLINE");
+  });
+});
+
 describe("ConsolePage — New Job launch flow", () => {
   it("creates a job with repo + task and navigates to its detail page", async () => {
     mockCreateJob.mockResolvedValue(makeJob({ job_id: "new-job-123" }));
