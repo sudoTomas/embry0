@@ -375,7 +375,7 @@ export function CredentialModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) requestClose();
       }}
@@ -385,7 +385,7 @@ export function CredentialModal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl"
+        className="relative max-h-full w-full max-w-md overflow-y-auto overscroll-contain rounded-lg border border-border bg-card p-6 shadow-xl"
       >
         <button
           type="button"

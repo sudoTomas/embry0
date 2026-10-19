@@ -283,6 +283,18 @@ describe("CredentialModal", () => {
     vi.useRealTimers();
   });
 
+  it("keeps the dialog inside a short screen and scrolls it inside itself", () => {
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} />);
+    const dialog = screen.getByRole("dialog", { name: "Create credential" });
+    // jsdom has no layout, so this pins the classes: the backdrop keeps a 16px
+    // gutter, and the dialog is no taller than the space inside it and scrolls
+    // its own content without handing the scroll to the page.
+    expect(dialog.parentElement?.className).toContain("p-4");
+    expect(dialog.className).toContain("max-h-full");
+    expect(dialog.className).toContain("overflow-y-auto");
+    expect(dialog.className).toContain("overscroll-contain");
+  });
+
   it("rotate mode shows the label read-only and submits only the secret", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined); const user = userEvent.setup();
     const credential = { id: "cred-000000000001", label: "alice", provider: "github", host: "github.com" } as never;
