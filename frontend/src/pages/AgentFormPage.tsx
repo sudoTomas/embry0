@@ -15,22 +15,23 @@ import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
-import { TagInput } from "@/components/ui/TagInput";
+import { AgentIdentityFields } from "@/components/agents/AgentIdentityFields";
+import { ToolChecklist } from "@/components/agents/ToolChecklist";
+import { SkillPicker } from "@/components/skills/SkillPicker";
 import { useAgent, useCreateAgent, useUpdateAgent } from "@/hooks/useAgents";
 import { useModels } from "@/hooks/useModels";
+import { useSkills } from "@/hooks/useSkills";
+import { useTools } from "@/hooks/useTools";
+import { DEFAULT_AVATAR, DEFAULT_COLOR, identityOf, type AvatarId, type PaletteId } from "@/lib/agentIdentity";
 import { providerForModel } from "@/lib/providers";
-import type { AgentCreateRequest, AgentUpdateRequest } from "@/lib/types/agents";
-
-const AVAILABLE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
-
-const SUGGESTED_SKILLS = [
-  "superpowers:subagent-driven-development",
-  "superpowers:verification-before-completion",
-  "superpowers:test-driven-development",
-];
+import type { AgentCreateRequest, AgentDefinition, AgentUpdateRequest } from "@/lib/types/agents";
 
 interface FormState {
   type: string;
+  display_name: string;
+  tagline: string;
+  avatar: AvatarId;
+  color: PaletteId;
   description: string;
   model: string;
   customModel: string;
@@ -48,6 +49,10 @@ const DEFAULT_MODEL = "claude-sonnet-5";
 
 const EMPTY_FORM: FormState = {
   type: "",
+  display_name: "",
+  tagline: "",
+  avatar: DEFAULT_AVATAR,
+  color: DEFAULT_COLOR,
   description: "",
   model: DEFAULT_MODEL,
   customModel: "",
@@ -94,6 +99,9 @@ export function AgentFormPage() {
     [offeredModels, providers],
   );
 
+  const { data: toolCatalog } = useTools();
+  const { data: skillCatalog, isLoading: skillsLoading } = useSkills();
+
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
 
@@ -104,8 +112,14 @@ export function AgentFormPage() {
     if (!existing) return;
     const isCustomModel = !offeredModels.includes(existing.model);
     const mcp = existing.mcp_servers;
+    // Through identityOf so a backend predating identity still yields valid ids.
+    const identity = identityOf(existing);
     setForm({
       type: existing.type,
+      display_name: identity.displayName,
+      tagline: identity.tagline,
+      avatar: identity.avatar,
+      color: identity.color,
       description: existing.description ?? "",
       model: isCustomModel ? "__custom__" : existing.model,
       customModel: isCustomModel ? existing.model : "",
@@ -185,10 +199,23 @@ export function AgentFormPage() {
       }
     }
 
+    const identity = {
+      display_name: form.display_name,
+      tagline: form.tagline,
+      avatar: form.avatar,
+      color: form.color,
+    };
+    const onSaved = (message: string) => (saved: AgentDefinition) => {
+      saved.warnings?.forEach((w) => toast.warning(w));
+      toast.success(message);
+      navigate("/agents");
+    };
+
     if (isEdit) {
       // PUT semantics: explicit null clears (execution/auth mode "inherit").
       const update: AgentUpdateRequest & { type: string } = {
         type: typeParam!,
+        ...identity,
         description: form.description,
         model: resolvedModel,
         tools: form.tools,
@@ -199,15 +226,13 @@ export function AgentFormPage() {
         mcp_servers: mcpServers,
       };
       updateAgent.mutate(update, {
-        onSuccess: () => {
-          toast.success("Agent updated");
-          navigate("/agents");
-        },
+        onSuccess: onSaved("Agent updated"),
         onError: (e) => toast.error(`Failed: ${e.message}`),
       });
     } else {
       const create: AgentCreateRequest = {
         type: form.type.trim(),
+        ...identity,
         description: form.description,
         model: resolvedModel,
         tools: form.tools,
@@ -218,15 +243,13 @@ export function AgentFormPage() {
         ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
       };
       createAgent.mutate(create, {
-        onSuccess: () => {
-          toast.success("Agent created");
-          navigate("/agents");
-        },
+        onSuccess: onSaved("Agent created"),
         onError: (e) => toast.error(`Failed: ${e.message}`),
       });
     }
   };
 
+  const orphanSkills = existing?.orphan_skills ?? [];
   const isPending = createAgent.isPending || updateAgent.isPending;
 
   if (isEdit && isLoading) {
@@ -297,6 +320,11 @@ export function AgentFormPage() {
                 <p className="text-xs text-white/30 mt-1">Agent type cannot be changed after creation.</p>
               )}
             </div>
+            <AgentIdentityFields
+              type={form.type}
+              value={form}
+              onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
+            />
             <div>
               <Label htmlFor="agent-description">Description</Label>
               <Textarea
@@ -379,35 +407,26 @@ export function AgentFormPage() {
             {/* Tools */}
             <div>
               <Label>Tools</Label>
-              <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {AVAILABLE_TOOLS.map((tool) => (
-                  <label
-                    key={tool}
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-md border border-white/[0.06] bg-white/[0.02] cursor-pointer hover:bg-white/[0.04] transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={form.tools.includes(tool)}
-                      onChange={() => handleToolToggle(tool)}
-                      className="w-4 h-4 rounded accent-cyan-500"
-                    />
-                    <span className="text-sm text-white/70 font-mono">{tool}</span>
-                  </label>
-                ))}
-              </div>
+              <ToolChecklist value={form.tools} onToggle={handleToolToggle} catalog={toolCatalog ?? []} />
             </div>
 
             {/* Skills */}
             <div>
-              <Label>Skills</Label>
-              <TagInput
-                value={form.skills}
-                onChange={(skills) => setForm((prev) => ({ ...prev, skills }))}
-                placeholder="Add skill..."
-                suggestions={SUGGESTED_SKILLS}
-                className="mt-1"
-              />
-              <p className="text-xs text-white/30 mt-1">Press Enter to add. Type to filter suggestions.</p>
+              <Label htmlFor="agent-skills">Skills</Label>
+              <div className="mt-1">
+                <SkillPicker
+                  id="agent-skills"
+                  value={form.skills}
+                  onChange={(skills) => setForm((prev) => ({ ...prev, skills }))}
+                  catalog={skillCatalog ?? []}
+                  isLoading={skillsLoading}
+                />
+              </div>
+              {isEdit && orphanSkills.length > 0 && (
+                <p className="text-xs text-amber-300/80 mt-1">
+                  No source lists: {orphanSkills.join(", ")}. They keep running; adding a new unknown name is refused.
+                </p>
+              )}
             </div>
 
             {/* Execution / auth mode (RAV-1058) */}
