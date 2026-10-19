@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useId } from "react";
 import {
   ReactFlowProvider,
   ReactFlow,
@@ -31,11 +31,14 @@ import { toastApiError } from "@/api/errorToast";
 const nodeTypes = { agentNode: AgentNode, startEndNode: StartEndNode };
 const edgeTypes = { feedbackEdge: FeedbackEdge };
 
+// embry0 re-seeds every built-in template on each restart, over any edit.
+const BUILTIN_HINT = "Built-in templates reset on restart. Save As makes your own copy.";
+
 interface PipelineEditorProps {
   mode?: "modal" | "page";
   initialGraph?: PipelineGraph;
   /** The saved template the page opened, so Save writes back to it. */
-  initialTemplate?: Pick<PipelineTemplate, "template_id" | "name">;
+  initialTemplate?: Pick<PipelineTemplate, "template_id" | "name" | "is_builtin">;
   onApply?: (graph: PipelineGraph) => void;
   onClose?: () => void;
 }
@@ -119,6 +122,10 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
 
   // Page-mode state
   const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(initialTemplate?.template_id ?? null);
+  // A built-in can be opened and edited, but only Save As keeps the edit.
+  const [isBuiltin, setIsBuiltin] = useState(initialTemplate?.is_builtin === true);
+  const canSaveInPlace = currentTemplateId !== null && !isBuiltin;
+  const builtinHintId = useId();
   const [pipelineName, setPipelineName] = useState(
     initialTemplate?.name || initialGraph?.name || "Untitled pipeline",
   );
@@ -140,19 +147,20 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
         // The id lives on the template, not inside its graph — reading
         // graph.metadata here left Save disabled forever (RAV-1293).
         setCurrentTemplateId(template.template_id ?? null);
+        setIsBuiltin(template.is_builtin === true);
       }
     },
     [loadGraph, mode],
   );
 
   const handleSave = useCallback(() => {
-    if (!currentTemplateId) return;
+    if (!currentTemplateId || isBuiltin) return;
     const graph = toApiGraph(serialize(pipelineName));
     renameMutation.mutate(
       { templateId: currentTemplateId, name: pipelineName, graph },
       { onError: (e) => toastApiError(e, "Failed to save the pipeline") },
     );
-  }, [currentTemplateId, pipelineName, serialize, renameMutation]);
+  }, [currentTemplateId, isBuiltin, pipelineName, serialize, renameMutation]);
 
   const handleAutoArrange = useCallback(() => {
     const result = autoLayout(nodes, edges);
@@ -170,6 +178,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
       {
         onSuccess: (created) => {
           setCurrentTemplateId(created.template_id);
+          setIsBuiltin(false);
           setPipelineName(name);
         },
         onError: (e) => toastApiError(e, "Failed to save the pipeline"),
@@ -228,7 +237,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
   ) : (
     /* Page header */
     <div className="h-14 shrink-0 border-b border-white/[0.08] flex items-center justify-between px-4 bg-surface">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-col">
         <input
           type="text"
           value={pipelineName}
@@ -236,6 +245,11 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
           className="bg-transparent border-none text-base font-semibold text-white outline-none focus:ring-1 focus:ring-white/20 rounded px-1.5 py-0.5 -ml-1.5 w-64"
           placeholder="Pipeline name..."
         />
+        {isBuiltin && (
+          <p id={builtinHintId} className="text-xs text-fg-muted">
+            {BUILTIN_HINT}
+          </p>
+        )}
       </div>
       <div className="flex items-center gap-2">
         <span className="relative inline-flex">
@@ -261,14 +275,16 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
           <FolderOpen size={13} />
           Templates
         </button>
-        {/* One gold action: Save once the pipeline is a saved template,
-            Save As while it is new and can only be saved as a copy. */}
+        {/* One gold action: Save for a template of your own, Save As for a
+            new pipeline or a built-in, which only a copy can keep. */}
         <Button
           type="button"
           size="sm"
-          variant={currentTemplateId ? "default" : "outline"}
+          variant={canSaveInPlace ? "default" : "outline"}
           onClick={handleSave}
-          disabled={!currentTemplateId || nodes.length === 0 || renameMutation.isPending}
+          disabled={!canSaveInPlace || nodes.length === 0 || renameMutation.isPending}
+          aria-describedby={isBuiltin ? builtinHintId : undefined}
+          title={isBuiltin ? BUILTIN_HINT : undefined}
           className="gap-1.5"
         >
           <Save size={13} />
@@ -277,7 +293,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
         <Button
           type="button"
           size="sm"
-          variant={currentTemplateId ? "outline" : "default"}
+          variant={canSaveInPlace ? "outline" : "default"}
           onClick={handleSaveAs}
           disabled={nodes.length === 0 || createMutation.isPending}
         >
