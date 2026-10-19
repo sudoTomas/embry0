@@ -13,6 +13,7 @@ import {
   ScrollText,
   Settings,
   ShieldCheck,
+  Sparkles,
   SquareTerminal,
   Variable,
   Workflow,
@@ -90,6 +91,7 @@ const NAV_GROUPS: readonly NavGroup[] = [
     items: [
       { path: "/sandboxes", label: "Sandboxes", icon: Container },
       { path: "/agents", label: "Agents", icon: Bot },
+      { path: "/skills", label: "Skills", icon: Sparkles, adminOnly: true },
       { path: "/environments", label: "Environments", icon: Variable },
       { path: "/credentials", label: "Credentials", icon: KeyRound },
     ],

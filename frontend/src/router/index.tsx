@@ -19,6 +19,7 @@ const NotFoundPage = lazy(() => import("../pages/NotFoundPage").then(m => ({ def
 const IssuesPage = lazy(() => import("@/pages/IssuesPage").then((m) => ({ default: m.IssuesPage })));
 const IssueDetailPage = lazy(() => import("@/pages/IssueDetailPage").then((m) => ({ default: m.IssueDetailPage })));
 const EnvironmentsPage = lazy(() => import("@/pages/EnvironmentsPage").then((m) => ({ default: m.EnvironmentsPage })));
+const SkillsPage = lazy(() => import("../pages/SkillsPage").then(m => ({ default: m.SkillsPage })));
 const CredentialsPage = lazy(() => import("../pages/CredentialsPage").then(m => ({ default: m.CredentialsPage })));
 const AboutOperationsPage = lazy(() => import("@/pages/AboutOperationsPage").then((m) => ({ default: m.AboutOperationsPage })));
 const QaAppHistoryPage = lazy(() => import("../pages/QaAppHistoryPage").then(m => ({ default: m.QaAppHistoryPage })));
@@ -56,6 +57,7 @@ export const router = createBrowserRouter([
       { path: "agents", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentsPage /></Suspense></ErrorBoundary> },
       { path: "agents/new", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
       { path: "agents/:type", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
+      { path: "skills", element: <ErrorBoundary inline><Suspense fallback={fallback}><SkillsPage /></Suspense></ErrorBoundary> },
       { path: "sandboxes", element: <ErrorBoundary inline><Suspense fallback={fallback}><SandboxesPage /></Suspense></ErrorBoundary> },
       { path: "sandboxes/new", element: <ErrorBoundary inline><Suspense fallback={fallback}><SandboxFormPage /></Suspense></ErrorBoundary> },
       { path: "sandboxes/:name", element: <ErrorBoundary inline><Suspense fallback={fallback}><SandboxFormPage /></Suspense></ErrorBoundary> },

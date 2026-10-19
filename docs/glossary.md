@@ -159,6 +159,9 @@ The visual canvas for composing pipelines. Located at `frontend/src/components/p
 ### TemplateDrawer
 The slide-in drawer in the [PipelineEditor](#pipelineeditor) that lists saved [templates](#template). Cards show the template name and (when set) the [operation](#the-seven-operations) sigil + tagline. Click a card to load its `PipelineGraph` into the canvas.
 
+### SkillsPage
+The dashboard page at `/skills` (Infra, admin) that lists [skill sources](api.md#skills) with their sync status, adds git or path sources, edits inline skills (published as the builtin `local` source), and shows the resulting catalog of `plugin:skill` names.
+
 ### AgentBar
 The horizontal bar at the bottom of the [PipelineEditor](#pipelineeditor) holding draggable agent chips. Each chip carries its substance sigil and color. Drag a chip onto the canvas to place an agent node. Filters out [triage](#triage) (orchestrator-side, not a pipeline node).
 
