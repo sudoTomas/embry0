@@ -1,7 +1,8 @@
 import { cn } from "@/lib/utils";
 
-/** A tile that is a status takes that status's colour on its border and value. */
-export type TileTone = "neutral" | "running" | "attention" | "good" | "bad";
+/** A tile that is a status takes that status's colour on its border and value.
+ * `accent` is the page's one gold: the single number to act on (Needs you). */
+export type TileTone = "neutral" | "running" | "good" | "bad" | "accent";
 
 interface VitalsTileProps {
   label: string;
@@ -16,9 +17,9 @@ interface VitalsTileProps {
 const TONE: Record<TileTone, { border: string; value: string }> = {
   neutral: { border: "border-border", value: "text-fg" },
   running: { border: "border-info/40", value: "text-info" },
-  attention: { border: "border-warning/40", value: "text-warning" },
   good: { border: "border-success/40", value: "text-success" },
   bad: { border: "border-destructive/40", value: "text-destructive" },
+  accent: { border: "border-primary/40", value: "text-primary" },
 };
 
 /** The family stat tile: the value on top, the label under it, sentence case. */

@@ -60,11 +60,13 @@ export function DashboardPage() {
             tone={(n) => (n > 0 ? "running" : "neutral")}
             detail={queue.data ? `${queue.data.pending} queued` : undefined}
           />
+          {/* The page's one gold: the count of jobs waiting for a person,
+              the single thing on Overview to act on. */}
           <SingleSourceTile
             label="Needs you"
             query={selectQuery(queue, (q) => q.awaiting_input + q.paused)}
             format={formatCount}
-            tone={(n) => (n > 0 ? "attention" : "neutral")}
+            tone={(n) => (n > 0 ? "accent" : "neutral")}
           />
           <SingleSourceTile
             label="Job success"
@@ -213,7 +215,7 @@ function DashboardPanel({
         {viewAll && (
           <Link
             to={viewAll.to}
-            className="text-sm text-primary hover:underline"
+            className="text-sm text-fg transition-colors hover:text-primary"
           >
             {viewAll.label} →
           </Link>

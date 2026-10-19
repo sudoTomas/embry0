@@ -12,14 +12,16 @@ interface BriefItem {
   text: string;
   /** Where the number is answered; the merge asks are answered in the approval chat. */
   to?: string;
-  /** Waits for a person: amber, and only shown above zero. */
+  /** Waits for a person: only shown above zero. */
   needsPerson: boolean;
 }
 
-/** Amber for what waits for a person; blue only for live work above zero, so
- * an idle "0 running" reads muted rather than as a second accent. */
+/** What waits for a person reads in the body colour, never amber or gold:
+ * the page keeps its one gold for the Needs-you count. Blue marks only live
+ * work above zero, so an idle "0 running" reads muted. Every linked item
+ * turns gold on hover. */
 function itemTone(item: BriefItem): string {
-  if (item.needsPerson) return "text-warning";
+  if (item.needsPerson) return "text-fg";
   return item.count > 0 ? "text-info" : "text-fg-muted";
 }
 
@@ -92,7 +94,7 @@ export function BriefBar() {
               <Link
                 to={item.to}
                 data-testid={`brief-${item.key}`}
-                className={cn(tone, "hover:underline")}
+                className={cn(tone, "transition-colors hover:text-primary")}
               >
                 {body}
               </Link>

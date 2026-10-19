@@ -46,9 +46,13 @@ describe("BriefBar", () => {
     expect(screen.getByTestId("brief-running")).toHaveAttribute("href", "/jobs");
   });
 
-  it("colours what needs a person amber and live work blue", () => {
+  it("writes what needs a person in the body colour, gold only on hover, and live work blue", () => {
     renderBar();
-    expect(screen.getByTestId("brief-awaiting").className).toContain("text-warning");
+    const awaiting = screen.getByTestId("brief-awaiting").className;
+    expect(awaiting).toContain("text-fg");
+    expect(awaiting).toContain("hover:text-primary");
+    expect(awaiting).not.toContain("text-warning");
+    expect(awaiting).not.toMatch(/(^| )text-primary/);
     expect(screen.getByTestId("brief-running").className).toContain("text-info");
   });
 
