@@ -303,9 +303,10 @@ export function SandboxFormPage() {
             </div>
           </div>
           <div>
-            <Label>Additional Packages</Label>
+            <Label htmlFor="additional_packages">Additional Packages</Label>
             <div className="mt-1">
               <TagInput
+                id="additional_packages"
                 value={form.additional_packages}
                 onChange={(tags) => setField("additional_packages", tags)}
                 placeholder="Add package..."
@@ -315,9 +316,10 @@ export function SandboxFormPage() {
             <p className="text-xs text-white/30 mt-1">Press Enter to add. These are installed at container startup.</p>
           </div>
           <div>
-            <Label>Setup Commands</Label>
+            <Label htmlFor="setup_commands">Setup Commands</Label>
             <div className="mt-1">
               <TagInput
+                id="setup_commands"
                 value={form.setup_commands}
                 onChange={(tags) => setField("setup_commands", tags)}
                 placeholder="Add command..."

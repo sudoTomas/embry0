@@ -29,6 +29,13 @@ export function forgeIssueUrl(opts: {
   return null;
 }
 
+const TRACKER_NAMES: Record<string, string> = { github: "GitHub", gitlab: "GitLab", linear: "Linear" };
+
+/** A tracker's name as people write it; an issue with no tracker syncs to GitHub. */
+export function trackerName(tracker: string | null | undefined): string {
+  return TRACKER_NAMES[(tracker ?? "github").toLowerCase()] ?? tracker ?? "GitHub";
+}
+
 function parseUrl(raw: string | null | undefined): URL | null {
   if (!raw) return null;
   try {

@@ -23,6 +23,7 @@ import { useIssue, useIssueActivity, useTriageIssue, useSyncIssue, useDeleteIssu
 import { formatDate } from "@/lib/utils";
 import { formatCost } from "@/lib/utils";
 import { statusLabel } from "@/lib/status";
+import { trackerName } from "@/lib/forgeLinks";
 import type { NotificationChannel } from "@/lib/types";
 import { toastApiError } from "@/api/errorToast";
 
@@ -317,6 +318,7 @@ export function IssueDetailPage(): JSX.Element {
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5">Status</p>
                 <Select
+                  aria-label="Status"
                   value={issue.status}
                   onChange={(e) => handleFieldUpdate("status", e.target.value)}
                   className="h-8 text-xs"
@@ -334,6 +336,7 @@ export function IssueDetailPage(): JSX.Element {
               <div>
                 <p className="text-xs text-muted-foreground mb-1.5">Priority</p>
                 <Select
+                  aria-label="Priority"
                   value={issue.priority}
                   onChange={(e) => handleFieldUpdate("priority", e.target.value)}
                   className="h-8 text-xs"
@@ -374,6 +377,7 @@ export function IssueDetailPage(): JSX.Element {
                         </span>
                         {issue.tracker_url && (
                           <a
+                            aria-label={`Open ${issue.tracker === "linear" ? issue.tracker_key : `#${issue.tracker_key}`} in ${trackerName(issue.tracker)}`}
                             href={issue.tracker_url}
                             target="_blank"
                             rel="noopener noreferrer"

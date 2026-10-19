@@ -185,18 +185,19 @@ export default function IntegrationsTab() {
         <CardContent>
           <div className="space-y-4">
             <div>
-              <Label>Webhook URL</Label>
+              <Label htmlFor="inbound_webhook_url">Webhook URL</Label>
               <div className="flex items-center gap-2 mt-1">
-                <Input value={webhookUrl} readOnly className="font-mono text-xs" />
-                <Button variant="outline" size="sm" onClick={handleCopyWebhook}>
+                <Input id="inbound_webhook_url" value={webhookUrl} readOnly className="font-mono text-xs" />
+                <Button variant="outline" size="sm" onClick={handleCopyWebhook} aria-label="Copy webhook URL" title="Copy webhook URL">
                   <Copy className="w-4 h-4" />
                 </Button>
               </div>
             </div>
             <div>
-              <Label>Trigger labels</Label>
+              <Label htmlFor="trigger_labels">Trigger labels</Label>
               <div className="mt-1">
                 <TagInput
+                  id="trigger_labels"
                   value={form.trigger_labels}
                   onChange={(tags) => setForm((prev) => (prev ? { ...prev, trigger_labels: tags } : prev))}
                   placeholder="Add trigger label..."

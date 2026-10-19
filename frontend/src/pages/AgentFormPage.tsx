@@ -404,8 +404,9 @@ export function AgentFormPage() {
 
             {/* Skills */}
             <div>
-              <Label>Skills</Label>
+              <Label htmlFor="agent_skills">Skills</Label>
               <TagInput
+                id="agent_skills"
                 value={form.skills}
                 onChange={(skills) => setForm((prev) => ({ ...prev, skills }))}
                 placeholder="Add skill..."

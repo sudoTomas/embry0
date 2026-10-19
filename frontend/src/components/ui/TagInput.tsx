@@ -3,6 +3,8 @@ import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface TagInputProps {
+  /** The text box's id, so a `<Label htmlFor>` names it. */
+  id?: string;
   value: string[];
   onChange: (tags: string[]) => void;
   placeholder?: string;
@@ -11,7 +13,7 @@ interface TagInputProps {
   disabled?: boolean;
 }
 
-export function TagInput({ value, onChange, placeholder = "Add...", suggestions, className, disabled = false }: TagInputProps) {
+export function TagInput({ id, value, onChange, placeholder = "Add...", suggestions, className, disabled = false }: TagInputProps) {
   const [input, setInput] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
 
@@ -54,13 +56,19 @@ export function TagInput({ value, onChange, placeholder = "Add...", suggestions,
           >
             {tag}
             {!disabled && (
-              <button type="button" onClick={() => removeTag(i)} className="hover:text-destructive">
+              <button
+                type="button"
+                onClick={() => removeTag(i)}
+                className="hover:text-destructive"
+                aria-label={`Remove ${tag}`}
+              >
                 <X className="w-3 h-3" />
               </button>
             )}
           </span>
         ))}
         <input
+          id={id}
           value={input}
           onChange={(e) => { setInput(e.target.value); setShowSuggestions(true); }}
           onKeyDown={handleKeyDown}

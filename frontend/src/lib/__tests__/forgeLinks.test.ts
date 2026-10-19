@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { forgeIssueUrl } from "../forgeLinks";
+import { forgeIssueUrl, trackerName } from "../forgeLinks";
 
 describe("forgeIssueUrl", () => {
   it("reads a GitHub pull request's repository and host", () => {
@@ -24,5 +24,13 @@ describe("forgeIssueUrl", () => {
     expect(forgeIssueUrl({ repo: "acme/app", issueNumber: null, forge: "github" })).toBeNull();
     expect(forgeIssueUrl({ repo: "acme/app", issueNumber: 4, prUrl: "not a url" })).toBeNull();
     expect(forgeIssueUrl({ repo: "acme/app", issueNumber: 4, prUrl: "javascript:alert(1)" })).toBeNull();
+  });
+});
+
+describe("trackerName", () => {
+  it("writes each tracker as people do, GitHub for an issue with none", () => {
+    expect(trackerName("gitlab")).toBe("GitLab");
+    expect(trackerName("linear")).toBe("Linear");
+    expect(trackerName(null)).toBe("GitHub");
   });
 });
