@@ -10,6 +10,7 @@ import { RepoAccountsSection } from "@/components/repos/RepoAccountsSection";
 import { RepoStandardsRow } from "@/components/standards/RepoStandardsRow";
 import { RepoDockerAccessSection } from "@/components/repos/RepoDockerAccessSection";
 import { ReadinessChip, SetupChecklist } from "@/components/repos/SetupChecklist";
+import { HistoryPanel } from "@/components/repos/HistoryPanel";
 import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
 import { PullRequestReviewCard } from "@/components/environments/PullRequestReviewCard";
 import { PageError } from "@/components/PageError";
@@ -22,7 +23,7 @@ import { formatDateTime } from "@/lib/utils";
 
 /** RAV-1253: the unified per-repo view. It opens on the setup checklist, then
  * the QA config editor, environment (masked), forge account, sandbox
- * preferences, and recent QA runs. */
+ * preferences, the history of setting changes, and recent test runs. */
 export function RepoDetailPage() {
   // Splat param: the repo path can be `owner/name` OR a GitLab nested
   // subgroup like `group/subgroup/project` (#162).
@@ -157,13 +158,15 @@ export function RepoDetailPage() {
         <RepoDockerAccessSection repo={repo.repo} dockerAccess={repo.docker_access === true} />
       </section>
 
+      <HistoryPanel repo={full} />
+
       <section className="space-y-2">
         <div className="flex items-center gap-2">
           <ListChecks className="h-4 w-4 text-fg-muted" />
-          <h2 className="text-section font-semibold">Recent QA runs</h2>
+          <h2 className="text-section font-semibold">Recent test runs</h2>
         </div>
         {(runs.data ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">No QA runs yet.</p>
+          <p className="text-sm text-muted-foreground">No test runs yet.</p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="data-table">

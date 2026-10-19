@@ -43,6 +43,12 @@ vi.mock("@/components/repos/RepoDockerAccessSection", () => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+const mockFetchHistory = vi.fn();
+vi.mock("@/api/repoHistory", () => ({
+  fetchHistory: (...a: unknown[]) => mockFetchHistory(...a),
+  undoChange: vi.fn(),
+}));
+
 const mockFetchReadiness = vi.fn();
 vi.mock("@/api/repoSetup", () => ({
   fetchReadiness: (...a: unknown[]) => mockFetchReadiness(...a),
@@ -107,6 +113,8 @@ beforeEach(() => {
   mockFetchRepoDetail.mockReset();
   mockFetchReadiness.mockReset();
   mockFetchReadiness.mockResolvedValue(READINESS);
+  mockFetchHistory.mockReset();
+  mockFetchHistory.mockResolvedValue({ entries: [], before_history: false });
   mockUseRepoEnv.mockReturnValue({ data: [] });
   mockUseQaRunsForRepo.mockReturnValue({ data: [] });
 });
@@ -195,6 +203,19 @@ describe("RepoDetailPage (RAV-1253)", () => {
     expect(screen.queryByTestId("repo-readiness-chip")).not.toBeInTheDocument();
     expect(screen.getByTestId("qa-config-editor")).toHaveTextContent("acme/widgets");
     expect(screen.getByTestId("repo-accounts-section")).toBeInTheDocument();
+  });
+
+  it("puts History after the settings and before the recent test runs", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    renderPage();
+    const history = await screen.findByTestId("history-panel");
+    const docker = screen.getByRole("heading", { name: "Docker access" });
+    const runs = screen.getByRole("heading", { name: "Recent test runs" });
+    expect(docker.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(history.compareDocumentPosition(runs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mockFetchHistory).toHaveBeenCalledWith("acme/widgets");
+    expect(screen.queryByRole("heading", { name: "Recent QA runs" })).not.toBeInTheDocument();
+    expect(screen.getByText("No test runs yet.")).toBeInTheDocument();
   });
 
   it("masks secret env values and links runs", async () => {
