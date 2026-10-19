@@ -60,6 +60,7 @@ describe("StandardsPage", () => {
     expect(api.standards).toHaveBeenCalledWith("acme");
     expect(screen.getByText("Version 2")).toBeInTheDocument();
     expect(screen.getByTestId("standard-prose")).toHaveTextContent("Dense and dark.");
+    expect(screen.getByTestId("standard-references")).toHaveTextContent(/^References/);
     expect(screen.getByTestId("standard-references")).toHaveTextContent("example.com/brand");
     expect(screen.getAllByTestId("standard-colour")).toHaveLength(2);
     expect(screen.getAllByTestId("standard-type-step")).toHaveLength(3);

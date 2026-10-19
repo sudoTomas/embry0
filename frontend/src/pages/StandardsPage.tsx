@@ -105,7 +105,7 @@ export function StandardsPage() {
             )}
             {active.references.length > 0 && (
               <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-muted" data-testid="standard-references">
-                <span>Held best in</span>
+                <span>References</span>
                 {active.references.map((ref) =>
                   /^https?:\/\//.test(ref) ? (
                     <a key={ref} href={ref} target="_blank" rel="noreferrer" className="font-mono text-fg-secondary hover:text-primary hover:underline">
