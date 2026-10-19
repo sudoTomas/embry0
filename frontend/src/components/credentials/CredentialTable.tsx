@@ -6,8 +6,9 @@ import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Tooltip } from "@/components/ui/Tooltip";
 import type { Credential, CredentialKind } from "@/lib/types/credentials";
-import { cn, formatDate } from "@/lib/utils";
-import { sentenceCase } from "@/lib/status";
+import { cn, formatDateTime } from "@/lib/utils";
+import { providerLabel, sentenceCase } from "@/lib/status";
+import { APP_NAME } from "@/lib/branding";
 
 export interface CredentialTableProps {
   credentials: Credential[];
@@ -40,13 +41,23 @@ const KIND_LABELS: Record<CredentialKind, string> = {
   ssh_key: "SSH key",
 };
 
+/** An account with no author of its own commits as the deployment's default
+ * author. The API does not return that identity, so the cell names it and the
+ * tooltip says where it comes from and what it is unless the deployment
+ * overrides it (embry0/branding.py). */
+const DEFAULT_AUTHOR = `${APP_NAME} default`;
+const DEFAULT_AUTHOR_TITLE =
+  "No author set on this account: commits use the deployment's default author, " +
+  "EMBRY0_GIT_AUTHOR_NAME <EMBRY0_GIT_AUTHOR_EMAIL>, " +
+  "which is embry0 <embry0-bot@users.noreply.github.com> unless the deployment sets them.";
+
 function authorLabel(credential: Credential): string {
   const name = credential.git_author_name;
   const email = credential.git_author_email;
   if (name && email) return `${name} <${email}>`;
   if (name) return name;
   if (email) return `<${email}>`;
-  return "branding default";
+  return DEFAULT_AUTHOR;
 }
 
 /**
@@ -140,14 +151,14 @@ export function CredentialTable({
                   data-testid="credential-row"
                 >
                   <td>
-                    <div className="text-foreground">{credential.label}</div>
-                    <div className="text-xs text-muted-foreground sm:hidden">{credential.provider}</div>
+                    <div className="font-mono text-xs text-foreground">{credential.label}</div>
+                    <div className="text-xs text-muted-foreground sm:hidden">{providerLabel(credential.provider)}</div>
                     {credential.verified_login && (
                       <div className="text-xs text-muted-foreground">{credential.verified_login}</div>
                     )}
                   </td>
                   <td className="hidden sm:table-cell">
-                    <div>{credential.provider}</div>
+                    <div>{providerLabel(credential.provider)}</div>
                     <div className="text-xs text-muted-foreground">
                       {credential.provider === "anthropic" || credential.provider === "xai"
                         ? KIND_LABELS[credential.kind] ?? sentenceCase(credential.kind)
@@ -160,8 +171,9 @@ export function CredentialTable({
                   <td
                     className={cn(
                       "hidden px-4 py-3 text-xs sm:table-cell",
-                      author === "branding default" && "text-muted-foreground",
+                      author === DEFAULT_AUTHOR && "text-muted-foreground",
                     )}
+                    title={author === DEFAULT_AUTHOR ? DEFAULT_AUTHOR_TITLE : undefined}
                   >
                     {author}
                   </td>
@@ -181,7 +193,7 @@ export function CredentialTable({
                     </Button>
                   </td>
                   <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">
-                    {credential.last_used_at ? formatDate(credential.last_used_at) : "never"}
+                    {credential.last_used_at ? formatDateTime(credential.last_used_at) : "never"}
                   </td>
                   <td className="text-right">
                     {/* Three to a line below sm, one line above. */}

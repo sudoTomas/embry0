@@ -24,7 +24,7 @@ function ReportBody({ content }: { content: string }) {
       {needsToggle && (
         <button
           onClick={() => setExpanded((e) => !e)}
-          className="mt-1 text-2xs text-primary hover:underline"
+          className="mt-1 text-2xs text-fg hover:text-primary hover:underline"
         >
           {expanded ? "Show less" : "Show full report"}
         </button>

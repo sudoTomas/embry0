@@ -59,6 +59,15 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     ]);
   });
 
+  it("shows a quiet uppercase label over each group but Overview, a group of one", () => {
+    renderSidebar();
+    const work = screen.getByRole("heading", { level: 3, name: "Work" });
+    expect(work.className).not.toContain("sr-only");
+    expect(work.className).toContain("uppercase");
+    expect(work.className).toContain("text-fg-muted");
+    expect(screen.getByRole("heading", { level: 3, name: "Overview" }).className).toContain("sr-only");
+  });
+
   it("Operations section contains Watcher, Logs in that order (Deploys removed with the RAV-658 deployer)", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Operations" })
@@ -108,12 +117,12 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     ]);
   });
 
-  it("Settings section contains Settings, LLM Providers", () => {
+  it("Settings section contains Settings, LLM providers", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Settings" })
       .parentElement as HTMLElement;
     const links = within(section).getAllByRole("link");
-    expect(links.map((a) => a.textContent?.trim())).toEqual(["Settings", "LLM Providers"]);
+    expect(links.map((a) => a.textContent?.trim())).toEqual(["Settings", "LLM providers"]);
   });
 
   it("Overview section contains a single Overview link to /", () => {
@@ -137,7 +146,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
       Repos: "/repos",
       Organizations: "/orgs",
       QA: "/qa/repos",
-      "LLM Providers": "/providers",
+      "LLM providers": "/providers",
       Watcher: "/watcher",
       Logs: "/logs",
       Sandboxes: "/sandboxes",

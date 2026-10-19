@@ -83,6 +83,17 @@ describe("EnvironmentsPage — RAV-1294 discoverability", () => {
     ).toBeInTheDocument();
   });
 
+  it("names its sections and buttons in sentence case and keeps the empty hints readable", async () => {
+    renderPage();
+    expect(screen.getByRole("heading", { name: "App config" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "QA test credentials" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add variable" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add QA variable" })).toBeInTheDocument();
+    const hint = screen.getByText(/to set global defaults/);
+    expect(hint.className).toContain("text-fg-muted");
+    expect(hint.className).not.toContain("white/[0.12]");
+  });
+
   it("clicking a repo chip jumps to that repo's tab", async () => {
     renderPage();
     const summary = await screen.findByTestId("repo-env-summary");

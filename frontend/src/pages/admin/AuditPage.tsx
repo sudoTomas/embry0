@@ -10,8 +10,8 @@ import { Pagination } from "@/components/ui/Pagination";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
-import { formatDate } from "@/lib/utils";
-import { ACTION_ICONS, ACTION_LABELS, actionLabel, formatDetails } from "@/lib/auditLabels";
+import { formatDateTime } from "@/lib/utils";
+import { ACTION_LABELS, actionIcon, actionLabel, formatDetails } from "@/lib/auditLabels";
 
 const WINDOW_OPTIONS = [
   { hours: 0, label: "All time" },
@@ -55,7 +55,7 @@ export function AuditPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <ScrollText size={18} className="text-primary" />
+        <ScrollText size={18} className="text-fg-muted" />
         <h1 className="text-xl font-bold">Audit</h1>
         {audit.data && <span className="text-sm text-muted-foreground">{audit.data.total}</span>}
       </div>
@@ -129,11 +129,12 @@ export function AuditPage() {
                   <tbody>
                     {audit.data.entries.map((entry) => {
                       const detail = formatDetails(entry.action, entry.details);
+                      const Icon = actionIcon(entry.action);
                       return (
                         <tr key={entry.id}>
                           <td>
                             <div className="flex items-baseline gap-1.5">
-                              <span className="text-sm">{ACTION_ICONS[entry.action] ?? "●"}</span>
+                              <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 self-center text-fg-muted" />
                               <span className="whitespace-nowrap font-medium text-white/80">
                                 {actionLabel(entry.action)}
                               </span>
@@ -145,7 +146,7 @@ export function AuditPage() {
                           <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">{entry.actor}</td>
                           <td className="hidden font-mono text-xs sm:table-cell">
                             {entry.issue_id ? (
-                              <Link to={`/issues/${entry.issue_id}`} className="text-primary hover:underline">
+                              <Link to={`/issues/${entry.issue_id}`} className="text-fg hover:text-primary hover:underline">
                                 {entry.issue_id.slice(0, 12)}
                               </Link>
                             ) : (
@@ -153,7 +154,7 @@ export function AuditPage() {
                             )}
                           </td>
                           <td className="whitespace-nowrap text-right text-xs text-muted-foreground">
-                            {formatDate(entry.created_at)}
+                            {formatDateTime(entry.created_at)}
                           </td>
                         </tr>
                       );

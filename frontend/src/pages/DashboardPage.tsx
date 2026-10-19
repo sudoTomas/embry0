@@ -4,7 +4,7 @@ import { useStats } from "@/hooks/useStats";
 import { useQueue } from "@/hooks/useQueue";
 import { useWatcherRuns } from "@/hooks/useWatcherRuns";
 import { Badge } from "@/components/ui/Badge";
-import { formatDate } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 import { statusLabel, statusTone } from "@/lib/status";
 import { watcherActionLabel, watcherActionTone } from "@/lib/watcherActions";
 import {
@@ -60,11 +60,13 @@ export function DashboardPage() {
             tone={(n) => (n > 0 ? "running" : "neutral")}
             detail={queue.data ? `${queue.data.pending} queued` : undefined}
           />
+          {/* The page's one gold: the count of jobs waiting for a person,
+              the single thing on Overview to act on. */}
           <SingleSourceTile
             label="Needs you"
             query={selectQuery(queue, (q) => q.awaiting_input + q.paused)}
             format={formatCount}
-            tone={(n) => (n > 0 ? "attention" : "neutral")}
+            tone={(n) => (n > 0 ? "accent" : "neutral")}
           />
           <SingleSourceTile
             label="Job success"
@@ -127,7 +129,7 @@ export function DashboardPage() {
                     <td className="num hidden whitespace-nowrap text-fg-secondary sm:table-cell">
                       {issue.cost_usd !== undefined ? formatUsd(issue.cost_usd) : "—"}
                     </td>
-                    <td className="num whitespace-nowrap text-fg-muted">{formatDate(issue.timestamp)}</td>
+                    <td className="num whitespace-nowrap text-fg-muted">{formatDateTime(issue.timestamp)}</td>
                   </tr>
                 );
               })}
@@ -162,7 +164,7 @@ export function DashboardPage() {
                   <td className="w-full max-w-0 truncate text-fg-secondary">
                     {run.tracker_key ?? `${run.log_lines} log lines`}
                   </td>
-                  <td className="num whitespace-nowrap text-fg-muted">{formatDate(run.created_at)}</td>
+                  <td className="num whitespace-nowrap text-fg-muted">{formatDateTime(run.created_at)}</td>
                 </tr>
               ))}
             </tbody>
@@ -213,7 +215,7 @@ function DashboardPanel({
         {viewAll && (
           <Link
             to={viewAll.to}
-            className="text-sm text-primary hover:underline"
+            className="text-sm text-fg transition-colors hover:text-primary"
           >
             {viewAll.label} →
           </Link>

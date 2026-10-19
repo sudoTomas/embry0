@@ -123,7 +123,7 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        aria-label={isEdit ? "Edit Variable" : "Add Variable"}
+        aria-label={isEdit ? "Edit variable" : "Add variable"}
         className="relative w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl"
       >
         <button
@@ -134,7 +134,7 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
         </button>
 
         <h2 className="text-section font-semibold mb-1">
-          {isEdit ? "Edit Variable" : "Add Variable"}
+          {isEdit ? "Edit variable" : "Add variable"}
           {effectiveScope === "qa" && (
             <span className="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-purple/10 text-purple ring-1 ring-inset ring-purple/20 align-middle">
               QA

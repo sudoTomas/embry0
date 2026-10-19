@@ -58,4 +58,16 @@ describe("PipelinesPage", () => {
     const card = screen.getByRole("button", { name: /Issue to PR/ });
     expect(card.innerHTML).not.toMatch(/text-info|bg-info|bg-blue/);
   });
+
+  it("dates a template card in the shared format: no year inside the current one", () => {
+    const year = new Date().getFullYear();
+    mockUseTemplates.mockReturnValue({
+      data: [{ template_id: "t1", name: "Issue to PR", description: "", created_at: `${year}-03-15T12:00:00Z` }],
+      isLoading: false,
+    });
+    renderPage();
+    const card = screen.getByRole("button", { name: /Issue to PR/ });
+    expect(card).toHaveTextContent(/Mar 15$/);
+    expect(card).not.toHaveTextContent(String(year));
+  });
 });

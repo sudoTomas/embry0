@@ -146,7 +146,12 @@ export function ConsolePage() {
           <h1 className="text-xl font-bold">Console</h1>
           <HeartbeatBadge lastUpdatedAt={dataUpdatedAt || null} />
         </div>
-        <Button onClick={() => setShowCreate((s) => !s)}>
+        {/* While an agent waits on someone, answering it is the page's one
+            gold action, so New job steps down to the secondary tone. */}
+        <Button
+          variant={lanes.needs_you.length > 0 ? "secondary" : "default"}
+          onClick={() => setShowCreate((s) => !s)}
+        >
           <Plus className="h-4 w-4 mr-2" /> New job
         </Button>
       </div>

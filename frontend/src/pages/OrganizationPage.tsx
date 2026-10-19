@@ -4,6 +4,7 @@ import { formatErrorDetail } from "@/api/errorDetail";
 import { AccessChips } from "@/components/orgs/AccessChips";
 import { DiscoveryStatus } from "@/components/orgs/DiscoveryStatus";
 import { OrgActPanel } from "@/components/orgs/OrgActPanel";
+import { OrgCredential } from "@/components/orgs/OrgCredential";
 import { OrgNeedsList } from "@/components/orgs/OrgNeedsList";
 import { OrgReposTable } from "@/components/orgs/OrgReposTable";
 import { RediscoverSetting } from "@/components/orgs/RediscoverSetting";
@@ -21,7 +22,7 @@ import {
   useOrganizationRepos,
   useOrganizationRuns,
 } from "@/hooks/useOrgs";
-import { ORG_WIZARD_PATH, credentialLabel } from "@/lib/orgs";
+import { ORG_WIZARD_PATH } from "@/lib/orgs";
 import { useAuthStore } from "@/stores/authStore";
 import { cn, formatDate } from "@/lib/utils";
 import { statusLabel } from "@/lib/status";
@@ -112,8 +113,8 @@ export function OrganizationPage() {
             <Radar className="h-4 w-4" /> Rediscover
           </Button>
         </div>
-        <p className="text-sm text-white/60">
-          {credentialLabel(o, credentials.data)}
+        <p className="text-sm text-white/60" data-testid="org-meta">
+          <OrgCredential org={o} credentials={credentials.data} />
           {o.repo_count !== null && ` · ${o.repo_count} repositories`}
           {` · discovered ${o.discovered_at ? formatDate(o.discovered_at) : "never"}`}
         </p>

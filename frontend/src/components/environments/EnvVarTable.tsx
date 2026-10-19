@@ -34,14 +34,16 @@ export function EnvVarTable({
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <div className="relative">
-          <KeyRound size={40} className="text-white/10 relative" />
+          <KeyRound size={40} className="text-fg-muted relative" />
         </div>
-        <p className="text-white/25 text-sm mt-4 font-medium">No environment variables configured</p>
-        <p className="text-white/[0.12] text-xs mt-1">Click &ldquo;Add Variable&rdquo; to set global defaults</p>
+        <p className="text-fg-secondary text-sm mt-4 font-medium">No environment variables configured</p>
+        <p className="text-fg-muted text-xs mt-1">Click &ldquo;Add variable&rdquo; to set global defaults</p>
       </div>
     );
   }
 
+  // Below sm the key, its value and the actions stay; type, description and
+  // the required mark step aside so edit and delete stay on a phone screen.
   return (
     <div className="overflow-x-auto">
       <table className="data-table">
@@ -53,10 +55,10 @@ export function EnvVarTable({
             <th>
               Value
             </th>
-            <th>
+            <th className="hidden sm:table-cell">
               Type
             </th>
-            <th>
+            <th className="hidden sm:table-cell">
               Description
             </th>
             {showSource && (
@@ -65,7 +67,7 @@ export function EnvVarTable({
               </th>
             )}
             {showRequired && (
-              <th>
+              <th className="hidden sm:table-cell">
                 Required
               </th>
             )}
@@ -83,7 +85,7 @@ export function EnvVarTable({
               <tr
                 key={v.key}
               >
-                <td className="font-mono text-xs text-foreground">{v.key}</td>
+                <td className="font-mono text-xs text-foreground [overflow-wrap:anywhere]">{v.key}</td>
 
                 <td className="font-mono text-xs text-muted-foreground max-w-[280px]">
                   <div className="flex items-center gap-2">
@@ -121,7 +123,7 @@ export function EnvVarTable({
                   </div>
                 </td>
 
-                <td>
+                <td className="hidden sm:table-cell">
                   {v.var_type === "secret" ? (
                     <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-amber-500/10 text-amber-400 ring-1 ring-inset ring-amber-500/20">
                       secret
@@ -133,7 +135,7 @@ export function EnvVarTable({
                   )}
                 </td>
 
-                <td className="text-muted-foreground text-xs max-w-[240px] truncate">
+                <td className="hidden text-muted-foreground text-xs max-w-[240px] truncate sm:table-cell">
                   {v.description || "\u2014"}
                 </td>
 
@@ -152,7 +154,7 @@ export function EnvVarTable({
                 )}
 
                 {showRequired && (
-                  <td className="text-center">
+                  <td className="hidden text-center sm:table-cell">
                     {v.required && <span className="text-amber-400 text-xs">*</span>}
                   </td>
                 )}

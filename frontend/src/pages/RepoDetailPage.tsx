@@ -14,7 +14,8 @@ import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { Badge } from "@/components/ui/Badge";
 import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
-import { statusLabel } from "@/lib/status";
+import { providerLabel, statusLabel } from "@/lib/status";
+import { formatDateTime } from "@/lib/utils";
 
 /** RAV-1253: the unified per-repo view — registry state, QA config editor,
  * environment (masked), forge account, sandbox preferences, and recent QA runs. */
@@ -55,7 +56,7 @@ export function RepoDetailPage() {
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
           <h1 className="text-xl font-bold">{full}</h1>
           <Badge tone="neutral" data-testid="repo-detail-forge">
-            {repo.forge === "gitlab" ? "GitLab" : "GitHub"}
+            {providerLabel(repo.forge)}
           </Badge>
           {repo.active ? <Badge tone="success">Active</Badge> : <Badge tone="neutral">Inactive</Badge>}
           {repo.has_qa_config ? (
@@ -67,7 +68,7 @@ export function RepoDetailPage() {
         {repo.notes && <p className="mt-1 text-sm text-white/60">{repo.notes}</p>}
         {repo.qa_config_updated_at && (
           <p className="mt-1 text-xs text-muted-foreground" data-testid="repo-config-meta">
-            QA config updated {repo.qa_config_updated_at}
+            QA config updated {formatDateTime(repo.qa_config_updated_at)}
             {repo.qa_config_updated_by ? ` by ${repo.qa_config_updated_by}` : ""}
           </p>
         )}
@@ -89,7 +90,7 @@ export function RepoDetailPage() {
           <h2 className="text-section font-semibold">Environment</h2>
           <Link
             to={`/environments?repo=${encodeURIComponent(full)}`}
-            className="ml-auto text-sm text-primary hover:underline"
+            className="ml-auto text-sm text-fg hover:text-primary hover:underline"
             data-testid="repo-env-manage-link"
           >
             Manage in Environments →
@@ -180,7 +181,7 @@ export function RepoDetailPage() {
               <tbody>
                 {(runs.data ?? []).map((run) => (
                   <tr key={run.job_id}>
-                    <td className="w-full max-w-0 truncate">
+                    <td className="w-full whitespace-nowrap">
                       <Link
                         to={`/qa/runs/${run.job_id}`}
                         className="font-mono text-xs text-fg hover:text-primary hover:underline"
@@ -193,7 +194,7 @@ export function RepoDetailPage() {
                       <RunStatusBadge status={run.overall_status} />
                     </td>
                     <td className="num whitespace-nowrap text-fg-muted">
-                      {new Date(run.started_at).toLocaleString()}
+                      {formatDateTime(run.started_at)}
                     </td>
                   </tr>
                 ))}

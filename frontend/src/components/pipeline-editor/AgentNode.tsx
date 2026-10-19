@@ -38,7 +38,6 @@ export function AgentNode({ data, selected }: NodeProps) {
         style={{
           width: SPHERE_PX,
           height: SPHERE_PX,
-          filter: selected ? `drop-shadow(0 0 12px ${color}66)` : undefined,
         }}
       >
         <Handle
@@ -52,6 +51,7 @@ export function AgentNode({ data, selected }: NodeProps) {
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none"
           viewBox="0 0 64 64"
+          overflow="visible"
         >
           <circle
             cx="32"
@@ -62,6 +62,19 @@ export function AgentNode({ data, selected }: NodeProps) {
             strokeWidth="2"
             opacity={ringOpacity}
           />
+          {/* Selected: a 1.5 px ring (1 unit at 96 px) in the node's own
+              colour just outside the halo, never a glow. */}
+          {selected && (
+            <circle
+              data-testid="node-selected-ring"
+              cx="32"
+              cy="32"
+              r={HALO_RADIUS + 2.5}
+              fill="none"
+              stroke={color}
+              strokeWidth="1"
+            />
+          )}
         </svg>
 
         {/* Gold geodesic sigil — hemisphere-lit by stage */}

@@ -237,10 +237,10 @@ export default function GeneralTab() {
           <div className="flex items-center justify-between gap-4">
             <p className="text-sm text-muted-foreground">
               Model tiers, per-model enablement, credential status, and
-              connection tests live on the LLM Providers page.
+              connection tests live on the LLM providers page.
             </p>
             <Button variant="outline" onClick={() => navigate("/providers")}>
-              Open LLM Providers
+              Open LLM providers
             </Button>
           </div>
         </CardContent>

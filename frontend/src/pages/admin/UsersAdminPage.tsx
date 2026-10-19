@@ -9,10 +9,12 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { statusLabel } from "@/lib/status";
-import { formatDate } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 
+// The admin tier stands out in the standard's fifth status hue; gold stays
+// for the page's primary action.
 const TIER_TONES: Record<AdminUser["tier"], BadgeTone> = {
-  admin: "gold",
+  admin: "purple",
   operator: "neutral",
   none: "neutral",
 };
@@ -52,7 +54,7 @@ export function UsersAdminPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <UsersRound size={18} className="text-primary" />
+          <UsersRound size={18} className="text-fg-muted" />
           <h1 className="text-xl font-bold">Users</h1>
           {users.data && (
             <span className="text-sm text-muted-foreground">{users.data.total}</span>
@@ -102,7 +104,7 @@ export function UsersAdminPage() {
                   </td>
                   <td className="hidden font-mono text-xs sm:table-cell">{u.login_count}</td>
                   <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">
-                    {u.last_login_at ? formatDate(u.last_login_at) : "—"}
+                    {u.last_login_at ? formatDateTime(u.last_login_at) : "—"}
                   </td>
                   <td>
                     <div className="flex items-center justify-end gap-1.5">

@@ -35,7 +35,9 @@ export function ConsoleCardShell({ job, className, style, headerRight, children 
       role="link"
       aria-label={`View job ${job.job_id}`}
       className={cn(
-        "rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 cursor-pointer transition-colors hover:bg-white/[0.04]",
+        // overflow-hidden: nothing a card holds (an agent's question, a long
+        // path) may spill into the next lane.
+        "overflow-hidden rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 cursor-pointer transition-colors hover:bg-white/[0.04]",
         className,
       )}
       style={style}

@@ -85,7 +85,13 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
         className="bg-page"
       >
         <Background color="rgba(255,255,255,0.018)" gap={24} />
-        <MiniMap className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !w-[120px] !h-[75px]" nodeColor="#ffffff20" />
+        <MiniMap
+          className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !w-[120px] !h-[75px]"
+          nodeColor="#ffffff20"
+          // React Flow's default mask is a light grey that reads as a block on
+          // the dark canvas; the page colour at 70% keeps the viewport window.
+          maskColor="rgb(10 10 15 / 0.7)"
+        />
         <Controls className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !shadow-lg" />
       </ReactFlow>
     </div>
@@ -184,7 +190,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
         >
           <X size={18} />
         </button>
-        <h2 className="text-section font-semibold">Pipeline Editor</h2>
+        <h2 className="text-section font-semibold">Pipeline editor</h2>
       </div>
       <div className="flex items-center gap-2">
         <span className="relative inline-flex">
@@ -196,7 +202,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
             title="Re-position all nodes into a clean left-to-right layout"
           >
             <LayoutGrid size={13} />
-            Auto Arrange
+            Auto arrange
           </button>
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <DivineRipple key={rippleKey} size={120} />
@@ -207,7 +213,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
           onClick={() => setShowTemplatePicker(true)}
           className="text-xs text-white/50 hover:text-white/70 px-3 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
         >
-          Load Template
+          Load template
         </button>
         <button
           type="button"
@@ -215,7 +221,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
           disabled={nodes.length === 0}
           className="h-[30px] rounded-md bg-primary px-3.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-30"
         >
-          Apply Pipeline
+          Apply pipeline
         </button>
       </div>
     </div>
@@ -241,7 +247,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
             title="Re-position all nodes into a clean left-to-right layout"
           >
             <LayoutGrid size={13} />
-            Auto Arrange
+            Auto arrange
           </button>
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <DivineRipple key={rippleKey} size={120} />

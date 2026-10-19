@@ -135,10 +135,10 @@ describe("DashboardPage", () => {
     expect(screen.queryByLabelText(/agent/i)).toBeNull();
   });
 
-  it("tints a tile that is a status: running, and work that needs a person", () => {
+  it("tints a tile that is a status: running, and the page's one gold on what needs a person", () => {
     renderPage();
     expect(within(screen.getByTestId("tile-Running")).getByText("4").className).toContain("text-info");
-    expect(within(screen.getByTestId("tile-Needs you")).getByText("3").className).toContain("text-warning");
+    expect(within(screen.getByTestId("tile-Needs you")).getByText("3").className).toContain("text-primary");
     expect(within(screen.getByTestId("tile-Job success")).getByText("90%").className).toContain("text-fg");
   });
 

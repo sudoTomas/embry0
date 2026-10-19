@@ -4,6 +4,8 @@ import { ExternalLink } from "lucide-react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
+import { formatDateTime } from "@/lib/utils";
+import { providerLabel } from "@/lib/status";
 import { useAcceptProposal, useProposals, useRejectProposal } from "@/hooks/useProposals";
 import type { HealingCase } from "@/lib/types";
 
@@ -20,10 +22,8 @@ const ACCEPTED_HERE = new Set(["github", "linear"]);
  */
 const LABELLED_ON_ACCEPT = new Set(["linear"]);
 
-const TRACKER_NAMES: Record<string, string> = { linear: "Linear", github: "GitHub", gitlab: "GitLab" };
-
 function trackerName(kind: string | undefined): string {
-  return (kind && TRACKER_NAMES[kind]) || kind || "its tracker";
+  return kind ? providerLabel(kind) : "its tracker";
 }
 
 function detailOf(error: unknown, fallback: string): string {
@@ -71,7 +71,7 @@ export function ProposalsSection() {
     return (
       <div role="alert" className="rounded-lg border border-amber-400/20 px-4 py-3 text-sm text-muted-foreground">
         Could not load the watcher&apos;s proposals.{" "}
-        <button className="text-primary hover:underline" onClick={() => proposals.refetch()}>
+        <button className="text-fg hover:text-primary hover:underline" onClick={() => proposals.refetch()}>
           Retry
         </button>
       </div>
@@ -139,7 +139,9 @@ export function ProposalsSection() {
           <thead>
             <tr>
               <th>Proposal</th>
-              <th className="hidden sm:table-cell">Ticket</th>
+              {/* Where the proposal comes from: the watcher's draft ticket, or an
+                  organization need, which has no ticket. */}
+              <th className="hidden sm:table-cell">Source</th>
               <th className="hidden sm:table-cell">Waiting</th>
               <th className="text-right">Decision</th>
             </tr>
@@ -153,7 +155,7 @@ export function ProposalsSection() {
                   {/* The one flexible column: it takes what the others leave and
                       truncates, so the decision stays on screen without a
                       sideways scroll. The repo rides under the title. Below sm
-                      the ticket and waiting columns step aside and the decision
+                      the source and waiting columns step aside and the decision
                       wraps, so Accept and Reject stay on a phone screen. */}
                   <td className="w-full min-w-[7rem] max-w-0 sm:min-w-[14rem]">
                     <div className="truncate" title={proposal.title}>
@@ -179,7 +181,7 @@ export function ProposalsSection() {
                         href={tracker.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-primary hover:underline"
+                        className="text-fg hover:text-primary hover:underline"
                       >
                         {tracker.key}
                       </a>
@@ -190,7 +192,7 @@ export function ProposalsSection() {
                   </td>
                   <td
                     className="hidden whitespace-nowrap text-muted-foreground sm:table-cell"
-                    title={new Date(filed).toLocaleString()}
+                    title={formatDateTime(filed)}
                   >
                     {formatDistanceToNow(new Date(filed))}
                   </td>
@@ -199,12 +201,12 @@ export function ProposalsSection() {
                       {isOrgNeed(proposal) ? (
                         <Link
                           to={`/orgs/${encodeURIComponent(ownerOf(proposal))}`}
-                          className="text-xs text-primary hover:underline"
+                          className="text-xs text-fg hover:text-primary hover:underline"
                         >
                           Answer on {ownerOf(proposal)}
                         </Link>
                       ) : tracker && ACCEPTED_HERE.has(tracker.kind) ? (
-                        <Button size="xs" disabled={busy} onClick={() => handleAccept(proposal)}>
+                        <Button size="xs" variant="secondary" disabled={busy} onClick={() => handleAccept(proposal)}>
                           Accept
                         </Button>
                       ) : tracker?.url ? (
@@ -212,7 +214,7 @@ export function ProposalsSection() {
                           href={tracker.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                          className="inline-flex items-center gap-1 text-xs text-fg hover:text-primary hover:underline"
                         >
                           Accept by label in {trackerName(tracker.kind)}
                           <ExternalLink className="h-3 w-3" />

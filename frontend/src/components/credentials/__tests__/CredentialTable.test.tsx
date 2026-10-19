@@ -51,10 +51,17 @@ describe("CredentialTable", () => {
       id: "cred-00000000000b", provider: "xai", kind: "llm_api_key", host: "", label: "grok-key",
     })]} isAdmin {...handlers()} />);
     const row = screen.getByTestId("credential-row");
-    expect(row).toHaveTextContent("xai");
+    expect(row).toHaveTextContent("xAI");
     // The kind reads in words, never as the stored identifier.
     expect(row).toHaveTextContent("API key");
     expect(row).not.toHaveTextContent("llm_api_key");
+  });
+
+  it("names the default commit author in words, never the internal fallback", () => {
+    render(<CredentialTable credentials={[cred({ git_author_name: null, git_author_email: null })]} isAdmin {...handlers()} />);
+    const cell = screen.getByText("embry0 default");
+    expect(cell).toHaveAttribute("title", expect.stringContaining("EMBRY0_GIT_AUTHOR_NAME"));
+    expect(screen.getByTestId("credential-row")).not.toHaveTextContent("branding default");
   });
 
   it("renders the empty state", () => {

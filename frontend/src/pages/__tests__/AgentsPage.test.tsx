@@ -79,7 +79,7 @@ describe("AgentsPage provider column", () => {
   it("names the provider and marks it ready", () => {
     renderPage();
     const row = rowOf("developer");
-    expect(within(row).getByText("anthropic")).toBeInTheDocument();
+    expect(within(row).getByText("Anthropic")).toBeInTheDocument();
     expect(within(row).getByText("Ready")).toBeInTheDocument();
     expect(within(row).queryByText("Not ready")).not.toBeInTheDocument();
   });
@@ -87,14 +87,14 @@ describe("AgentsPage provider column", () => {
   it("marks a provider without a credential as not ready", () => {
     renderPage();
     const row = rowOf("grok-dev");
-    expect(within(row).getByText("xai")).toBeInTheDocument();
+    expect(within(row).getByText("xAI")).toBeInTheDocument();
     expect(within(row).getByText("Not ready")).toBeInTheDocument();
   });
 
   it("shows no provider for a model nothing serves", () => {
     renderPage();
     const row = rowOf("mystery");
-    expect(within(row).getByText("none")).toBeInTheDocument();
+    expect(within(row).getByText("None")).toBeInTheDocument();
     expect(within(row).getByText("Not ready")).toBeInTheDocument();
   });
 

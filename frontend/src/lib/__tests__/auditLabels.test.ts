@@ -1,10 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { ACTION_ICONS, ACTION_LABELS, formatDetails } from "../auditLabels";
+import { Dot, KeyRound, Plus } from "lucide-react";
+import { ACTION_ICONS, ACTION_LABELS, actionIcon, formatDetails } from "../auditLabels";
 
 describe("auditLabels", () => {
   it("labels the issue events lifted from IssueActivityFeed", () => {
     expect(ACTION_LABELS["issue.created"]).toBe("Created");
-    expect(ACTION_ICONS["issue.created"]).toBe("✦");
+    expect(ACTION_ICONS["issue.created"]).toBe(Plus);
+  });
+
+  it("draws a lucide icon for every labelled action and a dot for an unknown one, never an emoji", () => {
+    for (const action of Object.keys(ACTION_LABELS)) {
+      expect(typeof actionIcon(action), action).not.toBe("string");
+    }
+    expect(actionIcon("user.login")).toBe(KeyRound);
+    expect(actionIcon("something.new")).toBe(Dot);
   });
 
   it("labels the Phase A/B/C identity events", () => {

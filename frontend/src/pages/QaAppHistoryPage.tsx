@@ -4,6 +4,7 @@ import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { formatDateTime } from "@/lib/utils";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -42,24 +43,27 @@ export function QaAppHistoryPage() {
           description="Once a QA run includes this app, it will appear here."
         />
       ) : (
-        <div className="overflow-hidden rounded-md border bg-card">
+        // Like the repo's run history: the run id is the row's only link and
+        // never wraps; below sm duration and failure step aside so the id,
+        // the status and the time fit a phone.
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="data-table">
             <thead>
               <tr>
-                <th>Run</th>
-                <th>Status</th>
-                <th>Duration</th>
-                <th>When</th>
-                <th>Failure</th>
+                <th scope="col">Run</th>
+                <th scope="col">Status</th>
+                <th scope="col" className="hidden sm:table-cell">Duration</th>
+                <th scope="col">When</th>
+                <th scope="col" className="hidden sm:table-cell">Failure</th>
               </tr>
             </thead>
             <tbody>
               {data.map((h) => (
                 <tr key={h.job_id}>
-                  <td className="font-mono">
+                  <td className="whitespace-nowrap">
                     <Link
                       to={`/qa/runs/${encodeURIComponent(h.job_id)}`}
-                      className="text-primary hover:underline"
+                      className="font-mono text-xs text-fg hover:text-primary hover:underline"
                     >
                       {h.job_id}
                     </Link>
@@ -67,11 +71,11 @@ export function QaAppHistoryPage() {
                   <td>
                     <RunStatusBadge status={h.status} />
                   </td>
-                  <td className="text-white/70">{formatDuration(h.duration_ms)}</td>
-                  <td className="text-white/40">
-                    {new Date(h.started_at).toLocaleString()}
+                  <td className="hidden text-white/70 sm:table-cell">{formatDuration(h.duration_ms)}</td>
+                  <td className="whitespace-nowrap text-fg-muted">
+                    {formatDateTime(h.started_at)}
                   </td>
-                  <td className="text-destructive">
+                  <td className="hidden text-destructive sm:table-cell">
                     {h.failure_summary || ""}
                   </td>
                 </tr>

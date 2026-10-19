@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { providerLabel } from "@/lib/status";
 import { IconBox } from "@/components/ui/IconBox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { useAgents, useDeleteAgent, useResetAgent } from "@/hooks/useAgents";
@@ -145,7 +146,7 @@ export function AgentsPage() {
                                   <OperationGlyph operation={op} size={28} titled />
                                 </span>
                               ) : (
-                                <IconBox icon={Bot} color="var(--color-primary)" size="sm" className="hidden sm:flex" />
+                                <IconBox icon={Bot} color="var(--color-fg-muted)" size="sm" className="hidden sm:flex" />
                               );
                             })()}
                             <div>
@@ -168,8 +169,10 @@ export function AgentsPage() {
                         {/* Provider: the catalog provider the model routes to, and
                             whether it has a credential now (GET /agents). */}
                         <td>
-                          <div className="flex items-center gap-2">
-                            <span className="hidden text-sm text-white/60 sm:inline">{agent.provider ?? "none"}</span>
+                          {/* A phone stacks the provider's name over its pill, so the
+                              column says whose readiness it is. */}
+                          <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
+                            <span className="whitespace-nowrap text-sm text-white/60">{agent.provider ? providerLabel(agent.provider) : "None"}</span>
                             {agent.provider_ready === true && <Badge tone="success">Ready</Badge>}
                             {agent.provider_ready === false && (
                               <Badge

@@ -5,6 +5,7 @@ import { QaAppResultCard } from "@/components/qa/QaAppResultCard";
 import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
+import { formatDateTime } from "@/lib/utils";
 
 export function QaRunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
@@ -31,11 +32,11 @@ export function QaRunDetailPage() {
         <RunStatusBadge status={data.overall_status} />
       </div>
       <p className="text-sm text-white/60">
-        {data.apps.length} apps · started {new Date(data.started_at).toLocaleString()}
+        {data.apps.length} apps · started {formatDateTime(data.started_at)}
         {" · "}
         <Link
           to={`/qa/runs/${encodeURIComponent(data.job_id)}/affected`}
-          className="text-primary hover:underline"
+          className="text-fg hover:text-primary hover:underline"
           data-testid="affected-set-link"
         >
           Affected set

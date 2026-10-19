@@ -8,6 +8,7 @@ import type { Forge } from "@/api/repos";
 import { Badge } from "@/components/ui/Badge";
 import { buttonVariants } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
+import { providerLabel } from "@/lib/status";
 
 // RAV-1301: the central repo registry page. Adding a repo starts here (the
 // token-discovered dropdown in AddRepoPanel); the registry list below shows
@@ -52,7 +53,7 @@ function RegisteredRepoRow({
           it from the path shape. */}
       <td className="hidden sm:table-cell">
         <Badge tone="neutral" data-testid="repo-forge-badge">
-          {forge === "gitlab" ? "GitLab" : "GitHub"}
+          {providerLabel(forge)}
         </Badge>
       </td>
       <td>
@@ -100,7 +101,7 @@ export function ReposPage() {
 
       <p className="text-sm text-white/60" data-testid="repos-orgs-pointer">
         Looking after every repository under one owner?{" "}
-        <Link to="/orgs" className="text-primary hover:underline">
+        <Link to="/orgs" className="text-fg hover:text-primary hover:underline">
           Add it as an organization
         </Link>
         .

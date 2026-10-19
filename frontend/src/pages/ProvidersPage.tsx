@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { PageError } from "@/components/PageError";
 import { formatDate } from "@/lib/utils";
-import { sentenceCase } from "@/lib/status";
+import { providerLabel, sentenceCase } from "@/lib/status";
 import { useAuthStore } from "@/stores/authStore";
 import {
   useModelsCatalog,
@@ -84,8 +84,8 @@ function ProviderCard({
     testProvider.mutate(provider.name, {
       onSuccess: (result) => {
         setProbe(result);
-        if (result.status === "ok") toast.success(`${provider.name}: connection OK`);
-        else toast.error(`${provider.name}: ${PROBE_STATUS_LABELS[result.status] ?? result.status}`);
+        if (result.status === "ok") toast.success(`${providerLabel(provider.name)}: connection OK`);
+        else toast.error(`${providerLabel(provider.name)}: ${PROBE_STATUS_LABELS[result.status] ?? result.status}`);
       },
       onError: (e) => toast.error(`Test failed: ${e.message}`),
     });
@@ -96,8 +96,8 @@ function ProviderCard({
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <CardTitle className="text-section capitalize">{provider.name}</CardTitle>
-            {provider.default && <Badge tone="gold">Default provider</Badge>}
+            <CardTitle className="text-section">{providerLabel(provider.name)}</CardTitle>
+            {provider.default && <Badge tone="neutral">Default provider</Badge>}
             {provider.available ? (
               <Badge tone="success">Available</Badge>
             ) : (
@@ -305,7 +305,7 @@ export function ProvidersPage() {
   return (
     <div className="space-y-6 max-w-4xl">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">LLM Providers</h1>
+        <h1 className="text-xl font-bold tracking-tight">LLM providers</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Every model provider embry0 can run agents on — availability, live
           connection tests, per-model enablement, and tier assignment.

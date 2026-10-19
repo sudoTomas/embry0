@@ -208,7 +208,7 @@ export default function ContextTab() {
             {!addingRepo && (
               <Button variant="outline" size="sm" onClick={() => setAddingRepo(true)}>
                 <Plus className="w-4 h-4 mr-1" />
-                Add Repository
+                Add repository
               </Button>
             )}
           </div>

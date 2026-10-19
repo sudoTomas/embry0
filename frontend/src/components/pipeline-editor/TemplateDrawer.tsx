@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { X, MoreVertical, Copy, Pencil, Trash2 } from "lucide-react";
 import { fetchTemplate } from "@/api/pipelines";
+import { formatDay } from "@/lib/utils";
 import { useTemplates, useTemplate, useRenameTemplate, useCreateTemplate, useDeleteTemplate } from "@/hooks/usePipelines";
 import type { PipelineTemplate, PipelineTemplateSummary } from "@/lib/types";
 
@@ -96,11 +97,6 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
     deleteMutation.mutate(templateId);
   };
 
-  const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  };
-
   return (
     <div className="absolute inset-y-0 left-0 z-30 w-[260px] bg-surface border-r border-white/[0.08] flex flex-col shadow-2xl animate-in slide-in-from-left duration-200">
       {/* Header */}
@@ -166,7 +162,7 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
                   <p className="text-[10px] text-white/30 mt-1 line-clamp-2 leading-relaxed">{t.description}</p>
                 )}
                 <div className="flex items-center gap-2 mt-1.5 text-[10px] text-white/25">
-                  <span>{formatDate(t.created_at)}</span>
+                  <span>{formatDay(t.created_at)}</span>
                 </div>
               </>
             )}

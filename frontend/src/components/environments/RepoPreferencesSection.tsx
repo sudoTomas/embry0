@@ -125,14 +125,14 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
   return (
     <Card className="p-4 space-y-4">
       <div>
-        <h3 className="text-sm font-semibold">Sandbox Preferences</h3>
+        <h3 className="text-sm font-semibold">Sandbox preferences</h3>
         <p className="text-xs text-muted-foreground mt-1">
           Override the triage agent&apos;s sandbox profile pick for this repository. Leave blank to
           let triage decide.
         </p>
         <Link
           to={`/qa/repos/${encodeURIComponent(repo)}/config`}
-          className="text-xs text-primary hover:underline mt-1 inline-block"
+          className="text-xs text-fg hover:text-primary hover:underline mt-1 inline-block"
           data-testid="repo-prefs-qa-config-link"
         >
           Edit QA config →
@@ -300,7 +300,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
       </div>
 
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={handleSave} disabled={saving || !dirty}>
+        <Button size="sm" variant="secondary" onClick={handleSave} disabled={saving || !dirty}>
           {saving ? "Saving…" : "Save"}
         </Button>
         <Button

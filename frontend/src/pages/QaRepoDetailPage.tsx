@@ -26,7 +26,7 @@ export function QaRepoDetailPage() {
         {" · "}
         <Link
           to={`/qa/repos/${encodeURIComponent(repo)}/cache`}
-          className="text-primary hover:underline"
+          className="text-fg hover:text-primary hover:underline"
           data-testid="cache-analytics-link"
         >
           Cache analytics
@@ -34,7 +34,7 @@ export function QaRepoDetailPage() {
         {" · "}
         <Link
           to={`/qa/repos/${encodeURIComponent(repo)}/flake`}
-          className="text-primary hover:underline"
+          className="text-fg hover:text-primary hover:underline"
           data-testid="flake-heatmap-link"
         >
           Flake heatmap
@@ -42,7 +42,7 @@ export function QaRepoDetailPage() {
         {" · "}
         <Link
           to={`/qa/repos/${encodeURIComponent(repo)}/config`}
-          className="text-primary hover:underline"
+          className="text-fg hover:text-primary hover:underline"
           data-testid="qa-config-link"
         >
           QA config
@@ -61,7 +61,7 @@ export function QaRepoDetailPage() {
               <tr>
                 <th scope="col">Run</th>
                 <th scope="col">Status</th>
-                <th scope="col" className="num">Apps</th>
+                <th scope="col" className="num hidden sm:table-cell">Apps</th>
                 <th scope="col" className="num">Started</th>
               </tr>
             </thead>

@@ -55,12 +55,12 @@ describe("RunStatusBadge", () => {
 });
 
 describe("CacheHitsRow", () => {
-  it("renders three dots when nothing hit", () => {
+  it("says every cache missed when nothing hit", () => {
     render(<CacheHitsRow hits={ZERO_HITS} />);
-    expect(screen.getByText("···")).toBeInTheDocument();
+    expect(screen.getByText("Cache: image miss · volume miss · turbo none")).toBeInTheDocument();
   });
 
-  it("shows fire glyph when image+volume hit and turbo majority hit", () => {
+  it("spells out image and volume hits and the turbo hit count, never an emoji", () => {
     render(
       <CacheHitsRow
         hits={{
@@ -71,10 +71,10 @@ describe("CacheHitsRow", () => {
         }}
       />,
     );
-    expect(screen.getByText("🔥🔥🔥")).toBeInTheDocument();
+    expect(screen.getByText("Cache: image hit · volume hit · turbo 2/3")).toBeInTheDocument();
   });
 
-  it("shows turbo dot when misses dominate", () => {
+  it("counts turbo hits when misses dominate", () => {
     render(
       <CacheHitsRow
         hits={{
@@ -85,7 +85,7 @@ describe("CacheHitsRow", () => {
         }}
       />,
     );
-    expect(screen.getByText("🔥🔥·")).toBeInTheDocument();
+    expect(screen.getByText("Cache: image hit · volume hit · turbo 1/3")).toBeInTheDocument();
   });
 });
 

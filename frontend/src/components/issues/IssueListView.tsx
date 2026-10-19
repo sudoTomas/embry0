@@ -6,7 +6,7 @@ import { Pagination } from "@/components/ui/Pagination";
 import { IssueStatusBadge } from "./IssueStatusBadge";
 import { IssuePriorityBadge } from "./IssuePriorityBadge";
 import { AgentIndicator } from "./AgentIndicator";
-import { formatDate } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 import { sentenceCase, statusLabel } from "@/lib/status";
 import { useNavigate } from "react-router";
 import type { IssueResponse, IssueStatus } from "@/lib/types";
@@ -175,7 +175,7 @@ export function IssueListView({
                         {issue.repo ?? "—"}
                       </td>
                       <td className="hidden whitespace-nowrap text-right text-muted-foreground sm:table-cell">
-                        {formatDate(issue.updated_at)}
+                        {formatDateTime(issue.updated_at)}
                       </td>
                       <td className="hidden text-right text-muted-foreground sm:table-cell">
                         {issue.children_count > 0 ? issue.children_count : "—"}

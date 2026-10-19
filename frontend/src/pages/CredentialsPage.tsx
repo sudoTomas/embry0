@@ -197,7 +197,7 @@ export function CredentialsPage() {
               href={DOCS_HREF}
               target="_blank"
               rel="noreferrer"
-              className="text-primary underline-offset-4 hover:underline"
+              className="text-fg underline-offset-4 hover:text-primary hover:underline"
             >
               docs/credentials.md
             </a>

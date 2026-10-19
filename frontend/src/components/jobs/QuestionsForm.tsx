@@ -1,4 +1,5 @@
 import { useState, type JSX } from "react";
+import { QuestionText } from "./QuestionText";
 import { Button } from "@/components/ui/Button";
 
 interface PendingInput {
@@ -90,7 +91,12 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
                   {input.asking_node}
                 </span>
               )}
-              <p className="text-sm text-white/90 flex-1">{input.question}</p>
+              <p
+                data-testid="question-text"
+                className="min-w-0 flex-1 break-words text-sm text-white/90 [overflow-wrap:anywhere]"
+              >
+                <QuestionText text={input.question} />
+              </p>
             </div>
 
             {/* Read-only: an answer already exists (e.g. via Telegram). */}

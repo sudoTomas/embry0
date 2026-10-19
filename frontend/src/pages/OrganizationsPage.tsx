@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { Building2, Plus } from "lucide-react";
 import type { Organization } from "@/api/orgs";
 import { AccessChips } from "@/components/orgs/AccessChips";
+import { OrgCredential } from "@/components/orgs/OrgCredential";
 import { TABLE_BOX, TD, TH } from "@/components/orgs/styles";
 import { PageError } from "@/components/PageError";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
@@ -10,9 +11,9 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/PageSkeleton";
 import { useCredentials } from "@/hooks/useCredentials";
 import { useOrganizations } from "@/hooks/useOrgs";
-import { ORG_WIZARD_PATH, credentialLabel } from "@/lib/orgs";
-import { statusLabel } from "@/lib/status";
-import { cn, formatDate } from "@/lib/utils";
+import { ORG_WIZARD_PATH } from "@/lib/orgs";
+import { providerLabel, statusLabel } from "@/lib/status";
+import { cn, formatDateTime } from "@/lib/utils";
 
 const STATUS_TONE: Record<Organization["status"], BadgeTone> = {
   active: "success",
@@ -97,15 +98,17 @@ export function OrganizationsPage() {
                     {org.display_name && <div className="text-xs text-muted-foreground">{org.display_name}</div>}
                   </td>
                   <td className={cn(TD, "hidden sm:table-cell")}>
-                    <Badge tone="neutral">{org.forge === "gitlab" ? "GitLab" : "GitHub"}</Badge>
+                    <Badge tone="neutral">{providerLabel(org.forge)}</Badge>
                   </td>
-                  <td className={cn(TD, "hidden text-white/70 sm:table-cell")}>{credentialLabel(org, credentials.data)}</td>
+                  <td className={cn(TD, "hidden text-white/70 sm:table-cell")}>
+                    <OrgCredential org={org} credentials={credentials.data} nowrap />
+                  </td>
                   <td className={cn(TD, "hidden sm:table-cell")}>
                     <AccessChips access={org.access} />
                   </td>
                   <td className={cn(TD, "text-right font-mono")}>{org.repo_count ?? "-"}</td>
                   <td className={cn(TD, "hidden whitespace-nowrap text-white/60 sm:table-cell")}>
-                    {org.discovered_at ? formatDate(org.discovered_at) : "never"}
+                    {org.discovered_at ? formatDateTime(org.discovered_at) : "never"}
                   </td>
                   <td className={TD}>
                     <Badge tone={STATUS_TONE[org.status] ?? "neutral"}>{statusLabel(org.status)}</Badge>

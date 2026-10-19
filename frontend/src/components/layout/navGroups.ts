@@ -95,7 +95,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
       { path: "/settings", label: "Settings", icon: Settings },
       // The LLM provider catalog — availability, connection
       // tests, per-model enablement, tier assignment.
-      { path: "/providers", label: "LLM Providers", icon: Cpu },
+      { path: "/providers", label: "LLM providers", icon: Cpu },
       { path: "/admin/users", label: "Users", icon: UsersRound, adminOnly: true },
     ],
   },

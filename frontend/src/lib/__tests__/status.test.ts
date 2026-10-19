@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { statusLabel, statusTone } from "../status";
+import { providerLabel, statusLabel, statusTone } from "../status";
 
 describe("statusLabel — readable words for every status, in one place", () => {
   it.each([
@@ -39,5 +39,26 @@ describe("statusTone", () => {
   it("falls back to neutral for an unknown status", () => {
     expect(statusTone("something_newer")).toBe("neutral");
     expect(statusTone(undefined)).toBe("neutral");
+  });
+});
+
+describe("providerLabel — provider names as their makers spell them", () => {
+  it.each([
+    ["anthropic", "Anthropic"],
+    ["xai", "xAI"],
+    ["openai", "OpenAI"],
+    ["github", "GitHub"],
+    ["GitLab", "GitLab"],
+    ["linear", "Linear"],
+    ["telegram", "Telegram"],
+  ])("%s -> %s", (raw, words) => {
+    expect(providerLabel(raw)).toBe(words);
+  });
+});
+
+describe("statusTone — gold is the accent, never a status", () => {
+  it("draws a proposed draft in the warn colour, like other work waiting for a person", () => {
+    expect(statusTone("proposed")).toBe("warning");
+    expect(statusTone("awaiting_input")).toBe("warning");
   });
 });

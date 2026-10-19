@@ -96,7 +96,7 @@ describe("ProvidersPage", () => {
     const anthropic = await screen.findByTestId("provider-card-anthropic");
     const line = within(anthropic).getByTestId("provider-last-probe");
     expect(line).toHaveTextContent("Last test: Unauthorized");
-    expect(within(line).getByText(/2026/).getAttribute("dateTime")).toBe("2026-01-02T03:04:05+00:00");
+    expect(line.querySelector("time")?.getAttribute("dateTime")).toBe("2026-01-02T03:04:05+00:00");
     const xai = screen.getByTestId("provider-card-xai");
     expect(within(xai).getByTestId("provider-last-probe")).toHaveTextContent("Last test: never");
   });
@@ -126,6 +126,16 @@ describe("ProvidersPage", () => {
     const xai = screen.getByTestId("provider-card-xai");
     expect(within(xai).getByText("Unavailable")).toBeInTheDocument();
     expect(within(xai).getByText(/none configured/)).toBeInTheDocument();
+  });
+
+  it("titles each provider card with the provider's own spelling, not the stored id", async () => {
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    expect(within(anthropic).getByText("Anthropic")).toBeInTheDocument();
+    const xai = screen.getByTestId("provider-card-xai");
+    const title = within(xai).getByText("xAI");
+    expect(title.className).not.toContain("capitalize");
+    expect(within(xai).queryByText("xai")).not.toBeInTheDocument();
   });
 
   it("shows model pricing in the provider table", async () => {
@@ -242,5 +252,10 @@ describe("ProvidersPage", () => {
     await waitFor(() => expect(locked).toBeDisabled());
     expect(within(xai).getByText("(default model)")).toBeInTheDocument();
     expect(within(xai).getByRole("checkbox", { name: "Enable grok-4.5" })).toBeEnabled();
+  });
+
+  it("titles the page in sentence case, the name the sidebar and Settings use", async () => {
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 1, name: "LLM providers" })).toBeInTheDocument();
   });
 });
