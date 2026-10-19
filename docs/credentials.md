@@ -217,7 +217,7 @@ The Credentials page is `/credentials`, under Infra. Any signed-in operator can 
 
 The list shows `masked_preview` only. There is no reveal, and the page never renders a secret after create or rotate.
 
-The create form passes no GitLab host, so it cannot select GitLab. Create a GitLab account with `POST /api/v1/credentials` or with `embry0 credentials import-env` (the importer sets the host from `GITLAB_URL`). GitHub accounts can be created in the form; the host is `github.com`.
+The create form passes no GitLab host, so it cannot select GitLab. Create a GitLab account with `POST /api/v1/credentials` or with `embry0 credentials import-env` (the importer sets the host from `GITLAB_URL`). GitHub accounts can be created in the form; the host is `github.com`. For an xAI account (kind LLM API key, provider xAI) the form also offers **Sign in with xAI**, the [device-code login](#xai-device-code-login), which stores an xAI `llm_oauth` account under the label instead of a pasted key; no other kind offers it.
 
 Import from environment runs the importer above. Checking "Replace differing secrets" re-runs it with `replace: true`. The page shows the `created`, `bound` and `skipped` report.
 

@@ -182,6 +182,9 @@ export function CredentialModal({
 
   const llmStates = llmProviderStates(catalogProviders);
   const notEnabled = llmStates.filter((entry) => entry.state === "not_enabled").map((entry) => entry.name);
+  // The device login creates an xAI llm_oauth account (POST /credentials/xai/device-login),
+  // so it is offered only while the form is making an xAI account.
+  const offersXaiSignIn = !isRotate && accountKind === "llm_api_key" && llmProvider === "xai";
 
   const requestClose = useCallback(() => {
     setSecret("");
@@ -559,11 +562,24 @@ export function CredentialModal({
             {fieldErrors.label && <FieldAlert id="credential-label-error">{fieldErrors.label}</FieldAlert>}
           </div>
 
-          {!isRotate && (
+          {(offersXaiSignIn || deviceLogin) && (
             <div className="space-y-2">
-              <Button type="button" variant="outline" onClick={() => void handleDeviceLogin()} disabled={pending}>
-                Sign in with xAI
-              </Button>
+              {offersXaiSignIn && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleDeviceLogin()}
+                    disabled={pending}
+                    aria-describedby="credential-xai-sign-in-hint"
+                  >
+                    Sign in with xAI
+                  </Button>
+                  <p id="credential-xai-sign-in-hint" className="text-xs text-muted-foreground">
+                    Or sign in instead of pasting a key: that stores an xAI OAuth account under this label.
+                  </p>
+                </>
+              )}
               {deviceLogin && (
                 <div className="space-y-1 text-sm">
                   <p className="font-mono">{deviceLogin.userCode}</p>
