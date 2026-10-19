@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/PageSkeleton";
+import { useGlideRef } from "@/hooks/useGlide";
 import type { BoardColumnConfig, BoardColumnTint } from "@/lib/boardColumns";
 
 const TINT_CLASSES: Record<BoardColumnTint, { label: string; pill: string }> = {
@@ -26,9 +27,13 @@ interface BoardColumnProps {
  */
 export function BoardColumn({ column, count, isLoading = false, children }: BoardColumnProps) {
   const tint = TINT_CLASSES[column.tint];
+  // Where lanes stack (narrow screens), a lane that gains a card moves the
+  // lanes below it; their headers travel with their cards, never ahead.
+  const headerRef = useGlideRef(`lane:${column.id}`);
+  const emptyRef = useGlideRef(`lane:${column.id}:empty`);
   return (
     <div className="flex min-w-0 flex-col gap-2" data-testid={`board-column-${column.id}`}>
-      <div className="flex items-center gap-2 px-1">
+      <div ref={headerRef} className="flex items-center gap-2 px-1">
         <span className={cn("text-xs font-semibold tracking-wide", tint.label)}>
           {column.label}
         </span>
@@ -51,6 +56,7 @@ export function BoardColumn({ column, count, isLoading = false, children }: Boar
           </>
         ) : count === 0 ? (
           <div
+            ref={emptyRef}
             data-testid="empty-lane"
             className="rounded-lg border border-dashed border-white/[0.06] py-6 text-center text-xs text-white/20"
           >

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Routes, Route, useLocation, useParams } from "react-router";
@@ -298,5 +298,83 @@ describe("ConsolePage — New Job launch flow", () => {
     await waitFor(() =>
       expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ["jobs"] })),
     );
+  });
+});
+
+describe("ConsolePage — cards glide between lanes", () => {
+  const LANE_ORDER = ["needs_you", "queued", "running", "done", "failed"];
+  let animated: { el: HTMLElement; keyframes: Keyframe[] }[] = [];
+
+  /** jsdom lays nothing out: a card's place is its lane (300 px apart) and
+   * its turn within the lane (120 px apart). */
+  function placeOnBoard(this: HTMLElement): DOMRect {
+    const lane = this.closest("[data-testid^='board-column-']")?.getAttribute("data-testid");
+    const col = LANE_ORDER.indexOf(lane?.slice("board-column-".length) ?? "");
+    const row = this.parentElement ? Array.from(this.parentElement.children).indexOf(this) : 0;
+    return { left: col * 300, top: row * 120 } as DOMRect;
+  }
+
+  /** The GlideItem around the card showing `text`. */
+  const glideItemOf = (text: string) =>
+    screen.getByText(text).closest("[role='link']")?.parentElement as HTMLElement;
+
+  beforeEach(() => {
+    animated = [];
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} })),
+    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(placeOnBoard);
+    HTMLElement.prototype.animate = function (this: HTMLElement, keyframes: Keyframe[]) {
+      animated.push({ el: this, keyframes });
+      return { cancel: () => {} } as unknown as Animation;
+    } as HTMLElement["animate"];
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+  });
+
+  it("glides a job's card to its new lane when a poll moves it", async () => {
+    mockFetchJobs.mockResolvedValue(
+      jobList([makeJob({ job_id: "move0001aaaa", status: "pending", task: "Moving task" })]),
+    );
+    const { client } = renderPage();
+    expect(await within(screen.getByTestId("board-column-queued")).findByText("Moving task")).toBeInTheDocument();
+    expect(animated).toEqual([]);
+
+    mockFetchJobs.mockResolvedValue(
+      jobList([makeJob({ job_id: "move0001aaaa", status: "running", task: "Moving task" })]),
+    );
+    await client.invalidateQueries({ queryKey: ["jobs"] });
+    expect(await within(screen.getByTestId("board-column-running")).findByText("Moving task")).toBeInTheDocument();
+
+    expect(animated).toHaveLength(1);
+    expect(animated[0].el).toBe(glideItemOf("Moving task"));
+    expect(animated[0].keyframes[0]).toEqual({ transform: "translate(-300px, 0px)" });
+  });
+
+  it("glides nothing when a filter change reflows the board", async () => {
+    const first = makeJob({ job_id: "one00001aaaa", repo: "acme/one", task: "First task" });
+    const second = makeJob({ job_id: "two00001aaaa", repo: "acme/two", task: "Second task" });
+    mockFetchJobs.mockImplementation(async (filters) =>
+      jobList(filters.repo ? [second] : [first, second]),
+    );
+    renderPage();
+    await screen.findByText("Second task");
+
+    fireEvent.change(screen.getByLabelText("Repos"), { target: { value: "acme/two" } });
+    await waitFor(() => expect(screen.queryByText("First task")).toBeNull());
+    await screen.findByText("Second task");
+
+    // Back to every repo: the cached board returns at once, and the second
+    // card sits one place lower than it did a moment ago.
+    animated = [];
+    fireEvent.change(screen.getByLabelText("Repos"), { target: { value: "" } });
+    await screen.findByText("First task");
+
+    expect(animated).toEqual([]);
   });
 });

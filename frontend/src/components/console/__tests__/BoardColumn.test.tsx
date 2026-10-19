@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { BoardColumn } from "../BoardColumn";
+import { GlideBoard } from "../GlideBoard";
+import { createGlide } from "@/hooks/useGlide";
 import type { BoardColumnConfig } from "@/lib/boardColumns";
 
 const NEEDS_YOU: BoardColumnConfig = { id: "needs_you", label: "Needs you", tint: "amber" };
@@ -62,5 +64,18 @@ describe("BoardColumn", () => {
     expect(container.querySelectorAll(".animate-pulse").length).toBe(2);
     expect(screen.queryByText("card")).toBeNull();
     expect(screen.queryByTestId("empty-lane")).toBeNull();
+  });
+
+  it("keeps its header's and empty placeholder's places, so they travel with the cards", () => {
+    const glide = createGlide();
+    const attach = vi.spyOn(glide, "attach");
+    render(
+      <GlideBoard glide={glide} layout={0} paintKey="">
+        <BoardColumn column={RUNNING} count={0} />
+      </GlideBoard>,
+    );
+
+    expect(attach).toHaveBeenCalledWith("lane:running", screen.getByText("Running").parentElement);
+    expect(attach).toHaveBeenCalledWith("lane:running:empty", screen.getByTestId("empty-lane"));
   });
 });

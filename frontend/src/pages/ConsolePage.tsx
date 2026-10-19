@@ -4,6 +4,7 @@ import { Plus } from "lucide-react";
 import { useJobs } from "@/hooks/useJobs";
 import { useQueue } from "@/hooks/useQueue";
 import { useConfig } from "@/hooks/useConfig";
+import { useGlide } from "@/hooks/useGlide";
 import { useJobInputs } from "@/hooks/useInputs";
 import { BOARD_COLUMNS, groupJobsByColumn, type BoardColumnId } from "@/lib/boardColumns";
 import { BoardColumn } from "@/components/console/BoardColumn";
@@ -13,6 +14,7 @@ import { QueuedCard } from "@/components/console/QueuedCard";
 import { DoneFailedCard } from "@/components/console/DoneFailedCard";
 import { HeartbeatBadge } from "@/components/console/HeartbeatBadge";
 import { NewJobForm } from "@/components/console/NewJobForm";
+import { GlideBoard, GlideItem } from "@/components/console/GlideBoard";
 import { EmptyJobsState } from "@/components/jobs/EmptyJobsState";
 import { PageError } from "@/components/PageError";
 import { Button } from "@/components/ui/Button";
@@ -60,6 +62,10 @@ export function ConsolePage() {
   const statusFilter = searchParams.get("status") ?? undefined;
   const repoFilter = searchParams.get("repo") ?? undefined;
   const [showCreate, setShowCreate] = useState(false);
+  const glide = useGlide();
+  // A filter change cuts the board differently; no job moved, so it paints
+  // afresh and nothing glides.
+  const paintKey = `${statusFilter ?? ""}|${repoFilter ?? ""}`;
 
   const setParam = useCallback(
     (key: string, value: string | undefined) => {
@@ -116,28 +122,34 @@ export function ConsolePage() {
 
   const maxBudgetUsd = config?.max_budget_per_job_usd ?? null;
 
-  const laneCards = (columnId: BoardColumnId) => {
+  const laneCard = (columnId: BoardColumnId, job: JobResponse, idx: number) => {
     switch (columnId) {
       case "needs_you":
-        return lanes.needs_you.map((job) => <NeedsYouCardWithInputs key={job.job_id} job={job} />);
+        return <NeedsYouCardWithInputs job={job} />;
       case "queued":
-        return lanes.queued.map((job, idx) => (
+        return (
           <QueuedCard
-            key={job.job_id}
             job={job}
             position={idx + 1}
             queueDepth={queue?.pending ?? lanes.queued.length}
           />
-        ));
+        );
       case "running":
-        return lanes.running.map((job) => (
-          <RunningCard key={job.job_id} job={job} maxBudgetUsd={maxBudgetUsd} />
-        ));
+        return <RunningCard job={job} maxBudgetUsd={maxBudgetUsd} />;
       case "done":
       case "failed":
-        return lanes[columnId].map((job) => <DoneFailedCard key={job.job_id} job={job} />);
+        return <DoneFailedCard job={job} />;
     }
   };
+
+  // Each card sits in a GlideItem keyed by its job, so a poll that moves a
+  // job to another lane shows the card travelling there.
+  const laneCards = (columnId: BoardColumnId) =>
+    lanes[columnId].map((job, idx) => (
+      <GlideItem key={job.job_id} id={job.job_id} index={idx}>
+        {laneCard(columnId, job, idx)}
+      </GlideItem>
+    ));
 
   return (
     <div className="space-y-4">
@@ -180,18 +192,20 @@ export function ConsolePage() {
         ) : boardEmpty ? (
           <EmptyJobsState variant="console" onNewJob={() => setShowCreate(true)} />
         ) : (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-5 items-start">
-            {BOARD_COLUMNS.map((column) => (
-              <BoardColumn
-                key={column.id}
-                column={column}
-                count={lanes[column.id].length}
-                isLoading={isLoading}
-              >
-                {laneCards(column.id)}
-              </BoardColumn>
-            ))}
-          </div>
+          <GlideBoard glide={glide} layout={lanes} paintKey={paintKey}>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-5 items-start">
+              {BOARD_COLUMNS.map((column) => (
+                <BoardColumn
+                  key={column.id}
+                  column={column}
+                  count={lanes[column.id].length}
+                  isLoading={isLoading}
+                >
+                  {laneCards(column.id)}
+                </BoardColumn>
+              ))}
+            </div>
+          </GlideBoard>
         )}
       </div>
     </div>
