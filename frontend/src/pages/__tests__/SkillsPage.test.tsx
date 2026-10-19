@@ -53,17 +53,46 @@ describe("SkillsPage", () => {
     expect(within(broken).getByRole("button", { name: /sync/i })).toBeEnabled();
   });
   it("refuses Remove on a builtin and asks for it on a custom source", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     renderPage();
     expect(within(screen.getByRole("row", { name: "superpowers" })).getByRole("button", { name: /remove/i })).toBeDisabled();
-    mockDelete.mockRejectedValueOnce({ response: { status: 409, data: { detail: "referenced", agents: ["developer"], templates: ["quick-fix"] } } });
+    mockDelete.mockRejectedValueOnce({ response: { status: 409, data: { detail: { message: "referenced", agents: ["developer"], templates: ["quick-fix"] } } } });
     await user.click(within(screen.getByRole("row", { name: "team" })).getByRole("button", { name: /remove/i }));
     expect(mockDelete).toHaveBeenCalledWith("team");
     expect(await screen.findByRole("alert")).toHaveTextContent(/developer/);
     expect(screen.getByRole("alert")).toHaveTextContent(/quick-fix/);
   });
+  it("shows a string 409 detail on Remove as it is", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderPage();
+    mockDelete.mockRejectedValueOnce({ response: { status: 409, data: { detail: "a sync of 'team' is running; delete it once it has finished" } } });
+    await user.click(within(screen.getByRole("row", { name: "team" })).getByRole("button", { name: /remove/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("a sync of 'team' is running; delete it once it has finished");
+  });
+  it("names what still references an inline skill when Delete is refused", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderPage();
+    await user.click(screen.getByRole("button", { name: /release-notes/ }));
+    mockDeleteInline.mockRejectedValueOnce({ response: { status: 409, data: { detail: { message: "referenced", agents: ["developer"], templates: ["quick-fix"] } } } });
+    await user.click(screen.getByRole("button", { name: /^delete$/i }));
+    expect(mockDeleteInline).toHaveBeenCalledWith("release-notes");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/developer/);
+    expect(alert).toHaveTextContent(/quick-fix/);
+    expect(alert).toHaveTextContent(/referenced/);
+  });
+  it("refuses a new inline skill whose name already exists", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderPage();
+    await user.click(screen.getByRole("button", { name: /new skill/i }));
+    await user.type(screen.getByLabelText(/^name$/i), "release-notes");
+    await user.type(screen.getByLabelText(/^body$/i), "# Other");
+    await user.click(screen.getByRole("button", { name: /save skill/i }));
+    expect(mockPut).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alert")).toHaveTextContent('A skill named "release-notes" exists; open it from the list to edit it.');
+  });
   it("adds a source and shows a 422 detail", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     renderPage();
     await user.type(screen.getByLabelText(/^id$/i), "acme");
     await user.type(screen.getByLabelText(/^url$/i), "http://example.com/x.git");
@@ -74,7 +103,7 @@ describe("SkillsPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("url must be https://");
   });
   it("toggles enabled and syncs", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     renderPage();
     const row = screen.getByRole("row", { name: "team" });
     await user.click(within(row).getByRole("checkbox", { name: /enabled/i }));
@@ -83,7 +112,7 @@ describe("SkillsPage", () => {
     expect(mockSync).toHaveBeenCalledWith("team", expect.objectContaining({ onError: expect.any(Function) }));
   });
   it("toasts the server detail when a toggle or sync is refused", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     renderPage();
     const row = screen.getByRole("row", { name: "team" });
     const refused = { response: { status: 403, data: { detail: "builtin sources cannot change ref" } } };
@@ -96,7 +125,7 @@ describe("SkillsPage", () => {
     expect(toast.error).toHaveBeenCalledWith("builtin sources cannot change ref");
   });
   it("edits an inline skill and saves it", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     renderPage();
     await user.click(screen.getByRole("button", { name: /release-notes/ }));
     expect(screen.getByLabelText(/^name$/i)).toHaveValue("release-notes");

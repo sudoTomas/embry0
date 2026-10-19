@@ -27,7 +27,7 @@ export async function createSkillSource(body: SkillSourceCreate): Promise<SkillS
 }
 
 export async function updateSkillSource(id: string, body: SkillSourceUpdate): Promise<SkillSource> {
-  const { data } = await api.patch<SkillSource>(`/skills/sources/${enc(id)}`, body);
+  const { data } = await api.patch<SkillSource>(`/skills/sources/${enc(id)}`, body, { suppressValidationToast: true });
   return data;
 }
 

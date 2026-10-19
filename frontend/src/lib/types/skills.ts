@@ -32,7 +32,7 @@ export interface SkillSourceCreate {
   id: string;
   kind: "git" | "path";
   url: string;
-  ref?: string | null;
+  ref?: string;
   enabled?: boolean;
 }
 
@@ -58,9 +58,14 @@ export interface ToolCatalogEntry {
   description: string;
 }
 
-/** The 409 body of a delete that something still references. */
-export interface SkillWriteConflict {
-  detail?: string;
+/** The `detail` of a 409 on a delete that something still references. */
+export interface SkillReferences {
+  message?: string;
   agents?: string[];
   templates?: string[];
+}
+
+/** A 409 body: the references above, or a plain string (a sync is running). */
+export interface SkillWriteConflict {
+  detail?: string | SkillReferences;
 }

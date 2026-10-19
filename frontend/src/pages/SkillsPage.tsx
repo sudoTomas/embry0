@@ -26,20 +26,25 @@ import type { InlineSkill, SkillSource, SkillWriteConflict } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 
-type HttpError = { response?: { status?: number; data?: SkillWriteConflict & { detail?: unknown } } };
+type HttpError = { response?: { status?: number; data?: { detail?: unknown } } };
 
 function errorDetail(err: unknown): string {
   const detail = (err as HttpError)?.response?.data?.detail;
   return formatErrorDetail(detail) ?? (err instanceof Error ? err.message : "The request failed.");
 }
 
-/** The 409 body names what still references the row; anything else is its detail. */
+/**
+ * A 409 whose detail is an object names what still references the row; a
+ * string detail (a sync is running) and anything else read as the detail.
+ */
 function writeRefusal(err: unknown): string {
   const response = (err as HttpError)?.response;
-  if (response?.status === 409) {
-    const agents = response.data?.agents ?? [];
-    const templates = response.data?.templates ?? [];
-    return `Still referenced by agents ${agents.join(", ") || "none"} and templates ${templates.join(", ") || "none"}`;
+  const detail = (response?.data as SkillWriteConflict | undefined)?.detail;
+  if (response?.status === 409 && detail && typeof detail === "object") {
+    const agents = detail.agents ?? [];
+    const templates = detail.templates ?? [];
+    const refs = `Still referenced by agents ${agents.join(", ") || "none"} and templates ${templates.join(", ") || "none"}`;
+    return detail.message ? `${detail.message}. ${refs}` : refs;
   }
   return errorDetail(err);
 }
@@ -124,7 +129,7 @@ function SourcesSection({ sources, canWrite }: { sources: SkillSource[]; canWrit
                 </td>
                 <td className={TD}>
                   <div className="flex gap-2">
-                    <Button type="button" size="sm" variant="outline" disabled={!canWrite} onClick={() => sync.mutate(s.id, { onError: (err) => toast.error(errorDetail(err)) })}>
+                    <Button type="button" size="sm" variant="outline" disabled={!canWrite || sync.isPending} onClick={() => sync.mutate(s.id, { onError: (err) => toast.error(errorDetail(err)) })}>
                       Sync
                     </Button>
                     <Button
@@ -231,6 +236,10 @@ function InlineSection({ skills, canWrite }: { skills: InlineSkill[]; canWrite: 
 
   async function save() {
     setError(null);
+    if (editing === null && skills.some((s) => s.name === name)) {
+      setError(`A skill named "${name}" exists; open it from the list to edit it.`);
+      return;
+    }
     try {
       await put.mutateAsync({ name, body: { description, body } });
       toast.success(`Saved skill "${name}"`);

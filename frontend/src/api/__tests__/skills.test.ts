@@ -18,7 +18,7 @@ describe("skills api paths (docs/api.md, Skills and Tools)", () => {
     await createSkillSource({ id: "team", kind: "git", url: "https://example.com/acme/skills.git", ref: "v1" });
     expect(api.post).toHaveBeenCalledWith("/skills/sources", { id: "team", kind: "git", url: "https://example.com/acme/skills.git", ref: "v1" }, { suppressValidationToast: true });
     await updateSkillSource("team", { enabled: false });
-    expect(api.patch).toHaveBeenCalledWith("/skills/sources/team", { enabled: false });
+    expect(api.patch).toHaveBeenCalledWith("/skills/sources/team", { enabled: false }, { suppressValidationToast: true });
     await syncSkillSource("team");
     expect(api.post).toHaveBeenCalledWith("/skills/sources/team/sync");
     await deleteSkillSource("team");
