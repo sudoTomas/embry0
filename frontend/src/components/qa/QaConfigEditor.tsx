@@ -50,11 +50,13 @@ function starterTemplate(repo: string): string {
 interface QaConfigEditorProps {
   /** Full repo path; may exceed two segments (GitLab subgroups, #162). */
   repo: string;
+  /** False on the repo page, whose Advanced section already names and explains it. */
+  showIntro?: boolean;
 }
 
 /** The stored-qa.yaml editor (RAV-1253) — shared by the standalone config
  * page and the unified repo detail page. */
-export function QaConfigEditor({ repo }: QaConfigEditorProps) {
+export function QaConfigEditor({ repo, showIntro = true }: QaConfigEditorProps) {
 
   const { data, isLoading, isError, refetch } = useQaConfig(repo);
   const saveMutation = useSaveQaConfig();
@@ -167,10 +169,12 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-white/60">
-        Test setup. How embry0 starts your app on its own test computer and what it checks after
-        each change. embry0 keeps it itself, so nothing is added to your repository.
-      </p>
+      {showIntro && (
+        <p className="text-sm text-white/60">
+          Test setup. How embry0 starts your app on its own test computer and what it checks after
+          each change. embry0 keeps it itself, so nothing is added to your repository.
+        </p>
+      )}
 
       {!showEditor ? (
         <EmptyState

@@ -55,6 +55,19 @@ describe("RepoPreferencesSection base branch", () => {
     expect(screen.getByLabelText("Base branch")).toHaveValue("dev");
   });
 
+  it("leaves its heading out when the repo page's Advanced section already names it", () => {
+    const { unmount } = renderSection();
+    expect(screen.getByRole("heading", { name: "Work machine and branches" })).toBeInTheDocument();
+    unmount();
+    render(
+      <MemoryRouter>
+        <RepoPreferencesSection repo="acme/group/backend" showIntro={false} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("heading", { name: "Work machine and branches" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Base branch")).toHaveValue("dev");
+  });
+
   it("saves an edited base branch", async () => {
     const user = userEvent.setup();
     renderSection();

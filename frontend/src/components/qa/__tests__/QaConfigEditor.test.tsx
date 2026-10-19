@@ -47,6 +47,16 @@ beforeEach(() => {
 });
 
 describe("QaConfigEditor copy", () => {
+  it("leaves its intro out when the repo page's Advanced section already explains it", () => {
+    stored(YAML);
+    render(
+      <MemoryRouter>
+        <QaConfigEditor repo="acme/widgets" showIntro={false} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText(/^Test setup\. How embry0 starts your app/)).not.toBeInTheDocument();
+  });
+
   it("says what a test setup is, in plain words", () => {
     stored(YAML);
     renderEditor();

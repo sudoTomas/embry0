@@ -18,6 +18,8 @@ import { toastApiError } from "@/api/errorToast";
 interface RepoPreferencesSectionProps {
   /** Full repo path; may exceed two segments (GitLab subgroups, #162). */
   repo: string;
+  /** False on the repo page, whose Advanced section already names and explains it. */
+  showIntro?: boolean;
 }
 
 /** Editable row shape: paths joined for a single input field. */
@@ -45,7 +47,7 @@ function fromDrafts(drafts: DevCheckDraft[]): DevCheck[] {
     }));
 }
 
-export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
+export function RepoPreferencesSection({ repo, showIntro = true }: RepoPreferencesSectionProps) {
   const { data: prefs, isLoading } = useRepoPreferences(repo);
   const { data: profiles = [], isLoading: profilesLoading } = useSandboxProfiles();
   const setPrefs = useSetRepoPreferences();
@@ -130,13 +132,15 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
 
   return (
     <Card className="p-4 space-y-4">
-      <div>
-        <h3 className="text-sm font-semibold">Work machine and branches</h3>
-        <p className="text-xs text-muted-foreground mt-1">
-          The work machine, the branch embry0 starts from and asks to merge into, the commit
-          author, and the checks it runs before a pull request.
-        </p>
-      </div>
+      {showIntro && (
+        <div>
+          <h3 className="text-sm font-semibold">Work machine and branches</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            The work machine, the branch embry0 starts from and asks to merge into, the commit
+            author, and the checks it runs before a pull request.
+          </p>
+        </div>
+      )}
 
       <div className="space-y-3">
         <div className="space-y-1">

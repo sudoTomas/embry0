@@ -84,7 +84,7 @@ export function RepoDetailPage() {
         </div>
 
         <AdvancedSection setting="testSetup">
-          <QaConfigEditor repo={full} />
+          <QaConfigEditor repo={full} showIntro={false} />
         </AdvancedSection>
 
         <AdvancedSection setting="appSettings">
@@ -131,11 +131,11 @@ export function RepoDetailPage() {
         </AdvancedSection>
 
         <AdvancedSection setting="workMachine">
-          <RepoPreferencesSection repo={full} />
+          <RepoPreferencesSection repo={full} showIntro={false} />
         </AdvancedSection>
 
         <AdvancedSection setting="prReview">
-          <PullRequestReviewCard repo={full} />
+          <PullRequestReviewCard repo={full} showIntro={false} />
         </AdvancedSection>
 
         <AdvancedSection setting="accounts">

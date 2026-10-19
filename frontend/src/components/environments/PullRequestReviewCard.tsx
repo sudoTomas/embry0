@@ -43,10 +43,12 @@ const READY_AUTHOR_OPTIONS: { value: PrReviewReadyAuthors; label: string; descri
 interface PullRequestReviewCardProps {
   /** Full repo path; may exceed two segments (GitLab subgroups, #162). */
   repo: string;
+  /** False on the repo page, whose Advanced section already names and explains it. */
+  showIntro?: boolean;
 }
 
 /** #30: per-repo pull request review settings, saved as one object. */
-export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
+export function PullRequestReviewCard({ repo, showIntro = true }: PullRequestReviewCardProps) {
   const { data: prefs, isLoading, isError, isSuccess } = useRepoPreferences(repo);
   const { models } = useModels();
   const setPrefs = useSetRepoPreferences();
@@ -88,13 +90,15 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
 
   return (
     <Card className="p-4 space-y-4" data-testid="pr-review-card">
-      <div>
-        <h3 className="text-sm font-semibold">Pull request review</h3>
-        <p className="text-xs text-muted-foreground mt-1">
-          When a pull request becomes ready for review, embry0 reviews it and posts its findings as comments. It
-          never approves a pull request and never blocks a merge.
-        </p>
-      </div>
+      {showIntro && (
+        <div>
+          <h3 className="text-sm font-semibold">Pull request review</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            When a pull request becomes ready for review, embry0 reviews it and posts its findings as comments. It
+            never approves a pull request and never blocks a merge.
+          </p>
+        </div>
+      )}
 
       {isLoading && <p className="text-xs text-muted-foreground">Loading review settings…</p>}
       {isError && (
