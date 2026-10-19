@@ -129,6 +129,29 @@ describe("TracesTable", () => {
     ]);
   });
 
+  it("spans an open trace's detail across every column of the table", () => {
+    renderTable();
+    const row = screen.getByRole("button", { name: "View trace run-fixture-1" });
+    fireEvent.click(row);
+    const columns = row.closest("table")!.tHead!.rows[0].cells.length;
+    expect((row as HTMLTableRowElement).cells.length, "a trace row and the head disagree").toBe(columns);
+    const detail = within(row.nextElementSibling as HTMLElement).getByRole("button", { name: "Close detail panel" });
+    expect((detail.closest("td") as HTMLTableCellElement).colSpan).toBe(columns);
+  });
+
+  it("spans the empty state across every column of the table", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <TracesTable traces={[]} total={0} offset={0} limit={50} filters={{}} onFilterChange={vi.fn()} onPageChange={vi.fn()} />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    const cell = screen.getByText("No traces found") as HTMLTableCellElement;
+    expect(cell.colSpan).toBe(cell.closest("table")!.tHead!.rows[0].cells.length);
+  });
+
   it("opens a trace without a gold border: gold marks only what needs a person", () => {
     renderTable();
     const row = screen.getByRole("button", { name: "View trace run-fixture-1" });

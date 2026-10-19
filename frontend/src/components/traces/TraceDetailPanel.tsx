@@ -5,6 +5,8 @@ import type { TraceResponse } from "@/lib/types";
 
 interface TraceDetailPanelProps {
   trace: TraceResponse;
+  /** The column count of the table it opens in: the panel spans all of it. */
+  colSpan: number;
   onClose: () => void;
 }
 
@@ -25,7 +27,7 @@ function InfoItem({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-export function TraceDetailPanel({ trace, onClose }: TraceDetailPanelProps) {
+export function TraceDetailPanel({ trace, colSpan, onClose }: TraceDetailPanelProps) {
   const toolEntries = Object.entries(trace.tools_called ?? {}).sort(
     ([, a], [, b]) => b - a,
   );
@@ -34,7 +36,7 @@ export function TraceDetailPanel({ trace, onClose }: TraceDetailPanelProps) {
 
   return (
     <tr>
-      <td colSpan={9} className="p-0">
+      <td colSpan={colSpan} className="p-0">
         <div className="border-t border-border bg-muted/20 px-6 py-5">
           {/* Header */}
           <div className="flex items-start justify-between mb-5">

@@ -14,6 +14,24 @@ interface TracesTableFilters {
   result?: string;
 }
 
+/**
+ * The table's columns, in order. The head renders from this list, and the
+ * rows that run the full width (a trace's detail, the empty state) span
+ * its length, so a column added here widens them too.
+ */
+const COLUMNS: { label: string; className?: string }[] = [
+  { label: "", className: "w-8" },
+  { label: "Trace" },
+  { label: "Agent" },
+  { label: "Model" },
+  { label: "Result" },
+  { label: "Cost", className: "text-right" },
+  { label: "Tokens", className: "text-right" },
+  { label: "Duration", className: "text-right" },
+  { label: "Tools", className: "text-right" },
+  { label: "Timestamp", className: "text-right" },
+];
+
 interface TracesTableProps {
   traces: TraceResponse[];
   total: number;
@@ -65,16 +83,11 @@ export function TracesTable({
           <table className="data-table">
             <thead>
               <tr>
-                <th scope="col" className="w-8" />
-                <th scope="col">Trace</th>
-                <th scope="col">Agent</th>
-                <th scope="col">Model</th>
-                <th scope="col">Result</th>
-                <th scope="col" className="text-right">Cost</th>
-                <th scope="col" className="text-right">Tokens</th>
-                <th scope="col" className="text-right">Duration</th>
-                <th scope="col" className="text-right">Tools</th>
-                <th scope="col" className="text-right">Timestamp</th>
+                {COLUMNS.map((col, i) => (
+                  <th key={i} scope="col" className={col.className}>
+                    {col.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -92,7 +105,7 @@ export function TracesTable({
               })}
               {traces.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="py-8 text-center text-muted-foreground">
+                  <td colSpan={COLUMNS.length} className="py-8 text-center text-muted-foreground">
                     No traces found
                   </td>
                 </tr>
@@ -174,7 +187,7 @@ function TraceRow({
           {formatDateTime(trace.created_at)}
         </td>
       </tr>
-      {isSelected && <TraceDetailPanel trace={trace} onClose={onClose} />}
+      {isSelected && <TraceDetailPanel trace={trace} colSpan={COLUMNS.length} onClose={onClose} />}
     </>
   );
 }
