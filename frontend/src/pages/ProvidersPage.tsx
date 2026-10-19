@@ -109,7 +109,8 @@ function ProviderCard({
             {testProvider.isPending ? "Testing..." : "Test connection"}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground font-mono">{provider.base_url}</p>
+        {/* A URL has no spaces to wrap at; a long one ran past a phone screen. */}
+        <p className="text-xs text-muted-foreground font-mono [overflow-wrap:anywhere]">{provider.base_url}</p>
         <p className="text-xs text-muted-foreground">
           Credentials:{" "}
           {provider.credential_source ? (

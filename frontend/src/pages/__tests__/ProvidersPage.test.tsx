@@ -128,6 +128,14 @@ describe("ProvidersPage", () => {
     expect(within(xai).getByText(/none configured/)).toBeInTheDocument();
   });
 
+  it("wraps a provider's base URL inside its card on a phone", async () => {
+    renderPage();
+    const anthropic = await screen.findByTestId("provider-card-anthropic");
+    // A URL has no spaces, so without a break anywhere a long one pushed
+    // main sideways on a phone screen.
+    expect(within(anthropic).getByText("https://api.anthropic.com")).toHaveClass("[overflow-wrap:anywhere]");
+  });
+
   it("titles each provider card with the provider's own spelling, not the stored id", async () => {
     renderPage();
     const anthropic = await screen.findByTestId("provider-card-anthropic");
