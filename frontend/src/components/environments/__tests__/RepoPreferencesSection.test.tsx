@@ -108,3 +108,20 @@ describe("RepoPreferencesSection heading", () => {
     expect(screen.getByRole("heading", { name: "Sandbox preferences" })).toBeInTheDocument();
   });
 });
+
+describe("RepoPreferencesSection save", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseRepoPreferences.mockReturnValue({ data: PREFS, isLoading: false });
+  });
+
+  // The section sits on the repo page under the QA config, and on the
+  // Environments Repository tab beside Add variable. Either page has one
+  // gold action already, so this Save is the secondary button.
+  it("saves with the secondary button, never the gold primary", () => {
+    renderSection();
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save.className).toContain("bg-overlay");
+    expect(save.className).not.toMatch(/(^|\s)bg-primary(\s|$)/);
+  });
+});

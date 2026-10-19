@@ -300,7 +300,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
       </div>
 
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={handleSave} disabled={saving || !dirty}>
+        <Button size="sm" variant="secondary" onClick={handleSave} disabled={saving || !dirty}>
           {saving ? "Saving…" : "Save"}
         </Button>
         <Button
