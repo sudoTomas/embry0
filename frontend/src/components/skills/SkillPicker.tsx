@@ -34,13 +34,17 @@ export function SkillPicker({
 }: SkillPickerProps) {
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Index into `filtered` of the option the arrow keys highlight; -1 for none.
+  const [active, setActive] = useState(-1);
   const listboxId = useId();
+  const optionId = (i: number) => `${listboxId}-option-${i}`;
 
   const add = (name: string) => {
     if (disabled || value.includes(name)) return;
     onChange([...value, name]);
     setQuery("");
     setError(null);
+    setActive(-1);
   };
 
   const remove = (name: string) => {
@@ -48,9 +52,30 @@ export function SkillPicker({
     onChange(value.filter((v) => v !== name));
   };
 
+  const needle = query.toLowerCase();
+  const filtered = catalog.filter((c) => `${c.name} ${c.description}`.toLowerCase().includes(needle));
+  const listboxShown = !isLoading;
+  const highlighted = listboxShown && active >= 0 && active < filtered.length ? active : -1;
+
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!listboxShown || filtered.length === 0) return;
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      const from = highlighted === -1 ? (step === 1 ? -1 : filtered.length) : highlighted;
+      setActive(Math.min(filtered.length - 1, Math.max(0, from + step)));
+      return;
+    }
+    if (e.key === "Escape") {
+      setActive(-1);
+      return;
+    }
     if (e.key !== "Enter") return;
     e.preventDefault();
+    if (highlighted !== -1) {
+      add(filtered[highlighted].name);
+      return;
+    }
     const name = query.trim();
     if (!name) return;
     if (catalog.some((c) => c.name === name) || (allowRepositorySkills && isRepositorySkill(name))) {
@@ -59,9 +84,6 @@ export function SkillPicker({
       setError(`Unknown skill "${name}": pick one from the list`);
     }
   };
-
-  const needle = query.toLowerCase();
-  const filtered = catalog.filter((c) => `${c.name} ${c.description}`.toLowerCase().includes(needle));
 
   return (
     <div className={cn("space-y-2", disabled && "opacity-60")}>
@@ -91,11 +113,12 @@ export function SkillPicker({
         id={id}
         role="combobox"
         aria-label="Search skills"
-        aria-expanded={filtered.length > 0}
-        aria-controls={listboxId}
+        aria-expanded={listboxShown && filtered.length > 0}
+        aria-controls={listboxShown ? listboxId : undefined}
+        aria-activedescendant={highlighted !== -1 ? optionId(highlighted) : undefined}
         aria-autocomplete="list"
         value={query}
-        onChange={(e) => { setQuery(e.target.value); setError(null); }}
+        onChange={(e) => { setQuery(e.target.value); setError(null); setActive(-1); }}
         onKeyDown={handleKeyDown}
         placeholder="Search skills or type a name"
         disabled={disabled}
@@ -112,18 +135,22 @@ export function SkillPicker({
           aria-label="Skills"
           className="max-h-60 overflow-auto rounded-md border border-white/[0.08] bg-[#0c1015] py-1"
         >
-          {filtered.map((c) => {
+          {filtered.map((c, i) => {
             const selected = value.includes(c.name);
             return (
               <li
                 key={c.name}
+                id={optionId(i)}
                 role="option"
-                aria-selected={selected}
-                aria-disabled={disabled || undefined}
+                // aria-selected is the keyboard highlight; a name already
+                // picked is disabled (it shows as a pill above).
+                aria-selected={i === highlighted}
+                aria-disabled={disabled || selected || undefined}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => add(c.name)}
                 className={cn(
                   "flex cursor-pointer items-start justify-between gap-2 px-3 py-1.5 hover:bg-white/[0.04]",
+                  i === highlighted && "bg-white/[0.08]",
                   selected && "cursor-default opacity-50",
                 )}
               >

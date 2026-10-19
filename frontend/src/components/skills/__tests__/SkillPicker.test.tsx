@@ -13,7 +13,7 @@ const CATALOG = [
 function setup(value: string[] = []) {
   const onChange = vi.fn();
   render(<MemoryRouter><SkillPicker value={value} onChange={onChange} catalog={CATALOG} /></MemoryRouter>);
-  return { onChange, user: userEvent.setup() };
+  return { onChange, user: userEvent.setup({ delay: null }) };
 }
 
 describe("SkillPicker", () => {
@@ -23,6 +23,33 @@ describe("SkillPicker", () => {
     expect(screen.queryByText("local:house-style")).toBeNull();
     await user.click(screen.getByRole("option", { name: /superpowers:writing-plans/ }));
     expect(onChange).toHaveBeenCalledWith(["superpowers:writing-plans"]);
+  });
+  it("ArrowDown then Enter adds the first filtered option", async () => {
+    const { onChange, user } = setup();
+    const box = screen.getByRole("combobox", { name: /search skills/i });
+    await user.type(box, "superpowers");
+    await user.keyboard("{ArrowDown}");
+    const first = screen.getByRole("option", { name: /superpowers:writing-plans/ });
+    expect(first).toHaveAttribute("aria-selected", "true");
+    expect(box).toHaveAttribute("aria-activedescendant", first.id);
+    await user.keyboard("{Enter}");
+    expect(onChange).toHaveBeenCalledWith(["superpowers:writing-plans"]);
+  });
+  it("ArrowDown, ArrowUp and Escape move and clear the highlight", async () => {
+    const { user } = setup();
+    const box = screen.getByRole("combobox", { name: /search skills/i });
+    await user.click(box);
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    expect(screen.getByRole("option", { name: /superpowers:brainstorming/ })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{ArrowUp}");
+    expect(screen.getByRole("option", { name: /superpowers:writing-plans/ })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Escape}");
+    expect(box).not.toHaveAttribute("aria-activedescendant");
+    for (const o of screen.getAllByRole("option")) expect(o).toHaveAttribute("aria-selected", "false");
+  });
+  it("names the listbox only while it is rendered", () => {
+    render(<MemoryRouter><SkillPicker value={[]} onChange={vi.fn()} catalog={CATALOG} isLoading /></MemoryRouter>);
+    expect(screen.getByRole("combobox", { name: /search skills/i })).not.toHaveAttribute("aria-controls");
   });
   it("shows availability", () => {
     setup();
