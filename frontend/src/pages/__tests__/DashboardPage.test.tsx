@@ -288,4 +288,32 @@ describe("DashboardPage", () => {
     expect(within(linearRow).getByText("Open")).toBeInTheDocument();
     expect(within(linearRow).queryByText("Expired")).toBeNull();
   });
+
+  it("keeps a recent issue's key and title readable on a phone", () => {
+    mockUseStats.mockReturnValue(
+      ready({
+        ...ORCH_OK.data!,
+        recent_issues: [
+          {
+            trace_id: "iss-lin", issue_number: 0, repo: "acme/app", title: "[ENG-7] [watcher] Tidy the setup docs",
+            tracker: "linear", tracker_key: "ENG-7", issue_status: "open", job_status: "expired",
+            timestamp: new Date().toISOString(), passed: false, cost_usd: 0, status: "expired",
+          },
+        ],
+      }),
+    );
+    renderPage();
+    const issues = screen.getByTestId("panel-Recent issues");
+    const link = within(issues).getByRole("link", { name: /ENG-7/ });
+    expect(link, "the title must not repeat the key the row already shows").toHaveTextContent(
+      /^ENG-7\s*\[watcher\] Tidy the setup docs$/,
+    );
+    // Up to two lines on a phone, one from sm up; the cell no longer cuts it to one.
+    expect(link).toHaveClass("line-clamp-2", "break-words", "sm:line-clamp-1");
+    expect(link.closest("td")).not.toHaveClass("truncate");
+    // When is the table's last column, and it steps aside below sm.
+    const table = within(issues).getByRole("table");
+    expect(within(table).getAllByRole("columnheader").at(-1)).toHaveTextContent("When");
+    expect(table).toHaveClass("[&_tr>*:last-child]:hidden", "sm:[&_tr>*:last-child]:table-cell");
+  });
 });

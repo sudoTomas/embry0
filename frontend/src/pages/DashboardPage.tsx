@@ -41,6 +41,13 @@ function recentIssueKey(issue: RecentIssue): string {
   return issue.issue_number > 0 ? `${issue.repo}#${issue.issue_number}` : issue.repo;
 }
 
+/** The issue's title without a leading "[KEY]" that repeats the key beside it. */
+function recentIssueTitle(issue: RecentIssue): string {
+  const title = issue.title ?? "";
+  const prefix = issue.tracker_key ? `[${issue.tracker_key}]` : "";
+  return prefix && title.startsWith(prefix) ? title.slice(prefix.length).trimStart() : title;
+}
+
 /**
  * Overview — every number on this page comes from embry0's own backend: live
  * counts from /queue, the rest from /stats, plus the watcher audit trail. The
@@ -112,7 +119,9 @@ export function DashboardPage() {
           isEmpty={recentIssues.length === 0}
           emptyText="No issues processed yet."
         >
-          <table className="data-table">
+          {/* On a phone the When column, the last, steps aside so the issue
+              keeps its key and title readable on up to two lines. */}
+          <table className="data-table [&_tr>*:last-child]:hidden sm:[&_tr>*:last-child]:table-cell">
             <thead>
               <tr>
                 <th scope="col">Status</th>
@@ -129,10 +138,14 @@ export function DashboardPage() {
                     <td className="w-px">
                       <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>
                     </td>
-                    <td className="w-full max-w-0 truncate">
-                      <Link to={`/issues/${issue.trace_id}`} className="hover:underline" title={issue.title}>
-                        <span className="text-fg-secondary">{recentIssueKey(issue)}</span>
-                        {issue.title && <span className="ml-2">{issue.title}</span>}
+                    <td className="w-full max-w-0">
+                      <Link
+                        to={`/issues/${issue.trace_id}`}
+                        className="line-clamp-2 break-words hover:underline sm:line-clamp-1"
+                        title={issue.title}
+                      >
+                        <span className="font-mono text-xs text-fg-secondary">{recentIssueKey(issue)}</span>
+                        {recentIssueTitle(issue) && <span className="ml-2">{recentIssueTitle(issue)}</span>}
                       </Link>
                     </td>
                     <td className="num hidden whitespace-nowrap text-fg-secondary sm:table-cell">
