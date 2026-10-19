@@ -3,7 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const api = { standards: vi.fn(), versions: vi.fn(), repos: vi.fn(), org: vi.fn(), job: vi.fn() };
+const api = { standards: vi.fn(), versions: vi.fn(), repos: vi.fn(), orgs: vi.fn(), org: vi.fn(), job: vi.fn() };
 vi.mock("@/api/standards", async () => {
   const actual = await vi.importActual<typeof import("@/api/standards")>("@/api/standards");
   return {
@@ -15,7 +15,11 @@ vi.mock("@/api/standards", async () => {
 vi.mock("@/api/repos", () => ({ fetchRepos: (...a: unknown[]) => api.repos(...a) }));
 vi.mock("@/api/orgs", async () => {
   const actual = await vi.importActual<typeof import("@/api/orgs")>("@/api/orgs");
-  return { ...actual, fetchOrganization: (...a: unknown[]) => api.org(...a) };
+  return {
+    ...actual,
+    fetchOrganizations: (...a: unknown[]) => api.orgs(...a),
+    fetchOrganization: (...a: unknown[]) => api.org(...a),
+  };
 });
 vi.mock("@/api/jobs", () => ({ fetchJob: (...a: unknown[]) => api.job(...a) }));
 
@@ -40,7 +44,8 @@ function renderPage(path = "/orgs/Acme/standards") {
 beforeEach(() => {
   Object.values(api).forEach((m) => m.mockReset());
   useAuthStore.setState({ authMode: "key", user: null });
-  api.org.mockResolvedValue(org({ display_name: "Acme Inc" }));
+  api.orgs.mockResolvedValue([org({ owner: "other" }), org({ display_name: "Acme Inc" })]);
+  api.org.mockRejectedValue(new Error("the view reads the organizations list, not one organization"));
   api.standards.mockResolvedValue(
     ownerStandards({
       repos: [
@@ -119,6 +124,17 @@ describe("StandardsPage", () => {
     const rows = await screen.findAllByTestId("standard-repo-row");
     expect(screen.queryByTestId("standard-mode-select")).toBeNull();
     expect(within(rows[0]).getByTestId("standard-audit-button")).toBeEnabled();
+  });
+
+  it("links back to the organizations list for an owner with a standard but no organization", async () => {
+    api.orgs.mockResolvedValue([org({ owner: "other" })]);
+    renderPage();
+    const back = await screen.findByTestId("standard-back");
+    expect(back).toHaveTextContent("← Organizations");
+    expect(back).toHaveAttribute("href", "/orgs");
+    expect(screen.getByRole("heading", { level: 1, name: "Design standard" })).toBeInTheDocument();
+    // No GET /orgs/<owner>, which would answer 404 for this owner on every load.
+    expect(api.org).not.toHaveBeenCalled();
   });
 
   it("offers a retry when the standards do not load", async () => {

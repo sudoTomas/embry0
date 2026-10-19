@@ -13,7 +13,7 @@ import {
 } from "@/components/standards/StandardParts";
 import { Badge } from "@/components/ui/Badge";
 import { DashboardSkeleton, Skeleton } from "@/components/ui/PageSkeleton";
-import { useOrganization } from "@/hooks/useOrgs";
+import { useOrganizations } from "@/hooks/useOrgs";
 import { useRegisteredRepos } from "@/hooks/useRepos";
 import { useAuditJobStatuses, useOwnerStandards, useStandardVersions } from "@/hooks/useStandards";
 import { colourRoles, otherRoles, standardRows, standardTitle } from "@/lib/standards";
@@ -59,7 +59,10 @@ export function StandardsPage() {
   const isAdmin = authMode === "key" || userTier === "admin";
   const canAudit = isAdmin || userTier === "operator";
 
-  const org = useOrganization(owner);
+  // From the list, not GET /orgs/<owner>: a standard can exist before its
+  // owner is registered, and that read would answer 404 on every load.
+  const orgs = useOrganizations();
+  const org = orgs.data?.find((o) => o.owner.toLowerCase() === owner) ?? null;
   const standards = useOwnerStandards(owner);
   const registered = useRegisteredRepos();
   const active = standards.data?.standards.find((s) => s.kind === KIND) ?? null;
@@ -74,15 +77,19 @@ export function StandardsPage() {
   }
   if (standards.isLoading || !standards.data) return <DashboardSkeleton />;
 
-  const name = org.data?.display_name || owner;
   const putPath = standardApiPath(owner, KIND);
 
   return (
     <div className="min-w-0 space-y-6" data-testid="standards-page">
       <div className="space-y-2">
-        <Link to={`/orgs/${owner}`} className="text-sm text-fg-muted hover:underline">
-          ← {name}
-        </Link>
+        {orgs.isPending ? (
+          <span className="block h-5" aria-hidden="true" />
+        ) : (
+          // Back to the organization when it is registered; else to the list, not to a page that does not exist.
+          <Link to={org ? `/orgs/${owner}` : "/orgs"} className="text-sm text-fg-muted hover:underline" data-testid="standard-back">
+            {org ? `← ${org.display_name || owner}` : "← Organizations"}
+          </Link>
+        )}
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-xl font-bold">{standardTitle(KIND)}</h1>
           {active && (
