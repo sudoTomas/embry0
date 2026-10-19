@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Work in the worktree `/Users/tomas/repos/embry0-worktrees/agent-identity-skills` on branch `feat/agent-identity-skills`; never check out a branch in `/Users/tomas/repos/embry0`.
+- Work in the worktree `<worktree-root>/agent-identity-skills` on branch `feat/agent-identity-skills`; never check out a branch in `<deploy-checkout>`.
 - Vendor-neutral naming: no customer, host, person or job id in code, tests, fixtures, docs or commit subjects (`CONTRIBUTING.md`, vendor-neutral naming).
 - Migration number is **101**, exactly once, contiguous (`tests/unit/storage/test_migration_100.py` hands the "last entry" assertion to `test_migration_101.py`).
 - Every new pipeline exception that can reach the executor needs a row in the exception table in `embry0/safety/error_codes.py` (the taxonomy guard test fails otherwise). This plan adds none that reach the executor; sync errors stay inside the sync service.
