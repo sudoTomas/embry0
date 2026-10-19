@@ -215,6 +215,23 @@ describe("JobLine", () => {
       );
     });
 
+    it("draws on from where the line is when a stage lands mid-draw", () => {
+      stubMedia({ reduced: false });
+      // The first draw (to half the line) is a quarter of the way along its
+      // eased progress when the developer finishes: the line is at 0.125.
+      const first = { cancel: vi.fn(), effect: { getComputedTiming: () => ({ progress: 0.25 }) } };
+      const animate = vi.fn().mockReturnValueOnce(first).mockReturnValue({ cancel: vi.fn() });
+      Object.defineProperty(HTMLElement.prototype, "animate", { value: animate, configurable: true, writable: true });
+      const graph = graphOf("triage", "developer", "review");
+      const { rerender } = render(<JobLine agents={running(1)} graph={graph} status="running" prUrl={null} />);
+      rerender(<JobLine agents={running(2)} graph={graph} status="running" prUrl={null} />);
+      expect(first.cancel, "the first draw gives way to the new one").toHaveBeenCalled();
+      expect(animate, "the new segment starts where the line is drawn, not at the first draw's end").toHaveBeenLastCalledWith(
+        [{ transform: "scaleX(0.125)" }, { transform: "scaleX(1)" }],
+        expect.objectContaining({ duration: 560 }),
+      );
+    });
+
     it("shows the line drawn at once under reduced motion", () => {
       stubMedia({ reduced: true });
       const animate = stubAnimate();

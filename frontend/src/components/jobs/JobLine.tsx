@@ -76,25 +76,46 @@ function lineOf(agents: AgentState[], graph: PipelineGraph | null, status: strin
   return { stops, open, reach, focus: current >= 0 ? current : Math.max(reach, 0) };
 }
 
+/** A draw of the line in progress, from and to as parts of its length. */
+interface Draw {
+  animation: Animation;
+  from: number;
+  to: number;
+}
+
+/**
+ * Where a draw has the line now, or null once it has ended. The animation's
+ * progress is eased already, so it is where the line is on screen.
+ */
+function drawnNow(draw: Draw | null): number | null {
+  if (!draw) return null;
+  const progress = draw.animation.effect?.getComputedTiming().progress;
+  return progress == null ? null : draw.from + (draw.to - draw.from) * progress;
+}
+
 /**
  * Draws the line to `to` (0 to 1 of its length): from the start when there is
- * first something to draw, from where it stood when a stage lands. The
- * element's own style already holds the end, so reduced motion, or an
- * animation that never runs, leaves the line drawn.
+ * first something to draw, from where it stands when a stage lands. A stage
+ * can land while the line is still drawing, so the new draw starts where the
+ * running one has the line, not where it was going. The element's own style
+ * already holds the end, so reduced motion, or an animation that never runs,
+ * leaves the line drawn.
  */
 function useDrawTo(ref: RefObject<HTMLElement | null>, to: number) {
-  const from = useRef(0);
-  const running = useRef<Animation | null>(null);
+  const target = useRef(0);
+  const running = useRef<Draw | null>(null);
   useLayoutEffect(() => {
     const el = ref.current;
-    const start = from.current;
-    from.current = to;
-    if (!el || start === to || prefersReducedMotion() || typeof el.animate !== "function") return;
-    running.current?.cancel();
-    running.current = el.animate([{ transform: `scaleX(${start})` }, { transform: `scaleX(${to})` }], {
+    const last = target.current;
+    target.current = to;
+    if (!el || last === to || prefersReducedMotion() || typeof el.animate !== "function") return;
+    const start = drawnNow(running.current) ?? last;
+    running.current?.animation.cancel();
+    const animation = el.animate([{ transform: `scaleX(${start})` }, { transform: `scaleX(${to})` }], {
       duration: start === 0 ? motionMs(el, "--motion-draw", 1400) : motionMs(el, "--motion-slow", 560),
       easing: EASE_TRAVEL,
     });
+    running.current = { animation, from: start, to };
   }, [ref, to]);
 }
 
