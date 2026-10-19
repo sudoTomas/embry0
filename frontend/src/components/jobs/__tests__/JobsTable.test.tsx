@@ -50,8 +50,16 @@ describe("JobsTable rows", () => {
 
   it("shows 8 characters of the id, after the job- prefix", () => {
     renderTable([tick("job-fd155299c8a4", "acme/backend", 22)]);
-    const id = screen.getByText("fd155299");
-    expect(id).toHaveAttribute("title", "job-fd155299c8a4");
+    for (const id of screen.getAllByText("fd155299")) expect(id).toHaveAttribute("title", "job-fd155299c8a4");
+  });
+
+  it("keeps the job's name and short id together on a phone, where the id column steps aside", () => {
+    // Below sm the id column hides so the name gets the row's width; the
+    // short id then shows under the name.
+    renderTable([tick("job-fd155299c8a4", "acme/backend", 22)]);
+    expect(screen.getByRole("columnheader", { name: "Job ID" })).toHaveClass("hidden", "sm:table-cell");
+    const cell = screen.getByText("Watcher tick, backend, 22 lines").closest("td") as HTMLElement;
+    expect(within(cell).getByText("fd155299")).toHaveClass("sm:hidden");
   });
 
   it("offers Cancel on every status the API cancels, and logs on every job that ran", () => {
