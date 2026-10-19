@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from embry0.api.app import create_app
 from embry0.api.deps import _admin_dependency, _auth_dependency
 from embry0.api.route_table import route_template
-from tests.fixtures.routes import app_routes
+from tests.fixtures.routes import ServedRoute, app_routes
 
 
 def _without_convertors(path: str) -> str:
@@ -59,6 +59,44 @@ def test_a_route_carries_the_dependencies_of_its_include() -> None:
     jobs = next(route for route in app_routes(create_app()) if route.path == "/api/v1/jobs/{job_id}")
     assert jobs.dependant is not None
     assert _auth_dependency in {d.call for d in jobs.dependant.dependencies}
+
+
+def _gates(route: ServedRoute) -> set[object]:
+    assert route.dependant is not None
+    return {d.call for d in route.dependant.dependencies}
+
+
+def test_every_skill_write_is_admin_and_the_skill_reads_are_not() -> None:
+    """Skill sources are code the agents load, so every write is admin tier (spec 3.4)."""
+    routes = [route for route in app_routes(create_app()) if route.is_api_route]
+    writes = {
+        (method, route.path): route
+        for route in routes
+        for method in route.methods or ()
+        if method in {"POST", "PUT", "PATCH", "DELETE"}
+        and (route.path.startswith("/api/v1/skills") or route.path.startswith("/api/v1/agents/{agent_type}/skills"))
+    }
+    assert sorted(writes) == [
+        ("DELETE", "/api/v1/agents/{agent_type}/skills/{skill_name}"),
+        ("DELETE", "/api/v1/skills/inline/{name}"),
+        ("DELETE", "/api/v1/skills/sources/{source_id}"),
+        ("PATCH", "/api/v1/skills/sources/{source_id}"),
+        ("POST", "/api/v1/agents/{agent_type}/skills/{skill_name}"),
+        ("POST", "/api/v1/skills/sources"),
+        ("POST", "/api/v1/skills/sources/{source_id}/sync"),
+        ("PUT", "/api/v1/skills/inline/{name}"),
+    ], "the set of skill write routes changed; gate any new one as admin and list it here"
+    ungated = sorted(key for key, route in writes.items() if _admin_dependency not in _gates(route))
+    assert ungated == [], f"skill write routes without the admin gate: {ungated}"
+
+    reads = {"/api/v1/skills", "/api/v1/skills/sources", "/api/v1/tools"}
+    for route in routes:
+        if route.path in reads and "GET" in (route.methods or ()):
+            gates = _gates(route)
+            assert _admin_dependency not in gates, f"GET {route.path} must be readable without admin"
+            assert _auth_dependency in gates, f"GET {route.path} must still need an authenticated caller"
+            reads.discard(route.path)
+    assert reads == set(), f"read routes missing from the table: {reads}"
 
 
 def _template_app() -> FastAPI:
