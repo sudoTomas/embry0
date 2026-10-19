@@ -3,11 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { FileCode2, GitPullRequest, KeyRound, ListChecks, Settings2, ShieldAlert } from "lucide-react";
 import { fetchRepoDetail } from "@/api/repos";
 import { useRepoEnv } from "@/hooks/useEnvironments";
+import { useRepoReadiness } from "@/hooks/useRepoReadiness";
 import { useQaRunsForRepo } from "@/hooks/useQaDashboard";
 import { QaConfigEditor } from "@/components/qa/QaConfigEditor";
 import { RepoAccountsSection } from "@/components/repos/RepoAccountsSection";
 import { RepoStandardsRow } from "@/components/standards/RepoStandardsRow";
 import { RepoDockerAccessSection } from "@/components/repos/RepoDockerAccessSection";
+import { ReadinessChip, SetupChecklist } from "@/components/repos/SetupChecklist";
 import { RepoPreferencesSection } from "@/components/environments/RepoPreferencesSection";
 import { PullRequestReviewCard } from "@/components/environments/PullRequestReviewCard";
 import { PageError } from "@/components/PageError";
@@ -18,8 +20,9 @@ import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
 import { providerLabel, statusLabel } from "@/lib/status";
 import { formatDateTime } from "@/lib/utils";
 
-/** RAV-1253: the unified per-repo view — registry state, QA config editor,
- * environment (masked), forge account, sandbox preferences, and recent QA runs. */
+/** RAV-1253: the unified per-repo view. It opens on the setup checklist, then
+ * the QA config editor, environment (masked), forge account, sandbox
+ * preferences, and recent QA runs. */
 export function RepoDetailPage() {
   // Splat param: the repo path can be `owner/name` OR a GitLab nested
   // subgroup like `group/subgroup/project` (#162).
@@ -35,6 +38,7 @@ export function RepoDetailPage() {
   });
   const { data: envVars = [] } = useRepoEnv(full);
   const runs = useQaRunsForRepo(validRepo ? full : undefined, { limit: 10 });
+  const readiness = useRepoReadiness(validRepo ? full : "");
 
   if (!validRepo) return <PageError message="Invalid repo — expected a path like owner/name" />;
   if (isNotFound(detail.error))
@@ -48,29 +52,23 @@ export function RepoDetailPage() {
   return (
     <div className="space-y-6">
       <div>
-        <Link to="/qa/repos" className="text-sm text-white/50 hover:underline">
-          ← Repos
+        <Link to="/repos" className="text-sm text-white/50 hover:underline">
+          ← Repositories
         </Link>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
           <h1 className="text-xl font-bold">{full}</h1>
           <Badge tone="neutral" data-testid="repo-detail-forge">
             {providerLabel(repo.forge)}
           </Badge>
-          {repo.active ? <Badge tone="success">Active</Badge> : <Badge tone="neutral">Inactive</Badge>}
-          {repo.has_qa_config ? (
-            <Badge tone="success">QA config stored</Badge>
-          ) : (
-            <Badge tone="warning">No QA config</Badge>
-          )}
+          {readiness.data && <ReadinessChip readiness={readiness.data} />}
         </div>
-        {repo.notes && <p className="mt-1 text-sm text-white/60">{repo.notes}</p>}
-        {repo.qa_config_updated_at && (
-          <p className="mt-1 text-xs text-muted-foreground" data-testid="repo-config-meta">
-            QA config updated {formatDateTime(repo.qa_config_updated_at)}
-            {repo.qa_config_updated_by ? ` by ${repo.qa_config_updated_by}` : ""}
-          </p>
+        {!repo.active && (
+          <p className="mt-1 text-xs text-muted-foreground">Hidden from lists. embry0 still works on this repository.</p>
         )}
+        {repo.notes && <p className="mt-1 text-sm text-white/60">{repo.notes}</p>}
       </div>
+
+      <SetupChecklist repo={full} forge={repo.forge} />
 
       <RepoStandardsRow repo={repo.repo} standards={repo.standards} />
 

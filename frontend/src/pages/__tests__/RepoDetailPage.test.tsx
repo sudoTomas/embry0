@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -43,6 +43,12 @@ vi.mock("@/components/repos/RepoDockerAccessSection", () => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+const mockFetchReadiness = vi.fn();
+vi.mock("@/api/repoSetup", () => ({
+  fetchReadiness: (...a: unknown[]) => mockFetchReadiness(...a),
+  skipTesting: vi.fn(),
+}));
+
 const mockFetchJobs = vi.fn();
 vi.mock("@/api/jobs", () => ({ fetchJobs: (...a: unknown[]) => mockFetchJobs(...a) }));
 
@@ -64,6 +70,26 @@ const DETAIL = {
   env_secret_count: 1,
 };
 
+const READINESS = {
+  repo: "acme/widgets",
+  status: "steps_left",
+  steps_left: 2,
+  summary: "embry0 can read this code and open pull requests. It cannot test your app yet.",
+  next_step: "testing",
+  rows: [
+    {
+      key: "testing",
+      required: true,
+      state: "missing",
+      title: "Test your app before showing you a change",
+      says: "Testing is not set up yet. embry0 can still write code, but it cannot check that your app still works.",
+      action: { kind: "start_setup", label: "Let embry0 set up testing" },
+    },
+  ],
+  needs_docker: false,
+  facts_seen_at: null,
+};
+
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -79,6 +105,8 @@ function renderPage() {
 
 beforeEach(() => {
   mockFetchRepoDetail.mockReset();
+  mockFetchReadiness.mockReset();
+  mockFetchReadiness.mockResolvedValue(READINESS);
   mockUseRepoEnv.mockReturnValue({ data: [] });
   mockUseQaRunsForRepo.mockReturnValue({ data: [] });
 });
@@ -88,9 +116,7 @@ describe("RepoDetailPage (RAV-1253)", () => {
     mockFetchRepoDetail.mockResolvedValue(DETAIL);
     renderPage();
     expect(await screen.findByRole("heading", { name: "acme/widgets" })).toBeInTheDocument();
-    expect(screen.getByText("QA config stored")).toBeInTheDocument();
     expect(screen.getByText("pilot repo")).toBeInTheDocument();
-    expect(screen.getByTestId("repo-config-meta")).toHaveTextContent("user:alex");
     expect(screen.getByTestId("qa-config-editor")).toHaveTextContent("acme/widgets");
     expect(screen.getByTestId("repo-accounts-section")).toHaveTextContent("acme/widgets");
     expect(screen.getByTestId("repo-accounts-section")).toHaveTextContent("github");
@@ -107,6 +133,68 @@ describe("RepoDetailPage (RAV-1253)", () => {
       "href",
       "/environments?repo=acme%2Fwidgets",
     );
+  });
+
+  it("opens on the setup checklist, under a header without registry badges", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    renderPage();
+    const heading = await screen.findByRole("heading", { name: "acme/widgets" });
+    const checklist = await screen.findByTestId("setup-checklist");
+    expect(heading.compareDocumentPosition(checklist) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const qa = screen.getByRole("heading", { name: "QA config" });
+    expect(checklist.compareDocumentPosition(qa) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mockFetchReadiness).toHaveBeenCalledWith("acme/widgets");
+    expect(screen.getByText("GitHub")).toBeInTheDocument();
+    expect(screen.queryByText("Active")).not.toBeInTheDocument();
+    expect(screen.queryByText("QA config stored")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("repo-config-meta")).not.toBeInTheDocument();
+    expect(screen.queryByText(/user:alex/)).not.toBeInTheDocument();
+  });
+
+  it("links back to the repositories list", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    renderPage();
+    await screen.findByRole("heading", { name: "acme/widgets" });
+    expect(screen.getByRole("link", { name: "← Repositories" })).toHaveAttribute("href", "/repos");
+  });
+
+  it.each([
+    [{ status: "steps_left", steps_left: 2 }, "2 steps left"],
+    [{ status: "steps_left", steps_left: 1 }, "1 step left"],
+    [{ status: "ready", steps_left: 0, next_step: null }, "Ready"],
+    [{ status: "needs_admin", steps_left: 3, next_step: "code_access" }, "Needs an admin"],
+    [{ status: "setup_to_review", steps_left: 2 }, "Setup to review"],
+  ])("shows one status chip from the setup status (%o)", async (overrides, chip) => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockFetchReadiness.mockResolvedValue({ ...READINESS, ...overrides });
+    renderPage();
+    expect(await screen.findByTestId("repo-readiness-chip")).toHaveTextContent(chip);
+  });
+
+  it("says a hidden repository is still worked on", async () => {
+    mockFetchRepoDetail.mockResolvedValue({ ...DETAIL, active: false });
+    renderPage();
+    await screen.findByRole("heading", { name: "acme/widgets" });
+    expect(screen.getByText("Hidden from lists. embry0 still works on this repository.")).toBeInTheDocument();
+    expect(screen.queryByText("Inactive")).not.toBeInTheDocument();
+  });
+
+  it("leaves the hidden note out for an active repository", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    renderPage();
+    await screen.findByRole("heading", { name: "acme/widgets" });
+    expect(screen.queryByText(/Hidden from lists/)).not.toBeInTheDocument();
+  });
+
+  it("still renders the page when the setup status fails to load", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockFetchReadiness.mockRejectedValue(new Error("boom"));
+    renderPage();
+    const checklist = await screen.findByTestId("setup-checklist");
+    expect(await within(checklist).findByText("Could not load the setup status.")).toBeInTheDocument();
+    expect(screen.queryByTestId("repo-readiness-chip")).not.toBeInTheDocument();
+    expect(screen.getByTestId("qa-config-editor")).toHaveTextContent("acme/widgets");
+    expect(screen.getByTestId("repo-accounts-section")).toBeInTheDocument();
   });
 
   it("masks secret env values and links runs", async () => {
