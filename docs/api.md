@@ -419,7 +419,8 @@ resolves). These are recorded facts, not an estimate. With the default
 ([configuration](configuration.md)).
 
 `POST .../setup/propose` takes `{"confirm_spend": true}`; without it the
-answer is 422. It retires a proposal that is waiting (it becomes `stale`),
+answer is 422, as it is for any value but a JSON `true`, such as `"yes"` or
+`1`. It retires a proposal that is waiting (it becomes `stale`),
 keeps the time the test setup was last saved, and starts an onboard job on
 the repository's base branch setting, else its default branch as discovery
 saw it, else `main`. It answers `{"proposal_id", "job_id"}`, or 409 while a

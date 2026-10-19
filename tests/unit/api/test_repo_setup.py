@@ -202,6 +202,15 @@ async def test_propose_needs_the_cost_confirmed_first(client, app) -> None:
 
 
 @pytest.mark.requires_postgres
+async def test_only_a_real_true_confirms_the_cost(client, app) -> None:
+    for value in ("yes", "true", "on", 1):
+        resp = await client.post(f"{SETUP}/propose", json={"confirm_spend": value})
+        assert resp.status_code == 422, f"{value!r}: {resp.status_code} {resp.text}"
+    assert app.state.issue_executor.calls == []
+    assert await app.state.repo_setup_proposals_repo.latest(REPO) is None
+
+
+@pytest.mark.requires_postgres
 async def test_propose_starts_one_onboard_run_in_propose_mode(client, app) -> None:
     resp = await client.post(f"{SETUP}/propose", json={"confirm_spend": True})
     assert resp.status_code == 200, resp.text

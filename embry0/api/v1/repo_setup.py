@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist
@@ -50,7 +50,8 @@ router = APIRouter()
 class ProposeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    confirm_spend: bool = False
+    # Strict: "yes" or 1 must not start a paid run.
+    confirm_spend: StrictBool = False
 
 
 class ApplyRequest(BaseModel):
