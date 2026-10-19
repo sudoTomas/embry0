@@ -355,3 +355,29 @@ async def test_an_update_may_name_any_agent_row(app):
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
     assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_a_failing_agent_rows_read_degrades_to_the_builtin_types(app):
+    """As at plan time: the rows cannot be read, so the builtin types decide; no 500."""
+    from structlog.testing import capture_logs
+
+    broken = MagicMock()
+    broken.list_all = AsyncMock(side_effect=RuntimeError("database is down"))
+    app.state.agent_defs_repo = broken
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with capture_logs() as logs:
+            ok = await client.post(
+                "/api/v1/pipelines/templates",
+                json={"name": "t", "graph_definition": SAMPLE_GRAPH},
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+        custom = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "t", "graph_definition": _bot_graph()},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    assert ok.status_code == 201, ok.text
+    assert any(e["event"] == "template_agent_types_unavailable" for e in logs), logs
+    assert custom.status_code == 422, custom.text
+    assert "unknown agent_type 'release-bot'" in custom.text
