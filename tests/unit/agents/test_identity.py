@@ -46,7 +46,16 @@ def test_the_adventurer_presets_follow_the_legacy_roster() -> None:
     assert identity.AVATARS[:12] == identity.LEGACY_AVATARS
     assert identity.AVATARS[12:] == identity.ADVENTURER_AVATARS
     assert len(identity.ADVENTURER_AVATARS) == 20
-    for expected in ("starter", "bronze-warrior", "dragon-warrior", "champion", "apprentice", "archmage", "scout", "sharpshooter"):
+    for expected in (
+        "starter",
+        "bronze-warrior",
+        "dragon-warrior",
+        "champion",
+        "apprentice",
+        "archmage",
+        "scout",
+        "sharpshooter",
+    ):
         assert expected in identity.ADVENTURER_AVATARS
     assert identity.validate_avatar("rune-warrior") == "rune-warrior"
 
