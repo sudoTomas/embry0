@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import contractText from "../../../../docs/contracts/identity.json?raw";
+import { PRESET_IDS } from "@/components/roster/appearance";
 import {
-  AVATARS, BUILTIN_IDENTITY, DEFAULT_AVATAR, DEFAULT_COLOR, DISPLAY_NAME_MAX, PALETTE, PALETTE_CLASSES, PALETTE_HEX, TAGLINE_MAX,
+  ADVENTURER_AVATARS, AVATARS, BUILTIN_IDENTITY, DEFAULT_AVATAR, DEFAULT_COLOR, DISPLAY_NAME_MAX, LEGACY_AVATARS, PALETTE, PALETTE_CLASSES, PALETTE_HEX, TAGLINE_MAX,
+  isAdventurerId, isAvatarId, isLegacyAvatarId,
 } from "../agentIdentity";
 
 interface Contract {
@@ -31,5 +33,13 @@ describe("identity contract mirror (docs/contracts/identity.json)", () => {
         expect.objectContaining({ text: expect.any(String), bg: expect.any(String), border: expect.any(String) }),
       );
     }
+  });
+  it("appends the adventurer presets to the twelve legacy avatars, in the presets' order", () => {
+    expect(LEGACY_AVATARS).toHaveLength(12);
+    expect([...ADVENTURER_AVATARS]).toEqual(PRESET_IDS);
+    expect([...AVATARS]).toEqual([...LEGACY_AVATARS, ...ADVENTURER_AVATARS]);
+    expect(contract.avatars.slice(12)).toEqual(PRESET_IDS);
+    expect(isAdventurerId("rune-warrior") && isAvatarId("rune-warrior") && !isLegacyAvatarId("rune-warrior")).toBe(true);
+    expect(isLegacyAvatarId("golem") && !isAdventurerId("golem")).toBe(true);
   });
 });

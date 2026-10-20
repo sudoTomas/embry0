@@ -1,7 +1,7 @@
 """Agent identity vocabulary: the avatar roster and the color palette.
 
 One source for the backend validators and, through docs/contracts/identity.json,
-for the frontend (frontend/src/lib/identity.ts). The frontend keys its sprites
+for the frontend (frontend/src/lib/agentIdentity.ts). The frontend keys its sprites
 and tints by these ids, so an id is never renamed once released; a new one is
 appended.
 """
@@ -13,7 +13,8 @@ import json
 import sys
 from typing import Any, Final
 
-AVATARS: Final[tuple[str, ...]] = (
+#: The twelve drawn avatars (frontend/src/components/roster/sprites.ts).
+LEGACY_AVATARS: Final[tuple[str, ...]] = (
     "seer",
     "smith",
     "warden",
@@ -27,6 +28,31 @@ AVATARS: Final[tuple[str, ...]] = (
     "bard",
     "golem",
 )
+#: The adventurer presets, composed from an appearance
+#: (frontend/src/components/roster/appearance/presets.ts). Same order as there.
+ADVENTURER_AVATARS: Final[tuple[str, ...]] = (
+    "starter",
+    "bronze-warrior",
+    "iron-warrior",
+    "steel-warrior",
+    "mithril-warrior",
+    "adamant-warrior",
+    "rune-warrior",
+    "dragon-warrior",
+    "champion",
+    "apprentice",
+    "mystic",
+    "archmage",
+    "scout",
+    "ranger",
+    "marksman",
+    "sharpshooter",
+    "monk",
+    "pirate",
+    "skiller",
+    "miner",
+)
+AVATARS: Final[tuple[str, ...]] = LEGACY_AVATARS + ADVENTURER_AVATARS
 PALETTE: Final[tuple[str, ...]] = ("gold", "cyan", "violet", "rose", "emerald", "amber", "sky", "slate")
 DEFAULT_AVATAR: Final = "golem"
 DEFAULT_COLOR: Final = "slate"

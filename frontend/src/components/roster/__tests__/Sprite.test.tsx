@@ -1,5 +1,6 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { PRESET_IDS } from "../appearance";
 import css from "../roster.css?raw";
 import { Sprite } from "../Sprite";
 
@@ -17,9 +18,9 @@ describe("Sprite", () => {
     expect(svg).toHaveAttribute("data-state", "idle");
     expect(svg.style.getPropertyValue("--sprite-fill")).toBe("var(--color-palette-amber)");
     const fills = [...svg.querySelectorAll("path")].map((p) => p.getAttribute("fill"));
-    expect(fills).toContain("var(--color-background)");
+    expect(fills).toContain("color-mix(in srgb, var(--sprite-fill) 30%, black)");
     expect(fills).toContain("var(--sprite-fill)");
-    expect(fills).toContain("var(--color-foreground)");
+    expect(fills).toContain("var(--color-background)");
   });
 
   it("stacks both frames of a two-frame state and one frame otherwise", () => {
@@ -97,5 +98,48 @@ describe("Sprite", () => {
 
   it("gives the nameplate the pixel face", () => {
     expect(css).toMatch(/\n\.sprite-nameplate\s*\{[^}]*font-family:\s*var\(--font-pixel\)/);
+  });
+
+  describe("with an adventurer preset", () => {
+    it("draws the composed 32x32 frames with their fixed fills and the cape in the party colour", () => {
+      const { container } = render(<Sprite avatar="rune-warrior" color="emerald" state="idle" size={48} label="Vanguard" />);
+      const svg = container.querySelector("svg")!;
+      expect(svg).toHaveAttribute("viewBox", "0 0 32 32");
+      expect(svg).toHaveAttribute("width", "48");
+      expect(svg).toHaveAttribute("aria-label", "Vanguard, idle");
+      expect(svg).toHaveAttribute("data-avatar", "rune-warrior");
+      expect(svg).toHaveAttribute("data-color", "emerald");
+      expect(svg).toHaveAttribute("data-frames", "2");
+      expect(svg.style.getPropertyValue("--sprite-fill")).toBe("var(--color-palette-emerald)");
+      const fills = [...svg.querySelectorAll('g[data-frame="0"] path')].map((p) => p.getAttribute("fill")!);
+      expect(fills.filter((f) => /^#[0-9a-f]{6}$/.test(f)).length, "fixed hex fills").toBeGreaterThan(8);
+      expect(fills, "a rune warrior wears a cape").toContain("var(--sprite-fill)");
+      expect(fills).not.toContain("color-mix(in srgb, var(--sprite-fill) 30%, black)");
+    });
+
+    it("keeps the legacy avatars at 16x16", () => {
+      const { container } = render(<Sprite avatar="smith" color="amber" state="idle" />);
+      expect(container.querySelector("svg")).toHaveAttribute("viewBox", "0 0 16 16");
+    });
+
+    it("renders every preset in every state, pending as the one dim-tint path", () => {
+      for (const id of PRESET_IDS) {
+        const { container, unmount } = render(<Sprite avatar={id} color="gold" state="pending" />);
+        const fills = [...container.querySelectorAll("path")].map((p) => p.getAttribute("fill"));
+        expect(fills, id).toEqual(["color-mix(in srgb, var(--sprite-fill) 45%, transparent)"]);
+        unmount();
+      }
+      for (const state of ["idle", "thinking", "tool", "done", "failed"] as const) {
+        const { container, unmount } = render(<Sprite avatar="archmage" color="violet" state={state} />);
+        expect(container.querySelectorAll("path").length, state).toBeGreaterThan(5);
+        unmount();
+      }
+    });
+
+    it("draws a still preset as frame 0 alone", () => {
+      const { container } = render(<Sprite avatar="scout" color="cyan" state="tool" still />);
+      expect(container.querySelector("svg")).toHaveAttribute("data-frames", "1");
+      expect(container.querySelectorAll("g.sprite-frame")).toHaveLength(1);
+    });
   });
 });

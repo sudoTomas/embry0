@@ -4,15 +4,27 @@
  * sides (agentIdentity.contract.test.ts). Replaces the hard-coded colour,
  * icon and role maps each surface used to keep.
  */
-export const AVATARS = [
+/** The twelve drawn avatars of components/roster/sprites.ts. */
+export const LEGACY_AVATARS = [
   "seer", "smith", "warden", "alchemist", "herald", "arbiter", "scholar", "oracle", "engineer", "rogue", "bard", "golem",
 ] as const;
+/** The adventurer presets, composed from an appearance (components/roster/appearance/presets.ts, which this list types). */
+export const ADVENTURER_AVATARS = [
+  "starter",
+  "bronze-warrior", "iron-warrior", "steel-warrior", "mithril-warrior", "adamant-warrior", "rune-warrior", "dragon-warrior", "champion",
+  "apprentice", "mystic", "archmage",
+  "scout", "ranger", "marksman", "sharpshooter",
+  "monk", "pirate", "skiller", "miner",
+] as const;
+export const AVATARS = [...LEGACY_AVATARS, ...ADVENTURER_AVATARS] as const;
+export type LegacyAvatarId = (typeof LEGACY_AVATARS)[number];
+export type AdventurerId = (typeof ADVENTURER_AVATARS)[number];
 export type AvatarId = (typeof AVATARS)[number];
 
 export const PALETTE = ["gold", "cyan", "violet", "rose", "emerald", "amber", "sky", "slate"] as const;
 export type PaletteId = (typeof PALETTE)[number];
 
-export const DEFAULT_AVATAR: AvatarId = "golem";
+export const DEFAULT_AVATAR: LegacyAvatarId = "golem";
 export const DEFAULT_COLOR: PaletteId = "slate";
 export const DISPLAY_NAME_MAX = 60;
 export const TAGLINE_MAX = 140;
@@ -51,6 +63,8 @@ export const PALETTE_CLASSES: Record<PaletteId, PaletteClasses> = {
 };
 
 export function isAvatarId(v: unknown): v is AvatarId { return typeof v === "string" && (AVATARS as readonly string[]).includes(v); }
+export function isLegacyAvatarId(v: unknown): v is LegacyAvatarId { return typeof v === "string" && (LEGACY_AVATARS as readonly string[]).includes(v); }
+export function isAdventurerId(v: unknown): v is AdventurerId { return typeof v === "string" && (ADVENTURER_AVATARS as readonly string[]).includes(v); }
 export function isPaletteId(v: unknown): v is PaletteId { return typeof v === "string" && (PALETTE as readonly string[]).includes(v); }
 
 /**
