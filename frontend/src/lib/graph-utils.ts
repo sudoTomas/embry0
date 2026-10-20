@@ -226,7 +226,6 @@ export function deserializeGraph(graph: PipelineGraph): { nodes: Node[]; edges: 
     target: e.target,
     type: e.edge_type === "feedback" ? "feedbackEdge" : "default",
     animated: e.edge_type === "feedback",
-    style: e.edge_type === "feedback" ? { stroke: "#f87171", strokeDasharray: "6 4" } : undefined,
     data: {
       edgeType: e.edge_type,
       loopConfig: e.loop_config,

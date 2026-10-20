@@ -45,7 +45,6 @@ export function useGraphState(initialGraph?: PipelineGraph) {
                 ...e,
                 type: "feedbackEdge",
                 animated: true,
-                style: { stroke: "#f87171", strokeDasharray: "6 4" },
                 data: {
                   ...((e.data as Record<string, unknown>) ?? {}),
                   edgeType: "feedback",
