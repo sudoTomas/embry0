@@ -35,9 +35,9 @@ function Divider() {
   return <div className="border-t border-white/[0.06] my-3" />;
 }
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
+function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
   return (
-    <label className="text-[11px] text-white/40 mb-1 block">{children}</label>
+    <label htmlFor={htmlFor} className="text-[11px] text-white/40 mb-1 block">{children}</label>
   );
 }
 
@@ -114,12 +114,13 @@ function TagPill({ label, onRemove }: TagPillProps) {
 }
 
 interface TagInputProps {
+  id: string;
   tags: string[];
   onChange: (tags: string[]) => void;
   placeholder?: string;
 }
 
-function TagInput({ tags, onChange, placeholder }: TagInputProps) {
+function TagInput({ id, tags, onChange, placeholder }: TagInputProps) {
   const [input, setInput] = useState("");
 
   const addTag = (value: string) => {
@@ -149,6 +150,7 @@ function TagInput({ tags, onChange, placeholder }: TagInputProps) {
         />
       ))}
       <input
+        id={id}
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -162,7 +164,7 @@ function TagInput({ tags, onChange, placeholder }: TagInputProps) {
   );
 }
 
-function SkillAddInput({ onAdd }: { onAdd: (name: string) => void }) {
+function SkillAddInput({ id, onAdd }: { id: string; onAdd: (name: string) => void }) {
   const [input, setInput] = useState("");
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" || e.key === ",") {
@@ -175,6 +177,7 @@ function SkillAddInput({ onAdd }: { onAdd: (name: string) => void }) {
   };
   return (
     <input
+      id={id}
       value={input}
       onChange={(e) => setInput(e.target.value)}
       onKeyDown={handleKeyDown}
@@ -546,6 +549,7 @@ function EditMode({
   setAdvancedOpen: React.Dispatch<React.SetStateAction<boolean>>;
   onCancel: () => void;
 }) {
+  const fieldId = useId();
   return (
     <>
       {/* Label */}
@@ -564,9 +568,9 @@ function EditMode({
       <SectionHeader>Execution</SectionHeader>
       <div className="space-y-3">
         <div>
-          <FieldLabel>Model</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-model`}>Model</FieldLabel>
           <FieldSelect
-            id="adp-model"
+            id={`${fieldId}-model`}
             value={(d.model as string) ?? ""}
             onChange={(e) => onUpdate({ model: e.target.value || null })}
           >
@@ -581,9 +585,9 @@ function EditMode({
 
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <FieldLabel>Budget (USD)</FieldLabel>
+            <FieldLabel htmlFor={`${fieldId}-budget`}>Budget (USD)</FieldLabel>
             <FieldInput
-              id="adp-budget"
+              id={`${fieldId}-budget`}
               type="number"
               step="0.5"
               min="0"
@@ -597,9 +601,9 @@ function EditMode({
             />
           </div>
           <div>
-            <FieldLabel>Max Turns</FieldLabel>
+            <FieldLabel htmlFor={`${fieldId}-turns`}>Max Turns</FieldLabel>
             <FieldInput
-              id="adp-turns"
+              id={`${fieldId}-turns`}
               type="number"
               min="1"
               value={(d.maxTurns as number) ?? ""}
@@ -614,9 +618,9 @@ function EditMode({
         </div>
 
         <div>
-          <FieldLabel>Effort</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-effort`}>Effort</FieldLabel>
           <FieldSelect
-            id="adp-effort"
+            id={`${fieldId}-effort`}
             value={(d.effort as string) ?? ""}
             onChange={(e) => onUpdate({ effort: e.target.value || null })}
           >
@@ -634,21 +638,23 @@ function EditMode({
       <SectionHeader>Tools &amp; Skills</SectionHeader>
       <div className="space-y-3">
         <div>
-          <FieldLabel>Tools</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-tools`}>Tools</FieldLabel>
           <TagInput
+            id={`${fieldId}-tools`}
             tags={tools}
             onChange={(t) => onUpdate({ tools: t.length ? t : null })}
             placeholder="Read, Write, Bash..."
           />
         </div>
         <div>
-          <FieldLabel>Skills</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-skills`}>Skills</FieldLabel>
           <div className="space-y-1.5">
             {skillConfigs.map((skill, idx) => (
               <div key={skill.name} className="flex items-center gap-1.5">
                 <TagPill label={skill.name} onRemove={() => removeSkill(idx)} />
                 <FieldSelect
                   id={`adp-skill-mode-${idx}`}
+                  aria-label={`${skill.name} mode`}
                   value={skill.mode}
                   onChange={(e) =>
                     updateSkillMode(idx, e.target.value as SkillConfig["mode"])
@@ -662,7 +668,7 @@ function EditMode({
               </div>
             ))}
           </div>
-          <SkillAddInput onAdd={addSkill} />
+          <SkillAddInput id={`${fieldId}-skills`} onAdd={addSkill} />
         </div>
       </div>
 
@@ -672,9 +678,9 @@ function EditMode({
       <SectionHeader>Prompt</SectionHeader>
       <div className="space-y-3">
         <div>
-          <FieldLabel>Prepend</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-prepend`}>Prepend</FieldLabel>
           <FieldTextarea
-            id="adp-prepend"
+            id={`${fieldId}-prepend`}
             value={(d.promptPrepend as string) ?? ""}
             onChange={(e) =>
               onUpdate({ promptPrepend: e.target.value || null })
@@ -683,9 +689,9 @@ function EditMode({
           />
         </div>
         <div>
-          <FieldLabel>Append</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-append`}>Append</FieldLabel>
           <FieldTextarea
-            id="adp-append"
+            id={`${fieldId}-append`}
             value={(d.promptAppend as string) ?? ""}
             onChange={(e) =>
               onUpdate({ promptAppend: e.target.value || null })
@@ -714,9 +720,9 @@ function EditMode({
       {advancedOpen && (
         <div className="mt-2 space-y-3">
           <div>
-            <FieldLabel>Sandbox Image</FieldLabel>
+            <FieldLabel htmlFor={`${fieldId}-sandbox`}>Sandbox Image</FieldLabel>
             <FieldInput
-              id="adp-sandbox"
+              id={`${fieldId}-sandbox`}
               value={
                 ((d.sandbox as Record<string, unknown> | null)?.image as string) ??
                 ""

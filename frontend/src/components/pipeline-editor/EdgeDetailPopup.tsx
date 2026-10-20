@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { Edge } from "@xyflow/react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -10,9 +10,9 @@ interface EdgeDetailPopupProps {
   onClose: () => void;
 }
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
+function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
   return (
-    <label className="text-[11px] text-white/40 mb-1 block">{children}</label>
+    <label htmlFor={htmlFor} className="text-[11px] text-white/40 mb-1 block">{children}</label>
   );
 }
 
@@ -53,6 +53,7 @@ function FieldSelect({
 
 export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const fieldId = useId();
   const d = (edge.data ?? {}) as Record<string, unknown>;
   const initialLoopConfig = (d.loopConfig as Record<string, unknown>) ?? {};
   const edgeType = (d.edgeType as string) ?? "flow";
@@ -152,9 +153,9 @@ export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProp
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <FieldLabel>Max Loops</FieldLabel>
+                  <FieldLabel htmlFor={`${fieldId}-loops`}>Max Loops</FieldLabel>
                   <FieldInput
-                    id="edp-loops"
+                    id={`${fieldId}-loops`}
                     type="number"
                     min="1"
                     max="10"
@@ -171,9 +172,9 @@ export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProp
                   />
                 </div>
                 <div>
-                  <FieldLabel>Loop Budget (USD)</FieldLabel>
+                  <FieldLabel htmlFor={`${fieldId}-budget`}>Loop Budget (USD)</FieldLabel>
                   <FieldInput
-                    id="edp-budget"
+                    id={`${fieldId}-budget`}
                     type="number"
                     step="0.5"
                     min="0"
@@ -192,9 +193,9 @@ export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProp
               </div>
 
               <div>
-                <FieldLabel>Feedback Mode</FieldLabel>
+                <FieldLabel htmlFor={`${fieldId}-mode`}>Feedback Mode</FieldLabel>
                 <FieldSelect
-                  id="edp-mode"
+                  id={`${fieldId}-mode`}
                   value={(loopConfig.feedback_mode as string) ?? "result"}
                   onChange={(e) =>
                     setLoopConfig((prev) => ({
