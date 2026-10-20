@@ -39,7 +39,16 @@ def test_every_builtin_identity_is_valid() -> None:
 def test_defaults_are_in_the_vocabulary() -> None:
     assert identity.DEFAULT_AVATAR in identity.AVATARS
     assert identity.DEFAULT_COLOR in identity.PALETTE
-    assert len(identity.AVATARS) == 12
+    assert len(identity.AVATARS) == 32
+
+
+def test_the_adventurer_presets_follow_the_legacy_roster() -> None:
+    assert identity.AVATARS[:12] == identity.LEGACY_AVATARS
+    assert identity.AVATARS[12:] == identity.ADVENTURER_AVATARS
+    assert len(identity.ADVENTURER_AVATARS) == 20
+    for expected in ("starter", "bronze-warrior", "dragon-warrior", "champion", "apprentice", "archmage", "scout", "sharpshooter"):
+        assert expected in identity.ADVENTURER_AVATARS
+    assert identity.validate_avatar("rune-warrior") == "rune-warrior"
 
 
 @pytest.mark.parametrize("bad", ["", "wizard", "Smith"])

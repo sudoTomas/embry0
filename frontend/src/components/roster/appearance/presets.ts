@@ -2,8 +2,11 @@
  * The named adventurers an agent can wear: a level-3 starter, a warrior
  * per metal tier and a maxed champion, three orders of mage, four archers,
  * and four extras. Each is a different person at a glance: skin, hair,
- * beard and the cloth under the gear vary, not only the gear.
+ * beard and the cloth under the gear vary, not only the gear. The ids
+ * are ADVENTURER_AVATARS in lib/agentIdentity.ts (the contract-pinned
+ * list); a preset missing or extra there fails to compile here.
  */
+import type { AdventurerId } from "@/lib/agentIdentity";
 import type { Appearance } from "./types.ts";
 
 export const PRESETS = {
@@ -111,7 +114,7 @@ export const PRESETS = {
     colours: { hair: "brown", torso: "cream", legs: "charcoal", feet: "black" },
     equipment: { head: "mining-helmet", weapon: "pickaxe", feet: "metal-boots" },
   },
-} as const satisfies Record<string, Appearance>;
+} as const satisfies Record<AdventurerId, Appearance>;
 
 export type PresetId = keyof typeof PRESETS;
 export const PRESET_IDS = Object.keys(PRESETS) as PresetId[];

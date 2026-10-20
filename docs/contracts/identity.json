@@ -11,7 +11,27 @@
     "engineer",
     "rogue",
     "bard",
-    "golem"
+    "golem",
+    "starter",
+    "bronze-warrior",
+    "iron-warrior",
+    "steel-warrior",
+    "mithril-warrior",
+    "adamant-warrior",
+    "rune-warrior",
+    "dragon-warrior",
+    "champion",
+    "apprentice",
+    "mystic",
+    "archmage",
+    "scout",
+    "ranger",
+    "marksman",
+    "sharpshooter",
+    "monk",
+    "pirate",
+    "skiller",
+    "miner"
   ],
   "builtin": {
     "analysis": {

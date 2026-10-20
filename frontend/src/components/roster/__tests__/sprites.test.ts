@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import source from "../sprites.ts?raw";
-import { AVATARS } from "@/lib/agentIdentity";
+import { LEGACY_AVATARS as AVATARS } from "@/lib/agentIdentity";
 import { COMPILED, FRAME_COUNTS, SPRITES, SPRITE_STATES, compileFrame } from "../sprites";
 
 const CELL = /^[.ofhe]{16}$/;

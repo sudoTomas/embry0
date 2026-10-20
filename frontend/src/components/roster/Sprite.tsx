@@ -1,11 +1,12 @@
 import type { CSSProperties } from "react";
-import { DEFAULT_AVATAR, DEFAULT_COLOR, isAvatarId, isPaletteId } from "@/lib/agentIdentity";
+import { DEFAULT_AVATAR, DEFAULT_COLOR, isAdventurerId, isAvatarId, isPaletteId } from "@/lib/agentIdentity";
 import { cn } from "@/lib/utils";
+import { COMPOSED, GHOST_FILL, GRID } from "./appearance";
 import { COMPILED, type CharClass, type SpriteState } from "./sprites";
 import "./roster.css";
 
 export interface SpriteProps {
-  /** A roster id; anything else renders golem (spec 3.10). */
+  /** A roster id, legacy or adventurer preset; anything else renders golem (spec 3.10). */
   avatar: string;
   /** A palette id; anything else renders slate. */
   color: string;
@@ -28,8 +29,8 @@ const FILL: Record<CharClass, string> = {
   h: "color-mix(in srgb, var(--sprite-fill) 70%, white)",
   e: "var(--color-background)",
 };
-/** The pending frame is outline only; in the background colour it vanishes on every surface, so it is a dim tint instead. */
-const PENDING_OUTLINE = "color-mix(in srgb, var(--sprite-fill) 45%, transparent)";
+/** The pending frame is outline only; in the background colour it vanishes on every surface, so it is a dim tint instead (shared with the composed frames). */
+const PENDING_OUTLINE = GHOST_FILL;
 
 function fillFor(cls: CharClass, state: SpriteState): string {
   return cls === "o" && state === "pending" ? PENDING_OUTLINE : FILL[cls];
@@ -41,15 +42,28 @@ const STATE_WORDS: Record<SpriteState, string> = {
   idle: "idle", thinking: "thinking", tool: "using a tool", done: "done", failed: "failed", pending: "waiting",
 };
 
-/** One avatar in one state: a 16x16 SVG, tinted by the palette token, stepping between two frames by CSS. */
+/** The frames of one avatar in one state: the composed 32x32 ones of an adventurer preset, else the compiled 16x16 ones. */
+type Painted = { grid: number; paths: { fill: string; d: string }[][] };
+
+function framesOf(avatar: string, state: SpriteState): Painted {
+  if (isAdventurerId(avatar)) {
+    return { grid: GRID, paths: COMPOSED[avatar][state].map((f) => Object.entries(f.paths).map(([fill, d]) => ({ fill, d }))) };
+  }
+  const av = isAvatarId(avatar) ? avatar : DEFAULT_AVATAR;
+  const legacy = COMPILED[av as keyof typeof COMPILED][state];
+  return { grid: 16, paths: legacy.map((paths) => ORDER.filter((k) => paths[k]).map((k) => ({ fill: fillFor(k, state), d: paths[k]! }))) };
+}
+
+/** One avatar in one state: a crisp SVG tinted by the palette token, stepping between two frames by CSS. */
 export function Sprite({ avatar, color, state, size = 32, label, decorative = false, still = false, className }: SpriteProps) {
   const av = isAvatarId(avatar) ? avatar : DEFAULT_AVATAR;
   const col = isPaletteId(color) ? color : DEFAULT_COLOR;
-  const frames = still ? COMPILED[av][state].slice(0, 1) : COMPILED[av][state];
+  const painted = framesOf(av, state);
+  const frames = still ? painted.paths.slice(0, 1) : painted.paths;
   return (
     <svg
       {...(decorative ? { "aria-hidden": true } : { role: "img", "aria-label": `${label ?? av}, ${STATE_WORDS[state]}` })}
-      viewBox="0 0 16 16"
+      viewBox={`0 0 ${painted.grid} ${painted.grid}`}
       width={size}
       height={size}
       shapeRendering="crispEdges"
@@ -62,8 +76,8 @@ export function Sprite({ avatar, color, state, size = 32, label, decorative = fa
     >
       {frames.map((paths, i) => (
         <g key={i} className="sprite-frame" data-frame={i}>
-          {ORDER.filter((k) => paths[k]).map((k) => (
-            <path key={k} d={paths[k]} fill={fillFor(k, state)} />
+          {paths.map(({ fill, d }) => (
+            <path key={fill} d={d} fill={fill} />
           ))}
         </g>
       ))}

@@ -63,6 +63,32 @@ async def test_create_agent_rejects_unknown_avatar(app):
 
 
 @pytest.mark.asyncio
+async def test_create_agent_accepts_an_adventurer_avatar(app):
+    app.state.agent_defs_repo.create = AsyncMock(return_value={"type": "vanguard"})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=_CSRF) as client:
+        resp = await client.post(
+            "/api/v1/agents",
+            json={"type": "vanguard", "description": "d", "model": "claude-sonnet-5", "avatar": "rune-warrior"},
+        )
+    assert resp.status_code == 201, resp.text
+    assert app.state.agent_defs_repo.create.await_args.kwargs["avatar"] == "rune-warrior"
+
+
+@pytest.mark.asyncio
+async def test_update_agent_rejects_an_unknown_avatar_but_takes_an_adventurer(app):
+    app.state.agent_defs_repo.update = AsyncMock(return_value={"type": "developer"})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=_CSRF) as client:
+        bad = await client.put("/api/v1/agents/developer", json={"avatar": "iron-wizard"})
+        good = await client.put("/api/v1/agents/developer", json={"avatar": "champion"})
+    assert bad.status_code == 422
+    assert "avatar must be one of" in bad.text
+    assert good.status_code == 200, good.text
+    assert app.state.agent_defs_repo.update.await_args.kwargs == {"avatar": "champion"}
+
+
+@pytest.mark.asyncio
 async def test_create_agent_passes_identity_to_repository(app):
     app.state.agent_defs_repo.create = AsyncMock(return_value={"type": "lantern"})
     transport = ASGITransport(app=app)

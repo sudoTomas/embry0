@@ -1,7 +1,7 @@
-import type { AvatarId } from "@/lib/agentIdentity";
+import type { LegacyAvatarId } from "@/lib/agentIdentity";
 
 /**
- * The roster (spec 3.2): twelve avatars as 16x16 character grids, one
+ * The roster (spec 3.2): the twelve legacy avatars as 16x16 character grids, one
  * Record<SpriteState, Frame[]> each, compiled once at module load into one
  * SVG path per character class so a rendered frame is at most four paths.
  * Not part of the divine layer (divine/CLAUDE.md rule 9): sprites may sit on
@@ -974,13 +974,13 @@ const golem = figure(11, {
   ],
 });
 
-export const SPRITES: Record<AvatarId, Record<SpriteState, Frame[]>> = {
+export const SPRITES: Record<LegacyAvatarId, Record<SpriteState, Frame[]>> = {
   seer, smith, warden, alchemist, herald, arbiter, scholar, oracle, engineer, rogue, bard, golem,
 };
 
-function compileAll(): Record<AvatarId, Record<SpriteState, CompiledFrame[]>> {
-  const out = {} as Record<AvatarId, Record<SpriteState, CompiledFrame[]>>;
-  for (const avatar of Object.keys(SPRITES) as AvatarId[]) {
+function compileAll(): Record<LegacyAvatarId, Record<SpriteState, CompiledFrame[]>> {
+  const out = {} as Record<LegacyAvatarId, Record<SpriteState, CompiledFrame[]>>;
+  for (const avatar of Object.keys(SPRITES) as LegacyAvatarId[]) {
     const states = {} as Record<SpriteState, CompiledFrame[]>;
     for (const state of SPRITE_STATES) states[state] = SPRITES[avatar][state].map(compileFrame);
     out[avatar] = states;
