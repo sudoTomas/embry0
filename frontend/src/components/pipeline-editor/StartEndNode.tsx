@@ -14,7 +14,7 @@ const ROLE_CONFIG = {
  * cardinal dots + equator + a single pole accent (start = north pole,
  * end = south pole).
  *
- * §3.2 — sentinels sit on the equator at ±1.4R in circular layout.
+ * §3.2 — sentinels sit on the equator, at least ±1.4R out, in circular layout.
  */
 export function StartEndNode({ data, selected }: NodeProps) {
   const role = (data.nodeRole as "start" | "end") ?? "start";

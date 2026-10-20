@@ -74,11 +74,20 @@ export function detectCycles(
 }
 
 /**
+ * Whether a React Flow node is the canvas's START or END, and which. The
+ * canvas types both "startEndNode" and tells them apart by data.nodeRole, so
+ * a check on node.type finds neither; the layouts ask here.
+ */
+export function startEndRole(n: Node): "start" | "end" | null {
+  const role = (n.data as Record<string, unknown> | undefined)?.nodeRole;
+  return role === "start" || role === "end" ? role : null;
+}
+
+/**
  * Helper: check if a React Flow node is a Start/End structural node.
  */
 function isStartEndNode(n: Node): boolean {
-  const role = (n.data as Record<string, unknown>).nodeRole;
-  return role === "start" || role === "end";
+  return startEndRole(n) !== null;
 }
 
 /**
