@@ -244,9 +244,13 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
             <LayoutGrid size={13} />
             Auto arrange
           </button>
-          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <DivineRipple key={rippleKey} size={120} />
-          </span>
+          {/* The ripple answers an arrange the person asked for, so it
+              mounts only after the first one, never as the editor opens. */}
+          {rippleKey > 0 && (
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <DivineRipple key={rippleKey} size={120} />
+            </span>
+          )}
         </span>
         <button
           type="button"
@@ -298,9 +302,13 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
             <LayoutGrid size={13} />
             Auto arrange
           </button>
-          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <DivineRipple key={rippleKey} size={120} />
-          </span>
+          {/* The ripple answers an arrange the person asked for, so it
+              mounts only after the first one, never as the editor opens. */}
+          {rippleKey > 0 && (
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <DivineRipple key={rippleKey} size={120} />
+            </span>
+          )}
         </span>
         <button
           type="button"
