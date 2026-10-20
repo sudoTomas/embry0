@@ -1,0 +1,18 @@
+/* The party tile (spec 3.4): one renderer for the editor and the live graph. */
+
+.party-ring {
+  border-width: 2px;
+  border-style: solid;
+  border-radius: 9999px;
+  transition: opacity 200ms ease-out;
+}
+.party-ring[data-ring="pending"] { opacity: 0.35; border-style: dashed; }
+.party-ring[data-ring="editor"] { opacity: 0.6; }
+.party-ring[data-ring="running"] { opacity: 1; }
+.party-ring[data-ring="completed"] { opacity: 0.8; }
+.party-ring[data-ring="failed"] { opacity: 0.9; border-color: var(--color-destructive) !important; }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* One-shot on completion (divine rule 3's one-shot shape; the keyframes are index.css's scale-in). */
+  .party-ring[data-ring="completed"] { animation: scale-in 0.3s ease-out both; }
+}

@@ -109,8 +109,8 @@ describe("circularLayout — placement", () => {
     const nodes = [
       node("t", "triage"),
       node("d", "developer"),
-      { id: "start", position: { x: 0, y: 0 }, data: { label: "Start" }, type: "start" },
-      { id: "end", position: { x: 0, y: 0 }, data: { label: "End" }, type: "end" },
+      { id: "start", position: { x: 0, y: 0 }, data: { nodeRole: "start" }, type: "startEndNode" },
+      { id: "end", position: { x: 0, y: 0 }, data: { nodeRole: "end" }, type: "startEndNode" },
     ];
     const result = circularLayout(nodes, []);
     const start = result.nodes.find((n) => n.id === "start")!;
@@ -140,6 +140,26 @@ describe("circularLayout — placement", () => {
     const result = circularLayout([original], []);
     expect(original.position).toEqual({ x: 999, y: 999 });
     expect(result.nodes[0]).not.toBe(original);
+  });
+
+  it("detects the sentinels deserializeGraph produces, not a node type that never existed", async () => {
+    const { deserializeGraph } = await import("@/lib/graph-utils");
+    const { nodes } = deserializeGraph({
+      graph_id: "g", name: "g", edges: [],
+      nodes: [
+        { node_id: "start", agent_type: "__start__", position: { x: 0, y: 0 } },
+        { node_id: "t", agent_type: "triage", position: { x: 0, y: 0 } },
+        { node_id: "d", agent_type: "developer", position: { x: 0, y: 0 } },
+        { node_id: "end", agent_type: "__end__", position: { x: 0, y: 0 } },
+      ],
+      metadata: { max_total_budget_usd: 0, max_total_loops: 0, created_by: "manual" },
+    });
+    const result = circularLayout(nodes, []);
+    expect(result.nodes.find((n) => n.id === "start")!.position).toEqual({ x: -CIRCLE_RADIUS * 1.4, y: 0 });
+    expect(result.nodes.find((n) => n.id === "end")!.position).toEqual({ x: CIRCLE_RADIUS * 1.4, y: 0 });
+    const legacy = { id: "x", position: { x: 0, y: 0 }, data: { label: "x" }, type: "start" } as Node;
+    const r2 = circularLayout([node("t", "triage"), node("d", "developer"), legacy], []);
+    expect(Math.abs(r2.nodes.find((n) => n.id === "x")!.position.x)).not.toBe(CIRCLE_RADIUS * 1.4);
   });
 });
 
@@ -189,14 +209,14 @@ describe("circularLayout — uniform fallback (no canonical cycle)", () => {
   const startNode = (id: string): Node => ({
     id,
     position: { x: 0, y: 0 },
-    data: { label: id },
-    type: "start",
+    data: { nodeRole: "start" },
+    type: "startEndNode",
   });
   const endNode = (id: string): Node => ({
     id,
     position: { x: 0, y: 0 },
-    data: { label: id },
-    type: "end",
+    data: { nodeRole: "end" },
+    type: "startEndNode",
   });
 
   it("distributes 4 unconnected nodes evenly around the circle starting at top", () => {

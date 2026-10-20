@@ -11,7 +11,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { X, Save, FolderOpen, LayoutGrid } from "lucide-react";
 import { toast } from "sonner";
-import { AgentNode } from "./AgentNode";
+import { PartyNode } from "@/components/pipeline/PartyNode";
 import { StartEndNode } from "./StartEndNode";
 import { FeedbackEdge } from "./FeedbackEdge";
 import { AgentBar } from "./AgentBar";
@@ -27,7 +27,7 @@ import { useRenameTemplate, useCreateTemplate } from "@/hooks/usePipelines";
 import { toApiGraph } from "@/lib/graph-utils";
 import type { PipelineGraph, PipelineTemplate } from "@/lib/types";
 
-const nodeTypes = { agentNode: AgentNode, startEndNode: StartEndNode };
+const nodeTypes = { agentNode: PartyNode, startEndNode: StartEndNode };
 const edgeTypes = { feedbackEdge: FeedbackEdge };
 
 interface PipelineEditorProps {

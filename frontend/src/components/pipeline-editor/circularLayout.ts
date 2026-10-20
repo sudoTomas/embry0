@@ -29,8 +29,9 @@ function nodeStage(node: Node): CardinalStage | null {
 }
 
 function isSentinel(node: Node): "start" | "end" | null {
-  if (node.type === "start") return "start";
-  if (node.type === "end") return "end";
+  const role = (node.data as Record<string, unknown> | undefined)?.nodeRole;
+  if (role === "start") return "start";
+  if (role === "end") return "end";
   return null;
 }
 
