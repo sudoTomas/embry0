@@ -26,7 +26,7 @@ export interface UseLiveJobSummaryResult {
   attempt: number;
   isConnected: boolean;
   isComplete: boolean;
-  /** A tool call is in flight: the newest `tool_call` has no `tool_result` yet. */
+  /** A tool call is in flight: some `tool_call` this connection saw has no `tool_result` yet. */
   toolOpen: boolean;
 }
 

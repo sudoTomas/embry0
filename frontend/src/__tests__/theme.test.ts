@@ -39,6 +39,7 @@ function theme(): string {
 describe("theme tokens", () => {
   it("imports Outfit, JetBrains Mono and Pixelify Sans, and declares the pixel face", () => {
     expect(css.split("\n")[0]).toMatch(/^@import url\('https:\/\/fonts\.googleapis\.com\/css2\?family=Outfit.*JetBrains\+Mono.*Pixelify\+Sans.*display=swap'\);$/);
+    expect(css.split("\n")[0], "the bold pixel headings need a 700 face").toContain("Pixelify+Sans:wght@400;600;700&");
     expect(theme()).toContain("--font-pixel: 'Pixelify Sans', monospace;");
     expect(html).not.toContain("IBM Plex");
     expect(html).not.toMatch(/fonts\.googleapis\.com\/css2/);

@@ -35,7 +35,8 @@ export function AgentFilterTabs({ nodeStates, selectedNodeId, onSelect }: AgentF
         All
       </button>
       {entries.map(([nodeId, state]) => {
-        const identity = lookup(state.agent_type || nodeId);
+        // A numbered node (developer-2) names its agent without the number.
+        const identity = lookup(state.agent_type || nodeId.replace(/-\d+$/, ""));
         const icon = STATE_ICONS[state.state] || "○";
         const label = identity.displayName;
 
