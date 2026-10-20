@@ -6,12 +6,17 @@ import {
   type RepoPreferencesUpdate,
 } from "@/api/repoPreferences";
 
-export function useRepoPreferences(fullRepo: string) {
-  return useQuery({
+/** A repo's preferences: the key and fetch every reader of them shares. */
+export function repoPreferencesQuery(fullRepo: string) {
+  return {
     queryKey: ["repo-preferences", fullRepo],
     queryFn: () => fetchRepoPreferences(fullRepo),
     enabled: !!fullRepo,
-  });
+  };
+}
+
+export function useRepoPreferences(fullRepo: string) {
+  return useQuery(repoPreferencesQuery(fullRepo));
 }
 
 export function useSetRepoPreferences() {

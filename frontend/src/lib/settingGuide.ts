@@ -92,3 +92,14 @@ export const SETTING_GUIDE: Record<SettingKey, SettingGuide> = {
     undo: "An admin sets it back on the organization's Standards page.",
   },
 };
+
+/**
+ * The setting an address names, if it names one: a link to
+ * #advanced-{setting} opens that section on the repo page (AdvancedSection).
+ */
+export function linkedSetting(hash: string): SettingKey | null {
+  const prefix = "#advanced-";
+  if (!hash.startsWith(prefix)) return null;
+  const key = hash.slice(prefix.length);
+  return Object.hasOwn(SETTING_GUIDE, key) ? (key as SettingKey) : null;
+}

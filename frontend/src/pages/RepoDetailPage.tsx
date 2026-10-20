@@ -1,9 +1,14 @@
-import { Link, useParams } from "react-router";
-import { useQuery } from "@tanstack/react-query";
+import { Link, useLocation, useParams } from "react-router";
+import { useQueries, useQuery, type UseQueryOptions } from "@tanstack/react-query";
 import { ListChecks } from "lucide-react";
 import { fetchRepoDetail } from "@/api/repos";
-import { useRepoEnv } from "@/hooks/useEnvironments";
+import { credentialsQuery, repoCredentialsQuery } from "@/hooks/useCredentials";
+import { repoEnvQuery, useRepoEnv } from "@/hooks/useEnvironments";
+import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
+import { modelsCatalogQuery } from "@/hooks/useProvider";
+import { qaConfigQuery } from "@/hooks/useQaConfig";
 import { useRepoReadiness } from "@/hooks/useRepoReadiness";
+import { repoPreferencesQuery } from "@/hooks/useRepoPreferences";
 import { useQaRunsForRepo } from "@/hooks/useQaDashboard";
 import { QaConfigEditor } from "@/components/qa/QaConfigEditor";
 import { RepoAccountsSection } from "@/components/repos/RepoAccountsSection";
@@ -19,8 +24,31 @@ import { isNotFound } from "@/api/errorDetail";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { Badge } from "@/components/ui/Badge";
 import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
+import { linkedSetting, type SettingKey } from "@/lib/settingGuide";
 import { providerLabel, statusLabel } from "@/lib/status";
 import { formatDateTime } from "@/lib/utils";
+
+/**
+ * The answers an Advanced section's body takes its height from. `name` is
+ * the repository as its details name it, which the accounts body is given.
+ * Docker access and Design checks are drawn from the page's own details (a
+ * running audit's status badge aside), so they wait on nothing more.
+ */
+function bodyQueries(setting: SettingKey, full: string, name: string): UseQueryOptions[] {
+  switch (setting) {
+    case "testSetup":
+      return [qaConfigQuery(full)];
+    case "appSettings":
+      return [repoEnvQuery(full)];
+    case "workMachine":
+    case "prReview":
+      return [repoPreferencesQuery(full)];
+    case "accounts":
+      return [repoCredentialsQuery(name), credentialsQuery(), modelsCatalogQuery()];
+    default:
+      return [];
+  }
+}
 
 /** RAV-1253: the unified per-repo view. It opens on the setup checklist. Every
  * technical control sits below it under Advanced settings, closed, each
@@ -42,6 +70,18 @@ export function RepoDetailPage() {
   const { data: envVars = [] } = useRepoEnv(full);
   const runs = useQaRunsForRepo(validRepo ? full : undefined, { limit: 10 });
   const readiness = useRepoReadiness(validRepo ? full : "");
+  // An address that names an Advanced section (#advanced-accounts) opens the
+  // page on it. Painted before that section's body had its answers, the body
+  // grew as they landed and pushed everything under it down (a layout shift
+  // of 0.2 at desktop width for Accounts, 0.37 on a phone). The page waits on
+  // them as it does on the setup status, for at most FIRST_PAINT_WAIT_MS, and
+  // fetches them here so they load beside the details.
+  const linked = linkedSetting(useLocation().hash);
+  const linkedAnswered = useQueries({
+    queries: linked && validRepo ? bodyQueries(linked, full, detail.data?.repo ?? full) : [],
+    combine: (results) => results.every(hasAnswered),
+  });
+  const linkedPainted = useFirstPaint(linkedAnswered);
 
   if (!validRepo) return <PageError message="Invalid repo — expected a path like owner/name" />;
   if (isNotFound(detail.error))
@@ -56,7 +96,7 @@ export function RepoDetailPage() {
   // refetches a failed query, and waiting on isLoading would unmount it again.
   const readinessAnswered =
     readiness.dataUpdatedAt > 0 || readiness.errorUpdatedAt > 0 || readiness.failureCount > 0;
-  if (!readinessAnswered) return <TableSkeleton />;
+  if (!readinessAnswered || !linkedPainted) return <TableSkeleton />;
 
   const repo = detail.data;
 

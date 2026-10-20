@@ -58,6 +58,17 @@ vi.mock("@/api/repoSetup", () => ({
 const mockFetchJobs = vi.fn();
 vi.mock("@/api/jobs", () => ({ fetchJobs: (...a: unknown[]) => mockFetchJobs(...a) }));
 
+// What the Accounts and Test setup bodies draw from, for a page opened on one.
+const mockFetchRepoCredentials = vi.fn();
+const mockFetchCredentials = vi.fn();
+vi.mock("@/api/credentials", () => ({
+  fetchRepoCredentials: (...a: unknown[]) => mockFetchRepoCredentials(...a),
+  fetchCredentials: () => mockFetchCredentials(),
+}));
+const mockFetchModelsCatalog = vi.fn();
+vi.mock("@/api/provider", () => ({ fetchModelsCatalog: () => mockFetchModelsCatalog() }));
+vi.mock("@/api/qaConfig", () => ({ fetchQaConfig: () => Promise.resolve(null) }));
+
 import { RepoDetailPage } from "../RepoDetailPage";
 
 const GOLD = /(^|\s)(bg-primary|bg-primary-dim|text-primary)(\s|$)/;
@@ -205,7 +216,20 @@ beforeEach(() => {
   mockFetchHistory.mockResolvedValue({ entries: [], before_history: false });
   mockUseRepoEnv.mockReturnValue({ data: [] });
   mockUseQaRunsForRepo.mockReturnValue({ data: [] });
+  mockFetchRepoCredentials.mockReset();
+  mockFetchRepoCredentials.mockResolvedValue({ repo: "acme/widgets", bindings: [], effective: {} });
+  mockFetchCredentials.mockReset();
+  mockFetchCredentials.mockResolvedValue([]);
+  mockFetchModelsCatalog.mockReset();
+  mockFetchModelsCatalog.mockResolvedValue({ providers: [] });
 });
+
+/** A fetch that answers when the test says. */
+function held() {
+  let answer: (value: unknown) => void = () => {};
+  const promise = new Promise((resolve) => (answer = resolve));
+  return { promise, answer };
+}
 
 describe("RepoDetailPage (RAV-1253)", () => {
   it("renders registry state and puts every technical control under Advanced settings, in order", async () => {
@@ -268,6 +292,46 @@ describe("RepoDetailPage (RAV-1253)", () => {
     await waitFor(() => expect(section("testSetup").open).toBe(true));
     expect(section("appSettings").open).toBe(false);
     expect(section("accounts").open).toBe(false);
+  });
+
+  it("paints a page opened on a section once that section's body has its answers", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    const bindings = held();
+    const accounts = held();
+    const catalog = held();
+    mockFetchRepoCredentials.mockReturnValue(bindings.promise);
+    mockFetchCredentials.mockReturnValue(accounts.promise);
+    mockFetchModelsCatalog.mockReturnValue(catalog.promise);
+    renderPage("/repos/acme/widgets#advanced-accounts");
+    await waitFor(() => expect(mockFetchReadiness).toHaveBeenCalled());
+    // Fetched beside the details, not once the page has drawn the body.
+    expect(mockFetchRepoCredentials).toHaveBeenCalledWith("acme/widgets");
+    await new Promise((r) => setTimeout(r, 20));
+    bindings.answer({ repo: "acme/widgets", bindings: [], effective: {} });
+    accounts.answer([]);
+    await new Promise((r) => setTimeout(r, 20));
+    // The body's height still waits on the catalog: no page under it yet.
+    expect(screen.queryByRole("heading", { name: "acme/widgets" })).not.toBeInTheDocument();
+    catalog.answer({ providers: [] });
+    await screen.findByRole("heading", { name: "acme/widgets" });
+    await waitFor(() => expect(section("accounts").open).toBe(true));
+  });
+
+  it("paints a page opened on a section whose body could not load", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockFetchRepoCredentials.mockRejectedValue(new Error("boom"));
+    renderPage("/repos/acme/widgets#advanced-accounts");
+    expect(await screen.findByRole("heading", { name: "acme/widgets" })).toBeInTheDocument();
+    await waitFor(() => expect(section("accounts").open).toBe(true));
+  });
+
+  it("waits on no section's body for an address that names none", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockFetchModelsCatalog.mockReturnValue(held().promise);
+    renderPage("/repos/acme/widgets#advanced");
+    expect(await screen.findByRole("heading", { name: "acme/widgets" })).toBeInTheDocument();
+    expect(mockFetchRepoCredentials).not.toHaveBeenCalled();
+    expect(mockFetchModelsCatalog).not.toHaveBeenCalled();
   });
 
   it.each([

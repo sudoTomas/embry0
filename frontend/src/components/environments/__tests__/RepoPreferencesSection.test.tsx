@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useLayoutEffect } from "react";
+import { createRoot } from "react-dom/client";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
@@ -192,5 +194,46 @@ describe("RepoPreferencesSection save", () => {
     const save = screen.getByRole("button", { name: "Save" });
     expect(save.className).toContain("bg-overlay");
     expect(save.className).not.toMatch(/(^|\s)bg-primary(\s|$)/);
+  });
+});
+
+describe("RepoPreferencesSection first frame", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseRepoPreferences.mockReturnValue({
+      data: { ...PREFS, dev_checks: [{ name: "python", paths: ["ml"], command: "pytest -q" }] },
+      isLoading: false,
+    });
+  });
+
+  it("draws the stored dev checks in the first frame a browser can paint", async () => {
+    // Outside act, which runs every effect before a test can look: what the
+    // page holds when the task that drew it ends is what a browser paints.
+    const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const actEnvironment = env.IS_REACT_ACT_ENVIRONMENT;
+    env.IS_REACT_ACT_ENVIRONMENT = false;
+    const painted: number[] = [];
+    function FrameEnd() {
+      useLayoutEffect(() => {
+        queueMicrotask(() => painted.push(document.querySelectorAll('[data-testid="dev-check-row"]').length));
+      }, []);
+      return null;
+    }
+    const box = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(box);
+    try {
+      root.render(
+        <MemoryRouter>
+          <RepoPreferencesSection repo="acme/group/backend" />
+          <FrameEnd />
+        </MemoryRouter>,
+      );
+      await new Promise((r) => setTimeout(r, 50));
+    } finally {
+      root.unmount();
+      box.remove();
+      env.IS_REACT_ACT_ENVIRONMENT = actEnvironment;
+    }
+    expect(painted).toEqual([1]);
   });
 });

@@ -1,17 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { checkQaConfig, fetchQaConfig, saveQaConfig, deleteQaConfig } from "@/api/qaConfig";
 
+/** A repo's stored setup: the key and fetch every reader of it shares. */
+export function qaConfigQuery(fullRepo: string) {
+  return {
+    queryKey: ["qa-config", fullRepo],
+    queryFn: () => fetchQaConfig(fullRepo),
+    enabled: !!fullRepo,
+    retry: false,
+  };
+}
+
 /**
  * The stored qa.yaml text for a repo. `data === null` means no setup is
  * stored, so QA treats the repo as unconfigured.
  */
 export function useQaConfig(fullRepo: string) {
-  return useQuery({
-    queryKey: ["qa-config", fullRepo],
-    queryFn: () => fetchQaConfig(fullRepo),
-    enabled: !!fullRepo,
-    retry: false,
-  });
+  return useQuery(qaConfigQuery(fullRepo));
 }
 
 export function useSaveQaConfig() {

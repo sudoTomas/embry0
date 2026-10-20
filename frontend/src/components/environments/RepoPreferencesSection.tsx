@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -62,8 +62,10 @@ export function RepoPreferencesSection({ repo, showIntro = true }: RepoPreferenc
   const [devChecks, setDevChecks] = useState<DevCheckDraft[]>([]);
   const [dirty, setDirty] = useState(false);
 
-  // Sync local form with server state whenever the preferences row changes.
-  useEffect(() => {
+  // Sync local form with server state whenever the preferences row changes,
+  // before paint: synced after it, the form was drawn once without its
+  // stored dev checks, and their rows then pushed everything below down.
+  useLayoutEffect(() => {
     setSandboxProfile(prefs?.sandbox_profile ?? "");
     setLanguageHint(prefs?.language_hint ?? "");
     setNotes(prefs?.notes ?? "");
