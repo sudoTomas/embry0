@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { useLiveDuration } from "@/hooks/useLiveDuration";
+import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { useLiveJobSummary } from "@/hooks/useLiveJobSummary";
 import { formatCost, formatDuration } from "@/lib/utils";
@@ -41,6 +42,7 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
     ? `${summary.currentNode}#${summary.attempt}`
     : job.current_stage ?? null;
   const stageIdentity = useAgentIdentity(summary.currentNode ?? job.current_stage ?? "");
+  const stageType = summary.currentNode ?? job.current_stage ?? null;
   const stageColors = stageIdentity.classes;
   const spentUsd = summary.latestCost > 0 ? summary.latestCost : job.total_cost_usd;
   const cap = maxBudgetUsd != null && maxBudgetUsd > 0 ? maxBudgetUsd : null;
@@ -61,6 +63,11 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
       }
     >
       <div className="mt-2 flex items-center gap-2 min-w-0">
+        {stageType && (
+          <span data-testid="stage-sprite" className="shrink-0">
+            <AgentAvatar identity={stageIdentity} size={32} state={summary.toolOpen ? "tool" : "thinking"} />
+          </span>
+        )}
         {stageLabel && (
           <span
             data-testid="stage-badge"

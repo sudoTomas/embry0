@@ -159,4 +159,24 @@ describe("RunningCard", () => {
       expect(screen.getByTestId("cost-line")).toHaveTextContent("$0.90");
     });
   });
+
+  describe("sprite", () => {
+    it("shows the stage's sprite thinking, and using a tool while a call is open", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "developer", toolOpen: false }));
+      const { unmount } = renderCard({ job: makeJob() });
+      let sprite = screen.getByTestId("stage-sprite").querySelector("svg")!;
+      expect(sprite).toHaveAttribute("data-avatar", "smith");
+      expect(sprite).toHaveAttribute("data-state", "thinking");
+      expect(sprite).toHaveAttribute("width", "32");
+      unmount();
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "developer", toolOpen: true }));
+      renderCard({ job: makeJob() });
+      sprite = screen.getByTestId("stage-sprite").querySelector("svg")!;
+      expect(sprite).toHaveAttribute("data-state", "tool");
+    });
+    it("shows no sprite before any stage is known", () => {
+      renderCard({ job: makeJob({ current_stage: null }) });
+      expect(screen.queryByTestId("stage-sprite")).toBeNull();
+    });
+  });
 });

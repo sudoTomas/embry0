@@ -121,7 +121,7 @@ export function AgentsPage() {
                       {/* Type */}
                       <td className="px-6 py-3">
                         <div className="flex items-center gap-2.5">
-                          <AgentAvatar identity={identity} size={28} />
+                          <AgentAvatar identity={identity} size={32} />
                           <div>
                             <div className="text-sm font-semibold text-white/90">{identity.displayName}</div>
                             {identity.displayName !== agent.type && (

@@ -143,6 +143,7 @@ describe("useLiveJobSummary", () => {
     expect(result.current.attempt).toBe(1);
     expect(result.current.isConnected).toBe(false);
     expect(result.current.isComplete).toBe(false);
+    expect(result.current.toolOpen).toBe(false);
     expect(lastCreatedWs).toBeNull();
   });
 
@@ -586,5 +587,39 @@ describe("useLiveJobSummary", () => {
     // A new WebSocket should have been created
     expect(allCreatedWs.length).toBe(2);
     expect(lastCreatedWs!.url).toContain("job-second");
+  });
+
+  it("reports toolOpen while the newest tool call has no result", async () => {
+    const { result } = renderHook(() => useLiveJobSummary("job-abc"));
+    await flushConnect();
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+    });
+    expect(result.current.toolOpen).toBe(false);
+
+    await act(async () => {
+      lastCreatedWs!.simulateMessage({ type: "tool_call", timestamp: "t1", node: "developer", tool_name: "Edit", tool_id: "a", summary: "x.ts" });
+    });
+    await flushBatch();
+    expect(result.current.toolOpen).toBe(true);
+
+    await act(async () => {
+      lastCreatedWs!.simulateMessage({ type: "progress", timestamp: "t2", message: "Editing" });
+    });
+    await flushBatch();
+    expect(result.current.toolOpen).toBe(true);
+
+    await act(async () => {
+      lastCreatedWs!.simulateMessage({ type: "tool_result", timestamp: "t3", node: "developer", tool_id: "a", content: "ok" });
+    });
+    await flushBatch();
+    expect(result.current.toolOpen).toBe(false);
+
+    await act(async () => {
+      lastCreatedWs!.simulateMessage({ type: "tool_call", timestamp: "t4", node: "developer", tool_name: "Bash", tool_id: "b", summary: "npm test" });
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t5", node: "review", attempt: 1 });
+    });
+    await flushBatch();
+    expect(result.current.toolOpen).toBe(false);
   });
 });

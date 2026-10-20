@@ -33,6 +33,7 @@ export function makeSummary(overrides: Partial<UseLiveJobSummaryResult> = {}): U
     attempt: 1,
     isConnected: true,
     isComplete: false,
+    toolOpen: false,
     ...overrides,
   };
 }

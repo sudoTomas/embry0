@@ -26,6 +26,8 @@ export interface UseLiveJobSummaryResult {
   attempt: number;
   isConnected: boolean;
   isComplete: boolean;
+  /** A tool call is in flight: the newest `tool_call` has no `tool_result` yet. */
+  toolOpen: boolean;
 }
 
 /** Summarize a tool invocation from the contract's `tool_call.summary`, the
@@ -50,6 +52,7 @@ interface LiveSummarySnapshot {
   tokensOut: number;
   currentNode: string | null;
   attempt: number;
+  toolOpen: boolean;
 }
 
 function emptySnapshot(): LiveSummarySnapshot {
@@ -61,6 +64,7 @@ function emptySnapshot(): LiveSummarySnapshot {
     tokensOut: 0,
     currentNode: null,
     attempt: 1,
+    toolOpen: false,
   };
 }
 
@@ -78,6 +82,8 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
   // Per-node start counts, the attempt fallback for legacy node_started rows
   // that carry no `attempt`.
   const nodeStartCountsRef = useRef(new Map<string, number>());
+  // Tool calls of the current run still waiting for their result.
+  const openToolIdsRef = useRef(new Set<string>());
   const flushTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [summary, setSummary] = useState<LiveSummarySnapshot>(emptySnapshot());
   const [hasEvents, setHasEvents] = useState(false);
@@ -91,8 +97,17 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
         break;
       case "tool_call":
         snapshot.lastToolCall = summarizeToolCall(event.tool_name, event.summary);
+        openToolIdsRef.current.add(event.tool_id);
+        snapshot.toolOpen = true;
+        break;
+      case "tool_result":
+        openToolIdsRef.current.delete(event.tool_id);
+        snapshot.toolOpen = openToolIdsRef.current.size > 0;
         break;
       case "node_started": {
+        // A new run starts with no call open.
+        openToolIdsRef.current.clear();
+        snapshot.toolOpen = false;
         const node = eventNode(event);
         if (node) {
           const startCount = (nodeStartCountsRef.current.get(node) || 0) + 1;
@@ -163,6 +178,7 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
         snapshotRef.current = emptySnapshot();
         totalsRef.current = emptyTotals();
         nodeStartCountsRef.current = new Map();
+        openToolIdsRef.current = new Set();
         setSummary(emptySnapshot());
         setHasEvents(false);
       },
@@ -182,5 +198,6 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
     attempt: summary.attempt,
     isConnected,
     isComplete,
+    toolOpen: summary.toolOpen,
   };
 }

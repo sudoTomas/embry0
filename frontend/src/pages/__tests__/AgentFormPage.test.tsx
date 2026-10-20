@@ -307,7 +307,7 @@ describe("identity and skills (spec 3.6)", () => {
     await user.type(screen.getByLabelText(/type \(slug\)/i), "release-bot");
     await user.type(screen.getByLabelText(/display name/i), "Release Bot");
     await user.type(screen.getByLabelText(/tagline/i), "Ships it.");
-    await user.selectOptions(screen.getByLabelText(/^avatar$/i), "rogue");
+    await user.click(screen.getByRole("radio", { name: "rogue" }));
     await user.click(screen.getByRole("radio", { name: "cyan" }));
     await user.click(screen.getByRole("button", { name: /save agent/i }));
     expect(mockCreateMutate).toHaveBeenCalledWith(
