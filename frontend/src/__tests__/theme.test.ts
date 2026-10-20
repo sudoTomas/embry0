@@ -30,7 +30,7 @@ const SOURCES = import.meta.glob(
 ) as Record<string, string>;
 
 function theme(): string {
-  const start = css.indexOf("@theme {");
+  const start = css.indexOf("@theme static {");
   const end = css.indexOf("\n}", start);
   expect(start, "index.css has one @theme block").toBeGreaterThan(-1);
   return css.slice(start, end);
@@ -44,6 +44,15 @@ describe("theme tokens", () => {
     expect(html).not.toContain("IBM Plex");
     expect(html).not.toMatch(/fonts\.googleapis\.com\/css2/);
     expect(html).toContain('rel="preconnect" href="https://fonts.googleapis.com"');
+  });
+
+  it("keeps the theme block static, so tokens read only through var() survive the build", () => {
+    // Tailwind v4 emits a plain @theme variable only when a utility references
+    // it. The sprites read --color-palette-* through var() alone, so a plain
+    // block ships two of the eight palette tokens and every other sprite
+    // renders black. @theme static emits them all.
+    expect(css).toContain("@theme static {");
+    expect(css).not.toMatch(/@theme \{/);
   });
 
   it("declares one palette token per identity colour, equal to PALETTE_HEX", () => {

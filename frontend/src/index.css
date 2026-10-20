@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Pixelify+Sans:wght@400;600;700&display=swap');
 @import "tailwindcss";
 
-@theme {
+@theme static {
   --color-background: #060d12;
   --color-foreground: #fafafa;
   --color-card: #0f1419;
