@@ -8,6 +8,7 @@ import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { isSuccessfulTerminal } from "@/lib/jobStatus";
 import { formatCost, formatDate } from "@/lib/utils";
 import type { JobResponse } from "@/lib/types";
+import { agentOfStage } from "./agentOfStage";
 import { ConsoleCardShell } from "./ConsoleCardShell";
 
 /**
@@ -43,12 +44,13 @@ const PR_PILL_DEFAULT = {
  */
 export const DoneFailedCard = memo(function DoneFailedCard({ job }: { job: JobResponse }) {
   const pill = PR_PILL[job.delivery_state ?? ""] ?? PR_PILL_DEFAULT;
-  const identity = useAgentIdentity(job.current_stage ?? "");
+  const agentType = agentOfStage(job.current_stage);
+  const identity = useAgentIdentity(agentType);
   const lastState: SpriteState = isSuccessfulTerminal(job.status) ? "done" : "failed";
   return (
     <ConsoleCardShell job={job} headerRight={<JobStatusBadge status={job.status} />}>
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        {job.current_stage && (
+        {agentType && (
           <span data-testid="party-sprite" className="shrink-0">
             <AgentAvatar identity={identity} size={32} state={lastState} />
           </span>
