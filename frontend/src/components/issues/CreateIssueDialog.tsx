@@ -92,7 +92,7 @@ export function CreateIssueDialog({ onClose, onCreated, initialRepo, labelSugges
       aria-label="Create issue dialog"
       tabIndex={-1}
     >
-      <Card className="w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <CardHeader><CardTitle>Create Issue</CardTitle></CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">

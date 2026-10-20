@@ -159,7 +159,7 @@ export function BindingsDrawer({ credential, isAdmin, onClose }: BindingsDrawerP
 
   return (
     <Overlay
-      className="flex justify-end bg-black/60 backdrop-blur-sm"
+      className="flex justify-end bg-black/60 p-0 backdrop-blur-sm"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}

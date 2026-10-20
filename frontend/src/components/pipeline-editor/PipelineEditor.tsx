@@ -382,7 +382,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
 
   // The modal editor covers the window, so it renders over it like a dialog.
   return isModal ? (
-    <Overlay className="bg-page flex flex-col">{content}</Overlay>
+    <Overlay className="bg-page flex flex-col p-0">{content}</Overlay>
   ) : (
     <div className="flex flex-col h-full bg-page">{content}</div>
   );

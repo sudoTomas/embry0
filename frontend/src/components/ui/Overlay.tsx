@@ -12,7 +12,11 @@ import { cn } from "@/lib/utils";
  * containing block; an ancestor's stacking context caps its z-index. Under
  * body none of them can reach it. React still treats it as part of the
  * component that renders it, so its events bubble there as before.
+ *
+ * The layer keeps a 16 px gutter round what it holds, so a dialog as wide
+ * as a phone still stops short of the screen's edges. A drawer or a
+ * full-window editor that belongs at the edge passes p-0.
  */
 export function Overlay({ className, ...props }: ComponentProps<"div">) {
-  return createPortal(<div className={cn("fixed inset-0 z-50", className)} {...props} />, document.body);
+  return createPortal(<div className={cn("fixed inset-0 z-50 p-4", className)} {...props} />, document.body);
 }

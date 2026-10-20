@@ -82,7 +82,7 @@ export function SetupAgentDialog({
 
   return (
     <Overlay
-      className="flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      className="flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

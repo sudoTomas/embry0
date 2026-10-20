@@ -23,7 +23,7 @@ export function TemplatePicker({ onSelect, onClose }: TemplatePickerProps) {
 
   return (
     <Overlay className="flex items-center justify-center bg-black/60">
-      <div className="w-[500px] max-h-[400px] rounded-lg border border-white/10 bg-surface shadow-xl overflow-hidden flex flex-col">
+      <div className="w-full max-w-[500px] max-h-[400px] rounded-lg border border-white/10 bg-surface shadow-xl overflow-hidden flex flex-col">
         <div className="p-4 border-b border-white/[0.08]">
           <h3 className="text-sm font-semibold text-white">
             Load pipeline template

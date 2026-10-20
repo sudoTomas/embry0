@@ -60,6 +60,19 @@ describe("Overlay", () => {
     expect(layer).toHaveClass("fixed", "inset-0", "z-50", "bg-black/60");
   });
 
+  // The Add variable dialog is as wide as a phone and had no gutter of its
+  // own: its border sat on both edges of a 390 px screen. jsdom has no
+  // layout, so this pins the class.
+  it("keeps a 16 px gutter round what it holds, unless the caller sits at the edge", () => {
+    render(<Overlay data-testid="dialog-layer" />);
+    expect(screen.getByTestId("dialog-layer")).toHaveClass("p-4");
+
+    render(<Overlay data-testid="drawer-layer" className="p-0" />);
+    const drawer = screen.getByTestId("drawer-layer");
+    expect(drawer).toHaveClass("p-0");
+    expect(drawer).not.toHaveClass("p-4");
+  });
+
   it("is the only box drawn over the whole window", () => {
     const inline = Object.entries(SOURCES)
       .filter(([file, source]) => strings(file, source).some(coversWindow))

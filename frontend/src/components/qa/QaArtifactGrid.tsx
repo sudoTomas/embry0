@@ -67,7 +67,7 @@ function ScreenshotLightbox({
       aria-modal="true"
       aria-label={`Screenshot ${filename}`}
       data-testid="qa-artifact-lightbox"
-      className="flex items-center justify-center bg-black/80 p-4"
+      className="flex items-center justify-center bg-black/80"
       onClick={onClose}
     >
       <div
