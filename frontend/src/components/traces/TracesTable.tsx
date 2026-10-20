@@ -78,8 +78,9 @@ export function TracesTable({
           />
         </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
+        {/* Table. A size container, so an open trace's detail can be as wide
+            as the part of the table in view (TraceDetailPanel). */}
+        <div className="@container overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>

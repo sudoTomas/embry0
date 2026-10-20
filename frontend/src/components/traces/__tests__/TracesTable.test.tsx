@@ -139,6 +139,20 @@ describe("TracesTable", () => {
     expect((detail.closest("td") as HTMLTableCellElement).colSpan).toBe(columns);
   });
 
+  // On a phone the table scrolls sideways, and the detail spanned all of it:
+  // at 390 px its close button sat past the table's visible right edge.
+  // jsdom has no layout, so this pins the classes: the scroller is a size
+  // container, and the detail is no wider than it and pinned to its left.
+  it("keeps an open trace's detail in the part of the table in view", () => {
+    renderTable();
+    const row = screen.getByRole("button", { name: "View trace run-fixture-1" });
+    fireEvent.click(row);
+    const close = screen.getByRole("button", { name: "Close detail panel" });
+    const detail = close.closest("td")!.firstElementChild!;
+    expect(detail).toHaveClass("sticky", "left-0", "max-w-[100cqw]");
+    expect(detail.closest(".overflow-x-auto")).toHaveClass("@container");
+  });
+
   it("spans the empty state across every column of the table", () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(

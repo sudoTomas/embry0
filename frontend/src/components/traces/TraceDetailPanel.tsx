@@ -37,7 +37,10 @@ export function TraceDetailPanel({ trace, colSpan, onClose }: TraceDetailPanelPr
   return (
     <tr>
       <td colSpan={colSpan} className="p-0">
-        <div className="border-t border-border bg-muted/20 px-6 py-5">
+        {/* On a phone the table scrolls sideways under the detail. The detail
+            stays as wide as the table's visible part and pinned to its left
+            edge, so the close button is in view whatever the scroll. */}
+        <div className="sticky left-0 max-w-[100cqw] border-t border-border bg-muted/20 px-6 py-5">
           {/* Header */}
           <div className="flex items-start justify-between mb-5">
             <div className="flex flex-col gap-1">
