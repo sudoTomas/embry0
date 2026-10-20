@@ -64,6 +64,7 @@
   --color-role-developer: var(--color-amber);
   --color-role-validator: var(--color-teal);
   --color-role-triage: var(--color-purple);
+  --color-role-reviewer: var(--color-purple);
 
   /* Pipeline stage colors (categorical) */
   --color-stage-triage: var(--color-purple);

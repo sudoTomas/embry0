@@ -49,6 +49,7 @@ export const ROLE_COLORS: Record<string, string> = {
   developer: "text-role-developer",
   validator: "text-role-validator",
   triage: "text-role-triage",
+  reviewer: "text-role-reviewer",
 };
 
 export const ROLE_BG_COLORS: Record<string, string> = {

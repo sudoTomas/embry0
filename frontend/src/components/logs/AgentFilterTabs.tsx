@@ -35,7 +35,6 @@ export function AgentFilterTabs({ nodeStates, selectedNodeId, onSelect }: AgentF
       </button>
       {entries.map(([nodeId, state]) => {
         const role = state.agent_type || nodeId;
-        const color = ROLE_COLORS[role] || ROLE_COLORS.default;
         const icon = STATE_ICONS[state.state] || "○";
         const label = role
           .replace(/-\d+$/, "")
@@ -64,7 +63,11 @@ export function AgentFilterTabs({ nodeStates, selectedNodeId, onSelect }: AgentF
             >
               {icon}
             </span>
-            <span style={selectedNodeId === nodeId ? undefined : { color }}>{label}</span>
+            {/* Unselected, the agent reads in its role's colour, as the
+                pipeline graph and the job page's agent cards draw it; a role
+                with no colour keeps the chip's muted text. Selected, it reads
+                neutral like All. */}
+            <span className={selectedNodeId === nodeId ? undefined : ROLE_COLORS[role]}>{label}</span>
           </button>
         );
       })}
