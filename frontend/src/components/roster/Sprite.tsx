@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { DEFAULT_AVATAR, DEFAULT_COLOR, isAdventurerId, isAvatarId, isPaletteId } from "@/lib/agentIdentity";
+import { DEFAULT_AVATAR, DEFAULT_COLOR, isAdventurerId, isAvatarId, isLegacyAvatarId, isPaletteId } from "@/lib/agentIdentity";
 import { cn } from "@/lib/utils";
 import { COMPOSED, GHOST_FILL, GRID } from "./appearance";
 import { COMPILED, type CharClass, type SpriteState } from "./sprites";
@@ -49,8 +49,7 @@ function framesOf(avatar: string, state: SpriteState): Painted {
   if (isAdventurerId(avatar)) {
     return { grid: GRID, paths: COMPOSED[avatar][state].map((f) => Object.entries(f.paths).map(([fill, d]) => ({ fill, d }))) };
   }
-  const av = isAvatarId(avatar) ? avatar : DEFAULT_AVATAR;
-  const legacy = COMPILED[av as keyof typeof COMPILED][state];
+  const legacy = COMPILED[isLegacyAvatarId(avatar) ? avatar : DEFAULT_AVATAR][state];
   return { grid: 16, paths: legacy.map((paths) => ORDER.filter((k) => paths[k]).map((k) => ({ fill: fillFor(k, state), d: paths[k]! }))) };
 }
 

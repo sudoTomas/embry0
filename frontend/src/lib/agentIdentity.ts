@@ -24,7 +24,7 @@ export type AvatarId = (typeof AVATARS)[number];
 export const PALETTE = ["gold", "cyan", "violet", "rose", "emerald", "amber", "sky", "slate"] as const;
 export type PaletteId = (typeof PALETTE)[number];
 
-export const DEFAULT_AVATAR: AvatarId = "golem";
+export const DEFAULT_AVATAR: LegacyAvatarId = "golem";
 export const DEFAULT_COLOR: PaletteId = "slate";
 export const DISPLAY_NAME_MAX = 60;
 export const TAGLINE_MAX = 140;
