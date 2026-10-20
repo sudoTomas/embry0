@@ -61,10 +61,13 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
   // Expanded card (active or manually expanded)
   return (
     <div className={`rounded-lg border ${colors.border} ${colors.bg} overflow-hidden`}>
-      {/* Header */}
+      {/* Header. Only its bottom edge has a width, so the card's own border
+          class draws the divider in the outline's colour. A border-b- class
+          made from it at runtime would be in no source file, and Tailwind
+          writes no rule for a class it cannot find there. */}
       <div
         onClick={() => !isActive && setManualExpand(!manualExpand)}
-        className={`px-4 py-3 flex items-center gap-3 border-b ${colors.border.replace("border-", "border-b-")} ${!isActive ? "cursor-pointer" : ""}`}
+        className={`px-4 py-3 flex items-center gap-3 border-b ${colors.border} ${!isActive ? "cursor-pointer" : ""}`}
       >
         <div className={`w-8 h-8 rounded-lg ${colors.bg} flex items-center justify-center`}>
           <span className={`${colors.text} text-base`}>{colors.icon}</span>

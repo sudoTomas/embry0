@@ -3,6 +3,8 @@ import { render, renderHook, screen } from "@testing-library/react";
 import { AgentCard } from "../AgentCard";
 import { useAgentStates, type AgentState } from "@/hooks/useAgentStates";
 import { loadFixture } from "@/lib/__tests__/fixtures";
+import { inSource } from "@/lib/__tests__/tailwindSource";
+import { AGENT_COLORS, getColors } from "@/lib/agentVisuals";
 
 function fixtureAgents(): AgentState[] {
   return renderHook(() => useAgentStates(loadFixture("issue-to-pr"))).result.current.agents;
@@ -54,6 +56,22 @@ describe("AgentCard", () => {
     render(<AgentCard agent={failed} />);
     expect(screen.getByText(/Tool denied by policy/)).toBeInTheDocument();
     expect(screen.queryByText(/ERR_TOOL_DENIED/), "a failed card must show its error code").not.toBeNull();
+  });
+
+  // The open card's header is ruled off in the card's outline colour. The
+  // divider's class was made at runtime by rewriting the outline's, a class
+  // Tailwind never generated, so every divider fell to the page's default
+  // border instead.
+  it.each([...Object.keys(AGENT_COLORS), "output"])("rules the open %s card's header in its outline colour", (agent) => {
+    const { container } = render(<AgentCard agent={{ ...fixtureAgents()[1], agent, node: agent }} expanded />);
+    const card = container.firstElementChild!;
+    const header = card.firstElementChild!;
+    const outline = getColors(agent).border;
+    expect(card.className.split(/\s+/)).toContain(outline);
+    expect(header.className.split(/\s+/), `the ${agent} header's divider is not the card's outline`).toContain(outline);
+    for (const cls of header.className.split(/\s+/).filter(Boolean)) {
+      expect(inSource(cls), `the ${agent} header's ${cls} is in no source file: Tailwind writes no rule for it`).toBe(true);
+    }
   });
 
   it("labels the fixture's retried developer run with its attempt", () => {
