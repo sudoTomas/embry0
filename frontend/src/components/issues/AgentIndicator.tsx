@@ -1,22 +1,18 @@
+import { AgentAvatar } from "@/components/agents/AgentAvatar";
+import { useAgentIdentity } from "@/hooks/useAgentIdentity";
+
 interface AgentIndicatorProps {
   agentType: string;
   size?: "sm" | "md";
 }
 
-const AGENT_CHARACTERS: Record<string, { char: string; color: string; label: string }> = {
-  triage: { char: "🔍", color: "text-purple-400", label: "Triaging" },
-  developer: { char: "🔧", color: "text-amber-400", label: "Developing" },
-  validator: { char: "🛡️", color: "text-green-400", label: "Validating" },
-  reviewer: { char: "👁️", color: "text-cyan-400", label: "Reviewing" },
-};
-
+/** The agent working an issue: its sprite, thinking, from the one identity source; the md size names it too. */
 export function AgentIndicator({ agentType, size = "sm" }: AgentIndicatorProps) {
-  const agent = AGENT_CHARACTERS[agentType] ?? AGENT_CHARACTERS.developer;
-  const sizeClass = size === "sm" ? "text-sm" : "text-base";
+  const identity = useAgentIdentity(agentType);
   return (
-    <span className={`inline-flex items-center gap-1 ${agent.color} ${sizeClass}`} title={agent.label}>
-      <span className="inline-block">{agent.char}</span>
-      {size === "md" && <span className="text-xs">{agent.label}</span>}
+    <span className={`inline-flex items-center gap-1 ${identity.classes.text}`}>
+      <AgentAvatar identity={identity} size={16} state="thinking" />
+      {size === "md" && <span className="text-xs">{identity.displayName}</span>}
     </span>
   );
 }
