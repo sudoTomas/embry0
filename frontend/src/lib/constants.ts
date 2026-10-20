@@ -59,6 +59,16 @@ export const ROLE_BG_COLORS: Record<string, string> = {
   triage: "bg-role-triage",
 };
 
+/** The agent change marker's tint: each role's colour at 15%. Written out
+ * whole, never built as `${bg}/15`: Tailwind writes a rule only for a class it
+ * finds in the source, so a built one has none and the pill draws untinted. */
+export const ROLE_TINT_COLORS: Record<string, string> = {
+  explorer: "bg-role-explorer/15",
+  developer: "bg-role-developer/15",
+  validator: "bg-role-validator/15",
+  triage: "bg-role-triage/15",
+};
+
 export const ROLE_LABELS: Record<string, string> = {
   explorer: "Explorer",
   developer: "Developer",

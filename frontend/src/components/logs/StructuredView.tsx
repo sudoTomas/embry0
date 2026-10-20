@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Virtuoso } from "react-virtuoso";
 import { ToolCallCard } from "./ToolCallCard";
 import { cn, extractRole } from "@/lib/utils";
-import { ROLE_COLORS, ROLE_BG_COLORS, ROLE_LABELS } from "@/lib/constants";
+import { ROLE_COLORS, ROLE_BG_COLORS, ROLE_TINT_COLORS, ROLE_LABELS } from "@/lib/constants";
 import { ROLE_ICON_MAP } from "@/lib/roleIcons";
 import type { LogEvent } from "@/lib/types";
 
@@ -195,13 +195,14 @@ function ToolCallNode({ call }: { call: ToolCall }) {
 function AgentTransitionMarker({ role, name }: { role: string; name: string }) {
   const textColor = ROLE_COLORS[role] ?? "text-muted-foreground";
   const bgColor = ROLE_BG_COLORS[role];
+  const tint = ROLE_TINT_COLORS[role] ?? "bg-muted";
   const label = ROLE_LABELS[role] ?? name;
   const IconComponent = ROLE_ICON_MAP[role];
 
   return (
     <div className="flex items-center gap-3 py-2">
       <div className={cn("h-px flex-1", bgColor ?? "bg-border")} style={{ opacity: 0.4 }} />
-      <div className={cn("inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full", textColor, bgColor ? `${bgColor}/15` : "bg-muted")}>
+      <div className={cn("inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full", textColor, tint)}>
         {IconComponent && <IconComponent className="h-3.5 w-3.5" />}
         <span>{label} Agent</span>
       </div>

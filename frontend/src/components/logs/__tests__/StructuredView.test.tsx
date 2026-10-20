@@ -4,6 +4,8 @@ import { VirtuosoMockContext } from "react-virtuoso";
 import type { ReactElement } from "react";
 import { StructuredView } from "../StructuredView";
 import { loadFixture } from "@/lib/__tests__/fixtures";
+import { inSource } from "@/lib/__tests__/tailwindSource";
+import { ROLE_COLORS, ROLE_LABELS } from "@/lib/constants";
 import type { LogEvent } from "@/lib/types";
 
 // Without a mock viewport react-virtuoso renders no items in jsdom (RawView.test shows it).
@@ -62,6 +64,33 @@ describe("StructuredView", () => {
     renderVirtual(<StructuredView events={loadFixture("issue-to-pr")} />);
     expect(screen.queryByText("Explore Agent"), "no subagent start marker").not.toBeNull();
     expect(screen.queryByText("Subagent Explore completed"), "the end marker does not name the subagent").not.toBeNull();
+  });
+
+  // The pill at a subagent's start names its agent in the role's colour, as
+  // the agent filter chips above the transcript do, on a wash of the same
+  // colour. The wash was built at runtime as `${bg}/15`, a class Tailwind never
+  // generated, so every role's pill drew untinted.
+  it("tints each role's agent change marker with the colour its filter chip reads", () => {
+    const roles = ["triage", "explorer", "developer", "validator"];
+    const names = [...roles, "general-purpose"];
+    const events: LogEvent[] = names.map((name, i) => ({
+      type: "subagent_start", timestamp: "", tool_id: `toolu_sub${i}`, name,
+    }));
+    renderVirtual(<StructuredView events={events} />);
+    const pill = (label: string) => screen.getByText(`${label} Agent`).parentElement!;
+    for (const role of roles) {
+      const classes = pill(ROLE_LABELS[role]).className.split(/\s+/);
+      const colour = ROLE_COLORS[role].replace(/^text-/, "");
+      expect(classes, `the ${role} pill reads its chip's colour`).toContain(ROLE_COLORS[role]);
+      expect(classes, `the ${role} pill's wash is not its chip's colour`).toContain(`bg-${colour}/15`);
+    }
+    for (const name of names) {
+      const label = ROLE_LABELS[name] ?? name;
+      for (const cls of pill(label).className.split(/\s+/).filter(Boolean)) {
+        expect(inSource(cls), `the ${label} pill's ${cls} is in no source file: Tailwind writes no rule for it`).toBe(true);
+      }
+      expect(pill(label).className, "an agent change is a label, not gold").not.toMatch(/(^|\s)(bg|text)-primary/);
+    }
   });
 
   it("renders progress with its app and message", () => {
