@@ -17,9 +17,9 @@ describe("Sprite", () => {
     expect(svg).toHaveAttribute("data-state", "idle");
     expect(svg.style.getPropertyValue("--sprite-fill")).toBe("var(--color-palette-amber)");
     const fills = [...svg.querySelectorAll("path")].map((p) => p.getAttribute("fill"));
-    expect(fills).toContain("var(--color-background)");
+    expect(fills).toContain("color-mix(in srgb, var(--sprite-fill) 30%, black)");
     expect(fills).toContain("var(--sprite-fill)");
-    expect(fills).toContain("var(--color-foreground)");
+    expect(fills).toContain("var(--color-background)");
   });
 
   it("stacks both frames of a two-frame state and one frame otherwise", () => {

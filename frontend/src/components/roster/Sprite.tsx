@@ -21,10 +21,12 @@ export interface SpriteProps {
 }
 
 const FILL: Record<CharClass, string> = {
-  o: "var(--color-background)",
+  // A dark shade of the palette colour, not the page background: the
+  // silhouette holds on every surface and the figure reads as one colour.
+  o: "color-mix(in srgb, var(--sprite-fill) 30%, black)",
   f: "var(--sprite-fill)",
   h: "color-mix(in srgb, var(--sprite-fill) 70%, white)",
-  e: "var(--color-foreground)",
+  e: "var(--color-background)",
 };
 /** The pending frame is outline only; in the background colour it vanishes on every surface, so it is a dim tint instead. */
 const PENDING_OUTLINE = "color-mix(in srgb, var(--sprite-fill) 45%, transparent)";
