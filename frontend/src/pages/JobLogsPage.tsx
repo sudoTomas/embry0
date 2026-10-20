@@ -91,7 +91,10 @@ export function JobLogsPage() {
         </Link>
       </div>
 
-      {/* Pipeline Visualization */}
+      {/* Pipeline Visualization. The note that stands in for the graph is as
+          tall as the graph (PipelineGraphView's h-[40vh]): the graph arrives
+          on the event stream a second or so after the page paints, and a
+          short note there pushed the whole transcript down when it came. */}
       <div className="rounded-lg border border-border bg-card p-2">
         {effectiveGraph ? (
           <PipelineGraphView
@@ -100,13 +103,18 @@ export function JobLogsPage() {
             onNodeSelect={handleNodeSelect}
           />
         ) : (
-          <div className="text-center text-white/20 py-8 text-sm">
-            The pipeline graph appears once the job's first node emits it.
-            Jobs that predate the live graph have none — use the{" "}
-            <Link to={`/jobs/${jobId}`} className="underline hover:text-white/40">
-              job detail page
-            </Link>{" "}
-            stage timeline instead.
+          <div
+            data-testid="pipeline-graph-pending"
+            className="flex h-[40vh] items-center justify-center px-4 text-center text-sm text-white/20"
+          >
+            <p>
+              The pipeline graph appears once the job's first node emits it.
+              Jobs that predate the live graph have none — use the{" "}
+              <Link to={`/jobs/${jobId}`} className="underline hover:text-white/40">
+                job detail page
+              </Link>{" "}
+              stage timeline instead.
+            </p>
           </div>
         )}
       </div>
