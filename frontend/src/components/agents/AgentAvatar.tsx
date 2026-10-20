@@ -17,7 +17,7 @@ export function AgentAvatar({ identity, size = 32, state = "idle", still, classN
       className={cn("inline-flex shrink-0 items-center justify-center select-none", className)}
       style={{ width: size, height: size }}
     >
-      <Sprite avatar={identity.avatar} color={identity.color} state={state} size={spriteSize} still={still} label={`${identity.displayName}, ${state}`} />
+      <Sprite avatar={identity.avatar} color={identity.color} state={state} size={spriteSize} still={still} label={identity.displayName} />
     </span>
   );
 }

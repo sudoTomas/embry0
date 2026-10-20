@@ -49,7 +49,7 @@ export function PartyNode({ data, selected }: NodeProps) {
       >
         <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-card" style={{ border: `2px solid ${identity.hex}`, top: "50%" }} />
         <div className="party-tile absolute inset-1 flex items-center justify-center bg-card">
-          <Sprite avatar={identity.avatar} color={identity.color} state={spriteState} size={48} label={`${identity.displayName}, ${spriteState}`} />
+          <Sprite avatar={identity.avatar} color={identity.color} state={spriteState} size={48} label={identity.displayName} />
         </div>
         <div data-ring={ring} aria-hidden="true" className="party-ring absolute inset-1" style={{ "--party-colour": identity.hex } as CSSProperties} />
         <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-card" style={{ border: `2px solid ${identity.hex}`, top: "50%" }} />

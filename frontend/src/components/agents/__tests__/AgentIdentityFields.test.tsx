@@ -16,6 +16,14 @@ describe("AgentIdentityFields", () => {
     expect(screen.queryByRole("combobox", { name: /avatar/i })).toBeNull();
   });
 
+  it("names each avatar option once: the button carries the name, its sprite is decorative", () => {
+    render(<AgentIdentityFields type="release-bot" value={value} onChange={() => {}} />);
+    const option = screen.getByRole("radio", { name: "rogue" });
+    const svg = option.querySelector("svg")!;
+    expect(svg).toHaveAttribute("aria-hidden", "true");
+    expect(svg).not.toHaveAttribute("aria-label");
+  });
+
   it("reports a chosen avatar", async () => {
     const onChange = vi.fn();
     render(<AgentIdentityFields type="release-bot" value={value} onChange={onChange} />);

@@ -11,8 +11,10 @@ export interface SpriteProps {
   color: string;
   state: SpriteState;
   size?: 16 | 32 | 48 | 64;
-  /** aria-label; defaults to "<avatar>, <state>". Pass the display name. */
+  /** The name in the aria-label "<name>, <state in words>"; defaults to the avatar id. Pass the display name. */
   label?: string;
+  /** Hidden from assistive tech, for a sprite inside a control that already carries the name. */
+  decorative?: boolean;
   /** Draw frame 0 only, never stepping: for a sprite repeated down a list, like a transcript marker. */
   still?: boolean;
   className?: string;
@@ -32,15 +34,19 @@ function fillFor(cls: CharClass, state: SpriteState): string {
 }
 const ORDER: CharClass[] = ["o", "f", "h", "e"];
 
+/** How each state reads aloud: the one place a sprite state becomes words. */
+const STATE_WORDS: Record<SpriteState, string> = {
+  idle: "idle", thinking: "thinking", tool: "using a tool", done: "done", failed: "failed", pending: "waiting",
+};
+
 /** One avatar in one state: a 16x16 SVG, tinted by the palette token, stepping between two frames by CSS. */
-export function Sprite({ avatar, color, state, size = 32, label, still = false, className }: SpriteProps) {
+export function Sprite({ avatar, color, state, size = 32, label, decorative = false, still = false, className }: SpriteProps) {
   const av = isAvatarId(avatar) ? avatar : DEFAULT_AVATAR;
   const col = isPaletteId(color) ? color : DEFAULT_COLOR;
   const frames = still ? COMPILED[av][state].slice(0, 1) : COMPILED[av][state];
   return (
     <svg
-      role="img"
-      aria-label={label ?? `${av}, ${state}`}
+      {...(decorative ? { "aria-hidden": true } : { role: "img", "aria-label": `${label ?? av}, ${STATE_WORDS[state]}` })}
       viewBox="0 0 16 16"
       width={size}
       height={size}

@@ -57,6 +57,7 @@ describe("PartyNode, live mode", () => {
     let node = screen.getByTestId("party-node");
     expect(node).toHaveAttribute("data-mode", "live");
     expect(node.querySelector("svg.sprite")).toHaveAttribute("data-state", "pending");
+    expect(node.querySelector("svg.sprite")).toHaveAttribute("aria-label", "Developer, waiting");
     expect(node.querySelector("[data-ring]")).toHaveAttribute("data-ring", "pending");
     unmount();
     wrap(<PartyNode {...live("running")} />);

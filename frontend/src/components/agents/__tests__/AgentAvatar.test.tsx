@@ -20,6 +20,7 @@ describe("AgentAvatar", () => {
     render(<AgentAvatar identity={identityOf("qa")} state="tool" size={48} />);
     const svg = screen.getByTitle("QA").querySelector("svg")!;
     expect(svg).toHaveAttribute("data-state", "tool");
+    expect(svg).toHaveAttribute("aria-label", "QA, using a tool");
     expect(svg).toHaveAttribute("width", "48");
   });
 
