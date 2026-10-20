@@ -147,17 +147,28 @@ export function paint(a: Appearance, pose: Pose): Grid {
   return pose.ghost ? ghostOf(grid) : grid;
 }
 
-/** Run-length rectangles, one path per colour: "M<x> <y>h<len>v1h-<len>z" per run. */
+/**
+ * Run-length rectangles, one path per colour: "M<x> <y>h<len>v<rows>h-<len>z"
+ * per run, a run extending down through every row below that repeats it
+ * exactly, so a torso is one rectangle rather than nine.
+ */
 export function runLength(grid: Grid): Record<Hex, string> {
   const runs: Record<Hex, string[]> = {};
+  const taken = grid.map((row) => row.map(() => false));
   grid.forEach((row, y) => {
     let x = 0;
     while (x < row.length) {
       const c = row[x];
-      if (c === null) { x++; continue; }
+      if (c === null || taken[y][x]) { x++; continue; }
       let len = 1;
-      while (x + len < row.length && row[x + len] === c) len++;
-      (runs[c] ??= []).push(`M${x} ${y}h${len}v1h-${len}z`);
+      while (x + len < row.length && row[x + len] === c && !taken[y][x + len]) len++;
+      const same = (yy: number) => yy < grid.length
+        && (x === 0 || grid[yy][x - 1] !== c) && (x + len >= row.length || grid[yy][x + len] !== c)
+        && grid[yy].slice(x, x + len).every((cell, i) => cell === c && !taken[yy][x + i]);
+      let rows = 1;
+      while (same(y + rows)) rows++;
+      for (let yy = y; yy < y + rows; yy++) for (let i = 0; i < len; i++) taken[yy][x + i] = true;
+      (runs[c] ??= []).push(`M${x} ${y}h${len}v${rows}h-${len}z`);
       x += len;
     }
   });

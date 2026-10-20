@@ -135,6 +135,10 @@ describe("compose", () => {
     const rows = ["o.ff............", ...Array.from({ length: 15 }, () => "................")];
     const grid = rows.map((r) => [...r].map((c) => (c === "." ? null : c)));
     expect(runLength(grid)).toEqual(compileFrame(rows));
+    expect(runLength([["a", "a", null], ["a", "a", "b"], ["a", null, "b"]]), "runs repeated below merge into one rectangle").toEqual({
+      a: "M0 0h2v2h-2zM0 2h1v1h-1z",
+      b: "M2 1h1v2h-1z",
+    });
     expect(compose(bare, idle).size).toBe(GRID);
     expect(compose(bare, idle).paths[OUTLINE]).toMatch(/^M\d+ \d+h\d+v1h-\d+z/);
   });
