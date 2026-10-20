@@ -386,6 +386,21 @@ body[data-divine="off"] .motion-mark * {
   }
 }
 
+/* React Flow marches an animated edge's dashes (the feedback loops, see
+   lib/graph-utils.ts) every 0.5 s, forever, and for everyone. The
+   dashboard's loops run no quicker than 2 s and stand still for anyone who
+   asked for reduced motion; the dashes stay drawn either way. Three
+   classes outrank React Flow's own rule whichever stylesheet loads last. */
+.react-flow .react-flow__edge.animated path {
+  animation-duration: 2s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-flow .react-flow__edge.animated path {
+    animation: none;
+  }
+}
+
 /* ===== end motion ===== */
 
 /* Density mode custom properties */
