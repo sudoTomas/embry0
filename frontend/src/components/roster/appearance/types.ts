@@ -31,9 +31,11 @@ export interface Appearance {
 
 /**
  * A text frame placed on the grid: `rows[j][i]` is the cell at
- * (x + i, y + j); `.` is transparent, any other character is looked up in
- * the layer's colour key. Frames are cropped to what they draw, so a boot
- * is three rows, not thirty-two.
+ * (x + i, y + j); `.` is transparent, `x` erases what lower layers drew
+ * there (a hat's crown clears the spikes under it while the hair at the
+ * sides still falls), any other character is looked up in the layer's
+ * colour key. Frames are cropped to what they draw, so a boot is three
+ * rows, not thirty-two.
  */
 export interface Frame {
   x: number;
