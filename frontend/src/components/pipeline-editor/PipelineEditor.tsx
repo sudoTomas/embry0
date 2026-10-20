@@ -81,6 +81,19 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
     [screenToFlowPosition, setNodes],
   );
 
+  // React Flow selects a focused node or edge on Enter or Space, but calls
+  // onNodeClick and onEdgeClick only for a pointer, so from the keyboard a
+  // detail never opened. The keys open it here as a click does: Enter as
+  // it goes down and Space as it comes up, the way a button takes them, so
+  // Space's release cannot land on the button the opened dialog focuses.
+  const openFromKey = (event: React.KeyboardEvent, key: string) => {
+    if (event.key !== key || !(event.target instanceof Element)) return;
+    const id = event.target.getAttribute("data-id");
+    if (!id) return;
+    if (event.target.classList.contains("react-flow__node")) onNodeClick(id);
+    else if (event.target.classList.contains("react-flow__edge")) onEdgeClick(id);
+  };
+
   return (
     <div className="flex-1 min-h-0 relative">
       {nodes.length === 0 && <EmptyCanvas />}
@@ -94,6 +107,8 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
         onDragOver={onDragOver}
         onNodeClick={(_, node) => onNodeClick(node.id)}
         onEdgeClick={(_, edge) => onEdgeClick(edge.id)}
+        onKeyDown={(e) => openFromKey(e, "Enter")}
+        onKeyUp={(e) => openFromKey(e, " ")}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
