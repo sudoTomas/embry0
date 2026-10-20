@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Sprite, stateForNode } from "@/components/roster";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
@@ -47,9 +48,10 @@ export function PartyNode({ data, selected }: NodeProps) {
         style={{ width: TILE_PX, height: TILE_PX, filter: selected ? `drop-shadow(0 0 12px ${identity.hex}66)` : undefined }}
       >
         <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-card" style={{ border: `2px solid ${identity.hex}`, top: "50%" }} />
-        <div data-ring={ring} className="party-ring absolute inset-1 flex items-center justify-center bg-card" style={{ borderColor: identity.hex }}>
+        <div className="party-tile absolute inset-1 flex items-center justify-center bg-card">
           <Sprite avatar={identity.avatar} color={identity.color} state={spriteState} size={48} label={`${identity.displayName}, ${spriteState}`} />
         </div>
+        <div data-ring={ring} aria-hidden="true" className="party-ring absolute inset-1" style={{ "--party-colour": identity.hex } as CSSProperties} />
         <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-card" style={{ border: `2px solid ${identity.hex}`, top: "50%" }} />
       </div>
       <div className="flex flex-col items-center min-w-0 max-w-[140px]">

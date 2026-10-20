@@ -1,16 +1,25 @@
-/* The party tile (spec 3.4): one renderer for the editor and the live graph. */
+/* The party tile (spec 3.4): one renderer for the editor and the live graph.
+   The ring is a sibling drawn over the tile, never an ancestor of the
+   sprite, and it dims by border colour alone: the sprite stays at full
+   strength in every state, and the completion flash moves only the ring. */
+
+.party-tile {
+  border-radius: 9999px;
+}
 
 .party-ring {
   border-width: 2px;
   border-style: solid;
   border-radius: 9999px;
-  transition: opacity 200ms ease-out;
+  border-color: var(--party-colour);
+  pointer-events: none;
+  transition: border-color 200ms ease-out;
 }
-.party-ring[data-ring="pending"] { opacity: 0.35; border-style: dashed; }
-.party-ring[data-ring="editor"] { opacity: 0.6; }
-.party-ring[data-ring="running"] { opacity: 1; }
-.party-ring[data-ring="completed"] { opacity: 0.8; }
-.party-ring[data-ring="failed"] { opacity: 0.9; border-color: var(--color-destructive) !important; }
+.party-ring[data-ring="pending"] { border-style: dashed; border-color: color-mix(in srgb, var(--party-colour) 35%, transparent); }
+.party-ring[data-ring="editor"] { border-color: color-mix(in srgb, var(--party-colour) 60%, transparent); }
+.party-ring[data-ring="running"] { border-color: var(--party-colour); }
+.party-ring[data-ring="completed"] { border-color: color-mix(in srgb, var(--party-colour) 80%, transparent); }
+.party-ring[data-ring="failed"] { border-color: color-mix(in srgb, var(--color-destructive) 90%, transparent); }
 
 @media (prefers-reduced-motion: no-preference) {
   /* One-shot on completion (divine rule 3's one-shot shape; the keyframes are index.css's scale-in). */
