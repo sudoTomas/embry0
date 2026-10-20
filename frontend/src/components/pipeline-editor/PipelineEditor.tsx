@@ -133,8 +133,10 @@ function PipelineCanvas({ graphState, arrangeCount, onNodeClick, onEdgeClick }: 
         className="bg-page"
       >
         <Background color="rgba(255,255,255,0.018)" gap={24} />
+        {/* Below sm the minimap covers part of the fitted pipeline, and a
+            phone's canvas shows the whole graph already. */}
         <MiniMap
-          className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !w-[120px] !h-[75px]"
+          className="!bg-[rgba(15,20,25,0.9)] !border-white/[0.06] !w-[120px] !h-[75px] max-sm:!hidden"
           nodeColor="#ffffff20"
           // React Flow's default mask is a light grey that reads as a block on
           // the dark canvas; the page colour at 70% keeps the viewport window.
