@@ -5,6 +5,7 @@ import { useLiveDuration } from "@/hooks/useLiveDuration";
 import { formatDuration } from "@/lib/utils";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
+import { stateFor } from "@/components/roster";
 import { ToolCallStream } from "./ToolCallStream";
 import { ThinkingBlock } from "./ThinkingBlock";
 
@@ -18,6 +19,7 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
   const isActive = agent.status === "running";
   const expanded = forceExpanded ?? (isActive || manualExpand);
   const identity = useAgentIdentity(agent.agent);
+  const spriteState = stateFor(agent);
   const colors = identity.classes;
   const liveDurationMs = useLiveDuration(agent.startedAt, isActive, agent.durationMs);
 
@@ -39,7 +41,7 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
             )}
           </div>
         ) : (
-          <AgentAvatar identity={identity} size={28} />
+          <AgentAvatar identity={identity} size={28} state={spriteState} />
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
@@ -74,14 +76,14 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
         onClick={() => !isActive && setManualExpand(!manualExpand)}
         className={`px-4 py-3 flex items-center gap-3 border-b ${colors.border.replace("border-", "border-b-")} ${!isActive ? "cursor-pointer" : ""}`}
       >
-        <AgentAvatar identity={identity} size={32} />
+        <AgentAvatar identity={identity} size={32} state={spriteState} />
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <span className={`font-semibold text-sm ${colors.text}`} title={agent.agent}>{identity.displayName}</span>
             {agent.node && agent.node !== agent.agent && <span className="text-sm text-muted-foreground">{agent.node}</span>}
             {isActive && (
               <span className="inline-flex items-center gap-1.5 text-[10px] text-amber-400">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
                 Running
               </span>
             )}

@@ -13,6 +13,8 @@ export interface SpriteProps {
   size?: 16 | 32 | 48 | 64;
   /** aria-label; defaults to "<avatar>, <state>". Pass the display name. */
   label?: string;
+  /** Draw frame 0 only, never stepping: for a sprite repeated down a list, like a transcript marker. */
+  still?: boolean;
   className?: string;
 }
 
@@ -31,10 +33,10 @@ function fillFor(cls: CharClass, state: SpriteState): string {
 const ORDER: CharClass[] = ["o", "f", "h", "e"];
 
 /** One avatar in one state: a 16x16 SVG, tinted by the palette token, stepping between two frames by CSS. */
-export function Sprite({ avatar, color, state, size = 32, label, className }: SpriteProps) {
+export function Sprite({ avatar, color, state, size = 32, label, still = false, className }: SpriteProps) {
   const av = isAvatarId(avatar) ? avatar : DEFAULT_AVATAR;
   const col = isPaletteId(color) ? color : DEFAULT_COLOR;
-  const frames = COMPILED[av][state];
+  const frames = still ? COMPILED[av][state].slice(0, 1) : COMPILED[av][state];
   return (
     <svg
       role="img"

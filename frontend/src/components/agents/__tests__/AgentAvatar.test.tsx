@@ -23,6 +23,13 @@ describe("AgentAvatar", () => {
     expect(svg).toHaveAttribute("width", "48");
   });
 
+  it("forwards still to the sprite", () => {
+    render(<AgentAvatar identity={identityOf("qa")} state="thinking" still />);
+    const svg = screen.getByTitle("QA").querySelector("svg")!;
+    expect(svg).toHaveAttribute("data-frames", "1");
+    expect(svg.querySelectorAll("g.sprite-frame")).toHaveLength(1);
+  });
+
   it("rounds an odd size down to the nearest sprite size", () => {
     render(<AgentAvatar identity={identityOf("qa")} size={40} />);
     expect(screen.getByTitle("QA").querySelector("svg")).toHaveAttribute("width", "32");

@@ -76,6 +76,7 @@ describe("StructuredView", () => {
     const { container } = renderVirtual(<StructuredView events={events} />);
     expect(screen.queryByText("Developer Agent"), "the marker reads the display name").not.toBeNull();
     expect(container.querySelector('[data-avatar="smith"]'), "the marker carries the row's avatar").not.toBeNull();
+    expect(container.querySelector("svg.sprite"), "a transcript marker is still, not bobbing").toHaveAttribute("data-frames", "1");
   });
 
   it("renders progress with its app and message", () => {

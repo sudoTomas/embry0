@@ -32,6 +32,16 @@ describe("Sprite", () => {
     expect(container.querySelectorAll("g.sprite-frame")).toHaveLength(1);
   });
 
+  it("draws a still sprite as frame 0 alone, so the stepping animation has nothing to step", () => {
+    const { container } = render(<Sprite avatar="seer" color="violet" state="thinking" still />);
+    const svg = container.querySelector("svg")!;
+    expect(svg, "the CSS animates only data-frames=2").toHaveAttribute("data-frames", "1");
+    expect(svg).toHaveAttribute("data-state", "thinking");
+    const frames = container.querySelectorAll("g.sprite-frame");
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toHaveAttribute("data-frame", "0");
+  });
+
   it("falls back to golem and slate for ids it does not know", () => {
     const { container } = render(<Sprite avatar="dragon" color="mauve" state="idle" />);
     const svg = container.querySelector("svg")!;
