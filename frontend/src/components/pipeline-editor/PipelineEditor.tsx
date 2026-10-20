@@ -1,4 +1,4 @@
-import { useState, useCallback, useId } from "react";
+import { useState, useCallback, useEffect, useId } from "react";
 import {
   ReactFlowProvider,
   ReactFlow,
@@ -28,6 +28,8 @@ import { useRenameTemplate, useCreateTemplate } from "@/hooks/usePipelines";
 import { toApiGraph } from "@/lib/graph-utils";
 import type { PipelineGraph, PipelineTemplate } from "@/lib/types";
 import { toastApiError } from "@/api/errorToast";
+import { prefersReducedMotion } from "@/hooks/useReducedMotion";
+import { motionMs } from "@/lib/motion";
 
 const nodeTypes = { agentNode: AgentNode, startEndNode: StartEndNode };
 const edgeTypes = { feedbackEdge: FeedbackEdge };
@@ -54,14 +56,28 @@ interface PipelineEditorProps {
 
 interface PipelineCanvasProps {
   graphState: ReturnType<typeof useGraphState>;
+  /** Arranges so far: each new one refits the view to the new layout. */
+  arrangeCount: number;
   onNodeClick: (nodeId: string) => void;
   onEdgeClick: (edgeId: string) => void;
 }
 
 /** Inner component rendered inside ReactFlowProvider -- can safely call useReactFlow(). */
-function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvasProps) {
-  const { screenToFlowPosition } = useReactFlow();
+function PipelineCanvas({ graphState, arrangeCount, onNodeClick, onEdgeClick }: PipelineCanvasProps) {
+  const { screenToFlowPosition, fitView } = useReactFlow();
   const { nodes, edges, onNodesChange, onEdgesChange, onConnect, onDragOver, setNodes } = graphState;
+
+  // The fitView prop fits the canvas once, as it opens, and an arrange
+  // moves every node, so the view refits after each one; without it nodes
+  // sat off the canvas or under the toolbar. This runs after React Flow has
+  // the arranged nodes, and the fit glides over the base duration, or lands
+  // at once under reduced motion.
+  useEffect(() => {
+    if (arrangeCount === 0) return;
+    void fitView({
+      duration: prefersReducedMotion() ? 0 : motionMs(document.documentElement, "--motion-base", 280),
+    });
+  }, [arrangeCount, fitView]);
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
@@ -370,6 +386,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
         <ReactFlowProvider>
           <PipelineCanvas
             graphState={graphState}
+            arrangeCount={rippleKey}
             onNodeClick={(nodeId) => {
               const node = nodes.find((n) => n.id === nodeId);
               if (node?.data?.nodeRole === "start" || node?.data?.nodeRole === "end") return;
