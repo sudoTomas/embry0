@@ -60,9 +60,14 @@ describe("StructuredView", () => {
     expect(screen.queryAllByText("Turn 2"), "the developer run's Turn 2 marker").toHaveLength(1);
   });
 
+  // The fixture's subagent is the built-in Explore agent, named after its
+  // Task call's subagent_type: its start marker reads the explorer role.
   it("names the subagent at its start and its end, paired by tool_id", () => {
     renderVirtual(<StructuredView events={loadFixture("issue-to-pr")} />);
-    expect(screen.queryByText("Explore Agent"), "no subagent start marker").not.toBeNull();
+    const start = screen.queryByText("Explorer Agent");
+    expect(start, "no subagent start marker in the explorer's name").not.toBeNull();
+    expect(start!.parentElement!.className.split(/\s+/), "the Explore subagent's pill is not the explorer's colour").toContain(ROLE_COLORS.explorer);
+    expect(start!.parentElement!.querySelector("svg"), "the Explore subagent's pill has no role icon").not.toBeNull();
     expect(screen.queryByText("Subagent Explore completed"), "the end marker does not name the subagent").not.toBeNull();
   });
 

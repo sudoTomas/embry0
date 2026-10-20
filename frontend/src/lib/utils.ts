@@ -92,11 +92,19 @@ export function getCostBarColor(used: number, budget: number): string {
 /**
  * Extract a role key from a subagent name.
  * e.g. "developer_agent" -> "developer", "validator_v2" -> "validator"
+ * A role is found by the root its names share. A subagent is named after its
+ * Task call's subagent_type, and the built-in explorer is "Explore", which
+ * holds no "explorer": the explorer's root is "explore".
  */
 export function extractRole(agentName: string): string | undefined {
   const lower = agentName.toLowerCase();
-  const roles = ["developer", "validator", "explorer", "triage"];
-  return roles.find((r) => lower.includes(r));
+  const roots: Array<[role: string, root: string]> = [
+    ["developer", "developer"],
+    ["validator", "validator"],
+    ["explorer", "explore"],
+    ["triage", "triage"],
+  ];
+  return roots.find(([, root]) => lower.includes(root))?.[0];
 }
 
 /**

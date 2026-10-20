@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cn, formatDateTime, formatDay, formatTime, highlightJson } from "../utils";
+import { cn, extractRole, formatDateTime, formatDay, formatTime, highlightJson } from "../utils";
 
 describe("cn", () => {
   it("merges class names", () => {
@@ -9,6 +9,29 @@ describe("cn", () => {
   it("handles conditional classes", () => {
     const isHidden = false;
     expect(cn("base", isHidden && "hidden", "extra")).toBe("base extra");
+  });
+});
+
+// A subagent is named after its Task call's subagent_type, else its
+// description, else the tool's own name (the executor's tool_use handling).
+describe("extractRole", () => {
+  it("reads the built-in Explore subagent as the explorer", () => {
+    expect(extractRole("Explore")).toBe("explorer");
+    expect(extractRole("explorer")).toBe("explorer");
+    expect(extractRole("frontend-explorer")).toBe("explorer");
+    expect(extractRole("Explore the repository layout")).toBe("explorer");
+  });
+
+  it("keeps the other roles' names as they were", () => {
+    expect(extractRole("developer_agent")).toBe("developer");
+    expect(extractRole("validator_v2")).toBe("validator");
+    expect(extractRole("triage")).toBe("triage");
+  });
+
+  it("names no role for a subagent that has none", () => {
+    for (const name of ["general-purpose", "Plan", "Task", "Agent"]) {
+      expect(extractRole(name), name).toBeUndefined();
+    }
   });
 });
 
