@@ -63,7 +63,7 @@ export function AgentsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Agents</h1>
+        <h1 className="title-pixel text-2xl font-bold">Agents</h1>
         <Link to="/agents/new">
           <Button>
             <Plus className="w-4 h-4" />
@@ -121,7 +121,7 @@ export function AgentsPage() {
                       {/* Type */}
                       <td className="px-6 py-3">
                         <div className="flex items-center gap-2.5">
-                          <AgentAvatar identity={identity} size={28} />
+                          <AgentAvatar identity={identity} size={32} />
                           <div>
                             <div className="text-sm font-semibold text-white/90">{identity.displayName}</div>
                             {identity.displayName !== agent.type && (

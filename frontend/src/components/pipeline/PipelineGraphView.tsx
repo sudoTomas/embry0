@@ -2,111 +2,43 @@ import { ReactFlow, ReactFlowProvider, Background, type Node, type Edge } from "
 import "@xyflow/react/dist/style.css";
 import { useMemo, useCallback } from "react";
 import { deserializeGraph } from "@/lib/graph-utils";
-import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import type { PipelineGraph } from "@/lib/types";
 import type { NodeLiveState } from "@/lib/pipeline-live";
-import type { NodeProps } from "@xyflow/react";
-
-// ---------------------------------------------------------------------------
-// Custom node for live monitoring view
-// ---------------------------------------------------------------------------
-
-function LiveAgentNode({ data }: NodeProps) {
-  const agentType = data.agentType as string;
-  const identity = useAgentIdentity(agentType);
-  const color = identity.hex;
-  const label = (data.label as string) || agentType;
-  const state = data.state as string | undefined;
-  const cost = data.costUsd as number | undefined;
-  const turns = data.turns as number | undefined;
-  const duration = data.durationSeconds as number | undefined;
-  const iteration = data.iteration as number | undefined;
-
-  const opacity = state === "pending" ? 0.4 : state === "completed" ? 0.8 : state === "failed" ? 0.7 : 1;
-  const borderColor =
-    state === "failed"
-      ? "#ef4444"
-      : state === "running"
-        ? color
-        : state === "completed"
-          ? `${color}90`
-          : "rgba(255,255,255,0.15)";
-  const glow = state === "running" ? `0 0 24px ${color}40, 0 0 8px ${color}20` : undefined;
-  const runningClass = state === "running" ? "animate-pulse-glow" : "";
-
-  return (
-    <div
-      className={`rounded-lg border-2 px-3 py-2.5 min-w-[150px] bg-[#1a1d2e] ${runningClass}`}
-      style={{ borderColor, opacity, boxShadow: glow }}
-    >
-      <div className="flex justify-between items-center">
-        <div>
-          <div
-            className="text-[10px] uppercase tracking-wider"
-            style={{ color: `${color}B0` }}
-          >
-            {identity.displayName}
-          </div>
-          <div className="text-[13px] font-semibold text-slate-200 mt-0.5">
-            {label}
-          </div>
-        </div>
-        <div className="text-base ml-2">
-          {state === "running" && (
-            <span className="animate-spin inline-block text-amber-400">&#x27F3;</span>
-          )}
-          {state === "completed" && (
-            <span className="text-green-400">&#x2713;</span>
-          )}
-          {state === "failed" && (
-            <span className="text-red-400">&#x2717;</span>
-          )}
-        </div>
-      </div>
-      {(state === "completed" || state === "running") && (
-        <div className="text-[10px] text-white/30 mt-1">
-          ${cost?.toFixed(2) ?? "\u2014"} &bull; {turns ?? 0} turns
-          {duration ? ` \u2022 ${Math.round(duration)}s` : ""}
-          {iteration && iteration > 1 ? ` \u2022 iter ${iteration}` : ""}
-        </div>
-      )}
-      {state === "running" && (
-        <div className="mt-1.5 h-[3px] bg-white/10 rounded overflow-hidden">
-          <div
-            className="h-full rounded animate-pulse"
-            style={{ width: "60%", background: `linear-gradient(90deg, ${color}, ${color}80)` }}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
+import { StartEndNode } from "@/components/pipeline-editor/StartEndNode";
+import { PartyNode } from "./PartyNode";
 
 // ---------------------------------------------------------------------------
 // Merge node states into React Flow data
 // ---------------------------------------------------------------------------
 
-function buildFlowData(
+// Exported for its test (React Flow does not lay nodes out in jsdom); Fast
+// Refresh reloads this module in full when it changes, which is all it costs.
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildFlowData(
   graph: PipelineGraph,
   nodeStates: Record<string, NodeLiveState>,
 ): { nodes: Node[]; edges: Edge[] } {
   const { nodes: baseNodes, edges: baseEdges } = deserializeGraph(graph);
 
-  const nodes: Node[] = baseNodes.map((n) => ({
-    ...n,
-    type: "liveAgentNode",
-    draggable: false,
-    selectable: true,
-    connectable: false,
-    data: {
-      ...n.data,
-      state: nodeStates[n.id]?.state ?? "pending",
-      costUsd: nodeStates[n.id]?.cost_usd ?? 0,
-      turns: nodeStates[n.id]?.turns ?? 0,
-      durationSeconds: nodeStates[n.id]?.duration_seconds ?? 0,
-      iteration: nodeStates[n.id]?.iteration ?? 1,
-    },
-  }));
+  const nodes: Node[] = baseNodes.map((n) =>
+    n.type === "startEndNode"
+      ? { ...n, draggable: false, selectable: false, connectable: false }
+      : {
+          ...n,
+          draggable: false,
+          selectable: true,
+          connectable: false,
+          data: {
+            ...n.data,
+            mode: "live",
+            state: nodeStates[n.id]?.state ?? "pending",
+            costUsd: nodeStates[n.id]?.cost_usd ?? 0,
+            turns: nodeStates[n.id]?.turns ?? 0,
+            durationSeconds: nodeStates[n.id]?.duration_seconds ?? 0,
+            iteration: nodeStates[n.id]?.iteration ?? 1,
+          },
+        },
+  );
 
   return { nodes, edges: baseEdges };
 }
@@ -125,7 +57,7 @@ export interface PipelineGraphViewProps {
 // Node types registry (must be stable reference)
 // ---------------------------------------------------------------------------
 
-const nodeTypes = { liveAgentNode: LiveAgentNode };
+const nodeTypes = { agentNode: PartyNode, startEndNode: StartEndNode };
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -161,7 +93,7 @@ function PipelineGraphViewInner({
   }
 
   return (
-    <div className="h-[40vh] w-full rounded-lg overflow-hidden bg-[#0f1120]">
+    <div className="h-[40vh] w-full rounded-lg overflow-hidden bg-canvas">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -179,7 +111,7 @@ function PipelineGraphViewInner({
         minZoom={0.3}
         maxZoom={1.5}
       >
-        <Background color="#1e2040" gap={20} />
+        <Background color="var(--color-grid)" gap={20} />
       </ReactFlow>
     </div>
   );

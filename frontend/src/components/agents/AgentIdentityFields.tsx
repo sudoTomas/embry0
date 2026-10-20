@@ -1,7 +1,7 @@
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
+import { Sprite } from "@/components/roster";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
-import { Select } from "@/components/ui/Select";
 import {
   AVATARS,
   DISPLAY_NAME_MAX,
@@ -33,7 +33,7 @@ export function AgentIdentityFields({ type, value, onChange }: AgentIdentityFiel
   const preview = identityOf({ type: type || "agent", ...value });
   return (
     <div className="flex gap-4">
-      <AgentAvatar identity={preview} size={40} className="mt-6" />
+      <AgentAvatar identity={preview} size={48} className="mt-6" />
       <div className="flex-1 space-y-4">
         <div>
           <div className="flex items-baseline justify-between">
@@ -62,19 +62,29 @@ export function AgentIdentityFields({ type, value, onChange }: AgentIdentityFiel
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <Label htmlFor="agent-avatar">Avatar</Label>
-            <Select
-              id="agent-avatar"
-              value={value.avatar}
-              onChange={(e) => onChange({ avatar: e.target.value as AvatarId })}
-              className="mt-1"
-            >
-              {AVATARS.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </Select>
+            <Label>Avatar</Label>
+            <div role="radiogroup" aria-label="Avatar" className="mt-2 grid grid-cols-6 gap-1.5">
+              {AVATARS.map((id) => {
+                const selected = value.avatar === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    aria-label={id}
+                    title={id}
+                    onClick={() => onChange({ avatar: id })}
+                    className={cn(
+                      "flex items-center justify-center rounded-md border p-1",
+                      selected ? "border-white bg-white/[0.06]" : "border-white/10 hover:border-white/30",
+                    )}
+                  >
+                    <Sprite avatar={id} color={value.color} state="idle" size={32} decorative />
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <div>
             <Label>Color</Label>

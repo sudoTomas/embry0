@@ -129,11 +129,11 @@ describe("RunningCard", () => {
         makeSummary({ isConnected: false, latestCost: 0, currentNode: null, lastActivity: null }),
       );
       renderCard({
-        job: makeJob({ total_cost_usd: 0.33, current_stage: "developer" }),
+        job: makeJob({ total_cost_usd: 0.33, current_stage: "developer_complete" }),
       });
 
-      // Polled stage badge — no attempt suffix (attempts only exist live)
-      expect(screen.getByTestId("stage-badge")).toHaveTextContent("developer");
+      // Polled stage badge — the raw stage, no attempt suffix (attempts only exist live)
+      expect(screen.getByTestId("stage-badge")).toHaveTextContent(/^developer_complete$/);
       expect(screen.getByTestId("stage-badge")).not.toHaveTextContent("#");
       // Polled cost from the jobs row
       expect(screen.getByTestId("cost-line")).toHaveTextContent("$0.33");
@@ -157,6 +157,56 @@ describe("RunningCard", () => {
       renderCard({ job: makeJob({ total_cost_usd: 0.33 }) });
 
       expect(screen.getByTestId("cost-line")).toHaveTextContent("$0.90");
+    });
+  });
+
+  describe("sprite", () => {
+    it("shows the stage's sprite thinking, and using a tool while a call is open", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "developer", toolOpen: false }));
+      const { unmount } = renderCard({ job: makeJob() });
+      let sprite = screen.getByTestId("stage-sprite").querySelector("svg")!;
+      expect(sprite).toHaveAttribute("data-avatar", "smith");
+      expect(sprite).toHaveAttribute("data-state", "thinking");
+      expect(sprite).toHaveAttribute("width", "32");
+      unmount();
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "developer", toolOpen: true }));
+      renderCard({ job: makeJob() });
+      sprite = screen.getByTestId("stage-sprite").querySelector("svg")!;
+      expect(sprite).toHaveAttribute("data-state", "tool");
+    });
+    it("falls back to the agent the polled stage names when the stream has no node", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: null }));
+      renderCard({ job: makeJob({ current_stage: "developer_complete" }) });
+      const sprite = screen.getByTestId("stage-sprite").querySelector("svg")!;
+      expect(sprite).toHaveAttribute("data-avatar", "smith");
+    });
+    it("shows no sprite, and no golem, for a polled stage that names no agent", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: null }));
+      renderCard({ job: makeJob({ current_stage: "output_finalized" }) });
+      expect(screen.queryByTestId("stage-sprite")).toBeNull();
+      expect(document.querySelector('svg[data-avatar="golem"]')).toBeNull();
+      expect(screen.getByTestId("stage-badge")).toHaveTextContent(/^output_finalized$/);
+    });
+    it("shows no sprite for a plumbing node that runs no agent", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "init", currentAgent: null }));
+      renderCard({ job: makeJob() });
+      expect(screen.queryByTestId("stage-sprite")).toBeNull();
+      expect(document.querySelector('svg[data-avatar="golem"]')).toBeNull();
+      expect(screen.getByTestId("stage-badge")).toHaveTextContent("init#1");
+    });
+    it("shows the agent the generic node runs, not the node", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "generic_agent", currentAgent: "qa" }));
+      renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-sprite").querySelector("svg")).toHaveAttribute("data-avatar", "alchemist");
+    });
+    it("shows a builtin node's own agent when the event names none", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "developer", currentAgent: null }));
+      renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-sprite").querySelector("svg")).toHaveAttribute("data-avatar", "smith");
+    });
+    it("shows no sprite before any stage is known", () => {
+      renderCard({ job: makeJob({ current_stage: null }) });
+      expect(screen.queryByTestId("stage-sprite")).toBeNull();
     });
   });
 });

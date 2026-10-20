@@ -186,7 +186,7 @@ export function CredentialsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Credentials</h1>
+          <h1 className="title-pixel text-2xl font-bold">Credentials</h1>
           <p className="mt-1 max-w-xl text-sm text-muted-foreground">
             Accounts embry0 acts as. Secrets are write-only; the env tokens are an import source.{" "}
             <a

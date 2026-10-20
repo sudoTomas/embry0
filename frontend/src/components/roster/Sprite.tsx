@@ -1,0 +1,70 @@
+import type { CSSProperties } from "react";
+import { DEFAULT_AVATAR, DEFAULT_COLOR, isAvatarId, isPaletteId } from "@/lib/agentIdentity";
+import { cn } from "@/lib/utils";
+import { COMPILED, type CharClass, type SpriteState } from "./sprites";
+import "./roster.css";
+
+export interface SpriteProps {
+  /** A roster id; anything else renders golem (spec 3.10). */
+  avatar: string;
+  /** A palette id; anything else renders slate. */
+  color: string;
+  state: SpriteState;
+  size?: 16 | 32 | 48 | 64;
+  /** The name in the aria-label "<name>, <state in words>"; defaults to the avatar id. Pass the display name. */
+  label?: string;
+  /** Hidden from assistive tech, for a sprite inside a control that already carries the name. */
+  decorative?: boolean;
+  /** Draw frame 0 only, never stepping: for a sprite repeated down a list, like a transcript marker. */
+  still?: boolean;
+  className?: string;
+}
+
+const FILL: Record<CharClass, string> = {
+  o: "var(--color-background)",
+  f: "var(--sprite-fill)",
+  h: "color-mix(in srgb, var(--sprite-fill) 70%, white)",
+  e: "var(--color-foreground)",
+};
+/** The pending frame is outline only; in the background colour it vanishes on every surface, so it is a dim tint instead. */
+const PENDING_OUTLINE = "color-mix(in srgb, var(--sprite-fill) 45%, transparent)";
+
+function fillFor(cls: CharClass, state: SpriteState): string {
+  return cls === "o" && state === "pending" ? PENDING_OUTLINE : FILL[cls];
+}
+const ORDER: CharClass[] = ["o", "f", "h", "e"];
+
+/** How each state reads aloud: the one place a sprite state becomes words. */
+const STATE_WORDS: Record<SpriteState, string> = {
+  idle: "idle", thinking: "thinking", tool: "using a tool", done: "done", failed: "failed", pending: "waiting",
+};
+
+/** One avatar in one state: a 16x16 SVG, tinted by the palette token, stepping between two frames by CSS. */
+export function Sprite({ avatar, color, state, size = 32, label, decorative = false, still = false, className }: SpriteProps) {
+  const av = isAvatarId(avatar) ? avatar : DEFAULT_AVATAR;
+  const col = isPaletteId(color) ? color : DEFAULT_COLOR;
+  const frames = still ? COMPILED[av][state].slice(0, 1) : COMPILED[av][state];
+  return (
+    <svg
+      {...(decorative ? { "aria-hidden": true } : { role: "img", "aria-label": `${label ?? av}, ${STATE_WORDS[state]}` })}
+      viewBox="0 0 16 16"
+      width={size}
+      height={size}
+      shapeRendering="crispEdges"
+      className={cn("sprite shrink-0", className)}
+      data-avatar={av}
+      data-color={col}
+      data-state={state}
+      data-frames={frames.length}
+      style={{ "--sprite-fill": `var(--color-palette-${col})` } as CSSProperties}
+    >
+      {frames.map((paths, i) => (
+        <g key={i} className="sprite-frame" data-frame={i}>
+          {ORDER.filter((k) => paths[k]).map((k) => (
+            <path key={k} d={paths[k]} fill={fillFor(k, state)} />
+          ))}
+        </g>
+      ))}
+    </svg>
+  );
+}

@@ -146,6 +146,15 @@ The agent that exercises a change against the full test matrix. Performs [Fermen
 ### Browser Backend
 The pluggable unit that supplies the [QA](#qa) agent's browser. A backend bundles four things: an MCP stdio server config, an exact-name tool allowlist, an auth-injection mechanism for pre-seeded login state, and a system-prompt fragment teaching the agent that backend's idioms. Two exist: `playwright` (default — `@playwright/mcp`, env-var storageState injection) and `vibium` (WebDriver-BiDi Go binary, tool-call `browser_restore_storage` injection, evaluate-shim console/network diagnostics). Selected per repo/app via the `browser_backend` field in qa.yaml v2 (defaults → app → app_local), overridable per job; both coexist in the `embry0-sandbox-qa` image. Registry lives in `embry0/workflows/qa/browser_backends.py`; design record in `docs/spikes/2026-08-27-vibium-browser-backend.md`. (2026-08)
 
+### Roster
+The twelve pixel avatars an agent can wear (`avatar` on its row; ids in `frontend/src/lib/agentIdentity.ts`), drawn as 16x16 character grids in `frontend/src/components/roster/sprites.ts` and compiled to SVG paths at load. Tinted by the agent's palette `color`. Not part of the [divine layer](#divine-layer) (its CLAUDE.md rule 9).
+
+### Sprite
+One roster avatar in one state (`idle`, `thinking`, `tool`, `done`, `failed`, `pending`), rendered by `<Sprite>` and stepped between two frames by one CSS keyframe under `prefers-reduced-motion: no-preference`. `stateFor` maps an agent run to a state, `stateForNode` a live graph node. A `still` sprite draws its first frame only, for one repeated down a list such as a transcript's agent markers. Assistive tech hears the display name and the state in words ("Developer, using a tool", "Developer, waiting"). Every surface that shows an agent shows its sprite (agents list and form, console cards, job page, [PartyNode](#partynode)).
+
+### PartyNode
+The one agent node renderer (`frontend/src/components/pipeline/PartyNode.tsx`) the [PipelineEditor](#pipelineeditor) and the live job graph both register: the agent's [sprite](#sprite) inside a ring in its palette colour, the display name on a pixel nameplate, and one HUD line (skill count and model in the editor; attempt, cost and turns live). The start and end sentinels keep their gold sphere.
+
 ### Output
 The agent that closes the loop — merges the PR, performs [Distill](#distill) (extract reusable template) and [Coagulate](#coagulate) (ship + record). Substance sigils: Aqua Vitae 🜈 (Distill), Sol ☉ (Coagulate).
 
@@ -163,7 +172,7 @@ The slide-in drawer in the [PipelineEditor](#pipelineeditor) that lists saved [t
 The dashboard page at `/skills` (Infra, admin) that lists [skill sources](api.md#skills) with their sync status, adds git or path sources, edits inline skills (published as the builtin `local` source), and shows the resulting catalog of `plugin:skill` names.
 
 ### AgentBar
-The horizontal bar at the bottom of the [PipelineEditor](#pipelineeditor) holding draggable agent chips, one per agent definition plus the terminal `output` step. Each chip shows the agent's avatar and display name in its identity colour, with the tagline as its tooltip. Drag a chip onto the canvas to place an agent node. A "New agent" link after the chips opens the agent form. Filters out [triage](#triage) (orchestrator-side, not a pipeline node).
+The horizontal bar at the bottom of the [PipelineEditor](#pipelineeditor) holding draggable agent chips, one per agent definition plus the terminal `output` step. Each chip shows the agent's sprite and display name in its identity colour, with the tagline as its tooltip. Drag a chip onto the canvas to place an agent node. A "New agent" link after the chips opens the agent form. Filters out [triage](#triage) (orchestrator-side, not a pipeline node).
 
 ### Replay-N
 A [command](#command) that re-executes the last N completed stages of a [job](#job) as a unit. Mirrors the Practice's `Repito los N Comandos`. Use case: a config or environment variable changed; you want stages 5-8 re-run with the new value, but not the entire pipeline.

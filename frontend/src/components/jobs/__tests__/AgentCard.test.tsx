@@ -56,6 +56,39 @@ describe("AgentCard", () => {
     expect(container.querySelector('[data-avatar="smith"]'), "the tile is the row's avatar").not.toBeNull();
   });
 
+  it("draws the sprite in the run's state, not idle", () => {
+    const pending: AgentState = { ...fixtureAgents()[1], status: "pending" };
+    const { container, unmount } = render(<AgentCard agent={pending} />);
+    expect(container.querySelector("svg.sprite"), "compact pending card").toHaveAttribute("data-state", "pending");
+    unmount();
+    const failed: AgentState = { ...fixtureAgents()[1], status: "failed" };
+    const second = render(<AgentCard agent={failed} expanded />);
+    expect(second.container.querySelector("svg.sprite"), "expanded failed card").toHaveAttribute("data-state", "failed");
+    second.unmount();
+    const done = render(<AgentCard agent={fixtureAgents()[1]} expanded />);
+    expect(done.container.querySelector("svg.sprite"), "expanded completed card").toHaveAttribute("data-state", "done");
+  });
+
+  it("keeps a pending card's sprite out from under any opacity, muting its text instead", () => {
+    const pending: AgentState = { ...fixtureAgents()[1], status: "pending", agent: "developer", node: "developer" };
+    const { container } = render(<AgentCard agent={pending} />);
+    const sprite = container.querySelector("svg.sprite")!;
+    expect(sprite).toHaveAttribute("data-state", "pending");
+    for (let el = sprite.parentElement; el && el !== container; el = el.parentElement) {
+      expect(el.className, "opacity on an ancestor would dim the pending frame").not.toMatch(/(^|\s)opacity-/);
+    }
+    expect(screen.getByText("Developer").className, "the name is muted while waiting").toContain("text-muted-foreground");
+  });
+
+  it("keeps the sprite the only animation in the running card's header", () => {
+    const running: AgentState = { ...fixtureAgents()[1], status: "running" };
+    const { container } = render(<AgentCard agent={running} expanded />);
+    const header = container.firstElementChild!.firstElementChild!;
+    expect(header.querySelector("svg.sprite"), "the header is the row holding the sprite").not.toBeNull();
+    expect(header).toHaveTextContent("Running");
+    expect(header.querySelector('[class*="animate-"]'), "divine rule 9: no second animation beside the sprite").toBeNull();
+  });
+
   it("shows a failed run's error code after its summary", () => {
     const failed: AgentState = {
       ...fixtureAgents()[1],

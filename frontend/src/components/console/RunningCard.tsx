@@ -1,9 +1,11 @@
 import { memo } from "react";
 import { useLiveDuration } from "@/hooks/useLiveDuration";
+import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { useLiveJobSummary } from "@/hooks/useLiveJobSummary";
 import { formatCost, formatDuration } from "@/lib/utils";
 import type { JobResponse } from "@/lib/types";
+import { agentOfStage } from "./agentOfStage";
 import { ConsoleCardShell } from "./ConsoleCardShell";
 
 /** Budget-meter thresholds per the board spec: amber from 80% of cap, red at
@@ -40,7 +42,9 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
   const stageLabel = summary.currentNode
     ? `${summary.currentNode}#${summary.attempt}`
     : job.current_stage ?? null;
-  const stageIdentity = useAgentIdentity(summary.currentNode ?? job.current_stage ?? "");
+  // The badge shows the raw stage; the sprite (and the badge colour) show the agent it names, if any.
+  const stageType = summary.currentAgent ?? agentOfStage(summary.currentNode) ?? agentOfStage(job.current_stage);
+  const stageIdentity = useAgentIdentity(stageType);
   const stageColors = stageIdentity.classes;
   const spentUsd = summary.latestCost > 0 ? summary.latestCost : job.total_cost_usd;
   const cap = maxBudgetUsd != null && maxBudgetUsd > 0 ? maxBudgetUsd : null;
@@ -61,6 +65,11 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
       }
     >
       <div className="mt-2 flex items-center gap-2 min-w-0">
+        {stageType && (
+          <span data-testid="stage-sprite" className="shrink-0">
+            <AgentAvatar identity={stageIdentity} size={32} state={summary.toolOpen ? "tool" : "thinking"} />
+          </span>
+        )}
         {stageLabel && (
           <span
             data-testid="stage-badge"

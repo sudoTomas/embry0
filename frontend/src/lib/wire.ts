@@ -61,3 +61,8 @@ export function normalizeWireEvent(raw: unknown): LogEvent {
 export function eventNode(event: LogEvent): string {
   return typeof event.node === "string" ? event.node : "";
 }
+
+/** The agent type an event names (the generic node runs whichever agent this says); "" when it names none. */
+export function eventAgent(event: LogEvent): string {
+  return typeof event.agent === "string" ? event.agent : "";
+}

@@ -248,7 +248,7 @@ export default function ApiKeysTab() {
       )}
 
       {keys.data && keys.data.length > 0 && (
-        <div className="embry0-card overflow-x-auto">
+        <div className="rounded-lg border border-border bg-card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/[0.06] text-left text-xs uppercase text-muted-foreground">

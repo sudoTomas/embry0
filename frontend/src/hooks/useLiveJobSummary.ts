@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import type { LogEvent } from "@/lib/types";
 import { useJobEventStream } from "./useJobEventStream";
-import { eventNode } from "@/lib/wire";
+import { eventAgent, eventNode } from "@/lib/wire";
 import { applyTotals, emptyTotals, totalsOf } from "@/lib/eventTotals";
 
 /** Truncation cap for the one-line activity ticker (matches the defensive
@@ -20,12 +20,16 @@ export interface UseLiveJobSummaryResult {
   /** Node id of the latest started pipeline stage/agent, null before the
    * first stage starts. */
   currentNode: string | null;
+  /** Agent type the latest node_started/agent_started names (the node id is a LangGraph node, not an agent); null when it names none. */
+  currentAgent: string | null;
   /** 1-based attempt of the current node from `node_started.attempt` —
    * renders ultracode-style as `node#attempt` (e.g. `review#2`). Legacy rows
    * without `attempt` fall back to counting the node's starts. */
   attempt: number;
   isConnected: boolean;
   isComplete: boolean;
+  /** A tool call is in flight: some `tool_call` this connection saw has no `tool_result` yet. */
+  toolOpen: boolean;
 }
 
 /** Summarize a tool invocation from the contract's `tool_call.summary`, the
@@ -49,7 +53,9 @@ interface LiveSummarySnapshot {
   tokensIn: number;
   tokensOut: number;
   currentNode: string | null;
+  currentAgent: string | null;
   attempt: number;
+  toolOpen: boolean;
 }
 
 function emptySnapshot(): LiveSummarySnapshot {
@@ -60,7 +66,9 @@ function emptySnapshot(): LiveSummarySnapshot {
     tokensIn: 0,
     tokensOut: 0,
     currentNode: null,
+    currentAgent: null,
     attempt: 1,
+    toolOpen: false,
   };
 }
 
@@ -78,6 +86,8 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
   // Per-node start counts, the attempt fallback for legacy node_started rows
   // that carry no `attempt`.
   const nodeStartCountsRef = useRef(new Map<string, number>());
+  // Tool calls of the current run still waiting for their result.
+  const openToolIdsRef = useRef(new Set<string>());
   const flushTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [summary, setSummary] = useState<LiveSummarySnapshot>(emptySnapshot());
   const [hasEvents, setHasEvents] = useState(false);
@@ -91,8 +101,18 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
         break;
       case "tool_call":
         snapshot.lastToolCall = summarizeToolCall(event.tool_name, event.summary);
+        openToolIdsRef.current.add(event.tool_id);
+        snapshot.toolOpen = true;
+        break;
+      case "tool_result":
+        openToolIdsRef.current.delete(event.tool_id);
+        snapshot.toolOpen = openToolIdsRef.current.size > 0;
         break;
       case "node_started": {
+        // A new run starts with no call open.
+        openToolIdsRef.current.clear();
+        snapshot.toolOpen = false;
+        snapshot.currentAgent = eventAgent(event) || null;
         const node = eventNode(event);
         if (node) {
           const startCount = (nodeStartCountsRef.current.get(node) || 0) + 1;
@@ -106,6 +126,8 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
         // Points at the active node; the attempt comes from node_started only.
         const node = eventNode(event);
         if (node) snapshot.currentNode = node;
+        const agent = eventAgent(event);
+        if (agent) snapshot.currentAgent = agent;
         break;
       }
     }
@@ -163,6 +185,7 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
         snapshotRef.current = emptySnapshot();
         totalsRef.current = emptyTotals();
         nodeStartCountsRef.current = new Map();
+        openToolIdsRef.current = new Set();
         setSummary(emptySnapshot());
         setHasEvents(false);
       },
@@ -179,8 +202,10 @@ export function useLiveJobSummary(jobId: string | undefined): UseLiveJobSummaryR
     latestTokensIn: summary.tokensIn,
     latestTokensOut: summary.tokensOut,
     currentNode: summary.currentNode,
+    currentAgent: summary.currentAgent,
     attempt: summary.attempt,
     isConnected,
     isComplete,
+    toolOpen: summary.toolOpen,
   };
 }

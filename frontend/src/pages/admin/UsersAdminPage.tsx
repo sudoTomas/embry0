@@ -52,7 +52,7 @@ export function UsersAdminPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <UsersRound size={18} className="text-primary" />
-          <h1 className="font-display text-lg font-semibold">Users</h1>
+          <h1 className="title-pixel font-display text-lg font-semibold">Users</h1>
           {users.data && (
             <span className="text-sm text-muted-foreground">{users.data.total}</span>
           )}
@@ -72,7 +72,7 @@ export function UsersAdminPage() {
       )}
 
       {users.data && users.data.users.length > 0 && (
-        <div className="embry0-card overflow-x-auto">
+        <div className="rounded-lg border border-border bg-card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/[0.06] text-left text-xs uppercase text-muted-foreground">

@@ -198,7 +198,7 @@ function AgentTransitionMarker({ name }: { name: string }) {
       <div className="h-px flex-1" style={{ background: identity.hex, opacity: 0.4 }} />
       <div className={cn("inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border",
         identity.classes.text, identity.classes.bg, identity.classes.border)}>
-        <AgentAvatar identity={identity} size={16} />
+        <AgentAvatar identity={identity} size={16} still />
         <span>{identity.displayName} Agent</span>
       </div>
       <div className="h-px flex-1" style={{ background: identity.hex, opacity: 0.4 }} />

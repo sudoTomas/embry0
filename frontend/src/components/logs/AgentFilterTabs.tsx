@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { ROLE_COLORS } from "@/lib/constants";
+import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import type { NodeLiveState } from "@/lib/pipeline-live";
 
 interface AgentFilterTabsProps {
@@ -17,6 +17,7 @@ const STATE_ICONS: Record<string, string> = {
 };
 
 export function AgentFilterTabs({ nodeStates, selectedNodeId, onSelect }: AgentFilterTabsProps) {
+  const lookup = useIdentityLookup();
   const entries = Object.entries(nodeStates);
   if (entries.length <= 1) return null;
 
@@ -34,14 +35,10 @@ export function AgentFilterTabs({ nodeStates, selectedNodeId, onSelect }: AgentF
         All
       </button>
       {entries.map(([nodeId, state]) => {
-        const role = state.agent_type || nodeId;
-        const color = ROLE_COLORS[role] || ROLE_COLORS.default;
+        // A numbered node (developer-2) names its agent without the number.
+        const identity = lookup(state.agent_type || nodeId.replace(/-\d+$/, ""));
         const icon = STATE_ICONS[state.state] || "○";
-        const label = role
-          .replace(/-\d+$/, "")
-          .split("-")
-          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-          .join(" ");
+        const label = identity.displayName;
 
         return (
           <button
@@ -64,7 +61,7 @@ export function AgentFilterTabs({ nodeStates, selectedNodeId, onSelect }: AgentF
             >
               {icon}
             </span>
-            <span style={selectedNodeId === nodeId ? undefined : { color }}>{label}</span>
+            <span className={selectedNodeId === nodeId ? undefined : identity.classes.text}>{label}</span>
           </button>
         );
       })}
