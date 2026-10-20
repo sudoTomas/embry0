@@ -111,9 +111,8 @@ const DIALOGS: { name: string; closes: string[]; dialog: (close: () => void) => 
     dialog: (close) => <SetupAgentDialog repo="acme/widgets" onClose={close} />,
   },
   {
-    // The pipeline editor's agent dialog has no Escape handler.
     name: "pipeline agent",
-    closes: ["Close"],
+    closes: ["Escape", "Close"],
     dialog: (close) => <AgentDetailPopup node={node} onUpdate={vi.fn()} onClose={close} />,
   },
 ];

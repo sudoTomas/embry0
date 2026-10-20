@@ -229,6 +229,14 @@ export function AgentDetailPopup({
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
     if (!containerRef.current) return;
     document.body.style.overflow = "hidden";
     const cleanup = createFocusTrap(containerRef.current);
