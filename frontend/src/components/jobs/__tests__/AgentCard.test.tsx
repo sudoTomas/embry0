@@ -69,6 +69,17 @@ describe("AgentCard", () => {
     expect(done.container.querySelector("svg.sprite"), "expanded completed card").toHaveAttribute("data-state", "done");
   });
 
+  it("keeps a pending card's sprite out from under any opacity, muting its text instead", () => {
+    const pending: AgentState = { ...fixtureAgents()[1], status: "pending", agent: "developer", node: "developer" };
+    const { container } = render(<AgentCard agent={pending} />);
+    const sprite = container.querySelector("svg.sprite")!;
+    expect(sprite).toHaveAttribute("data-state", "pending");
+    for (let el = sprite.parentElement; el && el !== container; el = el.parentElement) {
+      expect(el.className, "opacity on an ancestor would dim the pending frame").not.toMatch(/(^|\s)opacity-/);
+    }
+    expect(screen.getByText("Developer").className, "the name is muted while waiting").toContain("text-muted-foreground");
+  });
+
   it("keeps the sprite the only animation in the running card's header", () => {
     const running: AgentState = { ...fixtureAgents()[1], status: "running" };
     const { container } = render(<AgentCard agent={running} expanded />);

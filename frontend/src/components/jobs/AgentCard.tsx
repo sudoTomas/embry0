@@ -28,7 +28,7 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
     return (
       <div
         onClick={() => setManualExpand(!manualExpand)}
-        className={`${agent.status === "pending" ? "opacity-40" : ""} cursor-pointer rounded-lg border ${
+        className={`cursor-pointer rounded-lg border ${
           agent.status === "pending" ? "border-white/[0.04] bg-white/[0.01]" : "border-white/[0.06] bg-white/[0.02]"
         } px-3 py-2.5 flex items-center gap-3 transition-colors hover:bg-white/[0.04]`}
       >
@@ -45,7 +45,7 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`font-semibold text-xs ${colors.text}`} title={agent.agent}>{identity.displayName}</span>
+            <span className={`font-semibold text-xs ${agent.status === "pending" ? "text-muted-foreground" : colors.text}`} title={agent.agent}>{identity.displayName}</span>
             {agent.node && agent.node !== agent.agent && <span className="text-xs text-muted-foreground">{agent.node}</span>}
             {agent.retryLabel && <span className="text-[10px] text-amber-400">{agent.retryLabel}</span>}
             {agent.status === "completed" && <span className="text-[10px] text-green-400">Done</span>}
