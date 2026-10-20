@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -27,8 +27,7 @@ import { OrganizationPage } from "../OrganizationPage";
 import { need, needs, org, repo, run } from "@/components/orgs/__tests__/fixtures";
 import { ownerStandards } from "@/components/standards/__tests__/fixtures";
 
-function renderPage(path = "/orgs/acme") {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderPage(path = "/orgs/acme", client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
@@ -106,5 +105,43 @@ describe("OrganizationPage", () => {
     renderPage("/orgs/ghost");
     expect(await screen.findByText("No organization ghost")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Add organization" })).toHaveAttribute("href", "/orgs/-/new");
+  });
+});
+
+describe("OrganizationPage — the first paint", () => {
+  // Each answer sizes a section with others below it; painted before it,
+  // the section grew when it landed and pushed the rest of the page down.
+  const sources = {
+    "the latest discovery": () => api.runs,
+    "the needs list": () => api.needs,
+    "the standard": () => mockStandards,
+  };
+
+  it.each(Object.keys(sources))("holds the sections until %s is in, then paints them together", async (name) => {
+    const fetcher = sources[name as keyof typeof sources]();
+    const answer = fetcher.getMockImplementation() as () => Promise<unknown>;
+    let release: () => void = () => {};
+    fetcher.mockReturnValue(new Promise<void>((resolve) => (release = resolve)).then(answer));
+    renderPage();
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith("acme"));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(screen.queryByTestId("org-page")).toBeNull();
+
+    await act(async () => release());
+    expect(await screen.findByTestId("org-page")).toBeInTheDocument();
+    expect(screen.getByTestId("discovery-summary")).toBeInTheDocument();
+    expect(screen.getAllByTestId("org-need-group")).toHaveLength(1);
+    expect(screen.getByTestId("org-standard-summary")).toBeInTheDocument();
+  });
+
+  it("does not hold the page through the retries of a section that fails", async () => {
+    api.needs.mockRejectedValue(new Error("boom"));
+    // One retry, far off: the page paints on the first failed attempt.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: 1, retryDelay: 60_000 } } });
+    renderPage("/orgs/acme", client);
+    expect(await screen.findByTestId("org-page")).toBeInTheDocument();
+    expect(screen.getByTestId("discovery-summary")).toBeInTheDocument();
+    expect(api.needs).toHaveBeenCalledTimes(1);
   });
 });

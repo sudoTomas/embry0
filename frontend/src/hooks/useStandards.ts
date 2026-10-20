@@ -39,11 +39,11 @@ export async function fetchUnfinishedJobs(): Promise<Record<string, string>> {
   return byId;
 }
 
-export function useOwnerStandards(owner: string) {
+export function useOwnerStandards(owner: string, enabled = true) {
   return useQuery({
     queryKey: ["standards", owner],
     queryFn: () => fetchOwnerStandards(owner),
-    enabled: !!owner,
+    enabled: !!owner && enabled,
   });
 }
 
