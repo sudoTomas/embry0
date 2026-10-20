@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { RepoPicker } from "@/components/RepoPicker";
 import { useRegisteredRepos } from "@/hooks/useRepos";
+import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
 import { EnvVarTable } from "@/components/environments/EnvVarTable";
 import { EnvVarModal } from "@/components/environments/EnvVarModal";
 import { DetectBanner } from "@/components/environments/DetectBanner";
@@ -284,7 +285,13 @@ export function EnvironmentsPage() {
 
   // RAV-1294: the registry (with env-var counts) feeds both the repo picker
   // and the Global-tab discoverability summary.
-  const { data: registeredRepos = [] } = useRegisteredRepos();
+  const registry = useRegisteredRepos();
+  const { data: registeredRepos = [] } = registry;
+  // The Global tab paints once the registry has first answered. Its summary
+  // card sits above the two sections and only exists once the registry
+  // says some repository has variables; landing after them, it pushed both
+  // down (a layout shift of 0.13 to 0.16 on a phone, where its chips wrap).
+  const globalPainted = useFirstPaint(hasAnswered(registry));
   const reposWithVars = useMemo(
     () => registeredRepos.filter((r) => r.env_var_count > 0),
     [registeredRepos],
@@ -312,6 +319,11 @@ export function EnvironmentsPage() {
         </TabsList>
 
         <TabsContent value="global">
+          {!globalPainted ? (
+            <div className="mt-4">
+              <TableSkeleton rows={5} />
+            </div>
+          ) : (
           <div className="space-y-6 mt-4">
             {/* RAV-1294: repo-scoped variables exist one tab away — say so
                 instead of greeting the operator with an empty Global tab. */}
@@ -407,6 +419,7 @@ export function EnvironmentsPage() {
               </Card>
             </section>
           </div>
+          )}
         </TabsContent>
 
         <TabsContent value="repo">

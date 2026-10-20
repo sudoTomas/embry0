@@ -81,6 +81,17 @@ beforeEach(() => {
 });
 
 describe("EnvironmentsPage — RAV-1294 discoverability", () => {
+  it("paints the summary and the sections together, so neither pushes the other", async () => {
+    let answer: (repos: unknown) => void = () => {};
+    mockFetchRepos.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    renderPage();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("heading", { name: "App config" })).not.toBeInTheDocument();
+    answer(REPOS);
+    expect(await screen.findByTestId("repo-env-summary")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "App config" })).toBeInTheDocument();
+  });
+
   it("surfaces repo-scoped variables from the Global landing tab", async () => {
     renderPage();
     const summary = await screen.findByTestId("repo-env-summary");
@@ -92,7 +103,8 @@ describe("EnvironmentsPage — RAV-1294 discoverability", () => {
 
   it("names its sections and buttons in sentence case and keeps the empty hints readable", async () => {
     renderPage();
-    expect(screen.getByRole("heading", { name: "App config" })).toBeInTheDocument();
+    // The Global tab paints once the registry has answered.
+    expect(await screen.findByRole("heading", { name: "App config" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "QA test credentials" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add variable" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add QA variable" })).toBeInTheDocument();
