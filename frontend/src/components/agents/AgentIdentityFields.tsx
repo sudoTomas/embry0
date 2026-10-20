@@ -63,7 +63,7 @@ export function AgentIdentityFields({ type, value, onChange }: AgentIdentityFiel
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <Label>Avatar</Label>
-            <div role="radiogroup" aria-label="Avatar" className="mt-2 grid grid-cols-6 gap-1.5">
+            <div role="radiogroup" aria-label="Avatar" className="mt-2 grid grid-cols-8 gap-1.5">
               {AVATARS.map((id) => {
                 const selected = value.avatar === id;
                 return (
