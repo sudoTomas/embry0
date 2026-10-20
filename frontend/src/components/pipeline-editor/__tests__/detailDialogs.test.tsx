@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { Edge } from "@xyflow/react";
 import type { PipelineGraph } from "@/lib/types";
 
 vi.mock("@/hooks/usePipelines", () => ({
@@ -14,6 +15,7 @@ vi.mock("@/hooks/usePipelines", () => ({
 vi.mock("@/hooks/useAgents", () => ({ useAgents: () => ({ data: [], isLoading: false }) }));
 
 import { PipelineEditor } from "../PipelineEditor";
+import { EdgeDetailPopup } from "../EdgeDetailPopup";
 
 const graph: PipelineGraph = {
   graph_id: "g1",
@@ -52,5 +54,45 @@ describe("the pipeline editor's agent detail", () => {
 
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(node);
+  });
+});
+
+// The edge detail had no dialog role, no name, no trap and no Escape: a
+// screen reader heard an unnamed group of controls, Tab walked out of it
+// to the canvas behind, and Escape left it open. The focus-trap tests'
+// dialog table pins Escape and the return of focus to the opener.
+describe("the pipeline editor's edge detail", () => {
+  const flow = { id: "e1", source: "triage", target: "developer", data: { edgeType: "flow" } } as Edge;
+  const feedback = { id: "e2", source: "reviewer", target: "developer", data: { edgeType: "feedback" } } as Edge;
+
+  it("is a dialog named by its kind and the two nodes it joins", () => {
+    const { unmount } = render(<EdgeDetailPopup edge={flow} onUpdate={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "Flow edge from triage to developer" })).toHaveAttribute("aria-modal", "true");
+    unmount();
+
+    render(<EdgeDetailPopup edge={feedback} onUpdate={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "Feedback loop from reviewer to developer" })).toHaveAttribute("aria-modal", "true");
+  });
+
+  it("keeps Tab inside itself, away from the canvas behind it", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <button type="button">Behind</button>
+        <EdgeDetailPopup edge={feedback} onUpdate={vi.fn()} onClose={vi.fn()} />
+        <button type="button">Below</button>
+      </>,
+    );
+    const dialog = screen.getByRole("dialog");
+    await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
+
+    const visited = new Set<Element>();
+    for (let i = 0; i < 12; i++) {
+      await user.tab({ shift: i >= 6 });
+      expect(dialog).toContainElement(document.activeElement as HTMLElement);
+      visited.add(document.activeElement!);
+    }
+    // Close, the three loop fields, Cancel and Save.
+    expect(visited.size).toBe(6);
   });
 });

@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Node } from "@xyflow/react";
+import type { Edge, Node } from "@xyflow/react";
 import ts from "typescript";
 import { createFocusTrap } from "../focus-trap";
 import { EnvVarModal } from "@/components/environments/EnvVarModal";
@@ -11,6 +11,7 @@ import { BindingsDrawer } from "@/components/credentials/BindingsDrawer";
 import { CreateIssueDialog } from "@/components/issues/CreateIssueDialog";
 import { SetupAgentDialog } from "@/components/repos/SetupAgentDialog";
 import { AgentDetailPopup } from "@/components/pipeline-editor/AgentDetailPopup";
+import { EdgeDetailPopup } from "@/components/pipeline-editor/EdgeDetailPopup";
 import type { Credential } from "@/lib/types/credentials";
 import type { EnvVar } from "@/lib/types/environment";
 
@@ -76,6 +77,8 @@ const credential: Credential = {
 };
 
 const node = { id: "n1", position: { x: 0, y: 0 }, data: { agentType: "coder" } } as Node;
+const flowEdge = { id: "e1", source: "triage", target: "developer", data: { edgeType: "flow" } } as Edge;
+const feedbackEdge = { id: "e2", source: "reviewer", target: "developer", data: { edgeType: "feedback" } } as Edge;
 
 /** Every dialog that traps focus, and the ways a person closes it. The
  * screenshot lightbox is pinned in its own tests. */
@@ -114,6 +117,17 @@ const DIALOGS: { name: string; closes: string[]; dialog: (close: () => void) => 
     name: "pipeline agent",
     closes: ["Escape", "Close"],
     dialog: (close) => <AgentDetailPopup node={node} onUpdate={vi.fn()} onClose={close} />,
+  },
+  {
+    // Its footer button and its corner X are both named Close.
+    name: "pipeline flow edge",
+    closes: ["Escape"],
+    dialog: (close) => <EdgeDetailPopup edge={flowEdge} onUpdate={vi.fn()} onClose={close} />,
+  },
+  {
+    name: "pipeline feedback edge",
+    closes: ["Escape", "Cancel"],
+    dialog: (close) => <EdgeDetailPopup edge={feedbackEdge} onUpdate={vi.fn()} onClose={close} />,
   },
 ];
 

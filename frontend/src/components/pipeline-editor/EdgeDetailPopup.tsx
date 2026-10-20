@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Edge } from "@xyflow/react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { createFocusTrap } from "@/lib/focus-trap";
 
 interface EdgeDetailPopupProps {
   edge: Edge;
@@ -51,12 +52,26 @@ function FieldSelect({
 }
 
 export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const d = (edge.data ?? {}) as Record<string, unknown>;
   const initialLoopConfig = (d.loopConfig as Record<string, unknown>) ?? {};
   const edgeType = (d.edgeType as string) ?? "flow";
   const isFeedback = edgeType === "feedback";
 
   const [loopConfig, setLoopConfig] = useState<Record<string, unknown>>(initialLoopConfig);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    return createFocusTrap(containerRef.current);
+  }, []);
 
   function handleSave() {
     onUpdate({ loopConfig });
@@ -71,6 +86,10 @@ export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProp
     >
       {/* Card */}
       <div
+        ref={containerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${isFeedback ? "Feedback loop" : "Flow edge"} from ${edge.source} to ${edge.target}`}
         className={cn(
           "pipeline-popup-in w-[400px] rounded-lg bg-surface overflow-y-auto",
           isFeedback
@@ -113,6 +132,7 @@ export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProp
           {/* Close button */}
           <button
             onClick={onClose}
+            aria-label="Close"
             className="shrink-0 p-1 rounded-md text-white/30 hover:text-white/60 hover:bg-white/[0.06] transition-colors"
           >
             <X size={14} />
