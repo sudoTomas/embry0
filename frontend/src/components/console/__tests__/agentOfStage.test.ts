@@ -25,6 +25,11 @@ describe("agentOfStage", () => {
     ["completed", null],
     ["failed", null],
     ["abandoned", null],
+    // LangGraph node ids: a builtin agent's node names it, the plumbing nodes name none
+    ["developer", "developer"],
+    ["init", null],
+    ["generic_agent", null],
+    ["plan_route", null],
     ["", null],
     [null, null],
     [undefined, null],

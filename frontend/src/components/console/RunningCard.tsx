@@ -43,7 +43,7 @@ export const RunningCard = memo(function RunningCard({ job, maxBudgetUsd }: Runn
     ? `${summary.currentNode}#${summary.attempt}`
     : job.current_stage ?? null;
   // The badge shows the raw stage; the sprite (and the badge colour) show the agent it names, if any.
-  const stageType = summary.currentNode ?? agentOfStage(job.current_stage);
+  const stageType = summary.currentAgent ?? agentOfStage(summary.currentNode) ?? agentOfStage(job.current_stage);
   const stageIdentity = useAgentIdentity(stageType);
   const stageColors = stageIdentity.classes;
   const spentUsd = summary.latestCost > 0 ? summary.latestCost : job.total_cost_usd;

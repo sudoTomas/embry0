@@ -187,6 +187,23 @@ describe("RunningCard", () => {
       expect(document.querySelector('svg[data-avatar="golem"]')).toBeNull();
       expect(screen.getByTestId("stage-badge")).toHaveTextContent(/^output_finalized$/);
     });
+    it("shows no sprite for a plumbing node that runs no agent", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "init", currentAgent: null }));
+      renderCard({ job: makeJob() });
+      expect(screen.queryByTestId("stage-sprite")).toBeNull();
+      expect(document.querySelector('svg[data-avatar="golem"]')).toBeNull();
+      expect(screen.getByTestId("stage-badge")).toHaveTextContent("init#1");
+    });
+    it("shows the agent the generic node runs, not the node", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "generic_agent", currentAgent: "qa" }));
+      renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-sprite").querySelector("svg")).toHaveAttribute("data-avatar", "alchemist");
+    });
+    it("shows a builtin node's own agent when the event names none", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ currentNode: "developer", currentAgent: null }));
+      renderCard({ job: makeJob() });
+      expect(screen.getByTestId("stage-sprite").querySelector("svg")).toHaveAttribute("data-avatar", "smith");
+    });
     it("shows no sprite before any stage is known", () => {
       renderCard({ job: makeJob({ current_stage: null }) });
       expect(screen.queryByTestId("stage-sprite")).toBeNull();
