@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect, useRef, useId } from "react";
 import type { Node } from "@xyflow/react";
 import { X, ChevronDown, ChevronRight } from "lucide-react";
 import { useAgents } from "@/hooks/useAgents";
@@ -223,6 +223,7 @@ export function AgentDetailPopup({
   onClose,
 }: AgentDetailPopupProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
   const d = node.data as Record<string, unknown>;
   const { data: agents } = useAgents();
   const [editing, setEditing] = useState(false);
@@ -314,6 +315,7 @@ export function AgentDetailPopup({
         ref={containerRef}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
         className="pipeline-popup-in w-[560px] max-h-[85vh] overflow-y-auto rounded-lg"
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -337,7 +339,7 @@ export function AgentDetailPopup({
 
           {/* Title */}
           <div className="flex-1 min-w-0">
-            <div className="text-[22px] font-bold leading-tight" style={{ color }}>
+            <div id={titleId} className="text-[22px] font-bold leading-tight" style={{ color }}>
               {displayLabel}
             </div>
             <div className="text-[13px] text-white/40 mt-0.5">

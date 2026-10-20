@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Edge } from "@xyflow/react";
+import type { Edge, Node } from "@xyflow/react";
 import type { PipelineGraph } from "@/lib/types";
 
 vi.mock("@/hooks/usePipelines", () => ({
@@ -16,6 +16,7 @@ vi.mock("@/hooks/useAgents", () => ({ useAgents: () => ({ data: [], isLoading: f
 
 import { PipelineEditor } from "../PipelineEditor";
 import { EdgeDetailPopup } from "../EdgeDetailPopup";
+import { AgentDetailPopup } from "../AgentDetailPopup";
 
 const graph: PipelineGraph = {
   graph_id: "g1",
@@ -38,6 +39,18 @@ function renderEditor() {
 }
 
 describe("the pipeline editor's agent detail", () => {
+  // It had the dialog role but no name, so a screen reader announced an
+  // unnamed dialog; the edge detail already carried one.
+  it("is a dialog named by the agent it shows", () => {
+    const agent = (data: Record<string, unknown>) => ({ id: "n1", position: { x: 0, y: 0 }, data }) as Node;
+    const { unmount } = render(<AgentDetailPopup node={agent({ agentType: "developer" })} onUpdate={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "Developer" })).toHaveAttribute("aria-modal", "true");
+    unmount();
+
+    render(<AgentDetailPopup node={agent({ agentType: "developer", label: "Lead dev" })} onUpdate={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "Lead dev" })).toBeInTheDocument();
+  });
+
   it("closes on Escape and gives focus back to the node that opened it", async () => {
     const user = userEvent.setup();
     const { container } = renderEditor();
