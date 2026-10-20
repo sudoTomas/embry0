@@ -32,6 +32,14 @@ import { toastApiError } from "@/api/errorToast";
 const nodeTypes = { agentNode: AgentNode, startEndNode: StartEndNode };
 const edgeTypes = { feedbackEdge: FeedbackEdge };
 
+/**
+ * How far the canvas zooms out, by hand or in its first fit. React Flow's
+ * default of 0.5 stopped the fit short: a seven-agent pipeline lays out
+ * about 1500 px wide, so on a phone, or any canvas under about 840 px,
+ * START and END sat off its sides. At 0.1 it fits a 360 px screen.
+ */
+const MIN_ZOOM = 0.1;
+
 // embry0 re-seeds every built-in template on each restart, over any edit.
 const BUILTIN_HINT = "Built-in templates reset on restart. Save As makes your own copy.";
 
@@ -89,6 +97,7 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
+        minZoom={MIN_ZOOM}
         proOptions={{ hideAttribution: true }}
         className="bg-page"
       >
