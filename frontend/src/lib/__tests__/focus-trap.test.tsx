@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Node } from "@xyflow/react";
 import ts from "typescript";
@@ -130,12 +130,20 @@ function Page({ dialog }: { dialog: (close: () => void) => ReactNode }) {
   );
 }
 
-/** Open the dialog from its button and wait for focus to move into it. */
-async function open(user: ReturnType<typeof userEvent.setup>) {
+/**
+ * Open the dialog from its button and wait for focus to move into it. Safari
+ * does not focus a button it clicks or taps; with `safari`, the button's
+ * mousedown is prevented, so user-event leaves its focus where it was too.
+ */
+async function open(user: ReturnType<typeof userEvent.setup>, { safari = false } = {}) {
   const opener = screen.getByRole("button", { name: "Open" });
+  const focused = vi.fn();
+  opener.addEventListener("focus", focused);
+  if (safari) opener.addEventListener("mousedown", (e) => e.preventDefault());
   await user.click(opener);
   const dialog = screen.getByRole("dialog");
   await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
+  if (safari) expect(focused).not.toHaveBeenCalled();
   return opener;
 }
 
@@ -155,6 +163,43 @@ describe("createFocusTrap", () => {
     opener.remove();
   });
 
+  // Safari does not focus a button it clicks or taps, so the trap saved
+  // <body> as the opener and on close sent focus nowhere.
+  it("returns focus to the control the pointer pressed when the press left focus on <body>", async () => {
+    const opener = document.body.appendChild(document.createElement("button"));
+    opener.innerHTML = `<svg><path d="M0 0" /></svg>`;
+    const container = document.body.appendChild(document.createElement("div"));
+    container.innerHTML = `<button>Close</button>`;
+    fireEvent.pointerDown(opener.querySelector("path")!);
+    expect(document.activeElement).toBe(document.body);
+
+    const cleanup = createFocusTrap(container);
+    await waitFor(() => expect(document.activeElement).toBe(container.querySelector("button")));
+    container.remove();
+    cleanup();
+
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it("forgets a pressed control once the pointer presses something that takes no focus", async () => {
+    const pressed = document.body.appendChild(document.createElement("button"));
+    const blank = document.body.appendChild(document.createElement("div"));
+    const container = document.body.appendChild(document.createElement("div"));
+    container.innerHTML = `<button>Close</button>`;
+    fireEvent.pointerDown(pressed);
+    fireEvent.pointerDown(blank);
+
+    const cleanup = createFocusTrap(container);
+    await waitFor(() => expect(document.activeElement).toBe(container.querySelector("button")));
+    container.remove();
+    cleanup();
+
+    expect(document.activeElement).not.toBe(pressed);
+    pressed.remove();
+    blank.remove();
+  });
+
   // React focuses an autoFocus field while it commits the dialog, before the
   // effect that creates the trap, so the trap saved that field as the opener
   // and on close sent focus to an element no longer in the page: <body>.
@@ -171,6 +216,16 @@ describe.each(DIALOGS)("the $name dialog", ({ closes, dialog }) => {
     const user = userEvent.setup();
     render(<Page dialog={dialog} />);
     const opener = await open(user);
+    if (close === "Escape") await user.keyboard("{Escape}");
+    else await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: close }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it.each(closes)("returns focus to that button in Safari, which a click does not focus, when %s closes it", async (close) => {
+    const user = userEvent.setup();
+    render(<Page dialog={dialog} />);
+    const opener = await open(user, { safari: true });
     if (close === "Escape") await user.keyboard("{Escape}");
     else await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: close }));
     expect(screen.queryByRole("dialog")).toBeNull();
