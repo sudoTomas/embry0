@@ -5,7 +5,7 @@ import { Sprite } from "../Sprite";
 
 describe("Sprite", () => {
   it("renders a crisp 16x16 image tinted by the palette token, named for assistive tech", () => {
-    const { container } = render(<Sprite avatar="smith" color="amber" state="idle" size={32} label="Developer, idle" />);
+    const { container } = render(<Sprite avatar="smith" color="amber" state="idle" size={32} label="Developer" />);
     const svg = container.querySelector("svg")!;
     expect(svg).toHaveAttribute("role", "img");
     expect(svg).toHaveAttribute("aria-label", "Developer, idle");
@@ -30,6 +30,36 @@ describe("Sprite", () => {
     rerender(<Sprite avatar="seer" color="violet" state="done" />);
     expect(container.querySelector("svg")).toHaveAttribute("data-frames", "1");
     expect(container.querySelectorAll("g.sprite-frame")).toHaveLength(1);
+  });
+
+  it("draws a still sprite as frame 0 alone, so the stepping animation has nothing to step", () => {
+    const { container } = render(<Sprite avatar="seer" color="violet" state="thinking" still />);
+    const svg = container.querySelector("svg")!;
+    expect(svg, "the CSS animates only data-frames=2").toHaveAttribute("data-frames", "1");
+    expect(svg).toHaveAttribute("data-state", "thinking");
+    const frames = container.querySelectorAll("g.sprite-frame");
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toHaveAttribute("data-frame", "0");
+  });
+
+  it.each([
+    ["idle", "Developer, idle"],
+    ["thinking", "Developer, thinking"],
+    ["tool", "Developer, using a tool"],
+    ["done", "Developer, done"],
+    ["failed", "Developer, failed"],
+    ["pending", "Developer, waiting"],
+  ] as const)("names the %s state in words", (state, name) => {
+    const { container } = render(<Sprite avatar="smith" color="amber" state={state} label="Developer" />);
+    expect(container.querySelector("svg")).toHaveAttribute("aria-label", name);
+  });
+
+  it("is hidden from assistive tech when decorative, leaving its control's name to stand alone", () => {
+    const { container } = render(<Sprite avatar="rogue" color="cyan" state="idle" decorative />);
+    const svg = container.querySelector("svg")!;
+    expect(svg).toHaveAttribute("aria-hidden", "true");
+    expect(svg).not.toHaveAttribute("aria-label");
+    expect(svg).not.toHaveAttribute("role");
   });
 
   it("falls back to golem and slate for ids it does not know", () => {

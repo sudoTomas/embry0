@@ -80,7 +80,7 @@ export function AgentIdentityFields({ type, value, onChange }: AgentIdentityFiel
                       selected ? "border-white bg-white/[0.06]" : "border-white/10 hover:border-white/30",
                     )}
                   >
-                    <Sprite avatar={id} color={value.color} state="idle" size={32} label={id} />
+                    <Sprite avatar={id} color={value.color} state="idle" size={32} decorative />
                   </button>
                 );
               })}

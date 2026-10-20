@@ -360,6 +360,31 @@ describe("useLiveJobSummary", () => {
     expect(result.current.attempt).toBe(1);
   });
 
+  it("tracks the agent type a node_started or agent_started carries, cleared by a node without one", async () => {
+    const { result } = renderHook(() => useLiveJobSummary("job-abc"));
+    await flushConnect();
+
+    await act(async () => {
+      lastCreatedWs!.simulateOpen();
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t1", node: "generic_agent", agent: "qa" });
+    });
+    await flushBatch();
+    expect(result.current.currentNode).toBe("generic_agent");
+    expect(result.current.currentAgent, "the generic node runs the agent the event names").toBe("qa");
+
+    await act(async () => {
+      lastCreatedWs!.simulateMessage({ type: "node_started", timestamp: "t2", node: "init" });
+    });
+    await flushBatch();
+    expect(result.current.currentAgent, "a node with no agent clears it").toBeNull();
+
+    await act(async () => {
+      lastCreatedWs!.simulateMessage({ type: "agent_started", timestamp: "t3", node: "generic_agent", agent: "research" });
+    });
+    await flushBatch();
+    expect(result.current.currentAgent).toBe("research");
+  });
+
   it("takes the attempt number from node_started", async () => {
     const { result } = renderHook(() => useLiveJobSummary("job-abc"));
     await flushConnect();

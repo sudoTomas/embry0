@@ -25,6 +25,16 @@ describe("AgentFilterTabs", () => {
     expect(screen.getByText("Reviewer").className).toContain("text-rose-400");
   });
 
+  it("names a numbered node by its agent when the state carries no agent type", () => {
+    const numbered = {
+      "developer-2": { node_id: "developer-2", state: "running" as const, iteration: 1, cost_usd: 0, turns: 0, duration_seconds: 0 },
+      review: { node_id: "review", agent_type: "review", state: "pending" as const, iteration: 1, cost_usd: 0, turns: 0, duration_seconds: 0 },
+    } as unknown as Parameters<typeof AgentFilterTabs>[0]["nodeStates"];
+    render(<AgentFilterTabs nodeStates={numbered} selectedNodeId={null} onSelect={() => {}} />);
+    expect(screen.getByText("Developer").className).toContain("text-amber-400");
+    expect(screen.queryByText("developer-2"), "the raw node id is the golem fallback").toBeNull();
+  });
+
   it("labels a tab with the display name, not a re-cased slug", () => {
     render(<AgentFilterTabs nodeStates={states} selectedNodeId={null} onSelect={() => {}} />);
     // Re-casing the slug gives "Pr Reviewer"; the row says "PR Reviewer".

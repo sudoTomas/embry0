@@ -20,7 +20,15 @@ describe("AgentAvatar", () => {
     render(<AgentAvatar identity={identityOf("qa")} state="tool" size={48} />);
     const svg = screen.getByTitle("QA").querySelector("svg")!;
     expect(svg).toHaveAttribute("data-state", "tool");
+    expect(svg).toHaveAttribute("aria-label", "QA, using a tool");
     expect(svg).toHaveAttribute("width", "48");
+  });
+
+  it("forwards still to the sprite", () => {
+    render(<AgentAvatar identity={identityOf("qa")} state="thinking" still />);
+    const svg = screen.getByTitle("QA").querySelector("svg")!;
+    expect(svg).toHaveAttribute("data-frames", "1");
+    expect(svg.querySelectorAll("g.sprite-frame")).toHaveLength(1);
   });
 
   it("rounds an odd size down to the nearest sprite size", () => {

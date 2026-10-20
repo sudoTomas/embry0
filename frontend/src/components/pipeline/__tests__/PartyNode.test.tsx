@@ -31,7 +31,7 @@ describe("PartyNode, editor mode", () => {
     expect(sprite).toHaveAttribute("width", "48");
     expect(node.querySelector(".sprite-nameplate")).toHaveTextContent("Developer");
     expect(node.querySelector(".hud")).toHaveTextContent("2 skills · opus");
-    expect(node.querySelector("[data-ring]")).toHaveStyle({ borderColor: "#fbbf24" });
+    expect((node.querySelector("[data-ring]") as HTMLElement).style.getPropertyValue("--party-colour")).toBe("#fbbf24");
   });
 
   it("resolves the reviewer spelling to the review row", () => {
@@ -57,6 +57,7 @@ describe("PartyNode, live mode", () => {
     let node = screen.getByTestId("party-node");
     expect(node).toHaveAttribute("data-mode", "live");
     expect(node.querySelector("svg.sprite")).toHaveAttribute("data-state", "pending");
+    expect(node.querySelector("svg.sprite")).toHaveAttribute("aria-label", "Developer, waiting");
     expect(node.querySelector("[data-ring]")).toHaveAttribute("data-ring", "pending");
     unmount();
     wrap(<PartyNode {...live("running")} />);
@@ -73,6 +74,15 @@ describe("PartyNode, live mode", () => {
     expect(node.querySelector("[data-ring]")).toHaveAttribute("data-ring", "completed");
   });
 
+  it.each(["pending", "running", "completed", "failed"])("keeps the sprite outside the dimmed ring when %s", (state) => {
+    wrap(<PartyNode {...live(state)} />);
+    const node = screen.getByTestId("party-node");
+    const sprite = node.querySelector("svg.sprite")!;
+    const ring = node.querySelector("[data-ring]")!;
+    expect(ring.contains(sprite), "the ring's opacity and flash must not reach the sprite").toBe(false);
+    expect(sprite.closest(".party-tile"), "the sprite sits on the full-opacity tile").not.toBeNull();
+  });
+
   it("shows failed as failed", () => {
     wrap(<PartyNode {...live("failed")} />);
     expect(screen.getByTestId("party-node").querySelector("svg.sprite")).toHaveAttribute("data-state", "failed");
@@ -85,6 +95,18 @@ describe("party.css", () => {
     expect(gatedAt).toBeGreaterThan(-1);
     expect(css.slice(0, gatedAt)).not.toContain("animation:");
     expect(css.slice(gatedAt)).toMatch(/\[data-ring="completed"\]\s*\{\s*animation:\s*scale-in/);
+  });
+  it("dims the ring by its border colour, never by opacity, and animates only the ring", () => {
+    expect(css, "an opacity below 1 here would dim the sprite or fight the flash's end state").not.toMatch(/(^|[;{\s])opacity\s*:/);
+    expect(css).toMatch(/\.party-ring\[data-ring="pending"\]\s*\{[^}]*border-color:\s*color-mix\(in srgb, var\(--party-colour\) 35%, transparent\)/);
+    expect(css).toMatch(/\.party-ring\[data-ring="editor"\]\s*\{[^}]*border-color:\s*color-mix\(in srgb, var\(--party-colour\) 60%, transparent\)/);
+    expect(css).toMatch(/\.party-ring\[data-ring="completed"\]\s*\{[^}]*border-color:\s*color-mix\(in srgb, var\(--party-colour\) 80%, transparent\)/);
+    const tileRules = css.match(/\.party-tile[^{]*\{[^}]*\}/g) ?? [];
+    for (const rule of tileRules) expect(rule).not.toMatch(/opacity|animation/);
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    const animated = [...bare.matchAll(/([^{}]+)\{[^{}]*animation:/g)].map((m) => m[1].trim());
+    expect(animated.length).toBeGreaterThan(0);
+    for (const sel of animated) expect(sel).toMatch(/^\.party-ring\b/);
   });
   it("hard-codes no hex colour", () => {
     expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);

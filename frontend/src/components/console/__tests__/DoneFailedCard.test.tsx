@@ -83,15 +83,21 @@ describe("DoneFailedCard", () => {
     expect(screen.queryByText(/ERR_/)).toBeNull();
   });
 
-  it("shows the last stage's sprite done for a successful job and failed otherwise", () => {
-    renderCard(makeJob({ status: "completed", current_stage: "reviewer", finished_at: "2026-07-08T11:00:00Z" }));
+  it("shows the sprite of the agent the stage names, done for a successful job and failed otherwise", () => {
+    renderCard(makeJob({ status: "completed", current_stage: "review_complete", finished_at: "2026-07-08T11:00:00Z" }));
     let sprite = screen.getByTestId("party-sprite").querySelector("svg")!;
     expect(sprite).toHaveAttribute("data-avatar", "warden");
     expect(sprite).toHaveAttribute("data-state", "done");
     cleanup();
-    renderCard(makeJob({ status: "failed", current_stage: "reviewer", finished_at: "2026-07-08T11:00:00Z" }));
+    renderCard(makeJob({ status: "failed", current_stage: "developer_complete", finished_at: "2026-07-08T11:00:00Z" }));
     sprite = screen.getByTestId("party-sprite").querySelector("svg")!;
+    expect(sprite).toHaveAttribute("data-avatar", "smith");
     expect(sprite).toHaveAttribute("data-state", "failed");
+  });
+  it("shows no sprite, and no golem, for a stage that names no agent", () => {
+    renderCard(makeJob({ status: "completed", current_stage: "output_finalized", finished_at: "2026-07-08T11:00:00Z" }));
+    expect(screen.queryByTestId("party-sprite")).toBeNull();
+    expect(document.querySelector('svg[data-avatar="golem"]')).toBeNull();
   });
   it("shows no sprite for a legacy row without a recorded stage", () => {
     renderCard(makeJob({ status: "completed", current_stage: null }));
