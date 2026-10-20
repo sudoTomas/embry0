@@ -13,6 +13,7 @@ import {
 } from "@/components/standards/StandardParts";
 import { Badge } from "@/components/ui/Badge";
 import { DashboardSkeleton, Skeleton } from "@/components/ui/PageSkeleton";
+import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
 import { useOrganizations } from "@/hooks/useOrgs";
 import { useRegisteredRepos } from "@/hooks/useRepos";
 import { useAuditJobStatuses, useOwnerStandards, useStandardVersions } from "@/hooks/useStandards";
@@ -71,11 +72,19 @@ export function StandardsPage() {
   const rows = standards.data ? standardRows(owner, KIND, registered.data ?? [], standards.data.repos) : [];
   const jobIds = rows.flatMap((r) => (r.state.mode !== "off" && r.state.last_audit_job_id ? [r.state.last_audit_job_id] : []));
   const jobStatuses = useAuditJobStatuses(owner, jobIds);
+  // The page paints once the standards, the registry and the organizations
+  // list have first answered; the three are read side by side. Painted on
+  // the standards alone, it changed as the other two landed a moment later:
+  // the repositories' skeleton gave way to their table and the back link
+  // replaced its spacer, pushing the standard's parts down (a layout shift
+  // of up to 0.11 on a phone). The versions are not waited on: they sit at
+  // the foot of the page.
+  const painted = useFirstPaint(hasAnswered(standards) && hasAnswered(registered) && hasAnswered(orgs));
 
   if (standards.isError) {
     return <PageError message={`Failed to load the standards of ${owner}`} onRetry={() => void standards.refetch()} />;
   }
-  if (standards.isLoading || !standards.data) return <DashboardSkeleton />;
+  if (standards.isLoading || !standards.data || !painted) return <DashboardSkeleton />;
 
   const putPath = standardApiPath(owner, KIND);
 

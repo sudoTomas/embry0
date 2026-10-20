@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -162,5 +162,31 @@ describe("StandardsPage", () => {
     api.standards.mockRejectedValue(new Error("boom"));
     renderPage();
     expect(await screen.findByText("Failed to load the standards of acme")).toBeInTheDocument();
+  });
+});
+
+describe("StandardsPage — the first paint", () => {
+  // Each answer sizes something above the standard's parts; painted before
+  // it, the parts were pushed down when it landed.
+  const sources = {
+    "the registry": () => api.repos,
+    "the organizations list": () => api.orgs,
+  };
+
+  it.each(Object.keys(sources))("holds the page until %s is in, then paints it whole", async (name) => {
+    const fetcher = sources[name as keyof typeof sources]();
+    const answer = fetcher.getMockImplementation() as () => Promise<unknown>;
+    let release: () => void = () => {};
+    fetcher.mockReturnValue(new Promise<void>((resolve) => (release = resolve)).then(answer));
+    renderPage();
+
+    await waitFor(() => expect(api.standards).toHaveBeenCalledWith("acme"));
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(screen.queryByTestId("standards-page")).toBeNull();
+
+    await act(async () => release());
+    expect(await screen.findByTestId("standards-page")).toBeInTheDocument();
+    expect(screen.getAllByTestId("standard-repo-row")).toHaveLength(1);
+    expect(screen.getByTestId("standard-back")).toHaveTextContent("← Acme Inc");
   });
 });
