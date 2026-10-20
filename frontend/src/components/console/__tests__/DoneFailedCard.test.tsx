@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+
+vi.mock("@/hooks/useAgents", () => ({
+  useAgents: () => ({ data: [{ type: "review", display_name: "Reviewer", avatar: "warden", color: "rose", tagline: "" }], isLoading: false }),
+}));
 import { DoneFailedCard } from "../DoneFailedCard";
 import { makeJob } from "./fixtures";
 import type { JobResponse } from "@/lib/types";
@@ -77,5 +81,20 @@ describe("DoneFailedCard", () => {
   it("renders no error chip when error_code is null", () => {
     renderCard(makeJob({ status: "cancelled", error_code: null }));
     expect(screen.queryByText(/ERR_/)).toBeNull();
+  });
+
+  it("shows the last stage's sprite done for a successful job and failed otherwise", () => {
+    renderCard(makeJob({ status: "completed", current_stage: "reviewer", finished_at: "2026-07-08T11:00:00Z" }));
+    let sprite = screen.getByTestId("party-sprite").querySelector("svg")!;
+    expect(sprite).toHaveAttribute("data-avatar", "warden");
+    expect(sprite).toHaveAttribute("data-state", "done");
+    cleanup();
+    renderCard(makeJob({ status: "failed", current_stage: "reviewer", finished_at: "2026-07-08T11:00:00Z" }));
+    sprite = screen.getByTestId("party-sprite").querySelector("svg")!;
+    expect(sprite).toHaveAttribute("data-state", "failed");
+  });
+  it("shows no sprite for a legacy row without a recorded stage", () => {
+    renderCard(makeJob({ status: "completed", current_stage: null }));
+    expect(screen.queryByTestId("party-sprite")).toBeNull();
   });
 });

@@ -1,22 +1,23 @@
-import { cn } from "@/lib/utils";
+import { Sprite, type SpriteState } from "@/components/roster";
 import type { AgentIdentity } from "@/lib/agentIdentity";
+import { cn } from "@/lib/utils";
 
-interface AgentAvatarProps { identity: AgentIdentity; size?: number; className?: string }
+interface AgentAvatarProps { identity: AgentIdentity; size?: number; state?: SpriteState; className?: string }
 
-/** Tinted square with the display name's initial. Workstream 3 swaps the body for a sprite; the
- * data attributes and title stay so callers and tests do not change. */
-export function AgentAvatar({ identity, size = 28, className }: AgentAvatarProps) {
+const SIZES = [64, 48, 32, 16] as const;
+
+/** The agent's sprite (spec 3.3). The wrapper keeps the data attributes and title workstream 2 callers and tests read. */
+export function AgentAvatar({ identity, size = 32, state = "idle", className }: AgentAvatarProps) {
+  const spriteSize = SIZES.find((s) => s <= size) ?? 16;
   return (
     <span
       data-avatar={identity.avatar}
       data-color={identity.color}
       title={identity.displayName}
-      aria-label={identity.displayName}
-      className={cn("inline-flex shrink-0 items-center justify-center rounded-md border font-semibold select-none",
-        identity.classes.text, identity.classes.bg, identity.classes.border, className)}
-      style={{ width: size, height: size, fontSize: Math.max(10, Math.round(size * 0.5)) }}
+      className={cn("inline-flex shrink-0 items-center justify-center select-none", className)}
+      style={{ width: size, height: size }}
     >
-      {identity.initial}
+      <Sprite avatar={identity.avatar} color={identity.color} state={state} size={spriteSize} label={`${identity.displayName}, ${state}`} />
     </span>
   );
 }
