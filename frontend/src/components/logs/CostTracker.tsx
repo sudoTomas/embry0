@@ -18,26 +18,30 @@ export function CostTracker({ costUsd, tokensIn, tokensOut, turns, isComplete, b
   return (
     <Card>
       <CardContent className="p-4 space-y-3">
-        <div className="flex items-center gap-6">
-          <div>
-            <span className="text-xs text-muted-foreground">Cost</span>
-            <p className={`text-lg font-bold font-mono ${hasBudget ? getCostColor(costUsd, budgetUsd) : ""}`}>
-              {formatCost(costUsd)}
-            </p>
+        {/* The figures wrap and the status keeps its width: on a phone the
+            five did not fit one row, and the status pill ran out of the card. */}
+        <div className="flex items-start justify-between gap-6 sm:items-center">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <div>
+              <span className="text-xs text-muted-foreground">Cost</span>
+              <p className={`text-lg font-bold font-mono ${hasBudget ? getCostColor(costUsd, budgetUsd) : ""}`}>
+                {formatCost(costUsd)}
+              </p>
+            </div>
+            <div>
+              <span className="text-xs text-muted-foreground">Tokens In</span>
+              <p className="text-sm font-mono">{tokensIn.toLocaleString()}</p>
+            </div>
+            <div>
+              <span className="text-xs text-muted-foreground">Tokens Out</span>
+              <p className="text-sm font-mono">{tokensOut.toLocaleString()}</p>
+            </div>
+            <div>
+              <span className="text-xs text-muted-foreground">Turns</span>
+              <p className="text-sm font-mono">{turns}</p>
+            </div>
           </div>
-          <div>
-            <span className="text-xs text-muted-foreground">Tokens In</span>
-            <p className="text-sm font-mono">{tokensIn.toLocaleString()}</p>
-          </div>
-          <div>
-            <span className="text-xs text-muted-foreground">Tokens Out</span>
-            <p className="text-sm font-mono">{tokensOut.toLocaleString()}</p>
-          </div>
-          <div>
-            <span className="text-xs text-muted-foreground">Turns</span>
-            <p className="text-sm font-mono">{turns}</p>
-          </div>
-          <div className="ml-auto">
+          <div className="shrink-0">
             {isComplete ? (
               <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">Complete</span>
             ) : (
