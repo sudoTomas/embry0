@@ -9,6 +9,8 @@ import { IssueBoardView } from "@/components/issues/IssueBoardView";
 import { CreateIssueDialog } from "@/components/issues/CreateIssueDialog";
 import { ProposalsSection } from "@/components/issues/ProposalsSection";
 import { useIssueBoard, useIssues, useUpdateIssue } from "@/hooks/useIssues";
+import { useProposals } from "@/hooks/useProposals";
+import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
 import { useIssuesStore } from "@/stores/issuesStore";
 import { ISSUE_BOARD_COLUMNS } from "@/lib/constants";
 import type { IssueStatus } from "@/lib/types";
@@ -27,7 +29,7 @@ export function IssuesPage() {
   const [repoFilter, setRepoFilter] = useState<string | undefined>();
   const [search, setSearch] = useState("");
 
-  const { data, isLoading, isError, refetch } = useIssues({
+  const issues = useIssues({
     status: statusFilter,
     priority: priorityFilter,
     repo: repoFilter,
@@ -35,6 +37,15 @@ export function IssuesPage() {
     limit: LIMIT,
     offset,
   });
+  const { data, isLoading, isError, refetch } = issues;
+
+  // The page paints once the issues and the proposals above them have first
+  // answered. Before, the list's panel stood in view from the first frame
+  // and the proposals landed above it, pushing it down by their height:
+  // eleven drafts, 630 px, a layout shift of 0.13 on a wide screen, and off
+  // a phone's screen.
+  const proposals = useProposals();
+  const painted = useFirstPaint(hasAnswered(issues) && hasAnswered(proposals));
 
   // The board counts every issue per status, apart from the list's page.
   const board = useIssueBoard(
@@ -117,11 +128,15 @@ export function IssuesPage() {
         <CreateIssueDialog onClose={() => setShowCreate(false)} />
       )}
 
-      <ProposalsSection />
+      {painted && <ProposalsSection />}
 
-      {/* Content: the panel of the selected view tab. */}
-      <TabsContent value={viewMode} className="mt-0">
-        {isError ? (
+      {/* Content: the panel of the selected view tab. Keyed by the first
+          paint, so the painted panel is a new node under the proposals, not
+          the skeleton's panel moved down by them. */}
+      <TabsContent key={painted ? "painted" : "waiting"} value={viewMode} className="mt-0">
+        {!painted ? (
+          <TableSkeleton columns={viewMode === "list" ? 8 : 6} rows={6} />
+        ) : isError ? (
           <PageError message="Failed to load issues" onRetry={() => refetch()} />
         ) : isLoading ? (
           <TableSkeleton columns={8} rows={6} />

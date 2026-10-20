@@ -56,8 +56,8 @@ const PROPOSAL = {
   timestamps: { detected_at: NOW, tracked_at: NOW },
 };
 
-function renderPage() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderPage(queries: { retry: number | false; retryDelay?: number } = { retry: false }) {
+  const client = new QueryClient({ defaultOptions: { queries } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -74,6 +74,10 @@ beforeEach(() => {
     isLoading: false,
     isError: false,
     refetch: vi.fn(),
+    // The stored update times the page's first paint reads.
+    dataUpdatedAt: 1,
+    errorUpdatedAt: 0,
+    failureCount: 0,
   });
 });
 
@@ -87,6 +91,31 @@ describe("IssuesPage", () => {
     expect(draft.compareDocumentPosition(issue) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // A draft is a case, so it is not a row of the issue table.
     expect(draft.closest("table")).not.toBe(issue.closest("table"));
+  });
+
+  it("paints the drafts and the list together, so the drafts never push the list down", async () => {
+    let answer: (proposals: unknown) => void = () => {};
+    mockFetchProposals.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    renderPage();
+    await new Promise((r) => setTimeout(r, 20));
+    // Painted before the drafts answered, the list was in view when they
+    // landed above it and pushed it down by their height.
+    expect(screen.queryByText("An accepted piece of work")).not.toBeInTheDocument();
+    const waitingPanel = screen.getByRole("tabpanel");
+
+    answer({ cases: [PROPOSAL], total: 1, limit: 50, next_cursor: null });
+    expect(await screen.findByText("A draft nobody answered")).toBeInTheDocument();
+    expect(screen.getByText("An accepted piece of work")).toBeInTheDocument();
+    // The painted panel is a new node, not the waiting one moved down.
+    expect(screen.getByRole("tabpanel")).not.toBe(waitingPanel);
+  });
+
+  it("does not hold the list through the retries of a failed first attempt at the drafts", async () => {
+    mockFetchProposals.mockRejectedValue(new Error("down"));
+    // One retry, a minute away: the drafts stay unanswered for the whole test.
+    renderPage({ retry: 1, retryDelay: 60_000 });
+    // In findBy's 1 s, so on the failed attempt, not on the 1.5 s cap.
+    expect(await screen.findByText("An accepted piece of work")).toBeInTheDocument();
   });
 
   it("is the plain issue list when no draft is waiting", async () => {
