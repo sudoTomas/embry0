@@ -1912,7 +1912,7 @@ EOF
 
 ## Integration and PR
 
-Branch `feat/game-ui` (worktree `/Users/tomas/repos/embry0-worktrees/game-ui`) already carries the spec commit; this plan is committed on it before Task 1 is dispatched. Task worktrees `gui-t1` to `gui-t4` under `/Users/tomas/repos/embry0-worktrees/`, branches `gui/t1` to `gui/t4`, each cut from the integration branch at its wave's start.
+Branch `feat/game-ui` (worktree `<worktree-root>/game-ui`) already carries the spec commit; this plan is committed on it before Task 1 is dispatched. Task worktrees `gui-t1` to `gui-t4` under `<worktree-root>/`, branches `gui/t1` to `gui/t4`, each cut from the integration branch at its wave's start.
 
 After each wave, on the integration branch: merge the wave's task branches (fast-forward or merge commit, no squash), grep the tree for conflict markers, grep the touched files for duplicate `function` and `export const` definitions, then the frontend gate (`npm run build && npm run lint && npm test` in `frontend/`) and the backend guards that read the docs and the frontend tree (`.venv/bin/python -m pytest tests/unit/docs tests/unit/test_user_facing_text.py -q`). The name denylist runs in CI (`scripts/check_denylist.py` with the private list); before pushing, read the diff once for a host, customer or person name.
 
