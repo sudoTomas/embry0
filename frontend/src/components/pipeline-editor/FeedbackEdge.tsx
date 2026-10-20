@@ -14,7 +14,13 @@ export function FeedbackEdge(props: EdgeProps) {
       />
       {loopConfig?.max_loops && (
         <EdgeLabelRenderer>
-          <div
+          {/* A button, so the label is an opener that takes focus and gets
+              it back when the edge's detail closes. Its click reaches the
+              edge's own click handler through the portal, which opens the
+              detail, so it needs no handler of its own. */}
+          <button
+            type="button"
+            aria-label={`Feedback loop from ${props.source} to ${props.target}, max ${loopConfig.max_loops} loops`}
             className="nodrag nopan pointer-events-auto"
             style={{
               position: "absolute",
@@ -32,8 +38,8 @@ export function FeedbackEdge(props: EdgeProps) {
               gap: "4px",
             }}
           >
-            <span>↩</span> max {loopConfig.max_loops} loops
-          </div>
+            <span aria-hidden="true">↩</span> max {loopConfig.max_loops} loops
+          </button>
         </EdgeLabelRenderer>
       )}
     </>

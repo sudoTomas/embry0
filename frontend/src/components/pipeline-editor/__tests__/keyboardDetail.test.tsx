@@ -108,3 +108,47 @@ describe("the pipeline editor from the keyboard", () => {
     }
   });
 });
+
+// A feedback edge's "max N loops" label opened the edge's detail, its click
+// reaching the edge, but took no focus itself, so closing the detail left
+// focus on <body>.
+describe("a feedback edge's loop label", () => {
+  const looped: PipelineGraph = {
+    ...graph,
+    edges: [
+      ...graph.edges,
+      {
+        edge_id: "fb",
+        source: "developer",
+        target: "triage",
+        edge_type: "feedback",
+        loop_config: { max_loops: 3, feedback_mode: "result" },
+      },
+    ],
+  };
+
+  it("opens the loop's detail on a click and takes focus back when it closes", async () => {
+    const user = userEvent.setup();
+    renderEditor(looped);
+    const label = screen.getByRole("button", { name: "Feedback loop from developer to triage, max 3 loops" });
+
+    await user.click(label);
+
+    const dialog = screen.getByRole("dialog", { name: "Feedback loop from developer to triage" });
+    await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(label);
+  });
+
+  it("opens the loop's detail from the keyboard too", async () => {
+    const user = userEvent.setup();
+    renderEditor(looped);
+    const label = screen.getByRole("button", { name: /max 3 loops/ });
+    label.focus();
+
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByRole("dialog", { name: "Feedback loop from developer to triage" })).toBeInTheDocument();
+  });
+});
