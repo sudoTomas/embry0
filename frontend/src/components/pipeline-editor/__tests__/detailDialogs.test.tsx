@@ -87,6 +87,18 @@ describe("the pipeline editor's edge detail", () => {
     expect(screen.getByRole("dialog", { name: "Feedback loop from reviewer to developer" })).toHaveAttribute("aria-modal", "true");
   });
 
+  // The header column is a flex column, which stretches its children: the
+  // badge drew as wide as the source and target row (165 px for a 64 px
+  // label, measured at 390 and 1440 px). jsdom has no layout, so this pins
+  // the badge's own alignment, the fix, rather than its width.
+  it.each([
+    ["flow", flow, "Flow Edge"],
+    ["feedback", feedback, "Feedback Loop"],
+  ] as const)("keeps the %s badge to its own width", (_, edge, text) => {
+    render(<EdgeDetailPopup edge={edge} onUpdate={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByText(text)).toHaveClass("self-start");
+  });
+
   it("keeps Tab inside itself, away from the canvas behind it", async () => {
     const user = userEvent.setup();
     render(

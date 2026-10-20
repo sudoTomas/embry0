@@ -106,10 +106,12 @@ export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProp
         {/* Header */}
         <div className="p-5 pb-4 border-b border-white/[0.06] flex items-start justify-between gap-3">
           <div className="flex flex-col gap-2 min-w-0">
-            {/* Edge type badge */}
+            {/* Edge type badge. The column stretches its children to the
+                width of the source and target row; the badge keeps to its
+                own text. */}
             <span
               className={cn(
-                "inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider",
+                "self-start px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider",
                 isFeedback
                   ? "bg-destructive/10 text-destructive/80 border border-destructive/20"
                   : "bg-white/[0.06] text-white/40 border border-white/[0.08]",
