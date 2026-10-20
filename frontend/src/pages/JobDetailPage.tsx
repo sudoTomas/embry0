@@ -59,13 +59,15 @@ const TRACES_PAGE_SIZE = 25;
  * A card on the Pipeline tab arrives once, when it mounts: in its turn on
  * the first paint, at once when it lands later. A run that changes group
  * (waiting, running, done) mounts again in its new group, so it arrives in
- * its new place. The grid lets the card fill its cell's height, as it did
- * before it had a wrapper.
+ * its new place. The wrapper is the grid's item and keeps its card's own
+ * height: a grid cell stretches its item to the row's tallest, so a closed
+ * card beside an open one grew to the open card's height with its one line
+ * centred in the empty space.
  */
 function CardArrival({ turn, children }: { turn: number; children: ReactNode }) {
   const [i] = useState(turn);
   return (
-    <div className="motion-enter grid" style={motionIndex(i)}>
+    <div className="motion-enter self-start" style={motionIndex(i)}>
       {children}
     </div>
   );

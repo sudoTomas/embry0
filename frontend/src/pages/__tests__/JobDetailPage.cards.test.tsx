@@ -3,7 +3,7 @@
 // place, at once rather than in a turn it no longer has. In each group the
 // cards follow the order the job travels its stages.
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { JobResponse, LogEvent, PipelineGraph } from "@/lib/types";
@@ -79,6 +79,23 @@ describe("the Job page's agent cards", () => {
     expect(cardOf("developer"), "a card that changes group arrives in its new place").not.toBe(developerRunning);
     expect(turnOf("developer"), "a card arriving after the first paint does not wait for a turn").toBe("0");
     expect(turnOf("review")).toBe("0");
+  });
+
+  // A grid cell stretches its item to the row's tallest, so a closed card
+  // beside an open one grew to the open card's height with its one line
+  // centred in the empty space. jsdom lays nothing out: this pins the class
+  // that keeps each card at its own height, on the grid's own item.
+  it("keep their own height in a row beside an open card", () => {
+    logs.graph = graph;
+    logs.events = [...started("triage"), ...completed("triage"), ...started("developer"), ...completed("developer")] as LogEvent[];
+    render(page());
+    fireEvent.click(cardOf("triage").firstElementChild!);
+    expect(cardOf("triage").firstElementChild!.className, "the triage card did not open").toContain("overflow-hidden");
+    for (const agent of ["triage", "developer", "review"]) {
+      const item = cardOf(agent);
+      expect(item.parentElement!.className, `the ${agent} card's arrival wrapper is not the grid's item`).toMatch(/(^|\s)grid(\s|$)/);
+      expect(item.classList.contains("self-start"), `the ${agent} card stretches to its row's tallest card`).toBe(true);
+    }
   });
 
   it("follow the order the job travels its stages", () => {
