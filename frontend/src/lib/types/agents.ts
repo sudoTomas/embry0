@@ -36,6 +36,15 @@ export interface AgentDefinition {
   provider?: string | null;
   /** The provider has a credential configured right now. */
   provider_ready?: boolean;
+  /** The model a job that names none runs this agent on: the default model,
+   * a per-job tier or a disabled-model stand-in can replace `model`. Absent on
+   * a backend that predates the field (docs/providers.md). */
+  effective_model?: string;
+  /** What chose `effective_model`: `agent`, `default_model`,
+   * `disabled_fallback`, `builtin_default` or `per_job_<tier>_tier`. */
+  effective_model_source?: string;
+  effective_provider?: string | null;
+  effective_provider_ready?: boolean;
   /** Identity (docs/api.md, Agents); absent on a backend that predates it. */
   display_name?: string;
   avatar?: string;

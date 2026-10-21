@@ -13,6 +13,7 @@ import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { AdminButton } from "@/components/auth/AdminButton";
 import { useIsAdmin } from "@/stores/authStore";
 import type { AgentDefinition } from "@/lib/types/agents";
+import { runModelOf } from "@/lib/effectiveModel";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { agentTypeToOperation } from "@/components/divine/operations";
 import { toastApiError } from "@/api/errorToast";
@@ -118,7 +119,7 @@ export function AgentsPage() {
                     <tr>
                       <th>Type</th>
                       <th className="hidden sm:table-cell">Description</th>
-                      <th className="hidden sm:table-cell">Model</th>
+                      <th className="hidden sm:table-cell" title="The model a job that names none runs this agent on">Model</th>
                       <th>Provider</th>
                       <th className="hidden sm:table-cell">Tools</th>
                       <th className="hidden sm:table-cell">Skills</th>
@@ -129,6 +130,7 @@ export function AgentsPage() {
                     {filtered.map((agent: AgentDefinition) => {
                       const identity = lookup(agent.type);
                       const op = agentTypeToOperation(agent.type);
+                      const run = runModelOf(agent);
                       return (
                         <tr
                           key={agent.type}
@@ -162,24 +164,33 @@ export function AgentsPage() {
                             <p className="text-sm text-white/60 truncate">{agent.description || "—"}</p>
                           </td>
 
-                          {/* Model */}
+                          {/* Model: what a job that names none runs, and what chose it
+                              when that is not the agent's own model. */}
                           <td className="hidden sm:table-cell">
-                            <span className="text-sm font-mono text-white/60">{agent.model}</span>
+                            <span className="text-sm font-mono text-white/60">{run.model}</span>
+                            {run.reason && (
+                              <p className="text-xs text-white/40" data-testid="run-model-reason">
+                                {run.reason}
+                                {run.model !== agent.model && agent.model && (
+                                  <> · stored <span className="whitespace-nowrap font-mono">{agent.model}</span></>
+                                )}
+                              </p>
+                            )}
                           </td>
 
-                          {/* Provider: the catalog provider the model routes to, and
+                          {/* Provider: the catalog provider that model routes to, and
                               whether it has a credential now (GET /agents). */}
                           <td>
                             {/* A phone stacks the provider's name over its pill, so the
                                 column says whose readiness it is. */}
                             <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
-                              <span className="whitespace-nowrap text-sm text-white/60">{agent.provider ? providerLabel(agent.provider) : "None"}</span>
-                              {agent.provider_ready === true && <Badge tone="success">Ready</Badge>}
-                              {agent.provider_ready === false && (
+                              <span className="whitespace-nowrap text-sm text-white/60">{run.provider ? providerLabel(run.provider) : "None"}</span>
+                              {run.ready === true && <Badge tone="success">Ready</Badge>}
+                              {run.ready === false && (
                                 <Badge
                                   tone="error"
                                   title={
-                                    agent.provider
+                                    run.provider
                                       ? "No credential is configured for this provider"
                                       : "No configured provider serves this model"
                                   }

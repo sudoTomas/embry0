@@ -304,6 +304,40 @@ describe("AgentFormPage provider readiness from the catalog", () => {
   });
 });
 
+describe("AgentFormPage says when jobs run another model", () => {
+  const ON_DEFAULT = {
+    ...EXISTING,
+    effective_model: "grok-4.7",
+    effective_model_source: "default_model",
+    effective_provider: "xai",
+    effective_provider_ready: true,
+  };
+
+  it("names the deployment default model that replaces the stored one", () => {
+    mockUseAgent.mockReturnValue({ data: ON_DEFAULT, isLoading: false });
+    renderEdit();
+    expect(screen.getByTestId("model-run-override")).toHaveTextContent(
+      "Jobs run this agent on grok-4.7, the deployment default model, not on the model chosen here.",
+    );
+  });
+
+  it("keeps saying so when another model is picked, since the default replaces any", async () => {
+    mockUseAgent.mockReturnValue({ data: ON_DEFAULT, isLoading: false });
+    renderEdit();
+    await userEvent.selectOptions(screen.getByLabelText("Model"), "claude-sonnet-5");
+    expect(screen.getByTestId("model-run-override")).toHaveTextContent("grok-4.7, the deployment default model");
+  });
+
+  it("says nothing when the agent runs its own model", () => {
+    mockUseAgent.mockReturnValue({
+      data: { ...EXISTING, effective_model: "claude-opus-5", effective_model_source: "agent" },
+      isLoading: false,
+    });
+    renderEdit();
+    expect(screen.queryByTestId("model-run-override")).not.toBeInTheDocument();
+  });
+});
+
 describe("identity and skills (spec 3.6)", () => {
   it("creates an agent with its identity", async () => {
     mockUseAgent.mockReturnValue({ data: undefined, isLoading: false });
