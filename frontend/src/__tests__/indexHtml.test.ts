@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import indexHtml from "../../index.html?raw";
 import faviconSvg from "../../public/favicon.svg?raw";
+import indexCss from "../index.css?raw";
 
 /**
  * The browser tab and the home screen show the embry0 mark. index.html links
@@ -40,7 +41,11 @@ describe("index.html icons", () => {
   });
 
   it("colours the browser chrome with the page colour", () => {
-    expect(head.querySelector('meta[name="theme-color"]')?.getAttribute("content")).toBe("#0a0a0f");
+    // The page background is index.css's --color-background token; the
+    // theme-color meta is a copy of it, which is how it drifts.
+    const background = /--color-background:\s*(#[0-9a-f]{6})\b/i.exec(indexCss)?.[1];
+    expect(background).toBeDefined();
+    expect(head.querySelector('meta[name="theme-color"]')?.getAttribute("content")).toBe(background);
   });
 
   it("ships every icon it links, and the /favicon.ico browsers ask for unasked", () => {
