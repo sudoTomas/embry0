@@ -12,11 +12,12 @@ import { useJobInputs } from "@/hooks/useInputs";
 import { useTraces } from "@/hooks/useTraces";
 import { useJobLogs } from "@/hooks/useJobLogs";
 import { useAgentStates } from "@/hooks/useAgentStates";
-import { useElapsedTime } from "@/hooks/useElapsedTime";
 import { useQaAttempts } from "@/hooks/useQaResults";
 import { useJobVerification } from "@/hooks/useJobVerification";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { deriveNodeStates, filterEventsForNode, physicalOf } from "@/lib/pipeline-live";
+import { sessionAgentType } from "@/lib/agentSession";
+import { resolveAgentType } from "@/lib/agentIdentity";
 import { isTerminalStatus } from "@/lib/jobStatus";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
 import { AwaitingInputCard } from "@/components/jobs/AwaitingInputCard";
@@ -55,19 +56,36 @@ export function JobDetailPage() {
   // The run is the unit of selection: the strip, the map and the Conversation tab share it.
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const selectedRun = agents.find((a) => a.runId === selectedRunId) ?? null;
+  // A run and a graph node correspond when they share the physical node and
+  // the agent type; a card the graph itself produced (`pending:` / `node:`)
+  // names its node. Two steps of one agent type on one physical node (two
+  // research steps on generic_agent) cannot be told apart from the events, so
+  // neither direction picks one: the map highlights nothing, a node click
+  // selects no run. Both directions use the same rule.
+  const graphTwins = useCallback(
+    (physical: string, agent: string) =>
+      pipelineGraph?.nodes.filter((n) => physicalOf(n) === physical && resolveAgentType(n.agent_type) === resolveAgentType(agent)) ?? [],
+    [pipelineGraph],
+  );
   const selectedNodeId = useMemo(() => {
     if (!selectedRun || !pipelineGraph) return null;
-    return pipelineGraph.nodes.find((n) => physicalOf(n) === selectedRun.node)?.node_id ?? null;
-  }, [selectedRun, pipelineGraph]);
+    const own = /^(?:pending|node):(.+)$/.exec(selectedRun.runId);
+    if (own) return own[1];
+    const twins = graphTwins(selectedRun.node, selectedRun.agent);
+    return twins.length === 1 ? twins[0].node_id : null;
+  }, [selectedRun, pipelineGraph, graphTwins]);
   const handleNodeSelect = useCallback(
     (nodeId: string | null) => {
-      if (!nodeId || !pipelineGraph) { setSelectedRunId(null); return; }
-      const node = pipelineGraph.nodes.find((n) => n.node_id === nodeId);
-      const physical = node ? physicalOf(node) : nodeId;
-      const run = [...agents].reverse().find((a) => a.node === physical);
+      const node = nodeId ? pipelineGraph?.nodes.find((n) => n.node_id === nodeId) : undefined;
+      if (!node) { setSelectedRunId(null); return; }
+      const own = agents.find((a) => a.runId === `node:${node.node_id}` || a.runId === `pending:${node.node_id}`);
+      if (own) { setSelectedRunId(own.runId); return; }
+      const physical = physicalOf(node);
+      if (graphTwins(physical, node.agent_type).length !== 1) { setSelectedRunId(null); return; }
+      const run = [...agents].reverse().find((a) => a.node === physical && resolveAgentType(a.agent) === resolveAgentType(node.agent_type));
       setSelectedRunId(run?.runId ?? null);
     },
-    [agents, pipelineGraph],
+    [agents, pipelineGraph, graphTwins],
   );
   const recordEvents = useMemo(() => {
     if (!selectedRun) return events;
@@ -96,10 +114,23 @@ export function JobDetailPage() {
 
   const { data: qaAttempts } = useQaAttempts(jobId ?? "", live);
   const hasQa = events.some((e) => e.type === "qa_apps_resolved") || (qaAttempts?.length ?? 0) > 0;
-  const { data: verification } = useJobVerification(jobId, live);
-  const hasVerification = !!verification || events.some((e) => e.type === "verification_result");
+  const verificationSeen = events.some((e) => e.type === "verification_result");
+  const { data: verification, refetch: refetchVerification } = useJobVerification(jobId, { live, resultSeen: verificationSeen });
+  const hasVerification = !!verification || verificationSeen;
+  // The verify node emits verification_result before it writes the row, and a
+  // job can turn terminal inside one poll interval: fetch the row on the
+  // event's rising edge and once when the job stops being live, not on every
+  // event batch that follows.
+  const prevVerificationSeen = useRef(verificationSeen);
+  const prevLive = useRef(live);
+  useEffect(() => {
+    const rose = verificationSeen && !prevVerificationSeen.current;
+    const ended = prevLive.current && !live;
+    prevVerificationSeen.current = verificationSeen;
+    prevLive.current = live;
+    if (rose || ended) refetchVerification();
+  }, [verificationSeen, live, refetchVerification]);
 
-  const elapsed = useElapsedTime(job?.started_at ?? null, job?.finished_at ?? null);
   // Cost sources disagree by design: the stream-derived sums only cover agents
   // whose events this viewer received; job.total_cost_usd is the persisted
   // truth and trails only the running agent. Take whichever is highest.
@@ -163,7 +194,7 @@ export function JobDetailPage() {
       <PartyStrip agents={agents} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />
 
       {/* 3. HUD */}
-      <JobHud status={job.status} elapsed={elapsed} costUsd={displayCost} turns={latestTurns} tokensIn={latestTokensIn} tokensOut={latestTokensOut} budgetUsd={budgetUsd} />
+      <JobHud status={job.status} startedAt={job.started_at ?? null} finishedAt={job.finished_at ?? null} costUsd={displayCost} turns={latestTurns} tokensIn={latestTokensIn} tokensOut={latestTokensOut} budgetUsd={budgetUsd} />
 
       {/* 4. Banners */}
       {job.status === "completed" && (
@@ -216,7 +247,13 @@ export function JobDetailPage() {
             {hasQa && <TabsContent value="qa"><QATab jobId={job.job_id} jobIsLive={job.status === "running"} /></TabsContent>}
             {hasVerification && (
               <TabsContent value="verification">
-                {verification ? <VerificationTab verification={verification} /> : <p className="text-sm text-muted-foreground">The verification result is being recorded…</p>}
+                {verification ? (
+                  <VerificationTab verification={verification} />
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {jobFinished ? "No verification report was stored for this job." : "The verification result is being recorded…"}
+                  </p>
+                )}
               </TabsContent>
             )}
           </Tabs>
@@ -241,7 +278,7 @@ export function JobDetailPage() {
         </div>
       )}
 
-      <TranscriptDrawer open={drawerRun !== null} onClose={() => setDrawerRun(null)} jobId={job.job_id} agentType={drawerRun?.agent ?? null} displayName={drawerIdentity.displayName} />
+      <TranscriptDrawer open={drawerRun !== null} onClose={() => setDrawerRun(null)} jobId={job.job_id} agentType={drawerRun ? sessionAgentType(drawerRun.agent) : null} displayName={drawerIdentity.displayName} />
     </div>
   );
 }

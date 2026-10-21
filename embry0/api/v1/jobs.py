@@ -1,14 +1,16 @@
 """Jobs API — create, list, get, cancel jobs."""
 
 import json
+import os
 import uuid
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from embry0.api.deps import get_jobs_repo, request_actor
+from embry0.api.deps import get_jobs_repo, request_actor, require_operator
 from embry0.api.repo_allowlist import enforce_repo_allowlist, refusal_detail
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
 from embry0.api.schemas.jobs import JobResumeRequest
@@ -17,6 +19,8 @@ from embry0.safety.redaction import redact_event, secret_env_values
 from embry0.services.answer_recorder import record_answer
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.repos import UnregisteredRepoError
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -382,11 +386,46 @@ async def get_job_verification(job_id: str, request: Request) -> dict[str, Any]:
     return row
 
 
-@router.get("/jobs/{job_id}/agents/{agent_type}/session")
+async def _job_scrub_values(request: Request, job_id: str) -> list[str]:
+    """The values a transcript of this job is scrubbed with: the registry and
+    this process's secret-looking env vars, plus the job's own env vars as the
+    sandbox had them. The sandbox scrubbed the event stream with
+    ``secret_env_values()`` over an environment that held the job's decrypted
+    env vars (embry0/sandbox/runner.py); the stored messages never passed
+    through that, so the route rebuilds that environment with the
+    orchestrator's own loader and adds every secret-typed value outright. A
+    job or repo that cannot be resolved scrubs with what the process has."""
+    executor = getattr(request.app.state, "issue_executor", None)
+    jobs = getattr(request.app.state, "jobs_repo", None)
+    rows: list[dict[str, Any]] | None = None
+    if executor is not None and jobs is not None:
+        try:
+            job = await jobs.get(job_id)
+            repo_name = job.get("repo") if job else None
+            if repo_name:
+                rows = await executor._load_merged_env_vars(repo_name, job_id)
+            else:
+                logger.debug("session_scrub_repo_unresolved", job_id=job_id)
+        except Exception:
+            logger.debug("session_scrub_env_vars_unavailable", job_id=job_id, exc_info=True)
+    environ = dict(os.environ)
+    secret_typed: list[str] = []
+    for row in rows or []:
+        environ[str(row["key"])] = str(row["value"])
+        if row.get("var_type") == "secret":
+            secret_typed.append(str(row["value"]))
+    return secret_env_values(environ, extra=secret_typed)
+
+
+@router.get("/jobs/{job_id}/agents/{agent_type}/session", dependencies=[require_operator])
 async def get_agent_session(job_id: str, agent_type: str, request: Request) -> Response:
-    """The stored conversation of one agent run (``agent_sessions.messages``),
-    every message passed through :func:`redact_event`. 204 when the row holds
-    only a CLI ``session_blob`` (not exposed), 404 when there is no row."""
+    """The stored conversation of one agent for this job (``agent_sessions``
+    is one row per job and agent type, its ``messages`` merged across the
+    agent's runs), every message passed through :func:`redact_event`. 204 when
+    the row holds only a CLI ``session_blob`` (not exposed), 404 when there is
+    no row. Operator tier: a transcript shows what the agent saw in the
+    sandbox, scrubbed after the fact, where the event stream was scrubbed as
+    it was written; a read key gets 403."""
     repo = getattr(request.app.state, "agent_sessions_repo", None)
     row = await repo.get(job_id, agent_type) if repo is not None else None
     if row is None:
@@ -394,7 +433,7 @@ async def get_agent_session(job_id: str, agent_type: str, request: Request) -> R
     messages = _as_object(row.get("messages"))
     if not messages:
         return Response(status_code=204)
-    known = secret_env_values()
+    known = await _job_scrub_values(request, job_id)
     last_turn_at = row.get("last_turn_at")
     return JSONResponse(
         {
@@ -403,7 +442,8 @@ async def get_agent_session(job_id: str, agent_type: str, request: Request) -> R
             "mode": row.get("mode"),
             "session_id": row.get("session_id"),
             "last_turn_at": last_turn_at.isoformat() if hasattr(last_turn_at, "isoformat") else last_turn_at,
-            "messages": [redact_event(m, known) if isinstance(m, dict) else m for m in messages],
+            # Wrapped so a plain-string message is scrubbed like a dict's values.
+            "messages": [redact_event({"m": m}, known)["m"] for m in messages],
         }
     )
 

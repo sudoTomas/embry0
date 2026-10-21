@@ -12,10 +12,15 @@ import type { LogEvent } from "@/lib/types";
 import { Sprite } from "@/components/roster";
 import { useIdentityLookup } from "@/hooks/useAgentIdentity";
 import type { AgentIdentity } from "@/lib/agentIdentity";
+import { sessionAgentType } from "@/lib/agentSession";
 
 interface ConversationViewProps {
   events: LogEvent[];
-  /** Offered on a run's divider when the run finished and the stream truncated some of its events. */
+  /**
+   * Offered on the divider of an agent's latest finished run when the stream
+   * truncated events of any of that agent's finished runs: the stored session
+   * is one per job and agent type, merged across that agent's runs.
+   */
   onFullTranscript?: (run: { runId: string; agent: string }) => void;
 }
 
@@ -77,12 +82,14 @@ export function ConversationView({ events, onFullTranscript }: ConversationViewP
   // Group events into turns: turn_start opens one for its run, and the
   // thinking, text, tool_call and tool_result events of that run go into it.
   // A tool_result joins the turn that holds its tool_call. Alongside, the
-  // runs that finished and the runs the stream truncated, for the divider's
-  // full-transcript offer.
-  const { turns, finishedRuns, truncatedRuns } = useMemo(() => {
+  // runs offered a stored session: the latest finished run of each agent one
+  // of whose finished runs the stream truncated (the session row is per
+  // agent, not per run).
+  const { turns, offeredRuns } = useMemo(() => {
     const result: ConversationTurn[] = [];
     const finishedRuns = new Set<string>();
     const truncatedRuns = new Set<string>();
+    const agentByRun = new Map<string, string>();
     const currentByRun = new Map<string, ConversationTurn>();
     const turnByToolId = new Map<string, ConversationTurn>();
 
@@ -99,6 +106,7 @@ export function ConversationView({ events, onFullTranscript }: ConversationViewP
       };
       result.push(turn);
       currentByRun.set(event.run_id ?? "", turn);
+      if (event.run_id && event.agent) agentByRun.set(event.run_id, event.agent);
       return turn;
     };
     const turnFor = (event: LogEvent) => currentByRun.get(event.run_id ?? "") ?? open(event, null);
@@ -150,7 +158,18 @@ export function ConversationView({ events, onFullTranscript }: ConversationViewP
       }
       previousRunId = turn.runId;
     }
-    return { turns: result, finishedRuns, truncatedRuns };
+
+    // finishedRuns iterates in completion order, so the last write per agent wins.
+    const latestFinishedByAgent = new Map<string, string>();
+    const truncatedAgents = new Set<string>();
+    for (const runId of finishedRuns) {
+      const agent = agentByRun.get(runId);
+      if (!agent) continue;
+      latestFinishedByAgent.set(sessionAgentType(agent), runId);
+      if (truncatedRuns.has(runId)) truncatedAgents.add(sessionAgentType(agent));
+    }
+    const offeredRuns = new Set([...truncatedAgents].map((agent) => latestFinishedByAgent.get(agent)!));
+    return { turns: result, offeredRuns };
   }, [events]);
 
   const hasMore = turnsShown < turns.length;
@@ -197,8 +216,7 @@ export function ConversationView({ events, onFullTranscript }: ConversationViewP
           key={turns.length - visibleTurns.length + i}
           turn={turn}
           identityFor={identityFor}
-          finishedRuns={finishedRuns}
-          truncatedRuns={truncatedRuns}
+          offeredRuns={offeredRuns}
           onFullTranscript={onFullTranscript}
         />
       ))}
@@ -209,14 +227,12 @@ export function ConversationView({ events, onFullTranscript }: ConversationViewP
 function TurnCard({
   turn,
   identityFor,
-  finishedRuns,
-  truncatedRuns,
+  offeredRuns,
   onFullTranscript,
 }: {
   turn: ConversationTurn;
   identityFor: (type: string) => AgentIdentity;
-  finishedRuns: Set<string>;
-  truncatedRuns: Set<string>;
+  offeredRuns: Set<string>;
   onFullTranscript?: (run: { runId: string; agent: string }) => void;
 }) {
   return (
@@ -231,7 +247,7 @@ function TurnCard({
             {turn.divider}
             {turn.agent && <span className="ml-1.5" style={{ color: identityFor(turn.agent).hex }}>{identityFor(turn.agent).displayName}</span>}
           </span>
-          {turn.runId && turn.agent && onFullTranscript && finishedRuns.has(turn.runId) && truncatedRuns.has(turn.runId) && (
+          {turn.runId && turn.agent && onFullTranscript && offeredRuns.has(turn.runId) && (
             <button type="button" onClick={() => onFullTranscript({ runId: turn.runId!, agent: turn.agent! })} className="text-xs underline text-muted-foreground hover:text-foreground">
               Full transcript
             </button>
@@ -338,8 +354,9 @@ function ThinkingBlockView({ thinking }: { thinking: string }) {
 
 function ToolUseBlockView({ block }: { block: ConversationToolUseBlock }) {
   const [expanded, setExpanded] = useState(false);
-  const jsonInput = JSON.stringify(block.input, null, 2);
-  const segments = highlightJson(jsonInput);
+  // Computed once per input: the page re-renders on every stream batch, and a
+  // collapsed block must not re-stringify and re-highlight each time.
+  const segments = useMemo(() => highlightJson(JSON.stringify(block.input, null, 2)), [block.input]);
 
   return (
     <div className="border border-primary/30 rounded-md">
