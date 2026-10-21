@@ -9,7 +9,10 @@ whether a merge may happen lives in
 only translates.
 
 A ``merge``-scope key — the one the relay holds — may call ``decide`` but no
-other mutation; that restriction is enforced in ``embry0.api.deps``.
+other mutation; that restriction is enforced in ``embry0.api.deps``. The
+relay's form in turn is accepted only from that key, the master key or an
+admin: it names the person who answered, so anyone else who could send it
+would be attributing a decision to a name of their choosing.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from typing import Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from embry0.api.deps import ensure_admin, request_actor
+from embry0.api.deps import TIER_MERGE, ensure_admin, request_actor
 from embry0.api.repo_allowlist import enforce_repo_allowlist, restricted_key_name
 from embry0.audit.helpers import emit_audit
 from embry0.services.merge_approvals import DASHBOARD_CHANNEL, DecisionRefused, MergeApprovalService
@@ -42,6 +45,28 @@ class DecideBody(BaseModel):
     chat_id: str | None = Field(
         default=None, min_length=1, max_length=300, description="the chat the answer came from (the relay's form)"
     )
+
+
+RELAY_FORM_REFUSED = 'the relay\'s form is for the merge key; decide from the dashboard with {"decision"} instead'
+
+
+async def _ensure_relay(request: Request) -> None:
+    """The relay's form is for the merge-scope key, the master key or an admin.
+
+    The merge key is read off the principal the router's auth resolved for
+    this request; every other caller gets the admin gate's answer, with a
+    detail that points at the dashboard's form instead. Under AUTH_DEV_MODE
+    the admin gate admits, as every gate does.
+    """
+    principal = getattr(request.state, "principal", None)
+    if principal is not None and principal.tier == TIER_MERGE:
+        return
+    try:
+        await ensure_admin(request)
+    except HTTPException as refused:
+        if refused.status_code != 403:
+            raise
+        raise HTTPException(status_code=403, detail=RELAY_FORM_REFUSED) from None
 
 
 def _service(request: Request) -> MergeApprovalService:
@@ -94,6 +119,8 @@ async def decide_merge_approval(approval_id: str, body: DecideBody, request: Req
         await ensure_admin(request)
         via, decided_by, chat_id = "dashboard", request_actor(request), DASHBOARD_CHANNEL
     else:
+        # The relay's form: the relay's key, or an admin standing in for it.
+        await _ensure_relay(request)
         via, decided_by, chat_id = "chat", body.decided_by, body.chat_id
     if restricted_key_name(request) is not None:
         # Only a restricted key pays for the extra read; an unknown id falls

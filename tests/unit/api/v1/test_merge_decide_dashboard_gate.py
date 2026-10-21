@@ -162,13 +162,36 @@ async def test_an_operator_session_cannot_decide_from_the_dashboard(app):
     app.state.merge_approvals.decide.assert_not_awaited()
 
 
-async def test_the_relay_form_still_works_for_the_merge_key(app):
-    resp = await _decide(
-        app, "emb_merge", {"decision": "approve", "decided_by": "Alex", "chat_id": "19:chat@thread.v2"}
-    )
+RELAY_BODY = {"decision": "approve", "decided_by": "Alex", "chat_id": "19:chat@thread.v2"}
+RELAY_REFUSED = 'the relay\'s form is for the merge key; decide from the dashboard with {"decision"} instead'
+
+
+# The relay's form names the person who answered, so whoever may send it can
+# attribute a decision to anyone and route it past the dashboard's admin gate
+# as a chat answer. It is accepted from the relay's own key, the master key or
+# an admin, and from nobody the router otherwise lets mutate.
+@pytest.mark.parametrize("token", ["emb_merge", "master-key", "emb_admin"])
+async def test_the_relay_form_still_works_for_the_merge_key_and_an_admin(app, token):
+    resp = await _decide(app, token, RELAY_BODY)
     assert resp.status_code == 200, resp.text
     kwargs = app.state.merge_approvals.decide.await_args.kwargs
     assert (kwargs["via"], kwargs["decided_by"], kwargs["chat_id"]) == ("chat", "Alex", "19:chat@thread.v2")
+
+
+async def test_an_operator_session_cannot_use_the_relay_form(app):
+    resp = await _decide_as_session(app, "operator", RELAY_BODY)
+    assert resp.status_code == 403, (
+        f"an operator session decided through the relay's form: {resp.status_code} {resp.text}"
+    )
+    assert resp.json()["detail"] == RELAY_REFUSED
+    app.state.merge_approvals.decide.assert_not_awaited()
+
+
+async def test_an_operate_key_cannot_use_the_relay_form(app):
+    resp = await _decide(app, "emb_operate", RELAY_BODY)
+    assert resp.status_code == 403, f"an operate key decided through the relay's form: {resp.status_code} {resp.text}"
+    assert resp.json()["detail"] == RELAY_REFUSED
+    app.state.merge_approvals.decide.assert_not_awaited()
 
 
 async def test_no_credentials_is_401(app):

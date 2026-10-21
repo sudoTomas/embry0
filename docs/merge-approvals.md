@@ -94,7 +94,7 @@ prefix and all (`embry0/api/deps.py:MERGE_SCOPE_MUTATIONS`, read through
 - `GET /api/v1/merge-approvals/{id}`
 - `POST /api/v1/merge-approvals/{id}/decide`, two forms on one route →
   `{outcome: merged|would_merge|rejected|refused|stale|failed|already_decided, status, detail, …}`:
-  - the relay's: `{decision: approve|reject, decided_by, chat_id}`, with `chat_id` checked against `MERGE_APPROVAL_CHAT_ID`;
+  - the relay's: `{decision: approve|reject, decided_by, chat_id}`, with `chat_id` checked against `MERGE_APPROVAL_CHAT_ID`; accepted from the `merge`-scope key, the master key or an admin, since `decided_by` names whoever answered (an operate key or an operator session gets 403 pointing at the dashboard's form);
   - the dashboard's: `{decision}` alone, admin tier (an admin session or an admin-scope key); the actor is who authenticated, the stored `chat_id` is the literal `dashboard`, and no chat needs to be configured.
   A body with one of `decided_by` and `chat_id` but not the other is 422.
   Each decision writes a `merge.decided` audit row carrying `via` (`chat` or `dashboard`).
@@ -114,6 +114,8 @@ cannot use this form: it is the relay's key, and the relay answers for a chat.
 
 1. Deploy with `MERGE_APPROVAL_MODE=dry_run` and `MERGE_APPROVAL_CHAT_ID` set.
 2. Mint a `merge`-scope service key for that client and swap it in for the operate key.
+   The relay cannot decide until it holds that key: the relay's form is refused
+   to an operate key with a 403 that points at the dashboard's form.
 3. Watch a few asks and "would merge" answers in the chat.
 4. Set `MERGE_APPROVAL_MODE=on` in the root `.env` and recreate the orchestrator.
    The token for the repo's owner (`GITHUB_TOKEN__<OWNER>`) needs pull-request
