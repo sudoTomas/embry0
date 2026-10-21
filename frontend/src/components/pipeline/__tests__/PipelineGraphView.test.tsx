@@ -36,6 +36,12 @@ describe("buildFlowData", () => {
     expect(nodes.find((n) => n.id === "d")!.data).toMatchObject({ state: "pending", costUsd: 0, turns: 0, iteration: 1 });
   });
 
+  it("marks the selected node", () => {
+    const { nodes } = buildFlowData(graph, {}, "d");
+    expect(nodes.find((n) => n.id === "d")!.selected).toBe(true);
+    expect(nodes.find((n) => n.id === "s")!.selected, "sentinels are never selected").toBeFalsy();
+  });
+
   it("carries the states derived from the issue-to-pr fixture", () => {
     const events = loadFixture("issue-to-pr");
     const graphEvent = events.find((e) => e.type === "pipeline_graph");
