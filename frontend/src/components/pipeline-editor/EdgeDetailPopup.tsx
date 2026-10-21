@@ -69,7 +69,7 @@ export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProp
     <Dialog
       onClose={onClose}
       label={`${isFeedback ? "Feedback loop" : "Flow edge"} from ${edge.source} to ${edge.target}`}
-      className={cn("w-[400px]", isFeedback ? "border-destructive/20" : "border-white/[0.08]")}
+      className={cn("max-w-[400px]", isFeedback ? "border-destructive/20" : "border-white/[0.08]")}
     >
       {/* Header */}
       <div className="p-5 pb-4 border-b border-white/[0.06] flex items-start justify-between gap-3">

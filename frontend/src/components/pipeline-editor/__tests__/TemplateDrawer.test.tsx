@@ -9,6 +9,7 @@ const TEMPLATES = [
 let askedFor: string | null = null;
 const rename = vi.fn();
 const remove = vi.fn();
+const create = vi.fn();
 vi.mock("@/hooks/usePipelines", () => ({
   useTemplates: () => ({ data: TEMPLATES, isLoading: false }),
   useTemplate: (id: string | null) => {
@@ -16,17 +17,23 @@ vi.mock("@/hooks/usePipelines", () => ({
     return { data: undefined };
   },
   useRenameTemplate: () => ({ mutate: rename, isPending: false }),
-  useCreateTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateTemplate: () => ({ mutate: create, isPending: false }),
   useDeleteTemplate: () => ({ mutate: remove, isPending: false }),
 }));
 vi.mock("@/api/pipelines", () => ({ fetchTemplate: vi.fn() }));
+vi.mock("@/api/errorToast", () => ({ toastApiError: vi.fn() }));
 
+import { fetchTemplate } from "@/api/pipelines";
+import { toastApiError } from "@/api/errorToast";
 import { TemplateDrawer } from "../TemplateDrawer";
 
 beforeEach(() => {
   askedFor = null;
   rename.mockReset();
   remove.mockReset();
+  create.mockReset();
+  vi.mocked(fetchTemplate).mockReset();
+  vi.mocked(toastApiError).mockReset();
 });
 
 describe("TemplateDrawer", () => {
@@ -35,6 +42,7 @@ describe("TemplateDrawer", () => {
     const dialog = screen.getByRole("dialog", { name: "Templates" });
     expect(dialog).toHaveClass("dialog-in-left");
     expect(dialog).not.toHaveClass("animate-in");
+    expect(dialog, "a flex column, so the header stays while the list scrolls").toHaveClass("flex", "flex-col");
     expect(screen.getByText("quick-fix")).toBeInTheDocument();
   });
 
@@ -75,6 +83,21 @@ describe("TemplateDrawer", () => {
     await user.clear(field);
     await user.type(field, "quick-fix-2{Enter}");
     expect(rename).toHaveBeenCalledWith({ templateId: "t1", name: "quick-fix-2" }, expect.anything());
+  });
+
+  it("tells the person when the template to duplicate cannot be fetched", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchTemplate).mockRejectedValueOnce(new Error("offline"));
+    render(<TemplateDrawer onSelect={vi.fn()} onClose={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Actions for quick-fix" }));
+    await user.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+    await waitFor(() =>
+      expect(toastApiError, "a failed fetch is a toast, not an unhandled rejection").toHaveBeenCalledWith(
+        expect.any(Error),
+        "Failed to duplicate",
+      ),
+    );
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("deletes after asking", async () => {

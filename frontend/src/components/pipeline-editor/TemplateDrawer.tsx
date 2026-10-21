@@ -69,7 +69,13 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
 
   const handleDuplicate = async (t: PipelineTemplateSummary) => {
     // Fetch the full template to get its graph for duplication
-    const full = await fetchTemplate(t.template_id);
+    let full: PipelineTemplate;
+    try {
+      full = await fetchTemplate(t.template_id);
+    } catch (e) {
+      toastApiError(e, "Failed to duplicate");
+      return;
+    }
     createMutation.mutate(
       { name: `${t.name} (copy)`, description: t.description, graph: full.graph },
       { onError: (e) => toastApiError(e, "Failed to duplicate") },
@@ -82,7 +88,7 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
   };
 
   return (
-    <Dialog onClose={onClose} title="Templates" side="left" className="w-[260px] max-w-[85vw]">
+    <Dialog onClose={onClose} title="Templates" side="left" className="w-[260px] max-w-[85vw] flex flex-col">
       <div className="flex-1 space-y-1 overflow-y-auto p-2">
         {isLoading && <div className="text-xs text-white/30 p-3">Loading templates...</div>}
         {!isLoading && (!templates || templates.length === 0) && (
@@ -119,7 +125,7 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
                 <span className="truncate text-xs font-medium text-white/80">{t.name}</span>
                 <Menu
                   label={`Actions for ${t.name}`}
-                  triggerClassName="opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 group-focus-within:opacity-100"
+                  triggerClassName="opacity-0 transition-opacity motion-reduce:transition-none group-hover:opacity-100 focus:opacity-100 group-focus-within:opacity-100"
                   items={[
                     { label: "Rename", icon: <Pencil size={11} />, onSelect: () => handleRenameStart(t) },
                     { label: "Duplicate", icon: <Copy size={11} />, onSelect: () => void handleDuplicate(t) },

@@ -281,7 +281,7 @@ export function AgentDetailPopup({
     <Dialog
       onClose={onClose}
       labelledBy={titleId}
-      className="w-[560px]"
+      className="max-w-[560px]"
       style={{ border: `1px solid ${color}33` }}
     >
       {/* -------- Header -------- */}

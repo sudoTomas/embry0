@@ -41,6 +41,17 @@ describe("pipeline editor popup entrance", () => {
     expect(inlineAnimations()).toEqual([]);
   });
 
+  it("widens each popup with a max-w-* class, since the panel is w-full under max-w-lg", () => {
+    render(<AgentDetailPopup node={node} onUpdate={() => {}} onClose={() => {}} />);
+    const agent = screen.getByRole("dialog", { name: "Developer" });
+    expect(agent, "a w-[560px] loses to Dialog's max-w-lg; max-w-[560px] replaces it").toHaveClass("max-w-[560px]");
+    expect(agent).not.toHaveClass("max-w-lg");
+    render(<EdgeDetailPopup edge={edge} onUpdate={() => {}} onClose={() => {}} />);
+    const edgeDialog = screen.getByRole("dialog", { name: "Flow edge from triage to developer" });
+    expect(edgeDialog).toHaveClass("max-w-[400px]");
+    expect(edgeDialog).not.toHaveClass("max-w-lg");
+  });
+
   it("left no entrance of its own behind in index.css", () => {
     expect(css, "the pipeline-popup-in keyframes went with the hand-rolled shells").not.toContain("pipeline-popup-in");
   });
