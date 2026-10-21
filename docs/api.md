@@ -63,6 +63,13 @@ curl http://localhost:8200/api/v1/jobs/{job_id}/qa/attempts
 curl http://localhost:8200/api/v1/jobs/{job_id}/qa/attempts/1/result
 curl http://localhost:8200/api/v1/jobs/{job_id}/artifacts/screenshots/latest
 curl "http://localhost:8200/api/v1/jobs/{job_id}/artifacts/logs/gateway?follow=true"
+
+# The job's verification result (docs/verification.md): 404 when the verify node never ran.
+curl http://localhost:8200/api/v1/jobs/{job_id}/verification
+
+# One agent's stored conversation for the job, secrets redacted: 204 when only a CLI
+# session blob is stored, 404 when the agent kept no session.
+curl http://localhost:8200/api/v1/jobs/{job_id}/agents/developer/session
 ```
 
 ## Runtime configuration
