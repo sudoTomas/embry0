@@ -13,7 +13,6 @@ const state = vi.hoisted(() => ({
   attempts: [] as unknown[],
   refetch: vi.fn(),
   refetchInputs: vi.fn(),
-  graphProps: [] as unknown[],
 }));
 
 vi.mock("@/hooks/useJobs", () => ({
@@ -45,10 +44,9 @@ vi.mock("@/api/jobs", () => ({
   fetchAgentSession: vi.fn().mockResolvedValue({ job_id: "j1", agent_type: "developer", mode: "anthropic_api", session_id: null, last_turn_at: null, messages: [{ role: "user", content: "the untruncated text" }] }),
 }));
 vi.mock("@/components/pipeline/PipelineGraphView", () => ({
-  PipelineGraphView: (props: Record<string, unknown>) => {
-    state.graphProps.push(props);
-    return <div data-testid="party-map" data-selected={(props.selectedNodeId as string) ?? ""} />;
-  },
+  PipelineGraphView: (props: Record<string, unknown>) => (
+    <div data-testid="party-map" data-selected={(props.selectedNodeId as string) ?? ""} />
+  ),
 }));
 vi.mock("@/components/qa/QATab", () => ({ QATab: () => <div data-testid="qa-tab" /> }));
 vi.mock("@/components/jobs/DeliverablesCard", () => ({ DeliverablesCard: () => null }));
@@ -66,7 +64,8 @@ function job(over: Record<string, unknown> = {}) {
 
 function mount(path = "/jobs/j1") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  // A factory, not one element: React skips a subtree handed the same element object, so a rerender needs a fresh tree.
+  const ui = () => (
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
@@ -74,8 +73,9 @@ function mount(path = "/jobs/j1") {
           <Route path="/jobs/:jobId/logs" element={<JobLogsPageRedirect />} />
         </Routes>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  return { ...render(ui()), ui };
 }
 
 function use(fixture: FixtureName, extra: LogEvent[] = []) {
@@ -86,7 +86,6 @@ beforeEach(() => {
   state.job = job();
   state.verification = null;
   state.attempts = [];
-  state.graphProps = [];
   state.refetch.mockReset();
   state.refetchInputs.mockReset();
   use("issue-to-pr");
@@ -131,14 +130,24 @@ describe("JobDetailPage", () => {
     expect(screen.getByTestId("selected-run").getAttribute("data-run-id")).toBe(runId);
   });
 
-  it("selecting a run without a graph node filters the transcript and highlights no node", async () => {
-    use("legacy-rows");
+  it("selecting a run without a graph node filters the transcript and highlights no node", () => {
+    // A graph is present, but this run's node is not one of its nodes.
+    const ghost = { run_id: "run-ghost", node: "ghost", agent: "developer", timestamp: "2026-01-01T00:01:00Z" };
+    use("issue-to-pr", [
+      { type: "agent_started", ...ghost, model: "m", max_turns: 1 } as LogEvent,
+      { type: "turn_start", ...ghost, turn_number: 1 } as LogEvent,
+      { type: "text", ...ghost, text: "the ghost speaks" } as LogEvent,
+      { type: "agent_completed", ...ghost, is_error: false, error_code: null, error_message: "", output: "", cost_usd: 0, duration_ms: 0, input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, policy_denials: {}, tools_called: [] } as unknown as LogEvent,
+    ]);
     state.job = job({ status: "completed" });
     mount();
-    const buttons = within(screen.getByTestId("party-strip")).getAllByRole("button");
-    fireEvent.click(buttons[0]);
-    expect(screen.getByTestId("selected-run")).toBeTruthy();
-    expect(screen.queryByTestId("party-map"), "no graph, no map").toBeNull();
+    const button = within(screen.getByTestId("party-strip")).getAllByRole("button").find((b) => b.getAttribute("data-run-id") === "run-ghost")!;
+    fireEvent.click(button);
+    expect(screen.getByTestId("selected-run").getAttribute("data-run-id")).toBe("run-ghost");
+    expect(screen.getByTestId("party-map").getAttribute("data-selected"), "no graph node carries this run").toBe("");
+    expect(screen.getAllByTestId("run-divider").length, "the record shows this run alone").toBe(1);
+    expect(screen.getAllByText("the ghost speaks").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Routing to developer then reviewer."), "another run's text is filtered out").toBeNull();
   });
 
   it("a legacy job shows the strip and hides the map", () => {
@@ -193,6 +202,18 @@ describe("JobDetailPage", () => {
     mount();
     expect(state.refetch, "the banner must not wait for the 10 s poll").toHaveBeenCalled();
     expect(state.refetchInputs).toHaveBeenCalled();
+  });
+
+  it("refetches on the interrupt itself, not on every event batch that follows it", () => {
+    const events = loadFixture("issue-to-pr"); // carries one interrupt
+    state.events = events;
+    const { rerender, ui } = mount();
+    const calls = state.refetch.mock.calls.length;
+    expect(calls, "the interrupt refreshes the job row").toBeGreaterThan(0);
+    state.events = [...events, { type: "text", run_id: "run-fixture-4", node: "review", agent: "reviewer", text: "later", timestamp: "2026-01-01T00:01:00Z" } as LogEvent];
+    rerender(ui());
+    expect(state.refetch.mock.calls.length, "a later event batch must not refetch again").toBe(calls);
+    expect(state.refetchInputs.mock.calls.length).toBe(calls);
   });
 
   it("the ledger is collapsed and holds the traces table", () => {

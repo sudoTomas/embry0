@@ -82,10 +82,13 @@ export function JobDetailPage() {
   const drawerIdentity = useAgentIdentity(drawerRun?.agent);
 
   // Banners fed by the stream, not only the poll: a pause or interrupt the WS
-  // carried refreshes the job row and its inputs at once.
+  // carried refreshes the job row and its inputs at once. Keyed on booleans:
+  // interruptData is rebuilt with every event batch, and keying on the object
+  // would refetch on each batch after the interrupt, not on the interrupt.
+  const interrupted = interruptData !== null;
   useEffect(() => {
-    if (pausedForInput || interruptData) { refetch(); refetchInputs(); }
-  }, [pausedForInput, interruptData, refetch, refetchInputs]);
+    if (pausedForInput || interrupted) { refetch(); refetchInputs(); }
+  }, [pausedForInput, interrupted, refetch, refetchInputs]);
 
   const [traceFilters, setTraceFilters] = useState<{ agent_type?: string; result?: string }>({});
   const [traceOffset, setTraceOffset] = useState(0);
