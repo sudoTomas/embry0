@@ -18,6 +18,7 @@ import { useJobVerification } from "@/hooks/useJobVerification";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { deriveNodeStates, filterEventsForNode, physicalOf } from "@/lib/pipeline-live";
 import { sessionAgentType } from "@/lib/agentSession";
+import { resolveAgentType } from "@/lib/agentIdentity";
 import { isTerminalStatus } from "@/lib/jobStatus";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
 import { AwaitingInputCard } from "@/components/jobs/AwaitingInputCard";
@@ -56,19 +57,36 @@ export function JobDetailPage() {
   // The run is the unit of selection: the strip, the map and the Conversation tab share it.
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const selectedRun = agents.find((a) => a.runId === selectedRunId) ?? null;
+  // A run and a graph node correspond when they share the physical node and
+  // the agent type; a card the graph itself produced (`pending:` / `node:`)
+  // names its node. Two steps of one agent type on one physical node (two
+  // research steps on generic_agent) cannot be told apart from the events, so
+  // neither direction picks one: the map highlights nothing, a node click
+  // selects no run. Both directions use the same rule.
+  const graphTwins = useCallback(
+    (physical: string, agent: string) =>
+      pipelineGraph?.nodes.filter((n) => physicalOf(n) === physical && resolveAgentType(n.agent_type) === resolveAgentType(agent)) ?? [],
+    [pipelineGraph],
+  );
   const selectedNodeId = useMemo(() => {
     if (!selectedRun || !pipelineGraph) return null;
-    return pipelineGraph.nodes.find((n) => physicalOf(n) === selectedRun.node)?.node_id ?? null;
-  }, [selectedRun, pipelineGraph]);
+    const own = /^(?:pending|node):(.+)$/.exec(selectedRun.runId);
+    if (own) return own[1];
+    const twins = graphTwins(selectedRun.node, selectedRun.agent);
+    return twins.length === 1 ? twins[0].node_id : null;
+  }, [selectedRun, pipelineGraph, graphTwins]);
   const handleNodeSelect = useCallback(
     (nodeId: string | null) => {
-      if (!nodeId || !pipelineGraph) { setSelectedRunId(null); return; }
-      const node = pipelineGraph.nodes.find((n) => n.node_id === nodeId);
-      const physical = node ? physicalOf(node) : nodeId;
-      const run = [...agents].reverse().find((a) => a.node === physical);
+      const node = nodeId ? pipelineGraph?.nodes.find((n) => n.node_id === nodeId) : undefined;
+      if (!node) { setSelectedRunId(null); return; }
+      const own = agents.find((a) => a.runId === `node:${node.node_id}` || a.runId === `pending:${node.node_id}`);
+      if (own) { setSelectedRunId(own.runId); return; }
+      const physical = physicalOf(node);
+      if (graphTwins(physical, node.agent_type).length !== 1) { setSelectedRunId(null); return; }
+      const run = [...agents].reverse().find((a) => a.node === physical && resolveAgentType(a.agent) === resolveAgentType(node.agent_type));
       setSelectedRunId(run?.runId ?? null);
     },
-    [agents, pipelineGraph],
+    [agents, pipelineGraph, graphTwins],
   );
   const recordEvents = useMemo(() => {
     if (!selectedRun) return events;

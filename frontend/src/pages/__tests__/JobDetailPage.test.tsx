@@ -48,8 +48,10 @@ vi.mock("@/api/jobs", () => ({
   fetchAgentSession: vi.fn().mockResolvedValue({ job_id: "j1", agent_type: "developer", mode: "anthropic_api", session_id: null, last_turn_at: null, messages: [{ role: "user", content: "the untruncated text" }] }),
 }));
 vi.mock("@/components/pipeline/PipelineGraphView", () => ({
-  PipelineGraphView: (props: Record<string, unknown>) => (
-    <div data-testid="party-map" data-selected={(props.selectedNodeId as string) ?? ""} />
+  PipelineGraphView: (props: { selectedNodeId?: string | null; graph: { nodes: { node_id: string }[] }; onNodeSelect: (id: string | null) => void }) => (
+    <div data-testid="party-map" data-selected={props.selectedNodeId ?? ""}>
+      {props.graph.nodes.map((n) => <button key={n.node_id} type="button" data-testid={`map-node-${n.node_id}`} onClick={() => props.onNodeSelect(n.node_id)} />)}
+    </div>
   ),
 }));
 vi.mock("@/components/qa/QATab", () => ({ QATab: () => <div data-testid="qa-tab" /> }));
@@ -96,6 +98,22 @@ beforeEach(() => {
   state.refetchVerification.mockReset();
   use("issue-to-pr");
 });
+
+/** A graph of two steps on the one generic_agent node, and one finished run per step. */
+function twoGenericSteps(agentTypes: [string, string]) {
+  const t = "2026-01-01T00:00:00Z";
+  const node = (node_id: string, agent_type: string, x: number) => ({ node_id, agent_type, label: node_id, physical_node: "generic_agent", position: { x, y: 0 } });
+  const graph = { graph_id: "g", name: "two steps", nodes: [node("step-a", agentTypes[0], 0), node("step-b", agentTypes[1], 200)], edges: [{ edge_id: "e1", source: "step-a", target: "step-b" }], metadata: {} };
+  const run = (run_id: string, agent: string, attempt: number) => [
+    { type: "node_started", node: "generic_agent", agent, attempt, timestamp: t },
+    { type: "agent_started", run_id, node: "generic_agent", agent, model: "m", max_turns: 1, timestamp: t },
+    { type: "turn_start", run_id, node: "generic_agent", agent, turn_number: 1, timestamp: t },
+    { type: "text", run_id, node: "generic_agent", agent, text: `${run_id} speaks`, timestamp: t },
+    { type: "agent_completed", run_id, node: "generic_agent", agent, is_error: false, error_code: null, error_message: "", output: "", cost_usd: 0, duration_ms: 0, input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0, policy_denials: {}, tools_called: [], timestamp: t },
+    { type: "node_completed", node: "generic_agent", agent, attempt, timestamp: t },
+  ];
+  return [{ type: "pipeline_graph", graph, timestamp: t }, ...run("run-a", agentTypes[0], 1), ...run("run-b", agentTypes[1], 1)] as unknown as LogEvent[];
+}
 
 const VERIFICATION_RESULT = { type: "verification_result", tier: "backend_only", gate_verdict: "passed", blocking: false, timestamp: "2026-10-20T12:00:00Z" } as LogEvent;
 
@@ -156,6 +174,35 @@ describe("JobDetailPage", () => {
     expect(screen.getAllByTestId("run-divider").length, "the record shows this run alone").toBe(1);
     expect(screen.getAllByText("the ghost speaks").length).toBeGreaterThan(0);
     expect(screen.queryByText("Routing to developer then reviewer."), "another run's text is filtered out").toBeNull();
+  });
+
+  it("two steps on one physical node: each run highlights its own node and each node selects its run", () => {
+    state.events = twoGenericSteps(["research", "analysis"]);
+    state.job = job({ status: "completed" });
+    mount();
+    const strip = within(screen.getByTestId("party-strip"));
+    fireEvent.click(strip.getAllByRole("button").find((b) => b.getAttribute("data-run-id") === "run-b")!);
+    expect(screen.getByTestId("party-map").getAttribute("data-selected"), "the analysis run must light the analysis step, not the first generic_agent node").toBe("step-b");
+    fireEvent.click(strip.getAllByRole("button").find((b) => b.getAttribute("data-run-id") === "run-a")!);
+    expect(screen.getByTestId("party-map").getAttribute("data-selected")).toBe("step-a");
+    fireEvent.click(screen.getByTestId("map-node-step-a"));
+    expect(screen.getByTestId("selected-run").getAttribute("data-run-id"), "clicking the research step must select the research run, not the last generic_agent run").toBe("run-a");
+    fireEvent.click(screen.getByTestId("map-node-step-b"));
+    expect(screen.getByTestId("selected-run").getAttribute("data-run-id")).toBe("run-b");
+  });
+
+  it("two steps of one agent type on one physical node: no node is highlighted and a node click selects no run", () => {
+    state.events = twoGenericSteps(["research", "research"]);
+    state.job = job({ status: "completed" });
+    mount();
+    const strip = within(screen.getByTestId("party-strip"));
+    for (const runId of ["run-a", "run-b"]) {
+      fireEvent.click(strip.getAllByRole("button").find((b) => b.getAttribute("data-run-id") === runId)!);
+      expect(screen.getByTestId("selected-run").getAttribute("data-run-id")).toBe(runId);
+      expect(screen.getByTestId("party-map").getAttribute("data-selected"), `${runId} cannot be told apart from its twin: highlight nothing`).toBe("");
+    }
+    fireEvent.click(screen.getByTestId("map-node-step-a"));
+    expect(screen.queryByTestId("selected-run"), "an ambiguous node selects no run").toBeNull();
   });
 
   it("a legacy job shows the strip and hides the map", () => {
