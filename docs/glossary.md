@@ -158,6 +158,12 @@ One roster avatar in one state (`idle`, `thinking`, `tool`, `done`, `failed`, `p
 ### PartyNode
 The one agent node renderer (`frontend/src/components/pipeline/PartyNode.tsx`) the [PipelineEditor](#pipelineeditor) and the live job graph both register: the agent's [sprite](#sprite) inside a ring in its palette colour, the display name on a pixel nameplate, and one HUD line (skill count and model in the editor; attempt, cost and turns live). The start and end sentinels keep their gold sphere.
 
+### Party strip
+The row of run sprites at the top of the job page (`frontend/src/components/jobs/PartyStrip.tsx`): one 32 px [sprite](#sprite) per agent run in run order and in its state, the display name underneath, the graph's not-yet-started nodes in `pending`. Selecting a run filters the Conversation tab to that run and highlights its node on the party map; the map's selection does the same in reverse.
+
+### HUD
+The job page's one-line status bar (`frontend/src/components/jobs/JobHud.tsx`, the `.hud` pixel class): status, elapsed, cost, turns, tokens in and out, and a budget meter when the job carries `max_budget_usd` (amber from 80 percent, red at 100). Also the one HUD line under a [PartyNode](#partynode).
+
 ### Output
 The agent that closes the loop — merges the PR, performs [Distill](#distill) (extract reusable template) and [Coagulate](#coagulate) (ship + record). Substance sigils: Aqua Vitae 🜈 (Distill), Sol ☉ (Coagulate).
 

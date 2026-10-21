@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router";
+import { createBrowserRouter, Navigate, useParams } from "react-router";
 import { lazy, Suspense } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageError } from "../components/PageError";
@@ -8,7 +8,6 @@ const DashboardPage = lazy(() => import("../pages/DashboardPage").then(m => ({ d
 const ConsolePage = lazy(() => import("../pages/ConsolePage").then(m => ({ default: m.ConsolePage })));
 const JobsPage = lazy(() => import("../pages/JobsPage").then(m => ({ default: m.JobsPage })));
 const JobDetailPage = lazy(() => import("../pages/JobDetailPage").then(m => ({ default: m.JobDetailPage })));
-const JobLogsPage = lazy(() => import("../pages/JobLogsPage").then(m => ({ default: m.JobLogsPage })));
 const AgentsPage = lazy(() => import("../pages/AgentsPage").then(m => ({ default: m.AgentsPage })));
 const AgentFormPage = lazy(() => import("../pages/AgentFormPage").then(m => ({ default: m.AgentFormPage })));
 const SandboxesPage = lazy(() => import("../pages/SandboxesPage").then(m => ({ default: m.SandboxesPage })));
@@ -44,6 +43,12 @@ const AuditPage = lazy(() => import("../pages/admin/AuditPage").then(m => ({ def
 
 const fallback = <div className="p-6 text-muted-foreground">Loading...</div>;
 
+/** `/jobs/:jobId/logs` was the second job page; the one page carries the record now (spec 3.5). */
+export function JobLogsPageRedirect() {
+  const { jobId } = useParams<{ jobId: string }>();
+  return <Navigate to={`/jobs/${jobId}`} replace />;
+}
+
 export const router = createBrowserRouter([
   {
     element: <AppLayout />,
@@ -53,7 +58,7 @@ export const router = createBrowserRouter([
       { path: "console", element: <ErrorBoundary inline><Suspense fallback={fallback}><ConsolePage /></Suspense></ErrorBoundary> },
       { path: "jobs", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobsPage /></Suspense></ErrorBoundary> },
       { path: "jobs/:jobId", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobDetailPage /></Suspense></ErrorBoundary> },
-      { path: "jobs/:jobId/logs", element: <ErrorBoundary inline><Suspense fallback={fallback}><JobLogsPage /></Suspense></ErrorBoundary> },
+      { path: "jobs/:jobId/logs", element: <JobLogsPageRedirect /> },
       { path: "agents", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentsPage /></Suspense></ErrorBoundary> },
       { path: "agents/new", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },
       { path: "agents/:type", element: <ErrorBoundary inline><Suspense fallback={fallback}><AgentFormPage /></Suspense></ErrorBoundary> },

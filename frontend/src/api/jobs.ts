@@ -1,5 +1,5 @@
 import { api } from "./client";
-import type { JobCreateRequest, JobFilters, JobListResponse, JobResponse } from "@/lib/types";
+import type { AgentSession, JobCreateRequest, JobFilters, JobListResponse, JobResponse, JobVerification } from "@/lib/types";
 
 export async function fetchJobs(filters: JobFilters = {}): Promise<JobListResponse> {
   // Lists show one line per job, so ask for brief tasks: a watcher analysis
@@ -39,4 +39,32 @@ export async function resumeJob(jobId: string, choice: string, guidance?: string
 export async function discardJob(jobId: string): Promise<{ job_id: string; status: string; choice: string }> {
   const { data } = await api.post(`/jobs/${jobId}/resume`, { choice: "abandon" });
   return data;
+}
+
+/** The HTTP status of a failed request, undefined when the error carried none. */
+export function statusOf(err: unknown): number | undefined {
+  return (err as { response?: { status?: number } } | undefined)?.response?.status;
+}
+
+/** The job's verification row; null when the job has none (404). */
+export async function fetchJobVerification(jobId: string): Promise<JobVerification | null> {
+  try {
+    const { data } = await api.get(`/jobs/${jobId}/verification`);
+    return data;
+  } catch (err) {
+    if (statusOf(err) === 404) return null;
+    throw err;
+  }
+}
+
+/** One agent's stored transcript; null when there is none (404) or only a CLI blob (204). */
+export async function fetchAgentSession(jobId: string, agentType: string): Promise<AgentSession | null> {
+  try {
+    const res = await api.get(`/jobs/${jobId}/agents/${encodeURIComponent(agentType)}/session`);
+    if (res.status === 204 || !res.data) return null;
+    return res.data;
+  } catch (err) {
+    if (statusOf(err) === 404) return null;
+    throw err;
+  }
 }

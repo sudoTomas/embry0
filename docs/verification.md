@@ -208,6 +208,10 @@ false. `human_merge_reasons`: `no_branch_stack`, `qa_not_requested`,
 `gate_no_matching_targets` (the last two only when code changed),
 `gate_base_red_unverified`.
 
+The dashboard reads the row through `GET /jobs/{job_id}/verification`
+(404 when none); the job page's Verification tab shows the verdict, the tier,
+the gate table from `report.gate.targets` and the browser QA line.
+
 ## Two things to know before routing work at this
 
 - **Every builtin template with a developer now has a reviewer** — `verify`

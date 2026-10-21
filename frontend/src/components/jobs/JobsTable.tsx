@@ -101,8 +101,8 @@ export function JobsTable({
                         </a>
                       )}
                       {(job.status === "running" || job.status === "completed" || job.status === "failed") && (
-                        <Link to={`/jobs/${job.job_id}/logs`}>
-                          <Button variant="ghost" size="icon" title="View Logs">
+                        <Link to={`/jobs/${job.job_id}`}>
+                          <Button variant="ghost" size="icon" title="Open job">
                             <Eye className="h-3.5 w-3.5" />
                           </Button>
                         </Link>

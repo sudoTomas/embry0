@@ -126,8 +126,7 @@ export function StructuredView({ events, isComplete = false }: StructuredViewPro
 
   return (
     <Virtuoso
-      style={{ height: "calc(100vh - 280px)" }}
-      className="space-y-2"
+      className="space-y-2 flex-1 min-h-0 max-h-[70vh] lg:max-h-none overflow-auto"
       totalCount={items.length}
       itemContent={(i) => {
         const item = items[i];

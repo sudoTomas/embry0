@@ -9,9 +9,19 @@ import {
 } from "lucide-react";
 import { cn, highlightJson } from "@/lib/utils";
 import type { LogEvent } from "@/lib/types";
+import { Sprite } from "@/components/roster";
+import { useIdentityLookup } from "@/hooks/useAgentIdentity";
+import type { AgentIdentity } from "@/lib/agentIdentity";
+import { sessionAgentType } from "@/lib/agentSession";
 
 interface ConversationViewProps {
   events: LogEvent[];
+  /**
+   * Offered on the divider of an agent's latest finished run when the stream
+   * truncated events of any of that agent's finished runs: the stored session
+   * is one per job and agent type, merged across that agent's runs.
+   */
+  onFullTranscript?: (run: { runId: string; agent: string }) => void;
 }
 
 interface ConversationTextBlock {
@@ -63,16 +73,23 @@ interface ConversationTurn {
 const INITIAL_TURNS_SHOWN = 20;
 const LOAD_MORE_COUNT = 20;
 
-export function ConversationView({ events }: ConversationViewProps) {
+export function ConversationView({ events, onFullTranscript }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [turnsShown, setTurnsShown] = useState(INITIAL_TURNS_SHOWN);
+  const identityFor = useIdentityLookup();
 
   // Group events into turns: turn_start opens one for its run, and the
   // thinking, text, tool_call and tool_result events of that run go into it.
-  // A tool_result joins the turn that holds its tool_call.
-  const turns = useMemo(() => {
+  // A tool_result joins the turn that holds its tool_call. Alongside, the
+  // runs offered a stored session: the latest finished run of each agent one
+  // of whose finished runs the stream truncated (the session row is per
+  // agent, not per run).
+  const { turns, offeredRuns } = useMemo(() => {
     const result: ConversationTurn[] = [];
+    const finishedRuns = new Set<string>();
+    const truncatedRuns = new Set<string>();
+    const agentByRun = new Map<string, string>();
     const currentByRun = new Map<string, ConversationTurn>();
     const turnByToolId = new Map<string, ConversationTurn>();
 
@@ -89,12 +106,17 @@ export function ConversationView({ events }: ConversationViewProps) {
       };
       result.push(turn);
       currentByRun.set(event.run_id ?? "", turn);
+      if (event.run_id && event.agent) agentByRun.set(event.run_id, event.agent);
       return turn;
     };
     const turnFor = (event: LogEvent) => currentByRun.get(event.run_id ?? "") ?? open(event, null);
 
     for (const event of events) {
+      if (event.run_id && "truncated" in event && event.truncated) truncatedRuns.add(event.run_id);
       switch (event.type) {
+        case "agent_completed":
+          if (event.run_id) finishedRuns.add(event.run_id);
+          break;
         case "turn_start":
           open(event, event.turn_number, event.model);
           break;
@@ -136,7 +158,18 @@ export function ConversationView({ events }: ConversationViewProps) {
       }
       previousRunId = turn.runId;
     }
-    return result;
+
+    // finishedRuns iterates in completion order, so the last write per agent wins.
+    const latestFinishedByAgent = new Map<string, string>();
+    const truncatedAgents = new Set<string>();
+    for (const runId of finishedRuns) {
+      const agent = agentByRun.get(runId);
+      if (!agent) continue;
+      latestFinishedByAgent.set(sessionAgentType(agent), runId);
+      if (truncatedRuns.has(runId)) truncatedAgents.add(sessionAgentType(agent));
+    }
+    const offeredRuns = new Set([...truncatedAgents].map((agent) => latestFinishedByAgent.get(agent)!));
+    return { turns: result, offeredRuns };
   }, [events]);
 
   const hasMore = turnsShown < turns.length;
@@ -166,7 +199,7 @@ export function ConversationView({ events }: ConversationViewProps) {
   return (
     <div
       ref={containerRef}
-      className="space-y-1 overflow-auto h-[calc(100vh-280px)]"
+      className="space-y-1 overflow-auto flex-1 min-h-0 max-h-[70vh] lg:max-h-none"
       onScroll={handleScroll}
     >
       {hasMore && (
@@ -179,19 +212,46 @@ export function ConversationView({ events }: ConversationViewProps) {
       )}
 
       {visibleTurns.map((turn, i) => (
-        <TurnCard key={turns.length - visibleTurns.length + i} turn={turn} />
+        <TurnCard
+          key={turns.length - visibleTurns.length + i}
+          turn={turn}
+          identityFor={identityFor}
+          offeredRuns={offeredRuns}
+          onFullTranscript={onFullTranscript}
+        />
       ))}
     </div>
   );
 }
 
-function TurnCard({ turn }: { turn: ConversationTurn }) {
+function TurnCard({
+  turn,
+  identityFor,
+  offeredRuns,
+  onFullTranscript,
+}: {
+  turn: ConversationTurn;
+  identityFor: (type: string) => AgentIdentity;
+  offeredRuns: Set<string>;
+  onFullTranscript?: (run: { runId: string; agent: string }) => void;
+}) {
   return (
     <div className="space-y-1">
       {turn.divider && (
-        <div className="flex items-center gap-2 pt-3">
+        <div data-testid="run-divider" className="flex items-center gap-2 pt-3">
           <div className="h-px flex-1 bg-border" />
-          <span className="text-xs text-muted-foreground font-mono">{turn.divider}</span>
+          {turn.agent && (
+            <Sprite avatar={identityFor(turn.agent).avatar} color={identityFor(turn.agent).color} state="idle" size={16} still decorative />
+          )}
+          <span className="text-xs text-muted-foreground font-mono">
+            {turn.divider}
+            {turn.agent && <span className="ml-1.5" style={{ color: identityFor(turn.agent).hex }}>{identityFor(turn.agent).displayName}</span>}
+          </span>
+          {turn.runId && turn.agent && onFullTranscript && offeredRuns.has(turn.runId) && (
+            <button type="button" onClick={() => onFullTranscript({ runId: turn.runId!, agent: turn.agent! })} className="text-xs underline text-muted-foreground hover:text-foreground">
+              Full transcript
+            </button>
+          )}
           <div className="h-px flex-1 bg-border" />
         </div>
       )}
@@ -294,8 +354,9 @@ function ThinkingBlockView({ thinking }: { thinking: string }) {
 
 function ToolUseBlockView({ block }: { block: ConversationToolUseBlock }) {
   const [expanded, setExpanded] = useState(false);
-  const jsonInput = JSON.stringify(block.input, null, 2);
-  const segments = highlightJson(jsonInput);
+  // Computed once per input: the page re-renders on every stream batch, and a
+  // collapsed block must not re-stringify and re-highlight each time.
+  const segments = useMemo(() => highlightJson(JSON.stringify(block.input, null, 2)), [block.input]);
 
   return (
     <div className="border border-primary/30 rounded-md">

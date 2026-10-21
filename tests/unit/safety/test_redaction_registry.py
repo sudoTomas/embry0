@@ -70,3 +70,15 @@ def test_secret_env_values_result_is_a_copy():
     redaction.register_known_secrets(["registered-iiiiiiiiii"])
     redaction.secret_env_values(environ={}).append("mutated-jjjjjjjjjj")
     assert "mutated-jjjjjjjjjj" not in redaction.secret_env_values(environ={}), "callers cannot mutate the cache"
+
+
+def test_extra_values_join_the_scrub_list_with_the_same_floor():
+    """A caller holding secrets this environment never had (a job's env vars,
+    which only the sandbox carried) passes them as ``extra``."""
+    environ = {"GITHUB_TOKEN": "env-token-cccccccccc"}
+    values = redaction.secret_env_values(environ=environ, extra=["job-secret-value-gggggggg", "short"])
+    assert "job-secret-value-gggggggg" in values, "an extra value is not scrubbed"
+    assert "short" not in values, "a short extra value would redact ordinary words"
+    assert values == _reference(environ | {"EXTRA_SECRET": "job-secret-value-gggggggg"}), (
+        "extras keep the longest-first order"
+    )

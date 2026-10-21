@@ -254,3 +254,26 @@ describe("useAgentStates", () => {
     ]);
   });
 });
+
+describe("pausedForInput", () => {
+  const ts = "2026-10-20T12:00:00Z";
+  const base = loadFixture("issue-to-pr").filter((e) => e.type !== "job_finished");
+
+  it("is true after agent_paused_for_input with no later run event", () => {
+    const events = [...base, { type: "agent_paused_for_input", count: 1, timestamp: ts, run_id: "r-x", node: "developer", agent: "developer" } as LogEvent];
+    const { result } = renderHook(() => useAgentStates(events, "running", null));
+    expect(result.current.pausedForInput, "a pause the poll has not seen yet must show").toBe(true);
+  });
+
+  it("is false once the run goes on or the job ends", () => {
+    const paused = { type: "agent_paused_for_input", count: 1, timestamp: ts, run_id: "r-x", node: "developer", agent: "developer" } as LogEvent;
+    const resumed = [...base, paused, { type: "agent_started", model: "m", max_turns: 1, timestamp: ts, run_id: "r-y", node: "developer", agent: "developer" } as LogEvent];
+    expect(renderHook(() => useAgentStates(resumed, "running", null)).result.current.pausedForInput).toBe(false);
+    const finished = [...base, paused, { type: "job_finished", status: "completed", error_code: null, error_message: null, pr_url: null, total_cost_usd: 0, timestamp: ts } as LogEvent];
+    expect(renderHook(() => useAgentStates(finished, "completed", null)).result.current.pausedForInput).toBe(false);
+  });
+
+  it("is false with no pause at all", () => {
+    expect(renderHook(() => useAgentStates(base, "running", null)).result.current.pausedForInput).toBe(false);
+  });
+});

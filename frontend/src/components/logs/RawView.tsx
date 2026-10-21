@@ -80,8 +80,7 @@ function RawEventRow({ event }: { event: LogEvent }) {
 export function RawView({ events }: RawViewProps) {
   return (
     <Virtuoso
-      className="bg-background rounded-md border font-mono text-xs p-4"
-      style={{ height: "calc(100vh - 280px)" }}
+      className="bg-background rounded-md border font-mono text-xs p-4 flex-1 min-h-0 max-h-[70vh] lg:max-h-none overflow-auto"
       totalCount={events.length}
       itemContent={(i) => <RawEventRow event={events[i]} />}
       followOutput="smooth"

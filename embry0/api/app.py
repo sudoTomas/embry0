@@ -682,6 +682,7 @@ async def _init_app_state(
     from embry0.storage.repositories.dispatch_ledger import DispatchLedgerRepository
     from embry0.storage.repositories.issue_inputs import IssueInputsRepository
     from embry0.storage.repositories.issues import IssuesRepository
+    from embry0.storage.repositories.job_verifications import JobVerificationsRepository
     from embry0.trackers import IssueTracker, TrackerRegistry
 
     app.state.db = db
@@ -784,6 +785,7 @@ async def _init_app_state(
     )
     app.state.inputs_repo = IssueInputsRepository(db)
     app.state.agent_sessions_repo = AgentSessionsRepository(db)
+    app.state.job_verifications_repo = JobVerificationsRepository(db)
     app.state.github_sync = GitHubSyncService(
         github_token=github_token, credential_resolver=app.state.credential_resolver
     )

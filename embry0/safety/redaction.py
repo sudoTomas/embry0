@@ -152,17 +152,21 @@ def known_secret_values() -> list[str]:
     return sorted(_KNOWN_SECRETS)
 
 
-def secret_env_values(environ: dict[str, str] | None = None) -> list[str]:
+def secret_env_values(environ: dict[str, str] | None = None, *, extra: Iterable[str] = ()) -> list[str]:
     """Values of this process's secret-looking env vars plus the registered
     known secrets, longest first, so a secret that appears verbatim is caught
     even in a shape no pattern knows. Only the env part is sorted per call;
-    the registry's order is cached."""
+    the registry's order is cached. ``extra`` adds values a caller knows and
+    this environment never held (a job's secret env vars, which only the
+    sandbox's environment carried), under the same length floor."""
     global _KNOWN_SORTED
     if _KNOWN_SORTED is None:
         _KNOWN_SORTED = sorted(_KNOWN_SECRETS, key=_scrub_order)
     env = os.environ if environ is None else environ
     merged = list(_KNOWN_SORTED)
-    for value in {v for k, v in env.items() if _SECRET_ENV_NAME.search(k) and len(v) >= _MIN_KNOWN_VALUE_LEN}:
+    values = {v for k, v in env.items() if _SECRET_ENV_NAME.search(k) and len(v) >= _MIN_KNOWN_VALUE_LEN}
+    values.update(v for v in extra if isinstance(v, str) and len(v) >= _MIN_KNOWN_VALUE_LEN)
+    for value in values:
         if value not in _KNOWN_SECRETS:
             bisect.insort(merged, value, key=_scrub_order)
     return merged

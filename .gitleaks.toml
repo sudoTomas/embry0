@@ -65,4 +65,10 @@ regexes = [
     # base64-encoded (infra/tofu/modules/cloudflare-tunnel/tests/
     # full.tftest.hcl). A placeholder, never a real tunnel secret.
     '''^AQIDBAUGBwgBAgMEBQYHCAECAwQFBgcIAQIDBAUGBwg=$''',
+    # The two opaque env-var values the session route's redaction test plants
+    # (tests/unit/api/v1/test_job_session_route.py): one secret-typed, one with a
+    # secret-looking name. Chosen so no pattern matches them, which is the point
+    # of the test; matched whole here so a real secret in that file is still found.
+    '''^Yt3nQw8vLp2rMx6KdHs9Fb$''',
+    '''^Hq5wRt7yUp3iLk9oZx2cVb$''',
 ]
