@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   fetchSandboxProfiles,
   fetchSandboxProfile,
@@ -21,6 +21,13 @@ export function useSandboxProfile(name: string | null) {
   });
 }
 
+/** A write to one profile stales both the list and that profile's form query
+ * (["sandbox-profile", name]), so a reopened form shows what was saved. */
+function invalidateProfile(qc: QueryClient, name: string) {
+  qc.invalidateQueries({ queryKey: ["sandbox-profiles"] });
+  qc.invalidateQueries({ queryKey: ["sandbox-profile", name] });
+}
+
 export function useCreateSandboxProfile() {
   const qc = useQueryClient();
   return useMutation({
@@ -33,7 +40,7 @@ export function useUpdateSandboxProfile() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ name, ...profile }: SandboxProfile) => updateSandboxProfile(name, { name, ...profile }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sandbox-profiles"] }),
+    onSuccess: (_data, { name }) => invalidateProfile(qc, name),
   });
 }
 
@@ -41,7 +48,7 @@ export function useDeleteSandboxProfile() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) => deleteSandboxProfile(name),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sandbox-profiles"] }),
+    onSuccess: (_data, name) => invalidateProfile(qc, name),
   });
 }
 
@@ -49,9 +56,6 @@ export function useResetSandboxProfile() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) => resetSandboxProfile(name),
-    onSuccess: (_data, name) => {
-      qc.invalidateQueries({ queryKey: ["sandbox-profiles"] });
-      qc.invalidateQueries({ queryKey: ["sandbox-profile", name] });
-    },
+    onSuccess: (_data, name) => invalidateProfile(qc, name),
   });
 }

@@ -4,6 +4,7 @@ import { PageError } from "@/components/PageError";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/PageSkeleton";
+import { statusLabel } from "@/lib/status";
 import { groupNeeds } from "@/lib/orgs";
 
 /** Shown wherever the needs list would be, when the server has no needs endpoint yet. */
@@ -63,14 +64,14 @@ export function OrgNeedsList({
                   {g.needs.length} {g.needs.length === 1 ? "need" : "needs"}, {g.repoCount}{" "}
                   {g.repoCount === 1 ? "repository" : "repositories"}
                 </span>
-                {g.openCount > 0 && <Badge tone="gold">{g.openCount} open</Badge>}
+                {g.openCount > 0 && <Badge tone="neutral">{g.openCount} open</Badge>}
               </summary>
               <ul className="space-y-2 px-3 pb-3">
                 {g.needs.map((n) => (
                   <li key={n.id} className="min-w-0 text-sm">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={n.status === "open" ? "" : "text-white/40"}>{n.title}</span>
-                      {n.status !== "open" && <Badge tone="neutral">{n.status}</Badge>}
+                      {n.status !== "open" && <Badge tone="neutral">{statusLabel(n.status)}</Badge>}
                     </div>
                     {n.detail && <p className="text-xs text-muted-foreground">{n.detail}</p>}
                     {n.repos.length > 0 && (

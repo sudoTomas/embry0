@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from embry0.api.app import create_app
 from embry0.api.v1 import organizations as organizations_api
 from embry0.config import Embry0Config
-from embry0.services.org_discovery import RepoFacts
+from embry0.services.org_discovery import Discovery, RepoFacts
 from embry0.services.organizations import FORGES, STATUSES, AccessProbe, Organization
 
 
@@ -73,12 +73,15 @@ class FakeFactsRepo:
     async def upsert_fact(self, facts: RepoFacts, *, run_id: str) -> None:
         self.facts[facts.repo] = {**facts.to_dict(), "run_id": run_id}
 
+    async def refresh_state(self, repo: str, state: dict[str, Any]) -> None:
+        self.facts[repo]["facts"] = {**self.facts[repo]["facts"], **state}
+
     async def list_for_owner(self, owner: str, *, include_archived: bool = True) -> list[dict[str, Any]]:
         return [
             f for f in self.facts.values() if f["owner"] == owner.lower() and (include_archived or not f["archived"])
         ]
 
-    async def start_run(self, owner: str) -> dict[str, Any]:
+    async def start_run(self, owner: str) -> dict[str, Any] | None:
         run = {
             "id": f"odr-{len(self.runs) + 1}",
             "owner": owner,
@@ -354,10 +357,10 @@ async def test_discover_runs_in_the_background_and_stores_facts(app: Any, monkey
     from embry0.api.v1 import organizations as api_module
     from embry0.services import org_discovery
 
-    async def fake_discover(client: Any, owner: str, **kw: Any) -> list[RepoFacts]:
+    async def fake_discover(client: Any, owner: str, **kw: Any) -> Discovery:
         await kw["progress"](1, 1)
         state = await kw["embry0_state"]("acme/web")
-        return [RepoFacts(owner=owner, repo="acme/web", facts={"frontend": True, **state})]
+        return Discovery([RepoFacts(owner=owner, repo="acme/web", facts={"frontend": True, **state})])
 
     monkeypatch.setattr(org_discovery, "discover", fake_discover)
     app.state.repos_repo = None
@@ -419,9 +422,9 @@ async def test_discovery_reads_hooks_as_unknown_under_an_unset_or_loopback_origi
 
     seen: list[tuple[str, ...]] = []
 
-    async def fake_discover(client: Any, owner: str, **kw: Any) -> list[RepoFacts]:
+    async def fake_discover(client: Any, owner: str, **kw: Any) -> Discovery:
         seen.append(kw["hook_origins"])
-        return []
+        return Discovery([])
 
     monkeypatch.setattr(org_discovery, "discover", fake_discover)
     app.state.repos_repo = None
@@ -440,3 +443,128 @@ async def test_discovery_reads_hooks_as_unknown_under_an_unset_or_loopback_origi
     hooks = [{"config": {"url": "http://127.0.0.1:8200/api/v1/webhook"}}]
     if not expected:
         assert org_discovery.hook_state(hooks, seen[0]) is None, "hooks must read as unknown, not absent"
+
+
+# ---- rediscovery (ADR 0016) ----
+
+
+async def _wait_for_the_newest_run(client: AsyncClient) -> dict[str, Any]:
+    import asyncio
+
+    for _ in range(100):
+        runs = (await client.get("/api/v1/orgs/acme/runs")).json()["runs"]
+        if runs and runs[-1]["status"] != "running":
+            return dict(runs[-1])
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"the run never finished: {runs}")
+
+
+@pytest.mark.asyncio
+async def test_a_repository_the_next_run_does_not_list_has_its_registration_read_again(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second run does not list acme/api. Its row keeps the run that last
+    listed it, the summary counts it, and whether embry0 still holds it as an
+    active registration is read from the registry now, not kept from then."""
+    from embry0.services import org_discovery
+
+    listings = [["acme/web", "acme/api"], ["acme/web"]]
+
+    async def fake_discover(client: Any, owner: str, **kw: Any) -> Discovery:
+        return Discovery(
+            [RepoFacts(owner=owner, repo=name, facts={**(await kw["embry0_state"](name))}) for name in listings.pop(0)]
+        )
+
+    registry = {"acme/api": {"repo": "acme/api", "active": True}}
+
+    class Registry:
+        async def get(self, repo: str) -> dict[str, Any] | None:
+            return registry.get(repo)
+
+    monkeypatch.setattr(org_discovery, "discover", fake_discover)
+    app.state.repos_repo = Registry()
+    async with _client(app) as client:
+        await client.post("/api/v1/orgs", json={"owner": "acme", "probe": False})
+        assert (await client.post("/api/v1/orgs/acme/discover")).status_code == 202
+        first = await _wait_for_the_newest_run(client)
+        # A person deactivated it between the runs.
+        registry["acme/api"] = {"repo": "acme/api", "active": False}
+        assert (await client.post("/api/v1/orgs/acme/discover")).status_code == 202
+        second = await _wait_for_the_newest_run(client)
+        rows = {r["repo"]: r for r in (await client.get("/api/v1/orgs/acme/repos")).json()["repos"]}
+    assert first["status"] == "done" and first["summary"]["vanished"] == 0
+    assert second["status"] == "done" and second["summary"]["vanished"] == 1
+    assert second["summary"]["vanished_confirmed"] == 0, "an inactive registration is not read on the forge"
+    assert second["summary"]["listing_complete"] is True
+    assert rows["acme/web"]["run_id"] == second["id"]
+    assert rows["acme/api"]["run_id"] == first["id"], "the row still says which run last listed it"
+    assert rows["acme/api"]["facts"]["registered"] is True and rows["acme/api"]["facts"]["active"] is False
+    assert rows["acme/api"]["facts"]["vanished_run"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_start_that_loses_the_race_for_the_owner_is_refused(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The repository's own check said a run is already open (another start
+    got there between the endpoint's check and the insert): 409, no task."""
+
+    async def lost(owner: str) -> None:
+        return None
+
+    monkeypatch.setattr(app.state.org_repos_repo, "start_run", lost)
+    async with _client(app) as client:
+        await client.post("/api/v1/orgs", json={"owner": "acme", "probe": False})
+        resp = await client.post("/api/v1/orgs/acme/discover")
+    assert resp.status_code == 409 and "already running" in resp.json()["detail"]
+    assert not getattr(app.state, "org_discovery_tasks", set())
+
+
+@pytest.mark.asyncio
+async def test_the_schedule_starts_the_discover_endpoints_own_run(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The loop starts runs through start_discovery with a request bound to
+    the app, audited as the schedule, and never joins a run in progress."""
+    import asyncio
+
+    from embry0.services import org_discovery
+    from embry0.services.org_rediscovery import ACTOR, OrgRediscoveryLoop
+
+    release = asyncio.Event()
+    walked: list[str] = []
+
+    async def fake_discover(client: Any, owner: str, **kw: Any) -> Discovery:
+        walked.append(owner)
+        await release.wait()
+        return Discovery([])
+
+    audits: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def record(_db: Any, action: str, **kw: Any) -> None:
+        audits.append((action, kw.get("actor", ""), kw.get("details") or {}))
+
+    monkeypatch.setattr(org_discovery, "discover", fake_discover)
+    monkeypatch.setattr(organizations_api, "emit_audit", record)
+    app.state.repos_repo = None
+    async with _client(app) as client:
+        await client.post("/api/v1/orgs", json={"owner": "acme", "probe": False})
+        await client.post("/api/v1/orgs", json={"owner": "other", "probe": False})
+    app.state.organizations_repo.orgs["acme"].settings = {"rediscover_hours": 6}
+
+    def start_run(org: Organization) -> Any:
+        return organizations_api.start_discovery(organizations_api.app_request(app), org, actor=ACTOR)
+
+    loop = OrgRediscoveryLoop(
+        organizations=app.state.organizations_repo, runs=app.state.org_repos_repo, start_run=start_run
+    )
+    assert await loop.tick() == ["acme"], "only the owner on the schedule"
+    for _ in range(100):
+        if walked:
+            break
+        await asyncio.sleep(0.01)
+    assert walked == ["acme"]
+    assert await loop.tick() == [], "the run is still going"
+    release.set()
+    async with _client(app) as client:
+        newest = await _wait_for_the_newest_run(client)
+    assert newest["status"] == "done"
+    assert [(a, actor, d) for a, actor, d in audits if a == "organization.discover"] == [
+        ("organization.discover", ACTOR, {"owner": "acme", "run_id": newest["id"]})
+    ]

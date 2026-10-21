@@ -104,8 +104,17 @@ class FakeRegistry:
         return next((r for r in self.rows if r.lower() == repo.lower()), None)
 
     async def register(self, repo: str, notes: str = "", forge: str = "") -> dict[str, Any]:
-        self.rows.setdefault(repo, {"repo": repo, "notes": notes, "forge": forge})
+        self.rows.setdefault(repo, {"repo": repo, "notes": notes, "forge": forge, "active": True})
         return self.rows[repo]
+
+    async def get(self, repo: str) -> dict[str, Any] | None:
+        return self.rows.get(repo)
+
+    async def set_active(self, repo: str, active: bool) -> dict[str, Any] | None:
+        row = self.rows.get(repo)
+        if row is not None:
+            row["active"] = active
+        return row
 
 
 class FakeStacks:
@@ -376,7 +385,7 @@ async def test_watch_adds_a_disabled_stack_and_writes_the_stack_audit_row(app: A
     stack = app.state.watcher_stacks_repo.rows["acme/widgets"]
     assert stack.enabled is False and stack.tracker == "github"
     assert _audits(app, "watcher_stack_updated") == [
-        ("127.0.0.1", {"repo": "acme/widgets", "tracker": "github", "enabled": False, "ignored_settings": []})
+        ("embry0:anonymous", {"repo": "acme/widgets", "tracker": "github", "enabled": False, "ignored_settings": []})
     ]
     assert len(_audits(app, "organization.action")) == 1
 
@@ -392,15 +401,15 @@ async def test_watch_matches_an_existing_stack_under_another_case(app: Any) -> N
 
 
 @pytest.mark.asyncio
-async def test_onboard_writes_the_onboard_audit_row_with_the_actor(keyed_app: Any) -> None:
+async def test_onboard_starts_the_job_under_the_callers_actor(keyed_app: Any) -> None:
+    """The executor's onboard.job_created row names that actor
+    (tests/unit/api/test_job_created_audit_row.py); the route writes none of its own."""
     keyed_app.state.repos_repo.rows["acme/widgets"] = {"repo": "acme/widgets"}
     async with _client(keyed_app, ADMIN_TOKEN) as client:
         resp = await client.post("/api/v1/orgs/acme/actions", json={"action": "onboard", "repos": ["acme/widgets"]})
     assert resp.status_code == 200, resp.text
     assert resp.json()["results"][0]["outcome"] == "done"
-    assert _audits(keyed_app, "onboard_job_created") == [
-        ("key:org-admin", {"job_id": "job-1", "repo": "acme/widgets", "branch": "main"})
-    ]
+    assert [name for name, _actor, _details in keyed_app.state.audits if name.startswith("onboard")] == []
     call = keyed_app.state.issue_executor.start_onboard_job.await_args
     assert call.kwargs["dispatched_by"] == "key:org-admin"
 
@@ -424,7 +433,6 @@ async def test_onboard_honors_the_callers_repository_allowlist(keyed_app: Any) -
         assert resp.json()["results"][1]["detail"].startswith("repo_not_allowed")
     started = [c.kwargs["repo"] for c in keyed_app.state.issue_executor.start_onboard_job.await_args_list]
     assert started == ["acme/one"]
-    assert [d["repo"] for _actor, d in _audits(keyed_app, "onboard_job_created")] == ["acme/one"]
     assert _audits(keyed_app, "apikey.repo_refused")[0][1]["repo"] == "acme/two"
 
 
@@ -443,6 +451,32 @@ async def test_onboard_holds_a_rerun_after_a_completed_job_unless_forced(app: An
     assert forced.json()["results"][0]["outcome"] == "done", forced.text
     assert app.state.issue_executor.start_onboard_job.await_count == 1
     assert [d["force"] for _actor, d in _audits(app, "organization.action")] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_deactivate_sets_the_registration_inactive_once_and_rediscovers(app: Any) -> None:
+    """ADR 0016: the answer to repo_vanished. A dry run writes nothing; the
+    real call writes the row inactive, the audit row and a rediscovery, so
+    the need settles; the second call is already."""
+    app.state.repos_repo.rows["acme/widgets"] = {"repo": "acme/widgets", "active": True}
+    body = {"action": "deactivate", "repos": ["acme/widgets", "acme/gadgets"]}
+    async with _client(app) as client:
+        dry = await client.post("/api/v1/orgs/acme/actions", json={**body, "dry_run": True})
+        first = await client.post("/api/v1/orgs/acme/actions", json=body)
+        app.state.org_repos_repo.runs[0]["status"] = "done"
+        second = await client.post("/api/v1/orgs/acme/actions", json=body)
+    assert dry.status_code == 200, dry.text
+    assert [r["outcome"] for r in dry.json()["results"]] == ["done", "already"]
+    assert dry.json()["rediscovery"] is None
+    assert [(r["repo"], r["outcome"]) for r in first.json()["results"]] == [
+        ("acme/widgets", "done"),
+        ("acme/gadgets", "already"),
+    ]
+    assert first.json()["rediscovery"] == "odr-1"
+    assert [r["outcome"] for r in second.json()["results"]] == ["already", "already"]
+    assert second.json()["rediscovery"] is None
+    assert app.state.repos_repo.rows == {"acme/widgets": {"repo": "acme/widgets", "active": False}}
+    assert [d["action"] for _actor, d in _audits(app, "organization.action")] == ["deactivate", "deactivate"]
 
 
 @pytest.mark.asyncio
@@ -477,9 +511,9 @@ async def test_the_rediscovery_is_the_discover_endpoints_own_run(app: Any, monke
     monkeypatch.setattr(org_actions_api, "start_discovery", organizations_api.start_discovery)
     walked: list[str] = []
 
-    async def fake_discover(client: Any, owner: str, **kw: Any) -> list[Any]:
+    async def fake_discover(client: Any, owner: str, **kw: Any) -> org_discovery.Discovery:
         walked.append(owner)
-        return []
+        return org_discovery.Discovery([])
 
     monkeypatch.setattr(org_discovery, "discover", fake_discover)
     async with _client(app) as client:
@@ -491,7 +525,7 @@ async def test_the_rediscovery_is_the_discover_endpoints_own_run(app: Any, monke
     assert resp.json()["rediscovery"] == "odr-1", resp.text
     assert app.state.org_repos_repo.runs[0]["status"] == "done"
     assert walked == ["acme"]
-    assert _audits(app, "organization.discover") == [("127.0.0.1", {"owner": "acme", "run_id": "odr-1"})]
+    assert _audits(app, "organization.discover") == [("embry0:anonymous", {"owner": "acme", "run_id": "odr-1"})]
 
 
 @pytest.mark.asyncio

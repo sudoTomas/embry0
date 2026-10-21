@@ -21,7 +21,21 @@ from embry0.storage.database import DatabasePool
 logger = structlog.get_logger(__name__)
 
 KINDS = ("forge_token", "llm_oauth", "llm_api_key", "ssh_key", "tailnet_api_key")
-PROVIDERS = ("github", "gitlab", "anthropic", "xai", "ssh", "tailscale")
+PROVIDERS = (
+    "github",
+    "gitlab",
+    "anthropic",
+    "xai",
+    "ssh",
+    "tailscale",
+    # The OpenAI-compatible LLM providers (embry0/agents/providers.py OPENAI_COMPATIBLE).
+    "openai",
+    "openrouter",
+    "google",
+    "groq",
+    "deepseek",
+    "custom",
+)
 FORGE_PROVIDERS = ("github", "gitlab")
 ROLES = ("forge", "llm", "deploy", "tailnet")
 SCOPE_KINDS = ("repo", "owner", "host", "global")

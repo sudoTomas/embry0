@@ -28,6 +28,9 @@ export interface ConnectionTestResult {
 export interface CatalogModel {
   model: string;
   enabled: boolean;
+  /** False when the provider serves the model without tool calling (chat-only).
+   * Absent on an older backend. */
+  tool_calling?: boolean;
   pricing_usd_per_mtok: { input: number | null; output: number | null };
 }
 

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useId } from "react";
 import {
   ReactFlowProvider,
   ReactFlow,
@@ -23,30 +23,62 @@ import { TemplateDrawer } from "./TemplateDrawer";
 import { useGraphState } from "./hooks/useGraphState";
 import { autoLayout } from "./autoLayout";
 import { DivineRipple } from "@/components/divine/DivineRipple";
+import { Button } from "@/components/ui/Button";
+import { Overlay } from "@/components/ui/Overlay";
 import { useRenameTemplate, useCreateTemplate } from "@/hooks/usePipelines";
 import { toApiGraph } from "@/lib/graph-utils";
 import type { PipelineGraph, PipelineTemplate } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
+import { prefersReducedMotion } from "@/hooks/useReducedMotion";
+import { motionMs } from "@/lib/motion";
 
 const nodeTypes = { agentNode: PartyNode, startEndNode: StartEndNode };
 const edgeTypes = { feedbackEdge: FeedbackEdge };
 
+/**
+ * How far the canvas zooms out, by hand or in its first fit. React Flow's
+ * default of 0.5 stopped the fit short: a seven-agent pipeline lays out
+ * about 1500 px wide, so on a phone, or any canvas under about 840 px,
+ * START and END sat off its sides. At 0.1 it fits a 360 px screen.
+ */
+const MIN_ZOOM = 0.1;
+
+// embry0 re-seeds every built-in template on each restart, over any edit.
+const BUILTIN_HINT = "Built-in templates reset on restart. Save As makes your own copy.";
+
 interface PipelineEditorProps {
   mode?: "modal" | "page";
   initialGraph?: PipelineGraph;
+  /** The saved template the page opened, so Save writes back to it. */
+  initialTemplate?: Pick<PipelineTemplate, "template_id" | "name" | "is_builtin">;
   onApply?: (graph: PipelineGraph) => void;
   onClose?: () => void;
 }
 
 interface PipelineCanvasProps {
   graphState: ReturnType<typeof useGraphState>;
+  /** Arranges so far: each new one refits the view to the new layout. */
+  arrangeCount: number;
   onNodeClick: (nodeId: string) => void;
   onEdgeClick: (edgeId: string) => void;
 }
 
 /** Inner component rendered inside ReactFlowProvider -- can safely call useReactFlow(). */
-function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvasProps) {
-  const { screenToFlowPosition } = useReactFlow();
+function PipelineCanvas({ graphState, arrangeCount, onNodeClick, onEdgeClick }: PipelineCanvasProps) {
+  const { screenToFlowPosition, fitView } = useReactFlow();
   const { nodes, edges, onNodesChange, onEdgesChange, onConnect, onDragOver, setNodes } = graphState;
+
+  // The fitView prop fits the canvas once, as it opens, and an arrange
+  // moves every node, so the view refits after each one; without it nodes
+  // sat off the canvas or under the toolbar. This runs after React Flow has
+  // the arranged nodes, and the fit glides over the base duration, or lands
+  // at once under reduced motion.
+  useEffect(() => {
+    if (arrangeCount === 0) return;
+    void fitView({
+      duration: prefersReducedMotion() ? 0 : motionMs(document.documentElement, "--motion-base", 280),
+    });
+  }, [arrangeCount, fitView]);
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
@@ -66,8 +98,21 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
     [screenToFlowPosition, setNodes],
   );
 
+  // React Flow selects a focused node or edge on Enter or Space, but calls
+  // onNodeClick and onEdgeClick only for a pointer, so from the keyboard a
+  // detail never opened. The keys open it here as a click does: Enter as
+  // it goes down and Space as it comes up, the way a button takes them, so
+  // Space's release cannot land on the button the opened dialog focuses.
+  const openFromKey = (event: React.KeyboardEvent, key: string) => {
+    if (event.key !== key || !(event.target instanceof Element)) return;
+    const id = event.target.getAttribute("data-id");
+    if (!id) return;
+    if (event.target.classList.contains("react-flow__node")) onNodeClick(id);
+    else if (event.target.classList.contains("react-flow__edge")) onEdgeClick(id);
+  };
+
   return (
-    <div className="flex-1 min-h-0 relative" style={{ background: 'radial-gradient(circle at 50% 50%, rgba(6,182,212,0.015) 0%, transparent 60%)' }}>
+    <div className="flex-1 min-h-0 relative">
       {nodes.length === 0 && <EmptyCanvas />}
       <ReactFlow
         nodes={nodes}
@@ -79,21 +124,32 @@ function PipelineCanvas({ graphState, onNodeClick, onEdgeClick }: PipelineCanvas
         onDragOver={onDragOver}
         onNodeClick={(_, node) => onNodeClick(node.id)}
         onEdgeClick={(_, edge) => onEdgeClick(edge.id)}
+        onKeyDown={(e) => openFromKey(e, "Enter")}
+        onKeyUp={(e) => openFromKey(e, " ")}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
+        minZoom={MIN_ZOOM}
         proOptions={{ hideAttribution: true }}
         className="bg-canvas"
       >
         <Background color="rgba(255,255,255,0.018)" gap={24} />
-        <MiniMap className="!bg-card/90 !border-white/[0.06] !w-[120px] !h-[75px]" nodeColor="color-mix(in srgb, var(--color-foreground) 12%, transparent)" />
+        {/* Below sm the minimap covers part of the fitted pipeline, and a
+            phone's canvas shows the whole graph already. */}
+        <MiniMap
+          className="!bg-card/90 !border-white/[0.06] !w-[120px] !h-[75px] max-sm:!hidden"
+          nodeColor="color-mix(in srgb, var(--color-foreground) 12%, transparent)"
+          // React Flow's default mask is a light grey that reads as a block on
+          // the dark canvas; the page colour at 70% keeps the viewport window.
+          maskColor="color-mix(in srgb, var(--color-background) 70%, transparent)"
+        />
         <Controls className="!bg-card/90 !border-white/[0.06] !shadow-lg" />
       </ReactFlow>
     </div>
   );
 }
 
-export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose }: PipelineEditorProps) {
+export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, onApply, onClose }: PipelineEditorProps) {
   const graphState = useGraphState(initialGraph);
   const {
     nodes,
@@ -115,8 +171,14 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
   const [rippleKey, setRippleKey] = useState(0);
 
   // Page-mode state
-  const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
-  const [pipelineName, setPipelineName] = useState("Untitled pipeline");
+  const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(initialTemplate?.template_id ?? null);
+  // A built-in can be opened and edited, but only Save As keeps the edit.
+  const [isBuiltin, setIsBuiltin] = useState(initialTemplate?.is_builtin === true);
+  const canSaveInPlace = currentTemplateId !== null && !isBuiltin;
+  const builtinHintId = useId();
+  const [pipelineName, setPipelineName] = useState(
+    initialTemplate?.name || initialGraph?.name || "Untitled pipeline",
+  );
 
   const renameMutation = useRenameTemplate();
   const createMutation = useCreateTemplate();
@@ -135,27 +197,25 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
         // The id lives on the template, not inside its graph — reading
         // graph.metadata here left Save disabled forever (RAV-1293).
         setCurrentTemplateId(template.template_id ?? null);
+        setIsBuiltin(template.is_builtin === true);
       }
     },
     [loadGraph, mode],
   );
 
   const handleSave = useCallback(() => {
-    if (!currentTemplateId) return;
+    if (!currentTemplateId || isBuiltin) return;
     const graph = toApiGraph(serialize(pipelineName));
     renameMutation.mutate(
-      {
-        templateId: currentTemplateId,
-        name: pipelineName,
-        graph,
-      },
+      { templateId: currentTemplateId, name: pipelineName, graph },
       {
         onSuccess: (saved) => {
           saved.warnings?.forEach((w) => toast.warning(w));
         },
+        onError: (e) => toastApiError(e, "Failed to save the pipeline"),
       },
     );
-  }, [currentTemplateId, pipelineName, serialize, renameMutation]);
+  }, [currentTemplateId, isBuiltin, pipelineName, serialize, renameMutation]);
 
   const handleAutoArrange = useCallback(() => {
     const result = autoLayout(nodes, edges);
@@ -174,8 +234,10 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
         onSuccess: (created) => {
           created.warnings?.forEach((w) => toast.warning(w));
           setCurrentTemplateId(created.template_id);
+          setIsBuiltin(false);
           setPipelineName(name);
         },
+        onError: (e) => toastApiError(e, "Failed to save the pipeline"),
       },
     );
   }, [pipelineName, serialize, createMutation]);
@@ -193,7 +255,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
         >
           <X size={18} />
         </button>
-        <h2 className="text-base font-semibold text-white">Pipeline Editor</h2>
+        <h2 className="text-section font-semibold">Pipeline editor</h2>
       </div>
       <div className="flex items-center gap-2">
         <span className="relative inline-flex">
@@ -205,42 +267,55 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
             title="Re-position all nodes into a clean left-to-right layout"
           >
             <LayoutGrid size={13} />
-            Auto Arrange
+            Auto arrange
           </button>
-          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <DivineRipple key={rippleKey} size={120} />
-          </span>
+          {/* The ripple answers an arrange the person asked for, so it
+              mounts only after the first one, never as the editor opens. */}
+          {rippleKey > 0 && (
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <DivineRipple key={rippleKey} size={120} />
+            </span>
+          )}
         </span>
         <button
           type="button"
           onClick={() => setShowTemplatePicker(true)}
           className="text-xs text-white/50 hover:text-white/70 px-3 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
         >
-          Load Template
+          Load template
         </button>
         <button
           type="button"
           onClick={handleApply}
           disabled={nodes.length === 0}
-          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white text-xs font-medium px-4 py-1.5 rounded-md transition-colors"
+          className="h-[30px] rounded-md bg-primary px-3.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-30"
         >
-          Apply Pipeline
+          Apply pipeline
         </button>
       </div>
     </div>
   ) : (
-    /* Page header */
-    <div className="h-14 shrink-0 border-b border-white/[0.08] flex items-center justify-between px-4 bg-card">
-      <div className="flex items-center gap-3">
+    /* Page header. On a phone it wraps: the name on a row of its own, the
+       actions under it, so Templates, Save and Save As stay in view. */
+    <div
+      data-testid="pipeline-toolbar"
+      className="shrink-0 border-b border-white/[0.08] flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2 bg-card sm:h-14 sm:flex-nowrap sm:py-0"
+    >
+      <div className="flex w-full flex-col sm:w-auto">
         <input
           type="text"
           value={pipelineName}
           onChange={(e) => setPipelineName(e.target.value)}
-          className="bg-transparent border-none text-base font-semibold text-white outline-none focus:ring-1 focus:ring-white/20 rounded px-1.5 py-0.5 -ml-1.5 w-64"
+          className="bg-transparent border-none text-base font-semibold text-white outline-none focus:ring-1 focus:ring-white/20 rounded px-1.5 py-0.5 -ml-1.5 w-full sm:w-64"
           placeholder="Pipeline name..."
         />
+        {isBuiltin && (
+          <p id={builtinHintId} className="text-xs text-fg-muted">
+            {BUILTIN_HINT}
+          </p>
+        )}
       </div>
-      <div className="flex items-center gap-2">
+      <div data-testid="pipeline-actions" className="flex flex-wrap items-center gap-2">
         <span className="relative inline-flex">
           <button
             type="button"
@@ -250,11 +325,15 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
             title="Re-position all nodes into a clean left-to-right layout"
           >
             <LayoutGrid size={13} />
-            Auto Arrange
+            Auto arrange
           </button>
-          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <DivineRipple key={rippleKey} size={120} />
-          </span>
+          {/* The ripple answers an arrange the person asked for, so it
+              mounts only after the first one, never as the editor opens. */}
+          {rippleKey > 0 && (
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <DivineRipple key={rippleKey} size={120} />
+            </span>
+          )}
         </span>
         <button
           type="button"
@@ -264,29 +343,39 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
           <FolderOpen size={13} />
           Templates
         </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={!currentTemplateId || nodes.length === 0 || renameMutation.isPending}
-          className="flex items-center gap-1.5 bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-30 text-white/70 text-xs font-medium px-3 py-1.5 rounded-md transition-colors"
-        >
-          <Save size={13} />
-          Save
-        </button>
-        <button
-          type="button"
-          onClick={handleSaveAs}
-          disabled={nodes.length === 0 || createMutation.isPending}
-          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white text-xs font-medium px-4 py-1.5 rounded-md transition-colors"
-        >
-          Save As
-        </button>
+        {/* One gold action: Save for a template of your own, Save As for a
+            new pipeline or a built-in, which only a copy can keep. The two
+            wrap as a pair, so on a phone they share the actions' second row. */}
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={canSaveInPlace ? "default" : "outline"}
+            onClick={handleSave}
+            disabled={!canSaveInPlace || nodes.length === 0 || renameMutation.isPending}
+            aria-describedby={isBuiltin ? builtinHintId : undefined}
+            title={isBuiltin ? BUILTIN_HINT : undefined}
+            className="gap-1.5"
+          >
+            <Save size={13} />
+            Save
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={canSaveInPlace ? "outline" : "default"}
+            onClick={handleSaveAs}
+            disabled={nodes.length === 0 || createMutation.isPending}
+          >
+            Save As
+          </Button>
+        </div>
       </div>
     </div>
   );
 
-  return (
-    <div className={isModal ? "fixed inset-0 z-50 bg-background flex flex-col" : "flex flex-col h-full bg-background"}>
+  const content = (
+    <>
       {header}
 
       {/* Main content */}
@@ -306,6 +395,7 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
         <ReactFlowProvider>
           <PipelineCanvas
             graphState={graphState}
+            arrangeCount={rippleKey}
             onNodeClick={(nodeId) => {
               const node = nodes.find((n) => n.id === nodeId);
               if (node?.data?.nodeRole === "start" || node?.data?.nodeRole === "end") return;
@@ -345,6 +435,13 @@ export function PipelineEditor({ mode = "modal", initialGraph, onApply, onClose 
           onClose={() => setShowTemplatePicker(false)}
         />
       )}
-    </div>
+    </>
+  );
+
+  // The modal editor covers the window, so it renders over it like a dialog.
+  return isModal ? (
+    <Overlay className="bg-background flex flex-col p-0">{content}</Overlay>
+  ) : (
+    <div className="flex flex-col h-full bg-background">{content}</div>
   );
 }

@@ -36,6 +36,16 @@ export function physicalOf(node: PipelineGraph["nodes"][number]): string {
   return node.physical_node ?? node.node_id;
 }
 
+/**
+ * Whether a node_completed reports that its node failed: the triage and verify
+ * nodes say action "failed", the onboarding nodes ok false, and a node may
+ * carry an error. Completion alone is not success.
+ */
+export function nodeCompletedFailed(event: LogEvent): boolean {
+  if (event.type !== "node_completed") return false;
+  return event.action === "failed" || event.ok === false || (typeof event.error === "string" && event.error !== "");
+}
+
 export function deriveNodeStates(
   graph: PipelineGraph | null,
   events: LogEvent[],
@@ -150,8 +160,9 @@ export function deriveNodeStates(
         startedAt && timestamp
           ? Math.max(0, (new Date(timestamp).getTime() - new Date(startedAt).getTime()) / 1000)
           : 0;
-      // A run-ending error already failed the node; completing it must not hide that.
-      const state = states[target]?.state === "failed" ? "failed" : "completed";
+      // A run-ending error already failed the node; completing it must not hide
+      // that, and a node that reports its own failure is failed too.
+      const state = states[target]?.state === "failed" || nodeCompletedFailed(event) ? "failed" : "completed";
       upsert(target, { state, duration_seconds: duration });
       runningNodeByPhysical.delete(phys);
     } else if (event.type === "error") {

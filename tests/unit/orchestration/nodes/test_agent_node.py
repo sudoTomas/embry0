@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -27,121 +27,6 @@ def _make_fake_runner(agent_type: str = "developer", **kwargs: Any) -> AsyncMock
     runner = AsyncMock()
     runner.run = AsyncMock(return_value=out)
     return runner
-
-
-@pytest.mark.skip(reason="In-process executor fallback removed in 2026-04-28-sandbox-hardening")
-@pytest.mark.asyncio
-async def test_run_agent_node_builds_invocation_and_delegates(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
-
-    fake_out = AgentOutput(
-        agent_type="developer",
-        is_error=False,
-        output="ok",
-        cost_usd=0.02,
-        duration_ms=100,
-        tools_called={"Read": 1},
-    )
-    with patch("embry0.orchestration.nodes.agent.select_executor") as mock_factory:
-        mock_executor = AsyncMock()
-        mock_executor.run = AsyncMock(return_value=fake_out)
-        mock_factory.return_value = mock_executor
-
-        state: dict[str, Any] = {
-            "sandbox_container_id": "c1",
-            "total_cost_usd": 0.0,
-            "pipeline_config": {},
-            "agent_models_override": {},
-        }
-        updates = await run_agent_node(
-            state=state,
-            agent_runner=None,
-            agent_type="developer",
-            prompt="do it",
-            model="claude-sonnet-4-6",
-            tools=["Read"],
-            max_turns=10,
-            timeout_seconds=60,
-            agent_definition={
-                "model": "claude-sonnet-4-6",
-                "tools": ["Read"],
-                "skills": [],
-                "system_prompt": "",
-                "mcp_servers": {},
-                "execution_mode": None,
-                "auth_mode": "api_key",
-            },
-            credentials={"api_key": "sk-xyz", "oauth_token": ""},
-            global_defaults={"execution_mode": "sdk", "auth_mode": "oauth"},
-        )
-
-    assert updates["total_cost_usd"] == pytest.approx(0.02)
-    assert updates["current_stage"] == "developer_complete"
-    assert updates["agent_outputs"][0]["cost_usd"] == pytest.approx(0.02)
-
-
-@pytest.mark.skip(reason="In-process executor fallback removed in 2026-04-28-sandbox-hardening")
-@pytest.mark.asyncio
-async def test_run_agent_node_success() -> None:
-    """Legacy calling convention (no agent_definition/credentials/defaults) still works."""
-    fake_out = AgentOutput(
-        agent_type="developer",
-        is_error=False,
-        output="Fixed the bug",
-        cost_usd=0.42,
-        duration_ms=15000,
-        tools_called={"Read": 5, "Edit": 2},
-    )
-    with patch("embry0.orchestration.nodes.agent.select_executor") as mock_factory:
-        mock_executor = AsyncMock()
-        mock_executor.run = AsyncMock(return_value=fake_out)
-        mock_factory.return_value = mock_executor
-
-        state = {"sandbox_container_id": "sandbox-job-123", "total_cost_usd": 1.0}
-        result = await run_agent_node(
-            state=state,
-            agent_runner=None,
-            agent_type="developer",
-            prompt="Fix the auth bug",
-            model="claude-sonnet-4-6",
-            tools=["Read", "Write", "Edit", "Bash"],
-            credentials={"api_key": "", "oauth_token": "oauth-xyz"},
-        )
-
-    assert len(result["agent_outputs"]) == 1
-    assert result["agent_outputs"][0]["agent_type"] == "developer"
-    assert result["agent_outputs"][0]["cost_usd"] == 0.42
-    assert result["total_cost_usd"] == pytest.approx(1.42)
-    assert result["current_stage"] == "developer_complete"
-
-
-@pytest.mark.skip(reason="In-process executor fallback removed in 2026-04-28-sandbox-hardening")
-@pytest.mark.asyncio
-async def test_run_agent_node_error() -> None:
-    """Executor-level error (is_error=True) surfaces on the returned updates dict."""
-    fake_out = AgentOutput(
-        agent_type="developer",
-        is_error=True,
-        error_message="Timeout after 300s",
-    )
-    with patch("embry0.orchestration.nodes.agent.select_executor") as mock_factory:
-        mock_executor = AsyncMock()
-        mock_executor.run = AsyncMock(return_value=fake_out)
-        mock_factory.return_value = mock_executor
-
-        state = {"sandbox_container_id": "sandbox-job-123", "total_cost_usd": 0.0}
-        result = await run_agent_node(
-            state=state,
-            agent_runner=None,
-            agent_type="developer",
-            prompt="Fix the bug",
-            credentials={"api_key": "", "oauth_token": "oauth-xyz"},
-        )
-
-    assert result["agent_outputs"][0]["is_error"] is True
-    assert len(result["errors"]) == 1
-    assert "Timeout" in result["errors"][0]
-    assert result["current_stage"] == "developer_failed"
 
 
 @pytest.mark.asyncio
@@ -276,33 +161,6 @@ async def test_resolved_kind_from_configurable_reaches_the_resolver() -> None:
         "configurable llm_credential_kinds must reach the resolver, "
         f"got error_code={result.get('error_code')!r} stage={result.get('current_stage')!r}"
     )
-
-
-@pytest.mark.skip(reason="In-process executor fallback removed in 2026-04-28-sandbox-hardening")
-@pytest.mark.asyncio
-async def test_run_agent_node_select_executor_error_returns_error_updates(monkeypatch, tmp_path) -> None:
-    """If select_executor raises AuthConfigError, return error state (Phase 2 guard)."""
-    from embry0.execution.auth_provider import AuthConfigError
-    from embry0.safety.error_codes import ErrorCode
-
-    with patch(
-        "embry0.orchestration.nodes.agent.select_executor",
-        side_effect=AuthConfigError(ErrorCode.INVALID_CONFIG, "forced"),
-    ):
-        updates = await run_agent_node(
-            state={"total_cost_usd": 0.0, "pipeline_config": {}},
-            agent_runner=None,
-            agent_type="developer",
-            prompt="x",
-            model="claude-sonnet-4-6",
-            tools=["Read"],
-            credentials={"api_key": "sk-abc", "oauth_token": ""},
-            global_defaults={"execution_mode": "sdk", "auth_mode": "api_key"},
-        )
-
-    assert updates["agent_outputs"][0]["is_error"] is True
-    assert updates["error_code"] == "ERR_INVALID_CONFIG"
-    assert updates["current_stage"] == "developer_failed"
 
 
 @pytest.mark.asyncio

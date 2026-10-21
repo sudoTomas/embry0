@@ -21,12 +21,17 @@ export function useSetGlobalEnv() {
   });
 }
 
-export function useRepoEnv(fullRepo: string) {
-  return useQuery({
+/** A repo's environment variables: the key and fetch every reader of them shares. */
+export function repoEnvQuery(fullRepo: string) {
+  return {
     queryKey: ["repo-env", fullRepo],
     queryFn: () => fetchRepoEnv(fullRepo),
     enabled: !!fullRepo,
-  });
+  };
+}
+
+export function useRepoEnv(fullRepo: string) {
+  return useQuery(repoEnvQuery(fullRepo));
 }
 
 export function useSetRepoEnv() {

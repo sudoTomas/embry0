@@ -7,10 +7,11 @@ from typing import Any
 from fastapi import Request
 
 from embry0.api.deps import request_actor
+from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 
 
-async def audit(request: Request, action: str, **details: Any) -> None:
+async def audit(request: Request, action: AuditAction, **details: Any) -> None:
     config = getattr(request.app.state, "config", None)
     await emit_audit(
         getattr(request.app.state, "db", None),

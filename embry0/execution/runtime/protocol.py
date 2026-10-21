@@ -50,6 +50,33 @@ class VolumeSummary:
     created_at: str | None
 
 
+@dataclass(frozen=True)
+class ImageSummary:
+    """One image as ``list_images`` reports it.
+
+    ``repo_tags`` are ``<repository>:<tag>`` and ``repo_digests``
+    ``<repository>@sha256:...``; ``created_at`` is the daemon's RFC 3339
+    timestamp, unparsed; ``size`` is in bytes, shared layers included.
+    """
+
+    id: str
+    repo_tags: tuple[str, ...]
+    repo_digests: tuple[str, ...]
+    created_at: str
+    size: int
+
+
+@dataclass(frozen=True)
+class DiskUsage:
+    """What ``docker system df -v`` reports, in bytes: each image's own layers by image ID, each volume by name.
+
+    The daemon prints sizes rounded (``400.7MB``), so these are too.
+    """
+
+    image_unique_bytes: dict[str, int]
+    volume_bytes: dict[str, int]
+
+
 @runtime_checkable
 class AgentRuntime(Protocol):
     """The daemon that runs sandboxes, as the orchestrator uses it."""
@@ -159,6 +186,7 @@ class AgentRuntime(Protocol):
         name: str | None = None,
         label: str | None = None,
         volume: str | None = None,
+        ancestor: str | None = None,
         include_stopped: bool = True,
         timeout: int = 15,
     ) -> list[ContainerSummary]:
@@ -166,7 +194,8 @@ class AgentRuntime(Protocol):
 
         ``name`` matches anywhere in the container name (Docker's name filter).
         ``label`` is ``key`` or ``key=value``. ``volume`` keeps the containers
-        that mount that volume.
+        that mount that volume, ``ancestor`` those started from that image
+        (a reference or an image ID) or an image built on it.
         """
         ...
 
@@ -284,6 +313,24 @@ class AgentRuntime(Protocol):
 
     async def remove_image(self, image: str, *, timeout: int = 30) -> None:
         """Force-remove ``image`` from the daemon."""
+        ...
+
+    async def list_images(self, *, timeout: int = 60) -> list[ImageSummary]:
+        """Every image on the daemon (``docker image ls --all``): tagged, untagged and build intermediates."""
+        ...
+
+    async def remove_image_refs(self, refs: Sequence[str], *, timeout: int = 60) -> None:
+        """Remove these tags and digest references, without ``--force``.
+
+        The image itself goes with its last reference, and the daemon refuses
+        to remove the last reference of an image a container uses. Untagging a
+        repository's last tag also drops that repository's digest references,
+        so naming one of those after it fails ("No such image").
+        """
+        ...
+
+    async def disk_usage(self, *, timeout: int = 120) -> DiskUsage:
+        """Image and volume sizes as ``docker system df -v`` reports them."""
         ...
 
     # --- QA compose workspaces (mode: dind) ---------------------------------

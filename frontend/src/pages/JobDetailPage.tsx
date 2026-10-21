@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, ExternalLink } from "lucide-react";
-import { toast } from "sonner";
 import { OperationGlyph } from "@/components/divine/OperationGlyph";
 import { DivineRipple } from "@/components/divine/DivineRipple";
 import { jobToOperation, shouldFireCompletionFlare } from "@/components/divine/operations";
-import { Button } from "@/components/ui/Button";
+import { buttonVariants } from "@/components/ui/Button";
+import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { useJob } from "@/hooks/useJobs";
+import { useRegisteredRepos } from "@/hooks/useRepos";
 import { useJobInputs } from "@/hooks/useInputs";
 import { useTraces } from "@/hooks/useTraces";
 import { useJobLogs } from "@/hooks/useJobLogs";
@@ -19,6 +20,10 @@ import { deriveNodeStates, filterEventsForNode, physicalOf } from "@/lib/pipelin
 import { sessionAgentType } from "@/lib/agentSession";
 import { resolveAgentType } from "@/lib/agentIdentity";
 import { isTerminalStatus } from "@/lib/jobStatus";
+import { forgeIssueUrl } from "@/lib/forgeLinks";
+import { isNotFound } from "@/api/errorDetail";
+import { toastApiError } from "@/api/errorToast";
+import { PageError } from "@/components/PageError";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
 import { AwaitingInputCard } from "@/components/jobs/AwaitingInputCard";
 import { AutoAnswerCard } from "@/components/jobs/AutoAnswerCard";
@@ -41,15 +46,29 @@ import { resumeJob, discardJob } from "@/api/jobs";
 
 const TRACES_PAGE_SIZE = 25;
 
+/** The map's box and the box that holds its place: one height, so the record
+ * under it does not move when the graph lands (it arrives on the event stream
+ * a second or so after the page paints). */
+const MAP_BOX = "rounded-lg border border-border bg-card p-2 min-h-[320px]";
+
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
-  const { data: job, isLoading, isError, refetch } = useJob(jobId);
-  const { data: jobInputs, refetch: refetchInputs } = useJobInputs(jobId ?? "");
+  const { data: job, isLoading, isError, error, refetch } = useJob(jobId);
+  const missing = isNotFound(error);
+  const { data: jobInputs, refetch: refetchInputs } = useJobInputs(missing ? "" : (jobId ?? ""), job?.status);
 
-  const { events, isConnected, isComplete, latestCost, latestTokensIn, latestTokensOut, latestTurns, pipelineGraph } = useJobLogs(jobId);
+  // The event stream opens once the job is known to exist: a missing job
+  // has none, and opening it before the 404 mints a token for nothing.
+  const { events, isConnected, isComplete, latestCost, latestTokensIn, latestTokensOut, latestTurns, pipelineGraph } = useJobLogs(job ? jobId : undefined);
   const { agents, prUrl, interruptData, pausedForInput } = useAgentStates(events, job?.status, pipelineGraph);
   const jobFinished = isTerminalStatus(job?.status);
   const live = !!job && !jobFinished && !isComplete;
+
+  // A job with an issue number but no issue row (made through POST /jobs)
+  // links to the issue on its forge; the repository's row names the forge
+  // when there is no pull request yet.
+  const issueOnForgeOnly = !!job && !job.issue_id && job.issue_number != null && !!job.repo;
+  const { data: registeredRepos } = useRegisteredRepos({ enabled: issueOnForgeOnly });
 
   const nodeStates = useMemo(() => deriveNodeStates(pipelineGraph, events, job?.status), [pipelineGraph, events, job?.status]);
 
@@ -146,25 +165,38 @@ export function JobDetailPage() {
     prevStatusRef.current = job?.status ?? null;
   }, [job?.status]);
 
-  if (isError) return <div className="p-8 text-center text-destructive">Failed to load job</div>;
+  if (missing) return <PageError message={`No job ${jobId}`} back={{ to: "/jobs", label: "All jobs" }} />;
+  if (isError) return <PageError message="Failed to load job" onRetry={() => void refetch()} back={{ to: "/jobs", label: "All jobs" }} />;
   if (isLoading || !job) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
 
   const displayPrUrl = prUrl || job.pr_url;
+  const forgeIssueLink = issueOnForgeOnly
+    ? forgeIssueUrl({
+        repo: job.repo,
+        issueNumber: job.issue_number,
+        prUrl: displayPrUrl,
+        forge: registeredRepos?.find((r) => r.repo === job.repo)?.forge ?? null,
+      })
+    : null;
   const handleResume = async (choice: string, guidance?: string) => {
     try { await resumeJob(job.job_id, choice, guidance); refetch(); }
-    catch (err) { toast.error(err instanceof Error ? err.message : "Failed to resume job"); }
+    catch (err) { toastApiError(err, "Failed to resume job"); }
   };
   const handleDiscard = async () => {
     try { await discardJob(job.job_id); refetch(); }
-    catch (err) { toast.error(err instanceof Error ? err.message : "Failed to discard job"); }
+    catch (err) { toastApiError(err, "Failed to discard job"); }
   };
   const autoAnswered = (jobInputs ?? []).filter((inp) => inp.status === "auto_answered" || (inp.status === "answered" && inp.auto_answer != null));
+  const linkButton = cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1 text-xs h-7");
 
   return (
     <div className="space-y-4">
-      {/* 1. Header */}
+      {/* 1. Header. Every control here is one named link: a button inside a
+          link is two controls for one action. */}
       <div className="flex items-center gap-3 flex-wrap">
-        <Link to="/jobs"><Button variant="ghost" size="icon" className="h-8 w-8"><ArrowLeft className="h-4 w-4" /></Button></Link>
+        <Link to="/jobs" aria-label="Back to jobs" className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8")}>
+          <ArrowLeft className="h-4 w-4" />
+        </Link>
         <span className="relative flex items-center justify-center w-8 h-8 shrink-0">
           <OperationGlyph operation={currentOperation} size={28} titled />
           {flareKey > 0 && <span className="absolute inset-0 flex items-center justify-center pointer-events-none"><DivineRipple key={flareKey} size={64} /></span>}
@@ -176,14 +208,23 @@ export function JobDetailPage() {
           </div>
           <div className="text-[10px] text-muted-foreground font-mono">{job.job_id}</div>
         </div>
-        {job.issue_number && (
-          <a href={`https://github.com/${job.repo}/issues/${job.issue_number}`} target="_blank" rel="noopener noreferrer">
-            <Button variant="outline" size="sm" className="gap-1 text-xs h-7">Issue #{job.issue_number} <ExternalLink className="w-3 h-3" /></Button>
-          </a>
+        {/* The job's issue row, which links on to its tracker (GitHub, GitLab
+            or Linear): a link built here assumed github.com for every forge.
+            A job with no issue row links to the issue on its own forge. */}
+        {job.issue_id ? (
+          <Link to={`/issues/${job.issue_id}`} className={linkButton}>
+            {job.issue_number ? `Issue #${job.issue_number}` : "Issue"}
+          </Link>
+        ) : (
+          forgeIssueLink && (
+            <a href={forgeIssueLink} target="_blank" rel="noopener noreferrer" className={linkButton}>
+              Issue #{job.issue_number} <ExternalLink className="w-3 h-3" aria-hidden="true" />
+            </a>
+          )
         )}
         {displayPrUrl && (
-          <a href={displayPrUrl} target="_blank" rel="noopener noreferrer">
-            <Button variant="outline" size="sm" className="gap-1 text-xs h-7">Pull request <ExternalLink className="w-3 h-3" /></Button>
+          <a href={displayPrUrl} target="_blank" rel="noopener noreferrer" className={linkButton}>
+            Pull request <ExternalLink className="w-3 h-3" aria-hidden="true" />
           </a>
         )}
       </div>
@@ -196,11 +237,21 @@ export function JobDetailPage() {
       {/* 3. HUD */}
       <JobHud status={job.status} startedAt={job.started_at ?? null} finishedAt={job.finished_at ?? null} costUsd={displayCost} turns={latestTurns} tokensIn={latestTokensIn} tokensOut={latestTokensOut} budgetUsd={budgetUsd} />
 
-      {/* 4. Banners */}
-      {job.status === "completed" && (
-        <div className="px-4 py-3 rounded-lg border border-palette-emerald/30 bg-palette-emerald/10 text-sm text-palette-emerald">Pipeline completed successfully</div>
+      {/* 4. Banners. A finished job shows its outcome and deliverables whatever
+          finished status it reached: a merged PR, a partial or a skipped run
+          too, not only "completed". */}
+      {(job.status === "completed" || job.status === "pr_merged") && (
+        <div className="px-4 py-3 rounded-lg border border-palette-emerald/30 bg-palette-emerald/10 text-sm text-palette-emerald">
+          {job.status === "pr_merged" ? "Pipeline completed, pull request merged" : "Pipeline completed successfully"}
+        </div>
       )}
-      {job.status === "completed" && <DeliverablesCard jobId={job.job_id} />}
+      {job.status === "partial" && (
+        <div className="px-4 py-3 rounded-lg border border-warning/30 bg-warning/10">
+          <div className="text-sm font-medium text-warning mb-1">Pipeline partly passed</div>
+          {job.error_message && <div className="text-xs text-muted-foreground">{job.error_message}</div>}
+        </div>
+      )}
+      {jobFinished && <DeliverablesCard jobId={job.job_id} />}
       {job.status === "failed" && job.error_message && (
         <div className="px-4 py-3 rounded-lg border border-destructive/30 bg-destructive/10">
           <div className="text-sm font-medium text-destructive mb-1">Pipeline failed</div>
@@ -214,16 +265,23 @@ export function JobDetailPage() {
         <PausedBanner jobId={job.job_id} reason={interruptData?.reason || job.current_stage || "paused"} retryCount={interruptData?.retry_count} latestReview={interruptData?.latest_review} prUrl={displayPrUrl || undefined} pausedAt={job.finished_at || job.started_at || undefined} onResume={handleResume} onDiscard={handleDiscard} />
       )}
       {job.status === "awaiting_input" && <AwaitingInputCard jobInputs={jobInputs ?? []} jobId={job.job_id} />}
-      {autoAnswered.length > 0 && <div className="space-y-2">{autoAnswered.map((inp) => <AutoAnswerCard key={inp.input_id} input={inp} jobId={job.job_id} />)}</div>}
+      {autoAnswered.length > 0 && <div className="space-y-2">{autoAnswered.map((inp) => <AutoAnswerCard key={inp.id} input={inp} jobId={job.job_id} />)}</div>}
       {job.status === "pending" && <div className="text-center py-12 text-muted-foreground text-sm">Waiting to start...</div>}
 
-      {/* 5. Party map and the record */}
-      <div className={`grid gap-4 ${pipelineGraph ? "lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" : ""}`}>
-        {pipelineGraph && (
-          <div className="rounded-lg border border-border bg-card p-2 min-h-[320px]">
+      {/* 5. Party map and the record. A live job's map holds its place from
+          the first paint: the graph arrives on the event stream a second or
+          so later and must not push the record down when it does. A finished
+          job with no graph predates the live graph and has no map. */}
+      <div className={`grid gap-4 ${pipelineGraph || live ? "lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" : ""}`}>
+        {pipelineGraph ? (
+          <div className={MAP_BOX}>
             <PipelineGraphView graph={pipelineGraph} nodeStates={nodeStates} onNodeSelect={handleNodeSelect} selectedNodeId={selectedNodeId} />
           </div>
-        )}
+        ) : live ? (
+          <div data-testid="party-map-pending" className={cn(MAP_BOX, "flex items-center justify-center text-center text-xs text-muted-foreground")}>
+            The party map appears once the job's first node emits it.
+          </div>
+        ) : null}
         <div className="flex flex-col min-h-0 lg:max-h-[calc(100vh-14rem)]">
           <Tabs defaultValue="conversation" className="flex flex-col min-h-0 flex-1 space-y-3">
             <TabsList>
@@ -235,7 +293,8 @@ export function JobDetailPage() {
             </TabsList>
             <TabsContent value="conversation" className="flex flex-col min-h-0 flex-1 gap-3">
               {selectedRun && (
-                <div data-testid="selected-run" data-run-id={selectedRun.runId}>
+                // Keyed by the run, so the card of a newly selected run arrives (.motion-enter) rather than swapping in a frame.
+                <div key={selectedRun.runId} data-testid="selected-run" data-run-id={selectedRun.runId} className="motion-enter">
                   <AgentCard agent={selectedRun} expanded />
                   <button type="button" onClick={() => setSelectedRunId(null)} className="mt-1 text-xs underline text-muted-foreground hover:text-foreground">Show every run</button>
                 </div>

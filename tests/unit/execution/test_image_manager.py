@@ -1,11 +1,20 @@
 """Tests for SandboxImageManager — proxy image presence check + expire paused jobs routing."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from embry0.execution.image_manager import ContainerReaper, SandboxImageManager
 from embry0.execution.runtime import DockerRuntime
+from embry0.execution.sandbox_manager import SandboxManager
+
+
+def _reaper(docker: MagicMock, **kwargs: Any) -> ContainerReaper:
+    """A reaper whose teardown is a real SandboxManager over the same docker mock."""
+    runtime = DockerRuntime(docker)
+    sandbox = SandboxManager(docker, proxy_manager=MagicMock(unenroll_sandbox=AsyncMock()), runtime=runtime)
+    return ContainerReaper(runtime, sandbox_manager=sandbox, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -56,8 +65,8 @@ async def test_expire_paused_jobs_uses_jobs_repo():
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         paused_ttl_hours=0,
@@ -97,8 +106,8 @@ async def test_expire_paused_jobs_calls_purge_thread(monkeypatch):
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         paused_ttl_hours=0,
@@ -134,8 +143,8 @@ async def test_expire_paused_jobs_purge_failure_does_not_break_loop(monkeypatch)
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         paused_ttl_hours=0,
@@ -173,8 +182,8 @@ async def test_expire_paused_jobs_no_purge_without_database_url(monkeypatch):
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         paused_ttl_hours=0,
@@ -200,8 +209,8 @@ async def test_expire_paused_jobs_fallback_without_jobs_repo():
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=None,
         paused_ttl_hours=0,
@@ -246,8 +255,8 @@ async def test_expire_paused_jobs_claim_race_skips_destroy_and_purge(monkeypatch
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock()
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         issues_repo=mock_issues_repo,
@@ -282,8 +291,8 @@ async def test_expire_paused_jobs_reopens_issue_via_cas_helper():
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
 
-    reaper = ContainerReaper(
-        DockerRuntime(mock_docker),
+    reaper = _reaper(
+        mock_docker,
         db=mock_db,
         jobs_repo=mock_jobs_repo,
         issues_repo=mock_issues_repo,
@@ -455,7 +464,7 @@ def _reaper_with_paused_jobs(job_ids: list[str]) -> tuple[ContainerReaper, Async
     mock_docker.build_stop_cmd = MagicMock(return_value=["docker", "stop"])
     mock_docker.build_rm_cmd = MagicMock(return_value=["docker", "rm"])
     mock_docker.run_cmd = AsyncMock(side_effect=RuntimeError("no container"))
-    reaper = ContainerReaper(DockerRuntime(mock_docker), db=mock_db, jobs_repo=mock_jobs_repo, paused_ttl_hours=0)
+    reaper = _reaper(mock_docker, db=mock_db, jobs_repo=mock_jobs_repo, paused_ttl_hours=0)
     return reaper, mock_jobs_repo
 
 

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 import embry0.services._executor_outcomes as _executor_outcomes
 import embry0.services._executor_run as _executor_run
+from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.orchestration import dispatch_actors
 from embry0.orchestration.restart import ExecutorDraining, ShutdownInterrupt
@@ -219,10 +220,10 @@ class IssueExecutor:
         decision: DispatchDecision = await gate.check(actor=actor)
         return None if decision.allowed else decision
 
-    async def _emit_audit(self, *args: Any, **kwargs: Any) -> None:
+    async def _emit_audit(self, db: Any, action: AuditAction, **kwargs: Any) -> None:
         """Late-bound ``emit_audit`` — mixin methods call through here so test
         patches on ``embry0.services.issue_executor.emit_audit`` reach them."""
-        await emit_audit(*args, **kwargs)
+        await emit_audit(db, action, **kwargs)
 
     def _select_workflow(self, pipeline: str) -> Any:
         """Pick the workflow class based on the pipeline name.
@@ -641,10 +642,11 @@ class IssueExecutor:
             dispatched_by=dispatched_by,
         )
 
+        # The one row for this job: every path that starts a QA job ends here.
         await emit_audit(
             self._db,
             "qa.job_created",
-            actor="system",
+            actor=dispatched_by or "system",
             details={"job_id": job_id, "repo": repo, "branch": branch},
             audit_log_path=self._audit_log_path,
         )
@@ -679,9 +681,13 @@ class IssueExecutor:
         skip_smoke: bool = False,
         agent_models: dict[str, str] | None = None,
         dispatched_by: str | None = None,
+        proposal_id: str | None = None,
     ) -> str:
         """EMB-50: issue-less onboard job — analyze ``repo`` and generate its
-        qa.yaml v2 into the external config store. Returns the new job id."""
+        qa.yaml v2 into the external config store. Returns the new job id.
+
+        With ``proposal_id`` (propose mode, ADR 0019) the job stores its
+        draft on that setup proposal instead, for a person to apply."""
         import uuid
 
         trace_id = f"trc-{uuid.uuid4().hex[:12]}"
@@ -692,10 +698,16 @@ class IssueExecutor:
         }
         if agent_models:
             pipeline_config["agent_models_override"] = dict(agent_models)
+        if proposal_id:
+            pipeline_config["proposal_id"] = proposal_id
 
         job_id = await self._jobs.create(
             repo=repo,
-            task=f"Onboard {repo}@{branch} — generate qa.yaml into the config store",
+            task=(
+                f"Onboard {repo}@{branch}: propose a test setup for review"
+                if proposal_id
+                else f"Onboard {repo}@{branch} — generate qa.yaml into the config store"
+            ),
             pipeline_template="onboard",
             pipeline_config=pipeline_config,
             sandbox_profile="slim",
@@ -706,7 +718,7 @@ class IssueExecutor:
         await emit_audit(
             self._db,
             "onboard.job_created",
-            actor="system",
+            actor=dispatched_by or "system",
             details={"job_id": job_id, "repo": repo, "branch": branch},
             audit_log_path=self._audit_log_path,
         )
@@ -719,6 +731,7 @@ class IssueExecutor:
                 branch=branch,
                 skip_smoke=skip_smoke,
                 agent_models=agent_models,
+                proposal_id=proposal_id,
             ),
             kind="onboard_workflow_execute",
             job_id=job_id,
@@ -728,6 +741,7 @@ class IssueExecutor:
                 "branch": branch,
                 "skip_smoke": skip_smoke,
                 "agent_models": agent_models,
+                "proposal_id": proposal_id,
             },
         )
         return job_id
@@ -754,7 +768,7 @@ class IssueExecutor:
         await emit_audit(
             self._db,
             "pr_review.job_created",
-            actor="system",
+            actor=dispatched_by or "system",
             details={"job_id": job_id, "repo": repo, "number": number, "trigger": review.get("trigger")},
             audit_log_path=self._audit_log_path,
         )
@@ -1271,6 +1285,7 @@ class IssueExecutor:
                 branch=str(launch.get("branch") or ""),
                 skip_smoke=bool(launch.get("skip_smoke")),
                 agent_models=launch.get("agent_models"),
+                proposal_id=launch.get("proposal_id"),
             )
             return
         if runner == "pr-review":

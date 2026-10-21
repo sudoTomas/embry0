@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from embry0.audit.actions import AuditAction
 from embry0.audit.db_logger import emit_audit_event_db
 from embry0.audit.logger import emit_audit_event
 from embry0.storage.database import DatabasePool
@@ -11,7 +12,7 @@ from embry0.storage.database import DatabasePool
 
 async def emit_audit(
     db: DatabasePool | None,
-    action: str,
+    action: AuditAction,
     *,
     actor: str = "system",
     details: dict[str, Any] | None = None,

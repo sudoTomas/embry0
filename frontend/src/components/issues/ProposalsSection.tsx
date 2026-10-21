@@ -1,11 +1,14 @@
-import { isAxiosError } from "axios";
 import { formatDistanceToNow } from "date-fns";
 import { ExternalLink } from "lucide-react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
+import { formatDateTime } from "@/lib/utils";
+import { providerLabel } from "@/lib/status";
 import { useAcceptProposal, useProposals, useRejectProposal } from "@/hooks/useProposals";
 import type { HealingCase } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
+import { useIsAdmin } from "@/stores/authStore";
 
 /**
  * Trackers whose drafts the API accepts (POST /cases/{id}/accept). The others —
@@ -20,15 +23,8 @@ const ACCEPTED_HERE = new Set(["github", "linear"]);
  */
 const LABELLED_ON_ACCEPT = new Set(["linear"]);
 
-const TRACKER_NAMES: Record<string, string> = { linear: "Linear", github: "GitHub", gitlab: "GitLab" };
-
 function trackerName(kind: string | undefined): string {
-  return (kind && TRACKER_NAMES[kind]) || kind || "its tracker";
-}
-
-function detailOf(error: unknown, fallback: string): string {
-  const detail = isAxiosError(error) ? error.response?.data?.detail : undefined;
-  return typeof detail === "string" ? detail : fallback;
+  return kind ? providerLabel(kind) : "its tracker";
 }
 
 /**
@@ -63,6 +59,7 @@ function filedAt(proposal: HealingCase): string {
  * of a deployment with no watcher and no organization is unchanged.
  */
 export function ProposalsSection() {
+  const isAdmin = useIsAdmin();
   const proposals = useProposals();
   const accept = useAcceptProposal();
   const reject = useRejectProposal();
@@ -71,7 +68,7 @@ export function ProposalsSection() {
     return (
       <div role="alert" className="rounded-lg border border-amber-400/20 px-4 py-3 text-sm text-muted-foreground">
         Could not load the watcher&apos;s proposals.{" "}
-        <button className="text-primary hover:underline" onClick={() => proposals.refetch()}>
+        <button className="text-fg hover:text-primary hover:underline" onClick={() => proposals.refetch()}>
           Retry
         </button>
       </div>
@@ -89,7 +86,7 @@ export function ProposalsSection() {
     if (!confirm(`Accept "${proposal.title}"? ${effect}`)) return;
     accept.mutate(proposal.id, {
       onSuccess: (result) => toast.success(`Accepted — job ${result.job_id.slice(0, 12)} started`),
-      onError: (e) => toast.error(detailOf(e, "Could not accept the proposal")),
+      onError: (e) => toastApiError(e),
     });
   };
 
@@ -99,7 +96,7 @@ export function ProposalsSection() {
       return;
     reject.mutate(proposal.id, {
       onSuccess: () => toast.success(`Dismissed. Reopen it from the ${owner} needs list.`),
-      onError: (e) => toast.error(detailOf(e, "Could not dismiss the need")),
+      onError: (e) => toastApiError(e, "Could not dismiss the need"),
     });
   };
 
@@ -114,7 +111,7 @@ export function ProposalsSection() {
       return;
     reject.mutate(proposal.id, {
       onSuccess: () => toast.success(`Rejected. ${ticket} is still open in ${where}.`),
-      onError: (e) => toast.error(detailOf(e, "Could not reject the proposal")),
+      onError: (e) => toastApiError(e, "Could not reject the proposal"),
     });
   };
 
@@ -123,10 +120,10 @@ export function ProposalsSection() {
   return (
     <section aria-labelledby="proposals-heading" className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 id="proposals-heading" className="text-lg font-semibold text-amber-400">
+        <h2 id="proposals-heading" className="text-section font-semibold">
           Proposals
         </h2>
-        <span className="inline-flex items-center rounded-full bg-amber-400/10 px-2.5 py-0.5 text-xs font-medium text-amber-400">
+        <span className="inline-flex items-center rounded bg-amber-dim px-1.5 py-0.5 text-2xs font-semibold tabular-nums text-warning">
           {proposals.data?.total ?? rows.length}
         </span>
         <p className="text-sm text-muted-foreground">
@@ -134,14 +131,16 @@ export function ProposalsSection() {
         </p>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-amber-400/20">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="data-table">
           <thead>
-            <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
-              <th className="px-4 py-2">Proposal</th>
-              <th className="px-4 py-2">Ticket</th>
-              <th className="px-4 py-2">Waiting</th>
-              <th className="px-4 py-2 text-right">Decision</th>
+            <tr>
+              <th>Proposal</th>
+              {/* Where the proposal comes from: the watcher's draft ticket, or an
+                  organization need, which has no ticket. */}
+              <th className="hidden sm:table-cell">Source</th>
+              <th className="hidden sm:table-cell">Waiting</th>
+              <th className="text-right">Decision</th>
             </tr>
           </thead>
           <tbody>
@@ -149,11 +148,13 @@ export function ProposalsSection() {
               const tracker = proposal.tracker;
               const filed = filedAt(proposal);
               return (
-                <tr key={proposal.id} className="border-b border-white/[0.04] last:border-0">
+                <tr key={proposal.id}>
                   {/* The one flexible column: it takes what the others leave and
                       truncates, so the decision stays on screen without a
-                      sideways scroll. The repo rides under the title. */}
-                  <td className="w-full min-w-[14rem] max-w-0 px-4 py-2">
+                      sideways scroll. The repo rides under the title. Below sm
+                      the source and waiting columns step aside and the decision
+                      wraps, so Accept and Reject stay on a phone screen. */}
+                  <td className="w-full min-w-[7rem] max-w-0 sm:min-w-[14rem]">
                     <div className="truncate" title={proposal.title}>
                       {proposal.title}
                     </div>
@@ -169,7 +170,7 @@ export function ProposalsSection() {
                       <div className="truncate font-mono text-xs text-muted-foreground">{proposal.repo}</div>
                     )}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-2">
+                  <td className="hidden whitespace-nowrap sm:table-cell">
                     {isOrgNeed(proposal) ? (
                       <span className="text-muted-foreground">Organization need</span>
                     ) : tracker?.url ? (
@@ -177,7 +178,7 @@ export function ProposalsSection() {
                         href={tracker.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-primary hover:underline"
+                        className="text-fg hover:text-primary hover:underline"
                       >
                         {tracker.key}
                       </a>
@@ -187,22 +188,22 @@ export function ProposalsSection() {
                     )}
                   </td>
                   <td
-                    className="whitespace-nowrap px-4 py-2 text-muted-foreground"
-                    title={new Date(filed).toLocaleString()}
+                    className="hidden whitespace-nowrap text-muted-foreground sm:table-cell"
+                    title={formatDateTime(filed)}
                   >
                     {formatDistanceToNow(new Date(filed))}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-2">
-                    <div className="flex items-center justify-end gap-2">
+                  <td className="sm:whitespace-nowrap">
+                    <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 whitespace-nowrap sm:flex-nowrap">
                       {isOrgNeed(proposal) ? (
                         <Link
                           to={`/orgs/${encodeURIComponent(ownerOf(proposal))}`}
-                          className="text-xs text-primary hover:underline"
+                          className="text-xs text-fg hover:text-primary hover:underline"
                         >
                           Answer on {ownerOf(proposal)}
                         </Link>
                       ) : tracker && ACCEPTED_HERE.has(tracker.kind) ? (
-                        <Button size="sm" disabled={busy} onClick={() => handleAccept(proposal)}>
+                        <Button size="xs" variant="secondary" disabled={busy} onClick={() => handleAccept(proposal)}>
                           Accept
                         </Button>
                       ) : tracker?.url ? (
@@ -210,7 +211,7 @@ export function ProposalsSection() {
                           href={tracker.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                          className="inline-flex items-center gap-1 text-xs text-fg hover:text-primary hover:underline"
                         >
                           Accept by label in {trackerName(tracker.kind)}
                           <ExternalLink className="h-3 w-3" />
@@ -220,12 +221,16 @@ export function ProposalsSection() {
                           Accept by label in {trackerName(tracker?.kind)}
                         </span>
                       )}
+                      {/* Dismissing a need is admin work (the organization
+                          route requires admin), so only an admin gets it. */}
                       {isOrgNeed(proposal) ? (
-                        <Button size="sm" variant="outline" disabled={busy} onClick={() => handleDismiss(proposal)}>
-                          Dismiss
-                        </Button>
+                        isAdmin && (
+                          <Button size="xs" variant="outline" disabled={busy} onClick={() => handleDismiss(proposal)}>
+                            Dismiss
+                          </Button>
+                        )
                       ) : (
-                        <Button size="sm" variant="outline" disabled={busy} onClick={() => handleReject(proposal)}>
+                        <Button size="xs" variant="outline" disabled={busy} onClick={() => handleReject(proposal)}>
                           Reject
                         </Button>
                       )}

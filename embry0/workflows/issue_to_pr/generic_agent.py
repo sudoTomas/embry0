@@ -1,9 +1,9 @@
 """Generic agent node — executes non-code route-plan steps (RAV-604).
 
-``research``/``analysis``/``ops`` template steps, and every custom agent
-type (spec 3.5), all map to this one physical node. Unlike
-developer/review — whose prompts, output parsing, and retry loops are
-node code — a generic step's behavior comes entirely
+``research``/``analysis``/``ops`` template steps, the specialist agents'
+(``specialist_agents.py``) and every custom agent type (spec 3.5) all map
+to this one physical node. Unlike developer/review — whose prompts, output
+parsing, and retry loops are node code — a generic step's behavior comes entirely
 from its DB ``agent_definitions`` row (system prompt + toolset), so one
 node serves every non-code agent type: it reads the CURRENT route step to
 learn which agent to run, runs it single-pass, and advances the cursor.
@@ -34,6 +34,18 @@ from embry0.workflows.issue_to_pr.route_plan import (
 )
 
 logger = structlog.get_logger(__name__)
+
+# Wall-clock cap on one generic agent run. A read-and-report pass fits the
+# default; the specialists that run a repository's own checks (a dependency
+# install from the lockfile, then a test suite or a build) get room for them.
+GENERIC_AGENT_TIMEOUT_SECONDS: dict[str, int] = {
+    "kintsugi": 1800,
+    "interrogator": 1200,
+    "blast-radius": 1200,
+    "design-auditor": 900,
+    "gardener": 900,
+}
+DEFAULT_GENERIC_AGENT_TIMEOUT_SECONDS = 600
 
 
 def _with_watcher_log_tool(definition: dict[str, Any], state: dict[str, Any], agent_type: str) -> dict[str, Any]:
@@ -139,7 +151,7 @@ async def generic_agent_node(state: dict[str, Any], config: RunnableConfig) -> d
         prompt=_build_generic_prompt(state, agent_type),
         agent_definition=definition,
         template_config=step_template_config(state, agent_type),
-        timeout_seconds=600,
+        timeout_seconds=GENERIC_AGENT_TIMEOUT_SECONDS.get(agent_type, DEFAULT_GENERIC_AGENT_TIMEOUT_SECONDS),
         on_event=writer,
         credentials=credentials,
         config=config,

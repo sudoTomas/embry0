@@ -24,6 +24,8 @@
   --color-success: #22c55e;
   --color-warning: #f59e0b;
 
+  --color-info: var(--color-blue);
+
   /* Identity palette: one token per PALETTE id in lib/agentIdentity.ts
      (PALETTE_HEX mirrors these; theme.test.ts pins them equal). gold is
      --color-primary; the rest are the Tailwind 400 shades. */
@@ -42,7 +44,61 @@
   --color-grid: #1e2040;      /* dots of the React Flow background */
   --color-feedback: #f87171;  /* feedback (loop) edges */
 
+  /* Family skeleton names (the operator standard shared with the sibling
+     dashboards): one page base, one raised surface, one overlay, three text
+     weights, two borders, five status colours with a dim wash each. Every
+     name is an alias of the tokens above, so a component written against
+     either vocabulary draws the same colour; a utility whose token is
+     missing is silently dropped by Tailwind, so each name here is one the
+     components read. */
+  --color-page: var(--color-background);
+  --color-surface: var(--color-card);
+  --color-overlay: var(--color-elevated);
+
+  --color-fg: var(--color-foreground);
+  --color-fg-secondary: color-mix(in srgb, var(--color-foreground) 55%, var(--color-muted-foreground));
+  --color-fg-muted: var(--color-muted-foreground);
+
+  --color-border-strong: color-mix(in srgb, var(--color-border) 80%, var(--color-foreground));
+
+  --color-teal: var(--color-success);
+  --color-teal-dim: color-mix(in srgb, var(--color-teal) 12%, transparent);
+  --color-amber: var(--color-warning);
+  --color-amber-dim: color-mix(in srgb, var(--color-amber) 12%, transparent);
+  --color-red: var(--color-destructive);
+  --color-red-dim: color-mix(in srgb, var(--color-red) 12%, transparent);
+  --color-blue: #3b82f6;
+  --color-blue-dim: color-mix(in srgb, var(--color-blue) 12%, transparent);
+  --color-purple: var(--color-palette-violet);
+  --color-purple-dim: color-mix(in srgb, var(--color-purple) 12%, transparent);
+
+  /* The one accent, gold, at hover and as a wash. */
+  --color-primary-hover: #e2c158;
+  --color-primary-dim: color-mix(in srgb, var(--color-primary) 12%, transparent);
+
+  /* The brand cream: the dot of the embry0 mark, the life inside the zero.
+     Not a second accent; only the mark and the console's running light use it. */
+  --color-cream: #f5f1e6;
+
   --radius: 0.5rem;
+
+  /* Type scale on top of Tailwind's xs (12px), sm (14px) and xl (20px). */
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
+  --text-nav: 14.5px;
+  --text-nav--line-height: 22px;
+  --text-section: 15px;
+  --text-section--line-height: 22px;
+  --text-tile: 28px;
+  --text-tile--line-height: 30px;
+
+  /* Shell geometry */
+  --spacing-header: 65px;
+  --spacing-sidebar: 264px;
+  --spacing-rail: 56px;
+
+  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+  --default-transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 
   --font-sans: 'Outfit', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
@@ -50,8 +106,22 @@
   --font-pixel: 'Pixelify Sans', monospace;
 }
 
-* {
-  border-color: var(--color-border);
+/* The family's default border colour; Tailwind's own is currentColor. It
+   sits in the base layer, under the utilities: a rule outside every layer
+   beats any rule inside one, so unlayered it drew every border colour
+   utility (border-primary/40, border-border-strong) in the neutral colour. */
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+}
+
+/* The shell is fixed to the viewport and only <main> scrolls, so the page itself
+   must never rubber-band: on a trackpad or a phone it bounced the header and
+   sidebar with it. */
+html,
+body {
+  overscroll-behavior: none;
 }
 
 body {
@@ -59,6 +129,9 @@ body {
   background-color: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
   font-feature-settings: "tnum";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -98,6 +171,252 @@ h1, h2, h3, h4, h5, h6 {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-muted-foreground);
 }
+
+/* ===== Motion =====
+   The dashboard is alive, and its motion reports something real: a page
+   arriving, a number changing, a job moving to another lane or stage, a
+   setup step finishing. Atmosphere stays in the divine layer below.
+   - Nothing moves for anyone who asked for reduced motion: they get the
+     final state at once (hooks/useReducedMotion.ts for script motion).
+     Tailwind's loops (animate-pulse, animate-bounce, animate-ping) ignore
+     the setting, so they take the motion-safe: variant. A spinner keeps
+     turning: the turning is what it says, and a still one says nothing.
+   - Only transform, opacity and stroke-dashoffset animate.
+   - A loop runs no quicker than 2 s and no slower than 4 s, the divine
+     layer's rule, and only while the state it shows holds.
+   - The cream dot (--color-cream) is life: a job in flight. Gold never
+     moves for its own sake; it marks the one thing that needs a person.
+   - No animation library: CSS and the Web Animations API. */
+:root {
+  --motion-fast: 160ms;
+  --motion-base: 280ms;
+  --motion-slow: 560ms;
+  --motion-draw: 1400ms;
+  /* Travel: a thing going from one place to another (a card, a line).
+     Arrivals use --ease-standard. Plain :root, not @theme: Tailwind drops
+     theme variables no utility uses, and scripts read these. */
+  --ease-travel: cubic-bezier(0.65, 0, 0.35, 1);
+  /* The gap between siblings arriving in turn; lib/motion.ts sets --i. */
+  --motion-step: 35ms;
+}
+
+@keyframes motion-enter {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+@keyframes motion-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* An element arriving: in and up 6 px. Siblings take turns through --i,
+     capped at 12 so a long list never waits on its tail. It fills backwards
+     only: a finished arrival that still filled forwards would hold an
+     identity transform, and any transform makes the element the containing
+     block of every position: fixed box inside it, so an inline dialog would
+     open inside a card instead of over the window. */
+  .motion-enter {
+    animation: motion-enter var(--motion-base) var(--ease-standard) backwards;
+    animation-delay: calc(min(var(--i, 0), 12) * var(--motion-step));
+  }
+  /* Life: the cream dot of a job in flight. */
+  .motion-breathe {
+    animation: motion-breathe 2.4s ease-in-out infinite;
+  }
+}
+
+/* ----- motion: shell (mark, page arrival, sidebar) ----- */
+
+/* The header's mark draws its one line as the dashboard opens: a stroke
+   along the line's centre reveals the line through a mask, then the cream
+   dot arrives where the line ends (components/divine/Embry0Mark.tsx). */
+@keyframes motion-mark-draw {
+  from { stroke-dashoffset: 1; }
+}
+
+@keyframes motion-mark-dot {
+  0%  { transform: scale(0); }
+  60% { transform: scale(1.25); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .motion-mark-draw {
+    animation: motion-mark-draw var(--motion-draw) var(--ease-travel) both;
+  }
+  .motion-mark-dot {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: motion-mark-dot var(--motion-slow) var(--ease-standard) both;
+    animation-delay: calc(var(--motion-draw) - 120ms);
+  }
+}
+
+/* The mark belongs to the divine layer, so its escape hatch stills it too
+   (components/divine/CLAUDE.md, rules 3 and 4). */
+body[data-divine="off"] .motion-mark * {
+  animation: none;
+}
+
+/* The sidebar's active marker glides to the item a route lands on;
+   Sidebar.tsx sets data-glide for that move only, so a re-measure (the
+   rail collapsing, a section growing) jumps. */
+@media (prefers-reduced-motion: no-preference) {
+  .motion-nav-marker[data-glide] {
+    transition: transform var(--motion-base) var(--ease-travel);
+  }
+}
+
+/* ----- motion: live numbers and rows ----- */
+
+/* Table rows arrive in turn the first time they are drawn: each body row of
+   the shared .data-table rises in like .motion-enter, one --motion-step
+   after the row above, and rows past the twelfth share the twelfth's turn.
+   A row React keeps across a poll is the same element, so it never arrives
+   twice; a new row arrives on its own. The fill is backwards only, so a row
+   that is in holds no animation: a filled transform would leave every row a
+   containing block and a stacking context, so a menu or tooltip opened in a
+   row would be placed against the row and drawn under the rows after it. */
+@media (prefers-reduced-motion: no-preference) {
+  .data-table > tbody > tr {
+    animation: motion-enter var(--motion-base) var(--ease-standard) backwards;
+    animation-delay: calc(var(--row-turn, 11) * var(--motion-step));
+  }
+  .data-table > tbody > tr:nth-child(1) { --row-turn: 0; }
+  .data-table > tbody > tr:nth-child(2) { --row-turn: 1; }
+  .data-table > tbody > tr:nth-child(3) { --row-turn: 2; }
+  .data-table > tbody > tr:nth-child(4) { --row-turn: 3; }
+  .data-table > tbody > tr:nth-child(5) { --row-turn: 4; }
+  .data-table > tbody > tr:nth-child(6) { --row-turn: 5; }
+  .data-table > tbody > tr:nth-child(7) { --row-turn: 6; }
+  .data-table > tbody > tr:nth-child(8) { --row-turn: 7; }
+  .data-table > tbody > tr:nth-child(9) { --row-turn: 8; }
+  .data-table > tbody > tr:nth-child(10) { --row-turn: 9; }
+  .data-table > tbody > tr:nth-child(11) { --row-turn: 10; }
+}
+
+/* A status badge that changed rings once (ui/Badge.tsx): an outline of the
+   badge expands and fades, one gesture, the dissipation shape. It scales
+   more in height than in width, so around a short wide pill the outline
+   grows by about the same few pixels on every side. */
+@keyframes motion-ring {
+  from { opacity: 0.7; transform: scale(1); }
+  to   { opacity: 0; transform: scale(1.12, 1.5); }
+}
+
+/* At rest the ring is invisible, so it shows nothing if it never animates. */
+.motion-ring {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .motion-ring {
+    /* A plain ease-out, as the divine ripple's: --ease-standard spends
+       nearly all of its change in the first 150 ms, too soon to see. */
+    animation: motion-ring var(--motion-slow) ease-out;
+  }
+}
+
+/* ----- motion: console board ----- */
+/* A running card's top edge: a short faint light travels along it while
+   the job runs (components/console/RunningLight.tsx pauses it off screen).
+   Under reduced motion it is not drawn: a light standing still says
+   nothing. */
+@keyframes console-light-run {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(300%); }
+}
+.console-light-run {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-cream) 45%, transparent),
+    transparent
+  );
+  opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .console-light-run {
+    opacity: 1;
+    animation: console-light-run 2.4s var(--ease-travel) infinite;
+  }
+  .console-light[data-paused] .console-light-run {
+    animation-play-state: paused;
+  }
+}
+
+/* ----- motion: job journey ----- */
+@keyframes tool-call-arrive {
+  from { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* A tool call that streams in after the first paint: opacity only and
+     no stagger, so the live log stays readable at speed. */
+  .tool-call-arrive {
+    animation: tool-call-arrive var(--motion-fast) var(--ease-standard);
+  }
+}
+
+/* ----- motion: repository setup ----- */
+/* The repo page's Advanced settings open and close with a height ease
+   instead of a jump, where the browser can ease to and from `auto` and
+   style a <details> body. Others keep the instant open. The chevron turns
+   with it (AdvancedSection.tsx). */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (interpolate-size: allow-keywords) and selector(::details-content) {
+    .advanced-section {
+      interpolate-size: allow-keywords;
+    }
+    .advanced-section::details-content {
+      block-size: 0;
+      overflow: clip;
+      /* allow-discrete keeps the body shown until a close has finished. */
+      transition:
+        block-size var(--motion-base) var(--ease-standard),
+        content-visibility var(--motion-base) allow-discrete;
+    }
+    .advanced-section[open]::details-content {
+      block-size: auto;
+    }
+    /* Opened by the page's address: there at once, so the page can scroll to it. */
+    .advanced-section[data-instant]::details-content {
+      transition: none;
+    }
+  }
+}
+
+/* ----- motion: pipeline editor ----- */
+/* An agent's or an edge's detail popup opens rising in from a little
+   smaller and lower (components/pipeline-editor). The keyframes live here,
+   not in a popup's own <style>, so each popup has its entrance whichever
+   other popup is mounted. */
+@keyframes pipeline-popup-in {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pipeline-popup-in {
+    animation: pipeline-popup-in var(--motion-base) var(--ease-standard);
+  }
+}
+
+/* The animated edge: React Flow marches its dashes (the feedback loops, see
+   lib/graph-utils.ts) every 0.5 s, forever, and for everyone. The
+   dashboard's loops run no quicker than 2 s and stand still for anyone who
+   asked for reduced motion; the dashes stay drawn either way. Three
+   classes outrank React Flow's own rule whichever stylesheet loads last. */
+.react-flow .react-flow__edge.animated path {
+  animation-duration: 2s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-flow .react-flow__edge.animated path {
+    animation: none;
+  }
+}
+
+/* ===== end motion ===== */
 
 /* Density mode custom properties */
 :root {
@@ -189,8 +508,11 @@ body[data-divine="off"] .divine-fallback {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.animate-fade-up {
-  animation: fade-up 0.4s ease-out both;
+/* Reduced motion gets the page in place at once. */
+@media (prefers-reduced-motion: no-preference) {
+  .animate-fade-up {
+    animation: fade-up 0.4s ease-out both;
+  }
 }
 
 @keyframes scale-in {
@@ -212,6 +534,67 @@ body[data-divine="off"] .divine-fallback {
   }
   .vitals-pulse {
     animation: vitals-pulse 1.4s ease-in-out infinite;
+  }
+}
+
+/* ===== Shared table =====
+   One dense table for every list of records: uppercase muted head on the
+   surface, 14px cells on the page base, rows about 36px, a hover on the
+   overlay. Alignment and per-column type (numbers, mono ids) stay on the
+   cells; spacing, type and colour of the head live here only. */
+@layer components {
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    line-height: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+  .data-table > thead > tr > th {
+    background: var(--color-surface);
+    padding: 8px 12px;
+    font-size: var(--text-2xs);
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-fg-muted);
+    text-align: left;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .data-table > tbody {
+    background: var(--color-page);
+  }
+  .data-table > tbody > tr > td {
+    padding: 6px 12px;
+    height: 36px;
+    vertical-align: middle;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .data-table > tbody > tr:last-child > td {
+    border-bottom: 0;
+  }
+  .data-table > tbody > tr {
+    transition: background-color 150ms var(--ease-standard);
+  }
+  .data-table > tbody > tr:hover {
+    background: var(--color-overlay);
+  }
+  /* Right-aligned numeric column. */
+  .data-table .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Uppercase section label: 11px, .06em, muted. */
+  .label-caps {
+    font-size: var(--text-2xs);
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-fg-muted);
   }
 }
 

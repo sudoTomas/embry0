@@ -2,7 +2,7 @@ import axios, { AxiosError } from "axios";
 import { toast } from "sonner";
 import { getApiKey } from "@/lib/apiKey";
 import { useAuthStore } from "@/stores/authStore";
-import { formatErrorDetail } from "./errorDetail";
+import { formatErrorDetail, markReported } from "./errorDetail";
 
 declare module "axios" {
   export interface AxiosRequestConfig {
@@ -12,6 +12,12 @@ declare module "axios" {
      * detail is a multi-line schema report that belongs next to the editor).
      */
     suppressValidationToast?: boolean;
+    /**
+     * Skip the global network-error and server-error (5xx) toasts for this
+     * request: the caller shows the failure itself (the AuthGate's sign-in
+     * check, whose card already says the server did not answer).
+     */
+    suppressErrorToast?: boolean;
   }
 }
 
@@ -37,7 +43,10 @@ api.interceptors.response.use(
   (response) => response,
   (error: AxiosError<{ detail?: unknown }>) => {
     if (error.code === "ERR_NETWORK" || error.code === "ERR_CANCELED") {
-      toast.error("Network error — cannot reach the server");
+      if (!error.config?.suppressErrorToast) {
+        toast.error("Network error — cannot reach the server");
+        markReported(error);
+      }
       return Promise.reject(error);
     }
 
@@ -49,15 +58,23 @@ api.interceptors.response.use(
       // every widget degrade to "Unavailable" silently. No toast — the
       // full-screen prompt is the feedback.
       useAuthStore.getState().requirePrompt();
+      markReported(error);
     } else if (status === 422) {
       if (!error.config?.suppressValidationToast) {
         toast.error(`Validation error: ${detail ?? "invalid request"}`);
+        markReported(error);
       }
     } else if (status === 404) {
       // Don't toast 404s — let components handle "not found" states
     } else if (status && status >= 500) {
-      toast.error(`Server error (${status}): ${detail ?? "please try again"}`);
+      if (!error.config?.suppressErrorToast) {
+        toast.error(`Server error (${status}): ${detail ?? "please try again"}`);
+        markReported(error);
+      }
     }
+    // Any other refusal (403, 409, ...) is the caller's to explain, with
+    // apiErrorMessage; an error marked here is not toasted again
+    // (toastApiError).
 
     return Promise.reject(error);
   }

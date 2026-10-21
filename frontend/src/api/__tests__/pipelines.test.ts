@@ -85,6 +85,17 @@ describe("pipelines API client — boundary mappers", () => {
     expect(result.graph).toEqual(SAMPLE_GRAPH);
   });
 
+  it("fetchTemplate keeps is_builtin, false when the server leaves it out", async () => {
+    const row = {
+      id: "abc", name: "n", description: "d", sandbox_profile: null, graph_definition: SAMPLE_GRAPH,
+      created_at: "2026-05-04T00:00:00Z", updated_at: "2026-05-04T00:00:00Z",
+    };
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ data: { ...row, is_builtin: true } });
+    expect((await fetchTemplate("abc")).is_builtin, "the editor must know a built-in is re-seeded").toBe(true);
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ data: row });
+    expect((await fetchTemplate("abc")).is_builtin).toBe(false);
+  });
+
   it("createTemplate sends graph under graph_definition", async () => {
     (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: {

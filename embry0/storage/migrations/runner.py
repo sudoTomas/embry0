@@ -40,7 +40,8 @@ logger = structlog.get_logger(__name__)
 # database-wide namespace, so any future advisory lock in embry0 MUST pick a
 # different key and be registered here (grep `pg_advisory` for the roster).
 # The others hash a prefixed text key with hashtextextended:
-# `qa_image_tags:<repo>` and `org_needs:<owner>`.
+# `qa_image_tags:<repo>`, `org_needs:<owner>`, `standards:<owner>:<kind>` and
+# `org_discovery:<owner>`.
 MIGRATIONS_ADVISORY_LOCK_KEY = 0x656D62727930
 
 # Acquisition is usually instantaneous; anything slower means another replica
@@ -2889,6 +2890,165 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         COMMENT ON TABLE inline_skills IS
             'SKILL.md documents written in the dashboard; rendered into the `local` skill source.';
+        """,
+    ),
+    (
+        102,
+        "standards and repo_standard_state — an owner's versioned standards and each repository's place under them (ADR 0014)",
+        # A standard is one version of an owner's standard of one kind: the
+        # schema (the roles, type scale and rules every standard of the kind
+        # names) and the values (this owner's fill of the roles), with prose
+        # and the references it was measured from. A write makes a new
+        # version and supersedes the active one; the partial unique index
+        # keeps one active version per owner and kind, and the superseded
+        # versions are the history. `owner` is the forge owner, lowercase as
+        # organizations store it, with no foreign key: a standard may be
+        # written before its organization is registered.
+        #
+        # repo_standard_state is a repository's place under its owner's
+        # standard of a kind: a mode (off until an admin says otherwise, so
+        # nothing changes for any repository), the newest audit started, and
+        # the score and finding count of the newest audit that completed.
+        # last_audit_job_id is SET NULL when its job row is purged, so the
+        # score outlives the job.
+        """
+        CREATE TABLE IF NOT EXISTS standards (
+            id            TEXT PRIMARY KEY,
+            owner         TEXT NOT NULL,
+            kind          TEXT NOT NULL CHECK (kind IN ('design')),
+            version       INTEGER NOT NULL CHECK (version >= 1),
+            status        TEXT NOT NULL CHECK (status IN ('draft', 'active', 'superseded')),
+            schema        JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(schema) = 'object'),
+            values        JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(values) = 'object'),
+            prose         TEXT NOT NULL DEFAULT '',
+            "references"  JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof("references") = 'array'),
+            created_by    TEXT,
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (owner, kind, version)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS standards_one_active ON standards (owner, kind) WHERE status = 'active';
+
+        CREATE TABLE IF NOT EXISTS repo_standard_state (
+            repo               TEXT NOT NULL,
+            owner              TEXT NOT NULL,
+            kind               TEXT NOT NULL CHECK (kind IN ('design')),
+            mode               TEXT NOT NULL DEFAULT 'off' CHECK (mode IN ('off', 'advise', 'enforce')),
+            last_audit_at      TIMESTAMPTZ,
+            last_audit_job_id  TEXT REFERENCES jobs(job_id) ON DELETE SET NULL,
+            score              INTEGER CHECK (score IS NULL OR score BETWEEN 0 AND 100),
+            findings_open      INTEGER NOT NULL DEFAULT 0 CHECK (findings_open >= 0),
+            exceptions         JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(exceptions) = 'array'),
+            created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (repo, kind)
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_standard_state_owner ON repo_standard_state (owner, kind);
+        CREATE INDEX IF NOT EXISTS idx_repo_standard_state_audit_job
+            ON repo_standard_state (last_audit_job_id) WHERE last_audit_job_id IS NOT NULL;
+
+        COMMENT ON TABLE standards IS
+            'ADR 0014: one version of an owner''s standard of one kind. schema = the shape every standard of the kind shares (roles, type scale, rules); values = this owner''s fill of the roles. One active version per owner and kind.';
+        COMMENT ON TABLE repo_standard_state IS
+            'ADR 0014: a repository''s place under its owner''s standard of one kind. mode off = never audited; score and findings_open = the newest completed audit, at last_audit_at; last_audit_job_id = the newest audit started.';
+        """,
+    ),
+    (
+        103,
+        "credentials.provider takes the OpenAI-compatible LLM providers (docs/providers.md)",
+        # An API key for openai, openrouter, google, groq, deepseek or a custom
+        # OpenAI-compatible endpoint is a credentials row like an xAI key. Only
+        # the provider CHECK widens: kind, bindings and uses already allow any
+        # LLM provider name.
+        """
+        ALTER TABLE credentials DROP CONSTRAINT IF EXISTS credentials_provider_check;
+        ALTER TABLE credentials ADD CONSTRAINT credentials_provider_check
+            CHECK (provider IN ('github', 'gitlab', 'anthropic', 'xai', 'ssh', 'tailscale',
+                                'openai', 'openrouter', 'google', 'groq', 'deepseek', 'custom'));
+        """,
+    ),
+    (
+        104,
+        "repo_config_revisions: every change to a repo's test setup and preferences (ADR 0019)",
+        # One row per write that changed a repository's stored test setup
+        # (surface qa_config: the yaml text) or its preferences row (surface
+        # preferences: the row without updated_at). before is NULL when the
+        # write created the row and after is NULL when it removed it. The
+        # storage classes append in the write's own transaction and keep the
+        # newest 100 rows per repo and surface. No foreign key to repos, so
+        # the history outlives a repository's removal.
+        """
+        CREATE TABLE IF NOT EXISTS repo_config_revisions (
+            id          BIGSERIAL PRIMARY KEY,
+            repo        TEXT NOT NULL,
+            surface     TEXT NOT NULL CHECK (surface IN ('qa_config', 'preferences')),
+            before      JSONB,
+            after       JSONB,
+            actor       TEXT NOT NULL DEFAULT '',
+            source      TEXT NOT NULL DEFAULT 'person'
+                        CHECK (source IN ('person', 'bootstrap', 'onboard', 'proposal', 'restore')),
+            reason      TEXT NOT NULL DEFAULT '',
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_config_revisions_repo ON repo_config_revisions (repo, surface, id DESC);
+        """,
+    ),
+    (
+        105,
+        "repo_setup_proposals: agent-proposed test setups a person applies (ADR 0019)",
+        # The onboarding agent in propose mode stores its validated and
+        # smoke-tested draft here instead of in repo_qa_configs. A row is
+        # running while its job runs, then pending or failed; a person moves
+        # a pending row to applied or rejected, and a pending row whose base
+        # changed becomes stale. base_updated_at is repo_qa_configs.updated_at
+        # when the run started (NULL: no setup yet), for a compare-and-set
+        # apply. The partial unique index allows one running or pending row
+        # per repo, so it is also the lock against two setup runs at once.
+        """
+        CREATE TABLE IF NOT EXISTS repo_setup_proposals (
+            id               TEXT PRIMARY KEY,
+            repo             TEXT NOT NULL,
+            job_id           TEXT,
+            status           TEXT NOT NULL
+                             CHECK (status IN ('running', 'pending', 'applied', 'rejected', 'stale', 'failed')),
+            base_updated_at  TIMESTAMPTZ,
+            proposed_yaml    TEXT,
+            notes_md         TEXT NOT NULL DEFAULT '',
+            smoke            JSONB,
+            failure          TEXT NOT NULL DEFAULT '',
+            created_by       TEXT NOT NULL DEFAULT '',
+            decided_by       TEXT,
+            decided_at       TIMESTAMPTZ,
+            created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_repo_setup_proposals_repo ON repo_setup_proposals (repo, created_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_repo_setup_proposals_live
+            ON repo_setup_proposals (repo) WHERE status IN ('running', 'pending');
+        """,
+    ),
+    (
+        106,
+        "specialist agent identities for rows still at the defaults (docs/specialist-agents.md)",
+        # Migration 101 wrote the nine core agents' identity. The eight
+        # read-only specialists are seeded rows too, and a deployment that
+        # seeded them before identity existed shows them as slug / golem /
+        # slate until each is reset. Same shape as 101: only rows still at
+        # the defaults (display_name = '') are written, so an operator's edit
+        # survives; the values are BUILTIN_IDENTITY in embry0/agents/identity.py
+        # (tests/unit/storage/test_migration_106.py pins the two in sync).
+        """
+        UPDATE agent_definitions SET display_name = v.display_name, avatar = v.avatar, color = v.color, tagline = v.tagline
+        FROM (VALUES
+            ('kintsugi',       'Kintsugi',       'monk',     'gold',    'Finds every crack, proves it, writes the seal.'),
+            ('gardener',       'Gardener',       'skiller',  'emerald', 'Pulls one weed per run, provably.'),
+            ('interrogator',   'Interrogator',   'rogue',    'rose',    'Four angles on a diff, then a verdict.'),
+            ('why',            'Why',            'mystic',   'violet',  'Finds the forces that shaped the code.'),
+            ('how',            'How',            'bard',     'sky',     'Explains a subsystem before you change it.'),
+            ('blast-radius',   'Blast Radius',   'scout',    'amber',   'Finds what a change breaks beyond the diff.'),
+            ('comment-sicko',  'Comment Sicko',  'pirate',   'cyan',    'Deletes the comments that do the code''s job badly.'),
+            ('design-auditor', 'Design Auditor', 'archmage', 'gold',    'Measures a frontend against its standard.')
+        ) AS v(type, display_name, avatar, color, tagline)
+        WHERE agent_definitions.type = v.type AND agent_definitions.display_name = '';
         """,
     ),
 ]

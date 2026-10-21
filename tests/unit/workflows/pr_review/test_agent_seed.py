@@ -38,7 +38,8 @@ def test_the_prompt_says_advisory_and_untrusted_input() -> None:
 
 
 @pytest.mark.requires_postgres
-async def test_seeding_is_idempotent_and_restores_the_canonical_prompt(db_with_migrations) -> None:
+async def test_seeding_is_idempotent_and_keeps_an_edit(db_with_migrations) -> None:
+    """An edit sticks; POST /agents/pr-reviewer/reset is the way back."""
     repo = AgentDefinitionsRepository(db_with_migrations)
     await seed_pr_reviewer_agent(repo)
     await repo.update(AGENT_TYPE, system_prompt="edited by hand")
@@ -46,4 +47,7 @@ async def test_seeding_is_idempotent_and_restores_the_canonical_prompt(db_with_m
 
     row = await repo.get(AGENT_TYPE)
     assert row is not None and row["is_builtin"] is True
-    assert row["system_prompt"] == PR_REVIEWER_AGENT_SEED["system_prompt"]
+    assert row["system_prompt"] == "edited by hand"
+    await repo.reset(AGENT_TYPE)
+    row = await repo.get(AGENT_TYPE)
+    assert row is not None and row["system_prompt"] == PR_REVIEWER_AGENT_SEED["system_prompt"]

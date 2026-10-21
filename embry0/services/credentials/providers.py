@@ -13,6 +13,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 # The path the orchestrator image reads today (SandboxManager._read_oauth_token).
 _CLAUDE_CREDENTIALS_FILE = "/home/orchestrator/.claude/.credentials.json"
@@ -29,13 +30,35 @@ LLM_PROVIDERS: dict[str, LlmProvider] = {
     "anthropic": LlmProvider("anthropic", "api.anthropic.com", ("llm_oauth", "llm_api_key")),
     "xai": LlmProvider("xai", "api.x.ai", ("llm_oauth", "llm_api_key")),
 }
+"""The LLM providers every deployment resolves. ``llm_providers()`` adds the enabled
+OpenAI-compatible ones."""
 
 
-def default_host(provider: str) -> str:
+def llm_providers(environ: Mapping[str, str] | None = None) -> dict[str, LlmProvider]:
+    """This deployment's LLM providers: the two above plus those OPENAI_COMPATIBLE_PROVIDERS enables.
+
+    An OpenAI-compatible provider takes an API key only. Its host is its API's; the
+    custom provider has none of its own (each credential names its base URL).
+    """
+    from embry0.agents.providers import enabled_openai_compatible
+
+    table = dict(LLM_PROVIDERS)
+    for provider in enabled_openai_compatible(environ):
+        host = (urlparse(provider.openai_base_url).hostname or "").lower()
+        table[provider.name] = LlmProvider(provider.name, host, ("llm_api_key",))
+    return table
+
+
+def default_host(provider: str, environ: Mapping[str, str] | None = None) -> str:
     try:
-        return LLM_PROVIDERS[provider].host
+        return llm_providers(environ)[provider].host
     except KeyError:
         raise ValueError(f"unknown llm provider {provider!r}") from None
+
+
+def base_url_host(base_url: str) -> str:
+    """The host a custom credential's base URL names, lowercase; '' when it names none."""
+    return (urlparse(base_url).hostname or "").lower()
 
 
 def env_fallback(
@@ -52,9 +75,11 @@ def env_fallback(
     is never handed an OAuth token that the agent's auth check would refuse;
     any other mode is served the OAuth token, then the credentials file. A
     repo, job or agent that overrides the mode needs a registry account.
-    xAI's credential file is not read here.
+    xAI's credential file is not read here. Every other provider is served its
+    catalog ``api_key_env``; the custom provider only together with its base URL
+    (``env_fallback_metadata``).
     """
-    if provider not in LLM_PROVIDERS:
+    if provider not in llm_providers(environ):
         raise ValueError(f"unknown llm provider {provider!r}")
     if provider == "anthropic" and getattr(config, "default_auth_mode", None) == "api_key":
         api_key = (environ.get("ANTHROPIC_API_KEY") or "").strip()
@@ -67,8 +92,25 @@ def env_fallback(
         if file_token:
             return ("llm_oauth", file_token, "claude-credentials-file")
         return None
-    key = (environ.get("XAI_API_KEY") or "").strip()
-    return ("llm_api_key", key, "XAI_API_KEY") if key else None
+    from embry0.agents.providers import provider_named
+
+    catalog = provider_named(provider)
+    key_env = catalog.api_key_env if catalog is not None else "XAI_API_KEY"
+    key = (environ.get(key_env) or "").strip()
+    if catalog is not None and catalog.base_url_env and not (environ.get(catalog.base_url_env) or "").strip():
+        return None
+    return ("llm_api_key", key, key_env) if key else None
+
+
+def env_fallback_metadata(provider: str, environ: Mapping[str, str]) -> dict[str, Any]:
+    """The non-secret settings an env-fallback credential carries: a custom provider's base URL."""
+    from embry0.agents.providers import provider_named
+
+    catalog = provider_named(provider)
+    if catalog is None or not catalog.base_url_env:
+        return {}
+    base_url = (environ.get(catalog.base_url_env) or "").strip().rstrip("/")
+    return {"base_url": base_url} if base_url else {}
 
 
 def _claude_access_token(path: str) -> str | None:

@@ -4,11 +4,12 @@ import { fetchRepos, type RegisteredRepo } from "@/api/repos";
 // RAV-1294: registry list shared by the RepoPicker and any surface that
 // wants the fleet with env-var annotations.
 
-export function useRegisteredRepos(opts: { refetchInterval?: number } = {}) {
+export function useRegisteredRepos(opts: { refetchInterval?: number; enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["repos"],
     queryFn: () => fetchRepos(),
     refetchInterval: opts.refetchInterval,
+    enabled: opts.enabled,
   });
 }
 

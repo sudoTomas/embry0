@@ -10,7 +10,9 @@ agent. Smoke runs boot + ready checks only (embry0.workflows.qa.boot.
 run_boot_phase — the exact machinery a real QA run uses) for each managed
 app, in a fresh throwaway sandbox per app so an aborted boot can't poison
 the analysis sandbox. The generated config only reaches the external store
-(= becomes active) after schema validation AND smoke pass.
+(= becomes active) after schema validation AND smoke pass. In propose mode
+(``state['onboard_propose']``, ADR 0019) it never reaches it from here: the
+runner stores the draft as a setup proposal, and a person applies it.
 """
 
 from __future__ import annotations
@@ -168,6 +170,8 @@ async def analyze_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
         f"Analyze the repository {repo} (branch {branch}) cloned at /workspace "
         "and draft its qa.yaml v2 per your system prompt. Write "
         "/workspace/.onboard/qa.yaml and /workspace/.onboard/notes.md."
+        "\n\nEvery app with target: deployed must carry this guardrail: "
+        "'Only look. Never press Send, Save, Submit or Delete, and never submit a form.'"
     )
 
     # This deployment's actual profiles — the agent cannot know them, and the
@@ -496,7 +500,11 @@ async def smoke_node(state: dict[str, Any], config: RunnableConfig) -> dict[str,
 
 
 async def write_config_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-    """Persist the validated + smoked config into the embry0 DB (RAV-1251)."""
+    """Persist the validated + smoked config into the embry0 DB (RAV-1251).
+
+    In propose mode it writes nothing and only marks the draft ready: the
+    runner stores it on the job's setup proposal (ADR 0019).
+    """
     from embry0.api.schemas.repo_path import validate_repo_path
 
     ob = _onboard_state(state)
@@ -524,6 +532,12 @@ async def write_config_node(state: dict[str, Any], config: RunnableConfig) -> di
         validate_repo_path(repo)
     except ValueError as exc:
         return _failed(f"unsafe repo name {repo!r} — {exc}")
+    if state.get("onboard_propose"):
+        ob.update({"final_status": "completed", "store_path": "proposal"})
+        writer(events.progress(message="Test setup ready for review", node="write_config"))
+        logger.info("onboard_config_proposed", job_id=state.get("job_id"), repo=repo)
+        writer(events.node_completed(node="write_config", ok=True))
+        return {"onboard": ob}
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     qa_configs_repo = configurable.get("qa_configs_repo")
     if qa_configs_repo is None:

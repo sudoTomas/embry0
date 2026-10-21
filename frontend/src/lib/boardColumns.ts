@@ -11,24 +11,24 @@ export type BoardColumnTint = "amber" | "success" | "neutral";
 
 export interface BoardColumnConfig {
   id: BoardColumnId;
-  /** Lowercase header label. */
+  /** Sentence-case header label. */
   label: string;
   tint: BoardColumnTint;
 }
 
 /** Column order and header treatment, left to right. */
 export const BOARD_COLUMNS: readonly BoardColumnConfig[] = [
-  { id: "needs_you", label: "needs you", tint: "amber" },
-  { id: "queued", label: "queued", tint: "neutral" },
-  { id: "running", label: "running", tint: "neutral" },
-  { id: "done", label: "done", tint: "success" },
-  { id: "failed", label: "failed", tint: "neutral" },
+  { id: "needs_you", label: "Needs you", tint: "amber" },
+  { id: "queued", label: "Queued", tint: "neutral" },
+  { id: "running", label: "Running", tint: "neutral" },
+  { id: "done", label: "Done", tint: "success" },
+  { id: "failed", label: "Failed", tint: "neutral" },
 ];
 
 /**
  * Map a job status to its board lane. Exhaustive over JobStatus — adding a
  * new status without assigning it a lane is a compile-time error, not a
- * silently invisible card.
+ * silently invisible card; an unknown status at runtime lands in Failed.
  *
  * Note: embry0 has no "queued" status; `pending` is it — the lane keeps
  * the operator-facing "queued" name (and /stats reports the same alias).
@@ -58,7 +58,13 @@ export function columnForStatus(status: JobStatus): BoardColumnId {
       // Compile-time exhaustiveness guard: a new JobStatus lands here as a
       // type error until it is assigned a lane above.
       const unhandled: never = status;
-      throw new Error(`Unhandled job status: ${String(unhandled)}`);
+      // At runtime a status this bundle does not know (a deploy added it
+      // while a tab held the older bundle; the API types status as a plain
+      // string) must not take the board down. Failed is the lane for what
+      // is neither a known success, a wait nor a run, and the card's own
+      // pill names the status.
+      void unhandled;
+      return "failed";
     }
   }
 }

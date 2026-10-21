@@ -1,4 +1,4 @@
-"""Organization actions: register, hook, onboard and watch from the facts (ADR 0010).
+"""Organization actions: register, hook, onboard, watch and deactivate from the facts (ADR 0010).
 
 Discovery leaves one fact row per repository under an owner and the needs
 list turns those into things a person can act on. This module is the acting:
@@ -24,7 +24,7 @@ from embry0.services.watcher_stacks import WatcherStack
 
 logger = structlog.get_logger(__name__)
 
-ACTIONS = ("register", "hook", "onboard", "watch")
+ACTIONS = ("register", "hook", "onboard", "watch", "deactivate")
 OUTCOMES = ("done", "already", "skipped", "failed")
 
 #: The job statuses that mean an onboard job is still in flight.
@@ -42,6 +42,10 @@ class Registry(Protocol):
     async def registered_as(self, repo: str) -> str | None: ...
 
     async def register(self, repo: str, notes: str = "", forge: str = "") -> dict[str, Any]: ...
+
+    async def get(self, repo: str) -> dict[str, Any] | None: ...
+
+    async def set_active(self, repo: str, active: bool) -> dict[str, Any] | None: ...
 
 
 class QaConfigs(Protocol):
@@ -263,17 +267,45 @@ async def _watch(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: 
     return ActionResult(repo, "done", f"disabled watcher stack added filing to {tracker}; set its LogQL and enable it")
 
 
+async def _deactivate(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: bool) -> ActionResult:
+    # The answer to a repository that left the listing (ADR 0016). The row
+    # goes inactive through the call PUT /repos/{repo}/active makes: it stays
+    # registered and is hidden from listings, never deleted, and the same
+    # route turns it back on.
+    if ctx.registry is None:
+        return ActionResult(repo, "failed", "repo registry not initialized")
+    registered = await ctx.registry.registered_as(repo)
+    row = await ctx.registry.get(registered) if registered is not None else None
+    if registered is None or row is None:
+        return ActionResult(repo, "already", "not registered, so nothing is active")
+    if not row.get("active"):
+        return ActionResult(repo, "already", "inactive" if registered == repo else f"inactive as {registered}")
+    if dry_run:
+        return ActionResult(repo, "done", f"would deactivate the registration {registered}")
+    await ctx.registry.set_active(registered, False)
+    return ActionResult(repo, "done", f"registration {registered} deactivated")
+
+
 _Action = Callable[[ActionContext, str, dict[str, Any], bool], Awaitable[ActionResult]]
-_RUNNERS: dict[str, _Action] = {"register": _register, "hook": _hook, "onboard": _onboard, "watch": _watch}
+_RUNNERS: dict[str, _Action] = {
+    "register": _register,
+    "hook": _hook,
+    "onboard": _onboard,
+    "watch": _watch,
+    "deactivate": _deactivate,
+}
 
 
 async def run_action(ctx: ActionContext, action: str, repos: list[str], *, dry_run: bool = False) -> list[ActionResult]:
     """One outcome per repository, in the order asked, duplicates folded.
 
     A repository is acted on only when discovery saw it under this owner
-    and it is not archived; anything else is a skip that says why. It is
-    acted on under the spelling the forge reported, whatever case was
-    asked. One repository's error, or a refusal from the path an action
+    and, for every action but ``deactivate``, it is not archived; anything
+    else is a skip that says why. An archived repository takes no new work,
+    but its registration can still be switched off: one archived when it
+    was last listed and deleted since is what the ``repo_vanished`` need
+    proposes deactivating (ADR 0016). It is acted on under the spelling the
+    forge reported, whatever case was asked. One repository's error, or a refusal from the path an action
     reuses, is its own ``failed`` result and the rest still run.
     """
     runner = _RUNNERS.get(action)
@@ -296,7 +328,7 @@ async def run_action(ctx: ActionContext, action: str, repos: list[str], *, dry_r
             results.append(ActionResult(asked.strip(), "skipped", "not seen by discovery; run discovery first"))
             continue
         repo = str(row.get("repo") or key)
-        if row.get("archived"):
+        if row.get("archived") and action != "deactivate":
             results.append(ActionResult(repo, "skipped", "archived"))
             continue
         facts = dict(row.get("facts") or {})

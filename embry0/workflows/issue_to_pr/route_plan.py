@@ -17,7 +17,18 @@ from typing import Any
 
 import structlog
 
+from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_AGENT_TYPES
+
 logger = structlog.get_logger(__name__)
+
+# The builtin agent types that run on the generic agent node: their behavior
+# is the agent definition's system prompt, so the node needs no code per type.
+# AGENT_TYPE_TO_NODE and plan_route's physical-node map read this tuple; the
+# dispatcher maps below default every type outside the fixed node vocabulary
+# to the generic agent, and the template validator accepts any agent_type
+# that names an agent_definitions row (spec 3.5), so a new builtin generic
+# type needs its BUILTIN_SEED row and an entry here.
+GENERIC_AGENT_TYPES: tuple[str, ...] = ("research", "analysis", "ops", *SPECIALIST_AGENT_TYPES)
 
 # Template agent_type → physical LangGraph node. ``qa`` maps to the head of
 # the whole QA chain (init_orchestrator → orchestrate_qa → qa_report →
@@ -32,9 +43,7 @@ AGENT_TYPE_TO_NODE: dict[str, str] = {
     "review": "review",
     "qa": "init_orchestrator",
     "output": "finalize_output",
-    "research": "generic_agent",
-    "analysis": "generic_agent",
-    "ops": "generic_agent",
+    **dict.fromkeys(GENERIC_AGENT_TYPES, "generic_agent"),
 }
 
 # The dispatcher's return vocabulary; graph.py maps these to nodes.
@@ -83,6 +92,21 @@ def build_route_plan(graph_definition: dict[str, Any]) -> list[dict[str, Any]]:
             plan.append({"agent_type": agent_type, "node_id": node_id, "config": node_config(node)})
         node_id = successors.get(node_id)
     return plan
+
+
+def specialist_job_kind(plan: list[dict[str, Any]]) -> str | None:
+    """``"analysis"`` for a route whose agents are all specialists, else None.
+
+    A specialist route (kintsugi-trace, interrogate, ...) declares no
+    ``default_for_kind`` and is never triage's pick: a job reaches it only by
+    naming it (``SPECIALIST_TEMPLATE_NAMES``). Its agent examines a cloned
+    repository and reports, which is what the analysis kind means, so
+    plan_route records the job as one whatever kind triage guessed.
+    """
+    agents = [step.get("agent_type") for step in plan if step.get("agent_type") != "output"]
+    if agents and all(agent in SPECIALIST_AGENT_TYPES for agent in agents):
+        return "analysis"
+    return None
 
 
 def _step_target(step: dict[str, Any]) -> str:

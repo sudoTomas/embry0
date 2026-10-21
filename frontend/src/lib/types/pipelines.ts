@@ -91,6 +91,9 @@ export interface PipelineTemplate {
   created_at: string;
   /** Write responses only: non-fatal problems the backend found (e.g. a skill whose source is not ready). */
   warnings?: string[];
+  /** Seeded by embry0 and re-seeded on every restart, so an edit saved in
+   * place does not survive one; Save As keeps it as a template of your own. */
+  is_builtin?: boolean;
 }
 
 export interface PipelineTemplateSummary {

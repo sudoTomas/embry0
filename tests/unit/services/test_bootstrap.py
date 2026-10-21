@@ -10,6 +10,7 @@ from embry0.services.bootstrap import (
     bootstrap_repo,
     render_starter_qa_yaml,
 )
+from embry0.workflows.qa.qa_yaml_resolve import resolve_app_config
 from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
 
 
@@ -28,6 +29,33 @@ def test_app_template_validates_with_ready_check():
     assert cfg.qa_required == "auto"
     assert cfg.apps["web"].boot_command == "npm run dev"
     assert cfg.apps["web"].ready_checks[0].http == "http://localhost:5173"
+
+
+def test_app_template_tests_on_a_work_machine_with_a_browser():
+    """slim has no browser, so a starter that fell back to the schema default
+    failed every test run. The starter names the browser machine itself."""
+    cfg = parse_qa_yaml_v2(render_starter_qa_yaml("acme/widgets", app="web"))
+    resolved = resolve_app_config("web", cfg, cfg.app_local.get("web"))
+    assert resolved.sandbox_profile == "qa-external"
+
+
+def test_app_template_round_trips_quotes_and_backslashes():
+    boot = 'npm run dev -- --host "0.0.0.0" --label "a\\b"'
+    url = 'http://localhost:3000/?q="x"'
+    cfg = parse_qa_yaml_v2(
+        render_starter_qa_yaml("acme/widgets", app="web", boot_command=boot, frontend_url=url, ready_check_url=url)
+    )
+    assert cfg.apps["web"].boot_command == boot
+    assert cfg.apps["web"].frontend_url == url
+    assert cfg.apps["web"].ready_checks[0].http == url
+
+
+@pytest.mark.parametrize("app", [None, "web"])
+def test_starter_header_says_embry0_keeps_it(app):
+    text = render_starter_qa_yaml("acme/widgets", app=app)
+    assert text.splitlines()[0] == (
+        "# Starter test setup for acme/widgets. embry0 keeps it; the repository needs no copy."
+    )
 
 
 class _FakeConfigs:
@@ -93,8 +121,12 @@ async def test_bootstrap_minimal_writes_db(configs, github_ok):
 
 async def test_bootstrap_refuses_existing_without_force(configs, github_ok):
     await bootstrap_repo("acme/newrepo", github_token="tok", qa_configs_repo=configs)
-    with pytest.raises(BootstrapError, match="already exists"):
+    with pytest.raises(BootstrapError) as exc_info:
         await bootstrap_repo("acme/newrepo", github_token="tok", qa_configs_repo=configs)
+    assert str(exc_info.value) == (
+        "This repository already has a test setup. Replacing it keeps the current one in History "
+        "(send force=true, or --force on the command line)."
+    )
     # force overwrites
     result = await bootstrap_repo("acme/newrepo", github_token="tok", qa_configs_repo=configs, app="web", force=True)
     assert result.qa_required == "auto"
@@ -113,8 +145,12 @@ async def test_bootstrap_seeds_prefs_with_valid_profile(configs, github_ok):
     assert prefs.rows["acme/newrepo"]["sandbox_profile"] == "slim"
 
 
-async def test_bootstrap_rejects_unknown_profile(configs, github_ok):
-    with pytest.raises(BootstrapError, match="does not exist"):
+async def test_bootstrap_rejects_unknown_profile_before_writing_the_setup(configs, github_ok):
+    async def _no_write(repo, yaml_text, updated_by=""):
+        raise AssertionError("the test setup was written before the work machine was checked")
+
+    configs.upsert = _no_write
+    with pytest.raises(BootstrapError) as exc_info:
         await bootstrap_repo(
             "acme/newrepo",
             github_token="tok",
@@ -123,6 +159,8 @@ async def test_bootstrap_rejects_unknown_profile(configs, github_ok):
             profiles_repo=_FakeProfiles(set()),
             sandbox_profile="nope",
         )
+    assert str(exc_info.value) == "Work machine 'nope' does not exist on this embry0."
+    assert configs.rows == {}
 
 
 async def test_bootstrap_fails_before_db_write_on_github_404(configs, monkeypatch):

@@ -54,6 +54,15 @@ describe("PullRequestReviewCard", () => {
     withPrReview(null);
   });
 
+  it("leaves its heading out when the repo page's Advanced section already names it", () => {
+    const { unmount } = render(<PullRequestReviewCard repo="acme/widgets" />);
+    expect(screen.getByRole("heading", { name: "Pull request review" })).toBeInTheDocument();
+    unmount();
+    render(<PullRequestReviewCard repo="acme/widgets" showIntro={false} />);
+    expect(screen.queryByRole("heading", { name: "Pull request review" })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Review pull requests" })).toBeInTheDocument();
+  });
+
   it("is off, full depth and on the heavy tier for a repo that never configured it", () => {
     render(<PullRequestReviewCard repo="acme/widgets" />);
     expect(screen.getByRole("switch", { name: "Review pull requests" })).toHaveAttribute("aria-checked", "false");

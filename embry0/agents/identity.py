@@ -90,6 +90,55 @@ BUILTIN_IDENTITY: Final[dict[str, dict[str, str]]] = {
     },
     "analysis": {"display_name": "Analysis", "avatar": "oracle", "color": "violet", "tagline": "Finds the pattern."},
     "ops": {"display_name": "Ops", "avatar": "engineer", "color": "amber", "tagline": "Keeps it running."},
+    # The read-only specialists (docs/specialist-agents.md).
+    "kintsugi": {
+        "display_name": "Kintsugi",
+        "avatar": "monk",
+        "color": "gold",
+        "tagline": "Finds every crack, proves it, writes the seal.",
+    },
+    "gardener": {
+        "display_name": "Gardener",
+        "avatar": "skiller",
+        "color": "emerald",
+        "tagline": "Pulls one weed per run, provably.",
+    },
+    "interrogator": {
+        "display_name": "Interrogator",
+        "avatar": "rogue",
+        "color": "rose",
+        "tagline": "Four angles on a diff, then a verdict.",
+    },
+    "why": {
+        "display_name": "Why",
+        "avatar": "mystic",
+        "color": "violet",
+        "tagline": "Finds the forces that shaped the code.",
+    },
+    "how": {
+        "display_name": "How",
+        "avatar": "bard",
+        "color": "sky",
+        "tagline": "Explains a subsystem before you change it.",
+    },
+    "blast-radius": {
+        "display_name": "Blast Radius",
+        "avatar": "scout",
+        "color": "amber",
+        "tagline": "Finds what a change breaks beyond the diff.",
+    },
+    "comment-sicko": {
+        "display_name": "Comment Sicko",
+        "avatar": "pirate",
+        "color": "cyan",
+        "tagline": "Deletes the comments that do the code's job badly.",
+    },
+    "design-auditor": {
+        "display_name": "Design Auditor",
+        "avatar": "archmage",
+        "color": "gold",
+        "tagline": "Measures a frontend against its standard.",
+    },
 }
 
 

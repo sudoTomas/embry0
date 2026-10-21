@@ -1,15 +1,34 @@
-"""Per-repo preferences endpoints."""
+"""Per-repo preferences endpoints.
+
+Both writes are recorded in the repo's history (ADR 0019) and audited.
+"""
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Request
 
+from embry0.api.deps import request_actor
 from embry0.api.schemas.repo_preferences import (
     RepoPreferencesResponse,
     RepoPreferencesUpdateRequest,
 )
+from embry0.audit.actions import AuditAction
+from embry0.audit.helpers import emit_audit
 
 router = APIRouter()
+
+
+async def _audit(request: Request, action: AuditAction, details: dict[str, Any]) -> None:
+    config = getattr(request.app.state, "config", None)
+    await emit_audit(
+        getattr(request.app.state, "db", None),
+        action,
+        actor=request_actor(request),
+        details=details,
+        audit_log_path=getattr(config, "audit_log_path", None),
+    )
 
 
 @router.get("/repos/{full_repo:path}/preferences", response_model=RepoPreferencesResponse | None)
@@ -60,11 +79,17 @@ async def put_repo_preferences(
         # #30: exclude_unset reaches into nested models; the settings are one
         # object and are stored whole, defaults included.
         fields["pr_review"] = req.pr_review.model_dump()
-    saved = await prefs_repo.upsert(full_repo, **fields)
+    saved, revision_id = await prefs_repo.upsert_recorded(full_repo, actor=request_actor(request), **fields)
+    await _audit(
+        request, "repo.preferences_set", {"repo": full_repo, "revision_id": revision_id, "fields": sorted(fields)}
+    )
+    # The revision id stays out of the response model; history serves it.
     return RepoPreferencesResponse(**saved)
 
 
 @router.delete("/repos/{full_repo:path}/preferences", status_code=204, response_model=None)
 async def delete_repo_preferences(full_repo: str, request: Request) -> None:
     prefs_repo = request.app.state.repo_preferences_repo
-    await prefs_repo.delete(full_repo)
+    revision_id = await prefs_repo.delete_recorded(full_repo, actor=request_actor(request))
+    if revision_id is not None:
+        await _audit(request, "repo.preferences_cleared", {"repo": full_repo, "revision_id": revision_id})

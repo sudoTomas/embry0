@@ -12,10 +12,10 @@ export function ThinkingBlock({ blocks, isStreaming = false }: ThinkingBlockProp
   if (blocks.length === 0 && !isStreaming) return null;
 
   return (
-    <div className="border-l-2 border-violet-500/30 bg-violet-500/[0.03]">
+    <div className="border-l-2 border-purple/30 bg-purple/[0.03]">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-4 py-2 text-xs text-violet-300/70 hover:text-violet-300 transition-colors"
+        className="w-full flex items-center gap-2 px-4 py-2 text-xs text-purple/70 hover:text-purple transition-colors"
       >
         <Brain className="w-3 h-3" />
         {isStreaming && !expanded ? (

@@ -328,16 +328,7 @@ class AgentRunner:
                 proc.kill()
             except Exception:
                 pass
-            # proc.kill() only kills the host-side docker client — the
-            # in-container runner (and its CLI/browser children) keeps
-            # running until the sandbox is destroyed. Best-effort pkill
-            # so a stuck agent stops burning tokens immediately.
-            try:
-                await self._docker.run_cmd(
-                    self._docker.build_exec_cmd(container, ["pkill", "-f", "embry0.sandbox.runner"]),
-                    timeout=10,
-                )
-            except Exception:
+            if not await self._stop_runner_in_sandbox(container):
                 logger.warning("agent_runner_idle_pkill_failed", container=container)
 
         from embry0.workflows.qa.watchdogs import IdleWatchdog  # noqa: PLC0415 — leaf module, no cycle
@@ -509,6 +500,16 @@ class AgentRunner:
                 proc.kill()
             except Exception:
                 pass
+            # A timed-out job pauses and keeps its sandbox, so a runner left
+            # running there would spend unseen and race a resume.
+            runner_stopped = await self._stop_runner_in_sandbox(container)
+            logger.error(
+                "agent_runner_wall_clock_timeout",
+                agent_type=config.get("agent_type"),
+                container=container,
+                timeout_seconds=timeout_seconds,
+                runner_stopped=runner_stopped,
+            )
             return (
                 _diagnose(
                     AgentOutput(
@@ -531,6 +532,24 @@ class AgentRunner:
             {"source_id": m.source_id, "plugin_name": m.plugin_name, "container_path": m.container_path}
             for m in await self._sandbox.skill_mounts_for(container_id)
         ]
+
+    async def _stop_runner_in_sandbox(self, container: str) -> bool:
+        """Best-effort kill of the agent runner inside ``container``.
+
+        ``proc.kill()`` only kills the host-side docker exec client: the
+        in-container runner, and its CLI and browser children, keep running
+        and spending until the sandbox is destroyed. True when the pkill was
+        delivered; it exits 1 when nothing matched, and docker can hang, so
+        any failure is False, never an exception.
+        """
+        try:
+            await self._docker.run_cmd(
+                self._docker.build_exec_cmd(container, ["pkill", "-f", "embry0.sandbox.runner"]),
+                timeout=10,
+            )
+        except Exception:
+            return False
+        return True
 
     async def _image_ref(self, container: str) -> str:
         """The image a container was created from, for the stale-image log."""

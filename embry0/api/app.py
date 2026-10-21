@@ -36,6 +36,7 @@ from embry0.storage.repositories.qa_app_results import QAAppResultsRepository
 from embry0.storage.repositories.qa_image_tags import QAImageTagsRepository
 from embry0.storage.repositories.qa_run_metadata import QARunMetadataRepository
 from embry0.storage.repositories.qa_volume_state import QAVolumeStateRepository
+from embry0.storage.repositories.repo_config_revisions import RepoConfigRevisionsRepository
 from embry0.storage.repositories.repo_preferences import RepoPreferencesRepository
 from embry0.storage.repositories.repo_qa_configs import RepoQAConfigsRepository
 from embry0.storage.repositories.repos import ReposRepository
@@ -743,7 +744,18 @@ async def _init_app_state(
     from embry0.storage.repositories.hosts import HostsRepository
 
     app.state.hosts_repo = HostsRepository(db)
+    from embry0.storage.repositories.standards import RepoStandardStateRepository, StandardsRepository
+
+    # ADR 0014: an owner's versioned standards and each repository's mode under them.
+    app.state.standards_repo = StandardsRepository(db)
+    app.state.repo_standard_state_repo = RepoStandardStateRepository(db)
     app.state.qa_configs_repo = RepoQAConfigsRepository(db, default_forge=app_config.default_forge)
+    # ADR 0019: every change to a repo's test setup and preferences, for history and undo.
+    app.state.repo_config_revisions_repo = RepoConfigRevisionsRepository(db)
+    from embry0.storage.repositories.repo_setup_proposals import RepoSetupProposalsRepository
+
+    # ADR 0019: agent-proposed test setups waiting for a person.
+    app.state.repo_setup_proposals_repo = RepoSetupProposalsRepository(db)
     app.state.qa_app_results_repo = QAAppResultsRepository(db)
     app.state.qa_image_tags_repo = QAImageTagsRepository(db)
     app.state.qa_volume_state_repo = QAVolumeStateRepository(db)
@@ -917,18 +929,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await seed_builtin_pipeline_templates(PipelineTemplatesRepository(db))
 
-    # Seed the qa agent definition. Idempotent — upserts on every boot so the
-    # canonical system prompt and MCP server config stay in sync with the code.
+    # Seed the qa agent definition when it is missing. Insert-if-missing, like
+    # every built-in agent: an operator's edit survives a restart, and
+    # POST /agents/{type}/reset puts the seed back.
     from embry0.workflows.qa.agent_seed import seed_qa_agent
 
     await seed_qa_agent(AgentDefinitionsRepository(db))
 
-    # Seed the onboarding agent definition (EMB-50), same idempotent pattern.
+    # Seed the onboarding agent definition (EMB-50), same insert-if-missing pattern.
     from embry0.workflows.onboard.agent_seed import seed_onboarding_agent
 
     await seed_onboarding_agent(AgentDefinitionsRepository(db))
 
-    # Seed the pull request reviewer (#30), same idempotent pattern.
+    # Seed the pull request reviewer (#30), same insert-if-missing pattern.
     from embry0.workflows.pr_review.agent_seed import seed_pr_reviewer_agent
 
     await seed_pr_reviewer_agent(AgentDefinitionsRepository(db))
@@ -1042,7 +1055,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         not_started = "Orchestrator restarted before the job started; nothing ran. Dispatch it again."
         drained = (
             "Orchestrator shut down during the job and could not resume it "
-            "(QA and onboard jobs, and jobs without a checkpoint, start over). Dispatch it again."
+            "(QA, onboard and pr-review jobs, and jobs without a checkpoint, start over). Dispatch it again."
         )
         orphaned_ids = await boot_jobs_repo.fail_orphaned(
             ErrorCode.ORPHANED.value,
@@ -1257,6 +1270,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         jobs_repo=JobsRepository(db, metrics=loop_metrics),
         issues_repo=IssuesRepository(db),
         database_url=config.database_url,
+        sandbox_manager=sandbox_mgr,
     )
     reaper.start()
     app.state.container_reaper = reaper
@@ -1333,7 +1347,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # pool here.
     context_proxy_key = config.api_key
     try:
-        context_proxy_key = await ApiKeysRepository(db).rotate_service_key("svc-context-proxy", scope="read")
+        from embry0.api.deps import CONTEXT_PROXY_SERVICE_KEY
+
+        context_proxy_key = await ApiKeysRepository(db).rotate_service_key(CONTEXT_PROXY_SERVICE_KEY, scope="read")
         logger.info("context_proxy_service_key_rotated")
     except Exception as exc:  # noqa: BLE001
         logger.warning("context_proxy_service_key_rotation_failed", error=str(exc))
@@ -1667,6 +1683,54 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(audit_sweep_task)
     audit_sweep_task.add_done_callback(app.state.background_tasks.discard)
 
+    # ADR 0017: job log retention. The sweep object always exists, so the
+    # admin preview can dry-run it at any number of days; its loop runs only
+    # with JOB_LOG_RETENTION_DAYS set (one sweep now, then daily: a deploy
+    # more often than daily must not keep postponing it).
+    from embry0.services.job_log_retention import JobLogRetentionSweep
+    from embry0.storage.repositories.job_log_retention import JobLogRetentionRepository
+
+    app.state.job_log_retention = JobLogRetentionSweep(
+        JobLogRetentionRepository(db), retention_days=config.job_log_retention_days
+    )
+    if app.state.job_log_retention.enabled:
+        job_log_retention_task = asyncio.create_task(app.state.job_log_retention.start())
+        app.state.background_tasks.add(job_log_retention_task)
+        job_log_retention_task.add_done_callback(app.state.background_tasks.discard)
+    logger.info("job_log_retention_configured", retention_days=config.job_log_retention_days)
+
+    # ADR 0017: agent session retention, its own setting because deleting a
+    # session ends the resume of a pull request comment follow-up. Same shape.
+    from embry0.services.agent_session_retention import AgentSessionRetentionSweep
+
+    app.state.agent_session_retention = AgentSessionRetentionSweep(
+        app.state.agent_sessions_repo, retention_days=config.agent_session_retention_days
+    )
+    if app.state.agent_session_retention.enabled:
+        agent_session_retention_task = asyncio.create_task(app.state.agent_session_retention.start())
+        app.state.background_tasks.add(agent_session_retention_task)
+        agent_session_retention_task.add_done_callback(app.state.background_tasks.discard)
+    logger.info("agent_session_retention_configured", retention_days=config.agent_session_retention_days)
+
+    # ADR 0017: QA image retention, the same shape: always built (the preview
+    # dry-runs it), looping only with QA_IMAGE_RETENTION_DAYS set. Volumes are
+    # recognised by this deployment's instance label, as the volume reaper does.
+    from embry0.cache.qa_image_retention import QAImageRetentionSweep
+
+    app.state.qa_image_retention = QAImageRetentionSweep(
+        runtime=app.state.runtime,
+        image_repo=app.state.qa_image_tags_repo,
+        volume_state_repo=app.state.qa_volume_state_repo,
+        jobs_repo=app.state.jobs_repo,
+        instance_id=volume_instance_id,
+        retention_days=config.qa_image_retention_days,
+    )
+    if app.state.qa_image_retention.enabled:
+        qa_image_retention_task = asyncio.create_task(app.state.qa_image_retention.start())
+        app.state.background_tasks.add(qa_image_retention_task)
+        qa_image_retention_task.add_done_callback(app.state.background_tasks.discard)
+    logger.info("qa_image_retention_configured", retention_days=config.qa_image_retention_days)
+
     # #270: which trigger label dispatch matches on, and whether the DB row,
     # .env or the code default supplied it (DB wins; a shadowed .env warns).
     await app.state.integration_repo.log_effective_trigger_labels()
@@ -1932,6 +1996,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         app.state.daily_digest = None
         logger.critical("daily_digest_unavailable", exc_info=True)
+
+    # ADR 0016: organization rediscovery on a schedule. A discovery run lives
+    # in the process that started it, so one a previous process left running
+    # was cut off by the restart; it is closed first, or it would hold off
+    # every later run for its owner. The loop then starts runs through the
+    # function POST /orgs/{owner}/discover uses, for the owners whose
+    # rediscover_hours setting is on (it is off by default).
+    try:
+        from embry0.api.v1.organizations import app_request, start_discovery
+        from embry0.services.org_rediscovery import ACTOR as _REDISCOVERY_ACTOR
+        from embry0.services.org_rediscovery import OrgRediscoveryLoop
+        from embry0.services.organizations import Organization as _Organization
+
+        interrupted = await app.state.org_repos_repo.fail_interrupted_runs()
+        if interrupted:
+            logger.warning("org_discovery_runs_interrupted", run_ids=interrupted)
+
+        async def _start_scheduled_discovery(org: _Organization) -> dict[str, Any]:
+            return await start_discovery(app_request(app), org, actor=_REDISCOVERY_ACTOR)
+
+        app.state.org_rediscovery = OrgRediscoveryLoop(
+            organizations=app.state.organizations_repo,
+            runs=app.state.org_repos_repo,
+            start_run=_start_scheduled_discovery,
+        )
+        rediscovery_task = asyncio.create_task(app.state.org_rediscovery.start())
+        app.state.background_tasks.add(rediscovery_task)
+        rediscovery_task.add_done_callback(app.state.background_tasks.discard)
+    except Exception:
+        app.state.org_rediscovery = None
+        logger.critical("org_rediscovery_unavailable", exc_info=True)
 
     # Merge approvals (#319 phase 2): a job's PR on an enabled repo is asked
     # about in the operator's approval chat, and a relayed "merge it" is
@@ -2216,7 +2311,7 @@ def create_app(
 
 
 def _register_routers(app: FastAPI) -> None:
-    from embry0.api.deps import require_admin, require_auth
+    from embry0.api.deps import require_admin, require_auth, require_log_reader
     from embry0.api.v1 import (
         agents,
         api_keys,
@@ -2247,11 +2342,15 @@ def _register_routers(app: FastAPI) -> None:
         qa_events,
         qa_images,
         queue,
+        repo_history,
         repo_preferences,
+        repo_setup,
         repos,
+        retention,
         sandbox_profiles,
         sandboxes,
         skills,
+        standards,
         stats,
         telegram,
         tools,
@@ -2287,8 +2386,9 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"], dependencies=auth_deps)
     # RAV-603: typed job outputs (pr/report/artifact/message) + artifact download.
     app.include_router(deliverables.router, prefix="/api/v1", tags=["deliverables"], dependencies=auth_deps)
-    # RAV-1057: on-demand container-log queries (Loki proxy).
-    app.include_router(logs.router, prefix="/api/v1", tags=["logs"], dependencies=auth_deps)
+    # RAV-1057: on-demand container-log queries (Loki proxy). Operator tier
+    # and the context-proxy's service key only: the lines carry personal data.
+    app.include_router(logs.router, prefix="/api/v1", tags=["logs"], dependencies=[require_auth, require_log_reader])
     # #634: the live log tail is an EventSource, so its route takes a
     # job-scoped token as well as the header. Included first: the artifacts
     # router's `{path:path}` catch-all would otherwise shadow it.
@@ -2325,6 +2425,10 @@ def _register_routers(app: FastAPI) -> None:
     # RAV-1251: repo registry + unified per-repo detail.
     app.include_router(qa_config.router, prefix="/api/v1", tags=["qa-config"], dependencies=auth_deps)
     app.include_router(bootstrap.router, prefix="/api/v1", tags=["bootstrap"], dependencies=auth_deps)
+    # ADR 0019: a repo's change history and undo (operator tier, like the writes it reverses).
+    app.include_router(repo_history.router, prefix="/api/v1", tags=["repo-history"], dependencies=auth_deps)
+    # ADR 0019: start, review, apply and turn down a setup proposal (writes operator tier).
+    app.include_router(repo_setup.router, prefix="/api/v1", tags=["repo-setup"], dependencies=auth_deps)
     # MUST come after every router owning a /repos/{repo}/<suffix> route:
     # repos exposes a `{full_repo:path}` catch-all (#162, for GitLab nested
     # subgroups) which would otherwise shadow them. Pinned by
@@ -2334,6 +2438,10 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(org_needs.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     # ADR 0013: the hosts that run the code (reads and probes operator-tier; writes admin-tier in-route).
     app.include_router(hosts.router, prefix="/api/v1", tags=["hosts"], dependencies=auth_deps)
+    # ADR 0017: the retention dry run; its one route adds require_admin.
+    app.include_router(retention.router, prefix="/api/v1", tags=["retention"], dependencies=auth_deps)
+    # ADR 0014: organization standards (reads and audits operator-tier; writes admin-tier in-route).
+    app.include_router(standards.router, prefix="/api/v1", tags=["standards"], dependencies=auth_deps)
     app.include_router(org_actions.router, prefix="/api/v1", tags=["organizations"], dependencies=auth_deps)
     app.include_router(github.router, prefix="/api/v1", tags=["github"], dependencies=auth_deps)
     app.include_router(gitlab.router, prefix="/api/v1", tags=["gitlab"], dependencies=auth_deps)

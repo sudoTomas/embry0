@@ -14,41 +14,40 @@ export function CostBreakdownTable({ breakdown }: { breakdown: CostBreakdownEntr
     <Card>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-border text-muted-foreground">
-                <th scope="col" className="text-left px-4 py-3">Agent</th>
-                <th scope="col" className="text-left px-4 py-3">Model</th>
-                <th scope="col" className="text-right px-4 py-3">Runs</th>
-                <th scope="col" className="text-right px-4 py-3">Cost</th>
-                <th scope="col" className="text-right px-4 py-3">In</th>
-                <th scope="col" className="text-right px-4 py-3">Out</th>
-                <th scope="col" className="text-right px-4 py-3">Cache read</th>
-                <th scope="col" className="text-right px-4 py-3">Cache write</th>
+              <tr>
+                <th scope="col">Agent</th>
+                <th scope="col">Model</th>
+                <th scope="col" className="text-right">Runs</th>
+                <th scope="col" className="text-right">Cost</th>
+                <th scope="col" className="text-right">In</th>
+                <th scope="col" className="text-right">Out</th>
+                <th scope="col" className="text-right">Cache read</th>
+                <th scope="col" className="text-right">Cache write</th>
               </tr>
             </thead>
             <tbody>
               {breakdown.map((entry) => (
                 <tr
                   key={`${entry.agent_type}-${entry.model}`}
-                  className="border-b border-border/50"
                 >
-                  <td className="px-4 py-3 capitalize">{entry.agent_type}</td>
-                  <td className="px-4 py-3 font-mono text-xs">{entry.model}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{entry.runs}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">
+                  <td className="font-mono text-xs">{entry.agent_type}</td>
+                  <td className="font-mono text-xs">{entry.model}</td>
+                  <td className="text-right tabular-nums">{entry.runs}</td>
+                  <td className="text-right tabular-nums">
                     {formatCost(entry.cost_usd)}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
+                  <td className="text-right tabular-nums">
                     {formatTokens(entry.input_tokens ?? 0)}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
+                  <td className="text-right tabular-nums">
                     {formatTokens(entry.output_tokens ?? 0)}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
+                  <td className="text-right tabular-nums">
                     {formatTokens(entry.cache_read_tokens ?? 0)}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
+                  <td className="text-right tabular-nums">
                     {formatTokens(entry.cache_creation_tokens ?? 0)}
                   </td>
                 </tr>

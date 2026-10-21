@@ -14,7 +14,8 @@ const TILE_PX = 96;
 /**
  * The one agent node (spec 3.4): a 96 px tile with the agent's sprite in the
  * state's frame, a ring in its palette colour, the display name on a pixel
- * nameplate and one HUD line. Editor mode (data.mode absent) shows the
+ * nameplate and one HUD line. A selected node gets a second thin ring in
+ * the same colour, never a glow. Editor mode (data.mode absent) shows the
  * effective skill count and the model; live mode shows attempt, cost and
  * turns and maps the node's live state onto the sprite and the ring. The
  * start and end sentinels stay on StartEndNode.
@@ -45,8 +46,18 @@ export function PartyNode({ data, selected }: NodeProps) {
     <div data-testid="party-node" data-mode={mode} className="flex flex-col items-center gap-1 select-none">
       <div
         className="relative transition-transform duration-200 hover:-translate-y-0.5"
-        style={{ width: TILE_PX, height: TILE_PX, filter: selected ? `drop-shadow(0 0 12px ${identity.hex}66)` : undefined }}
+        style={{ width: TILE_PX, height: TILE_PX }}
       >
+        {/* Selected: a thin ring in the agent's own colour just outside the
+            state ring, never a glow. */}
+        {selected && (
+          <div
+            data-testid="node-selected-ring"
+            aria-hidden="true"
+            className="pointer-events-none absolute -inset-0.5 rounded-full border"
+            style={{ borderColor: identity.hex }}
+          />
+        )}
         <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-card" style={{ border: `2px solid ${identity.hex}`, top: "50%" }} />
         <div className="party-tile absolute inset-1 flex items-center justify-center bg-card">
           <Sprite avatar={identity.avatar} color={identity.color} state={spriteState} size={48} label={identity.displayName} />

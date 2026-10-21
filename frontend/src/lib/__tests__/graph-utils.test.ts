@@ -89,6 +89,21 @@ describe("toApiGraph", () => {
     expect(roles.sort()).toEqual(["end", "start"]);
     expect(nodes.filter((n) => n.type === "agentNode").map((n) => n.id)).toEqual(["triage", "developer"]);
   });
+
+  it("connects the injected Start and End to the roots and leaves, past feedback edges", () => {
+    const stored: PipelineGraph = {
+      ...canvasGraph(),
+      nodes: [node("triage", "triage"), node("developer", "developer", 240), node("review", "review", 400)],
+      edges: [
+        { edge_id: "e1", source: "triage", target: "developer", edge_type: "flow", loop_config: null },
+        { edge_id: "e2", source: "developer", target: "review", edge_type: "flow", loop_config: null },
+        { edge_id: "fb", source: "review", target: "developer", edge_type: "feedback", loop_config: null },
+      ],
+    };
+    const { edges } = injectStartEndNodes(deserializeGraph(stored));
+    const scaffold = edges.filter((e) => e.source === "__start__" || e.target === "__end__");
+    expect(scaffold.map((e) => `${e.source}->${e.target}`)).toEqual(["__start__->triage", "review->__end__"]);
+  });
 });
 
 import fixtureText from "../../../../tests/fixtures/templates/editor-config-shape.json?raw";

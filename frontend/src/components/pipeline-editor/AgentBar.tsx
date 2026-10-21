@@ -106,7 +106,7 @@ export function AgentBar({ nodes, edges }: AgentBarProps) {
         <span>{nodes.length} node{nodes.length !== 1 ? "s" : ""}</span>
         <span>{edges.length} edge{edges.length !== 1 ? "s" : ""}</span>
         {feedbackCount > 0 && (
-          <span className="text-red-400/60">
+          <span className="text-destructive/60">
             {feedbackCount} loop{feedbackCount !== 1 ? "s" : ""}
           </span>
         )}
@@ -114,7 +114,7 @@ export function AgentBar({ nodes, edges }: AgentBarProps) {
           className={cn(
             "px-2 py-0.5 rounded-full text-[10px] font-medium",
             isValid
-              ? "bg-emerald-500/10 text-emerald-400/80"
+              ? "bg-success/10 text-success/80"
               : "bg-amber-500/10 text-amber-400/80",
           )}
         >

@@ -80,6 +80,15 @@ describe("AuthGate (key mode — pre-SSO behavior preserved)", () => {
     expect(screen.queryByTestId("app-content")).toBeNull();
   });
 
+  it("rings the key mark in the neutral border: Unlock is the one gold", async () => {
+    routeGet({ "/queue": () => Promise.reject(axiosErr(401)) });
+    renderGate();
+    await screen.findByLabelText("API key");
+    const mark = document.querySelector(".bg-primary-dim");
+    expect(mark).toHaveClass("rounded-full", "border-border");
+    expect(mark?.className).not.toMatch(/(^|\s)border-primary/);
+  });
+
   it("renders the app when the probe fails for non-auth reasons (backend down)", async () => {
     routeGet({ "/queue": () => Promise.reject(new AxiosError("Network Error", "ERR_NETWORK")) });
     renderGate();
@@ -195,5 +204,75 @@ describe("AuthGate (SSO — RAV-1069)", () => {
     await screen.findByText(/access denied/i);
     expect(assign).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
+  });
+});
+
+describe("AuthGate (API-key sign-in turned off for people)", () => {
+  it("shows no key form when the server says key login is off and SSO is down", async () => {
+    // The public origin is SSO-only for people (api_key_login false). With
+    // SSO reporting off, the key form must not appear there.
+    routeGet({
+      "/auth/check": () =>
+        Promise.resolve({ data: { sso_enabled: false, authenticated: false, tier: null, api_key_login: false } }),
+      "/queue": () => Promise.reject(axiosErr(401)),
+    });
+    renderGate();
+    expect(await screen.findByText(/Sign-in is unavailable/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("API key")).toBeNull();
+    expect(screen.queryByTestId("app-content")).toBeNull();
+  });
+
+  it("keeps the key form where the server allows key login", async () => {
+    routeGet({
+      "/auth/check": () =>
+        Promise.resolve({ data: { sso_enabled: false, authenticated: false, tier: null, api_key_login: true } }),
+      "/queue": () => Promise.reject(axiosErr(401)),
+    });
+    renderGate();
+    expect(await screen.findByLabelText("API key")).toBeInTheDocument();
+  });
+});
+
+describe("AuthGate (the sign-in check itself fails)", () => {
+  // Only the server knows whether this origin lets people in with a key. When
+  // /auth/check cannot answer, the key form must not appear on an origin that
+  // may be SSO-only: the prompt says sign-in is unavailable, with Try again.
+  it("shows sign-in unavailable, not the key form, when the check answers 5xx", async () => {
+    routeGet({
+      "/auth/check": () => Promise.reject(axiosErr(503)),
+      "/queue": () => Promise.reject(axiosErr(401)),
+    });
+    renderGate();
+    expect(await screen.findByText(/Sign-in is unavailable/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("API key")).toBeNull();
+  });
+
+  it("shows sign-in unavailable when the check cannot reach the server", async () => {
+    routeGet({
+      "/auth/check": () => Promise.reject(new AxiosError("Network Error", "ERR_NETWORK")),
+      "/queue": () => Promise.reject(axiosErr(401)),
+    });
+    renderGate();
+    expect(await screen.findByText(/Sign-in is unavailable/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("API key")).toBeNull();
+  });
+
+  it("keeps the key form on an older backend that has no sign-in check (404)", async () => {
+    routeGet({
+      "/auth/check": () => Promise.reject(axiosErr(404)),
+      "/queue": () => Promise.reject(axiosErr(401)),
+    });
+    renderGate();
+    expect(await screen.findByLabelText("API key")).toBeInTheDocument();
+  });
+
+  it("still renders the app when a stored key works, whatever the check said", async () => {
+    routeGet({
+      "/auth/check": () => Promise.reject(axiosErr(503)),
+      "/queue": () => Promise.resolve({ data: {} }),
+    });
+    renderGate();
+    expect(await screen.findByTestId("app-content")).toBeInTheDocument();
   });
 });

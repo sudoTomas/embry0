@@ -111,7 +111,7 @@ def test_reserved_env_prefixes_export_expected_tuple() -> None:
     from embry0.execution.auth_provider import RESERVED_ENV_PREFIXES
 
     # These prefixes must NEVER be user-settable via the environment UI.
-    assert RESERVED_ENV_PREFIXES == ("QA_ARTIFACT_", "DOCKER_", "VIBIUM_", "GIT_CONFIG_")
+    assert RESERVED_ENV_PREFIXES == ("QA_ARTIFACT_", "DOCKER_", "VIBIUM_", "GIT_CONFIG_", "EMBRY0_LLM_")
 
 
 def test_hook_env_prefixes_export_expected_tuple() -> None:

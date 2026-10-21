@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect, useRef, useId } from "react";
 import type { Node } from "@xyflow/react";
 import { X, ChevronDown, ChevronRight } from "lucide-react";
 import { useAgents } from "@/hooks/useAgents";
@@ -39,9 +39,12 @@ function Divider() {
   return <div className="border-t border-white/[0.06] my-3" />;
 }
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
+function FieldLabel({ htmlFor, children }: { htmlFor?: string; children: React.ReactNode }) {
+  // A label over a group of pills (Removed, Effective) names no one field, so
+  // it is a heading; a <label> tied to nothing announces nothing.
+  if (!htmlFor) return <div className="text-[11px] text-white/40 mb-1 block">{children}</div>;
   return (
-    <label className="text-[11px] text-white/40 mb-1 block">{children}</label>
+    <label htmlFor={htmlFor} className="text-[11px] text-white/40 mb-1 block">{children}</label>
   );
 }
 
@@ -118,12 +121,13 @@ function TagPill({ label, onRemove }: TagPillProps) {
 }
 
 interface TagInputProps {
+  id: string;
   tags: string[];
   onChange: (tags: string[]) => void;
   placeholder?: string;
 }
 
-function TagInput({ tags, onChange, placeholder }: TagInputProps) {
+function TagInput({ id, tags, onChange, placeholder }: TagInputProps) {
   const [input, setInput] = useState("");
 
   const addTag = (value: string) => {
@@ -153,6 +157,7 @@ function TagInput({ tags, onChange, placeholder }: TagInputProps) {
         />
       ))}
       <input
+        id={id}
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -206,10 +211,19 @@ export function AgentDetailPopup({
   onClose,
 }: AgentDetailPopupProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
   const d = node.data as Record<string, unknown>;
   const { data: agents } = useAgents();
   const [editing, setEditing] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -291,13 +305,13 @@ export function AgentDetailPopup({
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        className="w-[560px] max-h-[85vh] overflow-y-auto rounded-2xl"
+        aria-labelledby={titleId}
+        className="pipeline-popup-in w-[560px] max-h-[85vh] overflow-y-auto rounded-lg"
         onClick={(e) => e.stopPropagation()}
         style={{
           border: `1px solid ${color}33`,
-          background: `linear-gradient(170deg, ${color}0A 0%, #0f1419 15%, #0f1419 100%)`,
-          boxShadow: `0 0 60px ${color}10, 0 25px 50px rgba(0,0,0,0.5)`,
-          animation: "popup-in 0.25s ease-out",
+          background: "var(--color-surface)",
+          boxShadow: "0 25px 50px rgb(0 0 0 / 0.5)",
         }}
       >
         {/* -------- Header -------- */}
@@ -306,7 +320,7 @@ export function AgentDetailPopup({
 
           {/* Title */}
           <div className="flex-1 min-w-0">
-            <div className="text-[22px] font-bold leading-tight" style={{ color }}>
+            <div id={titleId} className="text-[22px] font-bold leading-tight" style={{ color }}>
               {displayLabel}
             </div>
             <div className="text-[13px] text-white/40 mt-0.5">
@@ -425,8 +439,8 @@ function ReadMode({
       {/* Tools & Skills side-by-side */}
       <div className="flex gap-3 mb-5">
         {/* Tools card */}
-        <div className="flex-1 rounded-lg border border-cyan-500/15 bg-cyan-500/[0.02] px-3 py-2.5">
-          <div className="text-[11px] font-semibold text-cyan-400 mb-1.5">
+        <div className="flex-1 rounded-lg border border-border bg-white/[0.03] px-3 py-2.5">
+          <div className="text-2xs font-semibold text-fg-muted mb-1.5">
             &#9889; Tools
           </div>
           <div className="flex flex-wrap gap-1">
@@ -435,7 +449,7 @@ function ReadMode({
                 <ReadPill
                   key={t}
                   label={t}
-                  className="bg-cyan-500/10 text-cyan-400/80 border border-cyan-500/20"
+                  className="bg-white/[0.06] text-fg-secondary"
                 />
               ))
             ) : (
@@ -455,7 +469,7 @@ function ReadMode({
                 <ReadPill
                   key={s}
                   label={s}
-                  className="bg-purple-500/10 text-purple-400/80 border border-purple-500/20"
+                  className="bg-purple/10 text-purple/80 border border-purple/20"
                 />
               ))
             ) : (
@@ -519,6 +533,7 @@ function EditMode({
   setAdvancedOpen: React.Dispatch<React.SetStateAction<boolean>>;
   onCancel: () => void;
 }) {
+  const fieldId = useId();
   return (
     <>
       {/* Label */}
@@ -537,9 +552,9 @@ function EditMode({
       <SectionHeader>Execution</SectionHeader>
       <div className="space-y-3">
         <div>
-          <FieldLabel>Model</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-model`}>Model</FieldLabel>
           <FieldSelect
-            id="adp-model"
+            id={`${fieldId}-model`}
             value={(d.model as string) ?? ""}
             onChange={(e) => onUpdate({ model: e.target.value || null })}
           >
@@ -554,9 +569,9 @@ function EditMode({
 
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <FieldLabel>Budget (USD)</FieldLabel>
+            <FieldLabel htmlFor={`${fieldId}-budget`}>Budget (USD)</FieldLabel>
             <FieldInput
-              id="adp-budget"
+              id={`${fieldId}-budget`}
               type="number"
               step="0.5"
               min="0"
@@ -570,9 +585,9 @@ function EditMode({
             />
           </div>
           <div>
-            <FieldLabel>Max Turns</FieldLabel>
+            <FieldLabel htmlFor={`${fieldId}-turns`}>Max Turns</FieldLabel>
             <FieldInput
-              id="adp-turns"
+              id={`${fieldId}-turns`}
               type="number"
               min="1"
               value={(d.maxTurns as number) ?? ""}
@@ -587,9 +602,9 @@ function EditMode({
         </div>
 
         <div>
-          <FieldLabel>Effort</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-effort`}>Effort</FieldLabel>
           <FieldSelect
-            id="adp-effort"
+            id={`${fieldId}-effort`}
             value={(d.effort as string) ?? ""}
             onChange={(e) => onUpdate({ effort: e.target.value || null })}
           >
@@ -607,18 +622,19 @@ function EditMode({
       <SectionHeader>Tools &amp; Skills</SectionHeader>
       <div className="space-y-3">
         <div>
-          <FieldLabel>Tools</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-tools`}>Tools</FieldLabel>
           <TagInput
+            id={`${fieldId}-tools`}
             tags={tools}
             onChange={(t) => onUpdate({ tools: t.length ? t : null })}
             placeholder="Read, Write, Bash..."
           />
         </div>
         <div>
-          <FieldLabel>Added</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-skills-add`}>Added</FieldLabel>
           <div data-testid="skills-added">
             <SkillPicker
-              id="adp-skills-add"
+              id={`${fieldId}-skills-add`}
               value={delta.add}
               onChange={skillActions.setAdded}
               catalog={catalog}
@@ -696,9 +712,9 @@ function EditMode({
       <SectionHeader>Prompt</SectionHeader>
       <div className="space-y-3">
         <div>
-          <FieldLabel>Prepend</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-prepend`}>Prepend</FieldLabel>
           <FieldTextarea
-            id="adp-prepend"
+            id={`${fieldId}-prepend`}
             value={(d.promptPrepend as string) ?? ""}
             onChange={(e) =>
               onUpdate({ promptPrepend: e.target.value || null })
@@ -707,9 +723,9 @@ function EditMode({
           />
         </div>
         <div>
-          <FieldLabel>Append</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-append`}>Append</FieldLabel>
           <FieldTextarea
-            id="adp-append"
+            id={`${fieldId}-append`}
             value={(d.promptAppend as string) ?? ""}
             onChange={(e) =>
               onUpdate({ promptAppend: e.target.value || null })
@@ -738,9 +754,9 @@ function EditMode({
       {advancedOpen && (
         <div className="mt-2 space-y-3">
           <div>
-            <FieldLabel>Sandbox Image</FieldLabel>
+            <FieldLabel htmlFor={`${fieldId}-sandbox`}>Sandbox Image</FieldLabel>
             <FieldInput
-              id="adp-sandbox"
+              id={`${fieldId}-sandbox`}
               value={
                 ((d.sandbox as Record<string, unknown> | null)?.image as string) ??
                 ""

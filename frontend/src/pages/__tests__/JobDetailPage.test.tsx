@@ -33,6 +33,7 @@ vi.mock("@/hooks/useJobLogs", () => ({
 }));
 vi.mock("@/hooks/useInputs", () => ({ useJobInputs: () => ({ data: [], refetch: state.refetchInputs }) }));
 vi.mock("@/hooks/useTraces", () => ({ useTraces: () => ({ data: { traces: [], total: 0 } }) }));
+vi.mock("@/hooks/useRepos", () => ({ useRegisteredRepos: () => ({ data: [] }) }));
 vi.mock("@/hooks/useQaResults", () => ({
   useQaAttempts: () => ({ data: state.attempts, isLoading: false }),
   useQaServices: () => ({ data: [] }),
@@ -211,6 +212,22 @@ describe("JobDetailPage", () => {
     mount();
     expect(screen.getByTestId("party-strip")).toBeTruthy();
     expect(screen.queryByTestId("party-map")).toBeNull();
+    expect(screen.queryByTestId("party-map-pending"), "a finished job without a graph is not waiting for one").toBeNull();
+  });
+
+  it("a live job holds the map's place until the graph arrives, so the record does not move", () => {
+    // The graph lands on the event stream a second or so after the page paints.
+    state.events = [];
+    const { rerender, ui } = mount();
+    const pending = screen.getByTestId("party-map-pending");
+    expect(screen.queryByTestId("party-map")).toBeNull();
+    use("issue-to-pr");
+    rerender(ui());
+    const map = screen.getByTestId("party-map").parentElement!;
+    expect(screen.queryByTestId("party-map-pending")).toBeNull();
+    const heights = (el: Element) => [...el.classList].filter((c) => /^(min-)?h-/.test(c)).sort();
+    expect(heights(map).length, "the map's box carries a height").toBeGreaterThan(0);
+    expect(heights(pending), "the stand-in is as tall as the map's box").toEqual(heights(map));
   });
 
   it("the QA tab is keyed on qa_apps_resolved or attempts, not the template name", () => {

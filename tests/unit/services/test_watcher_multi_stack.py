@@ -9,10 +9,12 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from prometheus_client import CollectorRegistry
 
 import embry0.api.app as app_module
+import embry0.api.v1.watcher as watcher_api
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
 from embry0.metrics.loop import LoopMetrics, sample
@@ -52,14 +54,34 @@ async def test_one_stack_still_ticks_without_being_named() -> None:
     services[STACK].run_once.assert_awaited_once()
 
 
-async def test_with_two_stacks_the_tick_must_name_one() -> None:
-    """Ticking "the" watcher is ambiguous once there are several, and the
-    wrong one costs an analysis job."""
+async def test_with_two_stacks_an_unnamed_tick_runs_every_stack() -> None:
+    """The dashboard's Run tick now and MCP watcher_trigger name no stack.
+    With two stacks that answered 400 and ticked nothing. Unnamed, every
+    stack ticks, and the answer says what each one did."""
+    services = {STACK: _service("no_issue"), SELF: _service("proposed")}
+    async with _client(_app(services)) as client:
+        resp = await client.post("/api/v1/watcher/run")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["action"] == "every_stack_ticked"
+    assert body["stacks"] == [{"stack": STACK, "action": "no_issue"}, {"stack": SELF, "action": "proposed"}]
+    for service in services.values():
+        service.run_once.assert_awaited_once()
+
+
+async def test_an_unnamed_tick_needs_a_key_that_may_tick_every_stack(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A restricted key is checked against each stack before any ticks, so
+    it never starts some analyses and is refused the rest."""
+
+    async def _only_backend(request: Any, repo: str | None, *, action: str) -> None:
+        if repo != STACK:
+            raise HTTPException(status_code=403, detail=f"repo_not_allowed: {repo}")
+
+    monkeypatch.setattr(watcher_api, "enforce_repo_allowlist", _only_backend)
     services = {STACK: _service(), SELF: _service()}
     async with _client(_app(services)) as client:
         resp = await client.post("/api/v1/watcher/run")
-    assert resp.status_code == 400
-    assert SELF in resp.json()["detail"]
+    assert resp.status_code == 403, resp.text
     for service in services.values():
         service.run_once.assert_not_awaited()
 

@@ -49,7 +49,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <p className="text-white/20 text-xs mt-1 max-w-md">{this.state.error?.message}</p>
             <button
               onClick={() => this.setState({ hasError: false, error: null })}
-              className="mt-4 text-xs text-blue-400 hover:text-blue-300"
+              className="mt-4 text-xs text-primary hover:text-primary-hover"
             >
               Try again
             </button>
@@ -57,10 +57,10 @@ export class ErrorBoundary extends Component<Props, State> {
         );
       }
       return (
-        <div className="flex h-screen items-center justify-center bg-background text-foreground">
+        <div className="flex h-dvh items-center justify-center bg-background text-foreground">
           <div className="mx-auto max-w-md text-center space-y-4">
             <AlertTriangle className="h-12 w-12 text-destructive mx-auto" />
-            <h1 className="text-2xl font-bold">Something went wrong</h1>
+            <h1 className="text-xl font-bold">Something went wrong</h1>
             <p className="text-muted-foreground">
               An unexpected error occurred. You can try reloading the page or resetting the app state.
             </p>

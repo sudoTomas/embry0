@@ -8,7 +8,8 @@ interface FullGeodesicSphereProps {
  * with N-pole strut triangulation, latitude bands, equator (3D ellipse),
  * and cardinal dots — the long-form rendering of the geodesic mark.
  *
- * Pure SVG, currentColor stroke, ~1.5KB inline.
+ * Pure SVG, currentColor stroke, ~1.5KB inline. It sets no colour of its
+ * own: the figure around it gives the tone.
  */
 export function FullGeodesicSphere({ size = 240, className }: FullGeodesicSphereProps) {
   return (
@@ -16,7 +17,7 @@ export function FullGeodesicSphere({ size = 240, className }: FullGeodesicSphere
       width={size}
       height={size}
       viewBox="0 0 200 200"
-      className={`divine-element text-primary ${className ?? ""}`}
+      className={`divine-element ${className ?? ""}`}
       aria-hidden="true"
     >
       {/* Outer sphere ring */}

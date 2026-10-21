@@ -12,6 +12,7 @@ import { clearStoredApiKey } from "@/lib/apiKey";
 import { useAuthStore } from "@/stores/authStore";
 import { toast } from "sonner";
 import type { ConfigResponse } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 type DensityMode = "comfortable" | "standard" | "compact";
 
@@ -95,7 +96,7 @@ export default function GeneralTab() {
         setForm(null);
         toast.success("Settings saved");
       },
-      onError: (e) => toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`),
+      onError: (e) => toastApiError(e, "Failed"),
     });
   };
 
@@ -112,7 +113,7 @@ export default function GeneralTab() {
             Reset
           </Button>
           <Button onClick={handleSave} disabled={updateConfig.isPending || !hasChanges}>
-            {updateConfig.isPending ? "Saving..." : "Save Changes"}
+            {updateConfig.isPending ? "Saving..." : "Save changes"}
           </Button>
         </div>
       </div>
@@ -124,12 +125,12 @@ export default function GeneralTab() {
       {/* Budget & Limits */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Budget & Limits</CardTitle>
+          <CardTitle className="text-lg">Budget & limits</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <Label htmlFor="max_budget_per_job_usd">Max Budget per Job (USD)</Label>
+              <Label htmlFor="max_budget_per_job_usd">Max budget per job (USD)</Label>
               <Input
                 id="max_budget_per_job_usd"
                 type="number"
@@ -141,7 +142,7 @@ export default function GeneralTab() {
               />
             </div>
             <div>
-              <Label htmlFor="daily_cap_usd">Daily Budget Cap (USD)</Label>
+              <Label htmlFor="daily_cap_usd">Daily budget cap (USD)</Label>
               <Input
                 id="daily_cap_usd"
                 type="number"
@@ -153,7 +154,7 @@ export default function GeneralTab() {
               />
             </div>
             <div>
-              <Label htmlFor="monthly_cap_usd">Monthly Budget Cap (USD)</Label>
+              <Label htmlFor="monthly_cap_usd">Monthly budget cap (USD)</Label>
               <Input
                 id="monthly_cap_usd"
                 type="number"
@@ -171,12 +172,12 @@ export default function GeneralTab() {
       {/* Rate Limiting */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Rate Limiting</CardTitle>
+          <CardTitle className="text-lg">Rate limiting</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="rate_limit_per_author_per_hour">Rate Limit (per author/hour)</Label>
+              <Label htmlFor="rate_limit_per_author_per_hour">Rate limit (per author/hour)</Label>
               <Input
                 id="rate_limit_per_author_per_hour"
                 type="number"
@@ -187,7 +188,7 @@ export default function GeneralTab() {
               />
             </div>
             <div>
-              <Label htmlFor="overrun_mode">Overrun Mode</Label>
+              <Label htmlFor="overrun_mode">Overrun mode</Label>
               <Select
                 id="overrun_mode"
                 value={form.overrun_mode as string}
@@ -231,16 +232,16 @@ export default function GeneralTab() {
           connection tests moved to the dedicated LLM Providers page. */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">LLM Providers</CardTitle>
+          <CardTitle className="text-lg">LLM providers</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between gap-4">
             <p className="text-sm text-muted-foreground">
               Model tiers, per-model enablement, credential status, and
-              connection tests live on the LLM Providers page.
+              connection tests live on the LLM providers page.
             </p>
             <Button variant="outline" onClick={() => navigate("/providers")}>
-              Open LLM Providers
+              Open LLM providers
             </Button>
           </div>
         </CardContent>
@@ -249,7 +250,7 @@ export default function GeneralTab() {
       {/* Dashboard Access — the browser-stored API key (RAV-1058) */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Dashboard Access</CardTitle>
+          <CardTitle className="text-lg">Dashboard access</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between gap-4">

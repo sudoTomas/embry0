@@ -1,10 +1,16 @@
 import type { Edge, Node } from "@xyflow/react";
+import { startEndRole } from "@/lib/graph-utils";
 import { categoryToStage, type CardinalStage } from "@/lib/sigils";
 import { inferCanonicalEdges } from "./inferCanonicalEdges";
 
 export const CIRCLE_RADIUS = 220;
 const OUTER_RING_RATIO = 1.5;
 const SENTINEL_OFFSET = 1.4;
+/** Clear space between START or END and the node nearest it. */
+const SENTINEL_GAP = 48;
+/** The agent and START/END spheres, the width of a node not yet measured. */
+const AGENT_PX = 96;
+const SENTINEL_PX = 64;
 
 /**
  * Cardinal angle in radians for each stage (CSS coordinates: y grows down).
@@ -25,13 +31,6 @@ function nodeStage(node: Node): CardinalStage | null {
   if (stage === "triage" || stage === "develop" || stage === "validate" || stage === "qa") {
     return stage;
   }
-  return null;
-}
-
-function isSentinel(node: Node): "start" | "end" | null {
-  const role = (node.data as Record<string, unknown> | undefined)?.nodeRole;
-  if (role === "start") return "start";
-  if (role === "end") return "end";
   return null;
 }
 
@@ -76,6 +75,25 @@ export function shouldUseCircular(nodes: Node[], edges: Edge[]): boolean {
 }
 
 /**
+ * Agents in the order their flow edges run, ties (and any order a loop of
+ * flow edges leaves open) by id. By id alone, a triage → research → output
+ * pipeline went round the ring as output, research, triage, and the chain
+ * linked START to output and triage to END.
+ */
+function flowOrder(agents: Node[], edges: Edge[]): Node[] {
+  const pending = [...agents].sort((a, b) => a.id.localeCompare(b.id));
+  const ids = new Set(pending.map((n) => n.id));
+  const flow = edges.filter((e) => e.type !== "feedbackEdge" && ids.has(e.source) && ids.has(e.target));
+  const ordered: Node[] = [];
+  while (pending.length > 0) {
+    const placed = new Set(ordered.map((n) => n.id));
+    const ready = pending.findIndex((n) => !flow.some((e) => e.target === n.id && !placed.has(e.source)));
+    ordered.push(...pending.splice(Math.max(ready, 0), 1));
+  }
+  return ordered;
+}
+
+/**
  * Distributes nodes evenly around a single circle starting at top
  * (north) going clockwise, then auto-connects them in chain order.
  * Used when the graph doesn't fit the canonical 4-stage cardinal
@@ -83,7 +101,7 @@ export function shouldUseCircular(nodes: Node[], edges: Edge[]): boolean {
  * unconnected agents the user just dragged onto the canvas).
  *
  * Sort order for placement: START sentinel(s) first, then non-sentinel
- * nodes by id, then END sentinel(s) last. The chain auto-connects
+ * nodes in flow order, then END sentinel(s) last. The chain auto-connects
  * sequential pairs unless an edge already exists between them.
  */
 function uniformCircularLayout(
@@ -96,13 +114,12 @@ function uniformCircularLayout(
   const ends: Node[] = [];
   const middle: Node[] = [];
   for (const n of nodes) {
-    const sentinel = isSentinel(n);
+    const sentinel = startEndRole(n);
     if (sentinel === "start") starts.push(n);
     else if (sentinel === "end") ends.push(n);
     else middle.push(n);
   }
-  middle.sort((a, b) => a.id.localeCompare(b.id));
-  const ordered = [...starts, ...middle, ...ends];
+  const ordered = [...starts, ...flowOrder(middle, edges), ...ends];
 
   const n = ordered.length;
   const positioned: Node[] = ordered.map((node, i) => {
@@ -142,7 +159,7 @@ function uniformCircularLayout(
  * Place nodes around a circle whose cardinal points (N/E/S/W) match the
  * canonical 4-stage pipeline (triage / develop / validate / qa). Non-cardinal
  * agents go on an outer ring at 1.5×R; Start/End sentinels sit on the equator
- * just outside the circle.
+ * at its two ends, outside the circle and past every other node.
  *
  * If no canonical cycle is present, dispatches to `uniformCircularLayout`
  * which spreads nodes evenly around the circle and auto-connects them
@@ -171,7 +188,7 @@ export function circularLayout(
   const cardinalNodes: { node: Node; stage: CardinalStage }[] = [];
 
   for (const n of nodes) {
-    const sentinel = isSentinel(n);
+    const sentinel = startEndRole(n);
     if (sentinel === "start") {
       startNodes.push(n);
       continue;
@@ -217,16 +234,32 @@ export function circularLayout(
     });
   });
 
+  // START and END take the two ends of the equator: START left of every
+  // other node, END right of every one, and at least 1.4R out. At a fixed
+  // ±1.4R, END landed on the develop agent at +R, or on an outer-ring agent
+  // at angle 0. A position is a node's top-left corner, so the drop of half
+  // the spheres' difference levels START's and END's centres with the
+  // agents' on the equator.
+  const leftmost = Math.min(...positioned.map((n) => n.position.x));
+  const rightmost = Math.max(...positioned.map((n) => n.position.x + (n.measured?.width ?? AGENT_PX)));
+  const sentinelY = (AGENT_PX - SENTINEL_PX) / 2;
   for (const node of startNodes) {
+    const width = node.measured?.width ?? SENTINEL_PX;
     positioned.push({
       ...node,
-      position: { x: -CIRCLE_RADIUS * SENTINEL_OFFSET, y: 0 },
+      position: {
+        x: Math.min(-CIRCLE_RADIUS * SENTINEL_OFFSET, leftmost - SENTINEL_GAP - width),
+        y: sentinelY,
+      },
     });
   }
   for (const node of endNodes) {
     positioned.push({
       ...node,
-      position: { x: CIRCLE_RADIUS * SENTINEL_OFFSET, y: 0 },
+      position: {
+        x: Math.max(CIRCLE_RADIUS * SENTINEL_OFFSET, rightmost + SENTINEL_GAP),
+        y: sentinelY,
+      },
     });
   }
 

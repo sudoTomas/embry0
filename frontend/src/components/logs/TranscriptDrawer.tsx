@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
+import { Overlay } from "@/components/ui/Overlay";
 import { useAgentSession } from "@/hooks/useAgentSession";
 import { statusOf } from "@/api/jobs";
 import type { AgentSession } from "@/lib/types";
@@ -40,7 +41,7 @@ export function TranscriptDrawer({ open, onClose, jobId, agentType, displayName 
   if (!open) return null;
   const title = `Stored session of ${displayName} for this job`;
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-background/70" onClick={onClose}>
+    <Overlay className="flex justify-end bg-background/70 p-0" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"
@@ -60,7 +61,7 @@ export function TranscriptDrawer({ open, onClose, jobId, agentType, displayName 
         {data?.last_turn_at && <p className="mb-2 text-xs text-muted-foreground">Last turn {new Date(data.last_turn_at).toLocaleString()}</p>}
         {data && <Messages session={data} />}
       </div>
-    </div>
+    </Overlay>
   );
 }
 

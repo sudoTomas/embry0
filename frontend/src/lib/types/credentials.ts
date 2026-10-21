@@ -1,7 +1,9 @@
-export type CredentialKind = "forge_token" | "llm_oauth" | "llm_api_key" | "ssh_key";
-export type CredentialProvider = "github" | "gitlab" | "anthropic" | "xai" | "ssh";
+import type { LlmProviderName } from "../llmProviders";
+
+export type CredentialKind = "forge_token" | "llm_oauth" | "llm_api_key" | "ssh_key" | "tailnet_api_key";
+export type CredentialProvider = "github" | "gitlab" | "ssh" | "tailscale" | LlmProviderName;
 export type CredentialStatus = "ok" | "disabled" | "quarantined";
-export type BindingRole = "forge" | "llm" | "deploy";
+export type BindingRole = "forge" | "llm" | "deploy" | "tailnet";
 export type ScopeKind = "repo" | "owner" | "host" | "global";
 
 export interface Credential {
@@ -27,12 +29,14 @@ export interface Credential {
 /** `secret` is request-only; responses never echo it. xAI `llm_oauth` is not created here. */
 export interface CredentialCreate {
   kind: "forge_token" | "llm_oauth" | "llm_api_key";
-  provider: "github" | "gitlab" | "anthropic" | "xai";
+  provider: "github" | "gitlab" | LlmProviderName;
   host?: string;
   label: string;
   secret: string;
   git_author_name?: string | null;
   git_author_email?: string | null;
+  /** A custom provider's key carries the root of its OpenAI-compatible API. */
+  metadata?: { base_url: string };
 }
 
 export interface CredentialUpdate {
@@ -98,10 +102,7 @@ export interface RepoCredentials {
   bindings: Binding[];
   effective: {
     forge?: ResolvedCredential | { error: string };
-    llm?: {
-      anthropic?: ResolvedCredential | { error: string };
-      xai?: ResolvedCredential | { error: string };
-    };
+    llm?: Partial<Record<LlmProviderName, ResolvedCredential | { error: string }>>;
   };
 }
 

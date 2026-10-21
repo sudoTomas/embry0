@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { UsersRound, LogOut, Ban, CircleCheck } from "lucide-react";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
 import { useUsers } from "@/hooks/useUsers";
 import { setUserDisabled, forceLogoutUser, type AdminUser } from "@/api/users";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
@@ -8,11 +9,14 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
-import { formatDate } from "@/lib/utils";
+import { statusLabel } from "@/lib/status";
+import { formatDateTime } from "@/lib/utils";
 
+// The admin tier stands out in the standard's fifth status hue; gold stays
+// for the page's primary action.
 const TIER_TONES: Record<AdminUser["tier"], BadgeTone> = {
-  admin: "gold",
-  operator: "info",
+  admin: "purple",
+  operator: "neutral",
   none: "neutral",
 };
 
@@ -35,7 +39,7 @@ export function UsersAdminPage() {
       toast.success(`${row.email} ${row.disabled ? "disabled" : "enabled"}`);
       invalidate();
     },
-    onError: () => toast.error("Update failed"),
+    onError: (e) => toastApiError(e, "Update failed"),
   });
 
   const logoutMut = useMutation({
@@ -44,15 +48,15 @@ export function UsersAdminPage() {
       toast.success(`${row.email} signed out everywhere`);
       invalidate();
     },
-    onError: () => toast.error("Force logout failed"),
+    onError: (e) => toastApiError(e, "Force logout failed"),
   });
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <UsersRound size={18} className="text-primary" />
-          <h1 className="title-pixel font-display text-lg font-semibold">Users</h1>
+          <UsersRound size={18} className="text-fg-muted" />
+          <h1 className="title-pixel text-xl font-bold">Users</h1>
           {users.data && (
             <span className="text-sm text-muted-foreground">{users.data.total}</span>
           )}
@@ -73,39 +77,41 @@ export function UsersAdminPage() {
 
       {users.data && users.data.users.length > 0 && (
         <div className="rounded-lg border border-border bg-card overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-white/[0.06] text-left text-xs uppercase text-muted-foreground">
-                <th className="px-4 py-2.5">User</th>
-                <th className="px-4 py-2.5">Tier</th>
-                <th className="px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5">Logins</th>
-                <th className="px-4 py-2.5">Last login</th>
-                <th className="px-4 py-2.5 text-right">Actions</th>
+              <tr>
+                <th>User</th>
+                <th className="hidden sm:table-cell">Tier</th>
+                <th>Status</th>
+                <th className="hidden sm:table-cell">Logins</th>
+                <th className="hidden sm:table-cell">Last login</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {users.data.users.map((u) => (
-                <tr key={u.id} className="border-b border-white/[0.04]">
-                  <td className="px-4 py-2.5">
-                    <div className="text-foreground">{u.email}</div>
-                    {u.name && <div className="text-xs text-muted-foreground">{u.name}</div>}
+                <tr key={u.id}>
+                  {/* Below sm the email truncates and tier, logins and last
+                      login step aside, so status and the actions stay in view. */}
+                  <td className="w-full max-w-0 sm:w-auto sm:max-w-none">
+                    <div className="truncate text-foreground" title={u.email}>{u.email}</div>
+                    {u.name && <div className="truncate text-xs text-muted-foreground">{u.name}</div>}
                   </td>
-                  <td className="px-4 py-2.5">
-                    <Badge tone={TIER_TONES[u.tier]}>{u.tier}</Badge>
+                  <td className="hidden sm:table-cell">
+                    <Badge tone={TIER_TONES[u.tier]}>{statusLabel(u.tier)}</Badge>
                   </td>
-                  <td className="px-4 py-2.5">
-                    {u.disabled ? <Badge tone="error">disabled</Badge> : <Badge tone="success">active</Badge>}
+                  <td>
+                    {u.disabled ? <Badge tone="error">Disabled</Badge> : <Badge tone="success">Active</Badge>}
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-xs">{u.login_count}</td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {u.last_login_at ? formatDate(u.last_login_at) : "—"}
+                  <td className="hidden font-mono text-xs sm:table-cell">{u.login_count}</td>
+                  <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">
+                    {u.last_login_at ? formatDateTime(u.last_login_at) : "—"}
                   </td>
-                  <td className="px-4 py-2.5">
+                  <td>
                     <div className="flex items-center justify-end gap-1.5">
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="xs"
                         title="Sign this user out of every session"
                         disabled={logoutMut.isPending}
                         onClick={() => {
@@ -118,7 +124,7 @@ export function UsersAdminPage() {
                       </Button>
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="xs"
                         title={u.disabled ? "Re-enable access" : "Disable access (regardless of Auth0 role)"}
                         disabled={disableMut.isPending}
                         onClick={() => {

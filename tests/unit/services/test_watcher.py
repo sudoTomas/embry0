@@ -402,6 +402,25 @@ async def test_the_watchers_own_errors_never_reach_the_analysis_prompt():
     assert svc._runs.create.await_args.kwargs["log_lines"] == len(real)
 
 
+_LOG_READ = (
+    'INFO:     172.18.0.9:40312 - "GET /api/v1/logs/query?container=api&search=ERROR%7CException%7CTraceback'
+    '&since_minutes=60 HTTP/1.1" 200 OK'
+)
+
+
+@pytest.mark.asyncio
+async def test_the_drill_down_of_the_last_analysis_is_a_quiet_window():
+    """An analysis reads logs through /logs/query; the access lines that leaves
+    quote its query, error words and all. The next tick must not pay to read
+    them: no job, a quiet tick."""
+    job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}
+    svc = _service(lines=[_LOG_READ] * 4, job_result=job)
+    out = await svc.run_once()
+    assert out["action"] == "skipped_quiet", out
+    svc._jobs.create.assert_not_awaited()
+    assert svc._runs.create.await_args.kwargs["log_lines"] == 0
+
+
 @pytest.mark.asyncio
 async def test_analysis_task_names_the_watched_repo():
     job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}

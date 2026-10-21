@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Copy, FolderGit2, KeyRound, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
 import { useApiKeys } from "@/hooks/useApiKeys";
 import {
   createApiKey,
@@ -21,11 +22,13 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { parseRepoList } from "@/lib/repoList";
-import { formatDate } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 
+// The admin scope stands out in the standard's fifth status hue; gold stays
+// for the page's primary action.
 const SCOPE_TONES: Record<ApiKey["scope"], BadgeTone> = {
-  admin: "gold",
-  operate: "info",
+  admin: "purple",
+  operate: "neutral",
   merge: "warning",
   read: "neutral",
 };
@@ -75,7 +78,7 @@ export default function ApiKeysTab() {
       setAllowedRepos("");
       invalidate();
     },
-    onError: () => toast.error("Key creation failed"),
+    onError: (e) => toastApiError(e, "Key creation failed"),
   });
 
   const reposMut = useMutation({
@@ -86,7 +89,7 @@ export default function ApiKeysTab() {
       );
       invalidate();
     },
-    onError: () => toast.error("Could not change the key's repositories"),
+    onError: (e) => toastApiError(e, "Could not change the key's repositories"),
   });
 
   const revokeMut = useMutation({
@@ -95,7 +98,7 @@ export default function ApiKeysTab() {
       toast.success(`Key "${row.name}" revoked`);
       invalidate();
     },
-    onError: () => toast.error("Revoke failed"),
+    onError: (e) => toastApiError(e, "Revoke failed"),
   });
 
   // "merge" is the chat relay's narrow scope (read + merge decisions + agent
@@ -247,31 +250,33 @@ export default function ApiKeysTab() {
         <EmptyState title="No API keys" description="Create one above to authenticate MCP/CLI clients." />
       )}
 
+      {/* Below sm the key's name, scope, status and actions stay; the rest
+          steps aside so revoke never sits off a phone screen. */}
       {keys.data && keys.data.length > 0 && (
         <div className="rounded-lg border border-border bg-card overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-white/[0.06] text-left text-xs uppercase text-muted-foreground">
-                <th className="px-4 py-2.5">Name</th>
-                <th className="px-4 py-2.5">Key</th>
-                <th className="px-4 py-2.5">Scope</th>
-                <th className="px-4 py-2.5">Repositories</th>
-                {isAdmin && <th className="px-4 py-2.5">Owner</th>}
-                <th className="px-4 py-2.5">Last used</th>
-                <th className="px-4 py-2.5">Expires</th>
-                <th className="px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5 text-right">Actions</th>
+              <tr>
+                <th>Name</th>
+                <th className="hidden sm:table-cell">Key</th>
+                <th>Scope</th>
+                <th className="hidden sm:table-cell">Repositories</th>
+                {isAdmin && <th className="hidden sm:table-cell">Owner</th>}
+                <th className="hidden sm:table-cell">Last used</th>
+                <th className="hidden sm:table-cell">Expires</th>
+                <th>Status</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {keys.data.map((k) => (
-                <tr key={k.id} className="border-b border-white/[0.04]">
-                  <td className="px-4 py-2.5">{k.name}</td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{k.prefix}…</td>
-                  <td className="px-4 py-2.5">
+                <tr key={k.id}>
+                  <td>{k.name}</td>
+                  <td className="hidden font-mono text-xs text-muted-foreground sm:table-cell">{k.prefix}…</td>
+                  <td>
                     <Badge tone={SCOPE_TONES[k.scope]}>{k.scope}</Badge>
                   </td>
-                  <td className="px-4 py-2.5 text-xs" data-testid={`key-repos-${k.id}`}>
+                  <td className="hidden text-xs sm:table-cell" data-testid={`key-repos-${k.id}`}>
                     {k.allowed_repos ? (
                       <span className="font-mono">{k.allowed_repos.join(", ")}</span>
                     ) : (
@@ -279,25 +284,25 @@ export default function ApiKeysTab() {
                     )}
                   </td>
                   {isAdmin && (
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                      {k.service ? <Badge tone="neutral">service</Badge> : (k.user_id ?? "—")}
+                    <td className="hidden text-xs text-muted-foreground sm:table-cell">
+                      {k.service ? <Badge tone="neutral">Service</Badge> : (k.user_id ?? "—")}
                     </td>
                   )}
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {k.last_used_at ? formatDate(k.last_used_at) : "never"}
+                  <td className="hidden text-xs text-muted-foreground sm:table-cell">
+                    {k.last_used_at ? formatDateTime(k.last_used_at) : "never"}
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {k.expires_at ? formatDate(k.expires_at) : "—"}
+                  <td className="hidden text-xs text-muted-foreground sm:table-cell">
+                    {k.expires_at ? formatDateTime(k.expires_at) : "—"}
                   </td>
-                  <td className="px-4 py-2.5">
-                    {k.revoked_at ? <Badge tone="error">revoked</Badge> : <Badge tone="success">active</Badge>}
+                  <td>
+                    {k.revoked_at ? <Badge tone="error">Revoked</Badge> : <Badge tone="success">Active</Badge>}
                   </td>
-                  <td className="px-4 py-2.5">
+                  <td>
                     <div className="flex justify-end">
                       {!k.revoked_at && (
                         <Button
                           variant="ghost"
-                          size="sm"
+                          size="xs"
                           title="Change the repositories this key may start work on"
                           disabled={reposMut.isPending}
                           onClick={() => {
@@ -316,7 +321,7 @@ export default function ApiKeysTab() {
                       {!k.revoked_at && (
                         <Button
                           variant="ghost"
-                          size="sm"
+                          size="xs"
                           title="Revoke this key"
                           disabled={revokeMut.isPending}
                           onClick={() => {

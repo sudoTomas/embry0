@@ -51,7 +51,7 @@ async def test_seed_inserts_qa_agent(db_with_migrations):
     assert row is not None
     assert row["model"] == "claude-sonnet-5"
     assert row["is_builtin"] is True
-    # mcp_servers persisted via repo.update() rather than direct SQL
+    # mcp_servers persisted by repo.create(), not direct SQL
     assert row["mcp_servers"]["playwright"]["command"] == "playwright-mcp"
     assert "--headless" in row["mcp_servers"]["playwright"]["args"]
 

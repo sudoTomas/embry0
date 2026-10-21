@@ -58,6 +58,13 @@ curl -X POST http://localhost:8200/api/v1/jobs \
   -d '{"repo": "owner/repo", "branch": "main", "pipeline": "qa",
        "qa": {"acceptance_criteria": ["home page loads with no console errors"]}}'
 
+# Run a specialist agent: name its template (docs/specialist-agents.md).
+curl -X POST http://localhost:8200/api/v1/jobs \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"repo": "owner/repo", "pipeline_template": "kintsugi-trace",
+       "task": "Trace the cracks in this repository."}'
+
 # QA artifact endpoints (presigned-GET redirects + SSE log stream).
 curl http://localhost:8200/api/v1/jobs/{job_id}/qa/attempts
 curl http://localhost:8200/api/v1/jobs/{job_id}/qa/attempts/1/result
@@ -207,7 +214,44 @@ curl http://localhost:8200/api/v1/repos/owner/repo/environment/detect \
   -H "X-Requested-With: XMLHttpRequest"
 ```
 
+A list response carries each secret as `****` plus a `masked_preview`:
+eight `•` and the secret's last 2 characters when it has 12 or more, eight
+`•` alone otherwise.
+
+A PUT replaces the whole set. A secret sent back as `****`, the value the
+list responses carry, keeps its stored value, so a client can write one
+variable without revealing the others: the MCP `env_set` tool, and
+`env_delete` on the global set, work that way and need only operator tier. A
+secret sent as `****` for a key with no stored secret is refused with a 400.
+
 Some keys are refused with a 422, matched case-insensitively. The same check drops them again at sandbox start, from stored rows and from profile `env_defaults`. These keys are the infrastructure credentials and proxy URLs, plus every variable that would redirect a sandbox's traffic or load code into its processes: proxy routing, TLS verification, the dynamic loader, `PATH`/`HOME`/`SHELL`, shell and interpreter startup hooks, and the `GIT_`, `CLAUDE_`, `BUN_` and `GROK_` namespaces. `NODE_OPTIONS` and the JVM option variables (`JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`, `JAVA_OPTS`, `MAVEN_OPTS`, `GRADLE_OPTS`) are accepted, but only with memory flags. The authoritative list is `embry0/execution/auth_provider.py`. A 422 on these routes never echoes the submitted value.
+
+## Container logs
+
+`GET /api/v1/logs/query` reads container logs from Loki, newest first:
+`container` matches a container name by substring, `containers` is a
+comma-separated list of exact names, `search` is a regex line filter,
+`since_minutes` goes up to 1440 and `limit` up to 1000, and `logql` replaces
+all of them with a raw LogQL query. `GET /api/v1/logs/containers` lists the
+container names Loki holds. The dashboard's Logs page and the MCP
+`logs_query` tool use them.
+
+Production logs carry personal data, so both routes need operator tier: an
+operate or admin key, an SSO session or the master key. A read or merge key
+gets a 403. The one read-scope key they admit is the context-proxy's own
+service key (`svc-context-proxy`, rotated at every boot), which forwards
+allowlisted queries for the sandboxes enrolled with it.
+
+Every line returned goes through the log-text redactor
+(`embry0/safety/redaction.py`), whoever asks: secrets, e-mail addresses, long
+opaque runs and the values of the `LOG_REDACTION_FIELDS` fields
+([configuration.md](configuration.md)) are replaced. A line longer than 2000
+characters is cut and ends with `… [line truncated]`. The redactor is
+regex-based, so it is not a guarantee.
+
+```bash
+curl "http://localhost:8200/api/v1/logs/query?container=api&search=error&since_minutes=30&limit=50"
+```
 
 ## Credentials
 
@@ -297,6 +341,33 @@ curl -X POST http://localhost:8200/api/v1/hosts/import/tailnet \
 
 `GET /api/v1/repos/{repo}` lists the repository's hosts under `hosts`, each with its `role`.
 
+## Standards
+
+An owner's versioned standards and each repository's mode under them ([`docs/standards.md`](standards.md), [ADR 0014](adr/0014-organization-standards.md)). Reads need any authenticated principal and an audit needs an operator; writing a standard and setting a mode need the `admin` tier and write a `standard.*` audit row.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/standards/{owner}` | read |
+| `GET /api/v1/standards/{owner}/{kind}` | read |
+| `PUT /api/v1/standards/{owner}/{kind}` | admin |
+| `GET /api/v1/standards/{owner}/{kind}/versions` | read |
+| `GET /api/v1/standards/{owner}/{kind}/repos/{repo}` | read |
+| `PUT /api/v1/standards/{owner}/{kind}/repos/{repo}` | admin |
+| `POST /api/v1/standards/{owner}/{kind}/audit/{repo}` | operator |
+
+`PUT /standards/{owner}/{kind}` stores a whole new version, `{"schema", "values", "prose", "references"}`, and supersedes the active one; every key of `values` must be a role `schema.roles` declares, or the answer is a 422 listing the problems. `PUT .../repos/{repo}` sets `{"mode": "off" | "advise" | "enforce", "exceptions": [...]}` for a registered repository under the owner; every repository starts in `off`. The audit starts a read-only job on the `design-audit` pipeline template and answers 202 with its `job_id`, or 409 in mode `off`, without an active standard or the template, or while the previous audit runs (of requests sent together, one starts and the others are 409 naming its job); its completed report's `Score: N` line and findings table become the repository's `score` and `findings_open`. `GET /api/v1/repos/{repo}` lists the state under `standards`, one entry per kind.
+
+```bash
+# Put acme/widgets in advise mode, then audit it against acme's design standard
+curl -X PUT http://localhost:8200/api/v1/standards/acme/design/repos/acme/widgets \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"mode": "advise"}'
+
+curl -X POST http://localhost:8200/api/v1/standards/acme/design/audit/acme/widgets \
+  -H "X-Requested-With: XMLHttpRequest"
+```
+
 ## Organizations
 
 The forge owners embry0 maintains as a whole ([ADR 0010](adr/0010-organizations.md)). Reads need any authenticated principal; every mutation needs the `admin` tier and writes an `organization.*` audit row. Registering an owner changes nothing for any repository until a person acts.
@@ -320,18 +391,28 @@ The forge owners embry0 maintains as a whole ([ADR 0010](adr/0010-organizations.
 | `POST /api/v1/orgs/{owner}/actions` | admin |
 | `POST /api/v1/orgs/probe` | admin, stores nothing |
 
-`POST /api/v1/orgs/{owner}/discover` answers 202 and starts one discovery run for the owner; a request while a run is in progress, or for a paused or removed owner, answers 409, and an unknown owner 404. Poll `GET /api/v1/orgs/{owner}/runs` until the newest run is `done` or `error`. `GET /api/v1/orgs/{owner}/repos` returns one fact row per repository, replaced on each run, and `runs` keeps the history of every run with its progress and summary.
+`POST /api/v1/orgs/{owner}/discover` answers 202 and starts one discovery run for the owner; a request while a run is in progress, or for a paused or removed owner, answers 409, and an unknown owner 404. Poll `GET /api/v1/orgs/{owner}/runs` until the newest run is `done` or `error`. `GET /api/v1/orgs/{owner}/repos` returns one fact row per repository, replaced on each run, each with `maintain_hint`, one sentence on what it takes embry0 to maintain the repository, and `maintain_steps`, the needs actions that sentence names in the order they are taken (`register`, `credential`, `hook`, `onboard`, `watch`, `setting`); both are read from the facts and the organization's probe by rules, with no model call, and a repository the latest finished run did not list asks for nothing ([ADR 0015](adr/0015-maintain-hints.md)). `runs` keeps the history of every run with its progress and summary. A row whose `run_id` is not the newest run's is a repository that run did not list; the summary's `vanished` counts them. The listing alone cannot say such a repository is gone: it pages over newest push first, so a push during the listing can move a repository onto a page already read. Each one embry0 still holds as an active registration is therefore confirmed one by one with a direct read, `GET /repos/{owner}/{repo}` with the run's own credential: a 404, a 301 (the forge redirects a renamed or transferred repository's old name) or the record under another full name confirms it gone and stamps the row's `facts.vanished_run` with the run; the same repository, the case aside, means the listing missed it; any other answer (a rate limit, a 5xx) is unknown, which is not gone. The summary's `vanished_confirmed` counts the confirmed ones. A run confirms none, and logs `org_vanished_unchecked` with the reason, when the page cap (20 pages of 100) stopped its listing with a next page unread (the summary's `listing_complete` is then false), or when more than 50 candidates are held. A listing page the forge refuses fails the run rather than ending the listing early, and a run still marked `running` when the orchestrator starts is closed as `error` (it was cut off by the restart).
 
-`GET /api/v1/orgs/{owner}/needs` is the needs list ([ADR 0011](adr/0011-organization-needs.md)): what embry0 still needs from a person to maintain the owner, derived from the newest finished discovery run, one need per kind and repository set. `dismiss` and `reopen` keep a person's answer across rediscovery. Each open need is also a healing case with origin `org`, listed by `GET /api/v1/cases?awaiting_decision=true` ([Healing cases](#healing-cases)); closing that case dismisses the need.
+An owner with the `rediscover_hours` setting on is also rediscovered on a schedule ([ADR 0016](adr/0016-rediscovery-schedule.md)): every few minutes the orchestrator starts a run, the one this endpoint starts, for each active owner whose newest run is that many hours old, and never while one is running. A failed run waits a full interval too, and so does a start refused before any run exists (the owner's credential cannot be resolved), which the orchestrator remembers until it restarts. The audit row's actor is `embry0:org-rediscovery`.
 
-`PATCH /api/v1/orgs/{owner}` sets `display_name` and merges `settings` from a closed list (`auto_register`, a boolean, off by default); an unknown key or a wrong type answers 422. `GET` and `POST /api/v1/orgs/{owner}/webhook` inspect and install the organization's one GitHub webhook, and the receiver's gate handles deliveries for repositories nobody registered ([webhooks.md](webhooks.md#organization-webhooks-github), [ADR 0012](adr/0012-organization-webhook.md)).
+`GET /api/v1/orgs/{owner}/needs` is the needs list ([ADR 0011](adr/0011-organization-needs.md)): what embry0 still needs from a person to maintain the owner, derived from the newest finished discovery run, one need per kind and repository set. `dismiss` and `reopen` keep a person's answer across rediscovery. `repo_vanished` lists the repositories an earlier run listed, the newest did not and confirmed gone with a direct read, that embry0 still holds as active registrations; its action is `deactivate`, which a person runs: nothing is deactivated on its own. Each open need is also a healing case with origin `org`, listed by `GET /api/v1/cases?awaiting_decision=true` ([Healing cases](#healing-cases)); closing that case dismisses the need.
 
-`POST /api/v1/orgs/{owner}/actions` runs one action over repositories discovery saw under the owner. Body: `{"action": "register" | "hook" | "onboard" | "watch", "repos": ["acme/widgets"], "dry_run": false, "force": false}`. The response carries one result per repository: `{"repo", "outcome", "detail"}` with `outcome` one of `done`, `already` (the state exists), `skipped` (a reason the caller can fix) or `failed` (one repository's error, or a refusal from the path the action reuses; the rest still run). `repo` is the spelling the forge reported, whatever case was asked; a repository discovery has not seen, an archived one, or one under another owner is `skipped`. Every action reuses an existing path and is idempotent: a second identical call reports `already` for every repository the first one changed, and changes nothing. `dry_run` reports what would happen without side effects and writes no audit row; a real run writes one `organization.action` row with every repository's outcome, plus the rows the reused paths write. A real run with any `done` result starts a discovery run for the owner, the one `POST /orgs/{owner}/discover` starts, so the needs list catches up; the response's `rediscovery` is that run's id, or `null` when nothing changed, a dry run, or a run already in progress.
+`PATCH /api/v1/orgs/{owner}` sets `display_name` and merges `settings` from a closed list; an unknown key, a wrong type or a value out of range answers 422.
+
+| Setting | Type | Default | Meaning |
+|---|---|---|---|
+| `auto_register` | boolean | off | A webhook delivery for an unregistered repository under the owner registers it first ([webhooks.md](webhooks.md#organization-webhooks-github)) |
+| `rediscover_hours` | integer from 1 to 168, or `null` | `null` (off) | Rediscover the owner on a schedule, this many hours after its newest run |
+
+`GET` and `POST /api/v1/orgs/{owner}/webhook` inspect and install the organization's one GitHub webhook, and the receiver's gate handles deliveries for repositories nobody registered ([webhooks.md](webhooks.md#organization-webhooks-github), [ADR 0012](adr/0012-organization-webhook.md)).
+
+`POST /api/v1/orgs/{owner}/actions` runs one action over repositories discovery saw under the owner. Body: `{"action": "register" | "hook" | "onboard" | "watch" | "deactivate", "repos": ["acme/widgets"], "dry_run": false, "force": false}`. The response carries one result per repository: `{"repo", "outcome", "detail"}` with `outcome` one of `done`, `already` (the state exists), `skipped` (a reason the caller can fix) or `failed` (one repository's error, or a refusal from the path the action reuses; the rest still run). `repo` is the spelling the forge reported, whatever case was asked; a repository discovery has not seen, an archived one (for every action but `deactivate`), or one under another owner is `skipped`. Every action reuses an existing path and is idempotent: a second identical call reports `already` for every repository the first one changed, and changes nothing. `dry_run` reports what would happen without side effects and writes no audit row; a real run writes one `organization.action` row with every repository's outcome, plus the rows the reused paths write. A real run with any `done` result starts a discovery run for the owner, the one `POST /orgs/{owner}/discover` starts, so the needs list catches up; the response's `rediscovery` is that run's id, or `null` when nothing changed, a dry run, or a run already in progress.
 
 - `register` adds the repository to the repo registry under the organization's forge, the call `POST /repos` makes. A row under any case counts as `already`.
 - `hook` creates a GitHub webhook on the repository posting to `WEBHOOK_PUBLIC_URL` + `/api/v1/webhook` with `GITHUB_WEBHOOK_SECRET`, for issues, issue comments and pull requests ([webhooks.md](webhooks.md#github)). It runs only when the owner's probe found the credential can manage webhooks, and it is skipped while `WEBHOOK_PUBLIC_URL` is unset or a loopback address, or the secret is empty. A hook in the forge's live listing whose URL starts with `WEBHOOK_PUBLIC_URL` is `already`; a hook on the dashboard's origin is not, since that vhost answers 404 on the webhook paths. GitHub only in this release.
-- `onboard` starts the onboard job ([onboarding.md](onboarding.md)) on the repository's default branch through the function `POST /jobs {"pipeline": "onboard"}` uses, so it runs the same checks (the calling key's repository allowlist among them: a repository the key may not start work on is `failed` with `repo_not_allowed`) and writes the same `onboard_job_created` audit row. A repository that is not registered is skipped (the job would fail `ERR_REPO_UNREGISTERED`); a stored QA config or an onboard job in flight is `already`; a repository whose facts carry no boot hint is skipped. When the newest onboard job completed without storing a QA config, the repository is skipped with that job's id unless the body carries `"force": true`.
+- `onboard` starts the onboard job ([onboarding.md](onboarding.md)) on the repository's default branch through the function `POST /jobs {"pipeline": "onboard"}` uses, so it runs the same checks (the calling key's repository allowlist among them: a repository the key may not start work on is `failed` with `repo_not_allowed`) and starts it under the caller's actor, which its `onboard.job_created` audit row names. A repository that is not registered is skipped (the job would fail `ERR_REPO_UNREGISTERED`); a stored QA config or an onboard job in flight is `already`; a repository whose facts carry no boot hint is skipped. When the newest onboard job completed without storing a QA config, the repository is skipped with that job's id unless the body carries `"force": true`.
 - `watch` adds a watcher stack for the repository, disabled, filing to the organization's forge, with a placeholder LogQL selector to edit before enabling. It stores through the function `PUT /watcher/stacks/{owner}/{name}` uses and writes its `watcher_stack_updated` audit row. A stack under any case counts as `already`.
+- `deactivate` sets the repository's registry row inactive, the call `PUT /repos/{repo}/active` with `{"active": false}` makes: the row stays, hidden from listings, and the same route turns it back on. It answers the `repo_vanished` need, and it reaches an archived repository too: one archived when it was last listed and deleted since is what that need proposes. An inactive row, or no row at all, is `already`.
 
 The MCP tool `org_act(owner, action, repos, dry_run, force, confirm)` calls this endpoint; like every gated tool it needs `confirm=true` on every call, dry runs included.
 
@@ -361,6 +442,139 @@ The PUT replaces every field it does not mention — except `verification`
 (the orchestrator-run test gate and tier path rules, `docs/verification.md`):
 omitted or `null` keeps the stored value, `{}` clears it.
 
+## Repository history and undo
+
+Every change to a repository's stored test setup (`PUT` and `DELETE
+/repos/{repo}/qa-config`, bootstrap, onboarding) and to its preferences
+(`PUT` and `DELETE /repos/{repo}/preferences`) is recorded with who made it
+and how. The newest 100 changes of each are kept per repository. The API
+writes also add an audit row: `repo.qa_config_set`,
+`repo.qa_config_deleted`, `repo.preferences_set`,
+`repo.preferences_cleared`, and `repo.change_undone` for an undo.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/repos/{repo}/history?limit=50` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/history/{revision_id}/undo` | operator |
+
+`GET` answers `{"entries": [{"id", "surface", "what", "actor", "source",
+"created_at", "undoable", "why_not"}], "before_history": bool}`, newest
+first. `what` describes the change in plain words. `surface` is
+`qa_config` or `preferences`; `source` is `person`, `bootstrap`, `onboard`,
+`proposal` or `restore`. `before_history` is true when a test setup is
+stored but none of its changes are recorded: it was saved before the
+history existed.
+
+Undo puts back what one change replaced. Only the newest change of its
+surface can be undone, and only while the stored value is still what that
+change wrote; otherwise the answer is 409 with the `why_not` text. An
+earlier value that would no longer be accepted is a 422 and nothing is
+written. The undo is itself recorded, with source `restore`, so it can be
+undone in turn. The `PUT /qa-config` response carries the new change's
+`revision_id`, `null` when the text was unchanged.
+
+```bash
+# Put back the test setup the newest change replaced
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/history/42/undo \
+  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H "X-Requested-With: XMLHttpRequest"
+# -> {"revision_id": 43}
+```
+
+## Setting up testing with embry0
+
+The onboarding agent can write a repository's test setup for a person to
+review ([ADR 0019](adr/0019-setup-proposals.md)). In propose mode it reads
+the code, writes a setup, starts each app with it and waits for its ready
+checks, then stores the setup as a proposal. Nothing reaches the test
+setup until a person applies the proposal.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/repos/{repo}/setup/cost` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/setup/propose` | operator |
+| `GET /api/v1/repos/{repo}/setup/proposal` | any authenticated principal |
+| `POST /api/v1/repos/{repo}/setup/proposal/{proposal_id}/apply` | operator |
+| `POST /api/v1/repos/{repo}/setup/proposal/{proposal_id}/reject` | operator |
+| `POST /api/v1/repos/{repo}/setup/skip-testing` | operator |
+| `GET /api/v1/setup/proposals?status=pending` | any authenticated principal |
+| `GET /api/v1/repos/{repo}/readiness` | any authenticated principal |
+
+`GET .../setup/cost` answers `{"recorded_runs", "typical_cost_usd",
+"per_job_budget_usd", "model", "paid_from"}`: how many setup runs completed
+on this embry0, the median recorded cost of the newest 20 (`null` when
+there are none), the per-job budget, the model the run uses (the medium
+tier) and the label of the AI account that would pay (`null` when none
+resolves). These are recorded facts, not an estimate. With the default
+`BUDGET_OVERRUN_MODE` of `soft`, the per-job budget is not a hard stop
+([configuration](configuration.md)).
+
+`POST .../setup/propose` takes `{"confirm_spend": true}`; without it the
+answer is 422, as it is for any value but a JSON `true`, such as `"yes"` or
+`1`. It retires a proposal that is waiting (it becomes `stale`),
+keeps the time the test setup was last saved, and starts an onboard job on
+the repository's base branch setting, else its default branch as discovery
+saw it, else `main`. It answers `{"proposal_id", "job_id"}`, or 409 while a
+run is going for the repository. The calling key's repository allowlist
+applies, as for `POST /jobs`, and to apply, reject and skip-testing too.
+
+`GET .../setup/proposal` answers the latest proposal, or 404 when there is
+none: `{"id", "repo", "status", "job_id", "job_status", "created_by",
+"created_at", "decided_by", "decided_at", "notes_md", "failure", "smoke",
+"proposed_yaml", "current_yaml", "check"}`. `status` is `running`,
+`pending` (waiting for a person), `applied`, `rejected`, `stale` or
+`failed`. `check` is the answer `POST /repos/{repo}/qa-config/check` gives
+for `proposed_yaml`, `null` when there is none. A `running` proposal whose
+job has ended is stored as `failed` when it is read, with the job's error.
+
+Apply takes `{"acknowledged": [<warning codes>]}`. It answers 409 when the
+proposal is not waiting, or when the test setup was saved after the run
+started: the proposal becomes `stale` and nothing is written. The decision
+and the write are one transaction, so a turn-down or a save that lands while
+apply runs wins: apply then answers 409 and writes nothing. It answers
+422 with `{"message", "problems"}` when the check finds a problem every run
+would stop on, and 422 with `{"message", "missing"}` when a warning that
+needs confirming is not in `acknowledged`. Otherwise it writes the proposal
+as the test setup, recorded with source `proposal` so History can undo it,
+and answers `{"revision_id"}`. Apply and reject add the audit rows
+`repo.setup_applied` and `repo.setup_rejected`.
+
+`POST .../setup/skip-testing` stores the starter with `qa_required: never`
+when the repository has no test setup, and answers 409 when it has one.
+
+`GET .../readiness` is the checklist the repository page opens on. It is
+built from facts embry0 already stores, with no model call and no forge
+call: the account that resolves for the repository, what discovery read of
+it, the settings stored for it and globally, the test setup and its check,
+the latest proposal, and the newest pull request a job opened. It answers
+`{"repo", "status", "steps_left", "summary", "next_step", "rows",
+"needs_docker", "facts_seen_at"}`, or 404 for a repository that is not
+registered. `rows` are, in order, `code_access`, `app_values`,
+`testing`, `first_task` and the optional `work_trigger`, each
+`{"key", "required", "state", "title", "says", "action"}` where `action`
+is `{"kind", "label"}` or `null`. A fact embry0 does not have reads
+`unknown` and is not counted in `steps_left`; `facts_seen_at` says when
+discovery last saw the repository. `next_step` is the first required row a
+person can act on, `null` while a setup run is going. `needs_docker` is
+true when the stored test setup will not start without the Docker access an
+admin grants.
+
+```bash
+# Start a setup run, then apply the proposal it leaves
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/setup/propose \
+  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"confirm_spend": true}'
+# -> {"proposal_id": "prop-0123456789ab", "job_id": "job-0123456789ab"}
+curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/setup/proposal/prop-0123456789ab/apply \
+  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"acknowledged": ["live_address"]}'
+# -> {"revision_id": 44}
+```
+
 ## Docker access (admin)
 
 A sandbox profile with `dind_enabled` only *asks* for the shared Docker daemon
@@ -388,6 +602,43 @@ curl -X PUT http://localhost:8200/api/v1/repos/owner/repo/docker-access \
 Docker on a repo without the grant is refused before it starts, with
 `ERR_INCOHERENT_CONFIG` and a message naming this endpoint.
 
+## Retention preview (admin)
+
+What the three retention sweeps (`JOB_LOG_RETENTION_DAYS`,
+`AGENT_SESSION_RETENTION_DAYS`, `QA_IMAGE_RETENTION_DAYS`; see SECURITY.md,
+"Data retention") would remove if they ran now. It is a dry run of the same
+code, so it removes nothing.
+Each sweep runs at its configured number of days, or at the value in the
+query, to see the effect of a setting before turning it on. A sweep with
+neither reports zeros and `"retention_days": null`.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /api/v1/admin/retention/preview` | admin |
+
+```bash
+curl "http://localhost:8200/api/v1/admin/retention/preview?job_log_days=30&agent_session_days=30&qa_image_days=30" \
+  -H "Authorization: Bearer $EMBRY0_API_KEY"
+# -> {"job_logs": {"configured_days": null, "retention_days": 30, "jobs": 412,
+#      "events": 9031, "bytes": 21400000},
+#     "agent_sessions": {"configured_days": null, "retention_days": 30,
+#      "sessions": 380, "bytes": 61000000},
+#     "qa_images": {"configured_days": null, "retention_days": 30, "images": 3,
+#      "image_bytes": 1200000000, "volumes": 0, "volume_bytes": 0,
+#      "kept": {"pinned": 1, "recent": 1}, "failed": 0, "errors": [],
+#      "removed_images": [{"id": "sha256:…", "refs": ["…"], "last_used": "…", "bytes": 400700000}],
+#      "removed_volumes": []}}
+```
+
+`bytes` is what the redacted fields held in `job_logs`, and what the
+sessions hold in `agent_sessions`; `image_bytes` and `volume_bytes` are the
+sizes the daemon reports (`docker system df`, rounded), each image's own
+layers only, and `null` when the daemon could not report them. `kept`
+counts what stays, by reason: `pinned` (an active `qa_image_tags` row names
+it), `recent`, `in_use` (a container uses it), `live_job` (its repo has a job
+that has not ended), `not_ours`, `unchecked` (a lookup failed). The job log
+dry run reads every old event, so on a large database it takes a while.
+
 ## API keys
 
 Database API keys authenticate MCP, CLI and other machine clients with
@@ -407,19 +658,25 @@ revokes every key. The plaintext appears once, in the mint response. Settings
 
 A key may be limited to a list of repositories with `allowed_repos`. A
 restricted key is refused, with a 403 whose detail starts with
-`repo_not_allowed:`, whenever it would start or continue work on any other
-repository:
+`repo_not_allowed:`, whenever it would start, continue or stop work on any
+other repository:
 
 - `POST /jobs` (every pipeline; a job with no repository, such as an `http`
-  or `none` context, is refused too), `POST /jobs/{id}/resume` and
-  `POST /jobs/{id}/inputs/{input_id}/answer`;
+  or `none` context, is refused too), `POST /jobs/{id}/resume`,
+  `POST /jobs/{id}/inputs/{input_id}/answer` and `POST /jobs/{id}/cancel`;
 - `POST /issues` (an issue without a repository is refused),
   `PUT /issues/{id}` (the issue's repository and, when it changes, the new
-  one), `POST /issues/{id}/triage`, `POST /issues/{id}/sync` and
-  `POST /issues/{id}/inputs/{input_id}/answer`;
+  one), `POST /issues/{id}/triage`, `POST /issues/{id}/sync`,
+  `POST /issues/{id}/inputs/{input_id}/answer` and `DELETE /issues/{id}`
+  (the issue and each child issue it cancels);
 - `POST /cases/{id}/accept`, `POST /merge-approvals/{id}/decide`,
-  `POST /watcher/run` (the stack ticked), `POST /qa/images/build` and
-  `POST /repos/bootstrap`.
+  `POST /watcher/run` (the stack ticked; with none named, every watched
+  stack, all checked before any ticks), `POST /qa/images/build` and
+  `POST /repos/bootstrap`;
+- the steps of setting up testing: `POST /repos/{repo}/setup/propose`,
+  `POST /repos/{repo}/setup/proposal/{id}/apply` and `.../reject`,
+  `POST /repos/{repo}/setup/skip-testing` and
+  `POST /repos/{repo}/history/{id}/undo`.
 
 The MCP tools reach embry0 through these routes with the caller's key, so
 they are covered too. Matching ignores case and follows `REPO_RENAMES`
@@ -429,11 +686,12 @@ slug also matches its current one, and the reverse. Each refusal logs
 repository and the action, and writes an `apikey.repo_refused` audit row.
 
 Omitting the list, or sending an empty one, leaves the key unrestricted;
-every key minted before the allowlist existed is unrestricted. The list
-governs work only: it does not narrow what the key may read, nor the
-settings routes its scope allows. A restricted key may not mint keys or
-change any key's allowlist, its own included, since a key it minted would
-carry no restriction. For an agent that should only dispatch, mint an
+every key minted before the allowlist existed is unrestricted. Beyond the
+routes above, the list does not narrow what the key may read, nor the
+settings routes its scope allows, `PUT /repos/{repo}/qa-config` and
+`PUT /repos/{repo}/preferences` among them. A restricted key may not mint
+keys or change any key's allowlist, its own included, since a key it minted
+would carry no restriction. For an agent that should only dispatch, mint an
 `operate` key with the list.
 
 ```bash
@@ -453,6 +711,26 @@ curl -X PUT http://localhost:8200/api/v1/apikeys/key-0123456789ab/allowed-repos 
 Each change writes an `apikey.allowed_repos_changed` audit row with the list
 before and after.
 
+## Audit log
+
+```bash
+# Newest-first rows; admins see every row, other callers the rows they wrote
+curl "http://localhost:8200/api/v1/audit?action=qa.job_created&limit=50" \
+  -H "Authorization: Bearer $EMBRY0_API_KEY"
+
+# Every action a row can carry, with its label (the dashboard's filter list)
+curl http://localhost:8200/api/v1/audit/actions \
+  -H "Authorization: Bearer $EMBRY0_API_KEY"
+# -> {"actions": [{"action": "user.login", "label": "Signed in"}, ...]}
+```
+
+The action names live in one registry, `embry0/audit/actions.py`. Each
+event has one name: a QA, onboard or pull request review job writes one
+`qa.job_created`, `onboard.job_created` or `pr_review.job_created` row,
+whose actor is the job's actor. Rows written before that also carry a
+second, underscore-spelled copy (`qa_job_created`, `onboard_job_created`,
+`pr_review_job_created`); the registry does not list those.
+
 ## Sandbox visibility
 
 ```bash
@@ -463,8 +741,21 @@ curl http://localhost:8200/api/v1/sandboxes/active \
 
 ## WebSocket streaming
 
+The handshake takes a short-lived token scoped to one job, never an API key.
+Mint it with an operator or admin key; a read or merge key gets 403, and can
+page the same events from `GET /api/v1/jobs/{job_id}/logs/events?since_seq=`
+instead. A browser signed in with SSO needs no token: the session cookie
+authenticates the handshake.
+
 ```javascript
-const ws = new WebSocket('ws://localhost:8200/ws/jobs/{job_id}/events');
+// 1. Mint a token for this job (expires_in: 900 seconds).
+const { token } = await fetch(`http://localhost:8200/api/v1/jobs/${jobId}/events-token`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${apiKey}`, 'X-Requested-With': 'XMLHttpRequest' },
+}).then((r) => r.json());
+
+// 2. Present it as the subprotocol; the server echoes it back on accept.
+const ws = new WebSocket(`ws://localhost:8200/ws/jobs/${jobId}/events`, [`embry0.token.${token}`]);
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   // every event: { type, timestamp, event_seq, ...fields }
@@ -483,8 +774,8 @@ The route closes with code 1000 after forwarding `job_finished`, or straight aft
 | `turn_usage` | `cache_creation_tokens`, `cache_read_tokens`, `cost_usd`, `input_tokens`, `model`, `output_tokens`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `prev_seq`, `run_id` |
 | `text` | `text`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `original_length`, `parent_tool_use_id`, `prev_seq`, `run_id`, `truncated` |
 | `thinking` | `text`, `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `original_length`, `parent_tool_use_id`, `prev_seq`, `run_id`, `truncated` |
-| `tool_call` | `summary`, `timestamp`, `tool_id`, `tool_input`, `tool_name`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `prev_seq`, `run_id` |
-| `tool_result` | `content`, `is_error`, `timestamp`, `tool_id`, `type` | `agent`, `event_seq`, `job_id`, `node`, `original_length`, `parent_tool_use_id`, `prev_seq`, `run_id`, `truncated` |
+| `tool_call` | `summary`, `timestamp`, `tool_id`, `tool_input`, `tool_name`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `prev_seq`, `redacted`, `run_id` |
+| `tool_result` | `content`, `is_error`, `timestamp`, `tool_id`, `type` | `agent`, `event_seq`, `job_id`, `node`, `original_length`, `parent_tool_use_id`, `prev_seq`, `redacted`, `run_id`, `truncated` |
 | `subagent_start` | `name`, `timestamp`, `tool_id`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `prev_seq`, `run_id` |
 | `subagent_end` | `is_error`, `timestamp`, `tool_id`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `prev_seq`, `run_id` |
 | `context_compacted` | `timestamp`, `type` | `agent`, `event_seq`, `job_id`, `node`, `parent_tool_use_id`, `pre_tokens`, `prev_seq`, `run_id` |
@@ -517,3 +808,4 @@ The route closes with code 1000 after forwarding `job_finished`, or straight aft
 - `GET /api/v1/cases` and `GET /api/v1/cases/{case_id}` — the ledger's read API (#278): one case per finding, from detection to a healed verdict. See `docs/glossary.md`, "Healing case".
   - `?awaiting_decision=true` is "what is waiting for a person": watcher drafts with a ticket that nobody has accepted or rejected — the list the dashboard shows as **Proposals** above the issue list. It is the proposal cap's own rule without the age window, so a draft that aged out of the cap is still listed, and a draft whose ticket was finished or deleted in its tracker is not. It also lists a finding a `not_healed` verdict sent back for a retry nobody has accepted yet (#658), which holds no slot of the cap, and an organization need waiting for a person (origin `org`, [ADR 0011](adr/0011-organization-needs.md)), which holds none either and is answered on the needs list, never accepted. `?open_only=true` is a different question (every case not yet `closed`, which includes alerts, findings with no ticket, and merged, deployed and verified cases); `?stage=tracked` is not it either (a person's ticket passes through `tracked`, and a draft whose ticket is gone stays there).
 - `POST /api/v1/cases/{case_id}/accept` — accept a watcher finding and dispatch the pipeline on its draft, exactly as adding the trigger label would; refuses anything that is not a `tracked` watcher finding of an enabled watcher stack of this orchestrator (#378). A GitHub draft is dispatched directly. A Linear draft gets the trigger label put on the ticket and is dispatched through the Linear trigger path (#460); a refusal says what happened to the ticket, and a ticket whose Linear project resolves to another repo than the case's is refused untouched. A GitLab draft is still accepted in GitLab (`409`). A finding a `not_healed` verdict sent back is accepted here whatever its tracker: the retry is a new job on the issue of the failed attempt, which is reopened if its merge closed it, and the ticket is not touched (#658). Body: `{"accepted_by": "<name>"}`. `202` always carries a `job_id`. On the merge-scope allowlist. See `docs/self-watching.md`, "Accepting a finding without the label".
+- `POST /api/v1/cases/{case_id}/close` — settle a case a person has decided: `{"resolution_path": "out_of_band", "note": "…", "closed_by": "<name>"}`, with `resolution_path` required unless the case already carries one; `409` on a closed case. A case whose origin is `org` is an organization need, and closing it dismisses the need, so it needs the admin tier, as `POST /api/v1/orgs/{owner}/needs/{need_id}/dismiss` does; any other case is operator tier.

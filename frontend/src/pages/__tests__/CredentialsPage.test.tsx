@@ -21,6 +21,10 @@ vi.mock("@/hooks/useCredentials", () => ({
   useScopedBindings: () => ({ data: [], isLoading: false }),
   useSetScopedBindings: () => ({ mutate: vi.fn(), isPending: false }),
 }));
+let catalogProviders: { name: string }[] | undefined;
+vi.mock("@/hooks/useProvider", () => ({
+  useModelsCatalog: () => ({ data: catalogProviders ? { providers: catalogProviders } : undefined }),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { CredentialsPage } from "../CredentialsPage";
 
@@ -31,7 +35,7 @@ function renderPage() {
 const asTier = (tier: string) => useAuthStore.setState({ status: "authenticated", authMode: "session", user: { email: "u@example.com", name: "U", tier }, ssoEnabled: true, apiKeyLogin: true });
 
 describe("CredentialsPage", () => {
-  beforeEach(() => { mockCreate.mockReset(); mockImport.mockReset(); });
+  beforeEach(() => { mockCreate.mockReset(); mockImport.mockReset(); catalogProviders = undefined; });
 
   it("renders read-only for operator tier", () => {
     asTier("operator"); renderPage();
@@ -48,6 +52,21 @@ describe("CredentialsPage", () => {
     await user.type(screen.getByLabelText(/^secret/i), "ghp_abcdefghijklmnop");
     await user.click(screen.getByRole("button", { name: /^create/i }));
     expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ label: "bob", secret: "ghp_abcdefghijklmnop" }));
+  });
+
+  it("offers the LLM providers this deployment's catalog enables", async () => {
+    asTier("admin"); mockCreate.mockResolvedValue(creds[0]); const user = userEvent.setup();
+    catalogProviders = [{ name: "anthropic" }, { name: "xai" }, { name: "groq" }];
+    renderPage();
+    await user.click(screen.getByRole("button", { name: /add credential/i }));
+    await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
+    expect(screen.getByRole("option", { name: "Groq" })).toBeEnabled();
+    expect(screen.getByRole("option", { name: "OpenAI (not enabled)" })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText(/^provider/i), "groq");
+    await user.type(screen.getByLabelText(/label/i), "groq-key");
+    await user.type(screen.getByLabelText(/^secret/i), "gsk-placeholder");
+    await user.click(screen.getByRole("button", { name: /^create/i }));
+    expect(mockCreate).toHaveBeenCalledWith({ kind: "llm_api_key", provider: "groq", label: "groq-key", secret: "gsk-placeholder" });
   });
 
   it("secret field is cleared when the modal closes", async () => {

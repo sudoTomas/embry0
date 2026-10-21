@@ -28,7 +28,26 @@ _TIERS = {
     "model_light": "claude-haiku-4-5",
 }
 
-_EVERY_AGENT_TYPE = ("triage", "developer", "review", "qa", "analysis", "research", "ops", "onboarding", "pr-reviewer")
+_EVERY_AGENT_TYPE = (
+    "triage",
+    "developer",
+    "review",
+    "qa",
+    "analysis",
+    "research",
+    "ops",
+    "onboarding",
+    "pr-reviewer",
+    # The specialists.
+    "kintsugi",
+    "gardener",
+    "interrogator",
+    "why",
+    "how",
+    "blast-radius",
+    "comment-sicko",
+    "design-auditor",
+)
 
 
 def _policy(default_model: str = "", disabled: list[str] | None = None) -> dict[str, Any]:

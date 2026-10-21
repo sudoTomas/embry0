@@ -17,10 +17,17 @@ describe("OperationGlyph", () => {
     expect(container.querySelector("svg")).not.toBeNull();
   });
 
-  it("uses currentColor so the gold token drives the stroke/fill", () => {
+  it("uses currentColor so the text colour drives the stroke/fill", () => {
     const { container } = render(<OperationGlyph operation="calcinate" />);
     const ring = container.querySelector('svg circle[r="22"]');
     expect(ring?.getAttribute("stroke")).toBe("currentColor");
+  });
+
+  it("draws in the muted body colour, never the gold of a primary action", () => {
+    const { container } = render(<OperationGlyph operation="coagulate" />);
+    const cls = container.querySelector("svg")?.getAttribute("class") ?? "";
+    expect(cls).toContain("text-fg-muted");
+    expect(cls).not.toContain("text-primary");
   });
 
   it("carries the divine-element class for the escape hatch", () => {

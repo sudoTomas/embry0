@@ -5,15 +5,11 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { useAuthStore } from "@/stores/authStore";
+import { toastApiError } from "@/api/errorToast";
 
 /** What the grant hands over (#522). Shown wherever the grant can be given. */
 export const DOCKER_ACCESS_WARNING =
   "Code from this repo can control the shared Docker daemon, including the proxies holding your tokens.";
-
-function detailOf(error: unknown): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  return typeof detail === "string" && detail.trim() ? detail.trim() : "Could not change Docker access";
-}
 
 /** #522: the per-repo admin grant of the shared Docker daemon (DinD).
  * A sandbox profile with DinD only asks for the daemon; a sandbox gets it
@@ -30,7 +26,7 @@ export function RepoDockerAccessSection({ repo, dockerAccess }: { repo: string; 
       toast.success(row.docker_access ? "Docker access granted" : "Docker access revoked");
       void queryClient.invalidateQueries({ queryKey: ["repos"] });
     },
-    onError: (error: unknown) => toast.error(detailOf(error)),
+    onError: (error: unknown) => toastApiError(error, "Could not change Docker access"),
   });
 
   function onToggle() {
@@ -47,7 +43,7 @@ export function RepoDockerAccessSection({ repo, dockerAccess }: { repo: string; 
         {dockerAccess ? (
           <Badge tone="warning">Docker access granted</Badge>
         ) : (
-          <Badge tone="neutral">no Docker access</Badge>
+          <Badge tone="neutral">No Docker access</Badge>
         )}
         {isAdmin ? (
           <Button

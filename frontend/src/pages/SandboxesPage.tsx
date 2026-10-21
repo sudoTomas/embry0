@@ -3,12 +3,14 @@ import { useNavigate, Link } from "react-router";
 import { Box, Trash2, Plus, Cpu, Clock } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
 import { IconBox } from "@/components/ui/IconBox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { useSandboxProfiles, useDeleteSandboxProfile } from "@/hooks/useSandboxProfiles";
 import { useActiveSandboxes } from "@/hooks/useActiveSandboxes";
 import type { SandboxProfile } from "@/api/sandbox-profiles";
 import { toast } from "sonner";
+import { toastApiError } from "@/api/errorToast";
 
 export function SandboxesPage() {
   const [activeTab, setActiveTab] = useState<string>("profiles");
@@ -17,12 +19,12 @@ export function SandboxesPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="title-pixel text-2xl font-bold">Sandboxes</h1>
+        <h1 className="title-pixel text-xl font-bold">Sandboxes</h1>
         {activeTab === "profiles" && (
           <Link to="/sandboxes/new">
             <Button size="sm" className="gap-1.5">
               <Plus className="w-4 h-4" />
-              New Profile
+              New profile
             </Button>
           </Link>
         )}
@@ -56,13 +58,13 @@ function ProfilesTab() {
     if (!confirm(`Delete sandbox profile "${name}"?`)) return;
     deleteMutation.mutate(name, {
       onSuccess: () => toast.success(`Deleted "${name}"`),
-      onError: (err) => toast.error(`Failed to delete: ${err.message}`),
+      onError: (err) => toastApiError(err, "Failed to delete"),
     });
   };
 
   if (isError) {
     return (
-      <div className="p-8 text-center text-red-400">
+      <div className="p-8 text-center text-destructive">
         Failed to load sandbox profiles.
       </div>
     );
@@ -78,7 +80,7 @@ function ProfilesTab() {
       {/* Empty state */}
       {!isLoading && profiles && profiles.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center text-white/40 space-y-3">
-          <IconBox icon={Box} color="#06b6d4" size="lg" />
+          <IconBox icon={Box} color="var(--color-fg-secondary)" size="lg" />
           <p className="text-sm">No sandbox profiles yet.</p>
           <Link to="/sandboxes/new">
             <Button variant="outline" size="sm">Create your first profile</Button>
@@ -109,7 +111,7 @@ function ActiveTab() {
 
   if (isError) {
     return (
-      <div className="p-8 text-center text-red-400 mt-4">
+      <div className="p-8 text-center text-destructive mt-4">
         Failed to load active sandboxes.
       </div>
     );
@@ -122,7 +124,7 @@ function ActiveTab() {
   if (!data || data.count === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center text-white/40 space-y-3 mt-4">
-        <IconBox icon={Box} color="#06b6d4" size="lg" />
+        <IconBox icon={Box} color="var(--color-fg-secondary)" size="lg" />
         <p className="text-sm">No active sandbox containers right now.</p>
       </div>
     );
@@ -134,7 +136,7 @@ function ActiveTab() {
         <Card key={c.name}>
           <CardContent className="p-5 space-y-2">
             <div className="flex items-center gap-2.5 min-w-0">
-              <IconBox icon={Box} color="#06b6d4" size="sm" />
+              <IconBox icon={Box} color="var(--color-fg-secondary)" size="sm" />
               <span className="font-mono text-sm font-semibold text-white truncate">
                 {c.name}
               </span>
@@ -161,14 +163,14 @@ interface SandboxCardProps {
 function SandboxCard({ profile, onClick, onDelete, isDeleting }: SandboxCardProps) {
   return (
     <Card
-      className="cursor-pointer hover:border-cyan-500/20 transition-colors group"
+      className="cursor-pointer hover:border-border-strong transition-colors group"
       onClick={onClick}
     >
       <CardContent className="p-5 space-y-4">
         {/* Name row */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
-            <IconBox icon={Box} color="#06b6d4" size="sm" />
+            <IconBox icon={Box} color="var(--color-fg-secondary)" size="sm" />
             <span className="font-mono text-sm font-semibold text-white truncate">
               {profile.name}
             </span>
@@ -177,9 +179,10 @@ function SandboxCard({ profile, onClick, onDelete, isDeleting }: SandboxCardProp
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
+              className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity hover:text-destructive"
               onClick={onDelete}
               disabled={isDeleting}
+              aria-label={`Delete ${profile.name}`}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </Button>
@@ -200,18 +203,14 @@ function SandboxCard({ profile, onClick, onDelete, isDeleting }: SandboxCardProp
         {(profile.dind_enabled || profile.is_builtin) && (
           <div className="flex flex-wrap gap-2">
             {profile.dind_enabled && (
-              <span
-                className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 font-mono"
+              <Badge
+                tone="neutral"
                 title="Asks for the shared Docker daemon. Granted only to repos an admin has given Docker access."
               >
                 DinD
-              </span>
+              </Badge>
             )}
-            {profile.is_builtin && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-white/[0.05] text-white/50 border border-white/[0.06] font-mono">
-                builtin
-              </span>
-            )}
+            {profile.is_builtin && <Badge tone="neutral">Built-in</Badge>}
           </div>
         )}
 

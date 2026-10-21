@@ -213,13 +213,24 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
         "ref: string|null = null",
         "source_id: string",
     ],
+    "standard_audit": ["confirm: boolean = false", "kind: string", "owner: string", "repo: string"],
+    "standard_get": ["kind: string", "owner: string"],
+    "standard_set": [
+        "confirm: boolean = false",
+        "kind: string",
+        "owner: string",
+        'prose: string = ""',
+        "references: array|null = null",
+        "schema: object",
+        "values: object",
+    ],
     "stats": [],
     "template_get": ["template_id: string"],
     "template_list": [],
     "template_validate": ["graph: object"],
     "tool_list": [],
-    "watcher_runs": ["limit: integer = 50"],
-    "watcher_trigger": ["timeout: number = 900.0"],
+    "watcher_runs": ["limit: integer = 50", "stack: string|null = null"],
+    "watcher_trigger": ["stack: string|null = null", "timeout: number = 900.0"],
 }
 
 
@@ -297,6 +308,8 @@ async def test_every_confirm_gated_tool_defaults_to_refusing():
         "skill_source_remove",
         "skill_source_sync",
         "skill_source_update",
+        "standard_audit",
+        "standard_set",
     }
     for name in gated:
         confirm = tools[name]["inputSchema"]["properties"]["confirm"]

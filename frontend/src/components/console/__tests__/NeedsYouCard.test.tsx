@@ -12,16 +12,18 @@ import { NeedsYouCard } from "../NeedsYouCard";
 import { makeJob } from "./fixtures";
 import type { JobInput } from "@/lib/types";
 
+// The issue_inputs row GET /jobs/{id}/inputs returns (InputResponse).
 function makeJobInput(overrides: Partial<JobInput> = {}): JobInput {
   return {
-    input_id: "in-1",
+    id: "in-1",
     job_id: "abcd1234efgh5678",
     issue_id: "iss-1",
+    asking_node: "triage",
     question: "Which database should the migration target?",
-    category: "technical",
-    options: null,
+    importance: "blocking",
     status: "pending",
     answer: null,
+    answered_by: null,
     auto_answer: null,
     created_at: "2026-07-08T11:00:00Z",
     answered_at: null,
@@ -80,8 +82,17 @@ describe("NeedsYouCard", () => {
       fireEvent.click(screen.getByRole("button", { name: "Submit 1 answer" }));
 
       await waitFor(() => {
-        expect(answerInput).toHaveBeenCalledWith("iss-1", "in-1", "postgres");
+        expect(answerInput).toHaveBeenCalledWith("iss-1", "in-1", "postgres", "abcd1234efgh5678");
       });
+    });
+
+    it("gives the question the card's width: no second box inside the card", () => {
+      renderCard({ job: makeJob({ status: "awaiting_input" }), jobInputs: [makeJobInput()] });
+      // The card is the amber box. A box of its own inside it took the
+      // question another 26px of a lane a fifth of the board wide.
+      const box = screen.getByTestId("question-text").parentElement!.parentElement!;
+      expect(box).not.toHaveClass("border");
+      expect(box).not.toHaveClass("p-3");
     });
 
     it("renders no form when there are no renderable inputs", () => {

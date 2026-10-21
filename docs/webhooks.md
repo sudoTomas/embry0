@@ -208,7 +208,7 @@ Exit codes: **0** the database matches GitHub · **1** (`check` only) it does no
 
 ## Without webhooks
 
-You can trigger jobs manually via the dashboard — open the Issues page, find your issue, and click **Send to Agent**. No webhook setup required.
+You can trigger jobs manually via the dashboard — open the Issues page, find your issue, and click **Send to Triage**. No webhook setup required.
 
 
 ## Alertmanager as a detection source (#296)

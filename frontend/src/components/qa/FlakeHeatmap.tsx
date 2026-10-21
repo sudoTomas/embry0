@@ -119,7 +119,7 @@ export function FlakeHeatmap({ repo, windowDays = 7 }: Props) {
   return (
     <div className="space-y-4 p-6" data-testid="flake-heatmap">
       <header className="space-y-1">
-        <h1 className="text-2xl font-bold font-mono">{data.repo}</h1>
+        <h1 className="text-xl font-bold font-mono">{data.repo}</h1>
         <p className="text-sm text-white/60">
           Flake heatmap · {apps.length} {apps.length === 1 ? "app" : "apps"} ·{" "}
           {totalFlakes} total {totalFlakes === 1 ? "flake" : "flakes"} · last{" "}

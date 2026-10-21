@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -175,6 +176,84 @@ async def test_a_transport_error_never_quotes_the_request() -> None:
         await list_tailnet_devices(TailnetAccess(api_key=KEY), transport=httpx.MockTransport(handler))
     assert caught.value.reason == "unreachable (ConnectError)"
     assert KEY not in str(caught.value) and caught.value.__cause__ is None
+
+
+# ---- an OAuth client secret ----
+
+CLIENT_SECRET = "tskey-client-kUnitTest1CNTRL-unit-test-secret-value"
+EXCHANGED = "exchanged-access-token"
+
+
+def _oauth_api(
+    devices: list[dict[str, Any]],
+    *,
+    token_status: int = 200,
+    token_body: Any = None,
+    seen: list[httpx.Request] | None = None,
+) -> Any:
+    """The token endpoint and the device list. The list answers any bearer, so the asserts decide."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(request)
+        if request.url.path == "/api/v2/oauth/token":
+            if token_status != 200:
+                return httpx.Response(token_status, json={"message": "API token invalid"})
+            body = {"access_token": EXCHANGED, "token_type": "Bearer", "expires_in": 3600}
+            return httpx.Response(200, json=body if token_body is None else token_body)
+        return httpx.Response(200, json={"devices": devices})
+
+    return httpx.MockTransport(handler)
+
+
+async def test_an_oauth_client_secret_is_exchanged_for_an_access_token_first() -> None:
+    seen: list[httpx.Request] = []
+    access = TailnetAccess(api_key=CLIENT_SECRET)
+    devices = await list_tailnet_devices(access, transport=_oauth_api(CANNED_DEVICES, seen=seen), now=NOW)
+    assert [(r.method, r.url.path) for r in seen] == [
+        ("POST", "/api/v2/oauth/token"),
+        ("GET", "/api/v2/tailnet/-/devices"),
+    ], "an OAuth client secret must be exchanged before the device list is read"
+    assert parse_qs(seen[0].content.decode()) == {"client_id": ["kUnitTest1CNTRL"], "client_secret": [CLIENT_SECRET]}
+    assert seen[1].headers["Authorization"] == f"Bearer {EXCHANGED}", "the list is read with the exchanged token"
+    assert [d.name for d in devices] == ["web-1", "db-1", "worker-1"]
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        (400, "the OAuth client was refused (HTTP 400)"),
+        (401, "the OAuth client was refused (HTTP 401)"),
+        (403, "the OAuth client was refused (HTTP 403)"),
+        (500, "the token exchange failed (HTTP 500)"),
+    ],
+)
+async def test_a_failed_exchange_reports_its_status_and_reads_nothing(status: int, reason: str) -> None:
+    seen: list[httpx.Request] = []
+    with pytest.raises(TailnetAPIError) as caught:
+        await list_tailnet_devices(
+            TailnetAccess(api_key=CLIENT_SECRET), transport=_oauth_api([], token_status=status, seen=seen)
+        )
+    assert caught.value.reason == reason
+    assert CLIENT_SECRET not in str(caught.value)
+    assert [r.url.path for r in seen] == ["/api/v2/oauth/token"], "no device read after a failed exchange"
+
+
+@pytest.mark.parametrize("body", [{}, {"access_token": ""}, {"access_token": 7}, ["not", "an", "object"]])
+async def test_a_token_answer_without_an_access_token_is_an_error(body: Any) -> None:
+    with pytest.raises(TailnetAPIError) as caught:
+        await list_tailnet_devices(TailnetAccess(api_key=CLIENT_SECRET), transport=_oauth_api([], token_body=body))
+    assert caught.value.reason == "the token answer has no access token"
+
+
+async def test_a_transport_error_in_the_exchange_never_quotes_the_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"cannot connect, body was {request.content!r}")
+
+    with pytest.raises(TailnetAPIError) as caught:
+        await list_tailnet_devices(TailnetAccess(api_key=CLIENT_SECRET), transport=httpx.MockTransport(handler))
+    assert caught.value.reason == "unreachable (ConnectError)"
+    assert CLIENT_SECRET not in str(caught.value) and caught.value.__cause__ is None
 
 
 def test_the_key_stays_out_of_repr() -> None:

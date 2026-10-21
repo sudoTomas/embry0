@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Button } from "@/components/ui/Button";
+import { Overlay } from "@/components/ui/Overlay";
 import { X } from "lucide-react";
 import type { EnvVar, EnvVarScope } from "@/lib/types/environment";
 import { createFocusTrap } from "@/lib/focus-trap";
@@ -113,8 +114,8 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
   const canSave = !saving && key.trim().length > 0 && (isEdit || value.length > 0 || varType === "config");
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+    <Overlay
+      className="flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -123,7 +124,7 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
         ref={containerRef}
         role="dialog"
         aria-modal="true"
-        aria-label={isEdit ? "Edit Variable" : "Add Variable"}
+        aria-label={isEdit ? "Edit variable" : "Add variable"}
         className="relative w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl"
       >
         <button
@@ -133,10 +134,10 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
           <X className="h-4 w-4" />
         </button>
 
-        <h2 className="text-lg font-semibold mb-1">
-          {isEdit ? "Edit Variable" : "Add Variable"}
+        <h2 className="text-section font-semibold mb-1">
+          {isEdit ? "Edit variable" : "Add variable"}
           {effectiveScope === "qa" && (
-            <span className="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-purple-500/10 text-purple-300 ring-1 ring-inset ring-purple-500/20 align-middle">
+            <span className="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-purple/10 text-purple ring-1 ring-inset ring-purple/20 align-middle">
               QA
             </span>
           )}
@@ -162,7 +163,7 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
               placeholder={effectiveScope === "qa" ? "QA_TEST_USER" : "MY_VARIABLE"}
               className="font-mono mt-1"
               disabled={isEdit}
-              autoFocus={!isEdit}
+              data-autofocus={isEdit ? undefined : true}
               aria-invalid={keyError ? true : undefined}
               aria-describedby={keyError ? "env-key-error" : undefined}
             />
@@ -182,7 +183,7 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
               placeholder={isEdit && varType === "secret" ? "Enter new value..." : ""}
               className="font-mono mt-1"
               type={varType === "secret" ? "password" : "text"}
-              autoFocus={isEdit}
+              data-autofocus={isEdit ? true : undefined}
             />
           </div>
 
@@ -194,7 +195,7 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
                 onClick={() => setVarType("config")}
                 className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
                   varType === "config"
-                    ? "bg-green-500/15 text-green-400 ring-1 ring-green-500/30"
+                    ? "bg-success/15 text-success ring-1 ring-success/30"
                     : "bg-white/[0.03] text-muted-foreground hover:bg-white/[0.06]"
                 }`}
               >
@@ -246,6 +247,6 @@ export function EnvVarModal({ variable, envScope = "app", onSave, onClose }: Env
           </div>
         </form>
       </div>
-    </div>
+    </Overlay>
   );
 }

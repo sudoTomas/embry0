@@ -10,6 +10,7 @@ from fastapi import Depends, Header, HTTPException, Request
 
 from embry0.api.route_table import route_template
 from embry0.api.session import TIER_ADMIN, TIER_OPERATOR, SessionData, request_session
+from embry0.orchestration import dispatch_actors
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -57,8 +58,11 @@ class Principal:
     key_name: str | None = None
     email: str | None = None
     # Repositories this key may start work on; None = unrestricted. Enforced
-    # by embry0.api.repo_allowlist at each route that starts or continues work.
+    # by embry0.api.repo_allowlist at each route that starts, continues or
+    # stops work.
     allowed_repos: tuple[str, ...] | None = None
+    # An unowned key: minted by an admin or rotated by the orchestrator at boot.
+    service: bool = False
 
 
 # RAV-1056 Phase A: per-request session gate against the users table
@@ -119,8 +123,10 @@ async def resolve_bearer_principal(app: Any, token: str) -> Principal | None:
     """Validate a bearer token: the master API_KEY, else a live DB key.
 
     Returns the Principal or None (invalid/revoked/expired/owner-disabled).
-    Shared by the HTTP dependencies, the jobs WebSocket handshake, and the
-    QA SSE stream auth.
+    Shared by the HTTP dependencies, ``authenticate_stream`` (the SSE
+    streams) and the rate limiter. The jobs WebSocket handshake takes no key:
+    it takes a token minted by ``POST /jobs/{id}/events-token`` or an SSO
+    session.
     """
     config = app.state.config
     if config.api_key and hmac.compare_digest(token, config.api_key):
@@ -190,6 +196,7 @@ async def resolve_bearer_principal(app: Any, token: str) -> Principal | None:
         key_name=key_name,
         email=email or None,
         allowed_repos=allowed_repos,
+        service=user_id is None,
     )
 
 
@@ -319,16 +326,24 @@ def unidentified_caller_tier(request: Request) -> str:
 
 
 def request_actor(request: Request) -> str:
-    """Audit actor: session email > key owner email > key name > client IP."""
+    """Audit actor, named from who authenticated.
+
+    Session email > key owner email > key name > the master key. Never the
+    client address: behind the dashboard proxy every master-key request comes
+    from the proxy, so an address named no one. A request with no identity
+    (only AUTH_DEV_MODE lets one in) is ``embry0:anonymous``.
+    """
     session = getattr(request.state, "session", None)
     if session is not None and session.email:
         return str(session.email)
     principal = getattr(request.state, "principal", None)
+    if principal is not None and principal.kind == "master":
+        return dispatch_actors.MASTER_KEY
     if principal is not None and principal.kind == "key":
         if principal.email:
             return str(principal.email)
-        return f"key:{principal.key_name}"
-    return (request.client.host if request.client else None) or "unknown"
+        return f"key:{principal.key_name or principal.key_id}"
+    return dispatch_actors.ANONYMOUS
 
 
 # Reusable dependency: requires a valid API key OR an operator+ SSO session.
@@ -371,6 +386,44 @@ async def authenticate_stream(request: Request, scope: str, token: str | None) -
 require_admin = Depends(_admin_dependency)
 # Operator-tier reads: an operate+ key or an operator+ session, never a read or merge key.
 require_operator = Depends(_operator_dependency)
+
+
+async def ensure_admin(request: Request) -> None:
+    """The admin gate, for a route that needs admin for only some of what it acts on."""
+    await _admin_dependency(request, request.headers.get("authorization", ""))
+
+
+#: The context-proxy's service key, rotated at every boot (app.py). It is
+#: read scope, and the log routes admit it by name: the proxy forwards only
+#: allowlisted, quota'd container queries for the sandboxes enrolled with it.
+CONTEXT_PROXY_SERVICE_KEY = "svc-context-proxy"
+
+
+async def _log_reader_dependency(
+    request: Request,
+    authorization: str = Header(default=""),
+) -> None:
+    """Gate for the container-log routes: operator tier and up.
+
+    Production log lines carry personal data, so a read or merge key is
+    refused; the lines that do go out are redacted in the route. The one
+    read-scope key admitted is the context-proxy's own unowned service key.
+    Applied on top of require_auth; skipped only under AUTH_DEV_MODE."""
+    if request.app.state.config.auth_dev_mode:
+        return
+    if authorization:
+        principal = await _bearer_principal_or_401(request, authorization)
+        if principal.tier in (TIER_OPERATOR, TIER_ADMIN):
+            return
+        if principal.service and principal.key_name == CONTEXT_PROXY_SERVICE_KEY:
+            return
+        raise HTTPException(status_code=403, detail="reading container logs needs an operate-scope key or above")
+    if await _resolve_session_auth(request) is not None:
+        return
+    raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+
+require_log_reader = Depends(_log_reader_dependency)
 
 
 def get_config(request: Request) -> Any:

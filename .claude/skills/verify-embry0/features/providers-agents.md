@@ -1,6 +1,6 @@
 # Providers and agents
 
-The LLM Providers page lists each provider in the catalogue with a live probe, per-model toggles and tier models; agent definitions name a model, and the model's prefix decides the provider that serves it.
+The LLM providers page lists each provider in the catalogue with a live probe, per-model toggles and tier models; agent definitions name a model, and the model's prefix decides the provider that serves it.
 
 ## Sub-features
 
@@ -11,7 +11,7 @@ The LLM Providers page lists each provider in the catalogue with a live probe, p
 
 ## How to get to it (user POV)
 
-- `LLM Providers` under Settings in the sidebar.
+- `LLM providers` under Settings in the sidebar.
 - `Agents` under Infra in the sidebar, and an agent's edit form.
 - The API: `/api/v1/config/models`, `/api/v1/agents`.
 
@@ -21,7 +21,7 @@ Preconditions:
 
 - `doctor` reports `worth_driving: true`.
 
-- **Providers page.** Run `control-embry0 probe --route /providers`. `breadcrumbs` ends with `LLM Providers` and `errors` is empty.
+- **Providers page.** Run `control-embry0 probe --route /providers`. `breadcrumbs` ends with `LLM providers` and `errors` is empty.
 - **Models.** Run `control-embry0 api /api/v1/config/models`. Every model in the response belongs to a provider the page lists.
 - **Agents.** Run `control-embry0 api /api/v1/agents` and `control-embry0 read --route /agents --selector main`. Every agent's model in the API appears on the page.
 - **Readiness.** On a branch that adds it, each agent in `/api/v1/agents` carries its provider and a ready flag, and the page shows the same.

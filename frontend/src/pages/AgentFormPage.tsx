@@ -9,7 +9,8 @@ import {
   OPERATION_NUMERAL,
 } from "@/components/divine/operations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonVariants } from "@/components/ui/Button";
+import { AdminButton } from "@/components/auth/AdminButton";
 import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
@@ -24,7 +25,10 @@ import { useSkills } from "@/hooks/useSkills";
 import { useTools } from "@/hooks/useTools";
 import { DEFAULT_AVATAR, DEFAULT_COLOR, identityOf, type AvatarId, type PaletteId } from "@/lib/agentIdentity";
 import { providerForModel } from "@/lib/providers";
+import { providerLabel } from "@/lib/status";
 import type { AgentCreateRequest, AgentDefinition, AgentUpdateRequest } from "@/lib/types/agents";
+import { toastApiError } from "@/api/errorToast";
+import { cn } from "@/lib/utils";
 
 interface FormState {
   type: string;
@@ -229,7 +233,7 @@ export function AgentFormPage() {
       };
       updateAgent.mutate(update, {
         onSuccess: onSaved("Agent updated"),
-        onError: (e) => toast.error(`Failed: ${e.message}`),
+        onError: (e) => toastApiError(e, "Failed"),
       });
     } else {
       const create: AgentCreateRequest = {
@@ -246,7 +250,7 @@ export function AgentFormPage() {
       };
       createAgent.mutate(create, {
         onSuccess: onSaved("Agent created"),
-        onError: (e) => toast.error(`Failed: ${e.message}`),
+        onError: (e) => toastApiError(e, "Failed"),
       });
     }
   };
@@ -263,10 +267,12 @@ export function AgentFormPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link to="/agents">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
+          <Link
+            to="/agents"
+            aria-label="Back to agents"
+            className={cn(buttonVariants({ variant: "ghost", size: "icon" }))}
+          >
+            <ArrowLeft className="h-4 w-4" />
           </Link>
           {(() => {
             const op = agentTypeToOperation(typeParam);
@@ -277,14 +283,14 @@ export function AgentFormPage() {
             ) : null;
           })()}
           <div className="flex flex-col">
-            <h1 className="title-pixel text-2xl font-bold leading-tight">
-              {isEdit ? `Edit Agent: ${typeParam}` : "New Agent"}
+            <h1 className="title-pixel text-xl font-bold leading-tight">
+              {isEdit ? `Edit agent: ${typeParam}` : "New agent"}
             </h1>
             {(() => {
               const op = agentTypeToOperation(typeParam);
               if (!op) return null;
               return (
-                <span className="text-[10px] uppercase tracking-[0.18em] text-primary/65 font-mono mt-0.5">
+                <span className="text-[10px] uppercase tracking-[0.18em] text-fg-muted font-mono mt-0.5">
                   Op {OPERATION_NUMERAL[op]} · {op} · {OPERATION_ELEMENT[op]}
                 </span>
               );
@@ -295,9 +301,9 @@ export function AgentFormPage() {
           <Link to="/agents">
             <Button variant="outline">Cancel</Button>
           </Link>
-          <Button onClick={handleSave} disabled={isPending}>
+          <AdminButton onClick={handleSave} disabled={isPending}>
             {isPending ? "Saving..." : "Save Agent"}
-          </Button>
+          </AdminButton>
         </div>
       </div>
 
@@ -334,7 +340,7 @@ export function AgentFormPage() {
                 placeholder="Describe what this agent does..."
                 value={form.description}
                 onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-                className="mt-1 min-h-[80px] bg-[#0c1015] border-white/[0.08]"
+                className="mt-1 min-h-[80px] bg-overlay border-white/[0.08]"
               />
             </div>
           </div>
@@ -383,13 +389,13 @@ export function AgentFormPage() {
                 >
                   {chosenProvider.name ? (
                     <span>
-                      Provider: <span className="font-mono">{chosenProvider.name}</span>
+                      Provider: {providerLabel(chosenProvider.name)}
                     </span>
                   ) : (
                     <span>No configured provider serves this model</span>
                   )}
                   {chosenProvider.ready ? (
-                    <Badge tone="success">ready</Badge>
+                    <Badge tone="success">Ready</Badge>
                   ) : (
                     <Badge
                       tone="error"
@@ -399,7 +405,7 @@ export function AgentFormPage() {
                           : "No configured provider serves this model"
                       }
                     >
-                      not ready
+                      Not ready
                     </Badge>
                   )}
                 </p>
@@ -434,7 +440,7 @@ export function AgentFormPage() {
             {/* Execution / auth mode (RAV-1058) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="agent-execution-mode">Execution Mode</Label>
+                <Label htmlFor="agent-execution-mode">Execution mode</Label>
                 <Select
                   id="agent-execution-mode"
                   value={form.execution_mode}
@@ -449,7 +455,7 @@ export function AgentFormPage() {
                 </Select>
               </div>
               <div>
-                <Label htmlFor="agent-auth-mode">Auth Mode</Label>
+                <Label htmlFor="agent-auth-mode">Auth mode</Label>
                 <Select
                   id="agent-auth-mode"
                   value={form.auth_mode}
@@ -467,13 +473,13 @@ export function AgentFormPage() {
 
             {/* MCP servers (RAV-1058) */}
             <div>
-              <Label htmlFor="agent-mcp-servers">MCP Servers (JSON)</Label>
+              <Label htmlFor="agent-mcp-servers">MCP servers (JSON)</Label>
               <Textarea
                 id="agent-mcp-servers"
                 placeholder={'{\n  "my-server": { "type": "stdio", "command": "my-mcp", "args": ["--flag"] }\n}'}
                 value={form.mcpServersText}
                 onChange={(e) => setForm((prev) => ({ ...prev, mcpServersText: e.target.value }))}
-                className="mt-1 font-mono text-sm min-h-[120px] bg-[#0c1015] border-white/[0.08]"
+                className="mt-1 font-mono text-sm min-h-[120px] bg-overlay border-white/[0.08]"
               />
               <p className="text-xs text-white/30 mt-1">
                 Object mapping server name → config, injected into the sandbox agent. Leave empty for none. The QA
@@ -492,13 +498,13 @@ export function AgentFormPage() {
         </CardHeader>
         <CardContent>
           <div>
-            <Label htmlFor="agent-system-prompt">System Prompt</Label>
+            <Label htmlFor="agent-system-prompt">System prompt</Label>
             <Textarea
               id="agent-system-prompt"
               placeholder="Enter the system prompt for this agent..."
               value={form.system_prompt}
               onChange={(e) => setForm((prev) => ({ ...prev, system_prompt: e.target.value }))}
-              className="mt-1 font-mono text-sm min-h-[160px] bg-[#0c1015] border-white/[0.08]"
+              className="mt-1 font-mono text-sm min-h-[160px] bg-overlay border-white/[0.08]"
             />
           </div>
         </CardContent>

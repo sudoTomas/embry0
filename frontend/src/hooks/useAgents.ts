@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { fetchAgents, fetchAgent, createAgent, updateAgent, deleteAgent, resetAgent } from "@/api/agents";
 import type { AgentCreateRequest, AgentUpdateRequest } from "@/lib/types/agents";
 
@@ -14,6 +14,14 @@ export function useAgent(type: string | null) {
   });
 }
 
+/** A write to one agent stales both the list and that agent's form query
+ * (["agent", type]); with the app's 5-minute staleTime a form reopened after
+ * a save would otherwise show, and re-save, the old values. */
+function invalidateAgent(qc: QueryClient, type: string) {
+  qc.invalidateQueries({ queryKey: ["agents"] });
+  qc.invalidateQueries({ queryKey: ["agent", type] });
+}
+
 export function useCreateAgent() {
   const qc = useQueryClient();
   return useMutation({
@@ -26,7 +34,7 @@ export function useUpdateAgent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ type, ...update }: AgentUpdateRequest & { type: string }) => updateAgent(type, update),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["agents"] }),
+    onSuccess: (_data, { type }) => invalidateAgent(qc, type),
   });
 }
 
@@ -34,7 +42,7 @@ export function useDeleteAgent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (type: string) => deleteAgent(type),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["agents"] }),
+    onSuccess: (_data, type) => invalidateAgent(qc, type),
   });
 }
 
@@ -42,6 +50,6 @@ export function useResetAgent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (type: string) => resetAgent(type),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["agents"] }),
+    onSuccess: (_data, type) => invalidateAgent(qc, type),
   });
 }

@@ -29,7 +29,13 @@ push code):
 
 Assign roles in Auth0 (Dashboard → User Management → Roles), or with
 `infra/auth0/provision-roles.mjs --assign <role> <email>`. Role changes take
-effect at the user's **next login** (sessions are stateless signed cookies).
+effect at the user's **next login**: the session is a signed cookie that
+carries the tier it was minted with. Disabling a user
+(`PUT /api/v1/users/{id}/disabled`) or forcing a logout
+(`POST /api/v1/users/{id}/force-logout`), both admin routes, takes effect on
+the user's next request: each request checks the session against the `users`
+table (the disabled flag and the session epoch), caching a user's row for up
+to 30 seconds, and both routes clear that entry.
 
 ## Backend surface
 
@@ -40,10 +46,13 @@ effect at the user's **next login** (sessions are stateless signed cookies).
 - `require_auth` accepts API-key bearer OR operator+ session; `require_admin`
   additionally gates the admin-tier routes. SSE streams and the jobs
   WebSocket accept the session cookie directly.
-- Audit rows use the SSO email as actor when present (IP otherwise).
+- Audit rows use the SSO email as actor. A request made with an API key is
+  recorded under the key owner's email or `key:<name>`, one made with the
+  master key under `embry0:master-key`, never under a client address.
 
 Config: `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`,
-`SESSION_SECRET`, `SSO_PUBLIC_ORIGIN` in the **root `.env`** — all-or-nothing
+`SESSION_SECRET`, `SSO_PUBLIC_ORIGIN`, `SSO_ROLES_CLAIM` (the ID-token claim
+that carries the roles; it has no default) in the **root `.env`** — all-or-nothing
 (partial set refuses startup). Fully unset = SSO off, LAN key-only deploy.
 
 ## Ingress

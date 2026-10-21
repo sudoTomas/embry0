@@ -18,7 +18,7 @@ describe("CredentialTable", () => {
     render(<CredentialTable credentials={[cred()]} isAdmin {...handlers()} />);
     expect(screen.getByText("alice")).toBeInTheDocument();
     expect(screen.getByText("ghp_••••••••mnop")).toBeInTheDocument();
-    expect(screen.getByText("ok")).toBeInTheDocument();
+    expect(screen.getByText("OK")).toBeInTheDocument();
     expect(screen.getByText("alice-gh")).toBeInTheDocument();
   });
 
@@ -42,8 +42,8 @@ describe("CredentialTable", () => {
       cred({ id: "cred-000000000002", label: "q", status: "quarantined", status_reason: "rate_limited", quarantined_until: "2026-09-30T10:00:00Z" }),
       cred({ id: "cred-000000000003", label: "d", status: "disabled", status_reason: "decryption_failed" }),
     ]} isAdmin {...handlers()} />);
-    expect(screen.getByText("quarantined")).toHaveAttribute("title", expect.stringContaining("rate_limited"));
-    expect(screen.getByText("disabled")).toHaveAttribute("title", expect.stringContaining("decryption_failed"));
+    expect(screen.getByText("Quarantined")).toHaveAttribute("title", expect.stringContaining("rate_limited"));
+    expect(screen.getByText("Disabled")).toHaveAttribute("title", expect.stringContaining("decryption_failed"));
   });
 
   it("shows an LLM provider together with its kind", () => {
@@ -51,8 +51,30 @@ describe("CredentialTable", () => {
       id: "cred-00000000000b", provider: "xai", kind: "llm_api_key", host: "", label: "grok-key",
     })]} isAdmin {...handlers()} />);
     const row = screen.getByTestId("credential-row");
-    expect(row).toHaveTextContent("xai");
-    expect(row).toHaveTextContent("llm_api_key");
+    expect(row).toHaveTextContent("xAI");
+    // The kind reads in words, never as the stored identifier.
+    expect(row).toHaveTextContent("API key");
+    expect(row).not.toHaveTextContent("llm_api_key");
+  });
+
+  it("shows the kind of an OpenAI-compatible key, not its API host", () => {
+    render(<CredentialTable credentials={[
+      cred({ id: "cred-00000000000c", provider: "openai", kind: "llm_api_key", host: "api.openai.com", label: "openai-key" }),
+      cred({ id: "cred-00000000000d", provider: "custom", kind: "llm_api_key", host: "10.0.0.5", label: "ollama" }),
+    ]} isAdmin {...handlers()} />);
+    const [openai, custom] = screen.getAllByTestId("credential-row");
+    expect(openai).toHaveTextContent("OpenAI");
+    expect(openai).toHaveTextContent("API key");
+    expect(openai).not.toHaveTextContent("api.openai.com");
+    expect(custom).toHaveTextContent("Custom");
+    expect(custom).toHaveTextContent("API key");
+  });
+
+  it("names the default commit author in words, never the internal fallback", () => {
+    render(<CredentialTable credentials={[cred({ git_author_name: null, git_author_email: null })]} isAdmin {...handlers()} />);
+    const cell = screen.getByText("embry0 default");
+    expect(cell).toHaveAttribute("title", expect.stringContaining("EMBRY0_GIT_AUTHOR_NAME"));
+    expect(screen.getByTestId("credential-row")).not.toHaveTextContent("branding default");
   });
 
   it("renders the empty state", () => {

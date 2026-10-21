@@ -1,17 +1,16 @@
 import { memo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { QuestionsForm } from "@/components/jobs/QuestionsForm";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
-import { answerInput } from "@/api/inputs";
+import { useAnswerInput } from "@/hooks/useInputs";
 import type { JobInput, JobResponse } from "@/lib/types";
 import { ConsoleCardShell } from "./ConsoleCardShell";
 
-/** AwaitingInputCard's amber-glow treatment, reused verbatim so the board's
- * actionable cards read the same as the JobDetailPage banner. */
+/** AwaitingInputCard's amber treatment, reused verbatim so the board's
+ * actionable cards read the same as the JobDetailPage banner: the surface with
+ * an amber border, no glow. */
 const AMBER_GLOW = {
-  background: "linear-gradient(135deg, rgba(245,158,11,0.05), rgba(9,9,11,0.98))",
-  border: "1px solid rgba(245,158,11,0.2)",
-  boxShadow: "0 0 20px rgba(245,158,11,0.05)",
+  background: "var(--color-surface)",
+  border: "1px solid color-mix(in srgb, var(--color-amber) 35%, transparent)",
 } as const;
 
 interface NeedsYouCardProps {
@@ -25,7 +24,7 @@ interface NeedsYouCardProps {
  * renders inline so answering never requires navigation.
  */
 export const NeedsYouCard = memo(function NeedsYouCard({ job, jobInputs }: NeedsYouCardProps) {
-  const queryClient = useQueryClient();
+  const answer = useAnswerInput();
 
   // Same pending + auto_answered surfacing as AwaitingInputCard: pending rows
   // gate interactivity; auto_answered ones render with the Override affordance.
@@ -37,19 +36,19 @@ export const NeedsYouCard = memo(function NeedsYouCard({ job, jobInputs }: Needs
   // Map JobInput → QuestionsForm's PendingInput shape (AwaitingInputCard's
   // mapping, minus fields the board card doesn't carry).
   const formInputs = renderable.map((i) => ({
-    id: i.input_id,
+    id: i.id,
     question: i.question,
-    options: i.options,
-    category: i.category,
+    asking_node: i.asking_node,
     auto_answer: i.auto_answer,
     // Anything wider than the form's status union is filtered out above.
     status: i.status as "pending" | "answered" | "auto_answered",
   }));
 
-  // answerInput posts to /issues/{issueId}/inputs/{inputId}/answer.
-  const issueIdByInput: Record<string, string> = {};
+  // An issue-backed question answers through its issue, an issue-less one
+  // through the job (answerInput picks the route).
+  const issueIdByInput: Record<string, string | null> = {};
   for (const i of renderable) {
-    issueIdByInput[i.input_id] = i.issue_id;
+    issueIdByInput[i.id] = i.issue_id;
   }
 
   return (
@@ -69,10 +68,10 @@ export const NeedsYouCard = memo(function NeedsYouCard({ job, jobInputs }: Needs
         // shell's card-level navigate.
         <div className="mt-3" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
           <QuestionsForm
+            framed={false}
             inputs={formInputs}
-            onAnswer={async (inputId, answer) => {
-              await answerInput(issueIdByInput[inputId], inputId, answer);
-              await queryClient.invalidateQueries({ queryKey: ["job-inputs", job.job_id] });
+            onAnswer={async (inputId, text) => {
+              await answer.mutateAsync({ issueId: issueIdByInput[inputId], jobId: job.job_id, inputId, answer: text });
             }}
           />
         </div>

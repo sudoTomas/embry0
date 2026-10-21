@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen } from "@testing-library/react";
+import { TWEEN_MS } from "@/hooks/useTweenedNumber";
 import { SingleSourceTile } from "../SingleSourceTile";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+});
 
 describe("SingleSourceTile", () => {
   it("renders the value when the query is ready", () => {
@@ -65,5 +71,49 @@ describe("SingleSourceTile", () => {
     );
     const root = screen.getByTestId("tile-Cost Today");
     expect(root).toHaveAttribute("data-state", "error");
+  });
+
+  it("draws a ready number final at once where motion is unknown (jsdom)", () => {
+    render(
+      <SingleSourceTile
+        label="Job success"
+        query={{ isError: false, isPending: false, data: 0.874 }}
+        format={(n) => `${Math.round(n * 100)}%`}
+        turn={2}
+      />,
+    );
+    expect(screen.getByText("87%")).toBeInTheDocument();
+    expect(screen.getByTestId("tile-Job success")).toHaveClass("motion-enter");
+  });
+
+  it("counts a number up as it loads, then ticks it once when the poll changes it", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+    let queued: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => queued.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const frame = (now: number) => {
+      const due = queued;
+      queued = [];
+      act(() => due.forEach((cb) => cb(now)));
+    };
+    const animate = vi.fn();
+    HTMLElement.prototype.animate = animate;
+    const tile = (data: number) => (
+      <SingleSourceTile label="Running" query={{ isError: false, isPending: false, data }} format={(n) => String(Math.round(n))} />
+    );
+
+    const { rerender } = render(tile(7));
+    expect(screen.getByText("0")).toBeInTheDocument();
+    frame(0);
+    frame(TWEEN_MS);
+    expect(screen.getByText("7")).toBeInTheDocument();
+    expect(animate).not.toHaveBeenCalled();
+
+    rerender(tile(9));
+    expect(animate).toHaveBeenCalledTimes(1);
+    expect(animate.mock.contexts[0]).toBe(screen.getByText("7"));
+    frame(1000);
+    frame(1000 + TWEEN_MS);
+    expect(screen.getByText("9")).toBeInTheDocument();
   });
 });

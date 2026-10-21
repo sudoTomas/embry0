@@ -95,6 +95,15 @@ class ForgeWrite:
         return 200 <= self.status_code < 300
 
 
+@dataclass(frozen=True)
+class Listing:
+    """What :meth:`ForgeClient.paginate_listing` read: the items, and whether
+    they are the whole collection."""
+
+    items: list[Any]
+    complete: bool
+
+
 def forge_write(response: httpx.Response) -> ForgeWrite:
     """``response`` as a :class:`ForgeWrite`; ``detail`` is the forge's message, at most 1000 characters."""
     if 200 <= response.status_code < 300:
@@ -294,6 +303,27 @@ class ForgeClient:
         ``strict=True`` raises ``HTTPStatusError`` instead, so a caller that
         fans out across accounts can tell a dead token from an empty page.
         """
+        listing = await self.paginate_listing(
+            path, repo=repo, params=params, per_page=per_page, max_pages=max_pages, strict=strict
+        )
+        return listing.items
+
+    async def paginate_listing(
+        self,
+        path: str,
+        *,
+        repo: str | None = None,
+        params: Mapping[str, Any] | None = None,
+        per_page: int = 100,
+        max_pages: int = 20,
+        strict: bool = False,
+    ) -> Listing:
+        """:meth:`paginate`, saying whether it read the whole collection.
+
+        ``complete`` is False when ``max_pages`` stopped it with a next page
+        unread, or when a non-200 ended it under ``strict=False``. A caller
+        that reads what is absent from a listing as gone needs to know.
+        """
         merged = dict(params or {})
         merged.setdefault("per_page", per_page)
 
@@ -312,11 +342,10 @@ class ForgeClient:
                 )
                 if strict:
                     response.raise_for_status()
-                return items
+                return Listing(items, complete=False)
             body = response.json()
             if not isinstance(body, list):
-                single: list[Any] = [body]
-                return single
+                return Listing([body], complete=True)
             items.extend(body)
             next_path = response.links.get("next", {}).get("url")
             pages += 1
@@ -329,4 +358,4 @@ class ForgeClient:
                 max_pages=max_pages,
                 items=len(items),
             )
-        return items
+        return Listing(items, complete=not next_path)

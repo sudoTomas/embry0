@@ -143,13 +143,20 @@ describe("RunningCard", () => {
       expect(screen.getByTestId("live-indicator")).toHaveTextContent("Polling");
     });
 
-    it("shows the pulsing Live indicator while the WS is connected", () => {
+    it("shows the breathing Live indicator while the WS is connected", () => {
       vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ isConnected: true }));
       renderCard({ job: makeJob() });
 
       const indicator = screen.getByTestId("live-indicator");
       expect(indicator).toHaveTextContent("Live");
-      expect(indicator.querySelector(".animate-pulse")).not.toBeNull();
+      // The dot breathes through index.css's motion-breathe, which stands
+      // still under reduced motion. A bare animate-* utility would run
+      // whatever the setting; one behind motion-safe: is a class named
+      // "motion-safe:animate-pulse", so a ".animate-pulse" query never saw it.
+      const dot = indicator.firstElementChild!;
+      expect(dot).toHaveClass("motion-breathe");
+      const classes = [indicator, ...indicator.querySelectorAll("*")].flatMap((el) => [...el.classList]);
+      expect(classes.filter((c) => c.startsWith("animate-"))).toEqual([]);
     });
 
     it("prefers live cost over the polled row when the stream has ticked", () => {
@@ -207,6 +214,20 @@ describe("RunningCard", () => {
     it("shows no sprite before any stage is known", () => {
       renderCard({ job: makeJob({ current_stage: null }) });
       expect(screen.queryByTestId("stage-sprite")).toBeNull();
+    });
+  });
+
+  describe("running light", () => {
+    it("runs a light along the card's top edge while the job runs", () => {
+      renderCard({ job: makeJob() });
+      expect(screen.getByTestId("running-light")).toBeInTheDocument();
+      expect(screen.getByRole("link").className).toContain("relative");
+    });
+
+    it("stops the light once the stream reports the job over", () => {
+      vi.mocked(useLiveJobSummary).mockReturnValue(makeSummary({ isComplete: true }));
+      renderCard({ job: makeJob() });
+      expect(screen.queryByTestId("running-light")).toBeNull();
     });
   });
 });

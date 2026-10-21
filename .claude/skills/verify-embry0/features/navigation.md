@@ -7,7 +7,7 @@ The sidebar lists every page, can be collapsed on desktop and becomes a drawer b
 - `nav-desktop` shows the sidebar as a column at 1440 (`data-mode="column"`).
 - `nav-drawer` hides the sidebar at 390 and opens it as a drawer with a backdrop from `Open menu`.
 - `nav-close` closes the drawer from the backdrop, `Close sidebar`, or choosing a page.
-- `nav-crumbs` reads `<app> / <page>` with the page's own label, including Credentials and LLM Providers.
+- `nav-crumbs` reads `<app> / <page>` with the page's own label, including Credentials and LLM providers.
 
 ## How to get to it (user POV)
 
@@ -24,7 +24,7 @@ Preconditions:
 - **Desktop.** Run `control-embry0 probe --route / --width 1440`. `sidebar.mode` is `column`, `sidebar.visible` is true and `horizontal_scroll` is false.
 - **Phone.** Run `control-embry0 probe --route / --width 390`. `sidebar` is null or not visible, `open_menu_button` is true and `horizontal_scroll` is false.
 - **Drawer.** Run `control-embry0 shot --route / --width 390 --path artifacts/nav-390.png`. The screenshot shows the top bar with the menu button and no sidebar over the content.
-- **Breadcrumbs.** Run `control-embry0 probe --route /credentials` and `control-embry0 probe --route /providers`. `breadcrumbs` ends with `Credentials` and `LLM Providers`, and the app name appears once.
+- **Breadcrumbs.** Run `control-embry0 probe --route /credentials` and `control-embry0 probe --route /providers`. `breadcrumbs` ends with `Credentials` and `LLM providers`, and the app name appears once.
 
 ## Gotchas
 

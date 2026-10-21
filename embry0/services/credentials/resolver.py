@@ -20,7 +20,13 @@ from cryptography.fernet import InvalidToken
 
 from embry0.execution import github_tokens, gitlab_tokens
 from embry0.safety.error_codes import ErrorCode
-from embry0.services.credentials.providers import LLM_PROVIDERS, default_host, env_fallback
+from embry0.services.credentials.providers import (
+    base_url_host,
+    default_host,
+    env_fallback,
+    env_fallback_metadata,
+    llm_providers,
+)
 from embry0.storage.encryption import SecretsProvider
 from embry0.storage.repositories.credentials import CredentialsRepository
 
@@ -366,9 +372,8 @@ class CredentialResolver:
             resolved[provider] = reused if reused is not None else await self.resolve_llm(repo, provider, job_id=job_id)
         return resolved
 
-    @staticmethod
-    def _check_llm_provider(provider: str) -> None:
-        if provider not in LLM_PROVIDERS:
+    def _check_llm_provider(self, provider: str) -> None:
+        if provider not in llm_providers(self._environ):
             raise ValueError(f"unknown llm provider {provider!r}")
 
     async def _uses(self, job_id: str) -> list[dict[str, Any]]:
@@ -455,17 +460,21 @@ class CredentialResolver:
                     msg="token served from the environment; run `embry0 credentials import-env` to move it into the registry",
                 )
             trace.append(f"env:{key}")
+            metadata = env_fallback_metadata(provider, self._environ)
             return ResolvedCredential(
                 id=None,
                 kind=kind,
                 provider=provider,
-                host=default_host(provider),
+                host=base_url_host(metadata["base_url"])
+                if "base_url" in metadata
+                else default_host(provider, self._environ),
                 label=key,
                 secret=secret,
                 git_author_name=None,
                 git_author_email=None,
                 source="env",
                 trace=tuple(trace),
+                metadata=metadata,
             )
         trace.append(f"env:{provider} -> none")
         raise CredentialMissingError(
@@ -487,6 +496,8 @@ class CredentialResolver:
             git_author_email=row.get("git_author_email"),
             source="registry",
             trace=trace,
+            # A custom provider's base URL rides here into the sandbox env.
+            metadata=dict(row.get("metadata") or {}),
         )
 
     async def known_secret_values(self, *, refresh: bool = False) -> list[str]:

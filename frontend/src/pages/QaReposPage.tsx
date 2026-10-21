@@ -28,9 +28,9 @@ export function QaReposPage() {
   );
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="title-pixel text-2xl font-bold">QA</h1>
+        <h1 className="title-pixel text-xl font-bold">QA</h1>
         {reposCta}
       </div>
       {data.length === 0 ? (
@@ -42,10 +42,22 @@ export function QaReposPage() {
           {reposCta}
         </EmptyState>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {data.map((r) => (
-            <QaRepoCard key={r.repo} repo={r} />
-          ))}
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th scope="col">Repository</th>
+                <th scope="col">Latest run</th>
+                <th scope="col" className="num">Apps</th>
+                <th scope="col" className="hidden sm:table-cell">Run</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((r) => (
+                <QaRepoCard key={r.repo} repo={r} />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

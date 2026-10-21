@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 
@@ -110,8 +110,8 @@ describe("TracesTable", () => {
 
   it("offers exactly the storage result values in the result filter", () => {
     renderTable();
-    expect(optionLabels(screen.getByRole("combobox", { name: "Result" }))).toEqual([
-      "All Result",
+    expect(optionLabels(screen.getByRole("combobox", { name: "Results" }))).toEqual([
+      "All results",
       "success",
       "error",
       "running",
@@ -122,10 +122,67 @@ describe("TracesTable", () => {
     renderTable();
     await screen.findByRole("option", { name: "reviewer" });
     expect(fetchAgents).toHaveBeenCalled();
-    expect(optionLabels(screen.getByRole("combobox", { name: "Agent" }))).toEqual([
-      "All Agent",
+    expect(optionLabels(screen.getByRole("combobox", { name: "Agents" }))).toEqual([
+      "All agents",
       "developer",
       "reviewer",
     ]);
+  });
+
+  it("spans an open trace's detail across every column of the table", () => {
+    renderTable();
+    const row = screen.getByRole("button", { name: "View trace run-fixture-1" });
+    fireEvent.click(row);
+    const columns = row.closest("table")!.tHead!.rows[0].cells.length;
+    expect((row as HTMLTableRowElement).cells.length, "a trace row and the head disagree").toBe(columns);
+    const detail = within(row.nextElementSibling as HTMLElement).getByRole("button", { name: "Close detail panel" });
+    expect((detail.closest("td") as HTMLTableCellElement).colSpan).toBe(columns);
+  });
+
+  // On a phone the table scrolls sideways, and the detail spanned all of it:
+  // at 390 px its close button sat past the table's visible right edge.
+  // jsdom has no layout, so this pins the classes: the scroller is a size
+  // container, and the detail is no wider than it and pinned to its left.
+  it("keeps an open trace's detail in the part of the table in view", () => {
+    renderTable();
+    const row = screen.getByRole("button", { name: "View trace run-fixture-1" });
+    fireEvent.click(row);
+    const close = screen.getByRole("button", { name: "Close detail panel" });
+    const detail = close.closest("td")!.firstElementChild!;
+    expect(detail).toHaveClass("sticky", "left-0", "max-w-[100cqw]");
+    expect(detail.closest(".overflow-x-auto")).toHaveClass("@container");
+  });
+
+  it("spans the empty state across every column of the table", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <TracesTable traces={[]} total={0} offset={0} limit={50} filters={{}} onFilterChange={vi.fn()} onPageChange={vi.fn()} />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    const cell = screen.getByText("No traces found") as HTMLTableCellElement;
+    expect(cell.colSpan).toBe(cell.closest("table")!.tHead!.rows[0].cells.length);
+  });
+
+  it("marks the open trace's row on the overlay, not a gold wash: a selection is not gold", () => {
+    renderTable();
+    const row = screen.getByRole("button", { name: "View trace run-fixture-1" });
+    fireEvent.click(row);
+    expect(row).toHaveClass("bg-overlay");
+    expect(row.getAttribute("class")).not.toMatch(/(^|\s)bg-primary/);
+  });
+
+  it("opens a trace without a gold border: gold marks only what needs a person", () => {
+    renderTable();
+    const row = screen.getByRole("button", { name: "View trace run-fixture-1" });
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-expanded", "true");
+    const panel = row.nextElementSibling;
+    expect(panel?.innerHTML).toContain("border-t");
+    for (const el of [row, ...(panel?.querySelectorAll("*") ?? [])]) {
+      expect(el.getAttribute("class") ?? "").not.toMatch(/(^|\s)border(-[trblxy])?-primary/);
+    }
   });
 });

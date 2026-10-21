@@ -1,13 +1,17 @@
 import { Link, useParams } from "react-router";
 import { useQaRun } from "@/hooks/useQaDashboard";
+import { useJob } from "@/hooks/useJobs";
 import { useQaRunEvents } from "@/hooks/useQaRunEvents";
 import { QaAppResultCard } from "@/components/qa/QaAppResultCard";
 import { RunStatusBadge } from "@/components/qa/RunStatusBadge";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
+import { formatDateTime } from "@/lib/utils";
 
 export function QaRunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
+  // The run's job (same id): its finished status stops the run's polling.
+  useJob(runId);
   const { data, isLoading, isError, refetch } = useQaRun(runId);
   // Phase 5C: subscribe to SSE for sub-second liveness on per-app status
   // changes. The hook invalidates the same query key useQaRun reads, so the
@@ -19,7 +23,7 @@ export function QaRunDetailPage() {
   if (!runId || isLoading || !data) return <TableSkeleton />;
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4">
       <Link
         to={`/qa/repos/${encodeURIComponent(data.repo)}`}
         className="text-sm text-white/50 hover:underline"
@@ -27,15 +31,15 @@ export function QaRunDetailPage() {
         ← {data.repo}
       </Link>
       <div className="flex items-baseline justify-between">
-        <h1 className="title-pixel text-2xl font-bold font-mono">{data.job_id}</h1>
+        <h1 className="title-pixel text-xl font-bold font-mono">{data.job_id}</h1>
         <RunStatusBadge status={data.overall_status} />
       </div>
       <p className="text-sm text-white/60">
-        {data.apps.length} apps · started {new Date(data.started_at).toLocaleString()}
+        {data.apps.length} apps · started {formatDateTime(data.started_at)}
         {" · "}
         <Link
           to={`/qa/runs/${encodeURIComponent(data.job_id)}/affected`}
-          className="text-cyan-300 hover:underline"
+          className="text-fg hover:text-primary hover:underline"
           data-testid="affected-set-link"
         >
           Affected set

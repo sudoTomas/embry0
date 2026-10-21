@@ -15,7 +15,7 @@ import { CacheAnalyticsView } from "@/components/qa/CacheAnalyticsView";
 export function QaRepoCachePage() {
   const { repo } = useParams<{ repo: string }>();
   if (!repo) {
-    return <div className="p-6 text-white/50">No repo</div>;
+    return <div className="text-fg-muted">No repo</div>;
   }
   return (
     <div>

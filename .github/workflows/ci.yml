@@ -550,8 +550,9 @@ jobs:
         env:
           DENYLIST: ${{ secrets.EMBRY0_DENYLIST }}
         # Exit 2 (nothing checked, e.g. the secret is unset) fails the step,
-        # as a match does.
+        # as a match does. --public: every tracked file, with the allowances
+        # the public export passed, because this repository is the public one.
         run: |
           umask 077
           printf '%s\n' "$DENYLIST" > "$RUNNER_TEMP/denylist.txt"
-          EMBRY0_DENYLIST_FILE="$RUNNER_TEMP/denylist.txt" python3 scripts/check_denylist.py
+          EMBRY0_DENYLIST_FILE="$RUNNER_TEMP/denylist.txt" python3 scripts/check_denylist.py --public

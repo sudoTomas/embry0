@@ -8,6 +8,8 @@ vi.mock("@/hooks/useAgents", () => ({
 import { AgentCard } from "../AgentCard";
 import { useAgentStates, type AgentState } from "@/hooks/useAgentStates";
 import { loadFixture } from "@/lib/__tests__/fixtures";
+import { inSource } from "@/lib/__tests__/tailwindSource";
+import { BUILTIN_IDENTITY, identityOf } from "@/lib/agentIdentity";
 
 function fixtureAgents(): AgentState[] {
   return renderHook(() => useAgentStates(loadFixture("issue-to-pr"))).result.current.agents;
@@ -40,6 +42,7 @@ describe("AgentCard", () => {
     render(<AgentCard agent={qa} expanded={expanded} />);
     expect(screen.getByText("QA")).toBeInTheDocument();
     expect(screen.queryByText("orchestrate_qa"), "a card whose node differs from its agent must name the node").not.toBeNull();
+    expect(screen.getByText("orchestrate_qa").className, "the node id reads as code, not prose").toContain("font-mono");
   });
 
   it.each([false, true])("shows the name once when the node equals the agent (expanded: %s)", (expanded) => {
@@ -99,6 +102,22 @@ describe("AgentCard", () => {
     render(<AgentCard agent={failed} />);
     expect(screen.getByText(/Tool denied by policy/)).toBeInTheDocument();
     expect(screen.queryByText(/ERR_TOOL_DENIED/), "a failed card must show its error code").not.toBeNull();
+  });
+
+  // The open card's header is ruled off in the card's outline colour. The
+  // divider's class was made at runtime by rewriting the outline's, a class
+  // Tailwind never generated, so every divider fell to the page's default
+  // border instead.
+  it.each([...Object.keys(BUILTIN_IDENTITY), "output"])("rules the open %s card's header in its outline colour", (agent) => {
+    const { container } = render(<AgentCard agent={{ ...fixtureAgents()[1], agent, node: agent }} expanded />);
+    const card = container.firstElementChild!;
+    const header = card.firstElementChild!;
+    const outline = identityOf(agent).classes.border;
+    expect(card.className.split(/\s+/)).toContain(outline);
+    expect(header.className.split(/\s+/), `the ${agent} header's divider is not the card's outline`).toContain(outline);
+    for (const cls of header.className.split(/\s+/).filter(Boolean)) {
+      expect(inSource(cls), `the ${agent} header's ${cls} is in no source file: Tailwind writes no rule for it`).toBe(true);
+    }
   });
 
   it("labels the fixture's retried developer run with its attempt", () => {

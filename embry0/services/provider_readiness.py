@@ -10,8 +10,11 @@ live connection test of each provider, read back from the audit log the test wri
 
 Three surfaces read it. ``GET /config/models`` reports each provider's ``available``
 flag, ``credential_source`` and ``last_probe``. ``GET /agents`` reports it per agent as
-``provider`` and ``provider_ready``. With ``AGENT_MODEL_PROVIDER_CHECK`` on, saving an
-agent whose model has no ready provider is refused with a message that names the provider.
+``provider`` and ``provider_ready`` for the stored model, and as ``effective_provider``
+and ``effective_provider_ready`` for the model a run uses (``effective_model``), which
+the deployment's default model can replace. With ``AGENT_MODEL_PROVIDER_CHECK`` on,
+saving an agent whose model has no ready provider is refused with a message that names
+the provider.
 """
 
 from __future__ import annotations
@@ -20,11 +23,17 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 
-from embry0.agents.providers import CATALOG_PROVIDERS, ModelProvider
+import structlog
 
-PROBE_AUDIT_ACTION = "provider_connection_tested"
+from embry0.agents.model_policy import build_model_policy, resolve_tier_models
+from embry0.agents.providers import ModelProvider, catalog_providers
+from embry0.agents.resolver import effective_agent_model
+
+logger = structlog.get_logger(__name__)
+
+PROBE_AUDIT_ACTION: Final = "provider_connection_tested"
 """Audit action ``POST /config/providers/{name}/test`` writes, details ``{provider, status}``."""
 
 
@@ -55,7 +64,7 @@ def catalog_provider_for_model(model: str) -> ModelProvider | None:
     catalog prefix is None rather than the implicit default: the runtime would hand
     such an id to the Claude CLI, which cannot run it either.
     """
-    for provider in CATALOG_PROVIDERS:
+    for provider in catalog_providers():
         if any(model.startswith(prefix) for prefix in provider.model_prefixes):
             return provider
     return None
@@ -73,7 +82,10 @@ async def provider_availability(app_state: Any, provider: ModelProvider) -> tupl
 
     Anthropic authenticates via CLAUDE_CODE_OAUTH_TOKEN and/or ANTHROPIC_API_KEY; xAI via
     its console key or the SuperGrok OAuth proxy (a provisioned refresher means grok is
-    runnable). A registry row counts only when those env sources are absent.
+    runnable); an OpenAI-compatible provider via its key variable (the custom one only
+    together with its base URL variable). A registry row counts only when those env
+    sources are absent. A provider with none of them is not ready, and a job whose model
+    routes to it fails before its sandbox exists (CREDENTIAL_MISSING).
     """
     if provider.name == "anthropic":
         oauth = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
@@ -87,11 +99,11 @@ async def provider_availability(app_state: Any, provider: ModelProvider) -> tupl
         if await _registry_has_provider(app_state, "anthropic"):
             return True, "registry"
         return False, None
-    if os.environ.get(provider.api_key_env):
+    if os.environ.get(provider.api_key_env) and (not provider.base_url_env or os.environ.get(provider.base_url_env)):
         return True, "api_key"
     if provider.name == "xai" and getattr(app_state, "xai_refresher", None) is not None:
         return True, "oauth_proxy"
-    if provider.name == "xai" and await _registry_has_provider(app_state, "xai"):
+    if await _registry_has_provider(app_state, provider.name):
         return True, "registry"
     return False, None
 
@@ -120,34 +132,84 @@ async def readiness_by_provider(app_state: Any, *, with_last_probe: bool = False
     list leaves it off because it reports readiness only.
     """
     out: dict[str, ProviderReadiness] = {}
-    for provider in CATALOG_PROVIDERS:
+    for provider in catalog_providers():
         available, source = await provider_availability(app_state, provider)
         probe = await last_probe(app_state, provider.name) if with_last_probe else None
         out[provider.name] = ProviderReadiness(provider.name, available, source, probe)
     return out
 
 
-def annotate_agent(agent: Mapping[str, Any], readiness: Mapping[str, ProviderReadiness]) -> dict[str, Any]:
-    """``agent`` plus ``provider`` (catalog provider by prefix, or None) and ``provider_ready``."""
-    provider = catalog_provider_for_model(str(agent.get("model") or ""))
+def _provider_fields(model: str, readiness: Mapping[str, ProviderReadiness]) -> tuple[str | None, bool]:
+    provider = catalog_provider_for_model(model)
     state = readiness.get(provider.name) if provider is not None else None
+    return (provider.name if provider is not None else None), bool(state is not None and state.ready)
+
+
+def annotate_agent(
+    agent: Mapping[str, Any],
+    readiness: Mapping[str, ProviderReadiness],
+    model_policy: Mapping[str, Any] | None = None,
+    tier_models: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """``agent`` plus the provider of its stored model and of the model a run uses.
+
+    ``provider`` (catalog provider by prefix, or None) and ``provider_ready`` are
+    for the stored ``model``. ``effective_model`` is what a job that names no
+    model runs, resolved under ``model_policy`` and ``tier_models`` (the config
+    class defaults when None) as the executor resolves it
+    (``embry0.agents.resolver.effective_agent_model``), with
+    ``effective_model_source``, ``effective_provider`` and ``effective_provider_ready``.
+    """
+    provider, ready = _provider_fields(str(agent.get("model") or ""), readiness)
+    effective = effective_agent_model(
+        str(agent.get("type") or ""),
+        agent,
+        model_policy,
+        tier_models=tier_models if tier_models is not None else resolve_tier_models(None, None),
+    )
+    effective_provider, effective_ready = _provider_fields(effective.model, readiness)
     return {
         **agent,
-        "provider": provider.name if provider is not None else None,
-        "provider_ready": bool(state is not None and state.ready),
+        "provider": provider,
+        "provider_ready": ready,
+        "effective_model": effective.model,
+        "effective_model_source": effective.source,
+        "effective_provider": effective_provider,
+        "effective_provider_ready": effective_ready,
     }
 
 
+async def deployment_provider_config(app_state: Any) -> Mapping[str, Any] | None:
+    """The provider_config row (or its env defaults) agent runs read their models from.
+
+    None without a provider repository or on a failed read: the executor then
+    applies no model policy and reads each tier from ``Embry0Config``.
+    """
+    repo = getattr(app_state, "provider_repo", None)
+    if repo is None:
+        return None
+    try:
+        row = await repo.get()
+    except Exception:
+        logger.warning("agents_model_policy_load_failed", exc_info=True)
+        return None
+    return row if isinstance(row, Mapping) else None
+
+
 async def annotate_agents(agents: list[dict[str, Any]], app_state: Any) -> list[dict[str, Any]]:
+    """``annotate_agent`` for each agent under the deployment's model policy and tiers, read as runs read them."""
     readiness = await readiness_by_provider(app_state)
-    return [annotate_agent(agent, readiness) for agent in agents]
+    row = await deployment_provider_config(app_state)
+    model_policy = build_model_policy(row) if row is not None else None
+    tier_models = resolve_tier_models(row, getattr(app_state, "config", None))
+    return [annotate_agent(agent, readiness, model_policy, tier_models) for agent in agents]
 
 
 async def ensure_model_provider_ready(model: str, app_state: Any) -> None:
     """Raise ProviderNotReadyError unless a ready catalog provider serves ``model``."""
     provider = catalog_provider_for_model(model)
     if provider is None:
-        known = ", ".join(f"{p.name} ({', '.join(p.model_prefixes)})" for p in CATALOG_PROVIDERS)
+        known = ", ".join(f"{p.name} ({', '.join(p.model_prefixes)})" for p in catalog_providers())
         raise ProviderNotReadyError(
             f"no configured provider serves model {model!r}; providers and their model id prefixes: {known}"
         )

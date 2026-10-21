@@ -169,6 +169,34 @@ def test_actor_prefers_owner_email_then_key_name():
     assert r2.json()["actor"] == "key:hermes"
 
 
+def test_master_key_actor_names_the_key_not_the_client_address():
+    """Behind the dashboard proxy every master-key request arrives from the
+    proxy's address, so an IP actor named no one: about one audit row in five,
+    API key creation and revocation among them."""
+    client = TestClient(_app({}))
+    resp = client.post(
+        "/guarded-post", headers={"Authorization": "Bearer master-key", "X-Requested-With": "XMLHttpRequest"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["actor"] == "embry0:master-key", (
+        f"a master-key request was audited as {resp.json()['actor']!r}, not under the key"
+    )
+
+
+def test_a_request_with_no_identity_is_anonymous_not_an_address():
+    """Only AUTH_DEV_MODE lets a request reach a handler with no identity."""
+    app = FastAPI()
+    with patch.dict(os.environ, {}, clear=True):
+        app.state.config = Embry0Config(_env_file=None, auth_dev_mode=True)
+
+    @app.post("/open-post", dependencies=[require_auth])
+    def open_post(request: Request):
+        return {"actor": request_actor(request)}
+
+    actor = TestClient(app).post("/open-post", headers={"X-Requested-With": "XMLHttpRequest"}).json()["actor"]
+    assert actor == "embry0:anonymous", f"an unidentified request was audited as {actor!r}"
+
+
 def test_revocation_takes_effect_after_cache_bust():
     row = _key_row(scope="operate")
     key_rows = {hash_token(TOKEN): row}

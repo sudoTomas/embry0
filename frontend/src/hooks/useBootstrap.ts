@@ -6,9 +6,9 @@ export function useBootstrapRepo() {
   return useMutation({
     mutationFn: (req: BootstrapRequest) => bootstrapRepo(req),
     onSuccess: (result) => {
-      const [owner, name] = result.repo.split("/");
-      qc.invalidateQueries({ queryKey: ["qa-config", owner, name] });
-      qc.invalidateQueries({ queryKey: ["repo-preferences", owner, name] });
+      // Keyed by the full repo path, as useQaConfig and useRepoPreferences are.
+      qc.invalidateQueries({ queryKey: ["qa-config", result.repo] });
+      qc.invalidateQueries({ queryKey: ["repo-preferences", result.repo] });
       // QA dashboard repo lists don't know about the new repo yet.
       qc.invalidateQueries({ queryKey: ["qa-dashboard"] });
       // Bootstrap registers the repo (qa_configs upsert auto-registers), so

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detailMessages, formatErrorDetail } from "../errorDetail";
+import { detailMessages, formatErrorDetail, apiErrorMessage } from "../errorDetail";
 
 describe("formatErrorDetail", () => {
   it("returns a string detail unchanged, trimmed", () => {
@@ -14,6 +14,13 @@ describe("formatErrorDetail", () => {
       ]),
       "loc must render as a dotted field path without the leading body/query",
     ).toBe("env.0.name: Field required; limit: Input should be a valid integer");
+  });
+
+  it("drops pydantic's 'Value error, ' prefix from a validator's message", () => {
+    expect(
+      formatErrorDetail([{ loc: ["body", "variables", 0, "key"], msg: "Value error, Key 'X' is reserved." }]),
+    ).toBe("variables.0.key: Key 'X' is reserved.");
+    expect(detailMessages([{ msg: "Value error, Key 'X' is reserved." }])).toEqual(["Key 'X' is reserved."]);
   });
 
   it("shows a whole-body error without a field prefix", () => {
@@ -54,5 +61,25 @@ describe("detailMessages", () => {
     ]);
     expect(detailMessages(" one ")).toEqual(["one"]);
     expect(detailMessages(undefined)).toEqual([]);
+  });
+});
+
+describe("apiErrorMessage", () => {
+  it("is the API's detail, not axios's status sentence", () => {
+    const err = { message: "Request failed with status code 409", response: { status: 409, data: { detail: "already running" } } };
+    expect(apiErrorMessage(err)).toBe("already running");
+  });
+
+  it("names the status when the API sent no detail", () => {
+    expect(apiErrorMessage({ message: "Request failed with status code 403", response: { status: 403 } }, "Could not save"))
+      .toBe("Could not save (HTTP 403)");
+  });
+
+  it("says the server is unreachable on a network failure", () => {
+    expect(apiErrorMessage({ code: "ERR_NETWORK", message: "Network Error" })).toBe("Network error — cannot reach the server");
+  });
+
+  it("is a thrown Error's own message", () => {
+    expect(apiErrorMessage(new Error("answerInput requires issueId or jobId"))).toBe("answerInput requires issueId or jobId");
   });
 });

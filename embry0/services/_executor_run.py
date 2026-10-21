@@ -22,6 +22,7 @@ from embry0.services._cost import resolve_job_total_cost
 from embry0.services.healing.lifecycle import Origin
 from embry0.services.healing.recorder import record_case_event
 from embry0.storage.repositories.jobs import StatusTransitionConflict
+from embry0.storage.repositories.repo_setup_proposals import RepoSetupProposalsRepository
 from embry0.trackers import forge_number_of, github_number_of, linear_identifier_of
 
 logger = structlog.get_logger(__name__)
@@ -222,11 +223,17 @@ async def _run_onboard_workflow(
     branch: str,
     skip_smoke: bool,
     agent_models: dict[str, str] | None = None,
+    proposal_id: str | None = None,
 ) -> None:
     """Background runner for onboard jobs — mirrors ``_run_qa_workflow``'s
     lifecycle (trace binding, status transitions) minus QA verdict logic:
     the onboard graph's own nodes decide success (config written to the
-    store) vs failure (rounds exhausted / infra error)."""
+    store) vs failure (rounds exhausted / infra error).
+
+    With ``proposal_id`` (propose mode, ADR 0019) success is a draft for a
+    person instead: it is stored on that setup proposal (``pending``) before
+    the job is marked completed, and a job that cannot store it fails. Every
+    other end marks the proposal ``failed`` with the job's reason."""
     from datetime import UTC, datetime
 
     import structlog.contextvars as cv
@@ -246,6 +253,8 @@ async def _run_onboard_workflow(
         # #348: ask the gate before the job is marked running — a refused
         # job never ran and must not carry a started_at.
         if await self._refuse_if_over_budget(job_id):
+            if proposal_id is not None:
+                await _fail_setup_proposal(self, proposal_id, job_id, None)
             return
 
         await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
@@ -265,6 +274,7 @@ async def _run_onboard_workflow(
             # smoke phase boots apps exactly like a QA sub-task would.
             "qa_active": True,
             "skip_smoke": skip_smoke,
+            "onboard_propose": proposal_id is not None,
             "onboard": {},
         }
         if agent_models:
@@ -283,6 +293,8 @@ async def _run_onboard_workflow(
 
         if interrupted:
             logger.warning("onboard_workflow_unexpected_interrupt", job_id=job_id)
+            if proposal_id is not None:
+                await _fail_setup_proposal(self, proposal_id, job_id, "onboard workflow interrupted unexpectedly")
             await self._jobs.update(
                 job_id,
                 status="failed",
@@ -295,7 +307,25 @@ async def _run_onboard_workflow(
             return
 
         ob = (final_state or {}).get("onboard") or {}
-        if ob.get("final_status") == "completed":
+        failure: str | None = None
+        if ob.get("final_status") != "completed":
+            failure = ob.get("failure_summary") or ob.get("last_error") or "onboard did not complete"
+            if proposal_id is not None:
+                await _fail_setup_proposal(self, proposal_id, job_id, failure, notes_md=ob.get("notes_md") or "")
+        elif proposal_id is not None:
+            try:
+                stored = await _setup_proposals(self).finish(
+                    proposal_id,
+                    status="pending",
+                    proposed_yaml=ob["qa_yaml_text"],
+                    notes_md=ob.get("notes_md") or "",
+                    smoke=ob.get("smoke"),
+                )
+                if not stored:
+                    raise LookupError(f"proposal {proposal_id} is no longer waiting for this run")
+            except Exception as exc:  # noqa: BLE001
+                failure = f"could not store the proposal: {exc}"
+        if failure is None:
             await self._jobs.update(
                 job_id,
                 status="completed",
@@ -307,7 +337,7 @@ async def _run_onboard_workflow(
             await self._jobs.update(
                 job_id,
                 status="failed",
-                error_message=(ob.get("failure_summary") or ob.get("last_error") or "onboard did not complete")[:4000],
+                error_message=failure[:4000],
                 error_code=ErrorCode.ONBOARD_FAILED.value,
                 finished_at=datetime.now(UTC),
             )
@@ -316,6 +346,8 @@ async def _run_onboard_workflow(
     except Exception as exc:  # noqa: BLE001
         logger.error("onboard_workflow_crashed", job_id=job_id, error=str(exc), exc_info=True)
         crash_code = classify_failure(exc=exc, stage="onboard").value
+        if proposal_id is not None:
+            await _fail_setup_proposal(self, proposal_id, job_id, f"onboard workflow crashed: {exc}")
         try:
             await self._jobs.update(
                 job_id,
@@ -331,6 +363,27 @@ async def _run_onboard_workflow(
     finally:
         if trace_id_bound:
             cv.unbind_contextvars("trace_id")
+
+
+def _setup_proposals(self: IssueExecutor) -> RepoSetupProposalsRepository:
+    if self._db is None:
+        raise RuntimeError("no database to store the setup proposal in")
+    return RepoSetupProposalsRepository(self._db)
+
+
+async def _fail_setup_proposal(
+    self: IssueExecutor, proposal_id: str, job_id: str, failure: str | None, *, notes_md: str = ""
+) -> None:
+    """Mark a propose-mode run's setup proposal failed (ADR 0019). ``failure``
+    None takes the reason the job already carries (a refused start). Best
+    effort: the job's failure stays the record, and its status still tells a
+    proposal left ``running`` apart from a live run."""
+    try:
+        if failure is None:
+            failure = str(((await self._jobs.get(job_id)) or {}).get("error_message") or "")
+        await _setup_proposals(self).finish(proposal_id, status="failed", failure=failure, notes_md=notes_md)
+    except Exception:  # noqa: BLE001
+        logger.warning("setup_proposal_not_marked_failed", job_id=job_id, proposal_id=proposal_id, exc_info=True)
 
 
 async def _heavy_tier_model(self: IssueExecutor) -> str:
@@ -1190,19 +1243,21 @@ async def _run_workflow(
         await self._announce_finished(job_id)
         if pr_url:
             await self._record_pr_opened(issue_id, job_id, pr_url)
-        await self._issues.update(issue_id, status="open")
-        await self._emit_audit(
-            self._db,
-            "issue.status_changed",
-            actor="system",
-            details={
-                "old_status": "triaging",
-                "new_status": "open",
-                "reason": f"Workflow failed: {exc}",
-            },
-            audit_log_path=self._audit_log_path,
-            issue_id=issue_id,
-        )
+        # No issue, no status change to record (see _handle_workflow_result).
+        if issue_id is not None:
+            await self._issues.update(issue_id, status="open")
+            await self._emit_audit(
+                self._db,
+                "issue.status_changed",
+                actor="system",
+                details={
+                    "old_status": "triaging",
+                    "new_status": "open",
+                    "reason": f"Workflow failed: {exc}",
+                },
+                audit_log_path=self._audit_log_path,
+                issue_id=issue_id,
+            )
 
         # Purge checkpoint state for failed jobs.
         from embry0.orchestration.checkpoint import purge_thread as _purge_thread_on_error

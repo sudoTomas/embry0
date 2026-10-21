@@ -33,7 +33,14 @@ export interface BuiltinIdentity { display_name: string; avatar: string; color: 
 
 export const BUILTIN_IDENTITY: Record<string, BuiltinIdentity> = {
   analysis: { avatar: "oracle", color: "violet", display_name: "Analysis", tagline: "Finds the pattern." },
+  "blast-radius": { avatar: "scout", color: "amber", display_name: "Blast Radius", tagline: "Finds what a change breaks beyond the diff." },
+  "comment-sicko": { avatar: "pirate", color: "cyan", display_name: "Comment Sicko", tagline: "Deletes the comments that do the code's job badly." },
+  "design-auditor": { avatar: "archmage", color: "gold", display_name: "Design Auditor", tagline: "Measures a frontend against its standard." },
   developer: { avatar: "smith", color: "amber", display_name: "Developer", tagline: "Forges the change." },
+  gardener: { avatar: "skiller", color: "emerald", display_name: "Gardener", tagline: "Pulls one weed per run, provably." },
+  how: { avatar: "bard", color: "sky", display_name: "How", tagline: "Explains a subsystem before you change it." },
+  interrogator: { avatar: "rogue", color: "rose", display_name: "Interrogator", tagline: "Four angles on a diff, then a verdict." },
+  kintsugi: { avatar: "monk", color: "gold", display_name: "Kintsugi", tagline: "Finds every crack, proves it, writes the seal." },
   onboarding: { avatar: "herald", color: "sky", display_name: "Onboarding", tagline: "Announces a new repository." },
   ops: { avatar: "engineer", color: "amber", display_name: "Ops", tagline: "Keeps it running." },
   "pr-reviewer": { avatar: "arbiter", color: "cyan", display_name: "PR Reviewer", tagline: "Weighs a pull request." },
@@ -41,6 +48,7 @@ export const BUILTIN_IDENTITY: Record<string, BuiltinIdentity> = {
   research: { avatar: "scholar", color: "gold", display_name: "Research", tagline: "Reads everything first." },
   review: { avatar: "warden", color: "rose", display_name: "Reviewer", tagline: "Guards the gate." },
   triage: { avatar: "seer", color: "violet", display_name: "Triage", tagline: "Reads the issue, sets the course." },
+  why: { avatar: "mystic", color: "violet", display_name: "Why", tagline: "Finds the forces that shaped the code." },
 };
 
 /** gold is --color-primary; the rest are the Tailwind 400 shades (index.css theme). */

@@ -31,17 +31,16 @@ _MASK_GLYPHS = "•" * 8
 
 
 def partial_mask(plaintext: str) -> str:
-    """RAV-1294: recognisable-but-safe preview of a secret value.
+    """RAV-1294: a preview that tells two secrets apart without giving one away.
 
-    Rules from the ticket: values under 8 chars stay fully masked; at least
-    4 chars are always masked (so 4+4 visible needs length >= 12, shorter
-    values show 2+2); the mask run is fixed-length so previews don't leak
-    the value's length.
+    Every caller that can list env vars sees it, read keys included, so it
+    shows at most the last 2 characters, and only of a secret of 12 or more;
+    anything shorter is all glyphs. The glyph run is fixed-length so a
+    preview does not leak the value's length.
     """
-    if len(plaintext) < 8:
+    if len(plaintext) < 12:
         return _MASK_GLYPHS
-    show = 4 if len(plaintext) >= 12 else 2
-    return f"{plaintext[:show]}{_MASK_GLYPHS}{plaintext[-show:]}"
+    return f"{_MASK_GLYPHS}{plaintext[-2:]}"
 
 
 def _restore_unchanged_secrets(incoming: list[dict[str, Any]], stored: list[dict[str, Any]]) -> list[dict[str, Any]]:
