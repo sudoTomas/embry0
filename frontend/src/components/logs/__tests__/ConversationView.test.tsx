@@ -4,6 +4,11 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 vi.mock("@/hooks/useAgents", () => ({
   useAgents: () => ({ data: [{ type: "developer", display_name: "Developer", avatar: "smith", color: "amber", tagline: "" }], isLoading: false }),
 }));
+vi.mock("@/lib/utils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/utils")>();
+  return { ...actual, highlightJson: vi.fn(actual.highlightJson) };
+});
+import { highlightJson } from "@/lib/utils";
 
 import { ConversationView } from "../ConversationView";
 import { loadFixture } from "@/lib/__tests__/fixtures";
@@ -29,6 +34,15 @@ describe("ConversationView", () => {
     expect(screen.queryByText("Run 2 · developer · developer"), "no divider before the developer run").not.toBeNull();
     expect(screen.queryByText("Run 3 · developer · developer"), "no divider before the retried developer run").not.toBeNull();
     expect(screen.queryByText("Run 4 · review · reviewer"), "no divider before the review run").not.toBeNull();
+  });
+
+  it("a collapsed tool call does not re-highlight its input on a re-render", () => {
+    const events = loadFixture("issue-to-pr");
+    const { rerender } = render(<ConversationView events={events} />);
+    const afterMount = vi.mocked(highlightJson).mock.calls.length;
+    expect(afterMount, "the fixture carries tool calls").toBeGreaterThan(0);
+    rerender(<ConversationView events={events} onFullTranscript={() => {}} />);
+    expect(vi.mocked(highlightJson).mock.calls.length, "the page re-renders on every stream batch; a collapsed block must do no work").toBe(afterMount);
   });
 
   it("pre-contract job: the tool call shows its summary", () => {

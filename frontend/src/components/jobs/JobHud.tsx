@@ -1,8 +1,10 @@
 import { formatCost } from "@/lib/utils";
+import { useElapsedTime } from "@/hooks/useElapsedTime";
 
 interface JobHudProps {
   status: string;
-  elapsed: string;
+  startedAt: string | null;
+  finishedAt: string | null;
   costUsd: number;
   turns: number;
   tokensIn: number;
@@ -29,9 +31,11 @@ const LEVEL_CLASS: Record<Level, string> = {
 /**
  * The HUD bar (spec 3.5): status, elapsed, cost, turns, tokens in and out in
  * the pixel face, and a budget meter when the job has a budget. Wraps to two
- * rows on a phone.
+ * rows on a phone. The elapsed ticker lives here, so its once-a-second
+ * re-render stays inside the bar instead of re-rendering the whole page.
  */
-export function JobHud({ status, elapsed, costUsd, turns, tokensIn, tokensOut, budgetUsd }: JobHudProps) {
+export function JobHud({ status, startedAt, finishedAt, costUsd, turns, tokensIn, tokensOut, budgetUsd }: JobHudProps) {
+  const elapsed = useElapsedTime(startedAt, finishedAt);
   const hasBudget = typeof budgetUsd === "number" && budgetUsd > 0;
   const level = hasBudget ? levelOf(costUsd, budgetUsd) : "ok";
   const pct = hasBudget ? Math.min(100, Math.round((costUsd / budgetUsd) * 100)) : 0;

@@ -12,7 +12,6 @@ import { useJobInputs } from "@/hooks/useInputs";
 import { useTraces } from "@/hooks/useTraces";
 import { useJobLogs } from "@/hooks/useJobLogs";
 import { useAgentStates } from "@/hooks/useAgentStates";
-import { useElapsedTime } from "@/hooks/useElapsedTime";
 import { useQaAttempts } from "@/hooks/useQaResults";
 import { useJobVerification } from "@/hooks/useJobVerification";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
@@ -132,7 +131,6 @@ export function JobDetailPage() {
     if (rose || ended) refetchVerification();
   }, [verificationSeen, live, refetchVerification]);
 
-  const elapsed = useElapsedTime(job?.started_at ?? null, job?.finished_at ?? null);
   // Cost sources disagree by design: the stream-derived sums only cover agents
   // whose events this viewer received; job.total_cost_usd is the persisted
   // truth and trails only the running agent. Take whichever is highest.
@@ -196,7 +194,7 @@ export function JobDetailPage() {
       <PartyStrip agents={agents} selectedRunId={selectedRunId} onSelect={setSelectedRunId} />
 
       {/* 3. HUD */}
-      <JobHud status={job.status} elapsed={elapsed} costUsd={displayCost} turns={latestTurns} tokensIn={latestTokensIn} tokensOut={latestTokensOut} budgetUsd={budgetUsd} />
+      <JobHud status={job.status} startedAt={job.started_at ?? null} finishedAt={job.finished_at ?? null} costUsd={displayCost} turns={latestTurns} tokensIn={latestTokensIn} tokensOut={latestTokensOut} budgetUsd={budgetUsd} />
 
       {/* 4. Banners */}
       {job.status === "completed" && (
