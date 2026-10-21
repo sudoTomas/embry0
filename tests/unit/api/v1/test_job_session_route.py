@@ -1,14 +1,17 @@
 """GET /jobs/{id}/agents/{type}/session serves the stored transcript, redacted (spec 3.6)."""
 
+import os
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from embry0.api.app import create_app
+from embry0.api.deps import bust_api_key_cache
 from embry0.config import Embry0Config
 from embry0.safety.redaction import register_known_secrets, unregister_known_secrets
+from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 
 pytestmark = pytest.mark.asyncio
 
@@ -146,3 +149,74 @@ async def test_no_row_is_404(app):
     resp = await _get(app, "job-s1", "reviewer")
     assert resp.status_code == 404, resp.text
     assert resp.json()["detail"] == "No stored session for this agent"
+
+
+# ----- Tier: the stored session is operator-tier, the verification row read-tier -----
+#
+# A transcript holds what the agent saw inside the sandbox, scrubbed after the
+# fact; the verification row is a verdict. A read key may read the second and
+# not the first.
+
+KEYS = {"emb_read": "read", "emb_merge": "merge", "emb_operate": "operate", "emb_admin": "admin"}
+
+
+def _key_row(token: str, scope: str) -> ApiKeyRow:
+    return ApiKeyRow(
+        id=f"key-{scope}-000000",
+        user_id=None,
+        name=f"{scope}-key",
+        prefix=token[:12],
+        scope=scope,
+        created_by="tester",
+        created_at=None,
+        expires_at=None,
+        last_used_at=None,
+        revoked_at=None,
+    )
+
+
+@pytest.fixture
+def tiered_app(app):
+    """The same app with real bearer auth: the master key and one DB key per scope."""
+    with patch.dict(os.environ, {}, clear=True):
+        app.state.config = Embry0Config(_env_file=None, auth_dev_mode=False, api_key="master-key")
+    rows = {hash_token(token): _key_row(token, scope) for token, scope in KEYS.items()}
+    app.state.api_keys_repo = MagicMock()
+    app.state.api_keys_repo.get_by_hash = AsyncMock(side_effect=lambda h: rows.get(h))
+    app.state.api_keys_repo.touch_last_used = AsyncMock()
+    app.state.job_verifications_repo = MagicMock()
+    app.state.job_verifications_repo.get = AsyncMock(
+        return_value={"job_id": "job-s1", "report": {}, "gate_verdict": "passed"}
+    )
+    bust_api_key_cache()
+    yield app
+    bust_api_key_cache()
+
+
+async def _get_as(app, token: str, path: str):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        return await client.get(path, headers={"Authorization": f"Bearer {token}"})
+
+
+@pytest.mark.parametrize("token", ["emb_read", "emb_merge"])
+async def test_a_key_below_operator_cannot_read_a_stored_session(tiered_app, token):
+    resp = await _get_as(tiered_app, token, "/api/v1/jobs/job-s1/agents/developer/session")
+    assert resp.status_code == 403, f"a {KEYS[token]} key read the stored session: {resp.status_code} {resp.text}"
+    assert "operator" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("token", ["emb_operate", "emb_admin", "master-key"])
+async def test_an_operator_or_admin_key_reads_a_stored_session(tiered_app, token):
+    resp = await _get_as(tiered_app, token, "/api/v1/jobs/job-s1/agents/developer/session")
+    assert resp.status_code == 200, resp.text
+
+
+async def test_no_credentials_is_401_not_403(tiered_app):
+    async with AsyncClient(transport=ASGITransport(app=tiered_app), base_url="http://test") as client:
+        resp = await client.get("/api/v1/jobs/job-s1/agents/developer/session")
+    assert resp.status_code == 401, resp.text
+
+
+async def test_the_verification_row_stays_read_tier(tiered_app):
+    resp = await _get_as(tiered_app, "emb_read", "/api/v1/jobs/job-s1/verification")
+    assert resp.status_code == 200, f"a read key must still read the verification row: {resp.status_code} {resp.text}"

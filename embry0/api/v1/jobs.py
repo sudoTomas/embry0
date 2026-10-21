@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from embry0.api.deps import get_jobs_repo, request_actor
+from embry0.api.deps import get_jobs_repo, request_actor, require_operator
 from embry0.api.repo_allowlist import enforce_repo_allowlist, refusal_detail
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
 from embry0.api.schemas.jobs import JobResumeRequest
@@ -417,13 +417,15 @@ async def _job_scrub_values(request: Request, job_id: str) -> list[str]:
     return secret_env_values(environ, extra=secret_typed)
 
 
-@router.get("/jobs/{job_id}/agents/{agent_type}/session")
+@router.get("/jobs/{job_id}/agents/{agent_type}/session", dependencies=[require_operator])
 async def get_agent_session(job_id: str, agent_type: str, request: Request) -> Response:
     """The stored conversation of one agent for this job (``agent_sessions``
     is one row per job and agent type, its ``messages`` merged across the
     agent's runs), every message passed through :func:`redact_event`. 204 when
     the row holds only a CLI ``session_blob`` (not exposed), 404 when there is
-    no row."""
+    no row. Operator tier: a transcript shows what the agent saw in the
+    sandbox, scrubbed after the fact, where the event stream was scrubbed as
+    it was written; a read key gets 403."""
     repo = getattr(request.app.state, "agent_sessions_repo", None)
     row = await repo.get(job_id, agent_type) if repo is not None else None
     if row is None:

@@ -17,7 +17,7 @@
 - Rule 9 of `frontend/src/components/divine/CLAUDE.md`: one sprite per card or node, stepped no faster than two frames per second, gated by `prefers-reduced-motion`, never a second animation on it. This plan closes plan 1's accepted exception: the expanded agent card, the tool stream and the tool cards lose their `animate-pulse` and `animate-bounce` indicators.
 - `frontend/src/lib/agentIdentity.ts` is the only identity source; sprites come from `@/components/roster` (`Sprite`, `stateFor`, `stateForNode`) and `@/components/agents/AgentAvatar`.
 - Redaction of transcripts goes through `redact_event` in `embry0/safety/redaction.py` with the process's secret values (`secret_env_values()`, a superset of the spec's `known_secret_values()`: it adds this process's secret-looking environment variables, which the registry may not hold yet).
-- The two routes carry the router's default authentication (any API key or an operator+ session) and no admin gate; a `read`-scope key may read them.
+- The verification route carries the router's default authentication (any API key or an operator+ session), so a `read`-scope key may read it. The session route is operator-tier (`require_operator`: an operate- or admin-scope key, the master key, or an operator+ session; a `read` or `merge` key gets 403): a transcript shows what the agent saw in the sandbox, scrubbed after the fact, where the event stream was scrubbed as it was written. Neither route has an admin gate.
 - `docs/contracts/events.json`, `frontend/src/lib/types/events.ts` and the fixtures under `tests/fixtures/job-events/` do not change. Tests that need a `truncated`, `verification_result` or `agent_paused_for_input` event append it to a loaded fixture in the test.
 - Vendor-neutral naming: no customer, deployment, host or person name anywhere in the tree (`CONTRIBUTING.md`); screenshots of a deployment stay on the operator's machine.
 - Commits follow `.claude/skills/commit-standard` and end with `Claude-Session: https://claude.ai/code/session_011MYiGJuebTGdHFAS8GWusQ`. No AI co-author footers.
@@ -63,7 +63,7 @@ Tasks 2 and 3 both add to `components/jobs/` and `components/logs/` but never th
 
 **Interfaces:**
 - Consumes: `JobVerificationsRepository.get(job_id) -> dict | None` (`embry0/storage/repositories/job_verifications.py:65`, columns `job_id, repo, mode, tier, gate_verdict, blocking, browser_qa, human_merge_only, base_sha, head_sha, report, published_at, created_at, updated_at`); `AgentSessionsRepository.get(job_id, agent_type) -> dict | None` (`embry0/storage/repositories/agent_sessions.py:50`, `SELECT *`: `id, job_id, agent_type, mode, session_id, messages, session_blob, last_turn_at, created_at`); `redact_event(event, known_values)` and `secret_env_values()` from `embry0/safety/redaction.py`.
-- Produces: `GET /api/v1/jobs/{job_id}/verification` → 200 the row as JSON (`report` always an object), 404 `{"detail": "No verification for this job"}`; `GET /api/v1/jobs/{job_id}/agents/{agent_type}/session` → 200 `{"job_id", "agent_type", "mode", "session_id", "last_turn_at", "messages": [...]}` with every message passed through `redact_event`, 204 (no body) when the row holds only a `session_blob`, 404 `{"detail": "No stored session for this agent"}` when no row. Task 3's `fetchJobVerification` and `fetchAgentSession` read exactly these.
+- Produces: `GET /api/v1/jobs/{job_id}/verification` → 200 the row as JSON (`report` always an object), 404 `{"detail": "No verification for this job"}`; `GET /api/v1/jobs/{job_id}/agents/{agent_type}/session` → 200 `{"job_id", "agent_type", "mode", "session_id", "last_turn_at", "messages": [...]}` with every message passed through `redact_event`, 204 (no body) when the row holds only a `session_blob`, 404 `{"detail": "No stored session for this agent"}` when no row; the verification route is read-tier and the session route operator-tier (403 for a `read` or `merge` key). Task 3's `fetchJobVerification` and `fetchAgentSession` read exactly these.
 
 - [ ] **Step 1: Write the failing verification route tests**
 
@@ -305,11 +305,13 @@ async def get_job_verification(job_id: str, request: Request) -> dict[str, Any]:
     return row
 
 
-@router.get("/jobs/{job_id}/agents/{agent_type}/session")
+@router.get("/jobs/{job_id}/agents/{agent_type}/session", dependencies=[require_operator])
 async def get_agent_session(job_id: str, agent_type: str, request: Request) -> Response:
-    """The stored conversation of one agent run (``agent_sessions.messages``),
-    every message passed through :func:`redact_event`. 204 when the row holds
-    only a CLI ``session_blob`` (not exposed), 404 when there is no row."""
+    """The stored conversation of one agent for this job (``agent_sessions``
+    is one row per job and agent type, merged across the agent's runs), every
+    message passed through :func:`redact_event`. 204 when the row holds only a
+    CLI ``session_blob`` (not exposed), 404 when there is no row. Operator
+    tier: a read key gets 403."""
     repo = getattr(request.app.state, "agent_sessions_repo", None)
     row = await repo.get(job_id, agent_type) if repo is not None else None
     if row is None:

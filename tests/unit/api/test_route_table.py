@@ -15,7 +15,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.testclient import TestClient
 
 from embry0.api.app import create_app
-from embry0.api.deps import _admin_dependency, _auth_dependency
+from embry0.api.deps import _admin_dependency, _auth_dependency, _operator_dependency
 from embry0.api.route_table import route_template
 from tests.fixtures.routes import ServedRoute, app_routes
 
@@ -97,6 +97,16 @@ def test_every_skill_write_is_admin_and_the_skill_reads_are_not() -> None:
             assert _auth_dependency in gates, f"GET {route.path} must still need an authenticated caller"
             reads.discard(route.path)
     assert reads == set(), f"read routes missing from the table: {reads}"
+
+
+def test_the_stored_session_is_operator_tier_and_the_verification_row_read_tier() -> None:
+    """A transcript is what the agent saw in the sandbox, scrubbed after the fact (game UI spec 3.6)."""
+    routes = {route.path: route for route in app_routes(create_app()) if route.is_api_route}
+    session = routes["/api/v1/jobs/{job_id}/agents/{agent_type}/session"]
+    assert _operator_dependency in _gates(session), "GET .../session must carry the operator gate"
+    verification = routes["/api/v1/jobs/{job_id}/verification"]
+    assert _operator_dependency not in _gates(verification), "GET .../verification stays read tier"
+    assert _auth_dependency in _gates(verification)
 
 
 def _template_app() -> FastAPI:

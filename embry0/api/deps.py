@@ -283,6 +283,29 @@ async def _admin_dependency(
     raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
 
 
+async def _operator_dependency(
+    request: Request,
+    authorization: str = Header(default=""),
+) -> None:
+    """Operator-tier gate: an operate- or admin-scope key (or the master key)
+    OR an SSO session carrying embry0-operator or embry0-admin. Applied on top
+    of require_auth to reads that show more than the event stream did, such as
+    an agent's stored session; a read or merge key gets 403. Skipped only under
+    AUTH_DEV_MODE, as require_auth is."""
+    config = request.app.state.config
+    if config.auth_dev_mode:
+        return
+    if authorization:
+        principal = await _bearer_principal_or_401(request, authorization)
+        if principal.kind == "master" or principal.tier in (TIER_OPERATOR, TIER_ADMIN):
+            return
+        raise HTTPException(status_code=403, detail="operate-scope key or embry0-operator role required")
+    # A session that resolves is operator or admin; one without a role is 403 inside.
+    if await _resolve_session_auth(request) is not None:
+        return
+    raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+
 def unidentified_caller_tier(request: Request) -> str:
     """Tier of a request that reached a handler with no session and no principal.
 
@@ -346,6 +369,8 @@ async def authenticate_stream(request: Request, scope: str, token: str | None) -
 
 # Stricter dependency for admin-tier operations.
 require_admin = Depends(_admin_dependency)
+# Operator-tier reads: an operate+ key or an operator+ session, never a read or merge key.
+require_operator = Depends(_operator_dependency)
 
 
 def get_config(request: Request) -> Any:

@@ -65,10 +65,13 @@ curl http://localhost:8200/api/v1/jobs/{job_id}/artifacts/screenshots/latest
 curl "http://localhost:8200/api/v1/jobs/{job_id}/artifacts/logs/gateway?follow=true"
 
 # The job's verification result (docs/verification.md): 404 when the verify node never ran.
+# Read tier, like the rest of the job's routes.
 curl http://localhost:8200/api/v1/jobs/{job_id}/verification
 
-# One agent's stored conversation for the job, secrets redacted: 204 when only a CLI
-# session blob is stored, 404 when the agent kept no session.
+# One agent's stored conversation for the job (one row per job and agent type,
+# merged across the agent's runs), secrets redacted: 204 when only a CLI session
+# blob is stored, 404 when the agent kept no session. Needs an operator or admin
+# key, or an operator session; a read key gets 403.
 curl http://localhost:8200/api/v1/jobs/{job_id}/agents/developer/session
 ```
 

@@ -20,7 +20,9 @@ interface TranscriptDrawerProps {
  * open and returns to the opener on close (plan 3's Dialog brings the trap).
  */
 export function TranscriptDrawer({ open, onClose, jobId, agentType, displayName }: TranscriptDrawerProps) {
-  const { data, isLoading, isError } = useAgentSession(jobId, agentType, open);
+  const { data, isLoading, isError, error } = useAgentSession(jobId, agentType, open);
+  // The route is operator-tier (docs/api.md): a read key gets 403.
+  const forbidden = isError && (error as { response?: { status?: number } } | null)?.response?.status === 403;
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -51,7 +53,8 @@ export function TranscriptDrawer({ open, onClose, jobId, agentType, displayName 
           <button ref={closeRef} type="button" onClick={onClose} aria-label="Close" className="ml-auto rounded p-1 hover:bg-muted"><X className="h-4 w-4" /></button>
         </div>
         {isLoading && <p className="text-sm text-muted-foreground">Loading the stored session…</p>}
-        {isError && <p className="text-sm text-destructive">The stored session could not be loaded.</p>}
+        {forbidden && <p className="text-sm text-destructive">Operator access is needed to read stored sessions.</p>}
+        {isError && !forbidden && <p className="text-sm text-destructive">The stored session could not be loaded.</p>}
         {!isLoading && !isError && !data && <p className="text-sm text-muted-foreground">{`No stored session of ${displayName} for this job.`}</p>}
         {data?.last_turn_at && <p className="mb-2 text-xs text-muted-foreground">Last turn {new Date(data.last_turn_at).toLocaleString()}</p>}
         {data && <Messages session={data} />}

@@ -60,6 +60,12 @@ describe("TranscriptDrawer", () => {
     expect(await screen.findByText("No stored session of Developer for this job.")).toBeTruthy();
   });
 
+  it("says that operator access is needed when the route answers 403", async () => {
+    mockFetch.mockRejectedValue({ response: { status: 403, data: { detail: "operate-scope key or embry0-operator role required" } } });
+    mount();
+    expect(await screen.findByText("Operator access is needed to read stored sessions."), "a 403 must name the tier, not a generic load error").toBeTruthy();
+  });
+
   it("moves focus to the close button on open and gives it back on close", async () => {
     mockFetch.mockResolvedValue(SESSION);
     const opener = document.createElement("button");
