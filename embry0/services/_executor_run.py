@@ -572,8 +572,16 @@ async def _load_merged_env_vars(self: IssueExecutor, repo_name: str, job_id: str
                 keys=failed_keys,
                 msg="Encrypted values couldn't be decrypted with the current secret key. Those vars will NOT be injected into the sandbox.",
             )
+        # var_type rides along so a reader can tell the secret rows apart
+        # (the session route scrubs transcripts with them); the sandbox
+        # injection reads key, value and scope only.
         env_vars = [
-            {"key": v["key"], "value": v["value"], "scope": v.get("scope", "app")}
+            {
+                "key": v["key"],
+                "value": v["value"],
+                "scope": v.get("scope", "app"),
+                "var_type": v.get("var_type", "config"),
+            }
             for v in decrypted
             if v["value"] != "[DECRYPTION_FAILED]"
         ]

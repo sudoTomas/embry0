@@ -12,7 +12,12 @@ from embry0.safety.redaction import register_known_secrets, unregister_known_sec
 
 pytestmark = pytest.mark.asyncio
 
-PLANTED = "sk-ant-planted-secret-value-0123456789abcdef"
+# Opaque on purpose: no pattern in redaction.py matches these, so only the
+# known-values path can scrub them. One is registered (a credential-registry
+# secret); the others arrive as the job's env vars through the mocked loader.
+PLANTED = "Zq9vLx2mPw7rTn4KbHs8"
+REPO_SECRET = "Yt3nQw8vLp2rMx6KdHs9Fb"
+REPO_TOKEN_NAMED = "Hq5wRt7yUp3iLk9oZx2cVb"
 
 ROW = {
     "id": "sess-1",
@@ -40,8 +45,21 @@ ROW = {
 def app():
     app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
     app.state.jobs_repo = MagicMock()
+    app.state.jobs_repo.get = AsyncMock(return_value={"job_id": "job-s1", "repo": "owner/repo", "status": "completed"})
     app.state.agent_sessions_repo = MagicMock()
     app.state.agent_sessions_repo.get = AsyncMock(return_value=dict(ROW))
+    # The orchestrator's loader of a job's merged, decrypted env vars (the rows
+    # the sandbox had in its environment). OPAQUE_VALUE is a secret-typed var
+    # whose name no heuristic flags; APP_TOKEN is a config var a secret-looking
+    # name flags, as the sandbox's own scrub would.
+    app.state.issue_executor = MagicMock()
+    app.state.issue_executor._load_merged_env_vars = AsyncMock(
+        return_value=[
+            {"key": "OPAQUE_VALUE", "value": REPO_SECRET, "scope": "app", "var_type": "secret"},
+            {"key": "APP_TOKEN", "value": REPO_TOKEN_NAMED, "scope": "app", "var_type": "config"},
+            {"key": "MODE", "value": "dev", "scope": "app", "var_type": "config"},
+        ]
+    )
     return app
 
 
@@ -67,6 +85,45 @@ async def test_messages_are_served_with_the_planted_secret_redacted(app, planted
     assert "***REDACTED***" in body["messages"][1]["content"][0]["text"]
     assert "***REDACTED***" in body["messages"][1]["content"][1]["input"]["command"]
     app.state.agent_sessions_repo.get.assert_awaited_once_with("job-s1", "developer")
+
+
+async def test_the_jobs_secret_env_vars_are_redacted_like_the_sandbox_did(app):
+    """The sandbox scrubbed the stream with the job's decrypted env vars in its
+    environment; the stored messages never passed through that, so the route
+    rebuilds the same environment from the orchestrator's loader."""
+    app.state.agent_sessions_repo.get = AsyncMock(
+        return_value={
+            **ROW,
+            "messages": [
+                {"role": "assistant", "content": f"Connecting with {REPO_SECRET} and {REPO_TOKEN_NAMED} in mode dev"},
+            ],
+        }
+    )
+    resp = await _get(app, "job-s1", "developer")
+    assert resp.status_code == 200, resp.text
+    text = resp.json()["messages"][0]["content"]
+    assert REPO_SECRET not in text, "the job's secret-typed env var reached the client"
+    assert REPO_TOKEN_NAMED not in text, "an env var with a secret-looking name reached the client"
+    assert text == "Connecting with ***REDACTED*** and ***REDACTED*** in mode dev"
+    app.state.issue_executor._load_merged_env_vars.assert_awaited_once_with("owner/repo", "job-s1")
+
+
+async def test_a_plain_string_message_is_redacted_too(app, planted_secret):
+    app.state.agent_sessions_repo.get = AsyncMock(
+        return_value={**ROW, "messages": [f"system: token {planted_secret} in use", {"role": "user", "content": "hi"}]}
+    )
+    resp = await _get(app, "job-s1", "developer")
+    assert resp.status_code == 200, resp.text
+    assert planted_secret not in resp.text, "a non-dict message reached the client unredacted"
+    assert resp.json()["messages"][0] == "system: token ***REDACTED*** in use"
+
+
+async def test_an_unresolved_job_still_redacts_with_the_known_secrets(app, planted_secret):
+    app.state.jobs_repo.get = AsyncMock(return_value=None)
+    resp = await _get(app, "job-s1", "developer")
+    assert resp.status_code == 200, resp.text
+    assert planted_secret not in resp.text
+    app.state.issue_executor._load_merged_env_vars.assert_not_awaited()
 
 
 async def test_messages_stored_as_text_are_decoded(app):
