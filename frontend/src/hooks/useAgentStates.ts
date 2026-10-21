@@ -81,17 +81,26 @@ export function useAgentStates(
   events: LogEvent[],
   jobStatus?: string,
   graph?: PipelineGraph | null,
-): { agents: AgentState[]; interruptData: InterruptData | null; prUrl: string | null } {
+): { agents: AgentState[]; interruptData: InterruptData | null; prUrl: string | null; pausedForInput: boolean } {
   return useMemo(() => {
     const runs = new Map<string, AgentState>();
     const latestRunByNode = new Map<string, string>();
     const attemptByNode = new Map<string, number>();
     let lastStartedNode = "";
     let prUrl: string | null = null;
+    let pausedForInput = false;
     let interruptData: InterruptData | null = null;
 
     events.forEach((event, index) => {
       const node = eventNode(event);
+
+      if (event.type === "agent_paused_for_input") {
+        pausedForInput = true;
+        return;
+      }
+      if (event.type === "agent_started" || event.type === "node_completed" || event.type === "agent_completed" || event.type === "job_finished") {
+        pausedForInput = false;
+      }
 
       // Job-level events: they belong to no run.
       if (event.type === "pr_created") {
@@ -253,6 +262,6 @@ export function useAgentStates(
       }
     }
 
-    return { agents, interruptData, prUrl };
+    return { agents, interruptData, prUrl, pausedForInput };
   }, [events, jobStatus, graph]);
 }
