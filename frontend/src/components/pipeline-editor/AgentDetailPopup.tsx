@@ -631,10 +631,10 @@ function EditMode({
           />
         </div>
         <div>
-          <FieldLabel htmlFor="adp-skills-add">Added</FieldLabel>
+          <FieldLabel htmlFor={`${fieldId}-skills-add`}>Added</FieldLabel>
           <div data-testid="skills-added">
             <SkillPicker
-              id="adp-skills-add"
+              id={`${fieldId}-skills-add`}
               value={delta.add}
               onChange={skillActions.setAdded}
               catalog={catalog}
