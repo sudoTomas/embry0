@@ -1,9 +1,11 @@
 """Jobs API — create, list, get, cancel jobs."""
 
+import json
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from embry0.api.deps import get_jobs_repo, request_actor
@@ -11,6 +13,7 @@ from embry0.api.repo_allowlist import enforce_repo_allowlist, refusal_detail
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
 from embry0.api.schemas.jobs import JobResumeRequest
 from embry0.audit.helpers import emit_audit
+from embry0.safety.redaction import redact_event, secret_env_values
 from embry0.services.answer_recorder import record_answer
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.repos import UnregisteredRepoError
@@ -353,6 +356,56 @@ async def get_job_log_events(
                 payload = {**payload, "event_seq": row_id}
             result.append(payload)
     return {"events": result, "next_since_seq": next_since_seq, "has_more": has_more}
+
+
+def _as_object(value: Any) -> Any:
+    """A jsonb column as the dashboard expects it: asyncpg hands it back decoded
+    when the pool has a codec and as text when it does not."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
+
+
+@router.get("/jobs/{job_id}/verification")
+async def get_job_verification(job_id: str, request: Request) -> dict[str, Any]:
+    """The job's verification result (docs/verification.md, "The result"): the
+    ``job_verifications`` row the verify node wrote, 404 when the job has none."""
+    repo = getattr(request.app.state, "job_verifications_repo", None)
+    row = await repo.get(job_id) if repo is not None else None
+    if row is None:
+        raise HTTPException(status_code=404, detail="No verification for this job")
+    row = dict(row)
+    row["report"] = _as_object(row.get("report"))
+    return row
+
+
+@router.get("/jobs/{job_id}/agents/{agent_type}/session")
+async def get_agent_session(job_id: str, agent_type: str, request: Request) -> Response:
+    """The stored conversation of one agent run (``agent_sessions.messages``),
+    every message passed through :func:`redact_event`. 204 when the row holds
+    only a CLI ``session_blob`` (not exposed), 404 when there is no row."""
+    repo = getattr(request.app.state, "agent_sessions_repo", None)
+    row = await repo.get(job_id, agent_type) if repo is not None else None
+    if row is None:
+        raise HTTPException(status_code=404, detail="No stored session for this agent")
+    messages = _as_object(row.get("messages"))
+    if not messages:
+        return Response(status_code=204)
+    known = secret_env_values()
+    last_turn_at = row.get("last_turn_at")
+    return JSONResponse(
+        {
+            "job_id": row.get("job_id", job_id),
+            "agent_type": row.get("agent_type", agent_type),
+            "mode": row.get("mode"),
+            "session_id": row.get("session_id"),
+            "last_turn_at": last_turn_at.isoformat() if hasattr(last_turn_at, "isoformat") else last_turn_at,
+            "messages": [redact_event(m, known) if isinstance(m, dict) else m for m in messages],
+        }
+    )
 
 
 @router.post("/jobs/{job_id}/events-token")
