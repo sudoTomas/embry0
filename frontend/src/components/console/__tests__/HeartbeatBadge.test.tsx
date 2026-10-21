@@ -38,6 +38,14 @@ describe("HeartbeatBadge", () => {
     expect(screen.getByTestId("heartbeat-badge")).toHaveTextContent("OFFLINE");
   });
 
+  it("says it is connecting until the first poll answers, not OFFLINE", () => {
+    render(<HeartbeatBadge lastUpdatedAt={null} connecting />);
+    const badge = screen.getByTestId("heartbeat-badge");
+    expect(badge).toHaveTextContent("Connecting…");
+    expect(badge).not.toHaveTextContent("OFFLINE");
+    expect(badge.querySelector(".bg-destructive")).toBeNull();
+  });
+
   it("shows OFFLINE before the first successful poll", () => {
     render(<HeartbeatBadge lastUpdatedAt={null} />);
     expect(screen.getByTestId("heartbeat-badge")).toHaveTextContent("OFFLINE");

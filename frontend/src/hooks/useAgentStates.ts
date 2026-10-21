@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import type { LogEvent, PipelineGraph } from "@/lib/types";
 import { eventNode } from "@/lib/wire";
 import { isSuccessfulTerminal, isTerminalStatus } from "@/lib/jobStatus";
-import { deriveNodeStates, physicalOf } from "@/lib/pipeline-live";
+import { deriveNodeStates, nodeCompletedFailed, physicalOf } from "@/lib/pipeline-live";
 
 export type AgentStatus = "pending" | "running" | "completed" | "failed";
 
@@ -139,15 +139,23 @@ export function useAgentStates(
         return;
       }
 
-      const key = event.run_id ?? latestRunByNode.get(node);
+      // A pre-contract agent_completed carries neither run_id nor node, like
+      // its agent_started. A failed one closes the run of the node that last
+      // started, so the failure shows; a clean one adds nothing the node's own
+      // rows do not already say, and stays out as it always has.
+      const legacyFailure = event.type === "agent_completed" && !event.run_id && event.is_error === true;
+      const runNode = node || (legacyFailure ? lastStartedNode : "");
+      const key = event.run_id ?? latestRunByNode.get(runNode);
       const agent = key ? runs.get(key) : undefined;
       if (!agent) return;
       agent.events.push(event);
 
       switch (event.type) {
         case "node_completed":
-          if (agent.status === "running") agent.status = "completed";
-          if (event.action) agent.summary = event.action;
+          if (nodeCompletedFailed(event)) agent.status = "failed";
+          else if (agent.status === "running") agent.status = "completed";
+          // A failed run keeps its error message; the action ("failed") says less.
+          if (event.action && !(agent.status === "failed" && agent.summary)) agent.summary = event.action;
           if (agent.durationMs === 0 && agent.startedAt && event.timestamp) {
             agent.durationMs = new Date(event.timestamp).getTime() - new Date(agent.startedAt).getTime();
           }

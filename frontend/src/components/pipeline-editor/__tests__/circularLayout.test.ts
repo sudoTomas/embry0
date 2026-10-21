@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Edge, Node } from "@xyflow/react";
+import { deserializeGraph, injectStartEndNodes } from "@/lib/graph-utils";
+import type { PipelineGraph } from "@/lib/types";
+import { autoLayout } from "../autoLayout";
 import { circularLayout, canonicalCycleDetected, shouldUseCircular, CIRCLE_RADIUS } from "../circularLayout";
 
 const node = (id: string, agentType: string): Node => ({
@@ -7,6 +10,15 @@ const node = (id: string, agentType: string): Node => ({
   position: { x: 0, y: 0 },
   data: { agentType, label: id },
   type: "agentNode",
+});
+
+/** START or END as the canvas makes them: one node type, told apart by role. */
+const sentinel = (id: string, nodeRole: "start" | "end"): Node => ({
+  id,
+  position: { x: 0, y: 0 },
+  data: { nodeRole },
+  type: "startEndNode",
+  deletable: false,
 });
 
 describe("canonicalCycleDetected", () => {
@@ -109,16 +121,19 @@ describe("circularLayout — placement", () => {
     const nodes = [
       node("t", "triage"),
       node("d", "developer"),
-      { id: "start", position: { x: 0, y: 0 }, data: { nodeRole: "start" }, type: "startEndNode" },
-      { id: "end", position: { x: 0, y: 0 }, data: { nodeRole: "end" }, type: "startEndNode" },
+      sentinel("start", "start"),
+      sentinel("end", "end"),
     ];
     const result = circularLayout(nodes, []);
     const start = result.nodes.find((n) => n.id === "start")!;
     const end = result.nodes.find((n) => n.id === "end")!;
+    const d = result.nodes.find((n) => n.id === "d")!;
     expect(start.position.x).toBeLessThan(-CIRCLE_RADIUS);
     expect(end.position.x).toBeGreaterThan(CIRCLE_RADIUS);
-    expect(Math.abs(start.position.y)).toBeLessThan(10);
-    expect(Math.abs(end.position.y)).toBeLessThan(10);
+    // A position is the top-left corner: the 64 px sentinel sphere's centre
+    // sits level with the 96 px sphere of the develop agent on the equator.
+    expect(start.position.y + 32).toBeCloseTo(d.position.y + 48);
+    expect(end.position.y + 32).toBeCloseTo(d.position.y + 48);
   });
 
   it("returns existing edges plus inferred edges for the canonical cycle", () => {
@@ -155,8 +170,16 @@ describe("circularLayout — placement", () => {
       metadata: { max_total_budget_usd: 0, max_total_loops: 0, created_by: "manual" },
     });
     const result = circularLayout(nodes, []);
-    expect(result.nodes.find((n) => n.id === "start")!.position).toEqual({ x: -CIRCLE_RADIUS * 1.4, y: 0 });
-    expect(result.nodes.find((n) => n.id === "end")!.position).toEqual({ x: CIRCLE_RADIUS * 1.4, y: 0 });
+    // The sentinels sit on the equator (y is the top-left corner: the 64 px
+    // sphere's centre level with the 96 px agents'), at least 1.4R out and
+    // clear of every agent.
+    const sentinelY = (96 - 64) / 2;
+    const start = result.nodes.find((n) => n.id === "start")!.position;
+    const end = result.nodes.find((n) => n.id === "end")!.position;
+    expect(start.y).toBe(sentinelY);
+    expect(end.y).toBe(sentinelY);
+    expect(start.x).toBeLessThanOrEqual(-CIRCLE_RADIUS * 1.4);
+    expect(end.x).toBeGreaterThanOrEqual(CIRCLE_RADIUS * 1.4);
     const legacy = { id: "x", position: { x: 0, y: 0 }, data: { label: "x" }, type: "start" } as Node;
     const r2 = circularLayout([node("t", "triage"), node("d", "developer"), legacy], []);
     expect(Math.abs(r2.nodes.find((n) => n.id === "x")!.position.x)).not.toBe(CIRCLE_RADIUS * 1.4);
@@ -206,18 +229,8 @@ describe("shouldUseCircular", () => {
 });
 
 describe("circularLayout — uniform fallback (no canonical cycle)", () => {
-  const startNode = (id: string): Node => ({
-    id,
-    position: { x: 0, y: 0 },
-    data: { nodeRole: "start" },
-    type: "startEndNode",
-  });
-  const endNode = (id: string): Node => ({
-    id,
-    position: { x: 0, y: 0 },
-    data: { nodeRole: "end" },
-    type: "startEndNode",
-  });
+  const startNode = (id: string): Node => sentinel(id, "start");
+  const endNode = (id: string): Node => sentinel(id, "end");
 
   it("distributes 4 unconnected nodes evenly around the circle starting at top", () => {
     const nodes = [
@@ -282,5 +295,78 @@ describe("circularLayout — uniform fallback (no canonical cycle)", () => {
     const newEdge = result.edges.find((e) => e.id?.startsWith("inferred-chain-"));
     expect(newEdge?.source).toBe("d2");
     expect(newEdge?.target).toBe("d3");
+  });
+});
+
+describe("circularLayout — START and END at the ends", () => {
+  const graph = (agents: [string, string][]): PipelineGraph => ({
+    graph_id: "g",
+    name: "g",
+    nodes: agents.map(([node_id, agent_type], i) => ({
+      node_id,
+      agent_type,
+      label: agent_type,
+      position: { x: i * 240, y: 0 },
+      model: null,
+      max_budget_usd: null,
+      max_turns: null,
+      effort: null,
+      tools: null,
+      skills: null,
+      prompt_prepend: null,
+      prompt_append: null,
+      custom_prompt: null,
+      custom_tools: null,
+      sandbox: null,
+    })),
+    edges: agents.slice(1).map(([target], i) => ({
+      edge_id: `e${i}`,
+      source: agents[i][0],
+      target,
+      edge_type: "flow",
+      loop_config: null,
+    })),
+    metadata: { created_by: "auto", max_total_budget_usd: 10, max_total_loops: 3 },
+  });
+
+  /** An Auto arrange of a stored pipeline, the canvas's own START and END in it. */
+  const arrange = (agents: [string, string][]) => {
+    const { nodes, edges } = injectStartEndNodes(deserializeGraph(graph(agents)));
+    const byId = Object.fromEntries(autoLayout(nodes, edges).nodes.map((n) => [n.id, n]));
+    const others = Object.values(byId).filter((n) => n.type === "agentNode");
+    return { start: byId.__start__, end: byId.__end__, others };
+  };
+
+  it.each([
+    ["triage, developer, reviewer", [["triage", "triage"], ["developer", "developer"], ["reviewer", "reviewer"]]],
+    [
+      "the full arc, an outer-ring agent with it",
+      [["triage", "triage"], ["developer", "developer"], ["reviewer", "reviewer"], ["qa", "qa"], ["output", "output"]],
+    ],
+    [
+      "two outer-ring agents, one at angle 0",
+      [["explorer", "explorer"], ["triage", "triage"], ["developer", "developer"], ["output", "output"]],
+    ],
+  ] as [string, [string, string][]][])("puts START left and END right of every agent: %s", (_, agents) => {
+    const { start, end, others } = arrange(agents);
+    for (const agent of others) {
+      // An agent's sphere is 96 px wide and START's 64 px: neither touches.
+      expect(start.position.x + 64, `START reaches ${agent.id}`).toBeLessThan(agent.position.x);
+      expect(end.position.x, `END reaches ${agent.id}`).toBeGreaterThan(agent.position.x + 96);
+    }
+  });
+
+  it("rings a pipeline with one stage from START, in flow order, to END", () => {
+    const { nodes, edges } = injectStartEndNodes(
+      deserializeGraph(graph([["triage", "triage"], ["research", "research"], ["output", "output"]])),
+    );
+    const result = autoLayout(nodes, edges);
+    // Clockwise from north, as the ring places them.
+    const turn = (n: Node) => (Math.atan2(n.position.y, n.position.x) + (5 * Math.PI) / 2) % (2 * Math.PI);
+    const ring = [...result.nodes].sort((a, b) => turn(a) - turn(b)).map((n) => n.id);
+    expect(ring).toEqual(["__start__", "triage", "research", "output", "__end__"]);
+    // START and END already link to the first and the last agent: the chain
+    // invents no edge, as START to output or triage to END.
+    expect(result.edges.filter((e) => e.data?.inferred)).toEqual([]);
   });
 });

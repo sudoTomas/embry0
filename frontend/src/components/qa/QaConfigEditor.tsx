@@ -3,13 +3,21 @@ import { Link } from "react-router";
 import { isAxiosError } from "axios";
 import { FileCode2 } from "lucide-react";
 import { toast } from "sonner";
-import { useQaConfig, useSaveQaConfig, useDeleteQaConfig } from "@/hooks/useQaConfig";
+import {
+  useQaConfig,
+  useSaveQaConfig,
+  useDeleteQaConfig,
+  useCheckQaConfig,
+} from "@/hooks/useQaConfig";
+import type { QaCheckResult as CheckResult } from "@/api/qaConfig";
 import { PageError } from "@/components/PageError";
+import { QaCheckResult } from "@/components/qa/QaCheckResult";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button, buttonVariants } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { cn } from "@/lib/utils";
+import { toastApiError } from "@/api/errorToast";
 
 /**
  * Minimal schema-valid qa.yaml v2 skeleton for hand-written configs.
@@ -26,6 +34,8 @@ function starterTemplate(repo: string): string {
     "  config:\n" +
     '    apps:\n' +
     '      web: {path: "."}\n' +
+    "defaults:\n" +
+    "  sandbox_profile: qa-external\n" +
     "qa_required: auto\n" +
     "apps:\n" +
     "  web:\n" +
@@ -40,18 +50,23 @@ function starterTemplate(repo: string): string {
 interface QaConfigEditorProps {
   /** Full repo path; may exceed two segments (GitLab subgroups, #162). */
   repo: string;
+  /** False on the repo page, whose Advanced section already names and explains it. */
+  showIntro?: boolean;
 }
 
 /** The stored-qa.yaml editor (RAV-1253) — shared by the standalone config
  * page and the unified repo detail page. */
-export function QaConfigEditor({ repo }: QaConfigEditorProps) {
+export function QaConfigEditor({ repo, showIntro = true }: QaConfigEditorProps) {
 
   const { data, isLoading, isError, refetch } = useQaConfig(repo);
   const saveMutation = useSaveQaConfig();
   const deleteMutation = useDeleteQaConfig();
+  const checkMutation = useCheckQaConfig();
 
   // null = viewing the server state; string = editing (dirty or template-seeded)
   const [draft, setDraft] = useState<string | null>(null);
+  // The last check of the text on screen; dropped when the text changes.
+  const [checkResult, setCheckResult] = useState<CheckResult | null>(null);
   const text = draft ?? data ?? "";
   const dirty = draft !== null && draft !== (data ?? "");
 
@@ -70,7 +85,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [dirty]);
 
-  if (isError) return <PageError message="Failed to load the QA config" onRetry={() => refetch()} />;
+  if (isError) return <PageError message="Could not load the test setup" onRetry={() => refetch()} />;
   if (isLoading || data === undefined) return <TableSkeleton />;
 
   const showEditor = data !== null || draft !== null;
@@ -81,17 +96,54 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
       ? ((saveError.response.data as { detail?: string })?.detail ?? "validation failed")
       : null;
   const otherSaveError = saveError && !validationDetail;
+  const busy = saveMutation.isPending || checkMutation.isPending;
 
-  function handleSave() {
+  function handleCheck() {
+    setCheckResult(null);
+    checkMutation.mutate(
+      { fullRepo: repo, yamlText: text },
+      {
+        onSuccess: setCheckResult,
+        onError: (error) => toastApiError(error, "Could not check the setup"),
+      },
+    );
+  }
+
+  /** Store the text; `warned` is the check result to show once it is stored. */
+  function save(warned: CheckResult | null) {
     saveMutation.mutate(
       { fullRepo: repo, yamlText: text },
       {
-        onSuccess: () => toast.success("qa.yaml saved"),
+        onSuccess: () => {
+          toast.success("Test setup saved");
+          setCheckResult(warned);
+        },
         onError: (error) => {
           if (!(isAxiosError(error) && error.response?.status === 422)) {
-            toast.error("Failed to save qa.yaml");
+            toastApiError(error, "Could not save the test setup");
           }
         },
+      },
+    );
+  }
+
+  // The check runs first, so a setup every test run would stop on is never
+  // stored from here. When the check itself cannot run, the save goes ahead
+  // as before and the server's own validation still applies.
+  function handleSave() {
+    setCheckResult(null);
+    checkMutation.mutate(
+      { fullRepo: repo, yamlText: text },
+      {
+        onSuccess: (result) => {
+          if (!result.ok) {
+            setCheckResult(result);
+            toast.error("Not saved. Fix the problems shown below; every test run would stop on them.");
+            return;
+          }
+          save(result.warnings.length > 0 ? result : null);
+        },
+        onError: () => save(null),
       },
     );
   }
@@ -99,7 +151,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
   function handleDelete() {
     if (
       !window.confirm(
-        `Delete the stored qa.yaml for ${repo}? QA treats the repo as unconfigured until a new config is stored (a legacy in-repo .embry0/qa.yaml would re-import as a deprecated fallback).`,
+        `Remove the test setup for ${repo}? Jobs that need to test your app will stop at that step until a new setup is saved. You can undo this from History.`,
       )
     )
       return;
@@ -108,39 +160,36 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
       {
         onSuccess: () => {
           setDraft(null);
-          toast.success("Stored config deleted");
+          toast.success("Test setup removed. You can undo this from History.");
         },
-        onError: () => toast.error("Failed to remove the stored qa.yaml"),
+        onError: (e) => toastApiError(e, "Could not remove the test setup"),
       },
     );
   }
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-white/60">
-        Stored qa.yaml (v2) — the embry0 DB is the source of truth; target repos carry no
-        config file. Schema-validated on save. Field reference:{" "}
-        <code className="text-white/70">docs/qa-yaml-reference.md</code>
-      </p>
+      {showIntro && (
+        <p className="text-sm text-white/60">
+          Test setup. How embry0 starts your app on its own test computer and what it checks after
+          each change. embry0 keeps it itself, so nothing is added to your repository.
+        </p>
+      )}
 
       {!showEditor ? (
         <EmptyState
           stage="qa"
           icon={FileCode2}
-          title="No stored QA config"
-          description={
-            "embry0 has no stored qa.yaml for this repo, so QA treats it as unconfigured. " +
-            "A legacy in-repo .embry0/qa.yaml still auto-imports on the next run (deprecated) — " +
-            "storing one here is the supported path."
-          }
+          title="Testing is not set up yet"
+          description="embry0 can still write code, but it cannot check that your app still works."
         >
           <div className="flex items-center justify-center gap-3">
             <Link
               to={`/repos/onboard?repo=${encodeURIComponent(repo!)}`}
-              className={cn(buttonVariants({ size: "sm" }))}
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
               data-testid="qa-config-bootstrap-cta"
             >
-              Bootstrap this repo
+              Fill in a form
             </Link>
             <Button
               variant="outline"
@@ -158,6 +207,7 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
             value={text}
             onChange={(e) => {
               setDraft(e.target.value);
+              setCheckResult(null);
               if (saveMutation.error) saveMutation.reset();
             }}
             spellCheck={false}
@@ -179,19 +229,29 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
           )}
           <div className="flex items-center gap-3">
             <Button
+              variant="secondary"
               onClick={handleSave}
-              disabled={!dirty || !text.trim() || saveMutation.isPending}
+              disabled={!dirty || !text.trim() || busy}
               data-testid="qa-config-save"
             >
               {saveMutation.isPending ? "Validating & saving…" : "Save"}
             </Button>
             <Button
               variant="outline"
+              onClick={handleCheck}
+              disabled={!text.trim() || busy}
+              data-testid="qa-config-check"
+            >
+              {checkMutation.isPending ? "Checking…" : "Check my setup"}
+            </Button>
+            <Button
+              variant="outline"
               onClick={() => {
                 setDraft(null);
+                setCheckResult(null);
                 saveMutation.reset();
               }}
-              disabled={!dirty || saveMutation.isPending}
+              disabled={!dirty || busy}
               data-testid="qa-config-revert"
             >
               Revert
@@ -204,10 +264,11 @@ export function QaConfigEditor({ repo }: QaConfigEditorProps) {
                 disabled={deleteMutation.isPending}
                 data-testid="qa-config-delete"
               >
-                {deleteMutation.isPending ? "Deleting…" : "Delete stored config"}
+                {deleteMutation.isPending ? "Removing…" : "Remove test setup"}
               </Button>
             )}
           </div>
+          {checkResult && <QaCheckResult result={checkResult} />}
         </div>
       )}
     </div>

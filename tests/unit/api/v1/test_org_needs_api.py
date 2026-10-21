@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
-from embry0.services.org_discovery import RepoFacts
+from embry0.services.org_discovery import Discovery, RepoFacts
 from tests.unit.api.v1.test_organizations_api import FakeFactsRepo, FakeOrgsRepo
 from tests.unit.services.test_org_needs import FakeCases, FakeNeedsRepo
 
@@ -138,14 +139,16 @@ async def test_discovery_syncs_the_needs_when_it_finishes(app: Any, monkeypatch:
 
     from embry0.services import org_discovery
 
-    async def fake_discover(client: Any, owner: str, **kw: Any) -> list[RepoFacts]:
-        return [
-            RepoFacts(
-                owner=owner,
-                repo="acme/new",
-                facts={"root_visible": True, "hooks_visible": True, "hook_present": True, "registered": False},
-            )
-        ]
+    async def fake_discover(client: Any, owner: str, **kw: Any) -> Discovery:
+        return Discovery(
+            [
+                RepoFacts(
+                    owner=owner,
+                    repo="acme/new",
+                    facts={"root_visible": True, "hooks_visible": True, "hook_present": True, "registered": False},
+                )
+            ]
+        )
 
     monkeypatch.setattr(org_discovery, "discover", fake_discover)
     app.state.repos_repo = None
@@ -194,9 +197,9 @@ async def test_discovery_compares_hooks_against_the_webhook_url_only(
 
     seen: dict[str, Any] = {}
 
-    async def fake_discover(client: Any, owner: str, **kw: Any) -> list[RepoFacts]:
+    async def fake_discover(client: Any, owner: str, **kw: Any) -> Discovery:
         seen.update(kw)
-        return []
+        return Discovery([])
 
     monkeypatch.setattr(org_discovery, "discover", fake_discover)
     app.state.config = Embry0Config(
@@ -236,3 +239,192 @@ async def test_state_lookup_carries_env_key_names_never_values(app: Any) -> None
     assert api["env_keys_set"] == ["DB_URL", "SHARED"] and web["env_keys_set"] == ["SHARED"]
     assert env.global_reads == 1, "the global names are read once per run"
     assert "secret" not in repr(api) + repr(web)
+
+
+# ---- a vanished repository is confirmed with the forge, one by one (ADR 0016) ----
+
+GITHUB = "https://api.github.com"
+
+
+class ListingForge:
+    """GitHub as a discovery run reads it, behind ``GitHubClient.get``: the
+    owner's listing page by page, following ``Link: rel="next"``, and one
+    record per repository on a direct read (404 unless ``direct`` names it).
+    ``endless`` keeps a next link on every page, so the listing outlasts the
+    page cap. Every path asked is kept."""
+
+    def __init__(
+        self, pages: list[list[str]], direct: dict[str, httpx.Response] | None = None, *, endless: bool = False
+    ) -> None:
+        self.pages, self.direct, self.endless = pages, dict(direct or {}), endless
+        self.asked: list[str] = []
+
+    async def get(self, path: str, **_: Any) -> httpx.Response:
+        self.asked.append(path)
+        url = httpx.URL(path if path.startswith("http") else f"{GITHUB}{path}")
+        request = httpx.Request("GET", url)
+        if url.path.endswith("/acme/repos"):
+            page = int(url.params.get("page", "1"))
+            names = self.pages[page - 1] if page <= len(self.pages) else []
+            headers = {}
+            if self.endless or page < len(self.pages):
+                headers["Link"] = f'<{GITHUB}{url.path}?page={page + 1}>; rel="next"'
+            body = [{"full_name": n, "name": n.split("/")[1]} for n in names]
+            return httpx.Response(200, json=body, headers=headers, request=request)
+        response = self.direct.get(url.path.removeprefix("/repos/"))
+        if response is not None:
+            response.request = request
+            return response
+        return httpx.Response(404, json={"message": "Not Found"}, request=request)
+
+    def confirmed(self) -> list[str]:
+        """The repositories read directly, one ``GET /repos/{owner}/{name}`` each."""
+        return [p.removeprefix("/repos/") for p in self.asked if p.startswith("/repos/") and p.count("/") == 3]
+
+
+class HeldRegistry:
+    """The registry rows the state lookup reads: each one held active."""
+
+    def __init__(self, held: set[str]) -> None:
+        self.held = held
+
+    async def get(self, repo: str) -> dict[str, Any] | None:
+        return {"repo": repo, "active": True} if repo in self.held else None
+
+
+async def _rediscover(
+    app: Any, monkeypatch: pytest.MonkeyPatch, forge: ListingForge, held: set[str]
+) -> tuple[dict[str, Any], list[str] | None]:
+    """One discovery run against ``forge``, through POST /orgs/{owner}/discover
+    and the real discover, listing and paginate: the run row, and the
+    repositories the open repo_vanished need proposes (None without one)."""
+    import asyncio
+
+    from embry0.execution.github_client import GitHubClient
+
+    monkeypatch.setattr(GitHubClient, "get", forge.get)
+    app.state.repos_repo = HeldRegistry(held)
+    await app.state.organizations_repo.update_access("acme", {"owner_kind": "organization"})
+    async with _client(app) as client:
+        started = await client.post("/api/v1/orgs/acme/discover")
+        assert started.status_code == 202, started.text
+        for _ in range(500):
+            runs = (await client.get("/api/v1/orgs/acme/runs")).json()["runs"]
+            if runs[0]["id"] == started.json()["id"] and runs[0]["status"] != "running":
+                break
+            await asyncio.sleep(0.01)
+        needs = (await client.get("/api/v1/orgs/acme/needs")).json()["needs"]
+    assert runs[0]["status"] == "done", runs[0]
+    vanished = [n["repos"] for n in needs if n["kind"] == "repo_vanished" and n["status"] == "open"]
+    return runs[0], (vanished[0] if vanished else None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("full_name", ["acme/web", "Acme/Web"])
+async def test_a_repository_the_listing_skipped_but_the_forge_still_has_is_not_vanished(
+    app: Any, monkeypatch: pytest.MonkeyPatch, full_name: str
+) -> None:
+    """Pagination drift: the listing pages over newest push first, so a push
+    between two page reads moves a repository onto a page already read. The
+    listing misses acme/web, an active registration; a direct read answers
+    with it, the case aside, so nothing proposes deactivating it."""
+    forge = ListingForge([["acme/api"]], {"acme/web": httpx.Response(200, json={"full_name": full_name})})
+    run, vanished = await _rediscover(app, monkeypatch, forge, {"acme/web"})
+    assert vanished is None, "the forge still has acme/web"
+    assert forge.confirmed() == ["acme/web"], "the candidate is read directly before it counts"
+    assert run["summary"]["vanished"] == 1 and run["summary"]["vanished_confirmed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_repository_the_forge_answers_404_for_is_vanished(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    forge = ListingForge([["acme/api"]])
+    run, vanished = await _rediscover(app, monkeypatch, forge, {"acme/web"})
+    assert forge.confirmed() == ["acme/web"]
+    assert vanished == ["acme/web"]
+    assert run["summary"]["vanished_confirmed"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(200, json={"full_name": "acme/web-app"}),
+        httpx.Response(200, json={"full_name": "other/web"}),
+        httpx.Response(301, headers={"Location": f"{GITHUB}/repositories/42"}),
+    ],
+    ids=["renamed", "transferred", "redirected"],
+)
+async def test_a_repository_now_under_another_name_is_vanished(
+    app: Any, monkeypatch: pytest.MonkeyPatch, answer: httpx.Response
+) -> None:
+    """Renamed or transferred: the forge answers the old name with the
+    repository under its new one, or redirects it (GitHub's 301)."""
+    forge = ListingForge([["acme/api"]], {"acme/web": answer})
+    _run, vanished = await _rediscover(app, monkeypatch, forge, {"acme/web"})
+    assert forge.confirmed() == ["acme/web"]
+    assert vanished == ["acme/web"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [500, 403])
+async def test_a_repository_the_forge_cannot_answer_for_is_not_vanished(
+    app: Any, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """A 5xx or a rate limit on the direct read is unknown, and unknown is
+    not gone: a flaky forge never proposes a deactivation."""
+    forge = ListingForge([["acme/api"]], {"acme/web": httpx.Response(status, json={"message": "no"})})
+    run, vanished = await _rediscover(app, monkeypatch, forge, {"acme/web"})
+    assert vanished is None, "unknown is not gone"
+    assert forge.confirmed() == ["acme/web"]
+    assert run["status"] == "done" and run["summary"]["vanished_confirmed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_listing_the_page_cap_cut_short_proposes_nothing(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An owner past the cap (20 pages): the listing stops with a next page
+    unread, so a repository it did not reach is still there. Nothing is read
+    directly and nothing is proposed; the summary and a log line say why."""
+    import structlog
+
+    pages = [["acme/api"], *[[f"acme/r{page:02d}"] for page in range(2, 21)]]
+    forge = ListingForge(pages, endless=True)
+    with structlog.testing.capture_logs() as logs:
+        run, vanished = await _rediscover(app, monkeypatch, forge, {"acme/web"})
+    assert sum(1 for p in forge.asked if "/acme/repos" in p) == 20, "the listing read up to the cap"
+    assert forge.confirmed() == [], "a truncated listing confirms nothing"
+    assert vanished is None
+    assert run["summary"]["listing_complete"] is False and run["summary"]["vanished_confirmed"] == 0
+    skipped = [e for e in logs if e["event"] == "org_vanished_unchecked"]
+    assert [e["reason"] for e in skipped] == ["listing_truncated"], logs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held", [50, 51])
+async def test_more_vanished_registrations_than_a_run_confirms_propose_nothing(
+    app: Any, monkeypatch: pytest.MonkeyPatch, held: int
+) -> None:
+    """A run reads at most 50 candidates directly. Up to that, each is
+    confirmed; past it, none is read and nothing is proposed, with a log
+    line: that many registrations leaving at once is a credential's sight
+    narrowing more likely than deletions."""
+    import structlog
+
+    gone = {"acme/web", *(f"acme/k{i:02d}" for i in range(1, held))}
+    first = (await app.state.org_repos_repo.list_runs("acme"))[0]["id"]
+    for repo in sorted(gone - {"acme/web"}):
+        await app.state.org_repos_repo.upsert_fact(
+            RepoFacts(owner="acme", repo=repo, facts={"root_visible": True, "registered": True}), run_id=first
+        )
+    forge = ListingForge([["acme/api"]])
+    with structlog.testing.capture_logs() as logs:
+        run, vanished = await _rediscover(app, monkeypatch, forge, gone)
+    skipped = [e for e in logs if e["event"] == "org_vanished_unchecked"]
+    if held == 50:
+        assert sorted(forge.confirmed()) == sorted(gone)
+        assert vanished == sorted(gone)
+        assert skipped == []
+    else:
+        assert forge.confirmed() == [], "past the limit nothing is read"
+        assert vanished is None
+        assert [(e["reason"], e["candidates"], e["limit"]) for e in skipped] == [("over_confirm_limit", 51, 50)]
+    assert run["summary"]["vanished"] == held

@@ -204,6 +204,29 @@ async def test_paginate_stops_at_max_pages():
     assert items == [1, 1, 1]
 
 
+async def test_paginate_listing_says_whether_it_read_everything():
+    """Complete when the last page has no next link; not when max_pages
+    stopped it with one, nor when a non-200 ended it early."""
+
+    def last_page(request):
+        return httpx.Response(200, json=[1])
+
+    def endless(request):
+        return httpx.Response(200, json=[1], headers={"Link": f'<{GITHUB_API}/x?page=9>; rel="next"'})
+
+    def refused_second(request):
+        if request.url.params.get("page") is None:
+            return httpx.Response(200, json=[1], headers={"Link": f'<{GITHUB_API}/x?page=2>; rel="next"'})
+        return httpx.Response(403, json={})
+
+    whole = await _client(last_page).paginate_listing("/x")
+    capped = await _client(endless).paginate_listing("/x", max_pages=3)
+    cut = await _client(refused_second, max_attempts=1).paginate_listing("/x")
+    assert (whole.items, whole.complete) == ([1], True)
+    assert (capped.items, capped.complete) == ([1, 1, 1], False)
+    assert (cut.items, cut.complete) == ([1], False)
+
+
 async def test_paginate_strict_raises_on_non_200():
     """Discovery records a failed credential only when the listing raises."""
 

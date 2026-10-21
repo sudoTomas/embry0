@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Download, ExternalLink, FileText, GitPullRequest, MessageSquare, Package } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { useDeliverables } from "@/hooks/useDeliverables";
 import { downloadDeliverable, type Deliverable } from "@/api/deliverables";
+import { toastApiError } from "@/api/errorToast";
 
 function formatBytes(n: number | null): string {
   if (n === null || n === undefined) return "";
@@ -24,7 +24,7 @@ function ReportBody({ content }: { content: string }) {
       {needsToggle && (
         <button
           onClick={() => setExpanded((e) => !e)}
-          className="mt-1 text-[11px] text-cyan-400 hover:underline"
+          className="mt-1 text-2xs text-fg hover:text-primary hover:underline"
         >
           {expanded ? "Show less" : "Show full report"}
         </button>
@@ -38,19 +38,19 @@ function DeliverableRow({ deliverable }: { deliverable: Deliverable }) {
     try {
       await downloadDeliverable(deliverable);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to download artifact");
+      toastApiError(err, "Failed to download artifact");
     }
   };
 
   if (deliverable.type === "pr" && deliverable.url) {
     return (
       <div className="flex items-center gap-2 text-xs">
-        <GitPullRequest className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+        <GitPullRequest className="w-3.5 h-3.5 text-purple shrink-0" />
         <a
           href={deliverable.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-violet-400 hover:underline truncate"
+          className="text-purple hover:underline truncate"
         >
           {deliverable.url}
         </a>
@@ -77,7 +77,7 @@ function DeliverableRow({ deliverable }: { deliverable: Deliverable }) {
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2 text-xs text-white/50">
-        <Icon className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+        <Icon className="w-3.5 h-3.5 text-fg-muted shrink-0" />
         <span className="uppercase tracking-wide text-[10px]">{deliverable.title || deliverable.type}</span>
       </div>
       {deliverable.content && <ReportBody content={deliverable.content} />}
@@ -91,9 +91,9 @@ export function DeliverablesCard({ jobId }: { jobId: string }) {
 
   return (
     <div className="px-4 py-3 rounded-lg border border-white/[0.08] bg-white/[0.02] space-y-3">
-      <div className="text-xs font-medium text-white/60 uppercase tracking-wide">
-        Deliverables ({deliverables.length})
-      </div>
+      <h2 className="text-section font-semibold">
+        Deliverables <span className="ml-1 font-normal tabular-nums text-fg-muted">{deliverables.length}</span>
+      </h2>
       {deliverables.map((d) => (
         <DeliverableRow key={d.id} deliverable={d} />
       ))}

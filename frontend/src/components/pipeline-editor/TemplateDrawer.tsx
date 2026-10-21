@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { X, MoreVertical, Copy, Pencil, Trash2 } from "lucide-react";
 import { fetchTemplate } from "@/api/pipelines";
+import { formatDay } from "@/lib/utils";
 import { useTemplates, useTemplate, useRenameTemplate, useCreateTemplate, useDeleteTemplate } from "@/hooks/usePipelines";
 import type { PipelineTemplate, PipelineTemplateSummary } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 interface TemplateDrawerProps {
   onSelect: (template: PipelineTemplate) => void;
@@ -74,7 +76,7 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
   const handleRenameSubmit = (templateId: string) => {
     const trimmed = renameValue.trim();
     if (trimmed && trimmed !== templates?.find((t) => t.template_id === templateId)?.name) {
-      renameMutation.mutate({ templateId, name: trimmed });
+      renameMutation.mutate({ templateId, name: trimmed }, { onError: (e) => toastApiError(e, "Failed to rename") });
     }
     setRenamingId(null);
   };
@@ -83,26 +85,20 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
     setMenuOpenId(null);
     // Fetch the full template to get its graph for duplication
     const full = await fetchTemplate(t.template_id);
-    createMutation.mutate({
-      name: `${t.name} (copy)`,
-      description: t.description,
-      graph: full.graph,
-    });
+    createMutation.mutate(
+      { name: `${t.name} (copy)`, description: t.description, graph: full.graph },
+      { onError: (e) => toastApiError(e, "Failed to duplicate") },
+    );
   };
 
   const handleDelete = (templateId: string) => {
     setMenuOpenId(null);
     if (!window.confirm("Delete this template?")) return;
-    deleteMutation.mutate(templateId);
-  };
-
-  const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    deleteMutation.mutate(templateId, { onError: (e) => toastApiError(e, "Failed to delete") });
   };
 
   return (
-    <div className="absolute inset-y-0 left-0 z-30 w-[260px] bg-[#131520] border-r border-white/[0.08] flex flex-col shadow-2xl animate-in slide-in-from-left duration-200">
+    <div className="absolute inset-y-0 left-0 z-30 w-[260px] bg-surface border-r border-white/[0.08] flex flex-col shadow-2xl animate-in slide-in-from-left duration-200">
       {/* Header */}
       <div className="h-12 shrink-0 flex items-center justify-between px-3 border-b border-white/[0.08]">
         <span className="text-xs font-semibold text-white/70 uppercase tracking-wider">Templates</span>
@@ -166,7 +162,7 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
                   <p className="text-[10px] text-white/30 mt-1 line-clamp-2 leading-relaxed">{t.description}</p>
                 )}
                 <div className="flex items-center gap-2 mt-1.5 text-[10px] text-white/25">
-                  <span>{formatDate(t.created_at)}</span>
+                  <span>{formatDay(t.created_at)}</span>
                 </div>
               </>
             )}
@@ -175,7 +171,7 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
             {menuOpenId === t.template_id && (
               <div
                 ref={menuRef}
-                className="absolute right-2 top-8 z-40 w-32 rounded-md border border-white/[0.1] bg-[#1a1d2e] shadow-xl py-1"
+                className="absolute right-2 top-8 z-40 w-32 rounded-md border border-white/[0.1] bg-overlay shadow-xl py-1"
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
@@ -195,7 +191,7 @@ export function TemplateDrawer({ onSelect, onClose }: TemplateDrawerProps) {
                 <button
                   type="button"
                   onClick={() => handleDelete(t.template_id)}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400/70 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-destructive/70 hover:bg-destructive/10 hover:text-destructive transition-colors"
                 >
                   <Trash2 size={11} /> Delete
                 </button>

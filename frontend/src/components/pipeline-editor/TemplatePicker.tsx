@@ -1,6 +1,7 @@
 import { useTemplates, useTemplate } from "@/hooks/usePipelines";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { Overlay } from "@/components/ui/Overlay";
 import type { PipelineTemplate } from "@/lib/types";
 
 interface TemplatePickerProps {
@@ -21,11 +22,11 @@ export function TemplatePicker({ onSelect, onClose }: TemplatePickerProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="w-[500px] max-h-[400px] rounded-lg border border-white/10 bg-[#161822] shadow-xl overflow-hidden flex flex-col">
+    <Overlay className="flex items-center justify-center bg-black/60">
+      <div className="w-full max-w-[500px] max-h-[400px] rounded-lg border border-white/10 bg-surface shadow-xl overflow-hidden flex flex-col">
         <div className="p-4 border-b border-white/[0.08]">
           <h3 className="text-sm font-semibold text-white">
-            Load Pipeline Template
+            Load pipeline template
           </h3>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
@@ -63,10 +64,10 @@ export function TemplatePicker({ onSelect, onClose }: TemplatePickerProps) {
             onClick={handleApply}
             disabled={!selectedTemplate}
           >
-            Load Template
+            Load template
           </Button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }

@@ -43,11 +43,6 @@ export function EmptyState({
       )}
     >
       <div className="relative mb-4">
-        <div
-          className="absolute inset-0 blur-3xl rounded-full scale-150"
-          style={{ background: color, opacity: 0.08 }}
-          aria-hidden
-        />
         {stage && (
           <span
             className="divine-element relative flex items-center justify-center"
@@ -66,9 +61,9 @@ export function EmptyState({
           />
         )}
       </div>
-      <p className="text-white/55 text-sm font-medium">{title}</p>
+      <p className="text-fg-secondary text-sm font-medium">{title}</p>
       {description && (
-        <p className="text-white/30 text-xs mt-1.5 max-w-md">{description}</p>
+        <p className="text-fg-muted text-xs mt-1.5 max-w-md">{description}</p>
       )}
       {children && <div className="mt-4">{children}</div>}
     </div>

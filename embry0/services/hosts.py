@@ -37,6 +37,11 @@ DEFAULT_PORTS = {"ssh": 22, "http": 80}
 TAILNET_API_BASE = "https://api.tailscale.com/api/v2"
 #: ``-`` asks the tailnet API for the key's own tailnet.
 DEFAULT_TAILNET = "-"
+#: An OAuth client secret, ``tskey-client-<client id>-<random>``. Its access
+#: tokens carry only the client's scopes, so a client with ``devices:core:read``
+#: alone can list devices and nothing else; an API access token
+#: (``tskey-api-...``) carries every permission of the user who made it.
+OAUTH_CLIENT_PREFIX = "tskey-client-"
 PROBE_TIMEOUT_SECONDS = 5.0
 #: Without ``connectedToControl`` a device counts as online when its
 #: ``lastSeen`` is at most this old.
@@ -265,6 +270,33 @@ def device_from_api(raw: dict[str, Any], *, now: datetime | None = None) -> Tail
     )
 
 
+async def _bearer(access: TailnetAccess, client: httpx.AsyncClient, api_base: str) -> str:
+    """The bearer the device list is read with.
+
+    An API access token is sent as it is. An OAuth client secret is exchanged
+    at ``POST {api_base}/oauth/token`` for an access token, a fresh one per
+    read: it lives an hour and embry0 reads the tailnet seldom, so keeping it
+    would only add state.
+    """
+    if not access.api_key.startswith(OAUTH_CLIENT_PREFIX):
+        return access.api_key
+    client_id = access.api_key.removeprefix(OAUTH_CLIENT_PREFIX).split("-", 1)[0]
+    response = await client.post(
+        f"{api_base}/oauth/token", data={"client_id": client_id, "client_secret": access.api_key}
+    )
+    if response.status_code in (400, 401, 403):
+        raise TailnetAPIError(f"the OAuth client was refused (HTTP {response.status_code})")
+    if response.status_code != 200:
+        raise TailnetAPIError(f"the token exchange failed (HTTP {response.status_code})")
+    try:
+        token = response.json().get("access_token")
+    except (ValueError, AttributeError):
+        token = None
+    if not isinstance(token, str) or not token:
+        raise TailnetAPIError("the token answer has no access token")
+    return token
+
+
 async def list_tailnet_devices(
     access: TailnetAccess,
     *,
@@ -274,13 +306,15 @@ async def list_tailnet_devices(
 ) -> list[TailnetDevice]:
     """Every device of the tailnet, by ``GET {api_base}/tailnet/{tailnet}/devices``.
 
-    The only call embry0 makes to the tailnet API: one read, so the key needs
-    read access to devices and nothing more.
+    The only read embry0 makes from the tailnet API, so the key needs read
+    access to devices and nothing more. An OAuth client secret is first
+    exchanged for an access token (``_bearer``).
     """
     url = f"{api_base}/tailnet/{quote(access.tailnet or DEFAULT_TAILNET, safe='')}/devices"
-    headers = {"Authorization": f"Bearer {access.api_key}", "Accept": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=15.0, transport=transport) as client:
+            bearer = await _bearer(access, client, api_base)
+            headers = {"Authorization": f"Bearer {bearer}", "Accept": "application/json"}
             response = await client.get(url, headers=headers)
     except httpx.HTTPError as exc:
         # Never str(exc): a transport error can quote the request.

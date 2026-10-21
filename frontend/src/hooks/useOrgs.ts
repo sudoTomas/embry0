@@ -7,8 +7,10 @@ import {
   fetchOrganizationRepos,
   fetchOrganizationRuns,
   fetchOrganizations,
+  patchOrganization,
   reopenNeed,
   type DiscoveryRun,
+  type OrgSettingsPatch,
 } from "@/api/orgs";
 
 /** While a discovery run is going, its progress is read this often. */
@@ -72,5 +74,15 @@ export function useNeedStatus(owner: string) {
     mutationFn: ({ id, dismiss }: { id: string; dismiss: boolean }) =>
       dismiss ? dismissNeed(owner, id) : reopenNeed(owner, id),
     onSettled: () => qc.invalidateQueries({ queryKey: ["orgs", owner, "needs"] }),
+  });
+}
+
+/** Change an owner's settings; the stored row the server answers replaces the cached one. */
+export function usePatchOrganizationSettings(owner: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (settings: OrgSettingsPatch) => patchOrganization(owner, settings),
+    onSuccess: (org) => qc.setQueryData(["orgs", owner], org),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["orgs"] }),
   });
 }

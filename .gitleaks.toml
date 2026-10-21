@@ -52,6 +52,10 @@ regexes = [
     # tests/unit/api/v1/test_credentials.py and tests/unit/safety/test_redaction.py.
     '''^embry0\.scope_key$''',
     '''^embry0\.api-key$''',
+    # Reserved sandbox env-var NAMES for the OpenAI-compatible providers
+    # (embry0/agents/providers.py, `sandbox_key_env`): identifiers every
+    # sandbox sees, never values. Matched as a whole upper-case identifier.
+    '''^EMBRY0_[A-Z0-9_]+_KEY$''',
     '''^ghp_fromenv12345678$''',
     '''^abcdefgh12345678$''',
     # The 36-char synthetic token the redact-before-cap test places across the

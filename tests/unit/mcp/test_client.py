@@ -238,6 +238,22 @@ async def test_watcher_paths():
     assert await client.watcher_trigger() == {"proposals": 0}
 
 
+async def test_watcher_calls_can_name_a_stack():
+    handler = capture(
+        {
+            ("GET", "/api/v1/watcher/runs"): [],
+            ("POST", "/api/v1/watcher/run"): {"action": "no_issue"},
+        }
+    )
+    client = make_client(handler)
+    await client.watcher_runs(limit=5, stack="acme/api")
+    assert dict(handler.seen[0].url.params) == {"limit": "5", "stack": "acme/api"}
+    await client.watcher_trigger(stack="acme/api")
+    assert dict(handler.seen[1].url.params) == {"stack": "acme/api"}
+    await client.watcher_trigger()
+    assert dict(handler.seen[2].url.params) == {}, "no stack named: the route ticks every stack"
+
+
 async def test_case_paths():
     handler = capture(
         {
@@ -313,40 +329,42 @@ async def test_agent_update_surfaces_the_provider_readiness_refusal():
     assert exc_info.value.detail == detail
 
 
-async def test_env_set_reveals_existing_secrets_before_rewrite():
-    existing = {
-        "variables": [
-            {
-                "key": "PLAIN",
-                "value": "clear",
-                "var_type": "config",
-                "description": "",
-                "required": False,
-                "scope": "app",
-            },
-            {
-                "key": "SECRET_ONE",
-                "value": "****",
-                "var_type": "secret",
-                "description": "",
-                "required": True,
-                "scope": "app",
-            },
-        ]
-    }
-    handler = capture(
+_STORED = {
+    "variables": [
+        {"key": "PLAIN", "value": "clear", "var_type": "config", "description": "", "required": False, "scope": "app"},
         {
-            ("GET", "/api/v1/environment/global"): existing,
-            ("GET", "/api/v1/environment/global/SECRET_ONE/reveal"): {"key": "SECRET_ONE", "value": "real-secret"},
-            ("PUT", "/api/v1/environment/global"): {"variables": []},
-        }
-    )
+            "key": "SECRET_ONE",
+            "value": "****",
+            "var_type": "secret",
+            "description": "",
+            "required": True,
+            "scope": "app",
+        },
+    ]
+}
+# The reveal route answers, so a client that still reveals fails on the
+# assertion below rather than on a missing route.
+_ROUTES = {
+    ("GET", "/api/v1/environment/global"): _STORED,
+    ("GET", "/api/v1/environment/global/SECRET_ONE/reveal"): {"key": "SECRET_ONE", "value": "real-secret"},
+}
+
+
+async def test_env_set_never_reveals_a_stored_secret():
+    """A stored secret goes back as the mask, which the API keeps; nothing is revealed.
+
+    Reveal is admin tier and audited, while writing the set is operator tier, so a
+    write that revealed first failed for every operate key and wrote one
+    secret_revealed audit row per secret for an admin.
+    """
+    handler = capture({**_ROUTES, ("PUT", "/api/v1/environment/global"): _STORED})
     client = make_client(handler)
     await client.env_set("NEW_KEY", "new-value", var_type="secret")
-    put_request = next(r for r in handler.seen if r.method == "PUT")
-    body = json.loads(put_request.content)
+    reveals = [r.url.path for r in handler.seen if r.url.path.endswith("/reveal")]
+    assert reveals == [], f"env_set revealed stored secrets before writing: {reveals}"
+    body = handler.seen[("PUT", "/api/v1/environment/global")]
     by_key = {v["key"]: v for v in body["variables"]}
-    assert by_key["SECRET_ONE"]["value"] == "real-secret"
+    assert by_key["SECRET_ONE"] == _STORED["variables"][1], "the stored secret did not go back as the mask"
     assert by_key["PLAIN"]["value"] == "clear"
     assert by_key["NEW_KEY"] == {
         "key": "NEW_KEY",
@@ -356,7 +374,87 @@ async def test_env_set_reveals_existing_secrets_before_rewrite():
         "required": False,
         "scope": "app",
     }
-    assert "****" not in put_request.content.decode()
+
+
+async def test_env_delete_global_never_reveals_a_stored_secret():
+    handler = capture({**_ROUTES, ("PUT", "/api/v1/environment/global"): _STORED})
+    await make_client(handler).env_delete("PLAIN")
+    reveals = [r.url.path for r in handler.seen if r.url.path.endswith("/reveal")]
+    assert reveals == [], f"env_delete revealed stored secrets before writing: {reveals}"
+    body = handler.seen[("PUT", "/api/v1/environment/global")]
+    assert body["variables"] == [_STORED["variables"][1]]
+
+
+async def test_an_operate_key_sets_a_variable_and_keeps_the_stored_secret():
+    """Through the real environment router: an operate key writes, and the secret survives."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from fastapi import FastAPI
+
+    from embry0.api.deps import bust_api_key_cache, require_auth
+    from embry0.api.v1 import environment
+    from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
+
+    token = "emb_" + "o" * 43
+    operate = ApiKeyRow(
+        id="key-operate00001",
+        user_id=None,
+        name="ops-bot",
+        prefix="emb_oooooooo",
+        scope="operate",
+        created_by="tester",
+        created_at=None,
+        expires_at=None,
+        last_used_at=None,
+        revoked_at=None,
+    )
+    stored = {
+        "rows": [
+            {
+                "key": "DB_PASSWORD",
+                "value": "enc:hunter2-hunter2",
+                "var_type": "secret",
+                "description": "",
+                "required": False,
+                "scope": "app",
+            },
+        ]
+    }
+
+    async def get_global():
+        return [dict(r) for r in stored["rows"]]
+
+    async def set_global(rows):
+        stored["rows"] = [dict(r) for r in rows]
+
+    provider = MagicMock()
+    provider.encrypt = AsyncMock(side_effect=lambda v: f"enc:{v}")
+    provider.decrypt = AsyncMock(side_effect=lambda v: v.removeprefix("enc:"))
+    keys = MagicMock()
+    keys.get_by_hash = AsyncMock(side_effect=lambda h: operate if h == hash_token(token) else None)
+    keys.touch_last_used = AsyncMock()
+
+    app = FastAPI()
+    app.state.config = SimpleNamespace(auth_dev_mode=False, api_key="master-key", audit_log_path=None)
+    app.state.api_keys_repo = keys
+    app.state.users_repo = None
+    app.state.db = None
+    app.state.env_repo = SimpleNamespace(get_global=get_global, set_global=set_global)
+    app.state.secrets_provider = provider
+    app.include_router(environment.router, prefix="/api/v1", dependencies=[require_auth])
+
+    bust_api_key_cache()
+    client = Embry0Client(BASE, token, transport=httpx.ASGITransport(app=app))
+    try:
+        await client.env_set("LOG_LEVEL", "debug")
+    except Embry0APIError as exc:
+        pytest.fail(f"an operate key could not set a variable: {exc}")
+    finally:
+        bust_api_key_cache()
+    by_key = {r["key"]: r for r in stored["rows"]}
+    assert by_key["LOG_LEVEL"]["value"] == "debug"
+    assert by_key["DB_PASSWORD"]["value"] == "enc:hunter2-hunter2", "the stored secret was overwritten"
 
 
 async def test_env_set_replaces_existing_key():

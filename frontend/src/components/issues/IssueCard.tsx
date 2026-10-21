@@ -20,7 +20,7 @@ export function IssueCard({ issue, draggable, onDragStart }: IssueCardProps) {
 
   return (
     <div
-      className="rounded-lg border border-white/[0.06] bg-background p-3 space-y-2 cursor-pointer hover:border-cyan-500/30 hover:bg-cyan-500/[0.02] transition-colors"
+      className="rounded-lg border border-white/[0.06] bg-background p-3 space-y-2 cursor-pointer hover:border-border-strong hover:bg-overlay transition-colors"
       draggable={draggable}
       onDragStart={onDragStart}
       onClick={() => navigate(`/issues/${issue.id}`)}
@@ -51,13 +51,13 @@ export function IssueCard({ issue, draggable, onDragStart }: IssueCardProps) {
           {visibleLabels.map((label) => (
             <span
               key={label}
-              className="inline-flex items-center rounded-md bg-zinc-700/50 px-1.5 py-0.5 text-xs text-zinc-300"
+              className="inline-flex items-center rounded-md bg-overlay px-1.5 py-0.5 text-xs text-fg-secondary"
             >
               {label}
             </span>
           ))}
           {extraLabels > 0 && (
-            <span className="inline-flex items-center rounded-md bg-zinc-700/30 px-1.5 py-0.5 text-xs text-zinc-400">
+            <span className="inline-flex items-center rounded-md bg-overlay px-1.5 py-0.5 text-xs text-fg-muted">
               +{extraLabels}
             </span>
           )}
@@ -77,7 +77,7 @@ export function IssueCard({ issue, draggable, onDragStart }: IssueCardProps) {
           </div>
           <div className="h-1 w-full rounded-full bg-white/[0.06]">
             <div
-              className="h-1 rounded-full bg-blue-400 transition-all"
+              className="h-1 rounded-full bg-fg-secondary transition-all"
               style={{ width: `${progress}%` }}
             />
           </div>

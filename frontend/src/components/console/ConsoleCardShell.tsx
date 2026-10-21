@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { cn } from "@/lib/utils";
+import { jobTitle, shortJobId } from "@/lib/jobTitle";
 import type { JobResponse } from "@/lib/types";
 
 interface ConsoleCardShellProps {
@@ -14,8 +15,8 @@ interface ConsoleCardShellProps {
 }
 
 /**
- * Shared chrome for every board card: repo + 8-char mono job id, first line
- * of the task as the title, an issue chip when the job originated from an
+ * Shared chrome for every board card: repo + 8-char mono job id, the job's
+ * name (lib/jobTitle) as the title, an issue chip when the job originated from an
  * issue, and click-anywhere navigation to JobDetailPage (JobsTable's
  * row-as-link idiom — inner interactive elements must stopPropagation).
  *
@@ -25,7 +26,7 @@ interface ConsoleCardShellProps {
 export function ConsoleCardShell({ job, className, style, headerRight, children }: ConsoleCardShellProps) {
   const navigate = useNavigate();
   const hasIssue = job.issue_id != null || job.issue_number != null;
-  const title = job.task.split("\n")[0];
+  const title = jobTitle(job.task);
 
   return (
     <div
@@ -35,14 +36,16 @@ export function ConsoleCardShell({ job, className, style, headerRight, children 
       role="link"
       aria-label={`View job ${job.job_id}`}
       className={cn(
-        "rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 cursor-pointer transition-colors hover:bg-white/[0.04]",
+        // overflow-hidden: nothing a card holds (an agent's question, a long
+        // path) may spill into the next lane.
+        "overflow-hidden rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 cursor-pointer transition-colors hover:bg-white/[0.04]",
         className,
       )}
       style={style}
     >
       <div className="flex items-center gap-2 min-w-0">
         <span className="font-mono text-[11px] text-white/40 truncate">{job.repo}</span>
-        <span className="font-mono text-[11px] text-white/25 shrink-0">{job.job_id.slice(0, 8)}</span>
+        <span className="font-mono text-[11px] text-white/25 shrink-0" title={job.job_id}>{shortJobId(job.job_id)}</span>
         <span className="flex-1" />
         {headerRight}
       </div>
@@ -51,7 +54,7 @@ export function ConsoleCardShell({ job, className, style, headerRight, children 
         {hasIssue && (
           <span
             data-testid="issue-chip"
-            className="shrink-0 rounded-md border border-cyan-500/25 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-mono text-cyan-300"
+            className="shrink-0 rounded px-1.5 py-0.5 text-2xs font-mono bg-white/[0.06] text-fg-secondary"
           >
             {job.issue_number != null ? `#${job.issue_number}` : "issue"}
           </span>

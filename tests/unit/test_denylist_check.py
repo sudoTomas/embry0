@@ -249,3 +249,57 @@ def test_an_allowance_for_a_file_not_scanned_is_not_a_pass(tree: Path, denylist:
 
 def test_an_empty_allowance_is_not_a_pass(tree: Path, denylist: Path) -> None:
     _assert_not_run(_run(tree, "docs", "--allow", " ", denylist=denylist), "an allowance has an empty literal")
+
+
+# CI scans the published tree whole (--public), with the allowances the public
+# export passed: the canonical URLs anywhere, the owner's handle in
+# .github/CODEOWNERS, and each name CONTRIBUTORS lists, there only.
+def _public_tree(tree: Path) -> Path:
+    git = ["git", "-C", str(tree), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    (tree / ".github").mkdir()
+    (tree / ".github" / "CODEOWNERS").write_text("* @someone\n")
+    (tree / "CONTRIBUTORS").write_text(f"# The people who wrote it.\n\nAda {TERM.title()}\n")
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    return tree
+
+
+def test_public_mode_scans_every_tracked_file(tree: Path, denylist: Path) -> None:
+    root = _public_tree(tree)
+    clean = _run(root, "--public", denylist=denylist)
+    assert clean.returncode == 0, f"a clean tree failed the public scan: {clean.stdout}{clean.stderr}"
+    assert "(1 patterns, 4 files" in clean.stdout, f"--public did not scan every tracked file: {clean.stdout}"
+
+    plans = root / "docs" / "superpowers" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "plan.md").write_text(f"venv at /Users/{TERM}/repos/.venv\n")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    dirty = _run(root, "--public", denylist=denylist)
+    assert dirty.returncode == 1, f"a term in a file outside DEFAULT_SCOPE passed: {dirty.stdout}"
+    assert "docs/superpowers/plans/plan.md:1: matches denylist line 3" in dirty.stdout, dirty.stdout
+
+
+def test_public_mode_allows_a_contributor_only_in_contributors(tree: Path, denylist: Path) -> None:
+    root = _public_tree(tree)
+    (root / "docs" / "guide.md").write_text(f"Thanks, Ada {TERM.title()}.\n")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    result = _run(root, "--public", denylist=denylist)
+    assert result.returncode == 1, f"a contributor's name outside CONTRIBUTORS passed: {result.stdout}"
+    assert "docs/guide.md:1: matches denylist line 3" in result.stdout, result.stdout
+    assert "CONTRIBUTORS" not in result.stdout, f"CONTRIBUTORS itself was flagged: {result.stdout}"
+
+
+def test_public_mode_uses_the_export_allowances(tree: Path, denylist: Path) -> None:
+    checker = _load_checker()
+    root = _public_tree(tree)
+    allowances = checker.public_allowances(root, public_repo=f"{TERM}/widget")
+    assert {(a.path, a.literal) for a in allowances} == {
+        (None, CANONICAL),
+        (".github/CODEOWNERS", f"@{TERM}"),
+        ("CONTRIBUTORS", f"Ada {TERM.title()}"),
+    }
+
+
+def test_public_mode_takes_no_paths(tree: Path, denylist: Path) -> None:
+    result = _run(_public_tree(tree), "--public", "docs", denylist=denylist)
+    assert result.returncode == 2 and "--public scans the whole tree" in result.stderr, result.stderr

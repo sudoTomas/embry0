@@ -9,10 +9,13 @@ const mockSaveReset = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockUseSaveQaConfig = vi.fn();
 const mockUseDeleteQaConfig = vi.fn();
+// Save runs the free check first; here every check passes.
+const mockCheckMutate = vi.fn();
 vi.mock("@/hooks/useQaConfig", () => ({
   useQaConfig: () => mockUseQaConfig(),
   useSaveQaConfig: () => mockUseSaveQaConfig(),
   useDeleteQaConfig: () => mockUseDeleteQaConfig(),
+  useCheckQaConfig: () => ({ mutate: mockCheckMutate, isPending: false }),
 }));
 
 const toastSuccess = vi.fn();
@@ -63,6 +66,9 @@ beforeEach(() => {
     mutate: mockDeleteMutate,
     isPending: false,
   });
+  mockCheckMutate.mockReset().mockImplementation((_vars, opts: { onSuccess: (r: unknown) => void }) =>
+    opts.onSuccess({ ok: true, problems: [], warnings: [], summary: null }),
+  );
 });
 
 describe("QaRepoConfigPage", () => {
@@ -72,11 +78,11 @@ describe("QaRepoConfigPage", () => {
     expect(screen.queryByTestId("qa-config-textarea")).not.toBeInTheDocument();
   });
 
-  it("renders the no-stored-config empty state with an encoded bootstrap CTA on 404", () => {
+  it("renders the not-set-up empty state with an encoded form link on 404", () => {
     mockUseQaConfig.mockReturnValue({ data: null, isLoading: false, isError: false, refetch: vi.fn() });
     renderPage();
 
-    expect(screen.getByText("No stored QA config")).toBeInTheDocument();
+    expect(screen.getByText("Testing is not set up yet")).toBeInTheDocument();
     expect(screen.getByTestId("qa-config-bootstrap-cta")).toHaveAttribute(
       "href",
       "/repos/onboard?repo=owner%2Fname",
@@ -176,6 +182,12 @@ describe("QaRepoConfigPage", () => {
       expect.anything(),
     );
     confirmSpy.mockRestore();
+  });
+
+  it("links back to the repository page, not the QA runs", () => {
+    mockUseQaConfig.mockReturnValue({ data: YAML, isLoading: false, isError: false, refetch: vi.fn() });
+    renderPage();
+    expect(screen.getByRole("link", { name: "← Repository" })).toHaveAttribute("href", "/repos/owner/name");
   });
 
   it("rejects a repo param that is not owner/name", () => {

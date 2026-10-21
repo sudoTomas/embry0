@@ -18,6 +18,7 @@ import {
   type ContextConfig,
   type RepoContext,
 } from "@/api/config";
+import { toastApiError } from "@/api/errorToast";
 
 export default function ContextTab() {
   const qc = useQueryClient();
@@ -76,7 +77,7 @@ export default function ContextTab() {
       qc.invalidateQueries({ queryKey: ["global-context"] });
       toast.success("Global context saved");
     } catch (e) {
-      toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+      toastApiError(e, "Failed");
     } finally {
       setGlobalSaving(false);
     }
@@ -112,7 +113,7 @@ export default function ContextTab() {
       qc.invalidateQueries({ queryKey: ["repo-contexts"] });
       toast.success(`Context saved for ${selectedForm.repo}`);
     } catch (e) {
-      toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+      toastApiError(e, "Failed");
     }
   };
 
@@ -122,7 +123,7 @@ export default function ContextTab() {
       qc.invalidateQueries({ queryKey: ["repo-contexts"] });
       toast.success(`Context removed for ${repo}`);
     } catch (e) {
-      toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+      toastApiError(e, "Failed");
     }
   };
 
@@ -145,7 +146,7 @@ export default function ContextTab() {
       setSelectedRepo(trimmed);
       toast.success(`Added context for ${trimmed}`);
     } catch (e) {
-      toast.error(`Failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+      toastApiError(e, "Failed");
     }
   };
 
@@ -167,33 +168,33 @@ export default function ContextTab() {
       {/* Global Context Injection */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Global Context Injection</CardTitle>
+          <CardTitle className="text-lg">Global context injection</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="system_context">System Context</Label>
+              <Label htmlFor="system_context">System context</Label>
               <Textarea
                 id="system_context"
                 value={globalForm.system_context}
                 onChange={(e) => setGlobalForm((prev) => prev ? { ...prev, system_context: e.target.value } : prev)}
                 placeholder="Coding standards, architectural guidelines, team conventions..."
-                className="mt-1 min-h-[80px] bg-[#0c1015] border-white/[0.08]"
+                className="mt-1 min-h-[80px] bg-overlay border-white/[0.08]"
               />
             </div>
             <div>
-              <Label htmlFor="assistant_context">Assistant Context</Label>
+              <Label htmlFor="assistant_context">Assistant context</Label>
               <Textarea
                 id="assistant_context"
                 value={globalForm.assistant_context}
                 onChange={(e) => setGlobalForm((prev) => prev ? { ...prev, assistant_context: e.target.value } : prev)}
                 placeholder="Issue-specific instructions, prior context..."
-                className="mt-1 min-h-[80px] bg-[#0c1015] border-white/[0.08]"
+                className="mt-1 min-h-[80px] bg-overlay border-white/[0.08]"
               />
             </div>
             <div className="flex justify-end">
               <Button onClick={handleSaveGlobal} disabled={globalSaving}>
-                {globalSaving ? "Saving..." : "Save Global Context"}
+                {globalSaving ? "Saving..." : "Save global context"}
               </Button>
             </div>
           </div>
@@ -204,11 +205,11 @@ export default function ContextTab() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="text-lg">Per-Repository Context</CardTitle>
+            <CardTitle className="text-lg">Per-repository context</CardTitle>
             {!addingRepo && (
               <Button variant="outline" size="sm" onClick={() => setAddingRepo(true)}>
                 <Plus className="w-4 h-4 mr-1" />
-                Add Repository
+                Add repository
               </Button>
             )}
           </div>
@@ -216,7 +217,7 @@ export default function ContextTab() {
         <CardContent>
           <div className="space-y-6">
             {addingRepo && (
-              <div className="flex items-end gap-2 p-3 rounded-md border border-white/[0.08] bg-[#0c1015]">
+              <div className="flex items-end gap-2 p-3 rounded-md border border-white/[0.08] bg-overlay">
                 <div className="flex-1">
                   <Label htmlFor="new_repo">Repository (owner/repo)</Label>
                   <Input
@@ -276,21 +277,21 @@ export default function ContextTab() {
                   )}
                 </div>
                 <div>
-                  <Label>System Context</Label>
+                  <Label>System context</Label>
                   <Textarea
                     value={selectedForm.system_context}
                     onChange={(e) => handleRepoFieldChange("system_context", e.target.value)}
                     placeholder="Repository-specific system context..."
-                    className="mt-1 min-h-[60px] bg-[#0c1015] border-white/[0.08]"
+                    className="mt-1 min-h-[60px] bg-overlay border-white/[0.08]"
                   />
                 </div>
                 <div>
-                  <Label>Assistant Context</Label>
+                  <Label>Assistant context</Label>
                   <Textarea
                     value={selectedForm.assistant_context}
                     onChange={(e) => handleRepoFieldChange("assistant_context", e.target.value)}
                     placeholder="Repository-specific assistant context..."
-                    className="mt-1 min-h-[60px] bg-[#0c1015] border-white/[0.08]"
+                    className="mt-1 min-h-[60px] bg-overlay border-white/[0.08]"
                   />
                 </div>
                 <div className="flex justify-end">

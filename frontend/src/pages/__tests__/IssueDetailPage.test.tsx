@@ -116,3 +116,25 @@ describe("IssueDetailPage — Cancel (#450)", () => {
     expect(mockCancel).not.toHaveBeenCalled();
   });
 });
+
+describe("IssueDetailPage — sentence case", () => {
+  afterEach(() => {
+    Object.assign(ISSUE, { children: [], children_count: 0 });
+  });
+
+  it("names the statuses in the status picker in sentence case", () => {
+    renderPage();
+    const picker = screen.getByDisplayValue("Open") as HTMLSelectElement;
+    const labels = [...picker.options].map((o) => o.textContent);
+    expect(labels).toEqual(["Open", "Triaging", "Awaiting input", "In progress", "Closed", "Cancelled"]);
+  });
+
+  it("titles the child issues card in sentence case", () => {
+    Object.assign(ISSUE, {
+      children: [{ ...ISSUE, id: "iss-2", title: "Child fix", children: [] }],
+      children_count: 1,
+    });
+    renderPage();
+    expect(screen.getByText("Child issues")).toBeInTheDocument();
+  });
+});

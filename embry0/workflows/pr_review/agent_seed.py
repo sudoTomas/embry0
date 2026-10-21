@@ -1,8 +1,9 @@
 """The pr-reviewer agent definition (#30).
 
 Same pattern as the onboarding seed: ``SYSTEM_PROMPT`` is the canonical
-prompt, and ``seed_pr_reviewer_agent`` upserts the row on every boot so the
-prompt stays in sync with the code. The model is a placeholder: every
+prompt, and ``seed_pr_reviewer_agent`` inserts the row at startup when it is
+missing. An edit to the row is kept; ``POST /agents/pr-reviewer/reset``
+restores this seed. The model is a placeholder: every
 pr-review job names its model explicitly (the repo's override, else the
 deployment's heavy tier) through ``agent_models_override``.
 """
@@ -58,35 +59,27 @@ PR_REVIEWER_AGENT_SEED: dict[str, Any] = {
 
 
 async def seed_pr_reviewer_agent(repo: AgentDefinitionsRepository) -> None:
-    """Idempotently upsert the pr-reviewer definition (onboarding-seed pattern)."""
+    """Insert the pr-reviewer definition when it is missing (onboarding-seed pattern)."""
     seed = PR_REVIEWER_AGENT_SEED
-    if await repo.get(AGENT_TYPE) is None:
-        await repo.create(
-            agent_type=AGENT_TYPE,
-            description=seed["description"],
-            model=seed["model"],
-            tools=seed["tools"],
-            skills=seed["skills"],
-            system_prompt=seed["system_prompt"],
-            execution_mode=seed["execution_mode"],
-            auth_mode=seed["auth_mode"],
-            display_name=seed["display_name"],
-            avatar=seed["avatar"],
-            color=seed["color"],
-            tagline=seed["tagline"],
-        )
-    # Identity and skills are written only on create: an operator's edits and the
-    # skills added through POST /agents/{type}/skills survive a reboot, and
+    # Insert-if-missing, identity included: an operator's edits and the skills
+    # added through POST /agents/{type}/skills survive a reboot, and
     # POST /agents/{type}/reset is the explicit restore path.
-    await repo.update(
-        AGENT_TYPE,
+    if await repo.get(AGENT_TYPE) is not None:
+        return
+    await repo.create(
+        agent_type=AGENT_TYPE,
         description=seed["description"],
         model=seed["model"],
         tools=seed["tools"],
+        skills=seed["skills"],
         system_prompt=seed["system_prompt"],
         execution_mode=seed["execution_mode"],
         auth_mode=seed["auth_mode"],
         mcp_servers=seed["mcp_servers"],
+        display_name=seed["display_name"],
+        avatar=seed["avatar"],
+        color=seed["color"],
+        tagline=seed["tagline"],
     )
     # is_builtin is outside update()'s fields: only seeders set it (seed_onboarding_agent does the same).
     await repo._db.execute(  # noqa: SLF001

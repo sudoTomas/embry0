@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useAuthStore } from "@/stores/authStore";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -113,6 +114,8 @@ function renderEdit(type = "developer") {
 const renderNew = () => renderEdit("new");
 
 beforeEach(() => {
+  // Saving is admin work (require_admin); these tests drive it as the API key.
+  useAuthStore.setState({ authMode: "key" });
   vi.clearAllMocks();
   mockUpdateMutate.mockReset();
   mockCreateMutate.mockReset();
@@ -123,18 +126,20 @@ beforeEach(() => {
 describe("AgentFormPage — execution depth (RAV-1058)", () => {
   it("populates execution mode, auth mode, and mcp servers from the definition", () => {
     renderEdit();
-    expect(screen.getByLabelText("Execution Mode")).toHaveValue("cli");
-    expect(screen.getByLabelText("Auth Mode")).toHaveValue("oauth");
-    expect(screen.getByLabelText("MCP Servers (JSON)")).toHaveValue(
+    expect(screen.getByLabelText("Execution mode")).toHaveValue("cli");
+    expect(screen.getByLabelText("Auth mode")).toHaveValue("oauth");
+    expect(screen.getByLabelText("MCP servers (JSON)")).toHaveValue(
       JSON.stringify(EXISTING.mcp_servers, null, 2),
     );
+    expect(screen.getByLabelText("System prompt")).toHaveValue("You write code.");
+    expect(screen.getByRole("heading", { level: 1, name: "Edit agent: developer" })).toBeInTheDocument();
   });
 
   it("saves the full surface, sending null to clear an inherited mode", async () => {
     const user = userEvent.setup();
     renderEdit();
 
-    await user.selectOptions(screen.getByLabelText("Execution Mode"), "");
+    await user.selectOptions(screen.getByLabelText("Execution mode"), "");
     await user.click(screen.getByRole("button", { name: "Save Agent" }));
 
     expect(mockUpdateMutate).toHaveBeenCalledWith(
@@ -152,7 +157,7 @@ describe("AgentFormPage — execution depth (RAV-1058)", () => {
     const user = userEvent.setup();
     renderEdit();
 
-    const editor = screen.getByLabelText("MCP Servers (JSON)");
+    const editor = screen.getByLabelText("MCP servers (JSON)");
     await user.clear(editor);
     await user.type(editor, "not json");
     await user.click(screen.getByRole("button", { name: "Save Agent" }));
@@ -169,8 +174,8 @@ describe("AgentFormPage provider readiness without the catalog", () => {
     });
     renderEdit();
     const hint = screen.getByTestId("model-provider-readiness");
-    expect(hint).toHaveTextContent("xai");
-    expect(hint).toHaveTextContent("not ready");
+    expect(hint).toHaveTextContent("xAI");
+    expect(hint).toHaveTextContent("Not ready");
   });
 
   it("marks a ready provider", () => {
@@ -180,9 +185,9 @@ describe("AgentFormPage provider readiness without the catalog", () => {
     });
     renderEdit();
     const hint = screen.getByTestId("model-provider-readiness");
-    expect(hint).toHaveTextContent("anthropic");
-    expect(hint).toHaveTextContent("ready");
-    expect(hint).not.toHaveTextContent("not ready");
+    expect(hint).toHaveTextContent("Anthropic");
+    expect(hint).toHaveTextContent("Ready");
+    expect(hint).not.toHaveTextContent("Not ready");
   });
 
   it("shows nothing when the backend sends no readiness", () => {
@@ -232,8 +237,8 @@ describe("AgentFormPage provider readiness from the catalog", () => {
     expect(option("grok-4.5")).toBeEnabled();
     expect(option("grok-4.7")).toBeDisabled();
     const hint = screen.getByTestId("model-provider-readiness");
-    expect(hint).toHaveTextContent("xai");
-    expect(hint).toHaveTextContent("not ready");
+    expect(hint).toHaveTextContent("xAI");
+    expect(hint).toHaveTextContent("Not ready");
   });
 
   it("keeps every model and the saved one when this process sees no credential at all", () => {
@@ -250,8 +255,8 @@ describe("AgentFormPage provider readiness from the catalog", () => {
     expect(option("claude-opus-5")).toBeEnabled();
     expect(option("claude-haiku-4-5")).toBeDisabled();
     const hint = screen.getByTestId("model-provider-readiness");
-    expect(hint).toHaveTextContent("anthropic");
-    expect(hint).toHaveTextContent("not ready");
+    expect(hint).toHaveTextContent("Anthropic");
+    expect(hint).toHaveTextContent("Not ready");
   });
 
   it("starts a new agent on Custom when no model is ready, every model still listed", () => {
@@ -268,21 +273,21 @@ describe("AgentFormPage provider readiness from the catalog", () => {
     const user = userEvent.setup();
     renderEdit();
     const hint = () => screen.getByTestId("model-provider-readiness");
-    expect(hint()).toHaveTextContent("anthropic");
-    expect(hint()).not.toHaveTextContent("not ready");
+    expect(hint()).toHaveTextContent("Anthropic");
+    expect(hint()).not.toHaveTextContent("Not ready");
 
     await user.selectOptions(screen.getByLabelText("Model"), "__custom__");
     expect(screen.queryByTestId("model-provider-readiness")).not.toBeInTheDocument();
 
     const custom = screen.getByPlaceholderText("Enter model ID");
     await user.type(custom, "grok-4.5");
-    expect(hint()).toHaveTextContent("xai");
-    expect(hint()).toHaveTextContent("not ready");
+    expect(hint()).toHaveTextContent("xAI");
+    expect(hint()).toHaveTextContent("Not ready");
 
     await user.clear(custom);
     await user.type(custom, "gpt-4o");
     expect(hint()).toHaveTextContent("No configured provider serves this model");
-    expect(hint()).toHaveTextContent("not ready");
+    expect(hint()).toHaveTextContent("Not ready");
   });
 
   it("starts a new agent on the first ready model when the default is not offered", () => {

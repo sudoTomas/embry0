@@ -52,17 +52,18 @@ describe("OrganizationsPage", () => {
 
     expect(within(rows[0]).getByTestId("org-link")).toHaveAttribute("href", "/orgs/acme");
     expect(rows[0]).toHaveTextContent("GitHub");
-    expect(rows[0]).toHaveTextContent("environment (GITHUB_TOKEN__ACME)");
+    expect(rows[0]).toHaveTextContent("Environment token");
+    expect(within(rows[0]).getByText("GITHUB_TOKEN__ACME").className).toContain("font-mono");
     expect(within(rows[0]).getByTestId("access-read")).toHaveAttribute("data-state", "yes");
     expect(within(rows[0]).getByTestId("access-hooks")).toHaveAttribute("data-state", "yes");
     expect(within(rows[0]).getByTestId("access-push")).toHaveAttribute("data-state", "unknown");
     expect(rows[0]).toHaveTextContent("12");
     expect(rows[0]).toHaveTextContent("never");
-    expect(rows[0]).toHaveTextContent("active");
+    expect(rows[0]).toHaveTextContent("Active");
 
     expect(rows[1]).toHaveTextContent("GitLab");
     expect(await within(rows[1]).findByText("ci bot")).toBeInTheDocument();
-    expect(rows[1]).toHaveTextContent("paused");
+    expect(rows[1]).toHaveTextContent("Paused");
     expect(screen.getByTestId("add-org-cta")).toHaveAttribute("href", "/orgs/-/new");
   });
 

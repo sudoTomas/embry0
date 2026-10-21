@@ -61,9 +61,22 @@ export interface OrgRepoFacts {
   open_issues: number | null;
   facts: Record<string, unknown>;
   seen_at: string | null;
+  /** What it takes embry0 to maintain the repository, in one sentence read
+   * from the facts by rules (ADR 0015). Absent from an older server. */
+  maintain_hint?: string;
+  /** The actions that sentence names, in the order they are taken. */
+  maintain_steps?: NeedActionType[];
 }
 
-export type NeedActionType = "register" | "hook" | "onboard" | "watch" | "setting" | "credential" | "none";
+export type NeedActionType =
+  | "register"
+  | "hook"
+  | "onboard"
+  | "watch"
+  | "deactivate"
+  | "setting"
+  | "credential"
+  | "none";
 export type NeedStatus = "open" | "done" | "dismissed";
 
 export interface OrgNeed {
@@ -85,7 +98,7 @@ export interface OrgNeeds {
 }
 
 /** The actions the actions endpoint runs. The other need types are done by hand. */
-export type OrgActionName = "register" | "hook" | "onboard" | "watch";
+export type OrgActionName = "register" | "hook" | "onboard" | "watch" | "deactivate";
 
 export interface OrgActionResult {
   repo: string;
@@ -134,6 +147,22 @@ export async function fetchOrganizations(): Promise<Organization[]> {
 
 export async function fetchOrganization(owner: string): Promise<Organization> {
   const { data } = await api.get<Organization>(`/orgs/${encodeURIComponent(owner)}`);
+  return data;
+}
+
+/** The settings a PATCH may write; each key left out keeps its stored value. */
+export interface OrgSettingsPatch {
+  /** Hours between discovery runs, 1 to 168; null takes the owner off the schedule. */
+  rediscover_hours?: number | null;
+}
+
+/** Change an owner's settings (admin). The server merges them into the stored ones. */
+export async function patchOrganization(owner: string, settings: OrgSettingsPatch): Promise<Organization> {
+  const { data } = await api.patch<Organization>(
+    `/orgs/${encodeURIComponent(owner)}`,
+    { settings },
+    { suppressValidationToast: true },
+  );
   return data;
 }
 

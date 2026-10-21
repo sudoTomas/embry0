@@ -49,7 +49,7 @@ curl -X POST http://localhost:8200/api/v1/credentials \
   -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"kind": "tailnet_api_key", "provider": "tailscale", "label": "tailnet",
-       "secret": "tskey-api-...", "metadata": {"tailnet": "-"}}'
+       "secret": "tskey-client-...", "metadata": {"tailnet": "-"}}'
 
 curl -s "http://localhost:8200/api/v1/credentials/bindings?scope_kind=global&scope_value=" \
   -H "Authorization: Bearer $API_KEY" \
@@ -63,7 +63,10 @@ curl -X PUT http://localhost:8200/api/v1/credentials/bindings \
   -d @global-bindings.json
 ```
 
-**The scope the key needs.** embry0 makes one call with it, `GET https://api.tailscale.com/api/v2/tailnet/{tailnet}/devices`, so the key needs to read the tailnet's devices and nothing more. Use an API access token (`tskey-api-...`) from the Keys page of the tailnet's admin console. It acts with the permissions of the user who created it, so create it as a user who can see the devices, and rotate it with `POST /api/v1/credentials/{id}/rotate` before the expiry set at creation. OAuth clients are not supported in this release: their access tokens are short-lived and embry0 stores no refresh flow for them.
+**The scope the key needs.** embry0 reads one thing with it, `GET https://api.tailscale.com/api/v2/tailnet/{tailnet}/devices`, so the key needs to read the tailnet's devices and nothing more. Either of two secrets works:
+
+- An OAuth client secret (`tskey-client-...`) from the Trust credentials page of the tailnet's admin console, with the scope `devices:core:read` alone. This is the read-only choice. Before each read, embry0 exchanges the secret at `POST https://api.tailscale.com/api/v2/oauth/token` for an access token that lives an hour and carries only that scope, so it stores no token and needs no refresh flow. The client does not expire; revoke it in the admin console. Tailscale answers 404 to a read outside a client's scopes, so a client without `devices:core:read` shows up as the tailnet not found.
+- An API access token (`tskey-api-...`) from the Keys page. It acts with every permission of the user who created it, so create it as a user who can see the devices, and rotate it with `POST /api/v1/credentials/{id}/rotate` before the expiry set at creation.
 
 The key is treated like every other registry secret: encrypted at rest, never returned (responses carry `masked_preview`), never logged, and added to the log scrubbers' set when created or rotated. A tailnet API failure is reported by status code or exception type only, never by the text of the request. The probe and the import take an optional `credential_id` to read with another `tailnet_api_key` than the bound one.
 

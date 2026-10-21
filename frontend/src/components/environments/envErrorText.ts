@@ -7,7 +7,7 @@ import { detailMessages } from "@/api/errorDetail";
  */
 export function envErrorText(error: unknown): string {
   const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  const parts = detailMessages(detail).map((m) => m.replace(/^Value error, /, ""));
+  const parts = detailMessages(detail);
   if (parts.length > 0) return parts.join(" ");
   if (error instanceof Error && error.message) return error.message;
   return "Request failed";

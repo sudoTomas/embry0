@@ -46,10 +46,11 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className={`font-semibold text-xs ${agent.status === "pending" ? "text-muted-foreground" : colors.text}`} title={agent.agent}>{identity.displayName}</span>
-            {agent.node && agent.node !== agent.agent && <span className="text-xs text-muted-foreground">{agent.node}</span>}
+            {/* The graph node id is an identifier: mono, like code, never sans prose. */}
+            {agent.node && agent.node !== agent.agent && <span className="font-mono text-2xs text-muted-foreground">{agent.node}</span>}
             {agent.retryLabel && <span className="text-[10px] text-amber-400">{agent.retryLabel}</span>}
-            {agent.status === "completed" && <span className="text-[10px] text-green-400">Done</span>}
-            {agent.status === "failed" && <span className="text-[10px] text-red-400">Failed</span>}
+            {agent.status === "completed" && <span className="text-[10px] text-success">Done</span>}
+            {agent.status === "failed" && <span className="text-[10px] text-destructive">Failed</span>}
             {agent.status === "pending" && <span className="text-[10px] text-white/30">Waiting</span>}
           </div>
           {agent.status !== "pending" && (
@@ -71,16 +72,19 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
   // Expanded card (active or manually expanded)
   return (
     <div className={`rounded-lg border ${colors.border} ${colors.bg} overflow-hidden`}>
-      {/* Header */}
+      {/* Header. Only its bottom edge has a width, so the card's own border
+          class draws the divider in the outline's colour. A border-b- class
+          made from it at runtime would be in no source file, and Tailwind
+          writes no rule for a class it cannot find there. */}
       <div
         onClick={() => !isActive && setManualExpand(!manualExpand)}
-        className={`px-4 py-3 flex items-center gap-3 border-b ${colors.border.replace("border-", "border-b-")} ${!isActive ? "cursor-pointer" : ""}`}
+        className={`px-4 py-3 flex items-center gap-3 border-b ${colors.border} ${!isActive ? "cursor-pointer" : ""}`}
       >
         <AgentAvatar identity={identity} size={32} state={spriteState} />
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <span className={`font-semibold text-sm ${colors.text}`} title={agent.agent}>{identity.displayName}</span>
-            {agent.node && agent.node !== agent.agent && <span className="text-sm text-muted-foreground">{agent.node}</span>}
+            {agent.node && agent.node !== agent.agent && <span className="font-mono text-xs text-muted-foreground">{agent.node}</span>}
             {isActive && (
               <span className="inline-flex items-center gap-1.5 text-[10px] text-amber-400">
                 <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
@@ -88,7 +92,7 @@ export function AgentCard({ agent, expanded: forceExpanded }: AgentCardProps) {
               </span>
             )}
             {agent.retryLabel && <span className="text-[10px] text-amber-400">{agent.retryLabel}</span>}
-            {!isActive && agent.status === "completed" && <span className="text-[10px] text-green-400">{"\u2713"} Completed</span>}
+            {!isActive && agent.status === "completed" && <span className="text-[10px] text-success">{"\u2713"} Completed</span>}
           </div>
           <div className="text-[10px] text-white/40 mt-0.5">
             {formatDuration(liveDurationMs)}

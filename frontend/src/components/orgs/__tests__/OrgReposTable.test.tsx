@@ -21,14 +21,16 @@ function renderTable() {
 const rows = () => screen.getAllByTestId("org-repo-row");
 
 describe("OrgReposTable", () => {
-  it("links every row to its repository page, and registered rows to their QA config", () => {
+  it("links only registered rows to their repository page and QA config", () => {
+    // An unregistered repository has no embry0 page: its link dead-ended at
+    // "not registered in embry0".
     renderTable();
     const links = screen.getAllByTestId("org-repo-link");
-    expect(links.map((a) => a.getAttribute("href"))).toEqual([
-      "/repos/acme/widgets",
-      "/repos/acme/gadgets",
-      "/repos/acme/old",
-    ]);
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["/repos/acme/widgets"]);
+    const [, gadgets, old] = rows();
+    expect(within(gadgets).queryByRole("link")).toBeNull();
+    expect(within(gadgets).getByText("acme/gadgets")).toHaveAttribute("title", "Not registered in embry0");
+    expect(within(old).queryByRole("link")).toBeNull();
     const qa = screen.getAllByTestId("org-repo-qa-link");
     expect(qa).toHaveLength(1);
     expect(qa[0]).toHaveAttribute("href", "/qa/repos/acme%2Fwidgets/config");
@@ -43,7 +45,7 @@ describe("OrgReposTable", () => {
     expect(within(widgets).getByTestId("sense-watch")).toHaveAttribute("data-state", "off");
     expect(within(gadgets).getByTestId("sense-intake")).toHaveAttribute("data-state", "unknown");
     expect(within(old).queryByTestId("sense-intake")).toBeNull();
-    expect(old).toHaveTextContent("archived");
+    expect(old).toHaveTextContent("Archived");
   });
 
   it("filters by text and by a missing sense", () => {
@@ -54,12 +56,33 @@ describe("OrgReposTable", () => {
 
     fireEvent.change(screen.getByTestId("org-repos-filter"), { target: { value: "" } });
     fireEvent.change(screen.getByTestId("org-repos-missing"), { target: { value: "registry" } });
-    expect(rows().map((r) => within(r).getByTestId("org-repo-link").textContent)).toEqual(["acme/gadgets"]);
+    expect(rows().map((r) => within(r).getByTestId("org-repo-name").textContent)).toEqual(["acme/gadgets"]);
     expect(screen.getByTestId("org-repos-count")).toHaveTextContent("1 of 3");
 
     fireEvent.change(screen.getByTestId("org-repos-filter"), { target: { value: "nothing-matches" } });
     expect(screen.queryAllByTestId("org-repo-row")).toHaveLength(0);
     expect(screen.getByText("No repository matches these filters.")).toBeInTheDocument();
+  });
+
+  it("shows what each repository takes to maintain under its name, and nothing when the server sent none", () => {
+    const hint = "Not registered; a UI with a dev script, so register, then onboard to draft QA.";
+    render(
+      <MemoryRouter>
+        <OrgReposTable
+          repos={[
+            repo("widgets", { frontend: true, boot_hint: "npm run dev" }, { maintain_hint: hint, maintain_steps: ["register", "onboard"] }),
+            repo("gadgets"),
+          ]}
+        />
+      </MemoryRouter>,
+    );
+    const [widgets, gadgets] = rows();
+    const shown = within(widgets).getByTestId("org-repo-hint");
+    expect(shown).toHaveTextContent(hint);
+    expect(shown).toHaveClass("text-muted-foreground");
+    const name = within(widgets).getByTestId("org-repo-name");
+    expect(name.compareDocumentPosition(shown) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(gadgets).queryByTestId("org-repo-hint")).toBeNull();
   });
 
   it("says so when discovery stored nothing", () => {

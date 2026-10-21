@@ -190,6 +190,24 @@ async def _persist_deliverables(self: IssueExecutor, job_id: str, result: dict[s
     return persisted
 
 
+async def _record_standard_audit(self: IssueExecutor, job_id: str, result: dict[str, Any]) -> None:
+    """ADR 0014: a completed audit's score and finding count land on its repository's standards state.
+
+    Only the job the audit route named as a repository's newest audit writes
+    anything; any other job costs one indexed lookup. Never raises: the job
+    row is already written and nothing here may flip it.
+    """
+    if self._db is None:
+        return
+    try:
+        from embry0.services.standards import record_audit_completion
+        from embry0.storage.repositories.standards import RepoStandardStateRepository
+
+        await record_audit_completion(RepoStandardStateRepository(self._db), job_id, result)
+    except Exception:
+        logger.warning("standard_audit_record_failed", job_id=job_id, exc_info=True)
+
+
 async def _forge_for(self: IssueExecutor, repo: str) -> str:
     """The repo's forge, through the one shared resolver (Spec 1A §3.8).
 
@@ -814,6 +832,7 @@ async def _handle_workflow_result(
                 deliverable_count = await self._persist_deliverables(job_id, result)
             except Exception:
                 logger.warning("deliverables_persist_failed", job_id=job_id, exc_info=True)
+            await _record_standard_audit(self, job_id, result)
         # #298/#299: the verify node's result goes on the PR and into the
         # deliverables for completed AND failed jobs (a job the gate stopped
         # is exactly the one whose PR needs the explanation). After the PR
@@ -882,21 +901,24 @@ async def _handle_workflow_result(
                 status=final_status,
                 exc_info=True,
             )
-        issue_status = "closed" if final_status == "completed" else "open"
-        await self._issues.update(issue_id, status=issue_status)
-        await self._issues.update_parent_status(issue_id)
-        await self._emit_audit(
-            self._db,
-            "issue.status_changed",
-            actor="system",
-            details={
-                "old_status": "triaging",
-                "new_status": issue_status,
-                "job_status": final_status,
-            },
-            audit_log_path=self._audit_log_path,
-            issue_id=issue_id,
-        )
+        # A job with no issue (every log-watcher analysis job) has no status
+        # to change: a row here would record a transition that never happened.
+        if issue_id is not None:
+            issue_status = "closed" if final_status == "completed" else "open"
+            await self._issues.update(issue_id, status=issue_status)
+            await self._issues.update_parent_status(issue_id)
+            await self._emit_audit(
+                self._db,
+                "issue.status_changed",
+                actor="system",
+                details={
+                    "old_status": "triaging",
+                    "new_status": issue_status,
+                    "job_status": final_status,
+                },
+                audit_log_path=self._audit_log_path,
+                issue_id=issue_id,
+            )
 
 
 async def _handle_split(self: IssueExecutor, issue_id: str | None, job_id: str, decision: dict[str, Any]) -> None:

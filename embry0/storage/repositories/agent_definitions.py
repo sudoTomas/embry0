@@ -16,6 +16,7 @@ from embry0.workflows.issue_to_pr.noncode_agents import (
 from embry0.workflows.issue_to_pr.noncode_agents import (
     RESEARCH_SYSTEM_PROMPT as _RESEARCH_SYSTEM_PROMPT,
 )
+from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_SYSTEM_PROMPTS as _SPECIALIST_PROMPTS
 from embry0.workflows.onboard.agent_seed import SYSTEM_PROMPT as _ONBOARDING_SYSTEM_PROMPT
 from embry0.workflows.pr_review.agent_seed import PR_REVIEWER_AGENT_SEED as _PR_REVIEWER_AGENT_SEED
 from embry0.workflows.qa.agent_seed import QA_AGENT_SEED as _QA_AGENT_SEED
@@ -154,6 +155,130 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
         "tools": ["Read", "Glob", "Grep", "Bash", "Write", "Edit"],
         "skills": ["superpowers:verification-before-completion"],
         "system_prompt": _OPS_SYSTEM_PROMPT,
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    # The specialists: read-only agents on the generic node, each built
+    # around one method (specialist_agents.py). No Write or Edit: Bash runs
+    # the repository's checks and the scripts that prove a claim, and the
+    # prompts keep its scratch files under /tmp. The two that weigh the most
+    # judgment, kintsugi and interrogator, run on the developer's model.
+    "kintsugi": {
+        "description": (
+            "Traces the cracks in a repository by running its own gates and "
+            "reading code against its docs, and returns a ledger of proven "
+            "cracks, each graded and paired with the seal that would mend it. "
+            "Read-only."
+        ),
+        "model": "claude-opus-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["kintsugi"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "gardener": {
+        "description": (
+            "Finds one provable weed (dead code, a stale doc line, an unused "
+            "dependency, a duplicate helper) that can be pulled with no behavior "
+            "change, and returns it as a weed card with its proof, the exact diff "
+            "and the check that shows nothing changed. Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["gardener"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "interrogator": {
+        "description": (
+            "Reviews a branch or pull request diff from four independent angles "
+            "(adversarial, quality, mechanical, architecture) and returns "
+            "evidence-backed findings, sorted by a lead judgment, with a verdict. "
+            "Read-only."
+        ),
+        "model": "claude-opus-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": ["superpowers:requesting-code-review"],
+        "system_prompt": _SPECIALIST_PROMPTS["interrogator"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "why": {
+        "description": (
+            "Answers why code is the way it is from git history, decision "
+            "records, docs and the issue or pull request text in the job, as a "
+            "cited account of decisions and tradeoffs with each claim's "
+            "confidence marked. Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["why"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "how": {
+        "description": (
+            "Explains how a subsystem works before someone changes it: entry "
+            "points, runtime flow, ownership and layering, and a file:line map. "
+            "Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["how"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "blast-radius": {
+        "description": (
+            "Finds what a change could break beyond its diff, names the one fact "
+            "it is safe because of, and proves that fact by running real code in "
+            "the sandbox or marks it unproven. Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": ["superpowers:verification-before-completion"],
+        "system_prompt": _SPECIALIST_PROMPTS["blast-radius"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "comment-sicko": {
+        "description": (
+            "Reviews a diff for comments that narrate, banners, commented-out "
+            "code and workaround sermons, and returns the deletions plus the "
+            "check or test that should replace each claimed constraint. "
+            "Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["comment-sicko"],
+        "execution_mode": None,
+        "auth_mode": None,
+        "mcp_servers": {},
+    },
+    "design-auditor": {
+        "description": (
+            "Measures a repository's frontend against a design standard with a "
+            "deterministic script (font families, font sizes, radii, raw colors, "
+            "accents, tables versus cards) and returns ranked findings with two "
+            "reproducible 0 to 100 scores: conformance to the standard and code "
+            "hygiene. Read-only."
+        ),
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Glob", "Grep", "Bash"],
+        "skills": [],
+        "system_prompt": _SPECIALIST_PROMPTS["design-auditor"],
         "execution_mode": None,
         "auth_mode": None,
         "mcp_servers": {},

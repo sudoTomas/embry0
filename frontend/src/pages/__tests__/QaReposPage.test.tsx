@@ -9,7 +9,11 @@ vi.mock("@/hooks/useQaDashboard", () => ({
 }));
 
 vi.mock("@/components/qa/QaRepoCard", () => ({
-  QaRepoCard: ({ repo }: { repo: { repo: string } }) => <div data-testid="qa-repo-card">{repo.repo}</div>,
+  QaRepoCard: ({ repo }: { repo: { repo: string } }) => (
+    <tr>
+      <td data-testid="qa-repo-card">{repo.repo}</td>
+    </tr>
+  ),
 }));
 
 import { QaReposPage } from "../QaReposPage";

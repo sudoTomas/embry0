@@ -51,6 +51,9 @@ def _run(row: Any) -> dict[str, Any]:
 # row small.
 WEBHOOK_DELIVERY_IDS_KEPT = 50
 
+#: The error a run gets when the orchestrator restarted while it was going.
+INTERRUPTED = "interrupted: the orchestrator restarted before the run finished"
+
 
 class OrgReposRepository:
     def __init__(self, db: DatabasePool) -> None:
@@ -89,6 +92,20 @@ class OrgReposRepository:
             facts.pushed_at,
             facts.open_issues,
             dict(facts.facts),
+        )
+
+    async def refresh_state(self, repo: str, state: dict[str, Any]) -> None:
+        """Merge ``state``, what embry0's own tables say now, into the facts
+        of a repository the newest run did not list (ADR 0016).
+
+        ``run_id`` and ``seen_at`` stay: they say when the forge last listed
+        the repository, and the needs list reads a row stamped by an older
+        run as one that left the listing.
+        """
+        await self._db.execute(
+            "UPDATE org_repo_facts SET facts = facts || $2::jsonb WHERE repo = $1",
+            repo,
+            dict(state),
         )
 
     async def note_webhook_event(
@@ -165,6 +182,13 @@ class OrgReposRepository:
         )
         return bool(created)
 
+    async def get(self, repo: str) -> dict[str, Any] | None:
+        """One repository's facts, matched without regard to case (the forge keeps its own spelling)."""
+        row = await self._db.fetchrow(
+            f"SELECT {_FACT_COLUMNS} FROM org_repo_facts WHERE lower(repo) = lower($1) LIMIT 1", repo
+        )
+        return _fact(row) if row else None
+
     async def list_for_owner(self, owner: str, *, include_archived: bool = True) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
             f"SELECT {_FACT_COLUMNS} FROM org_repo_facts WHERE owner = $1 AND ($2::boolean OR NOT archived) ORDER BY pushed_at DESC NULLS LAST, repo",
@@ -173,14 +197,44 @@ class OrgReposRepository:
         )
         return [_fact(r) for r in rows]
 
-    async def start_run(self, owner: str) -> dict[str, Any]:
+    async def start_run(self, owner: str) -> dict[str, Any] | None:
+        """Open a running run for ``owner``, or return None while one is running.
+
+        The check and the insert hold the owner's advisory transaction lock
+        (``org_discovery:<owner>``), so two starts for one owner, a person's
+        and the schedule's (ADR 0016) or two processes', never both open one.
+        """
+        owner = owner.lower()
         run_id = f"odr-{secrets.token_hex(6)}"
-        row = await self._db.fetchrow(
-            f"INSERT INTO org_discovery_runs (id, owner, status) VALUES ($1, $2, 'running') RETURNING {_RUN_COLUMNS}",
-            run_id,
-            owner.lower(),
+        async with self._db.transaction() as conn:
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", f"org_discovery:{owner}")
+            row = await conn.fetchrow(
+                f"""
+                INSERT INTO org_discovery_runs (id, owner, status)
+                SELECT $1, $2, 'running'
+                 WHERE NOT EXISTS (SELECT 1 FROM org_discovery_runs WHERE owner = $2 AND status = 'running')
+                RETURNING {_RUN_COLUMNS}
+                """,
+                run_id,
+                owner,
+            )
+        return _run(row) if row else None
+
+    async def fail_interrupted_runs(self) -> list[str]:
+        """Close every run still marked running as an error; the ids closed.
+
+        A run lives in the orchestrator process that started it, so at boot
+        none is still going: one marked running was cut off by the restart.
+        Left alone it would read as in progress for good, and hold off every
+        later run for its owner, a person's and the schedule's. Called once
+        at startup, as the jobs a restart orphaned are failed then.
+        """
+        rows = await self._db.fetch(
+            "UPDATE org_discovery_runs SET status = 'error', error = $1, finished_at = NOW() "
+            "WHERE status = 'running' RETURNING id",
+            INTERRUPTED,
         )
-        return _run(row)
+        return [str(r["id"]) for r in rows]
 
     async def progress(self, run_id: str, *, seen: int, total: int) -> None:
         await self._db.execute(

@@ -35,6 +35,7 @@ const RepoDetailPage = lazy(() => import("../pages/RepoDetailPage").then(m => ({
 const OrganizationsPage = lazy(() => import("../pages/OrganizationsPage").then(m => ({ default: m.OrganizationsPage })));
 const OrgWizardPage = lazy(() => import("../pages/OrgWizardPage").then(m => ({ default: m.OrgWizardPage })));
 const OrganizationPage = lazy(() => import("../pages/OrganizationPage").then(m => ({ default: m.OrganizationPage })));
+const StandardsPage = lazy(() => import("../pages/StandardsPage").then(m => ({ default: m.StandardsPage })));
 const ProvidersPage = lazy(() => import("../pages/ProvidersPage").then(m => ({ default: m.ProvidersPage })));
 const WatcherPage = lazy(() => import("../pages/WatcherPage").then(m => ({ default: m.WatcherPage })));
 const LogsPage = lazy(() => import("../pages/LogsPage").then(m => ({ default: m.LogsPage })));
@@ -83,6 +84,7 @@ export const router = createBrowserRouter([
       { path: "orgs", element: <ErrorBoundary inline><Suspense fallback={fallback}><OrganizationsPage /></Suspense></ErrorBoundary> },
       { path: "orgs/-/new", element: <ErrorBoundary inline><Suspense fallback={fallback}><OrgWizardPage /></Suspense></ErrorBoundary> },
       { path: "orgs/:owner", element: <ErrorBoundary inline><Suspense fallback={fallback}><OrganizationPage /></Suspense></ErrorBoundary> },
+      { path: "orgs/:owner/standards", element: <ErrorBoundary inline><Suspense fallback={fallback}><StandardsPage /></Suspense></ErrorBoundary> },
       { path: "qa/runs/:runId", element: <ErrorBoundary inline><Suspense fallback={fallback}><QaRunDetailPage /></Suspense></ErrorBoundary> },
       { path: "qa/runs/:runId/affected", element: <ErrorBoundary inline><Suspense fallback={fallback}><QaAffectedSetPage /></Suspense></ErrorBoundary> },
       { path: "watcher", element: <ErrorBoundary inline><Suspense fallback={fallback}><WatcherPage /></Suspense></ErrorBoundary> },

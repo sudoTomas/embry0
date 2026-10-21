@@ -1,22 +1,22 @@
 import { useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";
-import { detailMessages } from "@/api/errorDetail";
+import { detailMessages, isReported } from "@/api/errorDetail";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useCredentials, useRepoCredentials, useSetRepoCredentials } from "@/hooks/useCredentials";
+import { useModelsCatalog } from "@/hooks/useProvider";
+import { ENABLE_SETTING, llmProviderStates, usableLlmProviders, type LlmProviderName } from "@/lib/llmProviders";
 import type { Binding, BindingInput, RepoCredentials } from "@/lib/types/credentials";
+import { providerLabel } from "@/lib/status";
 import { useAuthStore } from "@/stores/authStore";
 
 const NONE_VALUE = "";
-const NONE_LABEL = "(none — use owner/global/env)";
-const ENV_SOURCE_TITLE = "served from the environment; run import-env";
-const PIN_COPY = "Never fall back to another account for this repo";
-const LLM_PROVIDERS = ["anthropic", "xai"] as const;
-
-type LlmName = (typeof LLM_PROVIDERS)[number];
+const NONE_LABEL = "Use the shared account (recommended)";
+const ENV_SOURCE_TITLE = "Comes from the server's settings, not the account list";
+const PIN_COPY = "If this account is paused, stop work on this repository instead of using the shared account";
 
 type ForgeName = "github" | "gitlab";
 type ForgeEffective = NonNullable<RepoCredentials["effective"]["forge"]>;
@@ -29,11 +29,13 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
   const repoQuery = useRepoCredentials(repo);
   const credentialsQuery = useCredentials();
   const setRepoCredentials = useSetRepoCredentials();
+  // The providers page's catalog: a row per provider this deployment enables.
+  const catalog = useModelsCatalog();
   // The select is controlled by the server. Keep a local choice until that
   // query refetches, and drop it if the write fails.
   const [draft, setDraft] = useState<string | null>(null);
-  const [llmDraft, setLlmDraft] = useState<Partial<Record<LlmName, string>>>({});
-  const [pinDraft, setPinDraft] = useState<Partial<Record<LlmName, boolean>>>({});
+  const [llmDraft, setLlmDraft] = useState<Partial<Record<LlmProviderName, string>>>({});
+  const [pinDraft, setPinDraft] = useState<Partial<Record<LlmProviderName, boolean>>>({});
 
   useEffect(() => {
     setDraft(null);
@@ -79,7 +81,7 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
         },
         onError: (error: unknown) => {
           setDraft(null);
-          if (interceptorAlreadyToasted(error)) return;
+          if (isReported(error)) return;
           toast.error(failureText(error));
         },
       },
@@ -107,7 +109,7 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
     return binding.provider ?? credentials.find((row) => row.id === binding.credential_id)?.provider;
   }
 
-  function selectedFor(provider: LlmName): string {
+  function selectedFor(provider: LlmProviderName): string {
     const drafted = llmDraft[provider];
     if (drafted !== undefined) return drafted;
     const binding = bindings.find((row) => row.role === "llm" && providerOf(row) === provider);
@@ -117,13 +119,13 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
     return NONE_VALUE;
   }
 
-  function pinnedFor(provider: LlmName): boolean {
+  function pinnedFor(provider: LlmProviderName): boolean {
     if (pinDraft[provider] !== undefined) return Boolean(pinDraft[provider]);
     const binding = bindings.find((row) => row.role === "llm" && providerOf(row) === provider);
     return Boolean(binding?.pinned);
   }
 
-  function writeLlm(provider: LlmName, credentialId: string, pinned: boolean) {
+  function writeLlm(provider: LlmProviderName, credentialId: string, pinned: boolean) {
     if (!isAdmin || setRepoCredentials.isPending) return;
     setLlmDraft((curr) => ({ ...curr, [provider]: credentialId }));
     setPinDraft((curr) => ({ ...curr, [provider]: pinned }));
@@ -151,7 +153,7 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
             delete copy[provider];
             return copy;
           });
-          if (interceptorAlreadyToasted(error)) return;
+          if (isReported(error)) return;
           toast.error(failureText(error));
         },
       },
@@ -159,6 +161,15 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
   }
 
   const llm = repoQuery.data?.effective?.llm;
+  const llmStates = llmProviderStates(catalog.data?.providers);
+  // A row only for a provider this repository can use; the rest are counted.
+  const llmRows = usableLlmProviders(
+    catalog.data?.providers,
+    bindings.map((binding) => ({ role: binding.role, provider: providerOf(binding) })),
+    llm,
+  );
+  const unused = llmStates.filter((entry) => entry.state === "enabled" && !llmRows.includes(entry.name)).length;
+  const notEnabled = llmStates.filter((entry) => entry.state === "not_enabled").map((entry) => entry.name);
 
   return (
     <div className="space-y-4">
@@ -166,9 +177,13 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
         <h3 className="text-sm font-medium">Effective forge account</h3>
         <ForgeAccount forge={repoQuery.data?.effective?.forge} />
       </Card>
+      <div className="space-y-1">
+        <Label htmlFor="repo-bound-account">{providerLabel(forge)} account embry0 uses for this repository</Label>
+        <AdminPicker isAdmin={isAdmin}>{select}</AdminPicker>
+      </div>
       <Card className="space-y-4 p-4">
         <h3 className="text-sm font-medium">LLM accounts</h3>
-        {LLM_PROVIDERS.map((provider) => (
+        {llmRows.map((provider) => (
           <LlmProviderRow
             key={provider}
             provider={provider}
@@ -186,11 +201,20 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
             }}
           />
         ))}
+        {unused > 0 && (
+          <p data-testid="llm-unused" className="text-xs text-muted-foreground">
+            {unused === 1
+              ? "1 other AI company is switched on here but has no account. This repository does not use it."
+              : `${unused} other AI companies are switched on here but have no account. This repository does not use them.`}
+          </p>
+        )}
+        {notEnabled.length > 0 && (
+          <p data-testid="llm-not-enabled" className="text-xs text-muted-foreground">
+            Not enabled in this deployment: {notEnabled.map(providerLabel).join(", ")}. Name a provider in{" "}
+            <span className="font-mono">{ENABLE_SETTING}</span> to bind its account here.
+          </p>
+        )}
       </Card>
-      <div className="space-y-1">
-        <Label htmlFor="repo-bound-account">Bound account</Label>
-        <AdminPicker isAdmin={isAdmin}>{select}</AdminPicker>
-      </div>
     </div>
   );
 }
@@ -216,7 +240,7 @@ function LlmProviderRow({
   onSelect,
   onPin,
 }: {
-  provider: LlmName;
+  provider: LlmProviderName;
   effective: RepoCredentials["effective"]["llm"] extends infer T
     ? T extends Record<string, infer V>
       ? V
@@ -230,7 +254,7 @@ function LlmProviderRow({
   onSelect(credentialId: string): void;
   onPin(pinned: boolean): void;
 }) {
-  const label = provider === "anthropic" ? "Anthropic account" : "xAI account";
+  const label = `${providerLabel(provider)} account`;
   const selectId = `repo-llm-${provider}`;
   const select = (
     <Select
@@ -281,10 +305,10 @@ function LlmAccount({
         error?: string;
       }
     | undefined;
-  provider: LlmName;
+  provider: LlmProviderName;
 }) {
   if (value == null) {
-    return <p className="text-sm text-muted-foreground">No {provider} account resolved.</p>;
+    return <p className="text-sm text-muted-foreground">No {providerLabel(provider)} account resolved.</p>;
   }
   if ("error" in value && value.error) {
     return <p className="text-sm text-destructive">{value.error}</p>;
@@ -294,7 +318,7 @@ function LlmAccount({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <span className="text-sm">{value.label ?? ""}</span>
+        <span className="font-mono text-xs">{value.label ?? ""}</span>
         {source && (
           <Badge tone={sourceTone(source)} title={source === "env" ? ENV_SOURCE_TITLE : undefined}>
             {source}
@@ -302,8 +326,8 @@ function LlmAccount({
         )}
       </div>
       <details data-testid={`llm-trace-${provider}`}>
-        <summary className="cursor-pointer text-sm text-muted-foreground">Trace</summary>
-        <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-white/70">
+        <summary className="cursor-pointer text-sm text-muted-foreground">Why this account?</summary>
+        <ul className="mt-1 list-disc space-y-1 pl-5 font-mono text-xs text-fg-secondary">
           {trace.map((line, index) => (
             <li key={`${index}:${line}`}>{line}</li>
           ))}
@@ -317,7 +341,7 @@ function AdminPicker({ isAdmin, children }: { isAdmin: boolean; children: ReactN
   if (isAdmin) return children;
   return (
     <div className="w-full [&>div]:w-full">
-      <Tooltip content="Admin scope required">{children}</Tooltip>
+      <Tooltip content="Only an admin can change accounts.">{children}</Tooltip>
     </div>
   );
 }
@@ -349,14 +373,14 @@ function ResolvedForge({ forge }: { forge: Exclude<ForgeEffective, { error: stri
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <span className="text-sm">{forge.label ?? ""}</span>
+        <span className="font-mono text-xs">{forge.label ?? ""}</span>
         <Badge tone={sourceTone(source)} title={source === "env" ? ENV_SOURCE_TITLE : undefined}>
           {source}
         </Badge>
       </div>
       <details data-testid="repo-accounts-trace">
-        <summary className="cursor-pointer text-sm text-muted-foreground">Trace</summary>
-        <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-white/70">
+        <summary className="cursor-pointer text-sm text-muted-foreground">Why this account?</summary>
+        <ul className="mt-1 list-disc space-y-1 pl-5 font-mono text-xs text-fg-secondary">
           {trace.map((line, index) => (
             <li key={`${index}:${line}`}>{line}</li>
           ))}
@@ -364,15 +388,6 @@ function ResolvedForge({ forge }: { forge: Exclude<ForgeEffective, { error: stri
       </details>
     </div>
   );
-}
-
-function interceptorAlreadyToasted(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const coded = error as { code?: string; response?: { status?: number } };
-  if (coded.code === "ERR_NETWORK" || coded.code === "ERR_CANCELED") return true;
-  const status = coded.response?.status;
-  if (status === 401 || status === 422) return true;
-  return status !== undefined && status >= 500;
 }
 
 function failureText(error: unknown): string {

@@ -1,11 +1,11 @@
 """Organization actions API (ADR 0010): act on the needs list.
 
 ``POST /orgs/{owner}/actions`` runs one action (register, hook, onboard,
-watch) over a list of repositories under the owner and reports one outcome
-per repository. Admin-tier like every other organization write: a hook or
-a registration points embry0's credentials, and later its spend, at a
-repository. Every action is idempotent and ``dry_run`` answers what would
-happen without touching anything.
+watch, deactivate) over a list of repositories under the owner and reports
+one outcome per repository. Admin-tier like every other organization write:
+a hook or a registration points embry0's credentials, and later its spend,
+at a repository. Every action is idempotent and ``dry_run`` answers what
+would happen without touching anything.
 
 Onboard and watch go through the same functions as ``POST /jobs`` and
 ``PUT /watcher/stacks/{owner}/{name}``, so they run the same checks (the
@@ -37,7 +37,7 @@ router = APIRouter()
 
 
 class ActionBody(BaseModel):
-    action: str = Field(pattern="^(register|hook|onboard|watch)$")
+    action: str = Field(pattern="^(register|hook|onboard|watch|deactivate)$")
     repos: list[str] = Field(min_length=1, max_length=500, description="full repository paths under the owner")
     dry_run: bool = Field(default=False, description="report what would happen; change nothing")
     force: bool = Field(

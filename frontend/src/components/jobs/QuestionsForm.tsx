@@ -1,5 +1,7 @@
 import { useState, type JSX } from "react";
+import { QuestionText } from "./QuestionText";
 import { Button } from "@/components/ui/Button";
+import { apiErrorMessage } from "@/api/errorDetail";
 
 interface PendingInput {
   id: string;
@@ -20,9 +22,12 @@ interface PendingInput {
 interface QuestionsFormProps {
   inputs: PendingInput[];
   onAnswer: (inputId: string, answer: string) => Promise<void>;
+  /** Each question sits in its own amber box. A board card is that box
+   * already: it passes false, so the question is not boxed and padded twice. */
+  framed?: boolean;
 }
 
-export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Element {
+export function QuestionsForm({ inputs, onAnswer, framed = true }: QuestionsFormProps): JSX.Element {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -58,7 +63,7 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
     const newErrors: Record<string, string> = {};
     results.forEach((r, idx) => {
       if (r.status === "rejected") {
-        newErrors[toSubmit[idx].id] = String(r.reason).slice(0, 200);
+        newErrors[toSubmit[idx].id] = apiErrorMessage(r.reason).slice(0, 200);
       }
     });
     setErrors(newErrors);
@@ -77,25 +82,36 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
         const isAnswered = input.status === "answered";
         const isOverriding = isAutoAnswered && overridingId === input.id;
         const showAnswerField = needsAnswer(input);
+        // The answer field is named shortly and described by the question's
+        // row, which holds its number, the asking node and the question.
+        const questionId = `question-${input.id}`;
 
         return (
           <div
             key={input.id}
-            className="border border-amber-500/20 rounded p-3 bg-amber-500/[0.03]"
+            className={framed ? "border border-amber-500/20 rounded p-3 bg-amber-500/[0.03]" : undefined}
           >
-            <div className="flex items-baseline gap-2 mb-2">
+            {/* Where the box is narrow (a board card) the question takes the
+                line below its number and node, so it has the box's whole
+                width rather than what is left beside them. */}
+            <div id={questionId} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 mb-2">
               <span className="text-amber-400 font-mono text-xs">{idx + 1}.</span>
               {input.asking_node && (
                 <span className="text-[10px] uppercase text-amber-400/60">
                   {input.asking_node}
                 </span>
               )}
-              <p className="text-sm text-white/90 flex-1">{input.question}</p>
+              <p
+                data-testid="question-text"
+                className="min-w-0 flex-1 basis-80 break-words text-sm text-white/90 [overflow-wrap:anywhere]"
+              >
+                <QuestionText text={input.question} />
+              </p>
             </div>
 
             {/* Read-only: an answer already exists (e.g. via Telegram). */}
             {isAnswered && (
-              <p className="text-sm text-emerald-300/90 italic">
+              <p className="text-sm text-success/90 italic">
                 Answered.
               </p>
             )}
@@ -103,11 +119,11 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
             {/* Auto-answered: show the suggestion. Stays visible even while
                 the user types an override so they can compare. */}
             {isAutoAnswered && (
-              <div className="mb-2 px-2 py-1.5 rounded bg-emerald-500/[0.06] border border-emerald-500/20">
-                <p className="text-xs uppercase tracking-wide text-emerald-400/70 mb-0.5">
+              <div className="mb-2 px-2 py-1.5 rounded bg-success/[0.06] border border-success/20">
+                <p className="text-xs uppercase tracking-wide text-success/70 mb-0.5">
                   Auto-answered
                 </p>
-                <p className="text-sm text-emerald-300/90 whitespace-pre-wrap">
+                <p className="text-sm text-success/90 whitespace-pre-wrap">
                   {input.auto_answer ?? "(no suggestion recorded)"}
                 </p>
               </div>
@@ -136,6 +152,8 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
                       setAnswers((p) => ({ ...p, [input.id]: e.target.value }))
                     }
                     disabled={submitting}
+                    aria-label="Your answer"
+                    aria-describedby={questionId}
                     className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-sm text-white"
                   >
                     <option value="">— select —</option>
@@ -152,6 +170,8 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
                       setAnswers((p) => ({ ...p, [input.id]: e.target.value }))
                     }
                     disabled={submitting}
+                    aria-label="Your answer"
+                    aria-describedby={questionId}
                     rows={2}
                     className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-sm text-white font-mono resize-y"
                     placeholder={isOverriding ? "Override answer..." : "Your answer..."}
@@ -178,7 +198,7 @@ export function QuestionsForm({ inputs, onAnswer }: QuestionsFormProps): JSX.Ele
             )}
 
             {errors[input.id] && (
-              <p className="mt-1 text-xs text-red-400">{errors[input.id]}</p>
+              <p className="mt-1 text-xs text-destructive">{errors[input.id]}</p>
             )}
           </div>
         );

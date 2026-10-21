@@ -38,7 +38,7 @@ export function DiscoveryStatus({ owner, run }: { owner: string; run: DiscoveryR
     return (
       <div className="space-y-2" data-testid="discovery-running">
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <Badge tone="gold">running</Badge>
+          <Badge tone="info">Running</Badge>
           <span data-testid="discovery-progress">
             {total > 0 ? `${seen} of ${total} repositories` : "listing repositories"}
           </span>
@@ -51,7 +51,7 @@ export function DiscoveryStatus({ owner, run }: { owner: string; run: DiscoveryR
           aria-valuenow={seen}
           aria-label="Discovery progress"
         >
-          <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+          <div className="h-full bg-info transition-all" style={{ width: `${pct}%` }} />
         </div>
       </div>
     );
@@ -60,7 +60,7 @@ export function DiscoveryStatus({ owner, run }: { owner: string; run: DiscoveryR
   if (run.status === "error") {
     return (
       <div className="space-y-1" data-testid="discovery-error">
-        <Badge tone="error">failed</Badge>
+        <Badge tone="error">Failed</Badge>
         <p className="text-sm text-destructive">{run.error ?? "Discovery failed."}</p>
       </div>
     );
@@ -69,7 +69,7 @@ export function DiscoveryStatus({ owner, run }: { owner: string; run: DiscoveryR
   return (
     <div className="space-y-2" data-testid="discovery-done">
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <Badge tone="success">done</Badge>
+        <Badge tone="success">Done</Badge>
         {run.finished_at && <span className="text-muted-foreground">finished {formatDate(run.finished_at)}</span>}
       </div>
       <dl className="grid grid-cols-3 gap-2 sm:grid-cols-5" data-testid="discovery-summary">

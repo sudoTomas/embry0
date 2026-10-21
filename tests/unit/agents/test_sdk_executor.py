@@ -719,45 +719,6 @@ async def test_policy_denial_error_event_names_the_tool_and_the_code() -> None:
 
 
 # ---------------------------------------------------------------------------
-# hooks_unavailable warning path
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skip(
-    reason="sdk_hooks try/except removed in 2026-04-28-sandbox-hardening Task 3; hooks now fail-closed at boot"
-)
-@pytest.mark.asyncio
-async def test_sdk_executor_hooks_unavailable_logs_warning(tmp_path, monkeypatch) -> None:
-    """If options.hooks assignment raises, executor logs warning and continues."""
-    from unittest.mock import MagicMock
-
-    monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
-
-    mock_options = MagicMock()
-    # Make setting .hooks raise to simulate legacy SDK
-    type(mock_options).hooks = property(
-        fget=lambda self: None,
-        fset=lambda self, v: (_ for _ in ()).throw(AttributeError("hooks not supported")),
-    )
-
-    with (
-        patch(
-            "claude_agent_sdk.query",
-            return_value=_scripted_query([_FakeResultMessage("done", 0.001)]),
-        ),
-        patch("embry0.agents.executor.build_sdk_options", return_value=mock_options),
-    ):
-        executor = SdkAgentExecutor()
-        out = await executor.run(
-            _inv(),
-            config={"configurable": {}, "_test_writer": lambda _e: None},
-        )
-
-    # Executor should not crash even when hooks assignment fails
-    assert out.is_error is False
-
-
-# ---------------------------------------------------------------------------
 # writer emission edge branches
 # ---------------------------------------------------------------------------
 

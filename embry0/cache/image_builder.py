@@ -39,6 +39,11 @@ _LOCKFILE_CANDIDATES = (
 )
 
 
+#: Every pre-built QA image's repository name starts with this; the QA image
+#: retention sweep (embry0/cache/qa_image_retention.py) finds them by it.
+QA_IMAGE_PREFIX = "embry0-qa-"
+
+
 class ImageBuildError(Exception):
     """Raised when image building fails at any stage."""
 
@@ -60,7 +65,7 @@ def _make_image_tag(repo: str) -> str:
     """
     sanitized = repo.lower().replace("/", "_").replace(":", "_")
     ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M")
-    return f"embry0-qa-{sanitized}:{ts}"
+    return f"{QA_IMAGE_PREFIX}{sanitized}:{ts}"
 
 
 async def build_qa_image(

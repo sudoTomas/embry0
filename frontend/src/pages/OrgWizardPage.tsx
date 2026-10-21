@@ -10,7 +10,7 @@ import {
   type Organization,
 } from "@/api/orgs";
 import type { Forge } from "@/api/repos";
-import { formatErrorDetail } from "@/api/errorDetail";
+import { apiErrorMessage } from "@/api/errorDetail";
 import { AccessChips } from "@/components/orgs/AccessChips";
 import { DiscoveryStatus } from "@/components/orgs/DiscoveryStatus";
 import { OrgActPanel } from "@/components/orgs/OrgActPanel";
@@ -46,7 +46,7 @@ type ProbeState =
 function errorText(err: unknown): string {
   const response = (err as { response?: { status?: number; data?: { detail?: unknown } } }).response;
   if (response?.status === 403) return "This needs admin scope.";
-  return formatErrorDetail(response?.data?.detail) ?? (err instanceof Error ? err.message : "The request failed.");
+  return apiErrorMessage(err);
 }
 
 function httpStatus(err: unknown): number | undefined {
@@ -67,7 +67,7 @@ function Stepper({ step }: { step: Step }) {
             aria-current={state === "current" ? "step" : undefined}
             className={cn(
               "flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium",
-              state === "current" && "border-primary/40 bg-primary/10 text-primary",
+              state === "current" && "border-border bg-primary/10 text-primary",
               state === "done" && "border-success/25 text-success",
               state === "todo" && "border-white/[0.06] text-white/40",
             )}
@@ -84,7 +84,7 @@ function Stepper({ step }: { step: Step }) {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-3 rounded-lg border border-white/[0.06] bg-card p-4">
-      <h2 className="text-lg font-semibold">{title}</h2>
+      <h2 className="text-section font-semibold">{title}</h2>
       {children}
     </section>
   );
@@ -187,7 +187,7 @@ export function OrgWizardPage() {
         <Link to="/orgs" className="text-sm text-white/50 hover:underline">
           ← Organizations
         </Link>
-        <h1 className="title-pixel text-2xl font-bold">Add organization</h1>
+        <h1 className="title-pixel text-xl font-bold">Add organization</h1>
         <Stepper step={step} />
         {!isAdmin && (
           <p className="text-sm text-warning" data-testid="wizard-admin-note">

@@ -37,7 +37,7 @@ async def test_sweep_qa_orphans_removes_old_containers_via_both_labels():
         ]
     )
 
-    reaper = ContainerReaper(DockerRuntime(docker), max_age_hours=24)
+    reaper = ContainerReaper(DockerRuntime(docker), max_age_hours=24, sandbox_manager=AsyncMock())
     await reaper._sweep_qa_orphans()
 
     cmds = [c.args[0] for c in docker.run_cmd.call_args_list]
@@ -65,7 +65,7 @@ async def test_sweep_qa_orphans_skips_young_containers():
         ]
     )
 
-    reaper = ContainerReaper(DockerRuntime(docker), max_age_hours=24)
+    reaper = ContainerReaper(DockerRuntime(docker), max_age_hours=24, sandbox_manager=AsyncMock())
     await reaper._sweep_qa_orphans()
     cmds = [c.args[0] for c in docker.run_cmd.call_args_list]
     flat = " ".join(" ".join(map(str, c)) for c in cmds)
@@ -86,6 +86,6 @@ async def test_sweep_qa_orphans_swallows_in_use_network():
         ]
     )
 
-    reaper = ContainerReaper(DockerRuntime(docker), max_age_hours=24)
+    reaper = ContainerReaper(DockerRuntime(docker), max_age_hours=24, sandbox_manager=AsyncMock())
     # Should not raise.
     await reaper._sweep_qa_orphans()

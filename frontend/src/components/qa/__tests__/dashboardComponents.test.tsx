@@ -36,18 +36,18 @@ const ZERO_HITS: CacheHits = {
 describe("RunStatusBadge", () => {
   it("renders the status label", () => {
     render(<RunStatusBadge status="passed" />);
-    expect(screen.getByText("passed")).toBeInTheDocument();
+    expect(screen.getByText("Passed")).toBeInTheDocument();
   });
 
-  it("normalises underscores to spaces", () => {
+  it("reads as words, not the raw enum", () => {
     render(<RunStatusBadge status="qa_failure" />);
-    expect(screen.getByText("qa failure")).toBeInTheDocument();
+    expect(screen.getByText("QA failure")).toBeInTheDocument();
   });
 
   it("renders infra_error with neutral tone (bug_004)", () => {
     render(<RunStatusBadge status="infra_error" />);
-    // The badge text has underscores replaced with spaces
-    expect(screen.getByText("infra error")).toBeInTheDocument();
+    // The badge reads as words; the raw value stays in the title
+    expect(screen.getByText("Infra error")).toBeInTheDocument();
     // The badge element should have the neutral tone data attribute
     const badge = screen.getByTitle("infra_error");
     expect(badge).toBeInTheDocument();
@@ -55,12 +55,12 @@ describe("RunStatusBadge", () => {
 });
 
 describe("CacheHitsRow", () => {
-  it("renders three dots when nothing hit", () => {
+  it("says every cache missed when nothing hit", () => {
     render(<CacheHitsRow hits={ZERO_HITS} />);
-    expect(screen.getByText("···")).toBeInTheDocument();
+    expect(screen.getByText("Cache: image miss · volume miss · turbo none")).toBeInTheDocument();
   });
 
-  it("shows fire glyph when image+volume hit and turbo majority hit", () => {
+  it("spells out image and volume hits and the turbo hit count, never an emoji", () => {
     render(
       <CacheHitsRow
         hits={{
@@ -71,10 +71,10 @@ describe("CacheHitsRow", () => {
         }}
       />,
     );
-    expect(screen.getByText("🔥🔥🔥")).toBeInTheDocument();
+    expect(screen.getByText("Cache: image hit · volume hit · turbo 2/3")).toBeInTheDocument();
   });
 
-  it("shows turbo dot when misses dominate", () => {
+  it("counts turbo hits when misses dominate", () => {
     render(
       <CacheHitsRow
         hits={{
@@ -85,7 +85,7 @@ describe("CacheHitsRow", () => {
         }}
       />,
     );
-    expect(screen.getByText("🔥🔥·")).toBeInTheDocument();
+    expect(screen.getByText("Cache: image hit · volume hit · turbo 1/3")).toBeInTheDocument();
   });
 });
 
@@ -100,7 +100,11 @@ describe("QaRepoCard", () => {
     };
     render(
       <MemoryRouter>
-        <QaRepoCard repo={repo} />
+        <table>
+          <tbody>
+            <QaRepoCard repo={repo} />
+          </tbody>
+        </table>
       </MemoryRouter>,
     );
     expect(screen.getByText("org/r1")).toBeInTheDocument();
@@ -121,7 +125,11 @@ describe("QaRunRow", () => {
     };
     render(
       <MemoryRouter>
-        <QaRunRow run={run} />
+        <table>
+          <tbody>
+            <QaRunRow run={run} />
+          </tbody>
+        </table>
       </MemoryRouter>,
     );
     expect(screen.getByText("job-abc")).toBeInTheDocument();
@@ -146,7 +154,7 @@ describe("QaAppResultCard", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText("hub")).toBeInTheDocument();
-    expect(screen.getByText("passed")).toBeInTheDocument();
+    expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(screen.getByText("1s")).toBeInTheDocument();
   });
 

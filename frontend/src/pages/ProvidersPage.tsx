@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { PageError } from "@/components/PageError";
 import { formatDate } from "@/lib/utils";
+import { providerLabel, sentenceCase } from "@/lib/status";
 import { useAuthStore } from "@/stores/authStore";
 import {
   useModelsCatalog,
@@ -15,6 +16,7 @@ import {
   useUpdateProviderConfig,
 } from "@/hooks/useProvider";
 import type { CatalogProvider, ProviderProbeResult } from "@/lib/types/provider";
+import { toastApiError } from "@/api/errorToast";
 
 // RAV-1297: LLM Providers — the complete catalog (Anthropic first-class),
 // live connection tests, per-model enablement, and tier assignment. This
@@ -30,6 +32,15 @@ const TIER_FIELDS = [
 ] as const;
 
 type TierKey = (typeof TIER_FIELDS)[number]["key"];
+
+/** Where a provider's credential comes from (`credential_source`), in words. */
+const CREDENTIAL_SOURCE_LABELS: Record<string, string> = {
+  oauth: "OAuth token",
+  api_key: "API key",
+  "oauth+api_key": "OAuth token and API key",
+  oauth_proxy: "OAuth proxy",
+  registry: "Credential registry",
+};
 
 const PROBE_STATUS_LABELS: Record<string, string> = {
   ok: "Connected",
@@ -74,35 +85,38 @@ function ProviderCard({
     testProvider.mutate(provider.name, {
       onSuccess: (result) => {
         setProbe(result);
-        if (result.status === "ok") toast.success(`${provider.name}: connection OK`);
-        else toast.error(`${provider.name}: ${PROBE_STATUS_LABELS[result.status] ?? result.status}`);
+        if (result.status === "ok") toast.success(`${providerLabel(provider.name)}: connection OK`);
+        else toast.error(`${providerLabel(provider.name)}: ${PROBE_STATUS_LABELS[result.status] ?? result.status}`);
       },
-      onError: (e) => toast.error(`Test failed: ${e.message}`),
+      onError: (e) => toastApiError(e, "Test failed"),
     });
   };
 
   return (
     <Card data-testid={`provider-card-${provider.name}`}>
       <CardHeader>
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <CardTitle className="text-lg capitalize">{provider.name}</CardTitle>
-            {provider.default && <Badge tone="gold">default provider</Badge>}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle className="text-section">{providerLabel(provider.name)}</CardTitle>
+            {provider.default && <Badge tone="neutral">Default provider</Badge>}
             {provider.available ? (
-              <Badge tone="success">available</Badge>
+              <Badge tone="success">Available</Badge>
             ) : (
-              <Badge tone="error">unavailable</Badge>
+              <Badge tone="error">Unavailable</Badge>
             )}
           </div>
           <Button variant="outline" size="sm" onClick={handleTest} disabled={testProvider.isPending}>
             {testProvider.isPending ? "Testing..." : "Test connection"}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground font-mono">{provider.base_url}</p>
+        {/* A URL has no spaces to wrap at; a long one ran past a phone screen. */}
+        <p className="text-xs text-muted-foreground font-mono [overflow-wrap:anywhere]">{provider.base_url}</p>
         <p className="text-xs text-muted-foreground">
           Credentials:{" "}
           {provider.credential_source ? (
-            <span className="font-mono">{provider.credential_source}</span>
+            <span title={provider.credential_source}>
+              {CREDENTIAL_SOURCE_LABELS[provider.credential_source] ?? sentenceCase(provider.credential_source)}
+            </span>
           ) : (
             "none configured"
           )}
@@ -139,58 +153,68 @@ function ProviderCard({
           </div>
         )}
 
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-muted-foreground">
-              <th className="pb-2 font-medium">Model</th>
-              <th className="pb-2 font-medium">Input $/Mtok</th>
-              <th className="pb-2 font-medium">Output $/Mtok</th>
-              <th className="pb-2 font-medium text-right">Enabled</th>
-            </tr>
-          </thead>
-          <tbody>
-            {provider.models.map((m) => {
-              const isTier = tierModels.includes(m.model);
-              const isDefault = defaultModel !== "" && m.model === defaultModel;
-              const enabled = !disabledModels.includes(m.model);
-              // Backend interlock: a model that a tier or the default model
-              // points at cannot be disabled — reassign it first.
-              const locked = (isTier || isDefault) && enabled;
-              return (
-                <tr key={m.model} className="border-t border-white/[0.06]">
-                  <td className="py-2 font-mono">
-                    {m.model}
-                    {isTier && (
-                      <span className="ml-2 text-xs text-muted-foreground">(tier-assigned)</span>
-                    )}
-                    {isDefault && (
-                      <span className="ml-2 text-xs text-muted-foreground">(default model)</span>
-                    )}
-                  </td>
-                  <td className="py-2">{fmtPrice(m.pricing_usd_per_mtok.input)}</td>
-                  <td className="py-2">{fmtPrice(m.pricing_usd_per_mtok.output)}</td>
-                  <td className="py-2 text-right">
-                    <input
-                      type="checkbox"
-                      aria-label={`Enable ${m.model}`}
-                      checked={enabled}
-                      disabled={!isAdmin || pending || locked}
-                      title={
-                        !locked
-                          ? undefined
-                          : isDefault
-                            ? "The default model cannot be disabled — change the default model first"
-                            : "Tier-assigned models cannot be disabled — reassign the tier first"
-                      }
-                      onChange={(e) => onToggleModel(m.model, e.target.checked)}
-                      className="h-4 w-4 accent-primary"
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="overflow-x-auto">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th className="hidden sm:table-cell">Input $/Mtok</th>
+                <th className="hidden sm:table-cell">Output $/Mtok</th>
+                <th className="text-right">Enabled</th>
+              </tr>
+            </thead>
+            <tbody>
+              {provider.models.map((m) => {
+                const isTier = tierModels.includes(m.model);
+                const isDefault = defaultModel !== "" && m.model === defaultModel;
+                const enabled = !disabledModels.includes(m.model);
+                // Backend interlock: a model that a tier or the default model
+                // points at cannot be disabled — reassign it first.
+                const locked = (isTier || isDefault) && enabled;
+                return (
+                  <tr key={m.model}>
+                    <td className="font-mono">
+                      {m.model}
+                      {isTier && (
+                        <span className="ml-2 text-xs text-muted-foreground">(tier-assigned)</span>
+                      )}
+                      {isDefault && (
+                        <span className="ml-2 text-xs text-muted-foreground">(default model)</span>
+                      )}
+                      {m.tool_calling === false && (
+                        <span
+                          className="ml-2 text-xs text-muted-foreground"
+                          title="No tool calling on this provider's API: only an agent without tools can run on it"
+                        >
+                          (chat-only)
+                        </span>
+                      )}
+                    </td>
+                    <td className="hidden sm:table-cell">{fmtPrice(m.pricing_usd_per_mtok.input)}</td>
+                    <td className="hidden sm:table-cell">{fmtPrice(m.pricing_usd_per_mtok.output)}</td>
+                    <td className="text-right">
+                      <input
+                        type="checkbox"
+                        aria-label={`Enable ${m.model}`}
+                        checked={enabled}
+                        disabled={!isAdmin || pending || locked}
+                        title={
+                          !locked
+                            ? undefined
+                            : isDefault
+                              ? "The default model cannot be disabled — change the default model first"
+                              : "Tier-assigned models cannot be disabled — reassign the tier first"
+                        }
+                        onChange={(e) => onToggleModel(m.model, e.target.checked)}
+                        className="h-4 w-4 accent-fg-secondary"
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </CardContent>
     </Card>
   );
@@ -240,7 +264,7 @@ export function ProvidersPage() {
     return <PageError message="Failed to load provider catalog" onRetry={() => refetch()} />;
   }
   if (isLoading || !catalog) {
-    return <div className="p-6 text-muted-foreground">Loading...</div>;
+    return <div className="text-muted-foreground">Loading...</div>;
   }
 
   const currentTier = (key: TierKey): string => tierDraft[key] ?? tierValue(catalog, key);
@@ -271,7 +295,7 @@ export function ProvidersPage() {
         setDefaultModelDraft(null);
         toast.success("Model settings saved");
       },
-      onError: (e) => toast.error(`Failed to save model settings: ${e.message}`),
+      onError: (e) => toastApiError(e, "Failed to save model settings"),
     });
   };
 
@@ -283,15 +307,15 @@ export function ProvidersPage() {
       { disabled_models: next },
       {
         onSuccess: () => toast.success(`${model} ${enable ? "enabled" : "disabled"}`),
-        onError: (e) => toast.error(`Failed to update ${model}: ${e.message}`),
+        onError: (e) => toastApiError(e, `Failed to update ${model}`),
       },
     );
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-4xl">
+    <div className="space-y-6 max-w-4xl">
       <div>
-        <h1 className="title-pixel text-2xl font-bold tracking-tight">LLM Providers</h1>
+        <h1 className="title-pixel text-xl font-bold tracking-tight">LLM providers</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Every model provider embry0 can run agents on — availability, live
           connection tests, per-model enablement, and tier assignment.

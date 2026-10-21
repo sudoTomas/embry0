@@ -10,8 +10,9 @@ Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``org_act``, ``qa_config_set``, ``credential_bind``, ``host_import_tailnet``,
 ``skill_source_add``, ``skill_source_sync``, ``skill_source_remove``,
 ``inline_skill_put``, ``inline_skill_remove``, ``agent_skill_add``,
-``agent_skill_remove``) require ``confirm=true``; without it they return an
-instructive refusal instead of acting.
+``agent_skill_remove``, ``standard_set``, ``standard_audit``) require
+``confirm=true``; without it they return an instructive refusal instead of
+acting.
 """
 
 from __future__ import annotations
@@ -38,7 +39,8 @@ mcp = MCPServer(
         "templates, the log watcher, healing cases, merge approvals, per-repo environment "
         "variables, forge credentials (list, resolve, bind), the hosts that run the "
         "code (list, get, probe, import from a tailnet), "
-        "skills (catalog, sources, inline skills, per-agent add/remove) and the tool catalog. "
+        "skills (catalog, sources, inline skills, per-agent add/remove), the tool catalog, "
+        "and an owner's standards (get, set, audit a repository against one). "
         "Destructive tools require confirm=true after explicit user approval. "
         'Two lists answer "what is open?", and they are different things: '
         'issue_list(status="open") is the work on the Issues page of the dashboard; '
@@ -385,7 +387,12 @@ async def job_deliverables(job_id: str) -> list[dict[str, Any]]:
 
 @_tool
 async def agent_list() -> list[dict[str, Any]]:
-    """List all agent definitions (type, description, model, tools, skills, execution mode)."""
+    """List all agent definitions (type, description, model, tools, skills, execution mode).
+
+    ``model`` is the stored one. ``effective_model`` and ``effective_provider``
+    are what a job that names no model runs it on: a deployment default model
+    replaces the stored one (``effective_model_source`` says which applied).
+    """
     return await _get_client().agent_list()
 
 
@@ -651,25 +658,34 @@ async def logs_query(
     investigation. container: Docker container name substring (e.g. "api");
     search: regex line filter (e.g. "(?i)error|exception"); since_minutes: lookback
     window (max 1440); limit: max lines (default 200, max 1000); logql: raw LogQL
-    override for advanced queries. Keep limit modest — lines land in your context."""
+    override for advanced queries. Keep limit modest — lines land in your context.
+    Needs an operate-scope key or above. Lines come back redacted (secrets, e-mail
+    addresses and the operator's personal-data fields replaced) and cut at 2000
+    characters."""
     return await _get_client().logs_query(
         container=container, search=search, since_minutes=since_minutes, limit=limit, logql=logql
     )
 
 
 @_tool
-async def watcher_runs(limit: int = 50) -> list[dict[str, Any]]:
-    """List recent log-watcher runs (anomaly scans that file draft tickets)."""
-    return await _get_client().watcher_runs(limit=limit)
+async def watcher_runs(limit: int = 50, stack: str | None = None) -> list[dict[str, Any]]:
+    """List recent log-watcher runs (anomaly scans that file draft tickets), newest
+    first. stack (the watched repo, "group/name" or a GitLab subgroup path) narrows
+    to one watched stack; omitted, every stack's runs are interleaved and each
+    row's repo names its stack."""
+    return await _get_client().watcher_runs(limit=limit, stack=stack)
 
 
 @_tool
-async def watcher_trigger(timeout: float = 900.0) -> dict[str, Any]:
-    """Trigger one log-watcher tick now and return its summary. Safe: proposal caps,
-    dedup, and the human gate still apply. A tick runs an LLM analysis job
-    synchronously and takes minutes — timeout (seconds) bounds the wait; the tick
-    keeps running server-side even if it elapses."""
-    return await _get_client().watcher_trigger(timeout=timeout)
+async def watcher_trigger(timeout: float = 900.0, stack: str | None = None) -> dict[str, Any]:
+    """Trigger a log-watcher tick now and return its summary. Safe: proposal caps,
+    dedup, and the human gate still apply. stack (a watched repo, as watcher_runs
+    names it) ticks that stack; omitted while several are watched, every stack
+    ticks and the summary lists each one's result under "stacks" (each may run
+    one paid analysis). A tick runs an LLM analysis job synchronously and takes
+    minutes — timeout (seconds) bounds the wait; the tick keeps running
+    server-side even if it elapses."""
+    return await _get_client().watcher_trigger(timeout=timeout, stack=stack)
 
 
 # -------------------------------------------------------------------- cases
@@ -772,8 +788,9 @@ async def case_close(
     given up), "non_code" (nothing to change in code), "cancelled" (the finding was
     withdrawn), "self_resolved" (it stopped by itself), "embry0" (embry0's own merge).
     embry0 refuses (409) a case that is already closed. Closing is terminal but keeps
-    history: a later recurrence opens a new case pointing at this one. Requires
-    confirm=true."""
+    history: a later recurrence opens a new case pointing at this one. A case with
+    origin "org" is an organization need: closing it dismisses the need and needs an
+    admin-scope key. Requires confirm=true."""
     if not confirm:
         return _confirmation_refusal("case_close", f"close case {case_id} as {resolution_path or 'its existing path'}")
     return await _get_client().case_close(case_id, resolution_path=resolution_path, note=note, closed_by=closed_by)
@@ -822,7 +839,9 @@ async def merge_decide(
 async def env_list(repo: str | None = None) -> dict[str, Any]:
     """List environment variables — global set by default, or a repo's set when repo
     ("group/name", or a GitLab subgroup path like "group/subgroup/project") is given.
-    Secret values are always masked as "****"; there is no tool to read secret values."""
+    Secret values are always masked as "****"; there is no tool to read secret values.
+    A secret's masked_preview shows at most its last 2 characters, and only for a
+    secret of 12 characters or more."""
     return await _get_client().env_list(repo=repo)
 
 
@@ -947,6 +966,55 @@ async def host_import_tailnet(credential_id: str = "", confirm: bool = False) ->
 
 
 @_tool
+async def standard_get(owner: str, kind: str) -> dict[str, Any]:
+    """The active version of a forge owner's standard of one ``kind`` ("design") (ADR 0014): its
+    schema (the token roles, type scale and component rules every standard of the kind shares), its
+    values (this owner's fill of the roles), prose, references and version number. 404s when the
+    owner holds none of that kind. Read-only."""
+    return await _get_client().standard_get(owner, kind)
+
+
+@_tool
+async def standard_set(
+    owner: str,
+    kind: str,
+    schema: dict[str, Any],
+    values: dict[str, Any],
+    prose: str = "",
+    references: list[str] | None = None,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Write a new version of a forge owner's standard of one ``kind`` ("design") and supersede the
+    active one (ADR 0014). The call is the whole version, so read it with standard_get first and
+    send back what you keep. ``schema`` holds ``roles`` (role name to an object describing the
+    role), ``type_scale`` (step name to an object) and ``rules`` (objects with an ``id`` and a
+    ``text``); every key of ``values`` must be a role the schema declares. ``references`` are
+    repositories or URLs where the standard is held best. Needs an admin-scope key. Requires
+    confirm=true (changes what every repository under the owner is audited against)."""
+    if not confirm:
+        return _confirmation_refusal("standard_set", f"write a new version of the {kind} standard of {owner!r}")
+    return await _get_client().standard_set(
+        owner, kind, schema=schema, values=values, prose=prose, references=list(references or [])
+    )
+
+
+@_tool
+async def standard_audit(owner: str, kind: str, repo: str, confirm: bool = False) -> dict[str, Any]:
+    """Start a read-only audit job of one repository under ``owner`` ("group/name", or a GitLab
+    subgroup path like "group/subgroup/project") against the owner's active standard of ``kind``
+    ("design"). Refused unless an admin put the repository in mode advise or enforce, the owner holds
+    an active standard of the kind, its pipeline template (design-audit) exists, and no audit of the
+    repository is pending or running: a retry while one runs is refused with that job's id, which
+    is the one to follow. When the job
+    completes, its report's score (0 to 100) and finding count are stored on the repository's
+    standards state, which repo_get shows. Returns the job id: follow it with job_wait and
+    job_deliverables. Requires confirm=true (starts a paid job)."""
+    if not confirm:
+        return _confirmation_refusal("standard_audit", f"start a {kind} audit of {repo!r} against {owner!r}")
+    return await _get_client().standard_audit(owner, kind, repo)
+
+
+@_tool
 async def org_webhook_install(owner: str, confirm: bool = False) -> dict[str, Any]:
     """Install one GitHub webhook on the organization itself, firing for every
     repository under ``owner`` (present and future) and pointing at this
@@ -966,16 +1034,18 @@ async def org_act(
     """Run one organization action over repositories discovery saw under
     ``owner``: register (the repo registry), hook (a forge webhook pointing at
     WEBHOOK_PUBLIC_URL), onboard (the onboard job, for registered repositories
-    with a boot hint) or watch (a disabled watcher stack). One outcome per
-    repository: done, already (the state exists), skipped (detail says why)
-    or failed. Idempotent: the same call twice reports already for every
-    repository the first one changed, and changes nothing. dry_run=true
-    reports what would happen without touching anything. force=true lets
-    onboard start another job where the last one completed without storing
-    a QA config. A call that changed anything starts a rediscovery
-    (``rediscovery`` in the result). Requires confirm=true for every call,
-    dry runs included, like every other gated tool: a real call creates
-    registrations, webhooks, jobs or watcher stacks."""
+    with a boot hint), watch (a disabled watcher stack) or deactivate (the
+    registry row goes inactive: the answer to a repository that left the
+    listing). One outcome per repository: done, already (the state exists),
+    skipped (detail says why) or failed. Idempotent: the same call twice
+    reports already for every repository the first one changed, and
+    changes nothing. dry_run=true reports what would happen without touching
+    anything. force=true lets onboard start another job where the last one
+    completed without storing a QA config. A call that changed anything
+    starts a rediscovery (``rediscovery`` in the result). Requires
+    confirm=true for every call, dry runs included, like every other gated
+    tool: a real call creates registrations, webhooks, jobs or watcher
+    stacks, or deactivates registrations."""
     if not confirm:
         verb = "preview" if dry_run else "run"
         return _confirmation_refusal("org_act", f"{verb} {action} on {len(repos)} repositories under {owner!r}")

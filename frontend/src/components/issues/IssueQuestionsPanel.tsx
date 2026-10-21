@@ -4,9 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { AgentIndicator } from "@/components/issues/AgentIndicator";
+import { QuestionText } from "@/components/jobs/QuestionText";
 import { useIssueInputs, useAnswerIssueInput } from "@/hooks/useIssueInputs";
 import { formatDate } from "@/lib/utils";
 import type { InputResponse } from "@/lib/types";
+import { toastApiError } from "@/api/errorToast";
 
 interface IssueQuestionsPanelProps {
   issueId: string;
@@ -25,7 +27,7 @@ function QuestionRow({ input, issueId }: { input: InputResponse; issueId: string
           toast.success("Answer submitted");
           setAnswerText("");
         },
-        onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to submit answer"),
+        onError: (e) => toastApiError(e, "Failed to submit answer"),
       },
     );
   };
@@ -35,15 +37,20 @@ function QuestionRow({ input, issueId }: { input: InputResponse; issueId: string
       {/* Importance badge + question */}
       <div className="flex items-start gap-3">
         {input.importance === "blocking" ? (
-          <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-500/20 text-red-300 border border-red-500/30">
+          <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-destructive/20 text-destructive border border-destructive/30">
             blocking
           </span>
         ) : (
-          <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-zinc-500/20 text-zinc-400 border border-zinc-500/30">
+          <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-overlay text-fg-muted border border-border">
             auto
           </span>
         )}
-        <p className="text-sm text-foreground/90 leading-relaxed">{input.question}</p>
+        <p
+          data-testid="issue-question-text"
+          className="min-w-0 flex-1 break-words text-sm leading-relaxed text-foreground/90 [overflow-wrap:anywhere]"
+        >
+          <QuestionText text={input.question} />
+        </p>
       </div>
 
       {/* Response area */}
@@ -60,7 +67,7 @@ function QuestionRow({ input, issueId }: { input: InputResponse; issueId: string
             onClick={handleSubmit}
             disabled={!answerText.trim() || answerMutation.isPending}
           >
-            {answerMutation.isPending ? "Submitting…" : "Submit Answer"}
+            {answerMutation.isPending ? "Submitting…" : "Submit answer"}
           </Button>
         </div>
       )}

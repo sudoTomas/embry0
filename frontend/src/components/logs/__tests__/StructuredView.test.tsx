@@ -9,6 +9,8 @@ vi.mock("@/hooks/useAgents", () => ({
 
 import { StructuredView } from "../StructuredView";
 import { loadFixture } from "@/lib/__tests__/fixtures";
+import { inSource } from "@/lib/__tests__/tailwindSource";
+import { identityOf } from "@/lib/agentIdentity";
 import type { LogEvent } from "@/lib/types";
 
 // Without a mock viewport react-virtuoso renders no items in jsdom (RawView.test shows it).
@@ -63,9 +65,14 @@ describe("StructuredView", () => {
     expect(screen.queryAllByText("Turn 2"), "the developer run's Turn 2 marker").toHaveLength(1);
   });
 
+  // The fixture's subagent is the built-in Explore agent, named after its
+  // Task call's subagent_type; no agent row carries that name, so the marker
+  // names it as the stream does, with the fallback sprite.
   it("names the subagent at its start and its end, paired by tool_id", () => {
     renderVirtual(<StructuredView events={loadFixture("issue-to-pr")} />);
-    expect(screen.queryByText("Explore Agent"), "no subagent start marker").not.toBeNull();
+    const start = screen.queryByText("Explore Agent");
+    expect(start, "no subagent start marker").not.toBeNull();
+    expect(start!.parentElement!.querySelector("svg.sprite"), "the subagent's pill has no sprite").toHaveAttribute("data-avatar", "golem");
     expect(screen.queryByText("Subagent Explore completed"), "the end marker does not name the subagent").not.toBeNull();
   });
 
@@ -77,6 +84,28 @@ describe("StructuredView", () => {
     expect(screen.queryByText("Developer Agent"), "the marker reads the display name").not.toBeNull();
     expect(container.querySelector('[data-avatar="smith"]'), "the marker carries the row's avatar").not.toBeNull();
     expect(container.querySelector("svg.sprite"), "a transcript marker is still, not bobbing").toHaveAttribute("data-frames", "1");
+  });
+
+  // The pill at a subagent's start reads its agent's identity colour on a
+  // wash of the same colour. The wash was once built at runtime as
+  // `${bg}/15`, a class Tailwind never generated, so every pill drew
+  // untinted: each class must be written whole in a source file.
+  it("tints each agent change marker with its identity's classes, every one written in a source file", () => {
+    const names = ["triage", "developer", "qa", "general-purpose"];
+    const events: LogEvent[] = names.map((name, i) => ({
+      type: "subagent_start", timestamp: "", tool_id: `toolu_sub${i}`, name,
+    }));
+    renderVirtual(<StructuredView events={events} />);
+    for (const name of names) {
+      const identity = identityOf(name);
+      const pill = screen.getByText(`${identity.displayName} Agent`).parentElement!;
+      const classes = pill.className.split(/\s+/).filter(Boolean);
+      expect(classes, `the ${name} pill reads its identity's colour`).toContain(identity.classes.text);
+      expect(classes, `the ${name} pill's wash is not its identity's colour`).toContain(identity.classes.bg);
+      for (const cls of classes) {
+        expect(inSource(cls), `the ${name} pill's ${cls} is in no source file: Tailwind writes no rule for it`).toBe(true);
+      }
+    }
   });
 
   it("renders progress with its app and message", () => {
@@ -105,6 +134,24 @@ describe("StructuredView", () => {
     unmount();
     renderVirtual(<StructuredView events={[lost]} isComplete />);
     expect(screen.queryByText("Running..."), "a finished job's unanswered call still pulses Running...").toBeNull();
+  });
+
+  it("a running call keeps the neutral border: a job in flight is not gold", () => {
+    const lost: LogEvent = { type: "tool_call", timestamp: "", tool_id: "toolu_live", tool_name: "Glob", summary: "", tool_input: {} };
+    renderVirtual(<StructuredView events={[lost]} isComplete={false} />);
+    const card = toolButton("Glob")?.parentElement;
+    expect(screen.queryByText("Running..."), "the call is not running").not.toBeNull();
+    expect(card?.className).toContain("border-border");
+    expect(card?.className).not.toMatch(/(^|\s)border-primary/);
+  });
+
+  it("names a tool in the neutral foreground, not gold", () => {
+    // Every card carries a tool name; gold is kept for the one thing on the
+    // view that needs a person.
+    renderVirtual(<StructuredView events={loadFixture("issue-to-pr")} />);
+    const name = screen.getAllByText("Read", { selector: "button span" })[0];
+    expect(name.className).toContain("text-foreground");
+    expect(name.className).not.toMatch(/(^|\s)text-primary/);
   });
 
   it("pre-contract job: the error line shows its text and the tool call renders", () => {

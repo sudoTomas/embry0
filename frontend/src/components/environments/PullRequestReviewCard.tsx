@@ -8,6 +8,7 @@ import { useRepoPreferences, useSetRepoPreferences } from "@/hooks/useRepoPrefer
 import { useModels } from "@/hooks/useModels";
 import type { PrReviewDepth, PrReviewReadyAuthors, PrReviewSettings } from "@/api/repoPreferences";
 import { cn } from "@/lib/utils";
+import { toastApiError } from "@/api/errorToast";
 
 const DEFAULTS: PrReviewSettings = { enabled: false, depth: "full", model: null, ready_authors: "team" };
 
@@ -42,10 +43,12 @@ const READY_AUTHOR_OPTIONS: { value: PrReviewReadyAuthors; label: string; descri
 interface PullRequestReviewCardProps {
   /** Full repo path; may exceed two segments (GitLab subgroups, #162). */
   repo: string;
+  /** False on the repo page, whose Advanced section already names and explains it. */
+  showIntro?: boolean;
 }
 
 /** #30: per-repo pull request review settings, saved as one object. */
-export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
+export function PullRequestReviewCard({ repo, showIntro = true }: PullRequestReviewCardProps) {
   const { data: prefs, isLoading, isError, isSuccess } = useRepoPreferences(repo);
   const { models } = useModels();
   const setPrefs = useSetRepoPreferences();
@@ -80,24 +83,26 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
           toast.success("Pull request review settings saved");
           setDirty(false);
         },
-        onError: (e: Error) => toast.error(`Failed: ${e.message}`),
+        onError: (e: Error) => toastApiError(e, "Failed"),
       },
     );
   };
 
   return (
     <Card className="p-4 space-y-4" data-testid="pr-review-card">
-      <div>
-        <h3 className="text-sm font-semibold">Pull request review</h3>
-        <p className="text-xs text-muted-foreground mt-1">
-          When a pull request becomes ready for review, embry0 reviews it and posts its findings as comments. It
-          never approves a pull request and never blocks a merge.
-        </p>
-      </div>
+      {showIntro && (
+        <div>
+          <h3 className="text-sm font-semibold">Pull request review</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            When a pull request becomes ready for review, embry0 reviews it and posts its findings as comments. It
+            never approves a pull request and never blocks a merge.
+          </p>
+        </div>
+      )}
 
       {isLoading && <p className="text-xs text-muted-foreground">Loading review settings…</p>}
       {isError && (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-destructive">
           This repository's review settings could not be loaded, so they cannot be changed here. Reload the page to
           try again.
         </p>
@@ -113,7 +118,7 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
           onClick={() => update({ enabled: !settings.enabled })}
           className={cn(
             "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-ring",
-            settings.enabled ? "bg-cyan-500" : "bg-white/20",
+            settings.enabled ? "bg-primary" : "bg-white/20",
             "disabled:cursor-not-allowed disabled:opacity-50",
           )}
         >
@@ -196,7 +201,7 @@ export function PullRequestReviewCard({ repo }: PullRequestReviewCardProps) {
         <code>/embry0 review</code>.
       </p>
 
-      <Button size="sm" onClick={handleSave} disabled={locked || setPrefs.isPending || !dirty}>
+      <Button size="sm" variant="secondary" onClick={handleSave} disabled={locked || setPrefs.isPending || !dirty}>
         {setPrefs.isPending ? "Saving…" : "Save review settings"}
       </Button>
     </Card>

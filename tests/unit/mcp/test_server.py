@@ -53,6 +53,9 @@ EXPECTED_TOOLS = {
     "host_get",
     "host_probe",
     "host_import_tailnet",
+    "standard_get",
+    "standard_set",
+    "standard_audit",
     "org_webhook_install",
     "org_act",
     "qa_config_get",
@@ -91,6 +94,8 @@ CONFIRM_GATED = {
     "repo_register",
     "org_register",
     "host_import_tailnet",
+    "standard_set",
+    "standard_audit",
     "org_webhook_install",
     "org_act",
     "qa_config_set",
@@ -150,6 +155,8 @@ async def test_confirm_gated_tools_refuse_without_confirm(fake_client):
         await server.org_act("acme", "hook", ["acme/widgets"], dry_run=True),
         await server.qa_config_set("acme/widgets", "version: 2"),
         await server.host_import_tailnet(),
+        await server.standard_set("acme", "design", {"roles": {}}, {}),
+        await server.standard_audit("acme", "design", "acme/widgets"),
         await server.credential_bind("acme/widgets", "cred-000000000009"),
     ]
     for refusal in refusals:
@@ -177,6 +184,8 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
     assert await server.org_act("acme", "register", ["acme/widgets"], confirm=True) == {"called": "org_act"}
     assert await server.qa_config_set("acme/widgets", "version: 2", confirm=True) == {"called": "qa_config_set"}
     assert await server.host_import_tailnet(confirm=True) == {"called": "host_import_tailnet"}
+    assert await server.standard_set("acme", "design", {"roles": {}}, {}, confirm=True) == {"called": "standard_set"}
+    assert await server.standard_audit("acme", "design", "acme/widgets", confirm=True) == {"called": "standard_audit"}
     assert await server.credential_bind(
         "acme/widgets", "cred-000000000009", role="forge", pinned=True, confirm=True
     ) == {"called": "credential_bind"}
@@ -201,6 +210,8 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
         "org_act",
         "qa_config_set",
         "host_import_tailnet",
+        "standard_set",
+        "standard_audit",
         "credential_bind",
     ]
 
@@ -220,6 +231,41 @@ async def test_host_tools_pass_through(fake_client):
         ("host_probe", ("host-0123456789ab",), {"credential_id": "cred-000000000009"}),
         ("host_import_tailnet", (), {"credential_id": "cred-000000000009"}),
     ]
+
+
+async def test_standard_tools_pass_through(fake_client):
+    schema = {"roles": {"color.accent": {"type": "color"}}}
+    values = {"color.accent": "#3366ff"}
+    assert await server.standard_get("acme", "design") == {"called": "standard_get"}
+    assert await server.standard_set("acme", "design", schema, values, prose="One accent.", confirm=True) == {
+        "called": "standard_set"
+    }
+    assert await server.standard_set("acme", "design", schema, values, references=["acme/site"], confirm=True) == {
+        "called": "standard_set"
+    }
+    assert await server.standard_audit("acme", "design", "acme/widgets", confirm=True) == {"called": "standard_audit"}
+    assert fake_client.calls == [
+        ("standard_get", ("acme", "design"), {}),
+        (
+            "standard_set",
+            ("acme", "design"),
+            {"schema": schema, "values": values, "prose": "One accent.", "references": []},
+        ),
+        (
+            "standard_set",
+            ("acme", "design"),
+            {"schema": schema, "values": values, "prose": "", "references": ["acme/site"]},
+        ),
+        ("standard_audit", ("acme", "design", "acme/widgets"), {}),
+    ]
+
+
+async def test_standard_refusals_name_the_action(fake_client):
+    write = await server.standard_set("acme", "design", {}, {})
+    audit = await server.standard_audit("acme", "design", "acme/widgets")
+    assert "standard_set" in write["message"] and "design standard of 'acme'" in write["message"]
+    assert "standard_audit" in audit["message"] and "'acme/widgets'" in audit["message"]
+    assert fake_client.calls == []
 
 
 async def test_host_import_tailnet_refusal_names_the_action(fake_client):
@@ -244,6 +290,10 @@ async def test_org_act_needs_confirm_even_for_a_dry_run(fake_client):
 async def test_read_tools_pass_through(fake_client):
     assert await server.health() == {"called": "health"}
     assert await server.watcher_trigger() == {"called": "watcher_trigger"}
+    assert await server.watcher_trigger(stack="acme/api") == {"called": "watcher_trigger"}
+    assert fake_client.calls[-1][2] == {"timeout": 900.0, "stack": "acme/api"}
+    assert await server.watcher_runs(stack="acme/api") == {"called": "watcher_runs"}
+    assert fake_client.calls[-1][2] == {"limit": 50, "stack": "acme/api"}
     assert await server.job_wait("j1", timeout=1.0) == {"called": "job_wait"}
     name, _, kwargs = fake_client.calls[-1]
     assert name == "job_wait"

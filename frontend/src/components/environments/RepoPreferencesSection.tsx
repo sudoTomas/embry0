@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router";
+import { useLayoutEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -14,10 +13,13 @@ import {
 } from "@/hooks/useRepoPreferences";
 import type { DevCheck } from "@/api/repoPreferences";
 import { useSandboxProfiles } from "@/hooks/useSandboxProfiles";
+import { toastApiError } from "@/api/errorToast";
 
 interface RepoPreferencesSectionProps {
   /** Full repo path; may exceed two segments (GitLab subgroups, #162). */
   repo: string;
+  /** False on the repo page, whose Advanced section already names and explains it. */
+  showIntro?: boolean;
 }
 
 /** Editable row shape: paths joined for a single input field. */
@@ -45,7 +47,7 @@ function fromDrafts(drafts: DevCheckDraft[]): DevCheck[] {
     }));
 }
 
-export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
+export function RepoPreferencesSection({ repo, showIntro = true }: RepoPreferencesSectionProps) {
   const { data: prefs, isLoading } = useRepoPreferences(repo);
   const { data: profiles = [], isLoading: profilesLoading } = useSandboxProfiles();
   const setPrefs = useSetRepoPreferences();
@@ -60,8 +62,10 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
   const [devChecks, setDevChecks] = useState<DevCheckDraft[]>([]);
   const [dirty, setDirty] = useState(false);
 
-  // Sync local form with server state whenever the preferences row changes.
-  useEffect(() => {
+  // Sync local form with server state whenever the preferences row changes,
+  // before paint: synced after it, the form was drawn once without its
+  // stored dev checks, and their rows then pushed everything below down.
+  useLayoutEffect(() => {
     setSandboxProfile(prefs?.sandbox_profile ?? "");
     setLanguageHint(prefs?.language_hint ?? "");
     setNotes(prefs?.notes ?? "");
@@ -90,20 +94,26 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
       },
       {
         onSuccess: () => {
-          toast.success("Sandbox preferences saved");
+          toast.success("Settings saved");
           setDirty(false);
         },
-        onError: (e: Error) => toast.error(`Failed: ${e.message}`),
+        onError: (e: Error) => toastApiError(e, "Failed"),
       },
     );
   };
 
   const handleReset = () => {
+    if (
+      !window.confirm(
+        `Clear the work machine, branch, commit author, checks before a pull request and notes for ${repo}? This also turns off pull request review. You can undo this from History.`,
+      )
+    )
+      return;
     deletePrefs.mutate(
       { fullRepo: repo },
       {
         onSuccess: () => {
-          toast.success("Sandbox preferences cleared");
+          toast.success("Settings cleared. You can undo this from History.");
           setSandboxProfile("");
           setLanguageHint("");
           setNotes("");
@@ -113,7 +123,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
           setDevChecks([]);
           setDirty(false);
         },
-        onError: (e: Error) => toast.error(`Failed: ${e.message}`),
+        onError: (e: Error) => toastApiError(e, "Failed"),
       },
     );
   };
@@ -124,24 +134,19 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
 
   return (
     <Card className="p-4 space-y-4">
-      <div>
-        <h3 className="text-sm font-semibold">Sandbox Preferences</h3>
-        <p className="text-xs text-muted-foreground mt-1">
-          Override the triage agent&apos;s sandbox profile pick for this repository. Leave blank to
-          let triage decide.
-        </p>
-        <Link
-          to={`/qa/repos/${encodeURIComponent(repo)}/config`}
-          className="text-xs text-cyan-300 hover:underline mt-1 inline-block"
-          data-testid="repo-prefs-qa-config-link"
-        >
-          Edit QA config →
-        </Link>
-      </div>
+      {showIntro && (
+        <div>
+          <h3 className="text-sm font-semibold">Work machine and branches</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            The work machine, the branch embry0 starts from and asks to merge into, the commit
+            author, and the checks it runs before a pull request.
+          </p>
+        </div>
+      )}
 
       <div className="space-y-3">
         <div className="space-y-1">
-          <Label htmlFor="repo-prefs-profile">Sandbox profile</Label>
+          <Label htmlFor="repo-prefs-profile">Work machine</Label>
           <Select
             id="repo-prefs-profile"
             value={sandboxProfile}
@@ -151,7 +156,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
               setDirty(true);
             }}
           >
-            <option value="">— triage chooses —</option>
+            <option value="">embry0&apos;s default</option>
             {profiles.map((p) => (
               <option key={p.name} value={p.name}>
                 {p.name}
@@ -300,7 +305,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
       </div>
 
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={handleSave} disabled={saving || !dirty}>
+        <Button size="sm" variant="secondary" onClick={handleSave} disabled={saving || !dirty}>
           {saving ? "Saving…" : "Save"}
         </Button>
         <Button
@@ -309,7 +314,7 @@ export function RepoPreferencesSection({ repo }: RepoPreferencesSectionProps) {
           onClick={handleReset}
           disabled={resetting || (!hasRow && !dirty)}
         >
-          {resetting ? "Clearing…" : "Reset"}
+          {resetting ? "Clearing…" : "Clear these settings"}
         </Button>
       </div>
     </Card>

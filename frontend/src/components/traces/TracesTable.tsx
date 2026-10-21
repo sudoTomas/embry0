@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { FilterSelect } from "@/components/ui/FilterSelect";
 import { Pagination } from "@/components/ui/Pagination";
 import { RESULT_COLORS } from "@/lib/constants";
-import { formatCost, formatDate, formatTokens } from "@/lib/utils";
+import { formatCost, formatDateTime, formatTokens } from "@/lib/utils";
 import { TraceDetailPanel } from "@/components/traces/TraceDetailPanel";
 import { useAgents } from "@/hooks/useAgents";
 import type { TraceResponse } from "@/lib/types";
@@ -13,6 +13,24 @@ interface TracesTableFilters {
   agent_type?: string;
   result?: string;
 }
+
+/**
+ * The table's columns, in order. The head renders from this list, and the
+ * rows that run the full width (a trace's detail, the empty state) span
+ * its length, so a column added here widens them too.
+ */
+const COLUMNS: { label: string; className?: string }[] = [
+  { label: "", className: "w-8" },
+  { label: "Trace" },
+  { label: "Agent" },
+  { label: "Model" },
+  { label: "Result" },
+  { label: "Cost", className: "text-right" },
+  { label: "Tokens", className: "text-right" },
+  { label: "Duration", className: "text-right" },
+  { label: "Tools", className: "text-right" },
+  { label: "Timestamp", className: "text-right" },
+];
 
 interface TracesTableProps {
   traces: TraceResponse[];
@@ -47,34 +65,30 @@ export function TracesTable({
         {/* Filters */}
         <div className="flex items-center gap-3 border-b border-border px-4 py-3">
           <FilterSelect
-            label="Agent"
+            label="Agents"
             value={filters.agent_type}
             options={agentOptions}
             onChange={(agent_type) => onFilterChange({ ...filters, agent_type })}
           />
           <FilterSelect
-            label="Result"
+            label="Results"
             value={filters.result}
             options={["success", "error", "running"]}
             onChange={(result) => onFilterChange({ ...filters, result })}
           />
         </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        {/* Table. A size container, so an open trace's detail can be as wide
+            as the part of the table in view (TraceDetailPanel). */}
+        <div className="@container overflow-x-auto">
+          <table className="data-table">
             <thead>
-              <tr className="border-b border-border text-muted-foreground">
-                <th scope="col" className="w-8 px-2 py-3" />
-                <th scope="col" className="text-left px-4 py-3">Trace</th>
-                <th scope="col" className="text-left px-4 py-3">Agent</th>
-                <th scope="col" className="text-left px-4 py-3">Model</th>
-                <th scope="col" className="text-left px-4 py-3">Result</th>
-                <th scope="col" className="text-right px-4 py-3">Cost</th>
-                <th scope="col" className="text-right px-4 py-3">Tokens</th>
-                <th scope="col" className="text-right px-4 py-3">Duration</th>
-                <th scope="col" className="text-right px-4 py-3">Tools</th>
-                <th scope="col" className="text-right px-4 py-3">Timestamp</th>
+              <tr>
+                {COLUMNS.map((col, i) => (
+                  <th key={i} scope="col" className={col.className}>
+                    {col.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -92,7 +106,7 @@ export function TracesTable({
               })}
               {traces.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={COLUMNS.length} className="py-8 text-center text-muted-foreground">
                     No traces found
                   </td>
                 </tr>
@@ -127,7 +141,7 @@ function TraceRow({
       <tr
         className={`border-b border-border/50 cursor-pointer transition-colors ${
           isSelected
-            ? "bg-primary/5 border-l-2 border-l-primary"
+            ? "bg-overlay border-l-2 border-l-border"
             : "hover:bg-muted/30"
         }`}
         onClick={onClick}
@@ -142,39 +156,39 @@ function TraceRow({
         aria-label={`View trace ${trace.trace_id}`}
         aria-expanded={isSelected}
       >
-        <td className="px-2 py-3 text-muted-foreground">
+        <td className="text-muted-foreground">
           <ChevronDown
             className={`h-4 w-4 transition-transform ${isSelected ? "rotate-0" : "-rotate-90"}`}
           />
         </td>
-        <td className="px-4 py-3 font-mono text-xs" title={trace.trace_id}>
+        <td className="font-mono text-xs" title={trace.trace_id}>
           {trace.trace_id.length > 20 ? `${trace.trace_id.slice(0, 20)}...` : trace.trace_id}
         </td>
-        <td className="px-4 py-3 capitalize">{trace.agent_type}</td>
-        <td className="px-4 py-3 font-mono text-xs">{trace.model}</td>
-        <td className={`px-4 py-3 capitalize ${RESULT_COLORS[trace.result] ?? ""}`}>
+        <td className="capitalize">{trace.agent_type}</td>
+        <td className="font-mono text-xs">{trace.model}</td>
+        <td className={`capitalize ${RESULT_COLORS[trace.result] ?? ""}`}>
           {trace.result}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums">
+        <td className="text-right tabular-nums">
           {trace.cost_usd != null ? formatCost(trace.cost_usd) : "\u2014"}
         </td>
         <td
-          className="px-4 py-3 text-right tabular-nums"
+          className="text-right tabular-nums"
           title={`in ${trace.input_tokens ?? 0} / out ${trace.output_tokens ?? 0} / cache read ${trace.cache_read_tokens ?? 0}`}
         >
           {(trace.input_tokens ?? 0) + (trace.output_tokens ?? 0) > 0
             ? `${formatTokens(trace.input_tokens)} / ${formatTokens(trace.output_tokens)}`
             : "\u2014"}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums">
+        <td className="text-right tabular-nums">
           {durationSeconds != null ? `${durationSeconds.toFixed(1)}s` : "\u2014"}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums">{toolCount || "\u2014"}</td>
-        <td className="px-4 py-3 text-right text-muted-foreground">
-          {formatDate(trace.created_at)}
+        <td className="text-right tabular-nums">{toolCount || "\u2014"}</td>
+        <td className="text-right text-muted-foreground">
+          {formatDateTime(trace.created_at)}
         </td>
       </tr>
-      {isSelected && <TraceDetailPanel trace={trace} onClose={onClose} />}
+      {isSelected && <TraceDetailPanel trace={trace} colSpan={COLUMNS.length} onClose={onClose} />}
     </>
   );
 }

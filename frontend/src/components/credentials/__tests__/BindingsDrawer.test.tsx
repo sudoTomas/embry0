@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Binding, Credential } from "@/lib/types/credentials";
@@ -37,6 +37,18 @@ const credential: Credential = {
   rotated_at: null,
   last_used_at: null,
 };
+
+function account(over: Partial<Credential>): Credential {
+  return { ...credential, id: "cred-00000000000a", masked_preview: "sk-••••••••wxyz", ...over };
+}
+
+const anthropicKey = account({ kind: "llm_api_key", provider: "anthropic", host: "api.anthropic.com", label: "claude-key" });
+
+function offeredScopes(): (string | null)[] {
+  return within(screen.getByLabelText(/scope kind/i))
+    .getAllByRole("option")
+    .map((option) => option.getAttribute("value"));
+}
 
 function otherBinding(over: Partial<Binding> = {}): Binding {
   return {
@@ -150,6 +162,59 @@ describe("BindingsDrawer", () => {
     expect(screen.getByRole("dialog", { name: "Bindings for alice" })).toBeInTheDocument();
     await user.hover(screen.getByRole("button", { name: /add binding/i }));
     expect(screen.getByText("Admin scope required")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["an Anthropic API key", anthropicKey],
+    ["an xAI OAuth account", account({ kind: "llm_oauth", provider: "xai", host: "api.x.ai", label: "grok" })],
+    ["an OpenAI-compatible key", account({ kind: "llm_api_key", provider: "openai", host: "api.openai.com", label: "gpt" })],
+  ])("binds %s to the global pool at role llm", async (_name, llm) => {
+    const user = userEvent.setup();
+    render(<BindingsDrawer credential={llm} isAdmin onClose={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: /add binding/i }));
+    expect(h.mutate).toHaveBeenCalledWith({
+      scope_kind: "global",
+      scope_value: "",
+      bindings: [{ credential_id: llm.id, role: "llm" }],
+    });
+    expect(screen.getByText("Role is llm.")).toBeInTheDocument();
+  });
+
+  it("offers an LLM account only the scopes role llm is looked up at", () => {
+    render(<BindingsDrawer credential={anthropicKey} isAdmin onClose={vi.fn()} />);
+    expect(offeredScopes()).toEqual(["global", "owner"]);
+  });
+
+  it("prefills an LLM account's owner scope with a forge, not the LLM provider", async () => {
+    const user = userEvent.setup();
+    render(<BindingsDrawer credential={anthropicKey} isAdmin onClose={vi.fn()} />);
+    await user.selectOptions(screen.getByLabelText(/scope kind/i), "owner");
+    const scopeValue = screen.getByLabelText(/scope value/i);
+    expect(scopeValue).toHaveValue("github:");
+    await user.type(scopeValue, "acme");
+    await user.click(screen.getByRole("button", { name: /add binding/i }));
+    expect(h.mutate).toHaveBeenCalledWith({
+      scope_kind: "owner",
+      scope_value: "github:acme",
+      bindings: [{ credential_id: anthropicKey.id, role: "llm" }],
+    });
+  });
+
+  it.each([
+    ["an SSH key", account({ kind: "ssh_key", provider: "ssh", host: "deploy.example.com" }), "deploy", "host", "deploy.example.com"],
+    ["a tailnet key", account({ kind: "tailnet_api_key", provider: "tailscale", host: "api.tailscale.com" }), "tailnet", "global", ""],
+  ] as const)("binds %s at its role's only scope", async (_name, other, role, scope, value) => {
+    const user = userEvent.setup();
+    render(<BindingsDrawer credential={other} isAdmin onClose={vi.fn()} />);
+    expect(offeredScopes()).toEqual([scope]);
+    expect(screen.getByLabelText(/scope value/i)).toHaveValue(value);
+    expect(screen.getByText(`Role is ${role}.`)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /add binding/i }));
+    expect(h.mutate).toHaveBeenCalledWith({
+      scope_kind: scope,
+      scope_value: value,
+      bindings: [{ credential_id: other.id, role }],
+    });
   });
 
   it("renders a 422 detail string as an alert", () => {

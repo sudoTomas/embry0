@@ -1,11 +1,13 @@
 """Per-API-key repository allowlist.
 
-An API key may carry ``allowed_repos``: the repositories it may start or
-continue work on. ``None`` — every key minted before the column existed, and
+An API key may carry ``allowed_repos``: the repositories it may start,
+continue or stop work on. ``None`` — every key minted before the column existed, and
 every key minted without a list — is unrestricted. Sessions and the master
 key are never restricted.
 
-Each route that starts or continues work calls :func:`enforce_repo_allowlist`
+Each route that starts, continues or stops work (cancelling a job, deleting
+an issue), and each step of setting up testing (apply or turn down a setup
+proposal, skip testing, undo a change), calls :func:`enforce_repo_allowlist`
 with the repository it is about to act on. The check lives in the API, not in
 a client: the MCP server reaches embry0 through these routes with the
 caller's own key, so a client that holds a restricted key cannot route

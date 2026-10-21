@@ -1,7 +1,6 @@
 import { PauseCircle } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
 import { QuestionsForm } from "@/components/jobs/QuestionsForm";
-import { answerInput } from "@/api/inputs";
+import { useAnswerInput } from "@/hooks/useInputs";
 import type { JobInput } from "@/lib/types";
 
 interface AwaitingInputCardProps {
@@ -10,7 +9,7 @@ interface AwaitingInputCardProps {
 }
 
 export function AwaitingInputCard({ jobInputs, jobId }: AwaitingInputCardProps) {
-  const queryClient = useQueryClient();
+  const answer = useAnswerInput();
 
   // Plan B Task 6: surface auto_answered rows alongside pending so the user
   // can review and override the agent's suggestion before the pipeline moves
@@ -26,30 +25,28 @@ export function AwaitingInputCard({ jobInputs, jobId }: AwaitingInputCardProps) 
   // Map JobInput → QuestionsForm's PendingInput shape, forwarding the new
   // ask-user metadata so the form can render the override affordance.
   const formInputs = renderable.map((i) => ({
-    id: i.input_id,
+    id: i.id,
     question: i.question,
-    options: i.options,
-    category: i.category,
+    asking_node: i.asking_node,
     auto_answer: i.auto_answer,
     // JobInput.status also carries "skipped", which QuestionsForm doesn't
     // render; anything else is filtered out above so this cast is sound.
     status: i.status as "pending" | "answered" | "auto_answered",
   }));
 
-  // We need issue_id to hit POST /issues/{issueId}/inputs/{inputId}/answer.
-  // Build a quick lookup from input_id → issue_id.
-  const issueIdByInput: Record<string, string> = {};
+  // An issue-backed question answers through its issue, an issue-less one
+  // through the job (answerInput picks the route).
+  const issueIdByInput: Record<string, string | null> = {};
   for (const i of renderable) {
-    issueIdByInput[i.input_id] = i.issue_id;
+    issueIdByInput[i.id] = i.issue_id;
   }
 
   return (
     <div
-      className="rounded-2xl p-6"
+      className="rounded-lg p-5"
       style={{
-        background: "linear-gradient(135deg, rgba(245,158,11,0.05), rgba(9,9,11,0.98))",
-        border: "1px solid rgba(245,158,11,0.2)",
-        boxShadow: "0 0 20px rgba(245,158,11,0.05)",
+        background: "var(--color-surface)",
+        border: "1px solid color-mix(in srgb, var(--color-amber) 35%, transparent)",
       }}
     >
       <div className="flex items-center gap-3 mb-4">
@@ -57,7 +54,7 @@ export function AwaitingInputCard({ jobInputs, jobId }: AwaitingInputCardProps) 
           <PauseCircle className="w-5 h-5 text-amber-500" />
         </div>
         <div>
-          <h3 className="text-lg font-bold text-amber-400">Awaiting Input</h3>
+          <h3 className="text-lg font-bold text-amber-400">Awaiting input</h3>
           <p className="text-sm text-white/40">The pipeline needs more information to continue</p>
         </div>
       </div>
@@ -66,10 +63,8 @@ export function AwaitingInputCard({ jobInputs, jobId }: AwaitingInputCardProps) 
       {renderable.length > 0 && (
         <QuestionsForm
           inputs={formInputs}
-          onAnswer={async (inputId, answer) => {
-            const issueId = issueIdByInput[inputId];
-            await answerInput(issueId, inputId, answer, jobId);
-            await queryClient.invalidateQueries({ queryKey: ["job-inputs", jobId] });
+          onAnswer={async (inputId, text) => {
+            await answer.mutateAsync({ issueId: issueIdByInput[inputId], jobId, inputId, answer: text });
           }}
         />
       )}

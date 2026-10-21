@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import re
 
 import pytest
 
@@ -20,6 +21,9 @@ import embry0.services.watcher
 import embry0.services.watcher_budget
 import embry0.services.watcher_stacks
 from embry0.services.watcher_recursion import (
+    LOG_QUERY_EVENTS,
+    LOG_QUERY_URL,
+    LOGQL_LOG_QUERY_EXCLUSION,
     LOGQL_OWN_EVENTS_EXCLUSION,
     OWN_EVENT_PREFIXES,
     drop_own_lines,
@@ -118,3 +122,56 @@ def test_every_event_the_watcher_family_logs_is_covered() -> None:
     assert events, "no logger calls found — the extraction is broken"
     stray = sorted(e for e in events if not e.startswith(OWN_EVENT_PREFIXES))
     assert not stray, f"watcher-family events the recursion guard would not recognise: {stray}"
+
+
+# ---- embry0's own log reads ---------------------------------------------------
+
+#: The self stack's line filter as docs/self-watching.md gives it ("The selector").
+SELF_STACK_FILTER = re.compile(r'"level": "(error|critical)"|Traceback')
+
+#: What one read of the log-query route leaves in the deployment's own logs.
+#: Each hop's access line carries the query in its URL, and the route logs the
+#: query it served. All INFO, and each carries an error word only in the query.
+LOG_READS = [
+    # the orchestrator's uvicorn access line (an analysis agent's drill-down)
+    'INFO:     172.18.0.9:40312 - "GET /api/v1/logs/query?container=api&search=ERROR%7CException%7CTraceback'
+    '&since_minutes=60&limit=200 HTTP/1.1" 200 OK',
+    # the dashboard's nginx, for the Logs page
+    '172.18.0.1 - - [18/Oct/2026:22:40:01 +0000] "GET /api/v1/logs/query?search=Traceback&since_minutes=15'
+    ' HTTP/1.1" 200 5120 "-" "Mozilla/5.0"',
+    # the MCP server's HTTP client, for logs_query
+    'HTTP Request: GET http://orchestrator:8000/api/v1/logs/query?search=Traceback "HTTP/1.1 200 OK"',
+    # the route's own record of the query it served
+    '{"query": "{container_name=~\\".*api.*\\"} |~ \\"Traceback\\"", "since_minutes": 60, "returned": 12,'
+    ' "event": "logs_queried", "level": "info"}',
+]
+
+
+@pytest.mark.parametrize("line", LOG_READS)
+def test_a_log_read_the_self_stack_selects_is_dropped(line: str) -> None:
+    """The analysis agent drills down through /logs/query, and the request
+    lines quote its query, so the next tick selected them and paid to read
+    them. Each fixture is a line the documented selector matches."""
+    assert SELF_STACK_FILTER.search(line), "fixture must be a line the self stack's selector picks up"
+    kept, dropped = drop_own_lines([line])
+    assert (kept, dropped) == ([], 1), f"embry0's own log read reached the analysis: {line!r}"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'INFO:     172.18.0.9:40312 - "GET /api/v1/jobs?status=failed HTTP/1.1" 500 Internal Server Error',
+        "Traceback (most recent call last):",  # an exception raised inside the route is still a fault
+        '{"event": "request_failed", "path": "/api/v1/logs/query", "level": "error"}',
+        '{"event": "agent_runner_subprocess_failed", "level": "error", "detail": "logs_queried"}',
+    ],
+)
+def test_faults_near_the_log_query_route_are_kept(line: str) -> None:
+    assert drop_own_lines([line]) == ([line], 0)
+
+
+def test_logql_twin_names_the_log_reads() -> None:
+    assert "| json" not in LOGQL_LOG_QUERY_EXCLUSION
+    assert f'!= "{LOG_QUERY_URL}"' in LOGQL_LOG_QUERY_EXCLUSION
+    for event in LOG_QUERY_EVENTS:
+        assert event in LOGQL_LOG_QUERY_EXCLUSION

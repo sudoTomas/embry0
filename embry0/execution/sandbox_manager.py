@@ -36,6 +36,9 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# The ID `docker run` prints, which create() keys every enrollment by.
+_FULL_CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
+
 # One Maven local repository for every JVM dev sandbox. The wrapper downloads
 # Maven itself on first use; doing that inside a 15-minute agent run leaves
 # no time to compile. The volume lives in DinD and is created on first mount.
@@ -381,7 +384,34 @@ class SandboxManager:
             elif provider == "xai" and cred.kind == "llm_oauth":
                 env.pop("XAI_API_KEY", None)
                 xai_credential_id = cred.id or None
+            else:
+                # The OpenAI-compatible providers: their key (and a custom base URL)
+                # under the reserved EMBRY0_LLM_ names the chat-completions executor reads.
+                from embry0.agents.providers import provider_named
+
+                catalog = provider_named(provider)
+                if catalog is not None and catalog.sandbox_key_env and cred.kind == "llm_api_key":
+                    env[catalog.sandbox_key_env] = cred.secret
+                    base_url = str(cred.metadata.get("base_url") or "")
+                    if catalog.sandbox_base_url_env and base_url:
+                        env[catalog.sandbox_base_url_env] = base_url
         return xai_credential_id
+
+    @staticmethod
+    def _llm_egress_destinations(resolved: dict[str, ResolvedCredential]) -> list[str]:
+        """The hosts of the operator-given LLM endpoints a job resolved (the custom provider).
+
+        Such a server usually sits on the operator's own network, which the egress drop
+        blocks. Declaring its host lets this job's agent reach it; nothing else is opened.
+        """
+        from embry0.services.credentials.providers import base_url_host
+
+        hosts: list[str] = []
+        for cred in resolved.values():
+            host = base_url_host(str(cred.metadata.get("base_url") or ""))
+            if host and host not in hosts:
+                hosts.append(host)
+        return hosts
 
     async def _install_ca_bundle(self, container_id: str) -> None:
         """Merge the private CA into the container's trust store (spec 1A §3.2).
@@ -753,7 +783,7 @@ class SandboxManager:
             try:
                 await self._runtime.attach_policy(
                     container_id,
-                    allowed_destinations=list(egress_allowlist or []),
+                    allowed_destinations=[*(egress_allowlist or []), *self._llm_egress_destinations(llm_resolved)],
                     reachable_containers=list(internet_proxies()) if callable(internet_proxies) else [],
                 )
                 self._egress_enforced.add(container_id)
@@ -1092,8 +1122,35 @@ class SandboxManager:
         """Stop scrubbing the container's bearers: unenrolled, they open nothing."""
         unregister_known_secrets(self._bearers.pop(container, ()))
 
+    async def _full_container_id(self, container: str) -> str:
+        """The full ID of ``container``, which may be given as a name or a short ID.
+
+        Unresolvable (already removed, or docker not answering): the reference
+        as given, since there is then nothing left to look up.
+        """
+        if _FULL_CONTAINER_ID.fullmatch(container):
+            return container
+        try:
+            out = await self._docker.run_cmd(
+                self._docker.build_inspect_id_cmd(container), timeout=10, expected_failure=True
+            )
+        except (RuntimeError, TimeoutError):
+            return container
+        full = str(out).strip()
+        return full if _FULL_CONTAINER_ID.fullmatch(full) else container
+
     async def destroy(self, container: str, timeout: int = 10) -> None:
-        """Stop and remove a sandbox container."""
+        """Stop and remove a sandbox container: the one teardown path.
+
+        Every caller tears a sandbox down here, the stale-container reaper and
+        the paused-job expiry included, so each gets the proxy unenroll, the
+        egress-rule removal and the bearer release. ``container`` may be a
+        name or a short ID (the reaper has the one ``docker ps`` prints, the
+        expiry and the cancel path the name): it is resolved first to the full
+        ID that create() enrolled the sandbox and kept its bearers under.
+        Never raises for a docker failure, a timeout included.
+        """
+        container = await self._full_container_id(container)
         # Unenroll first so the proxy stops accepting the bearer; if this races
         # with `docker rm -f` below the worst case is a stale entry that the next
         # enrollment overwrites (sandbox_id == container_id; docker IDs are unique).
@@ -1120,16 +1177,19 @@ class SandboxManager:
             else:
                 logger.debug("sandbox_egress_clear_skipped", container=container)
 
+        # run_cmd raises TimeoutError for a hung command, and TimeoutError is
+        # not a RuntimeError: caught here too, so a stop that hangs still
+        # reaches the forced rm and destroy never raises for docker.
         try:
             stop_cmd = self._docker.build_stop_cmd(container, timeout=timeout)
             await self._docker.run_cmd(stop_cmd)
-        except RuntimeError:
+        except (RuntimeError, TimeoutError):
             logger.warning("sandbox_stop_failed", container=container)
 
         try:
             rm_cmd = self._docker.build_rm_cmd(container)
             await self._docker.run_cmd(rm_cmd)
-        except RuntimeError:
+        except (RuntimeError, TimeoutError):
             logger.warning("sandbox_rm_failed", container=container)
 
         logger.info("sandbox_destroyed", container=container)

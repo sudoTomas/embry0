@@ -1,4 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { isTerminalStatus } from "@/lib/jobStatus";
+import type { JobResponse } from "@/lib/types";
 import {
   fetchAffectedSet,
   fetchCacheAnalytics,
@@ -32,12 +34,20 @@ export function useQaRunsForRepo(
   });
 }
 
+/** Poll a QA run while the job behind it (the run id is its job id) is not
+ * known to be finished; useJob(runId) on the page keeps that status cached. */
+function useRunPollInterval(runId: string | undefined, ms: number): () => number | false {
+  const qc = useQueryClient();
+  return () => (isTerminalStatus(qc.getQueryData<JobResponse>(["jobs", runId])?.status) ? false : ms);
+}
+
 export function useQaRun(runId: string | undefined) {
+  const refetchInterval = useRunPollInterval(runId, 15_000);
   return useQuery({
     queryKey: ["qa-dashboard", "runs", runId],
     queryFn: () => fetchQaRun(runId!),
     enabled: !!runId,
-    refetchInterval: 15_000,
+    refetchInterval,
   });
 }
 
@@ -124,6 +134,7 @@ export function useAppArtifacts(
   app: string | undefined,
   kind: ArtifactKind,
 ) {
+  const refetchInterval = useRunPollInterval(runId, 15_000);
   return useQuery({
     queryKey: ["qa-artifacts", runId, app, kind],
     queryFn: () => listAppArtifacts(runId!, app!, kind),
@@ -131,7 +142,8 @@ export function useAppArtifacts(
     staleTime: 30_000,
     // Poll at 15s for parity with `useQaRun` — while a job is still running,
     // screenshots / HARs / console logs arrive incrementally and the panel
-    // should pick them up without a full page reload.
-    refetchInterval: 15_000,
+    // should pick them up without a full page reload. A finished job's
+    // artifacts change no more.
+    refetchInterval,
   });
 }

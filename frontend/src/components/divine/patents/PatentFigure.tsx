@@ -11,21 +11,22 @@ interface PatentFigureProps {
 /**
  * Single figure inside a patent canvas. Centers the children, captions
  * "FIG. <number> — <caption>" below in monospace small-caps. `inset`
- * shrinks the caption for sub-figures.
+ * shrinks the caption for sub-figures. The caption takes the canvas's
+ * text tone; a figure drawn in currentColor takes the figure's.
  */
 export function PatentFigure({ number, caption, inset = false, children, className }: PatentFigureProps) {
   return (
     <figure
       className={`flex flex-col items-center text-center ${className ?? ""}`}
     >
-      <div className="flex items-center justify-center text-primary">
+      <div className="flex items-center justify-center text-fg-secondary">
         {children}
       </div>
       <figcaption
         className={
           inset
-            ? "text-[9px] tracking-[0.18em] uppercase mt-1.5 opacity-70 text-primary/85"
-            : "text-[10px] tracking-[0.2em] uppercase mt-2 opacity-80 text-primary/90"
+            ? "text-[9px] tracking-[0.18em] uppercase mt-1.5 opacity-70"
+            : "text-[10px] tracking-[0.2em] uppercase mt-2 opacity-80"
         }
       >
         FIG. {number}

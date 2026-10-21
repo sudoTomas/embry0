@@ -123,6 +123,9 @@ class ToolCallEvent(BaseEvent):
     tool_name: str
     summary: str
     tool_input: dict[str, Any]
+    # never emitted live: the job log retention sweep adds it to a stored event
+    # whose code it replaced (embry0/services/job_log_retention.py, ADR 0017)
+    redacted: NotRequired[dict[str, Any]]
 
 
 class ToolResultEvent(BaseEvent):
@@ -131,6 +134,8 @@ class ToolResultEvent(BaseEvent):
     is_error: bool
     truncated: NotRequired[bool]
     original_length: NotRequired[int]
+    # never emitted live; see ToolCallEvent.redacted
+    redacted: NotRequired[dict[str, Any]]
 
 
 class SubagentStartEvent(BaseEvent):

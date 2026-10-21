@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { useAuthStore } from "@/stores/authStore";
 import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -97,6 +98,8 @@ let confirmSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Dismissing an organization need is admin work; these tests act as the API key.
+  useAuthStore.setState({ status: "authenticated", authMode: "key", user: null });
   mockFetchProposals.mockResolvedValue(page([LINEAR_DRAFT, GITHUB_DRAFT]));
   confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 });
@@ -122,6 +125,22 @@ describe("ProposalsSection", () => {
     // Counted from when the draft was filed, not when the fault was first seen.
     expect(within(linear).getByText("2 days")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Proposals" })).toBeInTheDocument();
+  });
+
+  it("frames the table in the neutral border: the count carries the waiting tone", async () => {
+    renderSection();
+    const frame = (await row("Fix the retry storm")).closest("table")!.parentElement!;
+    expect(frame).toHaveClass("border-border");
+    expect(frame.className).not.toMatch(/(^|\s)border-amber/);
+  });
+
+  it("heads the ticket column Source, since an organization need has no ticket", async () => {
+    mockFetchProposals.mockResolvedValue(page([LINEAR_DRAFT, ORG_NEED]));
+    renderSection();
+    await row("Register 3 repositories");
+    const heads = screen.getAllByRole("columnheader").map((th) => th.textContent);
+    expect(heads).toContain("Source");
+    expect(heads).not.toContain("Ticket");
   });
 
   it("offers Accept for GitHub and Linear drafts, and points at the tracker for GitLab", async () => {
@@ -232,6 +251,19 @@ describe("ProposalsSection", () => {
     expect(within(need).queryByText(/accept by label/i)).not.toBeInTheDocument();
     expect(within(need).queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
     // A watcher draft beside it is unchanged.
+    expect(within(await row("Cleanup fails when the daemon is down")).getByRole("button", { name: "Reject" })).toBeInTheDocument();
+  });
+
+  it("offers Dismiss on an organization need only to an admin", async () => {
+    // Dismissing a need is admin-only on the organization route, and closing
+    // its case is the same answer, so an operator is not offered it here.
+    useAuthStore.setState({ authMode: "session", user: { email: "o@x", name: "O", tier: "operator" } });
+    mockFetchProposals.mockResolvedValue(page([ORG_NEED, GITHUB_DRAFT]));
+    renderSection();
+    const need = await row("Register 3 repositories");
+    expect(within(need).queryByRole("button", { name: "Dismiss" })).toBeNull();
+    expect(within(need).getByRole("link", { name: "Answer on acme" })).toBeInTheDocument();
+    // An operator still rejects a watcher draft.
     expect(within(await row("Cleanup fails when the daemon is down")).getByRole("button", { name: "Reject" })).toBeInTheDocument();
   });
 

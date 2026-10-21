@@ -32,6 +32,29 @@ describe("PatentCanvas", () => {
     expect(screen.queryByText(/2026/)).not.toBeInTheDocument();
   });
 
+  it("draws its frame and rules in the neutral border, not gold", () => {
+    // Gold marks only the one thing on a view that needs a person.
+    const { container } = render(
+      <PatentCanvas date="MAY 04, 2026" title="T" epigraph="E">
+        <span>x</span>
+      </PatentCanvas>,
+    );
+    const bordered = Array.from(container.querySelectorAll("[class*='border']"));
+    expect(bordered).toHaveLength(3);
+    for (const el of bordered) {
+      expect(el.className).not.toMatch(/(^|\s)border(-[trblxy])?-primary/);
+    }
+  });
+
+  it("lays its chrome on the surface token in the neutral tones, not a hard-coded colour", () => {
+    // Rule 2 of the divine layer: colour comes from the theme tokens.
+    const { container } = render(<PatentCanvas title="T"><span>x</span></PatentCanvas>);
+    const canvas = container.firstElementChild as HTMLElement;
+    expect(canvas.className).toContain("bg-surface");
+    expect(canvas.className).toContain("text-fg-secondary");
+    expect(canvas.getAttribute("style")).toBeNull();
+  });
+
   it("carries divine-element class for the escape hatch", () => {
     const { container } = render(<PatentCanvas><span>x</span></PatentCanvas>);
     expect(container.querySelector(".divine-element")).not.toBeNull();
@@ -65,6 +88,11 @@ describe("FullGeodesicSphere", () => {
     expect(dots).toHaveLength(4);
     // Outer ring at scaled radius 78
     expect(container.querySelector('svg circle[r="78"]')).not.toBeNull();
+  });
+
+  it("sets no colour of its own, so the figure around it gives the tone", () => {
+    const { container } = render(<FullGeodesicSphere />);
+    expect(container.querySelector("svg")?.getAttribute("class")).not.toMatch(/(^|\s)text-/);
   });
 
   it("respects size prop", () => {

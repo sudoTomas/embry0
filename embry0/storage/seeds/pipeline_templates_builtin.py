@@ -54,6 +54,32 @@ def _graph(name: str, description: str, nodes: list[dict[str, Any]], edges: list
     }
 
 
+def _specialist_route(name: str, agent_type: str, description: str) -> dict[str, Any]:
+    """A specialist route: triage, the specialist on the generic node, output.
+
+    No ``default_for_kind``, and triage is not offered it: a job reaches it
+    only by naming the template (``SPECIALIST_TEMPLATE_NAMES``), and
+    plan_route records it as an analysis job (``specialist_job_kind``).
+    """
+    return {
+        "description": description,
+        "graph_definition": _graph(
+            name=name,
+            description=f"Triage → {agent_type} → output.",
+            nodes=[
+                _node("triage", "triage", 0, 0),
+                _node(agent_type, agent_type, 240, 0),
+                _node("output", "output", 480, 0),
+            ],
+            edges=[
+                _edge("e1", "triage", agent_type),
+                _edge("e2", agent_type, "output"),
+            ],
+        ),
+        "sandbox_profile": "slim",
+    }
+
+
 # Three canonical starter pipelines, each mapped to one alchemical operation
 # arc the agentTypeToOperation function already knows about:
 #   quick-fix      → calcinate → ferment → distill (break down, transform, refine)
@@ -203,6 +229,59 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
         ),
         "sandbox_profile": "slim",
     },
+    # One route per specialist agent (specialist_agents.py). Each is
+    # read-only and delivers one report, and the descriptions say so on the
+    # Pipelines page. Triage is not offered these (SPECIALIST_TEMPLATE_NAMES):
+    # a job runs one only by naming it.
+    "kintsugi-trace": _specialist_route(
+        "kintsugi-trace",
+        "kintsugi",
+        "Read-only: triage → kintsugi → output. Runs the repository's own gates, reads code against "
+        "its docs, and delivers a ledger of graded cracks with the seal for each.",
+    ),
+    "garden": _specialist_route(
+        "garden",
+        "gardener",
+        "Read-only: triage → gardener → output. Delivers one provable weed with its proof, the exact "
+        "diff that pulls it, and the check that shows nothing changed.",
+    ),
+    "interrogate": _specialist_route(
+        "interrogate",
+        "interrogator",
+        "Read-only: triage → interrogator → output. Reviews a branch or pull request from four angles "
+        "and delivers evidence-backed findings with a verdict.",
+    ),
+    "why": _specialist_route(
+        "why",
+        "why",
+        "Read-only: triage → why → output. Answers why code is the way it is, citing history, "
+        "decision records and docs, with each claim's confidence marked.",
+    ),
+    "how": _specialist_route(
+        "how",
+        "how",
+        "Read-only: triage → how → output. Explains how a subsystem works: entry points, runtime "
+        "flow, ownership and layering, and a file:line map.",
+    ),
+    "blast-radius": _specialist_route(
+        "blast-radius",
+        "blast-radius",
+        "Read-only: triage → blast-radius → output. Finds what a change could break beyond its diff "
+        "and proves the one fact it is safe because of, or marks it unproven.",
+    ),
+    "comment-pass": _specialist_route(
+        "comment-pass",
+        "comment-sicko",
+        "Read-only: triage → comment-sicko → output. Delivers the comments a diff should delete and "
+        "the checks that should replace the constraints they claim.",
+    ),
+    "design-audit": _specialist_route(
+        "design-audit",
+        "design-auditor",
+        "Read-only: triage → design-auditor → output. Measures the frontend against the design "
+        "standard in the job and delivers ranked findings with two reproducible 0 to 100 scores: "
+        "conformance to the standard and code hygiene.",
+    ),
 }
 
 

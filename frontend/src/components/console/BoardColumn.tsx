@@ -1,6 +1,8 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { tick } from "@/lib/motion";
 import { Skeleton } from "@/components/ui/PageSkeleton";
+import { useGlideRef } from "@/hooks/useGlide";
 import type { BoardColumnConfig, BoardColumnTint } from "@/lib/boardColumns";
 
 const TINT_CLASSES: Record<BoardColumnTint, { label: string; pill: string }> = {
@@ -14,25 +16,44 @@ interface BoardColumnProps {
   count: number;
   /** First-load skeleton — true until the first successful jobs poll. */
   isLoading?: boolean;
+  /** The board's filters. A count that changes with them was cut, not
+   * changed, so the pill does not tick. */
+  paintKey?: string;
   children?: ReactNode;
 }
 
 /**
- * One board lane. Lowercase label + count pill (dimming at zero), tinted per
+ * One board lane. Sentence-case label + count pill (dimming at zero), tinted per
  * the lane config (Needs You amber, Done success — the Speculum lane-tint
  * idiom in embry0's own tokens). Renders skeleton cards on first load and a
  * quiet dashed placeholder when empty, so the actionable Needs You lane
  * stays visible even with nothing in it.
  */
-export function BoardColumn({ column, count, isLoading = false, children }: BoardColumnProps) {
+export function BoardColumn({ column, count, isLoading = false, paintKey = "", children }: BoardColumnProps) {
   const tint = TINT_CLASSES[column.tint];
+  // The count ticks when a poll changes it: not on the first paint (the
+  // load that fills the lane), not when the filters cut the board anew.
+  const pillRef = useRef<HTMLSpanElement>(null);
+  const shown = useRef({ count, isLoading, paintKey });
+  useEffect(() => {
+    const prev = shown.current;
+    shown.current = { count, isLoading, paintKey };
+    if (count !== prev.count && !isLoading && !prev.isLoading && paintKey === prev.paintKey) {
+      tick(pillRef.current);
+    }
+  }, [count, isLoading, paintKey]);
+  // Where lanes stack (narrow screens), a lane that gains a card moves the
+  // lanes below it; their headers travel with their cards, never ahead.
+  const headerRef = useGlideRef(`lane:${column.id}`);
+  const emptyRef = useGlideRef(`lane:${column.id}:empty`);
   return (
     <div className="flex min-w-0 flex-col gap-2" data-testid={`board-column-${column.id}`}>
-      <div className="flex items-center gap-2 px-1">
-        <span className={cn("text-xs font-semibold lowercase tracking-wide", tint.label)}>
+      <div ref={headerRef} className="flex items-center gap-2 px-1">
+        <span className={cn("text-xs font-semibold tracking-wide", tint.label)}>
           {column.label}
         </span>
         <span
+          ref={pillRef}
           data-testid="count-pill"
           className={cn(
             "rounded-full px-1.5 py-0.5 text-[10px] font-mono",
@@ -51,10 +72,11 @@ export function BoardColumn({ column, count, isLoading = false, children }: Boar
           </>
         ) : count === 0 ? (
           <div
+            ref={emptyRef}
             data-testid="empty-lane"
             className="rounded-lg border border-dashed border-white/[0.06] py-6 text-center text-xs text-white/20"
           >
-            empty
+            Empty
           </div>
         ) : (
           children

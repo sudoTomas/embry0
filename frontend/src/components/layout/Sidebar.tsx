@@ -1,112 +1,15 @@
-import { NavLink } from "react-router";
-import {
-  Bot,
-  Building2,
-  CircleDot,
-  Container,
-  Cpu,
-  Eye,
-  FolderGit2,
-  Gauge,
-  KeyRound,
-  ListChecks,
-  ScrollText,
-  Settings,
-  ShieldCheck,
-  Sparkles,
-  SquareTerminal,
-  Variable,
-  Workflow,
-  Zap,
-  UsersRound,
-} from "lucide-react";
+import { useLayoutEffect, useRef } from "react";
+import { NavLink, useLocation } from "react-router";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { prefersReducedMotion } from "@/hooks/useReducedMotion";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useAwaitingIndicator } from "@/hooks/useAwaitingIndicator";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { APP_NAME } from "@/lib/branding";
-import type { LucideIcon } from "lucide-react";
-
-// Nav is lucide-only by decision (RAV-1058, 2026-07-26): the alchemical
-// sigils that used to override some entries live on in the divine layer
-// elsewhere (Agents, job detail, About), not in the nav rail.
-interface NavItem {
-  path: string;
-  label: string;
-  icon: LucideIcon;
-  accentColor?: string;
-  /** RAV-1056: render only for admin-tier sessions (or API-key mode —
-   *  the master key is admin-equivalent). Backend enforces regardless. */
-  adminOnly?: boolean;
-}
-
-interface NavGroup {
-  label: string;
-  items: readonly NavItem[];
-}
-
-// Unified IA (ticket 011, Companion surfaces dropped in RAV-1058 A2):
-// Overview, Work, Pipelines & QA, Infra, Settings — embry0-backend only.
-const NAV_GROUPS: readonly NavGroup[] = [
-  {
-    label: "Overview",
-    items: [
-      { path: "/", label: "Overview", icon: Gauge },
-    ],
-  },
-  {
-    label: "Work",
-    items: [
-      { path: "/console", label: "Console", icon: SquareTerminal },
-      { path: "/issues", label: "Issues", icon: CircleDot },
-      { path: "/jobs", label: "Jobs", icon: Zap },
-    ],
-  },
-  {
-    label: "Pipelines & QA",
-    items: [
-      { path: "/pipelines", label: "Pipelines", icon: Workflow },
-      // RAV-1301: central registry + token-discovered Add-repo flow.
-      { path: "/repos", label: "Repos", icon: FolderGit2 },
-      // ADR 0010: a forge owner maintained as a whole, next to the per-repo registry.
-      { path: "/orgs", label: "Organizations", icon: Building2 },
-      { path: "/qa/repos", label: "QA", icon: ShieldCheck },
-    ],
-  },
-  {
-    label: "Operations",
-    items: [
-      { path: "/watcher", label: "Watcher", icon: Eye },
-      { path: "/logs", label: "Logs", icon: ScrollText },
-      // RAV-1056 Phase C: global audit log. adminOnly gates NAV only —
-      // operators reaching /admin/audit by URL get their own rows (backend
-      // enforces row scoping).
-      { path: "/admin/audit", label: "Audit", icon: ListChecks, adminOnly: true },
-    ],
-  },
-  {
-    label: "Infra",
-    items: [
-      { path: "/sandboxes", label: "Sandboxes", icon: Container },
-      { path: "/agents", label: "Agents", icon: Bot },
-      { path: "/skills", label: "Skills", icon: Sparkles, adminOnly: true },
-      { path: "/environments", label: "Environments", icon: Variable },
-      { path: "/credentials", label: "Credentials", icon: KeyRound },
-    ],
-  },
-  {
-    label: "Settings",
-    items: [
-      { path: "/settings", label: "Settings", icon: Settings },
-      // RAV-1297: the LLM provider catalog — availability, connection
-      // tests, per-model enablement, tier assignment.
-      { path: "/providers", label: "LLM Providers", icon: Cpu },
-      { path: "/admin/users", label: "Users", icon: UsersRound, adminOnly: true },
-    ],
-  },
-];
+import { OrchestratorStatus } from "./OrchestratorStatus";
+import { NAV_GROUPS, type NavItem } from "./navGroups";
 
 function NavItemLink({
   item,
@@ -133,17 +36,17 @@ function NavItemLink({
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          "relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
-          "text-white/50 hover:text-white/80 hover:bg-cyan-500/[0.03] hover:translate-x-0.5",
-          isActive && "!text-primary bg-primary/[0.08] border-l-2 border-primary translate-x-0",
-          !isActive && accentColor && "hover:translate-x-0.5"
+          "relative flex h-8 w-full items-center gap-3 text-nav font-semibold transition-colors",
+          sidebarOpen ? "px-4" : "justify-center",
+          "text-fg-secondary hover:bg-overlay hover:text-fg",
+          isActive && "bg-overlay !text-primary",
         )
       }
     >
       {({ isActive }) => (
         <>
           <Icon
-            className="h-4 w-4 shrink-0"
+            className="h-[18px] w-[18px] shrink-0"
             style={
               accentColor && !isActive
                 ? { color: accentColor }
@@ -152,6 +55,7 @@ function NavItemLink({
           />
           {sidebarOpen && (
             <span
+              className="truncate"
               style={
                 accentColor && !isActive
                   ? { color: accentColor }
@@ -165,7 +69,7 @@ function NavItemLink({
             (sidebarOpen ? (
               <span
                 data-testid="nav-awaiting-badge"
-                className="ml-auto rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-mono text-amber-400"
+                className="ml-auto rounded bg-amber-dim px-1.5 py-0.5 text-2xs font-semibold tabular-nums text-warning"
               >
                 {badge}
               </span>
@@ -174,7 +78,7 @@ function NavItemLink({
               // still says "something is blocked".
               <span
                 data-testid="nav-awaiting-dot"
-                className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400"
+                className="absolute right-3 top-1.5 h-1.5 w-1.5 rounded-full bg-warning"
               />
             ))}
         </>
@@ -192,8 +96,84 @@ function NavItemLink({
   return link;
 }
 
+/** The marker's own height in px (its h-8, an item's height): an item of
+ * another height scales it to fit. */
+const MARKER_HEIGHT = 32;
+
+/**
+ * The active item's marker: one 2 px bar on the nav's left edge that travels
+ * to the item a route lands on, so the eye follows the move instead of
+ * hunting for the new item. Same emphasis as the active item's gold text.
+ *
+ * It stands at the link marked aria-current="page", measured when the route
+ * changes and when a section changes height (the rail hides the group
+ * labels, an admin entry arrives), never per frame. Only a move from one
+ * item to another glides (data-glide, index.css "motion: shell"); a first
+ * placement or a re-measure jumps, reduced motion always jumps, and with no
+ * active item there is no marker.
+ */
+function ActiveItemMarker() {
+  const { pathname } = useLocation();
+  const markerRef = useRef<HTMLSpanElement>(null);
+  // Where the marker stands now: the item's href and the transform that put
+  // it there.
+  const standing = useRef<{ href: string | null; transform: string } | null>(null);
+
+  useLayoutEffect(() => {
+    const marker = markerRef.current;
+    const nav = marker?.parentElement;
+    if (!marker || !nav) return;
+
+    const place = () => {
+      const link = nav.querySelector<HTMLElement>('a[aria-current="page"]');
+      if (!link) {
+        marker.hidden = true;
+        standing.current = null;
+        return;
+      }
+      const href = link.getAttribute("href");
+      const box = link.getBoundingClientRect();
+      const top = box.top - nav.getBoundingClientRect().top + nav.scrollTop;
+      const transform = `translateY(${top}px) scaleY(${box.height / MARKER_HEIGHT})`;
+      const from = standing.current;
+      // Nothing moved: leave a glide that is under way alone.
+      if (from?.href === href && from.transform === transform) return;
+      const glide = from !== null && from.href !== href && !prefersReducedMotion();
+      marker.toggleAttribute("data-glide", glide);
+      marker.style.transform = transform;
+      marker.hidden = false;
+      standing.current = { href, transform };
+    };
+
+    place();
+    // A section's height is what moves the items below it; a change of width
+    // alone (the column opening or closing) moves nothing, so it is skipped.
+    const heights = new WeakMap<Element, number>();
+    const observer = new ResizeObserver((entries) => {
+      let moved = false;
+      for (const entry of entries) {
+        if (heights.get(entry.target) !== entry.contentRect.height) moved = true;
+        heights.set(entry.target, entry.contentRect.height);
+      }
+      if (moved) place();
+    });
+    nav.querySelectorAll("section").forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, [pathname]);
+
+  return (
+    <span
+      ref={markerRef}
+      aria-hidden="true"
+      data-testid="nav-active-marker"
+      className="motion-nav-marker pointer-events-none absolute left-0 top-0 h-8 w-0.5 origin-top bg-primary"
+    />
+  );
+}
+
 export function Sidebar() {
   const desktopOpen = useLayoutStore((s) => s.sidebarOpen);
+  const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
   const drawerOpen = useLayoutStore((s) => s.drawerOpen);
   const setDrawerOpen = useLayoutStore((s) => s.setDrawerOpen);
   // Phone width: the sidebar is a drawer over the content, closed until the
@@ -220,48 +200,50 @@ export function Sidebar() {
       data-testid="sidebar"
       data-mode={narrow ? "drawer" : "column"}
       className={cn(
-        "flex flex-col border-r border-white/[0.06] bg-canvas transition-all duration-200",
-        narrow ? "fixed inset-y-0 left-0 z-50 w-64 shadow-2xl" : sidebarOpen ? "w-56" : "w-14"
+        "flex shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200",
+        // The drawer opens under the header, so the header's menu button
+        // stays visible and closes it again.
+        narrow ? "fixed bottom-0 left-0 top-header z-50 w-sidebar shadow-2xl" : sidebarOpen ? "w-sidebar" : "w-rail"
       )}
     >
-      <div className="flex h-14 items-center gap-2 border-b px-3">
-        <svg
-          width="24"
-          height="24"
-          viewBox="0 0 64 64"
-          aria-hidden="true"
-          className="shrink-0 divine-element text-primary"
-        >
-          <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" strokeWidth="2.2" />
-          <circle cx="32" cy="10" r="2.4" fill="currentColor" />
-          <circle cx="54" cy="32" r="2.4" fill="currentColor" />
-          <circle cx="32" cy="54" r="2.4" fill="currentColor" />
-          <circle cx="10" cy="32" r="2.4" fill="currentColor" />
-          <line
-            x1="14"
-            y1="32"
-            x2="50"
-            y2="32"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            opacity="0.7"
-          />
-        </svg>
-        {sidebarOpen && (
-          <span className="text-lg font-bold tracking-tight">{APP_NAME}</span>
-        )}
-      </div>
+      {!narrow && (
+        <div className={cn("flex h-11 shrink-0 items-center", sidebarOpen ? "px-2.5" : "justify-center")}>
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-overlay hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {sidebarOpen ? <ChevronLeft className="h-[18px] w-[18px]" /> : <ChevronRight className="h-[18px] w-[18px]" />}
+          </button>
+        </div>
+      )}
 
-      <nav className="flex flex-1 flex-col gap-1 p-2">
-        {NAV_GROUPS.map((group, idx) => (
+      <nav
+        className={cn(
+          // 32 px items and a 6 px gap leave room for the group labels, so
+          // the whole nav still fits a 1440x900 screen.
+          "relative flex flex-1 flex-col gap-1.5 pb-3",
+          narrow && "pt-3",
+          // The rail keeps its overflow visible so the hover labels can show.
+          sidebarOpen ? "overflow-y-auto" : "overflow-visible",
+        )}
+      >
+        {NAV_GROUPS.map((group) => (
           <section key={group.label} aria-label={group.label}>
-            {idx > 0 && <div className="mx-3 my-2 border-t border-white/[0.06]" />}
-            {sidebarOpen && (
-              <h3 className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-white/20 uppercase">
-                {group.label}
-              </h3>
-            )}
-            <div className="flex flex-col gap-1">
+            {/* A quiet label over each group, aligned with the item icons.
+                Overview is a group of one and needs none; the collapsed rail
+                has no room, so there the name stays for screen readers. */}
+            <h3
+              className={cn(
+                sidebarOpen && group.label !== "Overview"
+                  ? "truncate px-4 pb-0.5 text-2xs font-semibold uppercase tracking-wider text-fg-muted"
+                  : "sr-only",
+              )}
+            >
+              {group.label}
+            </h3>
+            <div className="flex flex-col">
               {group.items
                 .filter((item) => !item.adminOnly || isAdmin)
                 .map((item) => (
@@ -276,7 +258,13 @@ export function Sidebar() {
             </div>
           </section>
         ))}
+        {/* Last, so it paints over the active item's background. */}
+        <ActiveItemMarker />
       </nav>
+
+      <div className="shrink-0 border-t border-border py-2.5">
+        <OrchestratorStatus collapsed={!sidebarOpen} />
+      </div>
     </aside>
   );
 
@@ -287,7 +275,7 @@ export function Sidebar() {
         data-testid="sidebar-backdrop"
         role="presentation"
         onClick={closeDrawer}
-        className="fixed inset-0 z-40 bg-black/60"
+        className="fixed inset-x-0 bottom-0 top-header z-40 bg-black/60"
       />
       {aside}
     </>

@@ -6,7 +6,7 @@ Detailed technical documentation of the embry0 agent orchestration engine.
 
 ## System Overview
 
-embry0 is a general-purpose agent orchestration engine built on LangGraph and Claude Agent SDK. GitHub issues or API requests create issues which are triaged by an LLM agent, questions are dispatched to the user via multiple channels (Dashboard, Telegram, GitHub, Linear), agents execute inside Docker sandboxes, and on success a PR is opened automatically. Customer code never persists on the host — it lives only inside ephemeral sandbox containers.
+embry0 is a general-purpose agent orchestration engine built on LangGraph and Claude Agent SDK. GitHub issues or API requests create issues which are triaged by an LLM agent, questions are dispatched to the user via multiple channels (Dashboard, Telegram, GitHub, Linear), agents execute inside Docker sandboxes, and on success a PR is opened automatically. Agents work on customer code only inside ephemeral sandbox containers; the copies that outlive them (job events, saved agent sessions, pre-built QA images and per-repo volumes) and the settings that bound them are listed in [SECURITY.md](../SECURITY.md#data-retention).
 
 ```mermaid
 graph TB
@@ -227,7 +227,7 @@ The full mapping of each DinD mechanism is in
 | Service | Image | Purpose | Resources |
 |---------|-------|---------|-----------|
 | Frontend | `embry0-frontend` | nginx serving React SPA, reverse proxy | — |
-| Orchestrator | `embry0-orchestrator` | FastAPI + LangGraph, job management, proxy services. Never touches customer code. | configurable via `.env` |
+| Orchestrator | `embry0-orchestrator` | FastAPI + LangGraph, job management, proxy services. Never checks out customer code; stores job events and agent sessions, which carry it ([Data retention](../SECURITY.md#data-retention)). | configurable via `.env` |
 | PostgreSQL | `postgres:16` | Application data + LangGraph checkpoints | configurable via `.env` |
 | DinD | `docker:dind` | Runs sandbox containers (privileged) | configurable via `.env` |
 | MinIO | `pgsty/silo` (Silo, the community fork of MinIO) | S3-compatible artifact store. `qa-artifacts` bucket holds QA `result.json`, screenshots, traces, and `logs/full.log` per `<job_id>/<attempt_n>/...`. | configurable via `.env` |
@@ -612,7 +612,7 @@ Triage emits two distinct decisions inline in its JSON output (parsed via `Triag
 
 ## Sandbox Container Architecture
 
-Each job gets one Docker sandbox inside DinD. The sandbox clones the repo, agents execute inside it, and all git/GitHub operations happen within. When destroyed, all customer code is deleted.
+Each job gets one Docker sandbox inside DinD. The sandbox clones the repo, agents execute inside it, and all git/GitHub operations happen within. When destroyed, its checkout is deleted; [Data retention](../SECURITY.md#data-retention) lists what outlives it.
 
 ```mermaid
 graph LR
@@ -662,7 +662,7 @@ graph LR
 | Image | A profile's `base_image` names an image in embry0's own registry, without a registry host; it is pulled by its digest pin when one is installed (#523, #553) |
 | Credentials | Forge tokens are injected by the proxies (see Proxy Services) and never enter the sandbox. **The LLM credential does:** `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, and `XAI_API_KEY`, are in the sandbox env, because the Claude CLI reads its credential from there and subscription OAuth stays supported ([ADR 0008](adr/0008-llm-credential-in-sandbox-env.md)). Any code in the sandbox can read them. Only the xAI subscription token stays in `xai-proxy`. |
 | Command blocking | Ring 3: 41 regex patterns on Bash commands (`embry0/safety/patterns.py`), after NFKC normalization. Ring 2: the CLI's permission rules; embry0's own copy of that check, for the direct xAI executor, normalizes paths lexically and does not resolve symlinks. Defence in depth: neither binds a program the agent writes and runs |
-| Code retention | None — repo cloned inside container, deleted on teardown |
+| Code retention | The checkout is deleted with the container. Job events, saved agent sessions, pre-built QA images and per-repo volumes keep copies until `JOB_LOG_RETENTION_DAYS`, `AGENT_SESSION_RETENTION_DAYS` and `QA_IMAGE_RETENTION_DAYS` remove them; all three are unset by default ([Data retention](../SECURITY.md#data-retention)) |
 | LLM credentials | Resolved by the credential registry for each job and passed to the sandbox env (see the Credentials row above) |
 | Ring-3 enforcement | Asserted where the hook runs: the sandbox image builds fail, and `SdkAgentExecutor.run` returns an error before `query()`, if the sandbox's `claude_agent_sdk` does not declare `hooks` or the `PreToolUse` event (`embry0/agents/sdk_support.py`, #497). The orchestrator never runs an agent, so it no longer checks its own SDK. Per-run hook attachment is unconditional — no fall-back. The in-process executor fallback was removed in 2026-04 hardening. |
 
@@ -686,7 +686,7 @@ The `SandboxImageManager` handles image lifecycle inside DinD:
 - **Profile-specific images** — `embry0-sandbox:{profile_name}` extends the base image with additional packages/commands
 - **QA sandbox variant** — `embry0-sandbox-qa:latest` is a separate image (built from `infra/Dockerfile.sandbox.qa`) with the superset needed by the QA agent: JDK 21 (Adoptium Temurin), Docker CLI + compose plugin (talks to DinD daemon over TCP+TLS), Chromium + headless-shell pre-installed at `/opt/playwright`, the `playwright-mcp` global binary, the `vibium` CLI pinned at 26.8.21 with Chrome for Testing pre-baked at `/opt/vibium` (the second browser backend — agent-owned cache dir because the vibium daemon chmods its socket dir), and the qa-compose / qa-ready-check helpers in `/usr/local/bin`. Selected by sandbox profile `qa-jvm` — whose `dind_enabled` only asks for the shared Docker daemon: `SandboxManager` mounts the DinD client certs and sets `DOCKER_HOST` only when the repo also holds an admin's Docker access grant (`repos.docker_access`, #522), and refuses the sandbox otherwise, because code holding those certs controls the daemon that runs the credential proxies and every other sandbox — and by `qa-external` — the deployed-target variant that pairs the same browser image with `sandbox-internet` egress and `dind_enabled: false`, for driving an app that runs *outside* the sandbox. DinD NAT egress is by-IP only, so deployments clone `qa-external` and set the profile's `extra_hosts` (hostname → IP, emitted as `--add-host`) to reach Host-header-routed vhosts by name; the `dind` alias stays orchestrator-owned. The Chromium revision is pinned to whatever `@playwright/mcp`'s bundled `playwright-core` expects — installing via the standalone `playwright` package's CLI gives a different revision and breaks MCP launches.
 - **Which containers are sandboxes** — both the reaper and the start-up sweep select the `embry0.role=sandbox` label (#620), so a container on the daemon that embry0 did not create is never touched, whatever its name. A sandbox created before the label existed (#616) has none; it is still found when its name starts with `sandbox-` and it was created before 2026-10-10 (`embry0/execution/sandbox_listing.py`).
-- **Container reaper** — background task destroys sandbox containers older than 24 hours, **unless the matching job is still active in the DB**. Active-status lookup failures fail closed (the reaper does nothing rather than risk killing live work). The reaper also sweeps DinD-side QA orphans — containers with `com.docker.compose.project=qa_*` OR `embry0.qa_job_id=*` whose owning job is no longer active.
+- **Container reaper** — background task destroys sandbox containers older than 24 hours, **unless the matching job is still active in the DB**. Active-status lookup failures fail closed (the reaper does nothing rather than risk killing live work). The reaper also sweeps DinD-side QA orphans — containers with `com.docker.compose.project=qa_*` OR `embry0.qa_job_id=*` whose owning job is no longer active. It tears a sandbox down through `SandboxManager.destroy`, the one teardown path the start-up sweep and every finished job use, so the proxy unenroll, the egress rules and the bearer release come with it: `destroy` first resolves the short ID `docker ps` prints, or a container name, to the full ID `create` enrolled the sandbox and kept its bearers under. A docker command that times out still reaches the forced `rm`. Each of its three steps (stale sandboxes, QA orphans, paused-job expiry) runs on its own, so one that fails costs only itself that tick.
 - **Start-up sweep** — on start, after boot recovery has failed the jobs it could not take back (and left the ones it resumes `running`, #307), the orchestrator destroys the sandbox containers the previous process left behind, **except those of jobs still active in the DB** (the reaper's set: pending, running, awaiting input, paused). A paused or awaiting-input job's checkpoint names its container and the resume reuses it (#484). Without the active set it destroys nothing; the reaper removes true orphans later.
 
 ---
@@ -798,7 +798,7 @@ graph TB
         ISS["/issues — CRUD, triage, sync, activity,<br/>inputs answer/skip"]
         JOB["/jobs — create/list/get/cancel/resume,<br/>inputs answer, events-token,<br/>logs/events, qa/services"]
         DLV["/deliverables — typed job outputs"]
-        QUE["/queue"] 
+        QUE["/queue"]
         STA["/stats"]
         TRC["/traces"]
         LOG["/logs/query — Loki log proxy"]
@@ -1347,6 +1347,10 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 99 | what embry0 still needs to maintain an owner, keyed by (owner, kind, signature) so an answer survives rediscovery (ADR 0011) | `org_needs`, `idx_org_needs_owner`, `org_needs_synced` |
 | 100 | the machines that run the code, which repositories run on each, and the `tailnet_api_key` credential kind (ADR 0013) | `hosts`, `hosts_name_unique`, `repo_hosts`, `idx_repo_hosts_host`, `credentials.metadata`, `credentials_kind_check`, `credentials_provider_check`, `credential_bindings_role_check` |
 | 101 | agent identity (`display_name`, `avatar`, `color`, `tagline`, with the builtins' values written for rows still at the defaults), skill sources and inline skills | `agent_definitions.{display_name, avatar, color, tagline}`, `skill_sources`, `inline_skills` |
+| 102 | an owner's versioned standards and each repository's place under them: one active version per owner and kind, superseded versions as history (ADR 0014) | `standards`, `standards_one_active`, `repo_standard_state`, `idx_repo_standard_state_owner`, `idx_repo_standard_state_audit_job` |
+| 103 | `credentials.provider` takes the OpenAI-compatible LLM providers (openai, openrouter, google, groq, deepseek, custom; ADR 0018) | `credentials_provider_check` |
+| 104 | every change to a repository's stored test setup and preferences, newest 100 per repo and surface, outliving the repository (ADR 0019) | `repo_config_revisions`, `idx_repo_config_revisions_repo` |
+| 105 | agent-proposed test setups a person applies, one running or pending proposal per repository (ADR 0019) | `repo_setup_proposals`, `idx_repo_setup_proposals_repo`, `uq_repo_setup_proposals_live` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 
@@ -1375,7 +1379,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 
 | Code | Meaning |
 |------|---------|
-| `ERR_AGENT_TIMEOUT` | Agent SDK call exceeded its configured timeout. |
+| `ERR_AGENT_TIMEOUT` | Agent SDK call exceeded its configured timeout. The runner kills the agent inside the sandbox as well as its `docker exec` client, since the job pauses with its sandbox kept; `agent_runner_wall_clock_timeout` records whether that kill landed (`runner_stopped`). |
 | `ERR_NO_RESULT` | Sandbox produced no final `ResultMessage`. |
 | `ERR_BUDGET_OVERRUN` | The job ran and its per-job cap stopped it in-run (`overrun_mode=hard`). It spent money, so it counts toward its actor's rate limit and toward dispatch-attempt caps. Rows written before #331 also carry this code for gate refusals; readers tell those apart by evidence (no `traces` row and `budget_overrun_usd = 0`). |
 | `ERR_BUDGET_REFUSED` | The dispatch gate refused the job before any agent ran — a daily/monthly cap or the per-actor rate limit (#331). The only outcome exempt from rate-limit and attempt counts; the one definition is `gate_refusal_sql` (`embry0/storage/repositories/gate_refusal.py`). |
@@ -1558,6 +1562,8 @@ service actor (`embry0/orchestration/dispatch_actors.py`):
 | `embry0:auto-retriage` | triage re-run with auto-answered questions folded in | exempt |
 | `embry0:answer-resume` | fresh run after the last blocking answer arrived on a channel that names nobody | exempt |
 | `embry0:pr-comment` | PR follow-up whose comment named no author | limited |
+| `embry0:master-key` | an API request made with the master key (`API_KEY`) | limited |
+| `embry0:anonymous` | an API request with no identity, which only `AUTH_DEV_MODE` lets in | limited |
 | `linear-reconciler` | the Linear dispatch reconciler | limited |
 
 The per-author limit throttles people. The three exempt actors skip layer 3

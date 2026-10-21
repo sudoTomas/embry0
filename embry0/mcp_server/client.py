@@ -27,8 +27,6 @@ DEFAULT_API_URL = "http://localhost:8200"
 
 TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled", "partial", "expired", "skipped"})
 
-_SECRET_MASK = "****"
-
 
 class Embry0APIError(Exception):
     """An embry0 API call failed; carries the HTTP status and the API's ``detail``."""
@@ -79,6 +77,24 @@ def _host_id(host_id: str) -> str:
     if not _HOST_ID_RE.match(host_id):
         raise Embry0APIError(422, f"host_id must look like 'host-0123456789ab', got {host_id!r}")
     return host_id
+
+
+_OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
+_KIND_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}\Z")
+
+
+def _owner(owner: str) -> str:
+    """A forge owner, one path segment, so nothing else reaches the URL."""
+    if not _OWNER_RE.match(owner):
+        raise Embry0APIError(422, f"owner must be one forge owner with no slash, got {owner!r}")
+    return owner
+
+
+def _kind(kind: str) -> str:
+    """A standard's kind as the API names them (lowercase, one word), so nothing else reaches the URL."""
+    if not _KIND_RE.match(kind):
+        raise Embry0APIError(422, f"kind must be a standard kind such as 'design', got {kind!r}")
+    return kind
 
 
 def _repo_path(repo: str) -> str:
@@ -491,15 +507,17 @@ class Embry0Client:
 
     # ------------------------------------------------------------------ watcher
 
-    async def watcher_runs(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        return _as_list(await self._request("GET", "/api/v1/watcher/runs", params={"limit": limit}))
+    async def watcher_runs(self, *, limit: int = 50, stack: str | None = None) -> list[dict[str, Any]]:
+        params = _drop_none({"limit": limit, "stack": stack})
+        return _as_list(await self._request("GET", "/api/v1/watcher/runs", params=params))
 
-    async def watcher_trigger(self, *, timeout: float = 900.0) -> dict[str, Any]:
+    async def watcher_trigger(self, *, timeout: float = 900.0, stack: str | None = None) -> dict[str, Any]:
         # A tick runs its LLM analysis job synchronously inside the request —
         # real ticks take minutes, so the client default timeout would always
         # trip. The tick keeps running server-side either way; a long
         # per-request read timeout lets the caller actually see the summary.
-        return _as_dict(await self._request("POST", "/api/v1/watcher/run", timeout=timeout))
+        params = _drop_none({"stack": stack})
+        return _as_dict(await self._request("POST", "/api/v1/watcher/run", params=params, timeout=timeout))
 
     # ------------------------------------------------------------------- cases
 
@@ -574,17 +592,13 @@ class Embry0Client:
     async def env_list(self, *, repo: str | None = None) -> dict[str, Any]:
         return _as_dict(await self._request("GET", self._env_base(repo)))
 
-    async def _env_reveal(self, key: str, repo: str | None) -> str:
-        data = _as_dict(await self._request("GET", f"{self._env_base(repo)}/{key}/reveal"))
-        value = data.get("value")
-        return value if isinstance(value, str) else ""
-
     async def _env_rebuild(self, repo: str | None, *, drop_key: str | None = None) -> list[dict[str, Any]]:
-        """Reconstruct the current variable set with real (unmasked) values.
+        """The current variable set, as the list response gave it, minus ``drop_key``.
 
-        The API only exposes full-set PUT, and list responses mask secrets, so a
-        single-key upsert/delete must reveal each existing secret before writing
-        the set back — otherwise the literal mask would overwrite stored values.
+        The API only exposes full-set PUT. A stored secret goes back as the
+        ``****`` its list response carries, which the PUT reads as "keep the
+        stored value", so a single-key write never reveals a secret: reveal is
+        admin tier and audited, while writing the set is operator tier.
         """
         current = await self.env_list(repo=repo)
         variables: list[dict[str, Any]] = []
@@ -592,13 +606,10 @@ class Embry0Client:
             key = var.get("key")
             if not isinstance(key, str) or key == drop_key:
                 continue
-            value = var.get("value", "")
-            if var.get("var_type") == "secret" or value == _SECRET_MASK:
-                value = await self._env_reveal(key, repo)
             variables.append(
                 {
                     "key": key,
-                    "value": value,
+                    "value": var.get("value", ""),
                     "var_type": var.get("var_type", "config"),
                     "description": var.get("description", ""),
                     "required": var.get("required", False),
@@ -692,6 +703,33 @@ class Embry0Client:
         if credential_id:
             body["credential_id"] = credential_id
         return _as_dict(await self._request("POST", "/api/v1/hosts/import/tailnet", body=body))
+
+    # ------------------------------------------------------------- standards (ADR 0014)
+
+    async def standard_get(self, owner: str, kind: str) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/standards/{_owner(owner)}/{_kind(kind)}"))
+
+    async def standard_set(
+        self,
+        owner: str,
+        kind: str,
+        *,
+        schema: dict[str, Any],
+        values: dict[str, Any],
+        prose: str = "",
+        references: list[str] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "schema": schema,
+            "values": values,
+            "prose": prose,
+            "references": list(references or []),
+        }
+        return _as_dict(await self._request("PUT", f"/api/v1/standards/{_owner(owner)}/{_kind(kind)}", body=body))
+
+    async def standard_audit(self, owner: str, kind: str, repo: str) -> dict[str, Any]:
+        path = f"/api/v1/standards/{_owner(owner)}/{_kind(kind)}/audit/{_repo_path(repo)}"
+        return _as_dict(await self._request("POST", path))
 
     async def org_webhook_install(self, owner: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/webhook"))

@@ -35,10 +35,12 @@ interface AuthState {
   authMode: AuthMode | null;
   /** SSO identity when authMode === "session". */
   user: SsoUser | null;
-  /** Whether the backend reports SSO configured (drives the SSO button). */
+  /** Whether the backend reports SSO configured: the prompt then redirects
+   *  to the identity provider instead of showing a form. */
   ssoEnabled: boolean;
   /** Whether the API-key entry form may be shown (false on the public
-   *  SSO-only origin; bearer-header API auth is unaffected). */
+   *  SSO-only origin, where the prompt shows a sign-in-unavailable note
+   *  instead; bearer-header API auth is unaffected). */
   apiKeyLogin: boolean;
   markAuthenticated: (opts?: { mode?: AuthMode; user?: SsoUser | null }) => void;
   requirePrompt: (opts?: { sessionExpired?: boolean }) => void;
@@ -76,3 +78,13 @@ export const useAuthStore = create<AuthState>()((set) => ({
   setSsoEnabled: (enabled) => set({ ssoEnabled: enabled }),
   setApiKeyLogin: (enabled) => set({ apiKeyLogin: enabled }),
 }));
+
+/**
+ * Whether this session may use the API's admin-only routes (require_admin):
+ * the API key does, and an SSO user does when their tier is admin. Controls
+ * for those routes read this, so an operator is never offered a click that
+ * can only fail with 403.
+ */
+export function useIsAdmin(): boolean {
+  return useAuthStore((s) => s.authMode === "key" || s.user?.tier === "admin");
+}
