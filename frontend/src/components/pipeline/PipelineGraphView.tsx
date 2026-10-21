@@ -17,6 +17,7 @@ import { PartyNode } from "./PartyNode";
 export function buildFlowData(
   graph: PipelineGraph,
   nodeStates: Record<string, NodeLiveState>,
+  selectedNodeId: string | null = null,
 ): { nodes: Node[]; edges: Edge[] } {
   const { nodes: baseNodes, edges: baseEdges } = deserializeGraph(graph);
 
@@ -28,6 +29,7 @@ export function buildFlowData(
           draggable: false,
           selectable: true,
           connectable: false,
+          selected: n.id === selectedNodeId,
           data: {
             ...n.data,
             mode: "live",
@@ -51,6 +53,8 @@ export interface PipelineGraphViewProps {
   graph: PipelineGraph | null;
   nodeStates: Record<string, NodeLiveState>;
   onNodeSelect?: (nodeId: string | null) => void;
+  /** The graph node whose run is selected on the page; the map draws it selected. */
+  selectedNodeId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,11 +71,12 @@ function PipelineGraphViewInner({
   graph,
   nodeStates,
   onNodeSelect,
+  selectedNodeId = null,
 }: PipelineGraphViewProps) {
   const { nodes, edges } = useMemo(() => {
     if (!graph) return { nodes: [], edges: [] };
-    return buildFlowData(graph, nodeStates);
-  }, [graph, nodeStates]);
+    return buildFlowData(graph, nodeStates, selectedNodeId);
+  }, [graph, nodeStates, selectedNodeId]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
