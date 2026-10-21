@@ -8,11 +8,11 @@ Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``agent_reset``, ``env_set``, ``env_delete``, ``merge_decide``, ``case_accept``,
 ``case_close``, ``repo_register``, ``org_register``, ``org_webhook_install``,
 ``org_act``, ``qa_config_set``, ``credential_bind``, ``host_import_tailnet``,
-``skill_source_add``, ``skill_source_sync``, ``skill_source_remove``,
-``inline_skill_put``, ``inline_skill_remove``, ``agent_skill_add``,
-``agent_skill_remove``, ``standard_set``, ``standard_audit``) require
-``confirm=true``; without it they return an instructive refusal instead of
-acting.
+``skill_source_add``, ``skill_source_update``, ``skill_source_sync``,
+``skill_source_remove``, ``inline_skill_put``, ``inline_skill_remove``,
+``agent_skill_add``, ``agent_skill_remove``, ``standard_set``,
+``standard_audit``) require ``confirm=true``; without it they return an
+instructive refusal instead of acting.
 """
 
 from __future__ import annotations
