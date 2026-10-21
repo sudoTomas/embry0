@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef, useId } from "react";
+import { useMemo, useState, useId } from "react";
 import type { Node } from "@xyflow/react";
 import { X, ChevronDown, ChevronRight } from "lucide-react";
 import { useAgents } from "@/hooks/useAgents";
@@ -11,7 +11,7 @@ import { resolveAgentType } from "@/lib/agentIdentity";
 import { normalizeDelta, effectiveSkills, isEmptyDelta, type NormalizedDelta } from "@/lib/skills";
 import type { SkillCatalogEntry } from "@/lib/types";
 import { SANDBOX_IMAGE_PLACEHOLDER } from "@/lib/branding";
-import { createFocusTrap } from "@/lib/focus-trap";
+import { Dialog } from "@/components/ui/Dialog";
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                              */
@@ -210,30 +210,11 @@ export function AgentDetailPopup({
   onUpdate,
   onClose,
 }: AgentDetailPopupProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const d = node.data as Record<string, unknown>;
   const { data: agents } = useAgents();
   const [editing, setEditing] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    document.body.style.overflow = "hidden";
-    const cleanup = createFocusTrap(containerRef.current);
-    return () => {
-      cleanup();
-      document.body.style.overflow = "";
-    };
-  }, []);
 
   /* ---- derived data ---- */
   const agentType = (d.agentType as string) ?? "custom";
@@ -297,86 +278,74 @@ export function AgentDetailPopup({
   /* ================================================================ */
 
   return (
-    <div
-      className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={onClose}
+    <Dialog
+      onClose={onClose}
+      labelledBy={titleId}
+      className="w-[560px]"
+      style={{ border: `1px solid ${color}33` }}
     >
-      <div
-        ref={containerRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="pipeline-popup-in w-[560px] max-h-[85vh] overflow-y-auto rounded-lg"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          border: `1px solid ${color}33`,
-          background: "var(--color-surface)",
-          boxShadow: "0 25px 50px rgb(0 0 0 / 0.5)",
-        }}
-      >
-        {/* -------- Header -------- */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06]">
-          <AgentAvatar identity={identity} size={36} />
+      {/* -------- Header -------- */}
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06]">
+        <AgentAvatar identity={identity} size={36} />
 
-          {/* Title */}
-          <div className="flex-1 min-w-0">
-            <div id={titleId} className="text-[22px] font-bold leading-tight" style={{ color }}>
-              {displayLabel}
-            </div>
-            <div className="text-[13px] text-white/40 mt-0.5">
-              {editing ? "Editing" : identity.displayName}
-            </div>
+        {/* Title */}
+        <div className="flex-1 min-w-0">
+          <div id={titleId} className="text-[22px] font-bold leading-tight" style={{ color }}>
+            {displayLabel}
           </div>
-
-          {/* Close */}
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-white/[0.04] border border-white/[0.08] text-white/40 hover:text-white/80 transition-colors"
-          >
-            <X size={16} />
-          </button>
+          <div className="text-[13px] text-white/40 mt-0.5">
+            {editing ? "Editing" : identity.displayName}
+          </div>
         </div>
 
-        {/* -------- Body -------- */}
-        <div className="p-5">
-          {editing ? (
-            <EditMode
-              d={d}
-              color={color}
-              models={models}
-              tools={tools}
-              definitionSkills={definitionSkills}
-              delta={delta}
-              effective={effective}
-              catalog={catalog ?? []}
-              catalogLoading={catalogLoading}
-              skillActions={skillActions}
-              onUpdate={onUpdate}
-              advancedOpen={advancedOpen}
-              setAdvancedOpen={setAdvancedOpen}
-              onCancel={() => setEditing(false)}
-            />
-          ) : (
-            <ReadMode
-              color={color}
-              description={agentDef?.description}
-              displayModel={displayModel}
-              promptPreview={promptPreview}
-              tools={tools}
-              effective={effective}
-              onEdit={() => setEditing(true)}
-            />
-          )}
-        </div>
-
-        {/* -------- Footer -------- */}
-        <div className="pb-4 text-center text-[12px] text-white/20">
-          Click anywhere outside to close
-        </div>
+        {/* Close */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-white/[0.04] border border-white/[0.08] text-white/40 hover:text-white/80 transition-colors"
+        >
+          <X size={16} />
+        </button>
       </div>
-    </div>
+
+      {/* -------- Body -------- */}
+      <div className="p-5">
+        {editing ? (
+          <EditMode
+            d={d}
+            color={color}
+            models={models}
+            tools={tools}
+            definitionSkills={definitionSkills}
+            delta={delta}
+            effective={effective}
+            catalog={catalog ?? []}
+            catalogLoading={catalogLoading}
+            skillActions={skillActions}
+            onUpdate={onUpdate}
+            advancedOpen={advancedOpen}
+            setAdvancedOpen={setAdvancedOpen}
+            onCancel={() => setEditing(false)}
+          />
+        ) : (
+          <ReadMode
+            color={color}
+            description={agentDef?.description}
+            displayModel={displayModel}
+            promptPreview={promptPreview}
+            tools={tools}
+            effective={effective}
+            onEdit={() => setEditing(true)}
+          />
+        )}
+      </div>
+
+      {/* -------- Footer -------- */}
+      <div className="pb-4 text-center text-[12px] text-white/20">
+        Click anywhere outside to close
+      </div>
+    </Dialog>
   );
 }
 
