@@ -2857,15 +2857,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ('pr-reviewer', 'PR Reviewer', 'arbiter',   'cyan',    'Weighs a pull request.'),
             ('research',    'Research',    'scholar',   'gold',    'Reads everything first.'),
             ('analysis',    'Analysis',    'oracle',    'violet',  'Finds the pattern.'),
-            ('ops',         'Ops',         'engineer',  'amber',   'Keeps it running.'),
-            ('kintsugi',       'Kintsugi',       'monk',     'gold',    'Finds every crack, proves it, writes the seal.'),
-            ('gardener',       'Gardener',       'skiller',  'emerald', 'Pulls one weed per run, provably.'),
-            ('interrogator',   'Interrogator',   'rogue',    'rose',    'Four angles on a diff, then a verdict.'),
-            ('why',            'Why',            'mystic',   'violet',  'Finds the forces that shaped the code.'),
-            ('how',            'How',            'bard',     'sky',     'Explains a subsystem before you change it.'),
-            ('blast-radius',   'Blast Radius',   'scout',    'amber',   'Finds what a change breaks beyond the diff.'),
-            ('comment-sicko',  'Comment Sicko',  'pirate',   'cyan',    'Deletes the comments that do the code''s job badly.'),
-            ('design-auditor', 'Design Auditor', 'archmage', 'gold',    'Measures a frontend against its standard.')
+            ('ops',         'Ops',         'engineer',  'amber',   'Keeps it running.')
         ) AS v(type, display_name, avatar, color, tagline)
         WHERE agent_definitions.type = v.type AND agent_definitions.display_name = '';
 
@@ -3032,6 +3024,31 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_repo_setup_proposals_repo ON repo_setup_proposals (repo, created_at DESC);
         CREATE UNIQUE INDEX IF NOT EXISTS uq_repo_setup_proposals_live
             ON repo_setup_proposals (repo) WHERE status IN ('running', 'pending');
+        """,
+    ),
+    (
+        106,
+        "specialist agent identities for rows still at the defaults (docs/specialist-agents.md)",
+        # Migration 101 wrote the nine core agents' identity. The eight
+        # read-only specialists are seeded rows too, and a deployment that
+        # seeded them before identity existed shows them as slug / golem /
+        # slate until each is reset. Same shape as 101: only rows still at
+        # the defaults (display_name = '') are written, so an operator's edit
+        # survives; the values are BUILTIN_IDENTITY in embry0/agents/identity.py
+        # (tests/unit/storage/test_migration_106.py pins the two in sync).
+        """
+        UPDATE agent_definitions SET display_name = v.display_name, avatar = v.avatar, color = v.color, tagline = v.tagline
+        FROM (VALUES
+            ('kintsugi',       'Kintsugi',       'monk',     'gold',    'Finds every crack, proves it, writes the seal.'),
+            ('gardener',       'Gardener',       'skiller',  'emerald', 'Pulls one weed per run, provably.'),
+            ('interrogator',   'Interrogator',   'rogue',    'rose',    'Four angles on a diff, then a verdict.'),
+            ('why',            'Why',            'mystic',   'violet',  'Finds the forces that shaped the code.'),
+            ('how',            'How',            'bard',     'sky',     'Explains a subsystem before you change it.'),
+            ('blast-radius',   'Blast Radius',   'scout',    'amber',   'Finds what a change breaks beyond the diff.'),
+            ('comment-sicko',  'Comment Sicko',  'pirate',   'cyan',    'Deletes the comments that do the code''s job badly.'),
+            ('design-auditor', 'Design Auditor', 'archmage', 'gold',    'Measures a frontend against its standard.')
+        ) AS v(type, display_name, avatar, color, tagline)
+        WHERE agent_definitions.type = v.type AND agent_definitions.display_name = '';
         """,
     ),
 ]

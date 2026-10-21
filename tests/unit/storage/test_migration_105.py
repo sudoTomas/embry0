@@ -21,12 +21,6 @@ def test_migration_105_present_and_gapless() -> None:
     assert "repo_setup_proposals" in description
 
 
-def test_migration_105_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_101.py and test_migration_104.py, merged)."""
-    assert MIGRATIONS[-1][0] == 105, "migration 105 must create repo_setup_proposals"
-
-
 @pytest.mark.requires_postgres
 async def test_a_fresh_schema_has_the_table_with_its_defaults(db_with_migrations: DatabasePool) -> None:
     db = db_with_migrations
@@ -51,13 +45,13 @@ async def test_it_applies_on_a_schema_at_104(db_with_migrations: DatabasePool) -
     db = db_with_migrations
     await db.execute("DROP TABLE repo_setup_proposals")
     await db.execute("DELETE FROM embry0_migrations WHERE version = 105")
-    assert await db.fetchval("SELECT max(version) FROM embry0_migrations") == 104
+    assert await db.fetchval("SELECT 1 FROM embry0_migrations WHERE version = 105") is None
 
     await run_migrations(db)
     await db.execute(_sql_for(105))
 
     assert await db.fetchval("SELECT to_regclass('repo_setup_proposals') IS NOT NULL")
-    assert await db.fetchval("SELECT max(version) FROM embry0_migrations") == 105
+    assert await db.fetchval("SELECT 1 FROM embry0_migrations WHERE version = 105") == 1
 
 
 @pytest.mark.requires_postgres
