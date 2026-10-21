@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const mockMutate = vi.fn();
@@ -18,6 +18,13 @@ beforeEach(() => {
 });
 
 describe("CreateJobDialog", () => {
+  it("moves focus into the form, to the Context field, not to the header's Close", async () => {
+    render(<CreateJobDialog onClose={vi.fn()} />);
+    await waitFor(() =>
+      expect(document.activeElement, "the first field takes focus, not the Close button").toBe(screen.getByLabelText("Context")),
+    );
+  });
+
   it("submits a git context with repo, ref, and issue number", async () => {
     const user = userEvent.setup();
     render(<CreateJobDialog onClose={vi.fn()} />);

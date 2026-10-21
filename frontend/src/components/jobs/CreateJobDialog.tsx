@@ -86,6 +86,7 @@ export function CreateJobDialog({ onClose }: CreateJobDialogProps) {
               <Label htmlFor="context-type">Context</Label>
               <Select
                 id="context-type"
+                data-autofocus
                 value={contextType}
                 onChange={(e) => setContextType(e.target.value as JobContextType)}
               >
