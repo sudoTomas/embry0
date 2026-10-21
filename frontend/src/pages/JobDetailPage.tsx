@@ -97,8 +97,22 @@ export function JobDetailPage() {
 
   const { data: qaAttempts } = useQaAttempts(jobId ?? "", live);
   const hasQa = events.some((e) => e.type === "qa_apps_resolved") || (qaAttempts?.length ?? 0) > 0;
-  const { data: verification } = useJobVerification(jobId, live);
-  const hasVerification = !!verification || events.some((e) => e.type === "verification_result");
+  const verificationSeen = events.some((e) => e.type === "verification_result");
+  const { data: verification, refetch: refetchVerification } = useJobVerification(jobId, { live, resultSeen: verificationSeen });
+  const hasVerification = !!verification || verificationSeen;
+  // The verify node emits verification_result before it writes the row, and a
+  // job can turn terminal inside one poll interval: fetch the row on the
+  // event's rising edge and once when the job stops being live, not on every
+  // event batch that follows.
+  const prevVerificationSeen = useRef(verificationSeen);
+  const prevLive = useRef(live);
+  useEffect(() => {
+    const rose = verificationSeen && !prevVerificationSeen.current;
+    const ended = prevLive.current && !live;
+    prevVerificationSeen.current = verificationSeen;
+    prevLive.current = live;
+    if (rose || ended) refetchVerification();
+  }, [verificationSeen, live, refetchVerification]);
 
   const elapsed = useElapsedTime(job?.started_at ?? null, job?.finished_at ?? null);
   // Cost sources disagree by design: the stream-derived sums only cover agents
@@ -217,7 +231,13 @@ export function JobDetailPage() {
             {hasQa && <TabsContent value="qa"><QATab jobId={job.job_id} jobIsLive={job.status === "running"} /></TabsContent>}
             {hasVerification && (
               <TabsContent value="verification">
-                {verification ? <VerificationTab verification={verification} /> : <p className="text-sm text-muted-foreground">The verification result is being recorded…</p>}
+                {verification ? (
+                  <VerificationTab verification={verification} />
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {jobFinished ? "No verification report was stored for this job." : "The verification result is being recorded…"}
+                  </p>
+                )}
               </TabsContent>
             )}
           </Tabs>

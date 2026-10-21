@@ -10,9 +10,11 @@ const state = vi.hoisted(() => ({
   job: {} as Record<string, unknown>,
   events: [] as LogEvent[],
   verification: null as unknown,
+  verificationOpts: null as unknown,
   attempts: [] as unknown[],
   refetch: vi.fn(),
   refetchInputs: vi.fn(),
+  refetchVerification: vi.fn(),
 }));
 
 vi.mock("@/hooks/useJobs", () => ({
@@ -35,7 +37,9 @@ vi.mock("@/hooks/useQaResults", () => ({
   useQaAttempts: () => ({ data: state.attempts, isLoading: false }),
   useQaServices: () => ({ data: [] }),
 }));
-vi.mock("@/hooks/useJobVerification", () => ({ useJobVerification: () => ({ data: state.verification }) }));
+vi.mock("@/hooks/useJobVerification", () => ({
+  useJobVerification: (_jobId: string, opts: unknown) => { state.verificationOpts = opts; return { data: state.verification, refetch: state.refetchVerification }; },
+}));
 vi.mock("@/hooks/useAgents", () => ({
   useAgents: () => ({ data: [{ type: "developer", display_name: "Developer", avatar: "smith", color: "amber", skills: [] }] }),
 }));
@@ -89,8 +93,11 @@ beforeEach(() => {
   state.attempts = [];
   state.refetch.mockReset();
   state.refetchInputs.mockReset();
+  state.refetchVerification.mockReset();
   use("issue-to-pr");
 });
+
+const VERIFICATION_RESULT = { type: "verification_result", tier: "backend_only", gate_verdict: "passed", blocking: false, timestamp: "2026-10-20T12:00:00Z" } as LogEvent;
 
 describe("JobDetailPage", () => {
   it("/jobs/:id/logs redirects to the job page", () => {
@@ -175,10 +182,45 @@ describe("JobDetailPage", () => {
     mount();
     fireEvent.click(screen.getAllByRole("tab", { name: "Verification" })[0]);
     expect(screen.getByTestId("verification-tab")).toBeTruthy();
+    cleanup();
     state.verification = null;
-    use("issue-to-pr", [{ type: "verification_result", tier: "backend_only", gate_verdict: "passed", blocking: false, timestamp: "2026-10-20T12:00:00Z" } as LogEvent]);
+    use("issue-to-pr", [VERIFICATION_RESULT]);
     mount();
-    expect(screen.getAllByRole("tab", { name: "Verification" }).length, "the event alone shows the tab").toBeGreaterThan(0);
+    expect(screen.queryByRole("tab", { name: "Verification" }), "the event alone shows the tab").not.toBeNull();
+  });
+
+  it("refetches the verification row when the event arrives and once when the job ends, not on every batch", () => {
+    const quiet = loadFixture("issue-to-pr");
+    state.events = quiet;
+    const { rerender, ui } = mount();
+    expect(state.refetchVerification, "no event yet: the mount fetch alone").not.toHaveBeenCalled();
+    state.events = [...quiet, VERIFICATION_RESULT];
+    rerender(ui());
+    expect(state.refetchVerification, "the verify node emits the event before it writes the row: fetch it now").toHaveBeenCalledTimes(1);
+    state.events = [...quiet, VERIFICATION_RESULT, { type: "text", run_id: "run-fixture-4", node: "review", agent: "reviewer", text: "later", timestamp: "2026-01-01T00:01:00Z" } as LogEvent];
+    rerender(ui());
+    expect(state.refetchVerification, "a later batch is not a new edge").toHaveBeenCalledTimes(1);
+    state.job = job({ status: "completed", finished_at: "2026-10-20T12:05:00Z" });
+    rerender(ui());
+    expect(state.refetchVerification, "the live-to-terminal transition fetches once more").toHaveBeenCalledTimes(2);
+  });
+
+  it("polls for the row only after the event has been seen", () => {
+    mount();
+    expect(state.verificationOpts, "a live job without the event must not poll").toEqual({ live: true, resultSeen: false });
+    cleanup();
+    use("issue-to-pr", [VERIFICATION_RESULT]);
+    mount();
+    expect(state.verificationOpts).toEqual({ live: true, resultSeen: true });
+  });
+
+  it("a finished job with the event but no stored row says so plainly", () => {
+    use("issue-to-pr", [VERIFICATION_RESULT]);
+    state.job = job({ status: "completed", finished_at: "2026-10-20T12:05:00Z" });
+    mount();
+    fireEvent.click(screen.getByRole("tab", { name: "Verification" }));
+    expect(screen.queryByText("No verification report was stored for this job."), "a finished job is not still recording").not.toBeNull();
+    expect(screen.queryByText(/being recorded/)).toBeNull();
   });
 
   it("opens the transcript drawer for a truncated finished run", async () => {
