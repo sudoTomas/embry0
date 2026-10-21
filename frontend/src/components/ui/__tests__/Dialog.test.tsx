@@ -40,6 +40,13 @@ describe("Dialog", () => {
     expect(dialog).toHaveClass("dialog-in");
   });
 
+  it("the Esc hint is decoration for screen readers", () => {
+    render(<Dialog onClose={vi.fn()} title="Delete host">body</Dialog>);
+    const hint = screen.getByRole("dialog").querySelector("kbd");
+    expect(hint?.textContent).toBe("Esc");
+    expect(hint, "the hint repeats what Escape does; it is not text to read out").toHaveAttribute("aria-hidden", "true");
+  });
+
   it("renders nothing while closed", () => {
     render(<Dialog open={false} onClose={vi.fn()} title="Delete host">body</Dialog>);
     expect(screen.queryByRole("dialog")).toBeNull();

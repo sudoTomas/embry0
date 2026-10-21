@@ -20,7 +20,7 @@ export interface DialogProps {
   side?: DialogSide;
   /** A click on the backdrop closes (default true). A dialog that must be answered passes false. */
   dismissOnBackdrop?: boolean;
-  /** Classes for the panel: its width above all. */
+  /** Classes for the panel. It is `w-full` under `max-w-lg`, so widen or narrow it with a `max-w-*` class; a `w-*` above `max-w-lg` has no effect. */
   className?: string;
   style?: CSSProperties;
   children: ReactNode;
@@ -104,7 +104,9 @@ export function Dialog({
             <h2 id={titleId} className="min-w-0 flex-1 text-base font-semibold">
               {title}
             </h2>
-            <Kbd className="hidden sm:inline-flex">Esc</Kbd>
+            <Kbd className="hidden sm:inline-flex" aria-hidden="true">
+              Esc
+            </Kbd>
             <button
               type="button"
               onClick={onClose}

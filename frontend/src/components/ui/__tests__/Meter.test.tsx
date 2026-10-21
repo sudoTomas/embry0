@@ -32,6 +32,10 @@ describe("Meter", () => {
     const over = meter(12.5, 10);
     expect(over.el.dataset.level).toBe("over");
     expect(over.bar.style.width, "over budget still draws a full bar, not a wider one").toBe("100%");
+    expect(over.el.getAttribute("aria-valuetext"), "a valuenow past valuemax needs words a reader can trust").toBe(
+      "12.5 of 10, over",
+    );
+    expect(meter(8, 10).el.getAttribute("aria-valuetext")).toBe("8 of 10");
     const empty = meter(3, 0);
     expect(empty.bar.style.width).toBe("0%");
     expect(empty.el.dataset.level).toBe("ok");

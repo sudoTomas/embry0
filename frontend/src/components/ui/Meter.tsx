@@ -29,6 +29,8 @@ export interface MeterProps {
 export function Meter({ value, max, label, className }: MeterProps) {
   const level = levelOf(value, max);
   const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
+  // A valuenow past valuemax is invalid for role="meter"; the text says it in words.
+  const valueText = level === "over" ? `${value} of ${max}, over` : `${value} of ${max}`;
   return (
     <div
       role="meter"
@@ -36,6 +38,7 @@ export function Meter({ value, max, label, className }: MeterProps) {
       aria-valuemin={0}
       aria-valuemax={max}
       aria-valuenow={value}
+      aria-valuetext={valueText}
       data-level={level}
       className={cn("h-2 overflow-hidden rounded-full bg-muted", className)}
     >

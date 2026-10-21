@@ -28,6 +28,13 @@ describe("Switch", () => {
     expect(onCheckedChange).not.toHaveBeenCalled();
   });
 
+  it("stands still for people who asked for reduced motion", () => {
+    render(<Switch checked={false} onCheckedChange={vi.fn()} label="Review pull requests" />);
+    const sw = screen.getByRole("switch");
+    expect(sw, "the track's color transition is off under reduced motion").toHaveClass("motion-reduce:transition-none");
+    expect(sw.firstElementChild, "so is the thumb's slide").toHaveClass("motion-reduce:transition-none");
+  });
+
   it("takes its name from a label pointed at its id", () => {
     render(
       <>
