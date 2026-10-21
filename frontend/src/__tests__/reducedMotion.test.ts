@@ -22,9 +22,6 @@ const SOURCES = import.meta.glob(
   { query: "?raw", import: "default", eager: true },
 ) as Record<string, string>;
 
-/** Spinners keep turning under reduced motion: a still one says nothing. */
-const SPINNERS = new Set(["embry0-spinner"]);
-
 /** String literals and template text: where class names live, not comments. */
 function strings(fileName: string, source: string): string[] {
   const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
@@ -114,8 +111,7 @@ function unguardedClasses(css: string): string[] {
   const still = stilled(rules);
   return rules
     .filter((r) => r.animation !== "none" && !guarded(r) && !still.has(r.selector))
-    .flatMap((r) => [...r.selector.matchAll(/\.([\w-]+)/g)].map((m) => m[1]))
-    .filter((cls) => !SPINNERS.has(cls));
+    .flatMap((r) => [...r.selector.matchAll(/\.([\w-]+)/g)].map((m) => m[1]));
 }
 
 /** Every class token the app writes in a string, variants stripped. */
@@ -150,7 +146,6 @@ describe("reduced motion", () => {
       .marked { animation: x 1s; }
       @media (prefers-reduced-motion: reduce) { .marked { animation: none; } }
       .off { animation: none; }
-      .embry0-spinner { animation: x 1s linear infinite; }
     `;
     expect(unguardedClasses(css)).toEqual(["loose", "spun"]);
   });
