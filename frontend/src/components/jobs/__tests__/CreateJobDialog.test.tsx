@@ -98,4 +98,16 @@ describe("CreateJobDialog", () => {
       expect.anything(),
     );
   });
+
+  it("is a modal dialog named for what it does, and Cancel closes it", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<CreateJobDialog onClose={onClose} />);
+    const dialog = screen.getByRole("dialog", { name: "Create New Job" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(dialog.parentElement?.parentElement, "a Dialog over the page, not a card in it").toBe(document.body);
+    expect(screen.getByLabelText("Advanced options")).toHaveAttribute("role", "switch");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

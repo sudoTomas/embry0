@@ -1,5 +1,6 @@
 import { formatCost } from "@/lib/utils";
 import { useElapsedTime } from "@/hooks/useElapsedTime";
+import { Meter } from "@/components/ui/Meter";
 
 interface JobHudProps {
   status: string;
@@ -13,21 +14,6 @@ interface JobHudProps {
   budgetUsd: number | null | undefined;
 }
 
-type Level = "ok" | "warn" | "over";
-
-function levelOf(cost: number, budget: number): Level {
-  const ratio = cost / budget;
-  if (ratio >= 1) return "over";
-  if (ratio >= 0.8) return "warn";
-  return "ok";
-}
-
-const LEVEL_CLASS: Record<Level, string> = {
-  ok: "bg-palette-emerald",
-  warn: "bg-palette-amber",
-  over: "bg-destructive",
-};
-
 /**
  * The HUD bar (spec 3.5): status, elapsed, cost, turns, tokens in and out in
  * the pixel face, and a budget meter when the job has a budget. Wraps to two
@@ -37,8 +23,6 @@ const LEVEL_CLASS: Record<Level, string> = {
 export function JobHud({ status, startedAt, finishedAt, costUsd, turns, tokensIn, tokensOut, budgetUsd }: JobHudProps) {
   const elapsed = useElapsedTime(startedAt, finishedAt);
   const hasBudget = typeof budgetUsd === "number" && budgetUsd > 0;
-  const level = hasBudget ? levelOf(costUsd, budgetUsd) : "ok";
-  const pct = hasBudget ? Math.min(100, Math.round((costUsd / budgetUsd) * 100)) : 0;
   return (
     <div data-testid="job-hud" className="hud flex flex-wrap items-center gap-x-5 gap-y-2 rounded-md border border-border bg-card px-3 py-2 text-sm">
       <Reading label="Status" id="status" value={status} />
@@ -50,17 +34,7 @@ export function JobHud({ status, startedAt, finishedAt, costUsd, turns, tokensIn
       {hasBudget && (
         <div className="flex items-center gap-2 basis-full sm:basis-auto sm:ml-auto min-w-[160px]">
           <span className="text-muted-foreground text-xs">Budget</span>
-          <div
-            role="meter"
-            aria-label="Budget"
-            aria-valuemin={0}
-            aria-valuemax={budgetUsd}
-            aria-valuenow={costUsd}
-            data-level={level}
-            className="h-2 flex-1 rounded-full bg-muted overflow-hidden"
-          >
-            <div className={`h-full ${LEVEL_CLASS[level]}`} style={{ width: `${pct}%` }} />
-          </div>
+          <Meter value={costUsd} max={budgetUsd} label="Budget" className="flex-1" />
           <span className="text-xs">{formatCost(budgetUsd)}</span>
         </div>
       )}
