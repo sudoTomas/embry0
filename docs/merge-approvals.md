@@ -92,10 +92,23 @@ prefix and all (`embry0/api/deps.py:MERGE_SCOPE_MUTATIONS`, read through
 
 - `GET /api/v1/merge-approvals?status=pending` — asks, newest first, plus the current `mode`.
 - `GET /api/v1/merge-approvals/{id}`
-- `POST /api/v1/merge-approvals/{id}/decide` `{decision: approve|reject, decided_by, chat_id}` →
-  `{outcome: merged|would_merge|rejected|refused|stale|failed|already_decided, status, detail, …}`.
-  Each decision writes a `merge.decided` audit row.
+- `POST /api/v1/merge-approvals/{id}/decide`, two forms on one route →
+  `{outcome: merged|would_merge|rejected|refused|stale|failed|already_decided, status, detail, …}`:
+  - the relay's: `{decision: approve|reject, decided_by, chat_id}`, with `chat_id` checked against `MERGE_APPROVAL_CHAT_ID`;
+  - the dashboard's: `{decision}` alone, admin tier (an admin session or an admin-scope key); the actor is who authenticated, the stored `chat_id` is the literal `dashboard`, and no chat needs to be configured.
+  A body with one of `decided_by` and `chat_id` but not the other is 422.
+  Each decision writes a `merge.decided` audit row carrying `via` (`chat` or `dashboard`).
 - MCP: `merge_approval_list`, `merge_approval_get`, `merge_decide` (confirm-gated).
+
+## Deciding from the dashboard
+
+The approval chat is one channel; the dashboard's merge-approvals page is the
+other (spec 3.8). An admin presses approve or reject there, the dashboard
+sends `{decision}` and nothing else, and embry0 names the actor from the
+session or key that made the call. The same re-checks run (PR head unchanged,
+CI green, verification gate not blocking, mergeable); `MERGE_APPROVAL_REPOS`
+still decides which repositories are asked about at all. A `merge`-scope key
+cannot use this form: it is the relay's key, and the relay answers for a chat.
 
 ## Rolling out
 

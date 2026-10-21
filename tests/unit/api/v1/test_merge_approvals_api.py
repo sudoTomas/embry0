@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from embry0.services.merge_approvals import MergeApprovalService
@@ -41,6 +43,8 @@ async def test_decide_relays_an_approval(api_client) -> None:
         "SELECT details FROM audit_log WHERE action = 'merge.decided' ORDER BY id DESC LIMIT 1"
     )
     assert audit is not None, "the decision left no audit row"
+    details = audit["details"] if isinstance(audit["details"], dict) else json.loads(audit["details"])
+    assert details["via"] == "chat", "the relay's form is the chat channel"
 
 
 async def test_decide_from_the_wrong_chat_is_403(api_client) -> None:
@@ -82,3 +86,34 @@ async def test_a_merge_scope_key_can_be_stored(api_client) -> None:
     await api_client.app.state.db.execute("DELETE FROM api_keys WHERE name = 'hermes-merge-test'")
     row, _ = await repo.create(name="hermes-merge-test", scope="merge", user_id=None, created_by="test")
     assert row.scope == "merge"
+
+
+async def test_the_dashboard_form_decides_with_no_chat_configured(api_client) -> None:
+    """Spec 3.8: body {decision} alone is the dashboard's form. The route names
+    the actor itself and stores the literal channel. (api_client runs in
+    AUTH_DEV_MODE, where the admin gate admits and the actor is the anonymous
+    one; the tier itself is pinned in test_merge_decide_dashboard_gate.py.)"""
+    _, github, row = await _wire(api_client, merge_approval_chat_id="")
+    resp = await api_client.post(f"/api/v1/merge-approvals/{row['id']}/decide", json={"decision": "approve"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["outcome"] == "would_merge"
+    assert github.merge_calls == []
+    stored = await api_client.app.state.merge_approvals.get(row["id"])
+    assert stored["chat_id"] == "dashboard"
+    assert stored["decided_by"] == body["decided_by"] != ""
+    audit = await api_client.app.state.db.fetchrow(
+        "SELECT details FROM audit_log WHERE action = 'merge.decided' ORDER BY id DESC LIMIT 1"
+    )
+    details = audit["details"] if isinstance(audit["details"], dict) else json.loads(audit["details"])
+    assert (details["via"], details["decided_by"]) == ("dashboard", body["decided_by"])
+
+
+async def test_half_a_relay_body_is_422(api_client) -> None:
+    _, _, row = await _wire(api_client)
+    resp = await api_client.post(
+        f"/api/v1/merge-approvals/{row['id']}/decide", json={"decision": "approve", "decided_by": "Alex"}
+    )
+    assert resp.status_code == 422, resp.text
+    assert "together" in resp.json()["detail"]
+    assert (await api_client.app.state.merge_approvals.get(row["id"]))["status"] == "pending"

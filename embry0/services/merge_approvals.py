@@ -204,6 +204,10 @@ _PR_URL = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)/?$")
 APPROVE_WORDS = frozenset({"approve", "approved", "merge"})
 REJECT_WORDS = frozenset({"reject", "rejected", "decline"})
 
+#: The chat_id stored for a decision made on the dashboard (spec 3.8): the
+#: column says which channel answered, and this one has no chat.
+DASHBOARD_CHANNEL = "dashboard"
+
 
 class DecisionRefused(Exception):
     """The decision could not be accepted at all (wrong chat, unknown ask)."""
@@ -547,16 +551,35 @@ class MergeApprovalService:
 
     # -- decide -----------------------------------------------------------
 
-    async def decide(self, approval_id: str, *, decision: str, decided_by: str, chat_id: str) -> dict[str, Any]:
+    async def decide(
+        self,
+        approval_id: str,
+        *,
+        decision: str,
+        decided_by: str,
+        chat_id: str,
+        via: Literal["chat", "dashboard"] = "chat",
+    ) -> dict[str, Any]:
+        """Take a human's decision. ``via="chat"`` is the relay's: the answer must
+        come from the configured approval chat. ``via="dashboard"`` is an admin
+        on the dashboard (the route has already applied the admin gate and named
+        ``decided_by`` from who authenticated): no chat is involved, and the
+        stored ``chat_id`` is :data:`DASHBOARD_CHANNEL`. Everything after the
+        channel check is the same for both."""
         word = (decision or "").strip().lower()
         if word not in APPROVE_WORDS | REJECT_WORDS:
             raise DecisionRefused(422, f"decision must be 'approve' or 'reject', not {decision!r}")
         if not (decided_by or "").strip():
             raise DecisionRefused(422, "decided_by is required: name the person who answered")
-        if not self.chat_id:
-            raise DecisionRefused(403, "no approval chat is configured (MERGE_APPROVAL_CHAT_ID); nothing can be merged")
-        if (chat_id or "").strip() != self.chat_id:
-            raise DecisionRefused(403, "merge decisions are accepted only from the embry0 approval chat")
+        if via == "dashboard":
+            chat_id = DASHBOARD_CHANNEL
+        else:
+            if not self.chat_id:
+                raise DecisionRefused(
+                    403, "no approval chat is configured (MERGE_APPROVAL_CHAT_ID); nothing can be merged"
+                )
+            if (chat_id or "").strip() != self.chat_id:
+                raise DecisionRefused(403, "merge decisions are accepted only from the embry0 approval chat")
 
         row = await self._repo.get(approval_id)
         if row is None:
