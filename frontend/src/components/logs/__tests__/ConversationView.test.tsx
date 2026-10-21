@@ -7,6 +7,7 @@ vi.mock("@/hooks/useAgents", () => ({
 
 import { ConversationView } from "../ConversationView";
 import { loadFixture } from "@/lib/__tests__/fixtures";
+import type { LogEvent } from "@/lib/types";
 
 describe("ConversationView", () => {
   it("shows a tool call's summary in the header and its tool_input as the body", () => {
@@ -61,5 +62,24 @@ describe("run dividers", () => {
     const button = screen.getByRole("button", { name: /full transcript/i });
     fireEvent.click(button);
     expect(onFull).toHaveBeenCalledWith({ runId: run, agent: text!.agent });
+  });
+
+  it("offer the stored session once per agent, on its latest finished run", () => {
+    // The stored session is one row per job and agent type, merged across the
+    // agent's runs: the developer's two finished runs share it.
+    const events = loadFixture("issue-to-pr");
+    const developerRuns = events.filter((e) => e.type === "agent_completed" && e.agent === "developer").map((e) => e.run_id!);
+    expect(developerRuns.length, "the fixture carries a retried developer").toBe(2);
+    // The fixture's developer runs hold no text; give each one truncated line.
+    const truncated = [
+      ...events,
+      ...developerRuns.map((run_id) => ({ type: "text", run_id, node: "developer", agent: "developer", text: "cut", truncated: true, original_length: 9999, timestamp: "2026-01-01T00:02:00Z" }) as LogEvent),
+    ];
+    const onFull = vi.fn();
+    render(<ConversationView events={truncated} onFullTranscript={onFull} />);
+    const buttons = screen.getAllByRole("button", { name: /full transcript/i });
+    expect(buttons.length, "one offer per agent, on its latest finished run").toBe(1);
+    fireEvent.click(buttons[0]);
+    expect(onFull).toHaveBeenCalledWith({ runId: developerRuns[1], agent: "developer" });
   });
 });

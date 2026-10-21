@@ -53,6 +53,7 @@ vi.mock("@/components/jobs/DeliverablesCard", () => ({ DeliverablesCard: () => n
 
 import { JobDetailPage } from "../JobDetailPage";
 import { JobLogsPageRedirect } from "@/router/index";
+import { fetchAgentSession } from "@/api/jobs";
 
 function job(over: Record<string, unknown> = {}) {
   return {
@@ -189,6 +190,19 @@ describe("JobDetailPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /full transcript/i }));
     const dialog = await screen.findByRole("dialog");
     await waitFor(() => expect(dialog.textContent).toContain("the untruncated text"));
+  });
+
+  it("a reviewer run's stored session is read from the review row", async () => {
+    // Events spell the review step `reviewer`; nodes/_review.py stores its session as `review`.
+    const events = loadFixture("issue-to-pr");
+    const review = events.find((e) => e.type === "agent_completed" && e.agent === "reviewer")!.run_id!;
+    state.events = events.map((e) => (e.type === "text" && e.run_id === review ? { ...e, truncated: true } : e));
+    state.job = job({ status: "completed" });
+    mount();
+    const offers = screen.getAllByRole("button", { name: /full transcript/i });
+    fireEvent.click(offers[offers.length - 1]);
+    await screen.findByRole("dialog");
+    await waitFor(() => expect(fetchAgentSession, "the drawer must ask for the row the reviewer actually wrote").toHaveBeenCalledWith("j1", "review"));
   });
 
   it("refetches the job and its inputs when the stream reports a pause for input", () => {

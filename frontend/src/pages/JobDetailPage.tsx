@@ -17,6 +17,7 @@ import { useQaAttempts } from "@/hooks/useQaResults";
 import { useJobVerification } from "@/hooks/useJobVerification";
 import { useAgentIdentity } from "@/hooks/useAgentIdentity";
 import { deriveNodeStates, filterEventsForNode, physicalOf } from "@/lib/pipeline-live";
+import { sessionAgentType } from "@/lib/agentSession";
 import { isTerminalStatus } from "@/lib/jobStatus";
 import { JobStatusBadge } from "@/components/jobs/JobStatusBadge";
 import { AwaitingInputCard } from "@/components/jobs/AwaitingInputCard";
@@ -241,7 +242,7 @@ export function JobDetailPage() {
         </div>
       )}
 
-      <TranscriptDrawer open={drawerRun !== null} onClose={() => setDrawerRun(null)} jobId={job.job_id} agentType={drawerRun?.agent ?? null} displayName={drawerIdentity.displayName} />
+      <TranscriptDrawer open={drawerRun !== null} onClose={() => setDrawerRun(null)} jobId={job.job_id} agentType={drawerRun ? sessionAgentType(drawerRun.agent) : null} displayName={drawerIdentity.displayName} />
     </div>
   );
 }
