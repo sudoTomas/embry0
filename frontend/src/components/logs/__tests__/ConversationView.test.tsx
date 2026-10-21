@@ -96,4 +96,23 @@ describe("run dividers", () => {
     fireEvent.click(buttons[0]);
     expect(onFull).toHaveBeenCalledWith({ runId: developerRuns[1], agent: "developer" });
   });
+
+  it("offer the stored session on the latest finished run when an earlier run of the agent was truncated", () => {
+    // The row merges the agent's runs, so a truncation in run 2 is answered by
+    // the session offered on run 3 — the agent must not lose the offer because
+    // its latest run came through whole.
+    const events = loadFixture("issue-to-pr");
+    const developerRuns = events.filter((e) => e.type === "agent_completed" && e.agent === "developer").map((e) => e.run_id!);
+    const truncated = [
+      ...events,
+      { type: "text", run_id: developerRuns[0], node: "developer", agent: "developer", text: "cut", truncated: true, original_length: 9999, timestamp: "2026-01-01T00:02:00Z" } as LogEvent,
+      { type: "text", run_id: developerRuns[1], node: "developer", agent: "developer", text: "whole", timestamp: "2026-01-01T00:03:00Z" } as LogEvent,
+    ];
+    const onFull = vi.fn();
+    render(<ConversationView events={truncated} onFullTranscript={onFull} />);
+    const buttons = screen.queryAllByRole("button", { name: /full transcript/i });
+    expect(buttons.length, "an agent with any truncated finished run gets one offer").toBe(1);
+    fireEvent.click(buttons[0]);
+    expect(onFull, "the offer sits on the agent's latest finished run").toHaveBeenCalledWith({ runId: developerRuns[1], agent: "developer" });
+  });
 });

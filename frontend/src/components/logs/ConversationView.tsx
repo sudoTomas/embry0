@@ -17,8 +17,8 @@ import { sessionAgentType } from "@/lib/agentSession";
 interface ConversationViewProps {
   events: LogEvent[];
   /**
-   * Offered on a run's divider when the stream truncated some of the run's
-   * events and the run is its agent's latest finished one: the stored session
+   * Offered on the divider of an agent's latest finished run when the stream
+   * truncated events of any of that agent's finished runs: the stored session
    * is one per job and agent type, merged across that agent's runs.
    */
   onFullTranscript?: (run: { runId: string; agent: string }) => void;
@@ -82,8 +82,9 @@ export function ConversationView({ events, onFullTranscript }: ConversationViewP
   // Group events into turns: turn_start opens one for its run, and the
   // thinking, text, tool_call and tool_result events of that run go into it.
   // A tool_result joins the turn that holds its tool_call. Alongside, the
-  // runs offered a stored session: truncated by the stream, and the latest
-  // finished run of their agent (the session row is per agent, not per run).
+  // runs offered a stored session: the latest finished run of each agent one
+  // of whose finished runs the stream truncated (the session row is per
+  // agent, not per run).
   const { turns, offeredRuns } = useMemo(() => {
     const result: ConversationTurn[] = [];
     const finishedRuns = new Set<string>();
@@ -160,11 +161,14 @@ export function ConversationView({ events, onFullTranscript }: ConversationViewP
 
     // finishedRuns iterates in completion order, so the last write per agent wins.
     const latestFinishedByAgent = new Map<string, string>();
+    const truncatedAgents = new Set<string>();
     for (const runId of finishedRuns) {
       const agent = agentByRun.get(runId);
-      if (agent) latestFinishedByAgent.set(sessionAgentType(agent), runId);
+      if (!agent) continue;
+      latestFinishedByAgent.set(sessionAgentType(agent), runId);
+      if (truncatedRuns.has(runId)) truncatedAgents.add(sessionAgentType(agent));
     }
-    const offeredRuns = new Set([...latestFinishedByAgent.values()].filter((runId) => truncatedRuns.has(runId)));
+    const offeredRuns = new Set([...truncatedAgents].map((agent) => latestFinishedByAgent.get(agent)!));
     return { turns: result, offeredRuns };
   }, [events]);
 

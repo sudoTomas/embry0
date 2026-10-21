@@ -3,7 +3,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mockFetch = vi.fn();
-vi.mock("@/api/jobs", () => ({ fetchAgentSession: (...a: unknown[]) => mockFetch(...a) }));
+vi.mock("@/api/jobs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/jobs")>()),
+  fetchAgentSession: (...a: unknown[]) => mockFetch(...a),
+}));
 import { TranscriptDrawer } from "../TranscriptDrawer";
 
 function mount(open = true, onClose = vi.fn()) {

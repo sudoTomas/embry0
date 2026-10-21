@@ -41,7 +41,8 @@ export async function discardJob(jobId: string): Promise<{ job_id: string; statu
   return data;
 }
 
-function statusOf(err: unknown): number | undefined {
+/** The HTTP status of a failed request, undefined when the error carried none. */
+export function statusOf(err: unknown): number | undefined {
   return (err as { response?: { status?: number } } | undefined)?.response?.status;
 }
 

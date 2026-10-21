@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { useAgentSession } from "@/hooks/useAgentSession";
+import { statusOf } from "@/api/jobs";
 import type { AgentSession } from "@/lib/types";
 
 interface TranscriptDrawerProps {
@@ -22,7 +23,7 @@ interface TranscriptDrawerProps {
 export function TranscriptDrawer({ open, onClose, jobId, agentType, displayName }: TranscriptDrawerProps) {
   const { data, isLoading, isError, error } = useAgentSession(jobId, agentType, open);
   // The route is operator-tier (docs/api.md): a read key gets 403.
-  const forbidden = isError && (error as { response?: { status?: number } } | null)?.response?.status === 403;
+  const forbidden = isError && statusOf(error) === 403;
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
