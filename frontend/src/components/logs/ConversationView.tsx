@@ -9,9 +9,14 @@ import {
 } from "lucide-react";
 import { cn, highlightJson } from "@/lib/utils";
 import type { LogEvent } from "@/lib/types";
+import { Sprite } from "@/components/roster";
+import { useIdentityLookup } from "@/hooks/useAgentIdentity";
+import type { AgentIdentity } from "@/lib/agentIdentity";
 
 interface ConversationViewProps {
   events: LogEvent[];
+  /** Offered on a run's divider when the run finished and the stream truncated some of its events. */
+  onFullTranscript?: (run: { runId: string; agent: string }) => void;
 }
 
 interface ConversationTextBlock {
@@ -63,16 +68,21 @@ interface ConversationTurn {
 const INITIAL_TURNS_SHOWN = 20;
 const LOAD_MORE_COUNT = 20;
 
-export function ConversationView({ events }: ConversationViewProps) {
+export function ConversationView({ events, onFullTranscript }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [turnsShown, setTurnsShown] = useState(INITIAL_TURNS_SHOWN);
+  const identityFor = useIdentityLookup();
 
   // Group events into turns: turn_start opens one for its run, and the
   // thinking, text, tool_call and tool_result events of that run go into it.
-  // A tool_result joins the turn that holds its tool_call.
-  const turns = useMemo(() => {
+  // A tool_result joins the turn that holds its tool_call. Alongside, the
+  // runs that finished and the runs the stream truncated, for the divider's
+  // full-transcript offer.
+  const { turns, finishedRuns, truncatedRuns } = useMemo(() => {
     const result: ConversationTurn[] = [];
+    const finishedRuns = new Set<string>();
+    const truncatedRuns = new Set<string>();
     const currentByRun = new Map<string, ConversationTurn>();
     const turnByToolId = new Map<string, ConversationTurn>();
 
@@ -94,7 +104,11 @@ export function ConversationView({ events }: ConversationViewProps) {
     const turnFor = (event: LogEvent) => currentByRun.get(event.run_id ?? "") ?? open(event, null);
 
     for (const event of events) {
+      if (event.run_id && "truncated" in event && event.truncated) truncatedRuns.add(event.run_id);
       switch (event.type) {
+        case "agent_completed":
+          if (event.run_id) finishedRuns.add(event.run_id);
+          break;
         case "turn_start":
           open(event, event.turn_number, event.model);
           break;
@@ -136,7 +150,7 @@ export function ConversationView({ events }: ConversationViewProps) {
       }
       previousRunId = turn.runId;
     }
-    return result;
+    return { turns: result, finishedRuns, truncatedRuns };
   }, [events]);
 
   const hasMore = turnsShown < turns.length;
@@ -166,7 +180,7 @@ export function ConversationView({ events }: ConversationViewProps) {
   return (
     <div
       ref={containerRef}
-      className="space-y-1 overflow-auto h-[calc(100vh-280px)]"
+      className="space-y-1 overflow-auto flex-1 min-h-0 max-h-[70vh] lg:max-h-none"
       onScroll={handleScroll}
     >
       {hasMore && (
@@ -179,19 +193,49 @@ export function ConversationView({ events }: ConversationViewProps) {
       )}
 
       {visibleTurns.map((turn, i) => (
-        <TurnCard key={turns.length - visibleTurns.length + i} turn={turn} />
+        <TurnCard
+          key={turns.length - visibleTurns.length + i}
+          turn={turn}
+          identityFor={identityFor}
+          finishedRuns={finishedRuns}
+          truncatedRuns={truncatedRuns}
+          onFullTranscript={onFullTranscript}
+        />
       ))}
     </div>
   );
 }
 
-function TurnCard({ turn }: { turn: ConversationTurn }) {
+function TurnCard({
+  turn,
+  identityFor,
+  finishedRuns,
+  truncatedRuns,
+  onFullTranscript,
+}: {
+  turn: ConversationTurn;
+  identityFor: (type: string) => AgentIdentity;
+  finishedRuns: Set<string>;
+  truncatedRuns: Set<string>;
+  onFullTranscript?: (run: { runId: string; agent: string }) => void;
+}) {
   return (
     <div className="space-y-1">
       {turn.divider && (
-        <div className="flex items-center gap-2 pt-3">
+        <div data-testid="run-divider" className="flex items-center gap-2 pt-3">
           <div className="h-px flex-1 bg-border" />
-          <span className="text-xs text-muted-foreground font-mono">{turn.divider}</span>
+          {turn.agent && (
+            <Sprite avatar={identityFor(turn.agent).avatar} color={identityFor(turn.agent).color} state="idle" size={16} still decorative />
+          )}
+          <span className="text-xs text-muted-foreground font-mono">
+            {turn.divider}
+            {turn.agent && <span className="ml-1.5" style={{ color: identityFor(turn.agent).hex }}>{identityFor(turn.agent).displayName}</span>}
+          </span>
+          {turn.runId && turn.agent && onFullTranscript && finishedRuns.has(turn.runId) && truncatedRuns.has(turn.runId) && (
+            <button type="button" onClick={() => onFullTranscript({ runId: turn.runId!, agent: turn.agent! })} className="text-xs underline text-muted-foreground hover:text-foreground">
+              Full transcript
+            </button>
+          )}
           <div className="h-px flex-1 bg-border" />
         </div>
       )}

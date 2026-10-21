@@ -19,13 +19,9 @@ export function ThinkingBlock({ blocks, isStreaming = false }: ThinkingBlockProp
       >
         <Brain className="w-3 h-3" />
         {isStreaming && !expanded ? (
-          <span className="flex items-center gap-2">
+          <span className="flex items-center">
             Thinking
-            <span className="flex gap-0.5">
-              <span className="h-1 w-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-              <span className="h-1 w-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "150ms" }} />
-              <span className="h-1 w-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "300ms" }} />
-            </span>
+            <span className="text-violet-400">…</span>
           </span>
         ) : (
           <span>{blocks.length} thinking block{blocks.length !== 1 ? "s" : ""}</span>

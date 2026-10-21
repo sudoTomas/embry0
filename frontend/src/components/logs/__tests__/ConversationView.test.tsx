@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+
+vi.mock("@/hooks/useAgents", () => ({
+  useAgents: () => ({ data: [{ type: "developer", display_name: "Developer", avatar: "smith", color: "amber", tagline: "" }], isLoading: false }),
+}));
+
 import { ConversationView } from "../ConversationView";
 import { loadFixture } from "@/lib/__tests__/fixtures";
 
@@ -28,5 +33,33 @@ describe("ConversationView", () => {
   it("pre-contract job: the tool call shows its summary", () => {
     render(<ConversationView events={loadFixture("legacy-rows")} />);
     expect(screen.queryByText("ls -la"), "the legacy tool call was dropped").not.toBeNull();
+  });
+});
+
+describe("run dividers", () => {
+  it("show the agent's still sprite and display name", () => {
+    render(<ConversationView events={loadFixture("issue-to-pr")} />);
+    const dividers = screen.getAllByTestId("run-divider");
+    expect(dividers.length, "one divider per run").toBeGreaterThan(1);
+    const first = dividers[0];
+    const sprite = first.querySelector("svg.sprite");
+    expect(sprite, "divider carries the run's sprite").not.toBeNull();
+    expect(sprite?.getAttribute("data-frames"), "a repeated sprite is still").toBe("1");
+    expect(first.textContent).toContain("Run 1");
+  });
+
+  it("offer the full transcript only for a finished run with truncated events", () => {
+    const events = loadFixture("issue-to-pr");
+    const run = events.find((e) => e.type === "agent_completed")!.run_id!;
+    const text = events.find((e) => e.type === "text" && e.run_id === run);
+    const onFull = vi.fn();
+    render(<ConversationView events={events} onFullTranscript={onFull} />);
+    expect(screen.queryByRole("button", { name: /full transcript/i }), "no truncation, no offer").toBeNull();
+    cleanup();
+    const truncated = events.map((e) => (e === text ? { ...e, truncated: true, original_length: 9999 } : e));
+    render(<ConversationView events={truncated} onFullTranscript={onFull} />);
+    const button = screen.getByRole("button", { name: /full transcript/i });
+    fireEvent.click(button);
+    expect(onFull).toHaveBeenCalledWith({ runId: run, agent: text!.agent });
   });
 });
