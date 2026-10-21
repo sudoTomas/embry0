@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const mockMutate = vi.fn();
@@ -107,6 +107,8 @@ describe("CreateJobDialog", () => {
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(dialog.parentElement?.parentElement, "a Dialog over the page, not a card in it").toBe(document.body);
     expect(screen.getByLabelText("Advanced options")).toHaveAttribute("role", "switch");
+    fireEvent.click(dialog.parentElement as HTMLElement);
+    expect(onClose, "a click outside does not discard the form").not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });

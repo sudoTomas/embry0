@@ -78,7 +78,7 @@ export function CreateJobDialog({ onClose }: CreateJobDialogProps) {
   };
 
   return (
-    <Dialog onClose={onClose} title="Create New Job" className="max-w-2xl">
+    <Dialog onClose={onClose} title="Create New Job" dismissOnBackdrop={false} className="max-w-2xl">
       <div className="p-5">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
