@@ -39,7 +39,7 @@ export function PartyStrip({ agents, selectedRunId, onSelect }: PartyStripProps)
             style={selected ? { boxShadow: `0 0 0 1px ${identity.hex}` } : undefined}
           >
             <Sprite avatar={identity.avatar} color={identity.color} state={state} size={32} decorative />
-            <span className="sprite-nameplate truncate w-full text-center text-[11px]" style={{ color: identity.hex }}>
+            <span className="sprite-nameplate truncate w-full text-center" style={{ color: identity.hex }}>
               {identity.displayName}
             </span>
           </button>
