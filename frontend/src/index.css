@@ -401,6 +401,34 @@ body[data-divine="off"] .motion-mark * {
   }
 }
 
+/* ----- motion: dialogs ----- */
+/* A dialog opens rising in from a little smaller and lower; a drawer slides
+   in from its edge (components/ui/Dialog). The keyframes live here, not in
+   a component's <style>, so every dialog has its entrance. No forwards fill:
+   a transform kept after the entrance would make the panel the containing
+   block of every position: fixed box inside it. */
+@keyframes dialog-in {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+}
+@keyframes dialog-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+}
+@keyframes dialog-in-left {
+  from { opacity: 0; transform: translateX(-16px); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dialog-in {
+    animation: dialog-in var(--motion-base) var(--ease-standard);
+  }
+  .dialog-in-right {
+    animation: dialog-in-right var(--motion-base) var(--ease-standard);
+  }
+  .dialog-in-left {
+    animation: dialog-in-left var(--motion-base) var(--ease-standard);
+  }
+}
+
 /* The animated edge: React Flow marches its dashes (the feedback loops, see
    lib/graph-utils.ts) every 0.5 s, forever, and for everyone. The
    dashboard's loops run no quicker than 2 s and stand still for anyone who
