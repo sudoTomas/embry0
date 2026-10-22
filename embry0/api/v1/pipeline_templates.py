@@ -2,6 +2,7 @@
 
 from typing import Any
 
+import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -60,6 +61,13 @@ def _stored_added_skills(template: dict[str, Any] | None) -> set[str]:
     return names
 
 
+def _default_kind_taken(kind: str | None) -> HTTPException:
+    """The partial unique index on ``default_for_kind`` refused a second holder (RAV-601)."""
+    return HTTPException(
+        status_code=409, detail=f"another template is already the default for {kind!r}; clear it first"
+    )
+
+
 async def _known_agent_types(request: Request) -> set[str] | None:
     """The agent_definitions types that exist now; None when the app has no
     repository (tests) or the read fails, so the builtin types decide, as at
@@ -110,13 +118,16 @@ async def create_template(
         raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(req.graph_definition)
     warnings = await _check_template_skills(request, req.graph_definition)
-    created = await repo.create(
-        name=req.name,
-        description=req.description,
-        graph_definition=req.graph_definition,
-        sandbox_profile=req.sandbox_profile,
-        default_for_kind=req.default_for_kind,
-    )
+    try:
+        created = await repo.create(
+            name=req.name,
+            description=req.description,
+            graph_definition=req.graph_definition,
+            sandbox_profile=req.sandbox_profile,
+            default_for_kind=req.default_for_kind,
+        )
+    except asyncpg.UniqueViolationError:
+        raise _default_kind_taken(req.default_for_kind) from None
     return {**created, "warnings": warnings}
 
 
@@ -156,7 +167,10 @@ async def update_template(
     # 3. Only the names this save adds are checked; names the stored template has keep working.
     already = _stored_added_skills(stored)
     warnings = await check_added_skills(request, [s for s in added if s not in already])
-    updated = await repo.update(template_id, **updates)
+    try:
+        updated = await repo.update(template_id, **updates)
+    except asyncpg.UniqueViolationError:
+        raise _default_kind_taken(updates.get("default_for_kind")) from None
     if not updated:
         raise HTTPException(status_code=404, detail="Template not found")
     return {**updated, "warnings": warnings}

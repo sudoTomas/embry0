@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock
 
+import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -403,3 +404,28 @@ async def test_an_absent_default_kind_is_kept(app):
         resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"name": "Renamed"}, headers=_XHR)
     assert resp.status_code == 200, resp.text
     app.state.templates_repo.update.assert_awaited_once_with("tmpl-1", name="Renamed")
+
+
+@pytest.mark.asyncio
+async def test_a_second_default_for_a_kind_is_409(app):
+    """The partial unique index refuses two defaults for one kind; the route says which kind, not a 500."""
+    app.state.templates_repo.update = AsyncMock(side_effect=asyncpg.UniqueViolationError("duplicate key"))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"default_for_kind": "code"}, headers=_XHR)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "another template is already the default for 'code'; clear it first"
+
+
+@pytest.mark.asyncio
+async def test_creating_a_second_default_for_a_kind_is_409(app):
+    app.state.templates_repo.create = AsyncMock(side_effect=asyncpg.UniqueViolationError("duplicate key"))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/pipelines/templates",
+            json={"name": "Research", "graph_definition": SAMPLE_GRAPH, "default_for_kind": "research"},
+            headers=_XHR,
+        )
+    assert resp.status_code == 409, resp.text
+    assert "'research'" in resp.json()["detail"]
