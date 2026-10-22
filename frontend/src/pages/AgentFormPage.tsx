@@ -24,6 +24,7 @@ import { useModels } from "@/hooks/useModels";
 import { useSkills } from "@/hooks/useSkills";
 import { useTools } from "@/hooks/useTools";
 import { DEFAULT_AVATAR, DEFAULT_COLOR, identityOf, type AvatarId, type PaletteId } from "@/lib/agentIdentity";
+import { runOverrideNote } from "@/lib/effectiveModel";
 import { providerForModel } from "@/lib/providers";
 import { providerLabel } from "@/lib/status";
 import type { AgentCreateRequest, AgentDefinition, AgentUpdateRequest } from "@/lib/types/agents";
@@ -168,6 +169,10 @@ export function AgentFormPage() {
     }
     return null;
   })();
+
+  // When jobs will not run the model being edited: the default model or a
+  // per-job tier replaces it (GET /agents/{type}, effective_model).
+  const runNote = isEdit ? runOverrideNote(existing, resolvedModel) : null;
 
   const handleToolToggle = (tool: string) => {
     setForm((prev) => ({
@@ -408,6 +413,11 @@ export function AgentFormPage() {
                       Not ready
                     </Badge>
                   )}
+                </p>
+              )}
+              {runNote && (
+                <p className="mt-1 text-xs text-warning" data-testid="model-run-override">
+                  {runNote}
                 </p>
               )}
             </div>

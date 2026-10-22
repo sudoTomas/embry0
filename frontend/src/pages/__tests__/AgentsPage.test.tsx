@@ -114,6 +114,65 @@ describe("AgentsPage provider column", () => {
   });
 });
 
+// GET /agents reports the model a run uses next to the stored one: a
+// deployment default model replaces it, and the pr-reviewer runs the heavy tier.
+const ON_DEFAULT = {
+  ...AGENTS[0],
+  effective_model: "grok-4.7",
+  effective_model_source: "default_model",
+  effective_provider: "xai",
+  effective_provider_ready: true,
+};
+
+const PR_REVIEWER = {
+  ...AGENTS[0],
+  type: "pr-reviewer",
+  display_name: "PR Reviewer",
+  effective_model: "claude-opus-5",
+  effective_model_source: "per_job_heavy_tier",
+  effective_provider: "anthropic",
+  effective_provider_ready: true,
+};
+
+describe("AgentsPage shows what a run uses", () => {
+  it("shows the deployment default model and its provider, not the stored ones", () => {
+    mockUseAgents.mockReturnValue({ data: [ON_DEFAULT], isLoading: false });
+    renderPage();
+    const row = rowOf("developer");
+    expect(within(row).getByText("grok-4.7"), "the Model column names the model the run uses").toBeInTheDocument();
+    expect(within(row).getByText("xAI"), "the Provider column names its provider").toBeInTheDocument();
+    expect(within(row).queryByText("Anthropic"), "the stored model's provider is not shown").not.toBeInTheDocument();
+    const reason = within(row).getByTestId("run-model-reason");
+    expect(reason).toHaveTextContent("Deployment default model");
+    expect(reason).toHaveTextContent("stored claude-opus-5");
+  });
+
+  it("marks the run's provider not ready even when the stored one is ready", () => {
+    mockUseAgents.mockReturnValue({ data: [{ ...ON_DEFAULT, effective_provider_ready: false }], isLoading: false });
+    renderPage();
+    const row = rowOf("developer");
+    expect(within(row).getByText("Not ready")).toBeInTheDocument();
+    expect(within(row).queryByText("Ready")).not.toBeInTheDocument();
+  });
+
+  it("says the pr-reviewer runs the heavy tier, without a stored note when the models match", () => {
+    mockUseAgents.mockReturnValue({ data: [PR_REVIEWER], isLoading: false });
+    renderPage();
+    const reason = within(rowOf("pr-reviewer")).getByTestId("run-model-reason");
+    expect(reason).toHaveTextContent("Heavy tier, named by every job");
+    expect(reason).not.toHaveTextContent("stored");
+  });
+
+  it("adds no note when an agent runs its own model", () => {
+    mockUseAgents.mockReturnValue({
+      data: [{ ...AGENTS[0], effective_model: "claude-opus-5", effective_model_source: "agent", effective_provider: "anthropic", effective_provider_ready: true }],
+      isLoading: false,
+    });
+    renderPage();
+    expect(within(rowOf("developer")).queryByTestId("run-model-reason")).not.toBeInTheDocument();
+  });
+});
+
 // The eight read-only specialists the backend seeds as built-ins.
 const SPECIALISTS = [
   "kintsugi",

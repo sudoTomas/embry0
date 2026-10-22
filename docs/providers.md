@@ -293,7 +293,7 @@ that, from the same sources (`embry0/services/provider_readiness.py`):
   by side, not merged. The LLM Providers page shows all of them.
 - `GET /agents` and `GET /agents/{type}` carry `provider` (the catalogue
   provider the agent's `model` routes to, `null` when no prefix matches) and
-  `provider_ready` for every agent. The Agents page shows them as a column.
+  `provider_ready` for every agent.
   The stored `model` is not always what runs: a default model replaces it,
   and a disabled one falls back to a tier model. So each agent also carries
   `effective_model`, the model a job that names none runs, resolved by the
@@ -307,6 +307,11 @@ that, from the same sources (`embry0/services/provider_readiness.py`):
   then `MODEL_HEAVY`, then the built-in default), so neither its stored model
   nor the default model moves it. A repository's `pr_review.model` overrides
   the heavy tier for that repository's reviews.
+- The Agents page's Model and Provider columns show the effective model, its
+  provider and its readiness. When something other than the agent's own
+  model chose it, a line under the model says what, and names the stored
+  model when that differs. Against a backend without the `effective_*`
+  fields, the columns show the stored ones.
 - `GET /config/models` marks as `default` the provider that serves the
   default model when one is set, and Anthropic otherwise.
 - The agent form names the provider of the chosen model, a custom id
@@ -316,7 +321,10 @@ that, from the same sources (`embry0/services/provider_readiness.py`):
   labelled "(no credential)" and cannot be picked anew; an agent already
   saved on one opens on it, with the not-ready badge beside it. Readiness is
   what the API process sees, and credentials may be injected only where jobs
-  run, so the picker marks a model rather than hiding it.
+  run, so the picker marks a model rather than hiding it. Editing an agent,
+  the form also says when jobs will not run the chosen model. The default
+  model and a per-job tier replace any pick. A disabled-model stand-in is
+  named only while the saved model is chosen, the model it was resolved for.
 
 `AGENT_MODEL_PROVIDER_CHECK=true` turns the answer into a gate: creating or
 updating an agent definition (`POST /agents`, `PUT /agents/{type}`, the MCP
