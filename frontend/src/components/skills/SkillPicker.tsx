@@ -67,7 +67,12 @@ export function SkillPicker({
       return;
     }
     if (e.key === "Escape") {
-      setActive(-1);
+      // With a highlight to clear, the Escape is ours: the dialog around the
+      // picker must not close on it. With none, it goes through and closes.
+      if (highlighted !== -1) {
+        e.stopPropagation();
+        setActive(-1);
+      }
       return;
     }
     if (e.key !== "Enter") return;

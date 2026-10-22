@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
+import { Dialog } from "@/components/ui/Dialog";
 import { SkillPicker } from "../SkillPicker";
 
 const CATALOG = [
@@ -47,6 +48,29 @@ describe("SkillPicker", () => {
     expect(box).not.toHaveAttribute("aria-activedescendant");
     for (const o of screen.getAllByRole("option")) expect(o).toHaveAttribute("aria-selected", "false");
   });
+  it("Escape with a highlight clears it and stays inside; without one it reaches the dialog around it", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup({ delay: null });
+    render(
+      <MemoryRouter>
+        <Dialog onClose={onClose} title="Developer">
+          <SkillPicker value={[]} onChange={vi.fn()} catalog={CATALOG} />
+        </Dialog>
+      </MemoryRouter>,
+    );
+    // The dialog's focus trap moves focus in on a timeout; let it land first.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" })));
+    const box = screen.getByRole("combobox", { name: /search skills/i });
+    await user.click(box);
+    await user.keyboard("{ArrowDown}");
+    expect(box).toHaveAttribute("aria-activedescendant");
+    await user.keyboard("{Escape}");
+    expect(box).not.toHaveAttribute("aria-activedescendant");
+    expect(onClose, "that Escape was the picker's: it cleared a highlight").not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    expect(onClose, "with nothing to clear, Escape closes the dialog").toHaveBeenCalledTimes(1);
+  });
+
   it("names the listbox only while it is rendered", () => {
     render(<MemoryRouter><SkillPicker value={[]} onChange={vi.fn()} catalog={CATALOG} isLoading /></MemoryRouter>);
     expect(screen.getByRole("combobox", { name: /search skills/i })).not.toHaveAttribute("aria-controls");

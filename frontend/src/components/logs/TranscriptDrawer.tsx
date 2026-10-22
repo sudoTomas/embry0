@@ -1,6 +1,4 @@
-import { useEffect, useRef } from "react";
-import { X } from "lucide-react";
-import { Overlay } from "@/components/ui/Overlay";
+import { Dialog } from "@/components/ui/Dialog";
 import { useAgentSession } from "@/hooks/useAgentSession";
 import { statusOf } from "@/api/jobs";
 import type { AgentSession } from "@/lib/types";
@@ -18,42 +16,30 @@ interface TranscriptDrawerProps {
  * kept for this job, read from GET /jobs/{id}/agents/{type}/session (redacted
  * server-side). The row is one per job and agent type, merged across the
  * agent's runs, so the drawer describes the agent and the job, not a run.
- * Escape and the close button dismiss it; focus moves to the close button on
- * open and returns to the opener on close (plan 3's Dialog brings the trap).
+ * Escape, the backdrop and the Close button dismiss it; the focus trap,
+ * focus moving in on open and back to the opener on close come from Dialog.
  */
 export function TranscriptDrawer({ open, onClose, jobId, agentType, displayName }: TranscriptDrawerProps) {
   const { data, isLoading, isError, error } = useAgentSession(jobId, agentType, open);
   // The route is operator-tier (docs/api.md): a read key gets 403.
   const forbidden = isError && statusOf(error) === 403;
-  const closeRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-  useEffect(() => {
-    if (!open) return;
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    closeRef.current?.focus();
-    return () => opener?.focus();
-  }, [open]);
   if (!open) return null;
   const title = `Stored session of ${displayName} for this job`;
   return (
-    <Overlay className="flex justify-end bg-background/70 p-0" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onClick={(e) => e.stopPropagation()}
-        className="h-full w-full max-w-3xl overflow-y-auto border-l border-border bg-card p-4 shadow-xl"
-      >
-        <div className="mb-3 flex items-center gap-2">
-          <h2 className="title-pixel text-lg">Stored session</h2>
-          <span className="text-sm text-muted-foreground">of {displayName} for this job</span>
-          <button ref={closeRef} type="button" onClick={onClose} aria-label="Close" className="ml-auto rounded p-1 hover:bg-muted"><X className="h-4 w-4" /></button>
-        </div>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      side="right"
+      label={title}
+      title={
+        <>
+          <span className="title-pixel text-lg">Stored session</span>
+          <span className="ml-2 text-sm font-normal text-muted-foreground">of {displayName} for this job</span>
+        </>
+      }
+      className="max-w-3xl bg-card"
+    >
+      <div className="p-4">
         {isLoading && <p className="text-sm text-muted-foreground">Loading the stored session…</p>}
         {forbidden && <p className="text-sm text-destructive">Operator access is needed to read stored sessions.</p>}
         {isError && !forbidden && <p className="text-sm text-destructive">The stored session could not be loaded.</p>}
@@ -61,7 +47,7 @@ export function TranscriptDrawer({ open, onClose, jobId, agentType, displayName 
         {data?.last_turn_at && <p className="mb-2 text-xs text-muted-foreground">Last turn {new Date(data.last_turn_at).toLocaleString()}</p>}
         {data && <Messages session={data} />}
       </div>
-    </Overlay>
+    </Dialog>
   );
 }
 

@@ -181,7 +181,7 @@ Eight read-only built-in agents that each do one job on a cloned repository and 
 The visual canvas for composing pipelines. Located at `frontend/src/components/pipeline-editor/`. Built on `@xyflow/react`. Supports drag-from-bar agent placement, edge inference, circular and dagre auto-arrange, feedback edges, and operation-tag display in the canvas header.
 
 ### TemplateDrawer
-The slide-in drawer in the [PipelineEditor](#pipelineeditor) that lists saved [templates](#template). Cards show the template name and (when set) the [operation](#the-seven-operations) sigil + tagline. Click a card to load its `PipelineGraph` into the canvas.
+The drawer in the [PipelineEditor](#pipelineeditor) that lists saved [templates](#template): a `Dialog` at the left edge, closed by Escape, its backdrop or its Close button. Cards show the template name and description; click a card to load its `PipelineGraph` into the canvas. Each card's menu renames, duplicates or deletes the template.
 
 ### SkillsPage
 The dashboard page at `/skills` (Infra, admin) that lists [skill sources](api.md#skills) with their sync status, adds git or path sources, edits inline skills (published as the builtin `local` source), and shows the resulting catalog of `plugin:skill` names.

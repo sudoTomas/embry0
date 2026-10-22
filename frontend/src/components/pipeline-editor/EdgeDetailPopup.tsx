@@ -1,8 +1,8 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import type { Edge } from "@xyflow/react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { createFocusTrap } from "@/lib/focus-trap";
+import { Dialog } from "@/components/ui/Dialog";
 
 interface EdgeDetailPopupProps {
   edge: Edge;
@@ -52,7 +52,6 @@ function FieldSelect({
 }
 
 export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const fieldId = useId();
   const d = (edge.data ?? {}) as Record<string, unknown>;
   const initialLoopConfig = (d.loopConfig as Record<string, unknown>) ?? {};
@@ -61,192 +60,160 @@ export function EdgeDetailPopup({ edge, onUpdate, onClose }: EdgeDetailPopupProp
 
   const [loopConfig, setLoopConfig] = useState<Record<string, unknown>>(initialLoopConfig);
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    return createFocusTrap(containerRef.current);
-  }, []);
-
   function handleSave() {
     onUpdate({ loopConfig });
     onClose();
   }
 
   return (
-    // Overlay
-    <div
-      className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={onClose}
+    <Dialog
+      onClose={onClose}
+      label={`${isFeedback ? "Feedback loop" : "Flow edge"} from ${edge.source} to ${edge.target}`}
+      className={cn("max-w-[400px]", isFeedback ? "border-destructive/20" : "border-white/[0.08]")}
     >
-      {/* Card */}
-      <div
-        ref={containerRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={`${isFeedback ? "Feedback loop" : "Flow edge"} from ${edge.source} to ${edge.target}`}
-        className={cn(
-          "pipeline-popup-in w-[400px] rounded-lg bg-surface overflow-y-auto",
-          isFeedback
-            ? "border border-destructive/20"
-            : "border border-white/[0.08]",
-        )}
-        style={{
-          boxShadow:
-            "0 0 40px rgba(0,0,0,0.5), 0 15px 30px rgba(0,0,0,0.4)",
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="p-5 pb-4 border-b border-white/[0.06] flex items-start justify-between gap-3">
-          <div className="flex flex-col gap-2 min-w-0">
-            {/* Edge type badge. The column stretches its children to the
-                width of the source and target row; the badge keeps to its
-                own text. */}
-            <span
-              className={cn(
-                "self-start px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider",
-                isFeedback
-                  ? "bg-destructive/10 text-destructive/80 border border-destructive/20"
-                  : "bg-white/[0.06] text-white/40 border border-white/[0.08]",
-              )}
-            >
-              {isFeedback ? "Feedback Loop" : "Flow Edge"}
-            </span>
-
-            {/* Source → Target */}
-            <div className="flex items-center gap-1.5">
-              <span className="font-mono text-[11px] bg-white/[0.06] border border-white/[0.08] rounded px-2 py-0.5 text-white/60 truncate max-w-[120px]">
-                {edge.source}
-              </span>
-              <span className="text-white/20 text-xs shrink-0">→</span>
-              <span className="font-mono text-[11px] bg-white/[0.06] border border-white/[0.08] rounded px-2 py-0.5 text-white/60 truncate max-w-[120px]">
-                {edge.target}
-              </span>
-            </div>
-          </div>
-
-          {/* Close button */}
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="shrink-0 p-1 rounded-md text-white/30 hover:text-white/60 hover:bg-white/[0.06] transition-colors"
+      {/* Header */}
+      <div className="p-5 pb-4 border-b border-white/[0.06] flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-2 min-w-0">
+          {/* Edge type badge. The column stretches its children to the
+              width of the source and target row; the badge keeps to its
+              own text. */}
+          <span
+            className={cn(
+              "self-start px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider",
+              isFeedback
+                ? "bg-destructive/10 text-destructive/80 border border-destructive/20"
+                : "bg-white/[0.06] text-white/40 border border-white/[0.08]",
+            )}
           >
-            <X size={14} />
-          </button>
+            {isFeedback ? "Feedback Loop" : "Flow Edge"}
+          </span>
+
+          {/* Source → Target */}
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono text-[11px] bg-white/[0.06] border border-white/[0.08] rounded px-2 py-0.5 text-white/60 truncate max-w-[120px]">
+              {edge.source}
+            </span>
+            <span className="text-white/20 text-xs shrink-0">→</span>
+            <span className="font-mono text-[11px] bg-white/[0.06] border border-white/[0.08] rounded px-2 py-0.5 text-white/60 truncate max-w-[120px]">
+              {edge.target}
+            </span>
+          </div>
         </div>
 
-        {/* Body */}
-        <div className="p-5">
-          {!isFeedback && (
-            <p className="text-[11px] text-white/30 leading-relaxed">
-              A flow edge passes the output of the source node as input to the
-              target node. No additional configuration required.
-            </p>
-          )}
+        {/* Close button */}
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="shrink-0 p-1 rounded-md text-white/30 hover:text-white/60 hover:bg-white/[0.06] transition-colors"
+        >
+          <X size={14} />
+        </button>
+      </div>
 
-          {isFeedback && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <FieldLabel htmlFor={`${fieldId}-loops`}>Max Loops</FieldLabel>
-                  <FieldInput
-                    id={`${fieldId}-loops`}
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={(loopConfig.max_loops as number) ?? ""}
-                    onChange={(e) =>
-                      setLoopConfig((prev) => ({
-                        ...prev,
-                        max_loops: e.target.value
-                          ? Number(e.target.value)
-                          : null,
-                      }))
-                    }
-                    placeholder="3"
-                  />
-                </div>
-                <div>
-                  <FieldLabel htmlFor={`${fieldId}-budget`}>Loop Budget (USD)</FieldLabel>
-                  <FieldInput
-                    id={`${fieldId}-budget`}
-                    type="number"
-                    step="0.5"
-                    min="0"
-                    value={(loopConfig.max_loop_budget_usd as number) ?? ""}
-                    onChange={(e) =>
-                      setLoopConfig((prev) => ({
-                        ...prev,
-                        max_loop_budget_usd: e.target.value
-                          ? Number(e.target.value)
-                          : null,
-                      }))
-                    }
-                    placeholder="—"
-                  />
-                </div>
-              </div>
+      {/* Body */}
+      <div className="p-5">
+        {!isFeedback && (
+          <p className="text-[11px] text-white/30 leading-relaxed">
+            A flow edge passes the output of the source node as input to the
+            target node. No additional configuration required.
+          </p>
+        )}
 
+        {isFeedback && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <FieldLabel htmlFor={`${fieldId}-mode`}>Feedback Mode</FieldLabel>
-                <FieldSelect
-                  id={`${fieldId}-mode`}
-                  value={(loopConfig.feedback_mode as string) ?? "result"}
+                <FieldLabel htmlFor={`${fieldId}-loops`}>Max Loops</FieldLabel>
+                <FieldInput
+                  id={`${fieldId}-loops`}
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={(loopConfig.max_loops as number) ?? ""}
                   onChange={(e) =>
                     setLoopConfig((prev) => ({
                       ...prev,
-                      feedback_mode: e.target.value,
+                      max_loops: e.target.value
+                        ? Number(e.target.value)
+                        : null,
                     }))
                   }
-                >
-                  <option value="result">Result (full output)</option>
-                  <option value="summary">Summary</option>
-                  <option value="diff">Diff only</option>
-                </FieldSelect>
+                  placeholder="3"
+                />
               </div>
-
-              <p className="text-[11px] text-white/25 leading-relaxed pt-1">
-                Feedback edges create a cycle — the target node&apos;s output is fed
-                back to the source until the loop resolves or limits are reached.
-              </p>
+              <div>
+                <FieldLabel htmlFor={`${fieldId}-budget`}>Loop Budget (USD)</FieldLabel>
+                <FieldInput
+                  id={`${fieldId}-budget`}
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={(loopConfig.max_loop_budget_usd as number) ?? ""}
+                  onChange={(e) =>
+                    setLoopConfig((prev) => ({
+                      ...prev,
+                      max_loop_budget_usd: e.target.value
+                        ? Number(e.target.value)
+                        : null,
+                    }))
+                  }
+                  placeholder="—"
+                />
+              </div>
             </div>
-          )}
-        </div>
 
-        {/* Footer */}
-        <div className="p-5 pt-3 border-t border-white/[0.06] flex items-center justify-end gap-2">
-          {isFeedback ? (
-            <>
-              <button
-                onClick={onClose}
-                className="px-3 py-1.5 rounded-lg text-xs text-white/40 hover:text-white/60 hover:bg-white/[0.06] transition-colors"
+            <div>
+              <FieldLabel htmlFor={`${fieldId}-mode`}>Feedback Mode</FieldLabel>
+              <FieldSelect
+                id={`${fieldId}-mode`}
+                value={(loopConfig.feedback_mode as string) ?? "result"}
+                onChange={(e) =>
+                  setLoopConfig((prev) => ({
+                    ...prev,
+                    feedback_mode: e.target.value,
+                  }))
+                }
               >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                className="px-3 py-1.5 rounded-lg text-xs bg-white/[0.08] text-white/80 hover:bg-white/[0.12] border border-white/[0.1] transition-colors"
-              >
-                Save
-              </button>
-            </>
-          ) : (
+                <option value="result">Result (full output)</option>
+                <option value="summary">Summary</option>
+                <option value="diff">Diff only</option>
+              </FieldSelect>
+            </div>
+
+            <p className="text-[11px] text-white/25 leading-relaxed pt-1">
+              Feedback edges create a cycle — the target node&apos;s output is fed
+              back to the source until the loop resolves or limits are reached.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="p-5 pt-3 border-t border-white/[0.06] flex items-center justify-end gap-2">
+        {isFeedback ? (
+          <>
             <button
               onClick={onClose}
+              className="px-3 py-1.5 rounded-lg text-xs text-white/40 hover:text-white/60 hover:bg-white/[0.06] transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
               className="px-3 py-1.5 rounded-lg text-xs bg-white/[0.08] text-white/80 hover:bg-white/[0.12] border border-white/[0.1] transition-colors"
             >
-              Close
+              Save
             </button>
-          )}
-        </div>
+          </>
+        ) : (
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-lg text-xs bg-white/[0.08] text-white/80 hover:bg-white/[0.12] border border-white/[0.1] transition-colors"
+          >
+            Close
+          </button>
+        )}
       </div>
-    </div>
+    </Dialog>
   );
 }

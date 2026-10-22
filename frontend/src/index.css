@@ -386,18 +386,31 @@ body[data-divine="off"] .motion-mark * {
   }
 }
 
-/* ----- motion: pipeline editor ----- */
-/* An agent's or an edge's detail popup opens rising in from a little
-   smaller and lower (components/pipeline-editor). The keyframes live here,
-   not in a popup's own <style>, so each popup has its entrance whichever
-   other popup is mounted. */
-@keyframes pipeline-popup-in {
+/* ----- motion: dialogs ----- */
+/* A dialog opens rising in from a little smaller and lower; a drawer slides
+   in from its edge (components/ui/Dialog). The keyframes live here, not in
+   a component's <style>, so every dialog has its entrance. No forwards fill:
+   a transform kept after the entrance would make the panel the containing
+   block of every position: fixed box inside it. */
+@keyframes dialog-in {
   from { opacity: 0; transform: scale(0.95) translateY(8px); }
+}
+@keyframes dialog-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+}
+@keyframes dialog-in-left {
+  from { opacity: 0; transform: translateX(-16px); }
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .pipeline-popup-in {
-    animation: pipeline-popup-in var(--motion-base) var(--ease-standard);
+  .dialog-in {
+    animation: dialog-in var(--motion-base) var(--ease-standard);
+  }
+  .dialog-in-right {
+    animation: dialog-in-right var(--motion-base) var(--ease-standard);
+  }
+  .dialog-in-left {
+    animation: dialog-in-left var(--motion-base) var(--ease-standard);
   }
 }
 
