@@ -128,6 +128,10 @@ async def update_template(
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    # Only this field's null is a write: it clears the default so another
+    # template can take the kind. Every other field's null means "unchanged".
+    if "default_for_kind" in req.model_fields_set and req.default_for_kind is None:
+        updates["default_for_kind"] = None
     if not updates:
         template = await repo.get(template_id)
         if not template:

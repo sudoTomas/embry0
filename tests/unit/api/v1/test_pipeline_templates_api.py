@@ -381,3 +381,25 @@ async def test_a_failing_agent_rows_read_degrades_to_the_builtin_types(app):
     assert any(e["event"] == "template_agent_types_unavailable" for e in logs), logs
     assert custom.status_code == 422, custom.text
     assert "unknown agent_type 'release-bot'" in custom.text
+
+
+_XHR = {"X-Requested-With": "XMLHttpRequest"}
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_null_clears_the_default_kind(app):
+    """``{"default_for_kind": null}`` is a write, not an absent field (spec 3.7, plan 3b)."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"default_for_kind": None}, headers=_XHR)
+    assert resp.status_code == 200, resp.text
+    app.state.templates_repo.update.assert_awaited_once_with("tmpl-1", default_for_kind=None)
+
+
+@pytest.mark.asyncio
+async def test_an_absent_default_kind_is_kept(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put("/api/v1/pipelines/templates/tmpl-1", json={"name": "Renamed"}, headers=_XHR)
+    assert resp.status_code == 200, resp.text
+    app.state.templates_repo.update.assert_awaited_once_with("tmpl-1", name="Renamed")
