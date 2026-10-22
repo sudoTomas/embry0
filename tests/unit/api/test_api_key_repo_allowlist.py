@@ -26,15 +26,19 @@ OTHER = "acme/secret"
 
 OPEN_TOKEN = "emb_" + "o" * 43
 LIMITED_TOKEN = "emb_" + "l" * 43
+# The relay's form of the merge decision is accepted from the merge-scope key (or an admin),
+# so on that route the allowlist guards the relay's own restricted key, not an operate key.
+OPEN_MERGE_TOKEN = "emb_" + "p" * 43
+LIMITED_MERGE_TOKEN = "emb_" + "m" * 43
 
 
-def _key(key_id: str, name: str, allowed: tuple[str, ...] | None) -> ApiKeyRow:
+def _key(key_id: str, name: str, allowed: tuple[str, ...] | None, scope: str = "operate") -> ApiKeyRow:
     return ApiKeyRow(
         id=key_id,
         user_id=None,
         name=name,
         prefix="emb_xxxxxxxx",
-        scope="operate",
+        scope=scope,
         created_by="tester",
         created_at=None,
         expires_at=None,
@@ -47,7 +51,17 @@ def _key(key_id: str, name: str, allowed: tuple[str, ...] | None) -> ApiKeyRow:
 KEYS = {
     hash_token(OPEN_TOKEN): _key("key-open0000001", "open-key", None),
     hash_token(LIMITED_TOKEN): _key("key-limited00001", "dispatch-bot", (ALLOWED,)),
+    hash_token(OPEN_MERGE_TOKEN): _key("key-openmerge001", "open-key", None, scope="merge"),
+    hash_token(LIMITED_MERGE_TOKEN): _key("key-limitedmrg01", "dispatch-bot", (ALLOWED,), scope="merge"),
 }
+
+
+def _token_for(template: str, token: str) -> str:
+    """The merge-decision route takes the relay's form from the merge key: same name, same limits, that scope."""
+    if "/merge-approvals/" not in template:
+        return token
+    return {OPEN_TOKEN: OPEN_MERGE_TOKEN, LIMITED_TOKEN: LIMITED_MERGE_TOKEN}.get(token, token)
+
 
 JOBS = {
     "job-allowed": {"job_id": "job-allowed", "repo": ALLOWED, "status": "paused", "issue_id": None},
@@ -246,6 +260,7 @@ def _path(template: str, which: str) -> str:
 
 
 def _call(app: Any, token: str, method: str, template: str, body: Any, which: str) -> Any:
+    token = _token_for(template, token)
     bootstrap_result = MagicMock()
     bootstrap_result.as_dict.return_value = {"ok": True}
     with patch("embry0.api.v1.bootstrap.bootstrap_repo", AsyncMock(return_value=bootstrap_result)):
