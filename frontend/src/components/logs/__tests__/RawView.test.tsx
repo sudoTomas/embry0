@@ -37,7 +37,7 @@ describe("RawView", () => {
     renderVirtual(<RawView events={loadFixture("qa")} />);
     const row = screen.getAllByTestId("raw-row").find((r) => r.textContent?.includes("progress"));
     expect(row, "no progress row").toBeDefined();
-    expect(row!.textContent).toContain("Running acceptance criteria");
+    expect(row!.textContent).toContain("QA fan-out: 1 app(s): web");
     expect(document.body.textContent).not.toContain("undefined");
   });
 

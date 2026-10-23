@@ -229,8 +229,8 @@ describe("deriveNodeStates (RAV-1285)", () => {
 describe("deriveNodeStates on a standalone QA job (#90)", () => {
   it("the nested QA agent's cost_update lands on the orchestrate_qa node", () => {
     const states = deriveNodeStates(STANDALONE_QA_GRAPH, STANDALONE_QA_EVENTS, "completed");
-    expect(states.orchestrate_qa.cost_usd, "the qa run's cost was attributed to no node").toBeCloseTo(1.602263, 6);
-    expect(states.orchestrate_qa.turns, "the qa run's turns were attributed to no node").toBe(57);
+    expect(states.orchestrate_qa.cost_usd, "the qa run's cost was attributed to no node").toBeCloseTo(0.42, 6);
+    expect(states.orchestrate_qa.turns, "the qa run's turns were attributed to no node").toBe(2);
     expect(states.init_orchestrator.cost_usd, "init_orchestrator spent nothing").toBe(0);
     expect(states.init_orchestrator.turns, "init_orchestrator ran no turns").toBe(0);
     expect(states.qa_report.cost_usd, "qa_report spent nothing").toBe(0);
@@ -288,7 +288,7 @@ describe("deriveNodeStates on a standalone QA job (#90)", () => {
     expect(states.orchestrate_qa.state, "the retried run passed; node_completed action=passed is the verdict").toBe(
       "completed",
     );
-    expect(states.orchestrate_qa.cost_usd, "the passing retry's cost still lands on the node").toBeCloseTo(1.602263, 6);
+    expect(states.orchestrate_qa.cost_usd, "the passing retry's cost still lands on the node").toBeCloseTo(0.42, 6);
   });
 
   it("an error under the node's own name stays failed past a node_completed that reports success", () => {

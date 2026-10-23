@@ -108,6 +108,6 @@ describe("the Job page's party strip", () => {
     render(page());
     const members = within(screen.getByTestId("party-strip")).getAllByRole("button").map((b) => b.getAttribute("data-run-id"));
     expect(members, "the orchestrate_qa node's run is its only card").toEqual(["run-0001", "node:init_orchestrator", "node:qa_report"]);
-    expect(screen.getByTestId("job-hud").querySelector('[data-hud="cost"]')!.textContent, "the run's one cost_update, once").toBe("$1.60");
+    expect(screen.getByTestId("job-hud").querySelector('[data-hud="cost"]')!.textContent, "the run's one cost_update, once").toBe("$0.42");
   });
 });

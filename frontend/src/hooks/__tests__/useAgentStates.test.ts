@@ -215,14 +215,21 @@ describe("useAgentStates", () => {
     expect(agents[0].toolCalls).toMatchObject([{ tool_id: "legacy-1", input: "ls -la", result: "total 0" }]);
   });
 
-  it("agentless nodes: every graph node of a completed QA job keeps one completed card", () => {
+  it("agentless nodes: a completed QA job's init and report nodes keep one completed card each", () => {
+    // Only orchestrate_qa hosts an agent run (the QA agent nested inside it,
+    // #102); the other two nodes run no agent and must still keep a card once
+    // started. How many cards the one run yields is #104's assertion, not this one's.
     const { events, graph } = fixtureWithGraph("qa");
     const { agents } = run(events, "completed", graph);
+    for (const node of ["init_orchestrator", "qa_report"]) {
+      const cards = agents.filter((a) => a.node === node);
+      expect(cards.map((a) => a.status), `${node} must keep exactly one completed card`).toEqual(["completed"]);
+      expect(cards[0].toolCalls, `${node} ran no agent`).toHaveLength(0);
+    }
     expect(
-      agents.map((a) => [a.node, a.status]),
-      "a node with no agent run must keep a card once it has started",
-    ).toEqual(graph.nodes.map((n) => [n.physical_node ?? n.node_id, "completed"]));
-    expect(agents.every((a) => a.toolCalls.length === 0)).toBe(true);
+      agents.filter((a) => a.node === "orchestrate_qa").map((a) => a.status),
+      "orchestrate_qa keeps a completed card",
+    ).toEqual(["completed"]);
   });
 
   it("agentless nodes: a running QA node's card is running, the next one pending", () => {
@@ -269,11 +276,11 @@ describe("a run nested inside a graph node (#104)", () => {
     const qaRun = agents.find((a) => a.runId === "run-0001")!;
     expect(qaRun.node, "a nested run belongs to the graph node running when it started").toBe("orchestrate_qa");
     expect(qaRun.agent).toBe("qa");
-    expect([qaRun.status, qaRun.costUsd, qaRun.turnCount], "the run's own rows still reach its card").toEqual(["completed", 1.602263, 0]);
-    expect(agents.reduce((sum, a) => sum + a.costUsd, 0), "the run's one cost_update is counted once").toBeCloseTo(1.602263, 6);
-    expect(qaRun.summary, "neither the node's action nor its closing progress row may replace the outcome agent_completed set").toBe("All acceptance criteria passed.");
-    expect(qaRun.events.slice(0, 7).map((e) => e.type), "the run's record starts with its node's own rows").toEqual([
-      "node_started", "qa_apps_resolved", "qa_subtask_started", "qa_subtask_status", "progress", "progress", "agent_started",
+    expect([qaRun.status, qaRun.costUsd, qaRun.turnCount], "the run's own rows still reach its card").toEqual(["completed", 0.42, 2]);
+    expect(agents.reduce((sum, a) => sum + a.costUsd, 0), "the run's one cost_update is counted once").toBeCloseTo(0.42, 6);
+    expect(qaRun.summary, "neither the node's action nor its closing progress row may replace the outcome agent_completed set").toBe("overall: passed");
+    expect(qaRun.events.slice(0, 8).map((e) => e.type), "the run's record starts with its node's own rows").toEqual([
+      "node_started", "progress", "qa_apps_resolved", "qa_subtask_started", "qa_subtask_status", "progress", "progress", "agent_started",
     ]);
   });
 

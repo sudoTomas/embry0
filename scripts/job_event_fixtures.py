@@ -399,27 +399,94 @@ def onboarding() -> list[dict[str, Any]]:
 
 
 def qa() -> list[dict[str, Any]]:
-    s = Stream("job-fixture-qa")
-    s.add(ev.pipeline_graph(graph=qa_pipeline_graph(s.job_id), node=QA_NODE_IDS[0][0]))
+    """A completed standalone QA job: the orchestrator's and the executor's calls (#102).
+
+    The orchestrator brackets its three nodes with agentless node_started /
+    node_completed (embry0/workflows/qa/orchestrator.py, orchestrator_report.py);
+    the qa_* rows keep the builders' default node "qa" (orchestrator_helpers.py,
+    subtask_nodes.py); the sub-task's own progress rows name its nodes
+    acquire_sandbox and boot_app (subtask_nodes.py); and the QA agent run nested
+    inside orchestrate_qa is stamped node "qa", agent "qa" and its run_id by the
+    executor's _ids (nodes.py runs it with node="qa"). None of those names is a
+    graph node: the frontend has to attribute such rows to the node running at
+    the time. One thing the wire carries is left out: the sub-task writer's
+    `app` tag on every nested agent row, which the contract does not admit (#107).
+    """
+    s = Stream("job-0001")
     init_id, orchestrate_id, report_id = (n[0] for n in QA_NODE_IDS)
-    s.add(ev.node_started(node=init_id, attempt=1, agent=QA_NODE_IDS[0][1]))
-    s.add(ev.node_completed(node=init_id, attempt=1, agent=QA_NODE_IDS[0][1], ok=True))
-    s.add(ev.node_started(node=orchestrate_id, attempt=1, agent=QA_NODE_IDS[1][1]))
-    s.add(ev.qa_apps_resolved(apps=["web"], node=orchestrate_id))
-    s.add(ev.qa_subtask_started(app="web", target="http://web.example.test:3000", node=orchestrate_id))
+    s.add(ev.node_started(node=init_id))
+    s.add(ev.pipeline_graph(graph=qa_pipeline_graph(s.job_id), node=init_id))
+    s.add(ev.node_completed(node=init_id))
+    s.add(ev.node_started(node=orchestrate_id))
+    s.add(ev.progress(message="QA fan-out: 1 app(s): web", node=orchestrate_id))
+    s.add(ev.qa_apps_resolved(apps=["web"]))
+    s.add(ev.qa_subtask_started(app="web", target="managed"))
+    s.add(ev.qa_subtask_status(app="web", status="running"))
+    s.add(ev.progress(message="[web] acquiring sandbox", node="acquire_sandbox", app="web"))
+    s.add(ev.progress(message="[web] booting app (target=managed)", node="boot_app", app="web"))
+    r: dict[str, Any] = dict(run_id="run-0001", node="qa", agent="qa")
+    s.add(ev.agent_started(model="claude-sonnet-5-5", max_turns=100, **r))
+    s.add(ev.turn_start(turn_number=1, model="claude-sonnet-5-5", **r))
     s.add(
-        ev.qa_subtask_status(
-            app="web", status="booting", boot_phase={"phase": "install", "attempt": 1}, node=orchestrate_id
+        ev.tool_call(
+            tool_id="toolu_fx_qa1",
+            tool_name="mcp__playwright__browser_navigate",
+            summary="Navigate to http://web:3000/",
+            tool_input={"url": "http://web:3000/"},
+            **r,
         )
     )
-    s.add(ev.qa_agent_transient_retry(app="web", reason="ready check timed out once", node=orchestrate_id))
-    s.add(ev.progress(message="Running acceptance criteria", node=orchestrate_id, app="web"))
-    s.add(ev.qa_subtask_status(app="web", status="running", duration_ms=15000, node=orchestrate_id))
-    s.add(ev.qa_subtask_finished(app="web", status="passed", duration_ms=61000, node=orchestrate_id))
-    s.add(ev.node_completed(node=orchestrate_id, attempt=1, agent=QA_NODE_IDS[1][1], action="passed"))
-    s.add(ev.node_started(node=report_id, attempt=1, agent=QA_NODE_IDS[2][1]))
-    s.add(ev.node_completed(node=report_id, attempt=1, agent=QA_NODE_IDS[2][1], ok=True))
-    s.add(ev.job_finished(status="completed", error_code=None, error_message=None, pr_url=None, total_cost_usd=0.0))
+    s.add(ev.tool_result(tool_id="toolu_fx_qa1", content="Page loaded: Home", is_error=False, **r))
+    s.add(ev.turn_start(turn_number=2, model="claude-sonnet-5-5", **r))
+    s.add(ev.text(text="Every acceptance criterion passed.", **r))
+    s.add(
+        ev.turn_usage(
+            input_tokens=1800,
+            output_tokens=600,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            cost_usd=0.42,
+            model="claude-sonnet-5-5",
+            **r,
+        )
+    )
+    s.add(
+        ev.cost_update(
+            cost_usd=0.42,
+            duration_ms=160000,
+            duration_api_ms=150000,
+            num_turns=2,
+            tokens_in=1800,
+            tokens_out=600,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            **r,
+        )
+    )
+    s.add(
+        ev.agent_completed(
+            is_error=False,
+            error_code=None,
+            error_message="",
+            output="overall: passed",
+            cost_usd=0.42,
+            duration_ms=160000,
+            tools_called={"mcp__playwright__browser_navigate": 1},
+            policy_denials={},
+            input_tokens=1800,
+            output_tokens=600,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            **r,
+        )
+    )
+    s.add(ev.qa_subtask_status(app="web", status="passed", duration_ms=178000))
+    s.add(ev.qa_subtask_finished(app="web", status="passed", duration_ms=178000))
+    s.add(ev.progress(message="QA fan-out complete: passed", node=orchestrate_id))
+    s.add(ev.node_completed(node=orchestrate_id, action="passed"))
+    s.add(ev.node_started(node=report_id))
+    s.add(ev.node_completed(node=report_id))
+    s.add(ev.job_finished(status="completed", error_code=None, error_message=None, pr_url=None, total_cost_usd=0.42))
     return s.events
 
 

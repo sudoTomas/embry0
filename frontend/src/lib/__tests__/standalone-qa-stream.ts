@@ -1,137 +1,46 @@
 import type { LogEvent, PipelineGraph } from "@/lib/types";
+import { eventNode } from "@/lib/wire";
+import { loadFixture } from "./fixtures";
 
-// The event stream of a completed standalone QA job (#90), ids neutralised,
-// order and fields as the backend emits them. The graph's three nodes have no
-// `physical_node`, so each physical is its own id; the QA agent run nested
-// inside `orchestrate_qa` stamps `node: "qa"` on its own events, a name the
-// graph does not know. The run's agent_started, cost_update and
-// agent_completed carry its run_id; the qa_* rows carry none, and neither do
-// the sub-task's progress rows before the run (nodes acquire_sandbox and
-// boot_app, names the graph does not know either) nor the orchestrator's
-// closing progress row after it. The executor writes cost_update before
-// agent_completed (#104).
+// The event stream of a completed standalone QA job (#90), named by event for
+// the pipeline-live tests. It is the generated fixture
+// tests/fixtures/job-events/qa.json (#102), read through the loader like every
+// other fixture, not a copy of it: the graph's three nodes have no agent of
+// their own, and the QA agent run nested inside `orchestrate_qa` stamps
+// `node: "qa"` on its own events, a name the graph does not know.
 
-export const STANDALONE_QA_GRAPH: PipelineGraph = {
-  graph_id: "qa-job-0001",
-  name: "qa",
-  nodes: [
-    { node_id: "init_orchestrator", agent_type: "qa", position: { x: 0, y: 0 } },
-    { node_id: "orchestrate_qa", agent_type: "qa", position: { x: 230, y: 0 } },
-    { node_id: "qa_report", agent_type: "qa", position: { x: 460, y: 0 } },
-  ],
-  edges: [
-    { edge_id: "init_orchestrator->orchestrate_qa", source: "init_orchestrator", target: "orchestrate_qa", edge_type: "flow" },
-    { edge_id: "orchestrate_qa->qa_report", source: "orchestrate_qa", target: "qa_report", edge_type: "flow" },
-  ],
-  metadata: { max_total_budget_usd: 0, max_total_loops: 0, created_by: "auto" },
-};
+export const STANDALONE_QA_EVENTS: LogEvent[] = loadFixture("qa");
 
-function at(seconds: number, partial: Record<string, unknown>): LogEvent {
-  const timestamp = new Date(Date.UTC(2026, 9, 22, 12, 0, seconds)).toISOString();
-  return { timestamp, ...partial } as unknown as LogEvent;
+function one(label: string, match: (e: LogEvent) => boolean): LogEvent {
+  const hits = STANDALONE_QA_EVENTS.filter(match);
+  if (hits.length !== 1) throw new Error(`qa.json holds ${hits.length} events for ${label}, expected one`);
+  return hits[0];
 }
 
-export const QA_INIT_STARTED = at(0, { type: "node_started", node: "init_orchestrator", attempt: 1 });
-export const QA_PIPELINE_GRAPH = at(1, { type: "pipeline_graph", node: "init_orchestrator", graph: STANDALONE_QA_GRAPH });
-export const QA_INIT_COMPLETED = at(2, { type: "node_completed", node: "init_orchestrator" });
-export const QA_ORCHESTRATE_STARTED = at(3, { type: "node_started", node: "orchestrate_qa", attempt: 1 });
-export const QA_APPS_RESOLVED = at(4, { type: "qa_apps_resolved", node: "qa", apps: ["web"] });
-export const QA_SUBTASK_STARTED = at(5, { type: "qa_subtask_started", node: "qa", app: "web", target: "managed" });
-export const QA_SUBTASK_RUNNING = at(6, { type: "qa_subtask_status", node: "qa", app: "web", status: "running" });
-export const QA_ACQUIRING_SANDBOX = at(6, { type: "progress", node: "acquire_sandbox", app: "web", message: "[web] acquiring sandbox" });
-export const QA_BOOTING_APP = at(6, { type: "progress", node: "boot_app", app: "web", message: "[web] booting app (target=managed)" });
-export const QA_AGENT_STARTED = at(7, {
-  type: "agent_started",
-  node: "qa",
-  agent: "qa",
-  run_id: "run-0001",
-  model: "claude-sonnet-5-5",
-  max_turns: 100,
-});
-export const QA_COST_UPDATE = at(167, {
-  type: "cost_update",
-  node: "qa",
-  run_id: "run-0001",
-  cost_usd: 1.602263,
-  num_turns: 57,
-  duration_ms: 160769,
-  duration_api_ms: 150000,
-  tokens_in: 108,
-  tokens_out: 13785,
-  cache_creation_tokens: 0,
-  cache_read_tokens: 0,
-});
-export const QA_AGENT_COMPLETED = at(168, {
-  type: "agent_completed",
-  node: "qa",
-  agent: "qa",
-  run_id: "run-0001",
-  is_error: false,
-  error_code: null,
-  error_message: "",
-  output: "All acceptance criteria passed.",
-  cost_usd: 1.602263,
-  duration_ms: 160769,
-  tools_called: { browser_navigate: 12 },
-  policy_denials: {},
-  input_tokens: 108,
-  output_tokens: 13785,
-  cache_read_tokens: 0,
-  cache_creation_tokens: 0,
-});
-export const QA_SUBTASK_PASSED = at(184, {
-  type: "qa_subtask_status",
-  node: "qa",
-  app: "web",
-  status: "passed",
-  duration_ms: 178384,
-});
-export const QA_SUBTASK_FINISHED = at(184, {
-  type: "qa_subtask_finished",
-  node: "qa",
-  app: "web",
-  status: "passed",
-  duration_ms: 178384,
-});
-export const QA_FANOUT_COMPLETE = at(184, { type: "progress", node: "orchestrate_qa", message: "QA fan-out complete: passed" });
-export const QA_ORCHESTRATE_COMPLETED = at(185, { type: "node_completed", node: "orchestrate_qa", action: "passed" });
-export const QA_REPORT_STARTED = at(186, { type: "node_started", node: "qa_report" });
-export const QA_REPORT_COMPLETED = at(187, { type: "node_completed", node: "qa_report" });
-export const QA_JOB_FINISHED = at(188, {
-  type: "job_finished",
-  status: "completed",
-  error_code: null,
-  error_message: null,
-  pr_url: null,
-  total_cost_usd: 1.602263,
-});
+function ofNode(type: LogEvent["type"], node: string): LogEvent {
+  return one(`${type} ${node}`, (e) => e.type === type && eventNode(e) === node);
+}
 
-export const STANDALONE_QA_QA_EVENTS = [
-  QA_APPS_RESOLVED,
-  QA_SUBTASK_STARTED,
-  QA_SUBTASK_RUNNING,
-  QA_SUBTASK_PASSED,
-  QA_SUBTASK_FINISHED,
-];
+function subtaskStatus(status: string): LogEvent {
+  return one(`qa_subtask_status ${status}`, (e) => e.type === "qa_subtask_status" && e.status === status);
+}
 
-export const STANDALONE_QA_EVENTS: LogEvent[] = [
-  QA_INIT_STARTED,
-  QA_PIPELINE_GRAPH,
-  QA_INIT_COMPLETED,
-  QA_ORCHESTRATE_STARTED,
-  QA_APPS_RESOLVED,
-  QA_SUBTASK_STARTED,
-  QA_SUBTASK_RUNNING,
-  QA_ACQUIRING_SANDBOX,
-  QA_BOOTING_APP,
-  QA_AGENT_STARTED,
-  QA_COST_UPDATE,
-  QA_AGENT_COMPLETED,
-  QA_SUBTASK_PASSED,
-  QA_SUBTASK_FINISHED,
-  QA_FANOUT_COMPLETE,
-  QA_ORCHESTRATE_COMPLETED,
-  QA_REPORT_STARTED,
-  QA_REPORT_COMPLETED,
-  QA_JOB_FINISHED,
-];
+export const QA_PIPELINE_GRAPH = one("pipeline_graph", (e) => e.type === "pipeline_graph");
+export const STANDALONE_QA_GRAPH: PipelineGraph =
+  QA_PIPELINE_GRAPH.type === "pipeline_graph" ? QA_PIPELINE_GRAPH.graph : (() => { throw new Error("no graph"); })();
+
+export const QA_INIT_STARTED = ofNode("node_started", "init_orchestrator");
+export const QA_INIT_COMPLETED = ofNode("node_completed", "init_orchestrator");
+export const QA_ORCHESTRATE_STARTED = ofNode("node_started", "orchestrate_qa");
+export const QA_APPS_RESOLVED = one("qa_apps_resolved", (e) => e.type === "qa_apps_resolved");
+export const QA_AGENT_STARTED = one("agent_started", (e) => e.type === "agent_started");
+export const QA_COST_UPDATE = one("cost_update", (e) => e.type === "cost_update");
+export const QA_SUBTASK_PASSED = subtaskStatus("passed");
+export const QA_SUBTASK_FINISHED = one("qa_subtask_finished", (e) => e.type === "qa_subtask_finished");
+export const QA_ORCHESTRATE_COMPLETED = ofNode("node_completed", "orchestrate_qa");
+export const QA_REPORT_STARTED = ofNode("node_started", "qa_report");
+export const QA_REPORT_COMPLETED = ofNode("node_completed", "qa_report");
+export const QA_JOB_FINISHED = one("job_finished", (e) => e.type === "job_finished");
+
+/** The qa_* rows: the orchestrator's, stamped with the nested agent's node "qa" and no run_id. */
+export const STANDALONE_QA_QA_EVENTS = STANDALONE_QA_EVENTS.filter((e) => e.type.startsWith("qa_"));
