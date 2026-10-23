@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createHost,
-  fetchHost,
   fetchHosts,
   importTailnetHosts,
   probeHost,
@@ -14,10 +13,6 @@ import {
 
 export function useHosts(filter: HostsFilter) {
   return useQuery({ queryKey: ["hosts", filter.source ?? "all", filter.includeRemoved], queryFn: () => fetchHosts(filter) });
-}
-
-export function useHost(hostId: string | null) {
-  return useQuery({ queryKey: ["hosts", "one", hostId], queryFn: () => fetchHost(hostId!), enabled: !!hostId });
 }
 
 function invalidateHosts(qc: ReturnType<typeof useQueryClient>) {

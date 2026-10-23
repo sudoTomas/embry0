@@ -84,11 +84,6 @@ export async function fetchHosts(filter: HostsFilter): Promise<HostList> {
   return data;
 }
 
-export async function fetchHost(hostId: string): Promise<Host> {
-  const { data } = await api.get<Host>(`/hosts/${encodeURIComponent(hostId)}`);
-  return data;
-}
-
 /** Add a host (admin). A taken name is a 409 and a misfit address a 422, both shown in the form. */
 export async function createHost(body: HostWrite): Promise<Host> {
   const { data } = await api.post<Host>("/hosts", body, { suppressValidationToast: true });
