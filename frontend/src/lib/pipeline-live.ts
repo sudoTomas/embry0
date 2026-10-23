@@ -70,6 +70,10 @@ export function deriveNodeStates(
   const startCounts = new Map<string, number>();
   const runningNodeByPhysical = new Map<string, string>();
   const startedAtByNode = new Map<string, string>();
+  // Nodes failed by an error under their own physical's name. Such a failure
+  // is sticky through node_completed; one reached through a nested run's name
+  // (a retryable per-app QA error) yields to the node's own verdict.
+  const failedByOwnName = new Set<string>();
 
   const upsert = (nodeId: string, patch: Partial<NodeLiveState>) => {
     const prev = states[nodeId];
@@ -153,8 +157,12 @@ export function deriveNodeStates(
       // re-start is a retry of the last one.
       const target = ids[Math.min(count, ids.length - 1)];
       startCounts.set(phys, count + 1);
+      // Delete first: a re-start moves the physical to the end, so it is the
+      // one "running last" for unknown-node rows.
+      runningNodeByPhysical.delete(phys);
       runningNodeByPhysical.set(phys, target);
       startedAtByNode.set(target, timestamp);
+      failedByOwnName.delete(target);
       // The event's `attempt` is the iteration; legacy rows without one
       // fall back to counting re-starts.
       const counted = states[target] ? states[target].iteration + (states[target].state !== "pending" ? 1 : 0) : 1;
@@ -170,11 +178,14 @@ export function deriveNodeStates(
         startedAt && timestamp
           ? Math.max(0, (new Date(timestamp).getTime() - new Date(startedAt).getTime()) / 1000)
           : 0;
-      // A run-ending error already failed the node; completing it must not hide
-      // that, and a node that reports its own failure is failed too.
-      const state = states[target]?.state === "failed" || nodeCompletedFailed(event) ? "failed" : "completed";
+      // A run-ending error under the node's own name already failed it;
+      // completing it must not hide that, and a node that reports its own
+      // failure is failed too. A failure that came through a nested run's name
+      // was retryable: the node_completed verdict decides.
+      const state = failedByOwnName.has(target) || nodeCompletedFailed(event) ? "failed" : "completed";
       upsert(target, { state, duration_seconds: duration });
       runningNodeByPhysical.delete(phys);
+      failedByOwnName.delete(target);
     } else if (event.type === "error") {
       // An error naming a tool is a recoverable denial: the run goes on.
       if (event.tool_name) continue;
@@ -182,7 +193,9 @@ export function deriveNodeStates(
       // cost_update and node_completed still land on it.
       const resolved = resolvePhysical(phys);
       const target = resolved ? runningNodeByPhysical.get(resolved) : undefined;
-      if (target) upsert(target, { state: "failed" });
+      if (!target) continue;
+      upsert(target, { state: "failed" });
+      if (resolved === phys) failedByOwnName.add(target);
     }
   }
 
@@ -209,7 +222,9 @@ export function deriveNodeStates(
  * same events; the qa physical also collects every qa_* event; job-level events
  * (no `node`) are always kept. An event whose `node` the graph does not know (a
  * nested agent run's, e.g. `qa`) belongs to the physical running when it was
- * emitted, from its node_started to its node_completed (#90). An id the graph
+ * emitted (#90): the filter attributes such rows to the last known physical
+ * started and not yet completed, a single slot rather than deriveNodeStates's
+ * map, so the two can differ for a node that never completes. An id the graph
  * does not know, or a selection with no graph, keeps only the job-level events.
  */
 export function filterEventsForNode(

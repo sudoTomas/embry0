@@ -3,11 +3,17 @@ import { deriveNodeStates } from "../pipeline-live";
 import type { LogEvent, PipelineGraph } from "@/lib/types";
 import { loadFixture } from "./fixtures";
 import {
+  QA_APPS_RESOLVED,
   QA_COST_UPDATE,
   QA_INIT_COMPLETED,
   QA_INIT_STARTED,
+  QA_JOB_FINISHED,
   QA_ORCHESTRATE_COMPLETED,
   QA_ORCHESTRATE_STARTED,
+  QA_REPORT_COMPLETED,
+  QA_REPORT_STARTED,
+  QA_SUBTASK_FINISHED,
+  QA_SUBTASK_PASSED,
   STANDALONE_QA_EVENTS,
   STANDALONE_QA_GRAPH,
 } from "./standalone-qa-stream";
@@ -199,6 +205,17 @@ describe("deriveNodeStates (RAV-1285)", () => {
     expect(states.developer.turns, "turns add up across attempts").toBe(5);
   });
 
+  it("a re-started node counts as the one running last for an unknown-node cost_update", () => {
+    const states = deriveNodeStates(GRAPH, [
+      ev({ type: "node_started", node: "developer", attempt: 1 }),
+      ev({ type: "node_started", node: "review", attempt: 1 }),
+      ev({ type: "node_started", node: "developer", attempt: 2 }),
+      ev({ type: "cost_update", node: "nested-run", run_id: "run-0001", cost_usd: 0.5, num_turns: 3 }),
+    ]);
+    expect(states.developer.cost_usd, "the re-started developer is the node running last").toBe(0.5);
+    expect(states.reviewer.cost_usd, "the reviewer did not spend the nested run's cost").toBe(0);
+  });
+
   it("a partial job closes its running node", () => {
     const states = deriveNodeStates(GRAPH, [ev({ type: "node_started", node: "developer" })], "partial");
     expect(states.developer.state, "partial is terminal").not.toBe("running");
@@ -224,15 +241,20 @@ describe("deriveNodeStates on a standalone QA job (#90)", () => {
   });
 
   it("a run-ending error from the nested QA agent fails orchestrate_qa", () => {
-    const states = deriveNodeStates(STANDALONE_QA_GRAPH, [
+    const stream = [
       QA_INIT_STARTED,
       QA_INIT_COMPLETED,
       QA_ORCHESTRATE_STARTED,
       ev({ type: "error", node: "qa", run_id: "run-0001", message: "boom", code: "ERR_AGENT_CRASHED" }),
-      QA_ORCHESTRATE_COMPLETED,
+    ];
+    const running = deriveNodeStates(STANDALONE_QA_GRAPH, stream);
+    expect(running.orchestrate_qa.state, "the qa agent's error did not fail orchestrate_qa").toBe("failed");
+    expect(running.init_orchestrator.state, "init_orchestrator is unaffected").toBe("completed");
+    const completed = deriveNodeStates(STANDALONE_QA_GRAPH, [
+      ...stream,
+      ev({ type: "node_completed", node: "orchestrate_qa", action: "failed" }),
     ]);
-    expect(states.orchestrate_qa.state, "the qa agent's error did not fail orchestrate_qa").toBe("failed");
-    expect(states.init_orchestrator.state, "init_orchestrator is unaffected").toBe("completed");
+    expect(completed.orchestrate_qa.state, "a node_completed reporting failure keeps it failed").toBe("failed");
   });
 
   it("a cost_update with an unknown node while nothing runs is attributed to no node", () => {
@@ -241,5 +263,42 @@ describe("deriveNodeStates on a standalone QA job (#90)", () => {
       expect(st.cost_usd, `${st.node_id} gained cost while nothing was running`).toBe(0);
       expect(st.turns, `${st.node_id} gained turns while nothing was running`).toBe(0);
     }
+  });
+
+  it("a nested agent's transient error does not outlive a node_completed that reports success", () => {
+    const states = deriveNodeStates(
+      STANDALONE_QA_GRAPH,
+      [
+        QA_INIT_STARTED,
+        QA_INIT_COMPLETED,
+        QA_ORCHESTRATE_STARTED,
+        QA_APPS_RESOLVED,
+        ev({ type: "error", node: "qa", run_id: "run-0001", message: "overloaded_error", code: "ERR_AGENT_CRASHED" }),
+        ev({ type: "qa_agent_transient_retry", node: "qa", app: "web", reason: "overloaded_error" }),
+        QA_COST_UPDATE,
+        QA_SUBTASK_PASSED,
+        QA_SUBTASK_FINISHED,
+        QA_ORCHESTRATE_COMPLETED,
+        QA_REPORT_STARTED,
+        QA_REPORT_COMPLETED,
+        QA_JOB_FINISHED,
+      ],
+      "completed",
+    );
+    expect(states.orchestrate_qa.state, "the retried run passed; node_completed action=passed is the verdict").toBe(
+      "completed",
+    );
+    expect(states.orchestrate_qa.cost_usd, "the passing retry's cost still lands on the node").toBeCloseTo(1.602263, 6);
+  });
+
+  it("an error under the node's own name stays failed past a node_completed that reports success", () => {
+    const states = deriveNodeStates(STANDALONE_QA_GRAPH, [
+      QA_INIT_STARTED,
+      QA_INIT_COMPLETED,
+      QA_ORCHESTRATE_STARTED,
+      ev({ type: "error", node: "orchestrate_qa", message: "boom", code: "ERR_AGENT_CRASHED" }),
+      QA_ORCHESTRATE_COMPLETED,
+    ]);
+    expect(states.orchestrate_qa.state, "a run-ending error under the node's own name is sticky").toBe("failed");
   });
 });
