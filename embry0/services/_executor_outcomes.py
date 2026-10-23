@@ -247,16 +247,17 @@ async def _base_branch_for_change_request(self: IssueExecutor, repo: str, result
     if from_state:
         return from_state
     logger.info("change_request_base_branch_absent", repo=repo)
-    return await _repo_base_branch(self, repo)
+    return await _repo_base_branch(self, repo, caller="change_request")
 
 
-async def _repo_base_branch(self: IssueExecutor, repo: str) -> str:
+async def _repo_base_branch(self: IssueExecutor, repo: str, *, caller: str) -> str:
     """``repo``'s base branch: its preference, else the forge default, else "main".
 
     The executor-side counterpart of ``init_node``'s lookup, for callers that
     have no workflow state to read it from: the change-request fallback
-    above, and an onboard job started without a branch (#29). Never raises
-    and never returns empty.
+    above, and an onboard job started without a branch (#29). ``caller``
+    names the path in the ``repo_base_branch_lookup`` log event, which is
+    where the resolved forge is logged. Never raises and never returns empty.
     """
     from embry0.services.base_branch import resolve_base_branch
 
@@ -275,6 +276,7 @@ async def _repo_base_branch(self: IssueExecutor, repo: str) -> str:
         # is written — the run would hang in "running" forever.
         logger.warning("repo_base_branch_forge_unresolved", repo=repo, exc_info=True)
         forge = ""
+    logger.info("repo_base_branch_lookup", repo=repo, forge=forge, caller=caller)
     gitlab_client: Any = None
     github_client: Any = None
     resolver = getattr(self, "_credential_resolver", None)

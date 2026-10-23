@@ -95,16 +95,18 @@ async def _paid_from(app_state: Any, repo: str, model: str) -> str | None:
     return str(resolved.label)
 
 
-async def start_branch(app_state: Any, repo: str) -> str:
+async def start_branch(app_state: Any, repo: str) -> str | None:
     """The branch a setup run reads: the repository's base branch setting, else
-    the default branch discovery saw on the forge, else main."""
+    the default branch discovery saw on the forge, else None, which leaves the
+    executor to ask the forge (its preference, else the forge's default
+    branch, else main; #29) instead of guessing "main" here."""
     prefs = await app_state.repo_preferences_repo.get(repo)
     if prefs and prefs.get("base_branch"):
         return str(prefs["base_branch"])
     fact = await app_state.org_repos_repo.get(repo)
     if fact and fact.get("default_branch"):
         return str(fact["default_branch"])
-    return "main"
+    return None
 
 
 async def check_setup(app_state: Any, repo: str, text: str) -> dict[str, Any]:

@@ -93,7 +93,7 @@ class FakeExecutor:
         self.calls: list[dict[str, Any]] = []
         self.refuse: str | None = None
 
-    async def start_onboard_job(self, repo: str, branch: str, **kwargs: Any) -> str:
+    async def start_onboard_job(self, repo: str, branch: str | None, **kwargs: Any) -> str:
         self.calls.append({"repo": repo, "branch": branch, **kwargs})
         if self.refuse:
             raise ValueError(self.refuse)
@@ -218,7 +218,8 @@ async def test_propose_starts_one_onboard_run_in_propose_mode(client, app) -> No
     assert set(body) == {"proposal_id", "job_id"}
 
     [call] = app.state.issue_executor.calls
-    assert call["repo"] == REPO and call["branch"] == "main"
+    # No base branch setting and no discovery fact: the executor asks the forge (#29).
+    assert call["repo"] == REPO and call["branch"] is None
     assert call["proposal_id"] == body["proposal_id"]
     assert call["agent_models"] == {"onboarding": MEDIUM}
     assert call["dispatched_by"] == "dev@example.com"
@@ -292,7 +293,9 @@ async def test_the_run_starts_from_the_branch_embry0_works_from(client, app) -> 
     for repo in ("acme/prefs", "acme/facts", "acme/bare"):
         resp = await client.post(f"/api/v1/repos/{repo}/setup/propose", json={"confirm_spend": True})
         assert resp.status_code == 200, resp.text
-    assert [c["branch"] for c in app.state.issue_executor.calls] == ["develop", "trunk", "main"]
+    assert [c["branch"] for c in app.state.issue_executor.calls] == ["develop", "trunk", None], (
+        "a repository with no setting and no discovery fact must leave the branch to the executor's resolver"
+    )
 
 
 # -- cost ----------------------------------------------------------------------

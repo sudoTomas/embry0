@@ -693,7 +693,7 @@ class IssueExecutor:
         import uuid
 
         if not branch:
-            branch = await _executor_outcomes._repo_base_branch(self, repo)
+            branch = await _executor_outcomes._repo_base_branch(self, repo, caller="onboard")
 
         trace_id = f"trc-{uuid.uuid4().hex[:12]}"
         pipeline_config: dict[str, Any] = {

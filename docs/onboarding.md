@@ -58,7 +58,9 @@ agent analyzes the repo's base branch: its `base_branch` preference, else
 the forge's default branch, else `main`.
 
 In the dashboard the agent starts from the repository page's **Let embry0
-set up testing**, in propose mode (below). On an onboard job's page, a
+set up testing**, in propose mode (below), on the repository's `base_branch`
+preference, else the default branch an organization discovery saw, else
+the same forge lookup. On an onboard job's page, a
 completed job links to the stored setup (or to the proposal on the
 repository page); a failed one shows its error and links to the by-hand
 form with the repository filled in (the agent's draft is not kept after a

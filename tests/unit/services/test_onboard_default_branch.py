@@ -43,7 +43,7 @@ async def test_no_branch_resolves_the_repos_base_branch() -> None:
         "embry0.services._executor_outcomes._repo_base_branch", new=AsyncMock(return_value="develop")
     ) as resolve:
         created = await _start(ex, branch=None)
-    resolve.assert_awaited_once_with(ex, "group/proj")
+    resolve.assert_awaited_once_with(ex, "group/proj", caller="onboard")
     assert created["pipeline_config"]["branch"] == "develop", (
         f"an onboard job without a branch did not use the resolved base branch: {created['pipeline_config']}"
     )
