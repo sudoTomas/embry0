@@ -1,6 +1,8 @@
 import { useState, useCallback } from "react";
-import { Plus, GitBranch, Calendar, ChevronRight } from "lucide-react";
+import { Plus, GitBranch, Calendar } from "lucide-react";
 import { PipelineEditor } from "@/components/pipeline-editor/PipelineEditor";
+import { TemplateActions } from "@/components/pipelines/TemplateActions";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { formatDay } from "@/lib/utils";
 import { useTemplates } from "@/hooks/usePipelines";
@@ -15,13 +17,13 @@ interface TemplateCardProps {
 
 function TemplateCard({ template, onOpen, loading }: TemplateCardProps) {
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(template)}
-      disabled={loading}
-      className="group w-full text-left rounded-lg border border-border bg-surface hover:bg-overlay hover:border-border-strong p-4 transition-colors disabled:opacity-50 disabled:cursor-wait"
-    >
-      <div className="flex items-start justify-between gap-3">
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => onOpen(template)}
+        disabled={loading}
+        className="group w-full text-left rounded-lg border border-border bg-surface hover:bg-overlay hover:border-border-strong p-4 pr-12 transition-colors disabled:opacity-50 disabled:cursor-wait"
+      >
         <div className="flex items-center gap-3 min-w-0">
           <div className="shrink-0 w-8 h-8 rounded-lg bg-overlay border border-border flex items-center justify-center">
             <GitBranch size={14} className="text-fg-secondary" />
@@ -33,16 +35,17 @@ function TemplateCard({ template, onOpen, loading }: TemplateCardProps) {
             )}
           </div>
         </div>
-        <ChevronRight
-          size={14}
-          className="shrink-0 mt-0.5 text-white/20 group-hover:text-white/50 transition-colors"
-        />
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-2xs text-fg-muted">
+          <Calendar size={10} />
+          <span>{formatDay(template.created_at)}</span>
+          {template.is_builtin && <Badge tone="neutral">Built in</Badge>}
+          {template.default_for_kind && <Badge tone="info">{`Default for ${template.default_for_kind}`}</Badge>}
+        </div>
+      </button>
+      <div className="absolute right-2 top-2">
+        <TemplateActions template={template} />
       </div>
-      <div className="flex items-center gap-1 mt-3 text-2xs text-fg-muted">
-        <Calendar size={10} />
-        <span>{formatDay(template.created_at)}</span>
-      </div>
-    </button>
+    </div>
   );
 }
 
