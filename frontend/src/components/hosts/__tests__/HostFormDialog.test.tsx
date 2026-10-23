@@ -72,6 +72,14 @@ describe("HostFormDialog", () => {
     );
   });
 
+  it("commits a role typed without Enter when the form is saved", async () => {
+    render(<HostFormDialog logSourceKinds={[...KINDS]} onClose={vi.fn()} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "web-1");
+    await userEvent.type(screen.getByRole("textbox", { name: "Roles" }), "worker");
+    await userEvent.click(screen.getByRole("button", { name: "Add host" }));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ roles: ["worker"] }), expect.anything());
+  });
+
   it("refuses an empty name before asking the server", async () => {
     render(<HostFormDialog logSourceKinds={[...KINDS]} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "Add host" }));

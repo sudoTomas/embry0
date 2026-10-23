@@ -108,11 +108,11 @@ export function HostFormDialog({ host, logSourceKinds, onClose }: Props) {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1">
             <Label htmlFor="host-roles">Roles</Label>
-            <TagInput id="host-roles" value={roles} onChange={setRoles} placeholder="app, db, worker…" disabled={pending} />
+            <TagInput id="host-roles" value={roles} onChange={setRoles} placeholder="app, db, worker…" disabled={pending} commitOnBlur />
           </div>
           <div className="space-y-1">
             <Label htmlFor="host-tags">Tags</Label>
-            <TagInput id="host-tags" value={tags} onChange={setTags} placeholder="Add a tag…" disabled={pending} />
+            <TagInput id="host-tags" value={tags} onChange={setTags} placeholder="Add a tag…" disabled={pending} commitOnBlur />
           </div>
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -139,7 +139,7 @@ export function HostFormDialog({ host, logSourceKinds, onClose }: Props) {
         </div>
         <div className="space-y-1">
           <Label htmlFor="host-repos">Repositories</Label>
-          <TagInput id="host-repos" value={repos} onChange={setRepos} placeholder="owner/name…" disabled={pending} />
+          <TagInput id="host-repos" value={repos} onChange={setRepos} placeholder="owner/name…" disabled={pending} commitOnBlur />
           <p className="text-xs text-fg-muted">The repositories this host runs. New repositories are linked with the role app.</p>
         </div>
         {error && (
