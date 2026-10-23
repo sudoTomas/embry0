@@ -23,6 +23,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from embry0.api.deps import resolve_bearer_principal
 from embry0.api.session import (
     SESSION_COOKIE,
     STATE_COOKIE,
@@ -106,14 +107,28 @@ async def check(request: Request) -> dict[str, Any]:
     ``api_key_login`` gates the dashboard's key-entry FORM only (owner
     decision: the public origin is SSO-only for humans). API-key Bearer
     HEADERS keep working on every origin — MCP/CLI are not "login".
+
+    ``key_tier`` is the tier of the key in the ``Authorization: Bearer``
+    header, when there is one and it is valid (``admin`` for the master
+    key, else the tier of the key's scope), so the dashboard can hide the
+    admin-only controls from a key that cannot use them (#101). ``null``
+    without a header or for an invalid, revoked or expired key: the probe
+    stays unauthenticated and never answers 401. ``authenticated`` and
+    ``tier`` keep describing the session cookie only.
     """
     config = request.app.state.config
     session = request_session(request)
+    key_tier: str | None = None
+    authorization = request.headers.get("authorization", "")
+    if authorization.startswith("Bearer "):
+        principal = await resolve_bearer_principal(request.app, authorization[7:])
+        key_tier = principal.tier if principal else None
     return {
         "sso_enabled": config.sso_enabled,
         "authenticated": session is not None,
         "tier": session.tier if session else None,
         "api_key_login": not _on_public_origin(request),
+        "key_tier": key_tier,
     }
 
 
