@@ -116,6 +116,7 @@ describe("OnboardRepoPage — onboarding agent", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Set up testing");
     expect(screen.queryByText(/GitHub repo/)).toBeNull();
     expect(screen.queryByText(/GitHub token/)).toBeNull();
+    expect(screen.queryByText(/Onboard a repo|qa\.yaml|external config store/)).not.toBeInTheDocument();
   });
 
   it("offers every registered repo, GitLab included, labelled with its forge", () => {
@@ -162,7 +163,7 @@ describe("OnboardRepoPage — onboarding agent", () => {
 
   it("warns that a stored config will be replaced", () => {
     renderPage("?repo=group%2Fsub%2Fproj");
-    expect(screen.getByTestId("onboard-agent-replaces-config")).toHaveTextContent("already has a stored QA config");
+    expect(screen.getByTestId("onboard-agent-replaces-config")).toHaveTextContent("already has a test setup");
     fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "owner/name" } });
     expect(screen.queryByTestId("onboard-agent-replaces-config")).toBeNull();
   });

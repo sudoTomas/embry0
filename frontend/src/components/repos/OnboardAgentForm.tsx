@@ -63,8 +63,9 @@ export function OnboardAgentForm({ initialRepo = "" }: { initialRepo?: string })
         <div>
           <h3 className="text-sm font-semibold">Let the agent work it out</h3>
           <p className="text-xs text-muted-foreground mt-1">
-            The agent clones the repo, drafts its qa.yaml (v2), validates it and smoke-boots each app,
-            retrying on failures, then stores the config. Any registered repo, GitHub or GitLab.
+            The agent copies the code to a private test computer, reads it, writes a test setup, checks
+            it and starts each app there, trying up to three times, then stores the setup. Any
+            registered repository, GitHub or GitLab.
           </p>
         </div>
         <div className="space-y-1">
@@ -103,14 +104,15 @@ export function OnboardAgentForm({ initialRepo = "" }: { initialRepo?: string })
             Skip the smoke boot
           </label>
           <p id="onboard-agent-skip-smoke-help" className="text-xs text-muted-foreground">
-            Store the config once it passes schema validation, without booting the apps.
+            Store the setup once it passes the schema check, without starting the apps.
           </p>
         </div>
       </Card>
 
       {hasStoredConfig && (
-        <p className="text-sm text-amber-200" data-testid="onboard-agent-replaces-config">
-          {repo} already has a stored QA config. A config the agent validates replaces it.
+        <p className="text-sm text-warning" data-testid="onboard-agent-replaces-config">
+          {repo} already has a test setup. One the agent validates replaces it, and the current one
+          stays in History.
         </p>
       )}
       {error && (
