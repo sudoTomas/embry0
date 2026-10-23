@@ -7,6 +7,7 @@ import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { JobResponse, LogEvent, PipelineGraph } from "@/lib/types";
+import { STANDALONE_QA_EVENTS, STANDALONE_QA_GRAPH } from "@/lib/__tests__/standalone-qa-stream";
 
 const job = vi.hoisted(() => ({ current: null as unknown }));
 const logs = vi.hoisted(() => ({ events: [] as unknown[], graph: null as unknown }));
@@ -99,5 +100,14 @@ describe("the Job page's party strip", () => {
     expect(sprite, "one sprite per member").not.toBeNull();
     expect(sprite!.classList.contains("motion-enter")).toBe(false);
     expect(member.querySelectorAll("svg.sprite").length).toBe(1);
+  });
+
+  it("a standalone QA job's one run is one member, and the HUD counts its cost once (#104)", () => {
+    logs.graph = STANDALONE_QA_GRAPH;
+    logs.events = STANDALONE_QA_EVENTS;
+    render(page());
+    const members = within(screen.getByTestId("party-strip")).getAllByRole("button").map((b) => b.getAttribute("data-run-id"));
+    expect(members, "the orchestrate_qa node's run is its only card").toEqual(["run-0001", "node:init_orchestrator", "node:qa_report"]);
+    expect(screen.getByTestId("job-hud").querySelector('[data-hud="cost"]')!.textContent, "the run's one cost_update, once").toBe("$1.60");
   });
 });

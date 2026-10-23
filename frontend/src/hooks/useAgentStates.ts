@@ -85,6 +85,9 @@ export function useAgentStates(
   return useMemo(() => {
     const runs = new Map<string, AgentState>();
     const latestRunByNode = new Map<string, string>();
+    // The graph's physical nodes: a run under a name the graph does not know
+    // is nested inside the node running when it started (#90, #104).
+    const knownPhysicals = graph ? new Set(graph.nodes.map(physicalOf)) : null;
     const attemptByNode = new Map<string, number>();
     let lastStartedNode = "";
     let prUrl: string | null = null;
@@ -127,13 +130,20 @@ export function useAgentStates(
         // a card for the node that last started. The old executor stamped that
         // run's later rows with `node` = agent type (`reviewer` under `review`),
         // so the legacy run is also found under its agent.
-        const runNode = node || lastStartedNode;
+        // A run nested inside a LangGraph node stamps its own name (`qa` under
+        // `orchestrate_qa`), which the graph does not know: it is that node's
+        // run, so the node gets no graph card of its own on top (#104). Its
+        // run-less rows still carry the nested name, so the run is also found
+        // under it.
+        const nested = knownPhysicals !== null && node !== "" && lastStartedNode !== "" && !knownPhysicals.has(node);
+        const runNode = node && !nested ? node : lastStartedNode;
         const runId = event.run_id ?? `legacy:${index}`;
         const state = makeAgentState(runId, runNode, event.agent ?? runNode, attemptByNode.get(runNode) ?? 1, "running");
         state.model = event.model;
         state.startedAt = event.timestamp;
         runs.set(runId, state);
         latestRunByNode.set(runNode, runId);
+        if (nested) latestRunByNode.set(node, runId);
         if (!event.run_id && event.agent) latestRunByNode.set(event.agent, runId);
         state.events.push(event);
         return;

@@ -3,6 +3,7 @@ import { renderHook } from "@testing-library/react";
 import { useAgentStates } from "../useAgentStates";
 import type { LogEvent, PipelineGraph } from "@/lib/types";
 import { loadFixture, type FixtureName } from "@/lib/__tests__/fixtures";
+import { STANDALONE_QA_EVENTS, STANDALONE_QA_GRAPH } from "@/lib/__tests__/standalone-qa-stream";
 
 const t = "2026-10-15T00:00:00Z";
 
@@ -251,6 +252,37 @@ describe("useAgentStates", () => {
     const { agents } = run(events, "completed", graph);
     expect(agents.map((a) => a.runId), "a node with a run must not also get a graph card").toEqual([
       "run-fixture-1", "run-fixture-2", "run-fixture-3", "run-fixture-4",
+    ]);
+  });
+});
+
+describe("a run nested inside a graph node (#104)", () => {
+  // The standalone QA job's agent runs inside the orchestrate_qa LangGraph
+  // node and stamps `node: "qa"`, a name the graph does not know. The run is
+  // that node's work: the node must not get a second card of its own on top,
+  // carrying the same cost_update once more.
+  it("is its graph node's one card, with the run's cost counted once", () => {
+    const { agents } = run(STANDALONE_QA_EVENTS, "completed", STANDALONE_QA_GRAPH);
+    expect(agents.map((a) => a.runId), "the orchestrate_qa node's work is one card: its run").toEqual([
+      "run-0001", "node:init_orchestrator", "node:qa_report",
+    ]);
+    const qaRun = agents.find((a) => a.runId === "run-0001")!;
+    expect(qaRun.node, "a nested run belongs to the graph node running when it started").toBe("orchestrate_qa");
+    expect(qaRun.agent).toBe("qa");
+    expect([qaRun.status, qaRun.costUsd, qaRun.turnCount], "the run's own rows still reach its card").toEqual(["completed", 1.602263, 0]);
+    expect(agents.reduce((sum, a) => sum + a.costUsd, 0), "the run's one cost_update is counted once").toBeCloseTo(1.602263, 6);
+  });
+
+  it("keeps its own node name when the graph is not known yet", () => {
+    const { agents } = run(STANDALONE_QA_EVENTS, "completed", null);
+    expect(agents.map((a) => [a.runId, a.node]), "no graph, no resolution and no graph cards").toEqual([["run-0001", "qa"]]);
+  });
+
+  it("a run whose node the graph knows is unchanged", () => {
+    const { events, graph } = fixtureWithGraph("issue-to-pr");
+    const { agents } = run(events, "completed", graph);
+    expect(agents.map((a) => [a.runId, a.node])).toEqual([
+      ["run-fixture-1", "triage"], ["run-fixture-2", "developer"], ["run-fixture-3", "developer"], ["run-fixture-4", "review"],
     ]);
   });
 });
