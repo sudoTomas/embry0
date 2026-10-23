@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
 import { Hammer } from "lucide-react";
 import { toast } from "sonner";
 import { buildQaImage } from "@/api/qaDashboard";
@@ -10,6 +11,15 @@ import { Dialog } from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { Switch } from "@/components/ui/Switch";
+
+/**
+ * The request ended without an answer while the builder still runs: axios gave
+ * up at its timeout, or a proxy between here and the server did (504, or 524
+ * at the edge). A fresh build can outlast all three, so this is not a failure.
+ */
+function stillBuilding(err: unknown): boolean {
+  return isAxiosError(err) && (err.code === "ECONNABORTED" || err.response?.status === 504 || err.response?.status === 524);
+}
 
 function refusal(err: unknown): string | null {
   const response = (err as { response?: { status?: number; data?: { detail?: unknown } } } | null)?.response;
@@ -42,6 +52,12 @@ export function BuildImageButton({ repo }: { repo: string }) {
       setOpen(false);
     },
     onError: (e) => {
+      if (stillBuilding(e)) {
+        toast.info("Still building on the server. The image appears in the list when it finishes.");
+        void qc.invalidateQueries({ queryKey: ["qa-dashboard", "cache-analytics", repo] });
+        setOpen(false);
+        return;
+      }
       const shown = refusal(e);
       if (shown) setError(shown);
       else toastApiError(e, "QA image build failed");

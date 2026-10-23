@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { AxiosError } from "axios";
 
 const mockBuild = vi.fn();
 vi.mock("@/api/qaDashboard", () => ({ buildQaImage: (...a: unknown[]) => mockBuild(...a) }));
@@ -23,6 +24,7 @@ beforeEach(() => {
   mockBuild.mockReset();
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.info).mockReset();
+  vi.mocked(toast.error).mockReset();
 });
 
 describe("BuildImageButton", () => {
@@ -83,6 +85,16 @@ describe("BuildImageButton", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     await userEvent.keyboard("{Escape}");
     expect(screen.getByRole("dialog", { name: "Build QA image" })).toBeInTheDocument();
+  });
+
+  it("says the build goes on when the request times out, instead of calling it failed", async () => {
+    mockBuild.mockRejectedValue(new AxiosError("timeout of 300000ms exceeded", "ECONNABORTED"));
+    renderButton();
+    await userEvent.click(screen.getByRole("button", { name: "Build QA image" }));
+    await userEvent.click(screen.getByRole("button", { name: "Build" }));
+    await waitFor(() => expect(toast.info).toHaveBeenCalledWith("Still building on the server. The image appears in the list when it finishes."));
+    expect(toast.error).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("refuses an empty branch before asking the server", async () => {
