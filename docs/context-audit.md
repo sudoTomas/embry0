@@ -91,6 +91,8 @@ The answer lists each active registered repository with at least one instruction
 
 Each job the schedule starts is a job like any other: the read above names each repository's newest one, `GET /api/v1/jobs?repo=<owner>/<name>` lists it among the repository's jobs, and `GET /api/v1/jobs/{job_id}` carries its report. Its `job_created` audit row names the actor `embry0:context-audit`, and its `pipeline_config` records the `context_fingerprint` and `head_sha` it was started for.
 
+The organization page's **Context audit** tab shows the same read: each repository with instruction files, the outdated claims its newest audit counted, that audit's status, cost and failure if it failed, and whether the schedule will audit it again, most outdated claims first. Each row links to the job, whose page carries the findings table and the patch. The tab serves the last reading of the default branches; **Read again** reads them anew.
+
 ## Running it now
 
 An audit can be started by hand, whether or not the schedule is on, with the tier that creates a job (`operator`):

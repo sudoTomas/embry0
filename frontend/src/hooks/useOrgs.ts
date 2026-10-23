@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   discoverOrganization,
   dismissNeed,
+  fetchContextAudit,
   fetchOrganization,
   fetchOrganizationNeeds,
   fetchOrganizationRepos,
@@ -137,5 +138,23 @@ export function useInstallOrganizationWebhook(owner: string) {
         qc.invalidateQueries({ queryKey: ["orgs", owner, "webhook"] }),
         qc.invalidateQueries({ queryKey: ["orgs", owner, "needs"] }),
       ]),
+  });
+}
+
+/** The owner's context audit as last read: each repository with instruction files and its newest audit. */
+export function useContextAudit(owner: string, enabled = true) {
+  return useQuery({
+    queryKey: ["orgs", owner, "context-audit"],
+    queryFn: () => fetchContextAudit(owner),
+    enabled: !!owner && enabled,
+  });
+}
+
+/** Reads every default branch again and shows that answer in place of the last one. */
+export function useRefreshContextAudit(owner: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => fetchContextAudit(owner, true),
+    onSuccess: (survey) => qc.setQueryData(["orgs", owner, "context-audit"], survey),
   });
 }

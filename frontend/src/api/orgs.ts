@@ -298,3 +298,55 @@ export async function installOrganizationWebhook(owner: string): Promise<OrgWebh
   const { data } = await api.post<OrgWebhookInstall>(`/orgs/${encodeURIComponent(owner)}/webhook`, undefined, { suppressValidationToast: true });
   return data;
 }
+
+/** Why the context audit would start a repository's audit now (`first`, `changed`, `aged`), or why not. */
+export type ContextAuditReason = "first" | "changed" | "aged" | "live" | "current" | "off";
+
+/** A repository's newest context-audit job, with what its report counted. */
+export interface ContextAuditJob {
+  job_id: string;
+  status: string;
+  created_at: string | null;
+  finished_at: string | null;
+  total_cost_usd: number | null;
+  error_code: string | null;
+  /** Outdated claims the report counted; null until the job completed, or when its report lost the count. */
+  stale: number | null;
+  /** Instruction files the audit read. */
+  files_read: number | null;
+}
+
+export interface ContextAuditRepo {
+  repo: string;
+  /** Instruction files on the default branch (CLAUDE.md, AGENTS.md, skills, rules). */
+  files: number;
+  fingerprint: string;
+  head_sha: string;
+  newest_job: ContextAuditJob | null;
+  /** When the schedule's last start for it was refused before a job existed. */
+  refused_at: string | null;
+  due: boolean;
+  reason: ContextAuditReason;
+}
+
+/** What the context audit reads for one owner: each registered repository with instruction files. */
+export interface ContextAuditSurvey {
+  owner: string;
+  context_audit_days: number | null;
+  /** When the oldest reading of the default branches was taken. */
+  read_at: string | null;
+  template: string;
+  repos: ContextAuditRepo[];
+  /** Repositories the forge did not answer for, with why. */
+  unread: { repo: string; detail: string }[];
+}
+
+/** The owner's context audit as last read; `refresh` reads every default branch again, which takes longer. */
+export async function fetchContextAudit(owner: string, refresh = false): Promise<ContextAuditSurvey> {
+  const { data } = await api.get<ContextAuditSurvey>(`/orgs/${encodeURIComponent(owner)}/context-audit`, {
+    params: refresh ? { refresh: true } : undefined,
+    // A refresh reads every repository's default branch; give it longer than an ordinary call.
+    timeout: refresh ? 120_000 : undefined,
+  });
+  return data;
+}
