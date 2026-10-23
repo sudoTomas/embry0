@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { formatErrorDetail } from "@/api/errorDetail";
 import { toastApiError } from "@/api/errorToast";
@@ -57,12 +57,25 @@ export function OrgSettingsTab({ org, isAdmin }: { org: Organization; isAdmin: b
   const webhook = useOrganizationWebhook(org.owner, github);
   const autoRegister = org.settings.auto_register === true;
 
+  // The field follows the stored row: a save, a probe or another tab's write
+  // answers the organization and the name shown is the one it holds.
+  useEffect(() => {
+    setName(org.display_name ?? "");
+  }, [org.display_name]);
+
   const saveName = (e: FormEvent) => {
     e.preventDefault();
-    const trimmed = name.trim();
+    // Empty clears the name and shows the owner's slug; the server keeps the
+    // stored name on null (COALESCE), so an empty field is sent as "".
     update.mutate(
-      { display_name: trimmed === "" ? null : trimmed },
-      { onSuccess: () => setNameError(null), onError: (err) => setNameError(refusal(err, "The name was not saved.")) },
+      { display_name: name.trim() },
+      {
+        onSuccess: () => {
+          setNameError(null);
+          toast.success("Saved");
+        },
+        onError: (err) => setNameError(refusal(err, "The name was not saved.")),
+      },
     );
   };
 
@@ -145,7 +158,7 @@ export function OrgSettingsTab({ org, isAdmin }: { org: Organization; isAdmin: b
                 <span className="text-fg-muted">No public webhook origin is configured.</span>
               )}
               <Gated isAdmin={isAdmin} onClick={installHook} disabled={install.isPending || org.status !== "active"}>
-                {install.isPending ? "Installing…" : "Install webhook"}
+                {install.isPending ? "Installing…" : webhook.data.installed ? "Install again" : "Install webhook"}
               </Gated>
             </div>
             {!webhook.data.hooks_visible ? (

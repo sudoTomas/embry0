@@ -262,7 +262,8 @@ export interface OrgWebhookInstall {
   detail: string;
 }
 
-/** What PATCH /orgs/{owner} takes: a display name (null clears), settings (merged), or both. */
+/** What PATCH /orgs/{owner} takes: a display name (empty clears it; null keeps
+ * the stored one), settings (merged), or both. */
 export interface OrgPatch {
   display_name?: string | null;
   settings?: OrgSettingsPatch;

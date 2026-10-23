@@ -2,6 +2,7 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { Building2, ClipboardList, FolderGit2, Radar, Ruler, ShieldCheck, Wrench } from "lucide-react";
 import { formatErrorDetail } from "@/api/errorDetail";
 import { toastApiError } from "@/api/errorToast";
+import { AdminButton } from "@/components/auth/AdminButton";
 import { AccessChips } from "@/components/orgs/AccessChips";
 import { DiscoveryStatus } from "@/components/orgs/DiscoveryStatus";
 import { OrgActPanel } from "@/components/orgs/OrgActPanel";
@@ -120,17 +121,17 @@ export function OrganizationPage() {
             {statusLabel(o.status)}
           </Badge>
           <AccessChips access={o.access} />
-          <Button
+          <AdminButton
             type="button"
             size="sm"
             variant="outline"
             className="ml-auto"
             onClick={() => reprobe.mutate(undefined, { onError: (e) => toastApiError(e, "The probe did not run") })}
-            disabled={!isAdmin || reprobe.isPending}
+            disabled={reprobe.isPending}
             data-testid="org-reprobe"
           >
             <ShieldCheck className="h-4 w-4" /> {reprobe.isPending ? "Probing…" : "Probe again"}
-          </Button>
+          </AdminButton>
           <Button
             type="button"
             size="sm"

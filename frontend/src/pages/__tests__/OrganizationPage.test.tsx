@@ -111,6 +111,15 @@ describe("OrganizationPage", () => {
     await waitFor(() => expect(api.reprobe).toHaveBeenCalledWith("acme"));
   });
 
+  it("shows an operator Probe again disabled, with the reason on hover", async () => {
+    useAuthStore.setState({ authMode: "session", user: { email: "ops@example.test", name: "Ops", tier: "operator" } });
+    renderPage();
+    const probe = await screen.findByTestId("org-reprobe");
+    expect(probe).toBeDisabled();
+    fireEvent.mouseEnter(probe.parentElement as HTMLElement);
+    expect(screen.getByText("Admin scope required")).toBeInTheDocument();
+  });
+
   it("opens the Settings tab from the URL and keeps the overview as the default", async () => {
     renderPage("/orgs/acme?tab=settings");
     await screen.findByRole("heading", { level: 1, name: "acme" });

@@ -40,7 +40,7 @@ beforeEach(() => {
 });
 
 describe("OrgSettingsTab", () => {
-  it("saves a display name, and sends null to clear it", async () => {
+  it("saves a display name, and sends an empty one to clear it", async () => {
     render(<OrgSettingsTab org={org({ display_name: "Acme Inc" })} isAdmin />);
     const name = screen.getByRole("textbox", { name: "Display name" });
     expect(name).toHaveValue("Acme Inc");
@@ -50,7 +50,17 @@ describe("OrgSettingsTab", () => {
     expect(update).toHaveBeenCalledWith({ display_name: "Acme" }, expect.anything());
     await userEvent.clear(name);
     await userEvent.click(screen.getByRole("button", { name: "Save name" }));
-    expect(update).toHaveBeenLastCalledWith({ display_name: null }, expect.anything());
+    // The server keeps a null name (COALESCE); only an empty string clears it.
+    expect(update).toHaveBeenLastCalledWith({ display_name: "" }, expect.anything());
+  });
+
+  it("says Saved after a name save and re-syncs the field from the stored row", async () => {
+    update.mockImplementation((_body: unknown, opts: { onSuccess: () => void }) => opts.onSuccess());
+    const view = render(<OrgSettingsTab org={org({ display_name: "Acme Inc" })} isAdmin />);
+    await userEvent.click(screen.getByRole("button", { name: "Save name" }));
+    expect(toast.success).toHaveBeenCalledWith("Saved");
+    view.rerender(<OrgSettingsTab org={org({ display_name: "Widgets Co" })} isAdmin />);
+    expect(screen.getByRole("textbox", { name: "Display name" })).toHaveValue("Widgets Co");
   });
 
   it("switches automatic registration on through the settings patch", async () => {
@@ -70,7 +80,8 @@ describe("OrgSettingsTab", () => {
     expect(within(section).getByText("Installed")).toBeInTheDocument();
     expect(within(section).getAllByRole("listitem")).toHaveLength(2);
     expect(within(section).getByText("https://other.example.test")).toBeInTheDocument();
-    await userEvent.click(within(section).getByRole("button", { name: "Install webhook" }));
+    expect(within(section).queryByRole("button", { name: "Install webhook" })).toBeNull();
+    await userEvent.click(within(section).getByRole("button", { name: "Install again" }));
     expect(install).toHaveBeenCalled();
     expect(toast.info).toHaveBeenCalledWith("A webhook already points at this deployment.");
   });
@@ -104,6 +115,7 @@ describe("OrgSettingsTab", () => {
   });
 
   it("offers every write disabled below admin and spends no gold", () => {
+    mockUseWebhook.mockReturnValue(ready({ ...WEBHOOK, installed: false, hook: null }));
     render(<OrgSettingsTab org={org()} isAdmin={false} />);
     expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
     expect(screen.getByRole("switch", { name: "Register repositories automatically" })).toBeDisabled();
