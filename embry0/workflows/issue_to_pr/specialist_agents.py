@@ -18,10 +18,16 @@ only by naming its pipeline template (``SPECIALIST_TEMPLATE_NAMES``): triage
 is not offered those templates, and plan_route drops triage naming one.
 """
 
+from embry0.agents.output_text import MAX_OUTPUT_CHARS
 from embry0.services.instruction_files import INSTRUCTION_FILE_GLOBS, SKIPPED_DIRS
 from embry0.workflows.issue_to_pr.noncode_agents import DELIVERABLE_CONTRACT
 
-_WORKSPACE = """
+# The size a specialist's report stays under: the job keeps only the last
+# MAX_OUTPUT_CHARS of the final message (embry0.agents.output_text), so a
+# longer report loses its beginning, where its counts and findings are.
+REPORT_TARGET_CHARS = 8_000
+
+_WORKSPACE = f"""
 ## Workspace
 
 The repository the job names is cloned at /workspace: a shallow clone (the \
@@ -46,8 +52,11 @@ sentence (a file:line, or the command you ran and what it printed), or is \
 labeled *inferred*. Never invent a file, a caller, a command or an output.
 
 Write plain, direct sentences: no marketing words, no emojis, no filler. \
-The job keeps the first 10,000 characters of your final message, so put \
-the most important material first and stay under about 8,000."""
+The job keeps only the last {MAX_OUTPUT_CHARS:,} characters of your final \
+message: a longer one loses its beginning, where your report starts. Keep \
+the whole message under {REPORT_TARGET_CHARS:,} characters: write it to \
+/tmp/report.md first, measure it (`wc -m /tmp/report.md`), cut it until it \
+fits, and send that text as your final message."""
 
 # The diff-shaped agents (interrogator, blast-radius, comment-sicko) share
 # one way to find the change under review.

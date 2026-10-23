@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from embry0.agents.output_text import MAX_OUTPUT_CHARS, tail_on_line_boundary
 from embry0.orchestration.nodes.agent import DEFAULT_AGENT_MAX_TURNS
 from embry0.safety.patterns import is_dangerous_command
 from embry0.services.instruction_files import INSTRUCTION_FILE_GLOBS, SKIPPED_DIRS, instruction_files
@@ -32,6 +33,7 @@ from embry0.workflows.issue_to_pr.route_plan import (
 )
 from embry0.workflows.issue_to_pr.specialist_agents import (
     CONTEXT_AUDITOR_SYSTEM_PROMPT,
+    REPORT_TARGET_CHARS,
     SPECIALIST_AGENT_TYPES,
     SPECIALIST_TEMPLATE_NAMES,
 )
@@ -141,6 +143,21 @@ def test_checks_run_in_a_copy_so_the_workspace_stays_untouched():
         prompt = BUILTIN_SEED[agent_type]["system_prompt"]
         assert "cd /tmp && rm -rf run && cp -a /workspace run" in prompt, agent_type
         assert "never runs in /workspace" in prompt, agent_type
+
+
+def test_the_prompts_say_which_end_of_a_long_report_the_job_keeps():
+    # The executor keeps the tail of a final message. The prompts used to
+    # promise the head, so a report that ran long lost its counts and its
+    # findings table, the part they told the agent to put first.
+    report = "Stale: 3\nFiles: 6\n" + "row\n" * MAX_OUTPUT_CHARS
+    assert not tail_on_line_boundary(report).startswith("Stale: 3")
+    assert REPORT_TARGET_CHARS < MAX_OUTPUT_CHARS
+    for agent_type in SPECIALISTS:
+        prompt = BUILTIN_SEED[agent_type]["system_prompt"]
+        assert f"keeps only the last {MAX_OUTPUT_CHARS:,} characters" in prompt, agent_type
+        assert f"under {REPORT_TARGET_CHARS:,} characters" in prompt, agent_type
+        assert "wc -m /tmp/report.md" in prompt, agent_type
+        assert "first 10,000" not in prompt, agent_type
 
 
 def _quoted_commands(prompt: str) -> list[str]:

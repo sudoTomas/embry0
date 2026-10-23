@@ -201,7 +201,9 @@ own templates or agents:
   job's sandbox.
 - The clone is shallow (50 commits). The why and context-auditor agents
   deepen it when history runs out.
-- The report keeps the first 10,000 characters of the agent's final message;
-  the prompts put the most important material first.
+- The report keeps only the last 10,000 characters of the agent's final
+  message (`embry0/agents/output_text.py`), so a longer one loses its
+  beginning. The prompts have the agent write the report to a file, measure
+  it and keep it under 8,000.
 - A gate that needs a database, a service or a network the sandbox lacks is
   reported as not run, never as a pass.
