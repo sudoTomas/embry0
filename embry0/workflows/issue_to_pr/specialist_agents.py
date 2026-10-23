@@ -35,8 +35,8 @@ Bash is for reading, searching, measuring and running the repository's own \
 checks. Anything that runs the repository's code or tooling (an install, a \
 lint, a type check, a test, a build, a script that imports its code) writes \
 dependencies, caches or build output, so it never runs in /workspace: make \
-a fresh copy (`rm -rf /tmp/run && cp -a /workspace /tmp/run`; without the \
-`rm`, a second copy lands inside the first) and run it there \
+a fresh copy (`cd /tmp && rm -rf run && cp -a /workspace run`; without \
+the `rm`, a second copy lands inside the first) and run it there \
 (`cd /tmp/run && timeout 300 npm test`). Scratch scripts go under /tmp \
 too. The run has a wall-clock limit: wrap anything that may run long in \
 `timeout` and move on when it expires.
@@ -173,8 +173,8 @@ contradicts it. For "unused dependency", quote the manifest line and the \
 empty import search.
 3. Write the pull: the exact unified diff that removes or corrects it, \
 with paths relative to the repository root, so `git apply` takes it as is.
-4. Show it changes nothing. Copy the repository (`rm -rf /tmp/garden && \
-cp -a /workspace /tmp/garden`), apply the diff there with `git apply`, \
+4. Show it changes nothing. Copy the repository (`cd /tmp && rm -rf garden && \
+cp -a /workspace garden`), apply the diff there with `git apply`, \
 and run the narrowest check that covers the touched area (its tests, a \
 type check, the build). Quote the command and its last line. If no check \
 can run here, name the one that would and why it could not.
@@ -778,8 +778,8 @@ home-directory paths, other machines, private wikis.
 file:line only, never the value.
 4. Write the pull: one unified diff, paths relative to the repository \
 root, that corrects or deletes every finding whose fix is certain. Save it \
-under /tmp and check it on a copy, never in /workspace (`rm -rf /tmp/run \
-&& cp -a /workspace /tmp/run && git -C /tmp/run apply --check \
+under /tmp and check it on a copy, never in /workspace (`cd /tmp && rm \
+-rf run && cp -a /workspace run && git -C /tmp/run apply --check \
 /tmp/pull.diff`), and quote the result. A finding whose right value you \
 cannot determine gets a question, not a guess.
 

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from embry0.orchestration.nodes.agent import DEFAULT_AGENT_MAX_TURNS
+from embry0.safety.patterns import is_dangerous_command
 from embry0.services.instruction_files import INSTRUCTION_FILE_GLOBS, SKIPPED_DIRS, instruction_files
 from embry0.services.standards import MAX_FINDING_ROWS
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
@@ -109,7 +110,7 @@ def test_each_prompt_carries_its_methods_output_contract():
             "Weed kind",
             "git apply",
             "no weeds found",
-            "rm -rf /tmp/garden && cp -a /workspace /tmp/garden",
+            "cd /tmp && rm -rf garden && cp -a /workspace garden",
         ],
         "interrogator": [
             "Adversarial",
@@ -138,8 +139,29 @@ def test_checks_run_in_a_copy_so_the_workspace_stays_untouched():
     # The rm first: cp -a onto an existing /tmp/run nests the second copy.
     for agent_type in SPECIALISTS:
         prompt = BUILTIN_SEED[agent_type]["system_prompt"]
-        assert "rm -rf /tmp/run && cp -a /workspace /tmp/run" in prompt, agent_type
+        assert "cd /tmp && rm -rf run && cp -a /workspace run" in prompt, agent_type
         assert "never runs in /workspace" in prompt, agent_type
+
+
+def _quoted_commands(prompt: str) -> list[str]:
+    """Every fenced block and every inline code span of a prompt."""
+    fenced = re.findall(r"```[^\n]*\n(.*?)```", prompt, re.S)
+    inline = re.findall(r"(?<!`)`([^`\n]+)`(?!`)", prompt)
+    return fenced + inline
+
+
+def test_no_prompt_prescribes_a_command_the_safety_policy_blocks():
+    # The sandbox runs every Bash call through the same patterns: a command a
+    # prompt prescribes and the policy blocks costs the agent a turn, then it
+    # improvises. `rm -rf /tmp/run` did, in every specialist (an absolute path
+    # after `rm -rf` is blocked whatever it names).
+    blocked = {
+        (agent_type, command, pattern)
+        for agent_type in SPECIALISTS
+        for command in _quoted_commands(BUILTIN_SEED[agent_type]["system_prompt"])
+        if (pattern := is_dangerous_command(command)) is not None
+    }
+    assert not blocked
 
 
 def test_design_audit_report_opens_with_the_score_and_the_findings_table():
