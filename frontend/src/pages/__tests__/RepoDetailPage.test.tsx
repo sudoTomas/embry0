@@ -289,6 +289,17 @@ describe("RepoDetailPage (RAV-1253)", () => {
     expect(goldElements(el)).toEqual([]);
   });
 
+  it("spends no gold in App settings with the Effective switch on", async () => {
+    mockFetchRepoDetail.mockResolvedValue(DETAIL);
+    mockUseResolvedRepoEnv.mockReturnValue({ data: [], isPending: false, isError: false, refetch: vi.fn() });
+    renderPage();
+    await screen.findByRole("heading", { name: "acme/widgets" });
+    const toggle = screen.getByRole("switch", { name: "Effective for this repo" });
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(goldElements(section("appSettings"))).toEqual([]);
+  });
+
   it("opens the section a link points at", async () => {
     mockFetchRepoDetail.mockResolvedValue(DETAIL);
     renderPage("/repos/acme/widgets#advanced-testSetup");

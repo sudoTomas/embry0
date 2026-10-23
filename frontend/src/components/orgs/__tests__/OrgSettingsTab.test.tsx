@@ -114,11 +114,13 @@ describe("OrgSettingsTab", () => {
     expect(screen.queryByRole("button", { name: "Remove organization" })).toBeNull();
   });
 
-  it("offers every write disabled below admin and spends no gold", () => {
+  it("offers every write disabled below admin and spends no gold, the switch on included", () => {
     mockUseWebhook.mockReturnValue(ready({ ...WEBHOOK, installed: false, hook: null }));
-    render(<OrgSettingsTab org={org()} isAdmin={false} />);
+    render(<OrgSettingsTab org={org({ settings: { auto_register: true } })} isAdmin={false} />);
     expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Register repositories automatically" })).toBeDisabled();
+    const auto = screen.getByRole("switch", { name: "Register repositories automatically" });
+    expect(auto).toBeDisabled();
+    expect(auto).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Install webhook" })).toBeDisabled();
     const gold = [...document.querySelectorAll("*")].filter((el) => /(^|\s)(bg-primary|bg-primary-dim|text-primary)(\s|$)/.test(el.getAttribute("class") ?? ""));

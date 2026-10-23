@@ -119,6 +119,10 @@ describe("HostsPage", () => {
     renderPage();
     const add = screen.getByRole("button", { name: "Add host" });
     expect(add.className).toContain("bg-primary");
+    // With Show removed on, the switch is on too: Add host stays the only gold.
+    await userEvent.click(screen.getByRole("switch", { name: "Show removed" }));
+    const gold = [...document.querySelectorAll("*")].filter((el) => /(^|\s)(bg-primary|bg-primary-dim|text-primary)(\s|$)/.test(el.getAttribute("class") ?? ""));
+    expect(gold).toEqual([add]);
     await userEvent.click(add);
     expect(screen.getByRole("dialog", { name: "Add host" })).toBeInTheDocument();
   });
