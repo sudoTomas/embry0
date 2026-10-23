@@ -4763,7 +4763,7 @@ Frontend image for everything (rebuilt by `infra/deploy.sh`); orchestrator image
 
 ## Live check after integration
 
-On a deployment through the SSH tunnel recipe of plan 3a (`scratchpad/aegis-check-3a.sh` builds the branch's frontend beside the stack), at 1440 and 390 px, with a one-day admin key and a one-day operator key, screenshots in the PR:
+On a deployment through the SSH tunnel recipe of plan 3a (the branch's frontend built beside the stack in a verify container), at 1440 and 390 px, with a one-day admin key and a one-day operator key, screenshots in the PR:
 
 1. `/merge-approvals`: the list filters; an ask's page shows its sections; the operator sees Approve disabled; the admin's Approve opens the confirm and, on a dry-run deployment, the toast reads the outcome.
 2. `/pipelines`: the built-in badge, a Make default from the menu, the 409 toast when the kind is taken, Clear default, Duplicate through its dialog.
