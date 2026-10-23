@@ -39,6 +39,7 @@ from embry0.services.context_audit import (
     job_budget_usd,
     read_blobs,
     read_head,
+    report_counts,
     start_context_audit_job,
 )
 from embry0.services.organizations import Organization
@@ -75,6 +76,8 @@ class FakeForge:
         self.calls: list[str] = []
         # True: every read gives the event loop a turn, as a real request does.
         self.yields = False
+        self.in_flight = 0
+        self.most_in_flight = 0
 
     def put(self, repo: str, head: str | None, files: dict[str, str]) -> None:
         """A repository whose default branch is at ``head``; None for one with no commit."""
@@ -83,7 +86,10 @@ class FakeForge:
     async def get(self, path: str, **kwargs: Any) -> Resp:
         self.calls.append(path)
         if self.yields:
+            self.in_flight += 1
+            self.most_in_flight = max(self.most_in_flight, self.in_flight)
             await asyncio.sleep(0)
+            self.in_flight -= 1
         parts = path.split("/")
         repo = f"{parts[2]}/{parts[3]}"
         if repo not in self.repos:
@@ -129,6 +135,7 @@ class FakeJobs:
         self.rows: list[dict[str, Any]] = []
         # True: a create gives the event loop a turn before the row exists, as an INSERT does.
         self.yields = False
+        self.summary_reads: list[list[str]] = []
 
     def add(self, repo: str, status: str, created: datetime, finished: datetime | None = None, **config: Any) -> None:
         self.rows.append(
@@ -170,9 +177,13 @@ class FakeJobs:
                 out[repo] = {**newest, "live": any(r["status"] in _LIVE for r in mine)}
         return out
 
-    def finish(self, repo: str, status: str, when: datetime) -> None:
+    def finish(self, repo: str, status: str, when: datetime, report: str | None = None) -> None:
         row = next(r for r in reversed(self.rows) if r["repo"] == repo)
-        row.update(status=status, finished_at=when)
+        row.update(status=status, finished_at=when, result_summary=report)
+
+    async def result_summaries(self, job_ids: Collection[str]) -> dict[str, str | None]:
+        self.summary_reads.append(sorted(job_ids))
+        return {r["job_id"]: r.get("result_summary") for r in self.rows if r["job_id"] in job_ids}
 
 
 class FakeExecutor:
@@ -719,6 +730,7 @@ async def test_the_survey_says_per_repository_what_the_read_endpoint_shows() -> 
     assert survey == {
         "owner": "acme",
         "context_audit_days": None,
+        "read_at": T0.isoformat(),
         "template": TEMPLATE,
         "repos": [
             {
@@ -730,6 +742,11 @@ async def test_the_survey_says_per_repository_what_the_read_endpoint_shows() -> 
                     "job_id": "job-1",
                     "status": "completed",
                     "created_at": (T0 - timedelta(days=2)).isoformat(),
+                    "finished_at": (T0 - timedelta(days=2)).isoformat(),
+                    "total_cost_usd": None,
+                    "error_code": None,
+                    "stale": None,
+                    "files_read": None,
                 },
                 "refused_at": None,
                 "due": False,
@@ -740,6 +757,67 @@ async def test_the_survey_says_per_repository_what_the_read_endpoint_shows() -> 
     }
     with pytest.raises(context_audit.UnsupportedForge):
         await world.loop.survey(org("lab", forge="gitlab"))
+
+
+def test_report_counts_reads_the_two_lines_the_report_starts_with() -> None:
+    report = "I'll audit the steering files first.\n\nStale: 16\nFiles: 6\n\n## Findings\n| a | b |\n"
+    assert report_counts(report) == (16, 6)
+    assert report_counts("Stale: 0\nFiles: 0\n") == (0, 0)
+    assert report_counts("Stale: 2\n## Findings\nStale: 9\n") == (2, None), "the first line of its form counts"
+    # A report cut short loses its start: the counts are unknown, not zero.
+    assert report_counts("@@ -1,2 +1,2 @@\n-old\n+new\n") == (None, None)
+    assert report_counts("the Stale: 4 in prose\nFiles: 1 of 2") == (None, None), "only a line of its own"
+    assert report_counts(None) == (None, None) and report_counts("") == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_a_survey_without_refresh_serves_the_last_reading_with_the_jobs_as_they_are_now() -> None:
+    """The read endpoint's answer must not take a forge read per repository
+    (seconds per dozen): the schedule's last reading is served, the jobs are
+    read fresh, and read_at says how old the reading is."""
+    world = World(org("acme", days=7), repos=(reg("acme/web"), reg("acme/api")))
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+    world.forge.put("acme/api", HEAD, {"AGENTS.md": "b" * 40})
+    assert await world.loop.tick() == ["acme/api", "acme/web"]
+    reads = len(world.forge.calls)
+
+    world.clock.now = T0 + timedelta(minutes=10)
+    world.jobs.finish("acme/web", "completed", world.clock.now, "Stale: 4\nFiles: 1\n")
+    world.forge.put("acme/web", "2" * 40, {"CLAUDE.md": "c" * 40})  # pushed since: not seen without refresh
+    cached = await world.loop.survey(org("acme", days=7), refresh=False, reports=True)
+    assert len(world.forge.calls) == reads, "no forge read"
+    assert cached.read_at == T0
+    web = next(s for s in cached.repos if s.context.repo == "acme/web")
+    assert web.context.head_sha == HEAD and web.reason == CURRENT, "the reading is the last one"
+    assert web.report == (4, 1), "the job finished since, and its report's counts are read"
+    assert web.to_dict()["newest_job"]["stale"] == 4 and web.to_dict()["newest_job"]["files_read"] == 1
+    api = next(s for s in cached.repos if s.context.repo == "acme/api")
+    assert api.reason == LIVE and api.report is None, "a job still running has no report"
+    assert world.jobs.summary_reads == [["job-2"]], "only completed newest jobs' reports are read"
+
+    world.loop._registry.rows.append(reg("acme/new"))
+    world.forge.put("acme/new", HEAD, {"CLAUDE.md": "d" * 40})
+    mixed = await world.loop.survey(org("acme", days=7), refresh=False)
+    assert [c for c in world.forge.calls[reads:] if "/acme/new/" not in c] == [], "only the unread one is read"
+    assert {s.context.repo for s in mixed.repos} == {"acme/api", "acme/new", "acme/web"}
+
+    fresh = await world.loop.survey(org("acme", days=7))
+    assert fresh.read_at == world.clock.now
+    assert next(s for s in fresh.repos if s.context.repo == "acme/web").reason == CHANGED
+
+
+@pytest.mark.asyncio
+async def test_the_forge_is_read_a_handful_of_repositories_at_a_time_in_registry_order() -> None:
+    names = [f"acme/r{i:02}" for i in range(20)]
+    world = World(org("acme", days=7), repos=tuple(reg(n) for n in names))
+    world.forge.yields = True
+    for name in names:
+        world.forge.put(name, HEAD, {"CLAUDE.md": "a" * 40} if name != "acme/r07" else {"README.md": "a" * 40})
+    del world.forge.repos["acme/r11"]  # the forge answers 404 for this one
+    survey = await world.loop.survey(org("acme", days=7))
+    assert 1 < world.forge.most_in_flight <= context_audit.READ_CONCURRENCY, world.forge.most_in_flight
+    assert [s.context.repo for s in survey.repos] == [n for n in names if n not in ("acme/r07", "acme/r11")]
+    assert [repo for repo, _detail in survey.unread] == ["acme/r11"]
 
 
 # ---- starting a job ----

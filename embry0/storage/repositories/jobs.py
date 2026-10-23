@@ -298,7 +298,7 @@ class JobsRepository:
         rows = await self._db.fetch(
             f"""
             SELECT DISTINCT ON (repo)
-                repo, job_id, status, created_at, finished_at, pipeline_config,
+                repo, job_id, status, created_at, finished_at, pipeline_config, total_cost_usd, error_code,
                 bool_or(NOT (status = ANY($4::text[]))) OVER (PARTITION BY repo) AS live
             FROM jobs
             WHERE repo = ANY($1::text[]) AND (pipeline_template = $2 OR dispatched_by = $3)
@@ -311,6 +311,15 @@ class JobsRepository:
             sorted(str(status) for status in RELEASED_JOB_STATUSES),
         )
         return {str(r["repo"]): dict(r) for r in rows}
+
+    async def result_summaries(self, job_ids: Collection[str]) -> dict[str, str | None]:
+        """Each job's ``result_summary``, its report, for the jobs in ``job_ids`` that exist."""
+        if not job_ids:
+            return {}
+        rows = await self._db.fetch(
+            "SELECT job_id, result_summary FROM jobs WHERE job_id = ANY($1::text[])", sorted(set(job_ids))
+        )
+        return {str(r["job_id"]): r["result_summary"] for r in rows}
 
     async def count_dispatched_by(
         self,

@@ -52,9 +52,15 @@ class FakeJobs:
                 "created_at": when,
                 "finished_at": when + timedelta(minutes=9),
                 "pipeline_config": {"context_fingerprint": "0" * 64, "head_sha": HEAD},
+                "total_cost_usd": 1.25,
+                "error_code": None,
                 "live": False,
             }
         }
+
+    async def result_summaries(self, job_ids: Collection[str]) -> dict[str, str | None]:
+        assert set(job_ids) == {"job-7"}, "only the completed newest jobs' reports are read"
+        return {"job-7": "I'll audit the files first.\nStale: 3\nFiles: 2\n\n## Findings\n"}
 
 
 class Resp:
@@ -135,6 +141,7 @@ async def test_the_read_lists_each_repository_with_instruction_files_and_why_it_
     assert resp.json() == {
         "owner": "acme",
         "context_audit_days": 7,
+        "read_at": "2026-10-02T00:00:00+00:00",
         "template": "context-audit",
         "repos": [
             {
@@ -142,7 +149,16 @@ async def test_the_read_lists_each_repository_with_instruction_files_and_why_it_
                 "files": 2,
                 "fingerprint": fingerprint({"CLAUDE.md": "a" * 40, ".cursor/rules/style.mdc": "b" * 40}),
                 "head_sha": HEAD,
-                "newest_job": {"job_id": "job-7", "status": "completed", "created_at": "2026-10-01T00:00:00+00:00"},
+                "newest_job": {
+                    "job_id": "job-7",
+                    "status": "completed",
+                    "created_at": "2026-10-01T00:00:00+00:00",
+                    "finished_at": "2026-10-01T00:09:00+00:00",
+                    "total_cost_usd": 1.25,
+                    "error_code": None,
+                    "stale": 3,
+                    "files_read": 2,
+                },
                 "refused_at": None,
                 "due": True,
                 "reason": "changed",
@@ -152,6 +168,14 @@ async def test_the_read_lists_each_repository_with_instruction_files_and_why_it_
     }
     assert app.state.tokens == ["env-token"], "the forge is read with the organization's credential"
     assert not any(c.startswith("/repos/other/") for c in app.state.forge.calls)
+
+    reads = len(app.state.forge.calls)
+    async with _client(app) as client:
+        again = await client.get("/api/v1/orgs/acme/context-audit")
+        assert len(app.state.forge.calls) == reads, "a second read serves the last reading"
+        assert again.json() == resp.json()
+        fresh = await client.get("/api/v1/orgs/acme/context-audit", params={"refresh": "true"})
+    assert fresh.status_code == 200 and len(app.state.forge.calls) > reads, "refresh reads the forge again"
 
 
 @pytest.mark.asyncio

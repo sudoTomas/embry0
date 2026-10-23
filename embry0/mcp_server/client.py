@@ -693,8 +693,9 @@ class Embry0Client:
             body["settings"] = dict(settings)
         return _as_dict(await self._request("PATCH", f"/api/v1/orgs/{_owner(owner)}", body=body))
 
-    async def context_audit_status(self, owner: str) -> dict[str, Any]:
-        return _as_dict(await self._request("GET", f"/api/v1/orgs/{_owner(owner)}/context-audit"))
+    async def context_audit_status(self, owner: str, *, refresh: bool = False) -> dict[str, Any]:
+        params = {"refresh": "true"} if refresh else None
+        return _as_dict(await self._request("GET", f"/api/v1/orgs/{_owner(owner)}/context-audit", params=params))
 
     async def context_audit_run(
         self, owner: str, *, repo: str | None = None, force: bool = False, limit: int | None = None
