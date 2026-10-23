@@ -125,6 +125,7 @@ export function WatcherStacksTab() {
       {(open?.kind === "add" || open?.kind === "edit") && (
         <StackEditorDialog
           stack={open.kind === "edit" ? open.stack : undefined}
+          existing={list.data?.stacks.map((s) => s.repo) ?? []}
           overridable={list.data?.overridable_settings ?? []}
           onClose={() => setOpen(null)}
         />

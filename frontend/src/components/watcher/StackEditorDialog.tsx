@@ -43,6 +43,8 @@ function refusal(err: unknown): string | null {
 interface Props {
   /** The stack to edit; absent, the editor adds one. */
   stack?: WatcherStack;
+  /** The repositories already watched; adding one of them is refused, since the PUT would overwrite its stack. */
+  existing: string[];
   overridable: string[];
   onClose: () => void;
 }
@@ -54,7 +56,7 @@ interface Props {
  * is enabled. Keys the watcher does not know are named before the save and
  * again from the server's answer, which drops them.
  */
-export function StackEditorDialog({ stack, overridable, onClose }: Props) {
+export function StackEditorDialog({ stack, existing, overridable, onClose }: Props) {
   const [repo, setRepo] = useState(stack?.repo ?? "");
   const [logql, setLogql] = useState(stack?.logql ?? "");
   const [tracker, setTracker] = useState<WatcherTracker>(stack?.tracker ?? "linear");
@@ -75,6 +77,10 @@ export function StackEditorDialog({ stack, overridable, onClose }: Props) {
     const name = repo.trim().toLowerCase();
     if (!/^[^/\s]+\/[^/\s]+$/.test(name)) {
       setError("Name the repository as owner/name.");
+      return;
+    }
+    if (!stack && existing.includes(name)) {
+      setError("Already watched. Edit it instead.");
       return;
     }
     if (!logql.trim()) {

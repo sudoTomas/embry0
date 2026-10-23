@@ -65,6 +65,17 @@ describe("WatcherStacksTab", () => {
     expect(toast.success).toHaveBeenCalledWith("Saved acme/gadgets");
   });
 
+  it("refuses to add a repository that is already watched, so the stored stack is not overwritten", async () => {
+    render(<WatcherStacksTab />);
+    await userEvent.click(screen.getByRole("button", { name: "Add stack" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Repository" }), "Acme/Widgets");
+    await userEvent.type(screen.getByRole("textbox", { name: "LogQL selector" }), '{{app="widgets"}');
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(save).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Already watched. Edit it instead.");
+    expect(screen.getByRole("dialog", { name: "Add stack" })).toBeInTheDocument();
+  });
+
   it("edits a stack with the repository fixed and the linear target fields filled", async () => {
     render(<WatcherStacksTab />);
     await userEvent.click(screen.getByRole("button", { name: "Actions for acme/widgets" }));
