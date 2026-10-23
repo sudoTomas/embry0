@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { RadioTower, Play } from "lucide-react";
 import { toast } from "sonner";
 import { useWatcherRuns } from "@/hooks/useWatcherRuns";
@@ -9,8 +9,11 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageError } from "@/components/PageError";
 import { TableSkeleton } from "@/components/TableSkeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
+import { WatcherStacksTab } from "@/components/watcher/WatcherStacksTab";
 import { formatDateTime, formatTime } from "@/lib/utils";
 import { watcherActionLabel, watcherActionTone } from "@/lib/watcherActions";
+import { WATCHER_TABS, watcherTab } from "@/lib/watcherTabs";
 import { toastApiError } from "@/api/errorToast";
 
 
@@ -28,6 +31,11 @@ function windowLabel(startIso: string, endIso: string): string {
 export function WatcherPage() {
   const runs = useWatcherRuns(50);
   const queryClient = useQueryClient();
+
+  // The open tab lives in the URL so a stack can be linked to.
+  const [params, setParams] = useSearchParams();
+  const tab = watcherTab(params.get("tab")).value;
+  const openTab = (value: string) => setParams(value === WATCHER_TABS[0].value ? {} : { tab: value }, { replace: true });
 
   const tick = useMutation({
     mutationFn: triggerWatcherRun,
@@ -61,85 +69,99 @@ export function WatcherPage() {
         issue. Proposals are human-gated: nothing auto-runs from here.
       </p>
 
-      {runs.isError ? (
-        <PageError message="Failed to load watcher runs" onRetry={() => runs.refetch()} />
-      ) : runs.isPending ? (
-        <TableSkeleton />
-      ) : runs.data.length === 0 ? (
-        <EmptyState
-          icon={RadioTower}
-          title="No watcher ticks recorded yet"
-          description="Tick results land here when the scheduled watcher runs or you trigger one manually."
-        />
-      ) : (
-        // Below sm the window, log count, proposal and detail step aside, so
-        // when, what happened and the analysis job (the row's link) fit a
-        // phone on one line per tick.
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>When</th>
-                <th>Action</th>
-                <th className="hidden sm:table-cell">Window</th>
-                <th className="hidden sm:table-cell">Log lines</th>
-                <th>Analysis job</th>
-                <th className="hidden sm:table-cell">Proposal</th>
-                <th className="hidden sm:table-cell">Detail</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.data.map((run) => (
-                <tr key={run.id}>
-                  <td className="whitespace-nowrap text-muted-foreground">
-                    {formatDateTime(run.created_at)}
-                  </td>
-                  <td>
-                    <Badge tone={watcherActionTone(run.action)}>
-                      {watcherActionLabel(run.action)}
-                    </Badge>
-                  </td>
-                  <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">
-                    {windowLabel(run.window_start, run.window_end)}
-                  </td>
-                  <td className="hidden tabular-nums text-muted-foreground sm:table-cell">{run.log_lines}</td>
-                  <td className="whitespace-nowrap">
-                    {run.job_id ? (
-                      <Link to={`/jobs/${run.job_id}`} className="font-mono text-xs text-fg hover:text-primary hover:underline">
-                        {run.job_id.slice(0, 12)}
-                      </Link>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="hidden whitespace-nowrap sm:table-cell">
-                    {run.tracker_key ? (
-                      run.tracker_url ? (
-                        <a
-                          href={run.tracker_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-fg hover:text-primary hover:underline"
-                        >
-                          {run.tracker_key}
-                        </a>
-                      ) : (
-                        // Rows filed before the url was stored (#378).
-                        <span>{run.tracker_key}</span>
-                      )
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="hidden max-w-xs truncate text-muted-foreground sm:table-cell" title={run.detail ?? undefined}>
-                    {run.detail ?? "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <Tabs defaultValue={WATCHER_TABS[0].value} value={tab} onValueChange={openTab}>
+        <TabsList>
+          {WATCHER_TABS.map((t) => (
+            <TabsTrigger key={t.value} value={t.value}>
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value="ticks">
+          {runs.isError ? (
+            <PageError message="Failed to load watcher runs" onRetry={() => runs.refetch()} />
+          ) : runs.isPending ? (
+            <TableSkeleton />
+          ) : runs.data.length === 0 ? (
+            <EmptyState
+              icon={RadioTower}
+              title="No watcher ticks recorded yet"
+              description="Tick results land here when the scheduled watcher runs or you trigger one manually."
+            />
+          ) : (
+            // Below sm the window, log count, proposal and detail step aside, so
+            // when, what happened and the analysis job (the row's link) fit a
+            // phone on one line per tick.
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Action</th>
+                    <th className="hidden sm:table-cell">Window</th>
+                    <th className="hidden sm:table-cell">Log lines</th>
+                    <th>Analysis job</th>
+                    <th className="hidden sm:table-cell">Proposal</th>
+                    <th className="hidden sm:table-cell">Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.data.map((run) => (
+                    <tr key={run.id}>
+                      <td className="whitespace-nowrap text-muted-foreground">
+                        {formatDateTime(run.created_at)}
+                      </td>
+                      <td>
+                        <Badge tone={watcherActionTone(run.action)}>
+                          {watcherActionLabel(run.action)}
+                        </Badge>
+                      </td>
+                      <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">
+                        {windowLabel(run.window_start, run.window_end)}
+                      </td>
+                      <td className="hidden tabular-nums text-muted-foreground sm:table-cell">{run.log_lines}</td>
+                      <td className="whitespace-nowrap">
+                        {run.job_id ? (
+                          <Link to={`/jobs/${run.job_id}`} className="font-mono text-xs text-fg hover:text-primary hover:underline">
+                            {run.job_id.slice(0, 12)}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="hidden whitespace-nowrap sm:table-cell">
+                        {run.tracker_key ? (
+                          run.tracker_url ? (
+                            <a
+                              href={run.tracker_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-fg hover:text-primary hover:underline"
+                            >
+                              {run.tracker_key}
+                            </a>
+                          ) : (
+                            // Rows filed before the url was stored (#378).
+                            <span>{run.tracker_key}</span>
+                          )
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="hidden max-w-xs truncate text-muted-foreground sm:table-cell" title={run.detail ?? undefined}>
+                        {run.detail ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </TabsContent>
+        <TabsContent value="stacks">
+          <WatcherStacksTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

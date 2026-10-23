@@ -13,6 +13,11 @@ vi.mock("@/hooks/useWatcherRuns", () => ({
 vi.mock("@/api/watcher", () => ({
   triggerWatcherRun: () => mockTriggerWatcherRun(),
 }));
+vi.mock("@/hooks/useWatcherStacks", () => ({
+  useWatcherStacks: () => ({ data: { stacks: [], overridable_settings: [] }, isPending: false, isError: false, refetch: vi.fn() }),
+  useSaveWatcherStack: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteWatcherStack: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 
 import { WatcherPage } from "../WatcherPage";
 
@@ -90,5 +95,13 @@ describe("WatcherPage", () => {
     mockUseWatcherRuns.mockReturnValue(ready([]));
     renderPage();
     expect(screen.getByText("No watcher ticks recorded yet")).toBeInTheDocument();
+  });
+
+  it("opens the Stacks tab from the URL and keeps the ticks as the default", async () => {
+    renderPage();
+    expect(screen.getByRole("tab", { name: "Ticks" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Stacks" }));
+    expect(screen.getByText("No watched stacks")).toBeInTheDocument();
   });
 });
