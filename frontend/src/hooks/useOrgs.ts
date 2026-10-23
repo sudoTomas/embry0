@@ -127,10 +127,15 @@ export function useSetOrganizationStatus(owner: string) {
   return useMutation({ mutationFn: (status: OrgStatus) => setOrganizationStatus(owner, status), ...replaceOrganization(qc, owner) });
 }
 
+/** Install the organization's webhook; the hook's read and the needs list (a missing hook is a need) are stale afterwards. */
 export function useInstallOrganizationWebhook(owner: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => installOrganizationWebhook(owner),
-    onSettled: () => qc.invalidateQueries({ queryKey: ["orgs", owner, "webhook"] }),
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ["orgs", owner, "webhook"] }),
+        qc.invalidateQueries({ queryKey: ["orgs", owner, "needs"] }),
+      ]),
   });
 }
